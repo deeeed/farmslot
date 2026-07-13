@@ -542,3 +542,35 @@ test('a same-id pass package is removed when reassembly blocks (stale-pass barri
     'stale pass-status package survived a blocked reassembly',
   );
 });
+
+test('quarantine scrub-report never carries a mnemonic split across separate record paths', () => {
+  const { ctx, input } = scenario();
+  const half1 = path.join(ctx.workspace as string, 'h1.bin');
+  const half2 = path.join(ctx.workspace as string, 'h2.bin');
+  writeFileSync(half1, 'bytes');
+  writeFileSync(half2, 'bytes');
+  // Two disallowed media paths of six wordlist words each: each record alone
+  // is below the run threshold, only the joined view shows the phrase.
+  input.media = [
+    {
+      absolutePath: half1,
+      packagePath: 'abandon ability able about above absent',
+      kind: 'screenshot',
+      evidenceManifestSelected: false,
+    },
+    {
+      absolutePath: half2,
+      packagePath: 'absorb abstract absurd abuse access accident',
+      kind: 'screenshot',
+      evidenceManifestSelected: false,
+    },
+  ];
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'blocked');
+  if (result.status !== 'blocked') return;
+  const report = readFileSync(path.join(result.quarantineDir, 'scrub-report.json'), 'utf8');
+  const survivors = report.match(/abandon|ability|absorb|accident/g) ?? [];
+  assert.equal(survivors.length, 0, 'cross-record mnemonic survived in the quarantine report');
+  // The audit structure itself survives: reasons/kinds remain enumerable.
+  assert.ok(report.includes('[REDACTED:entry-'));
+});

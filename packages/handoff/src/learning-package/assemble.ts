@@ -249,12 +249,53 @@ function writeQuarantine(
   };
   // Quarantine keeps only the block audit trail - never raw artifacts. The
   // report is redacted too: its omitted/attestation entries echo caller strings
-  // (paths, attestation fields) that may themselves carry the secret.
+  // (paths, attestation fields) that may themselves carry the secret. Same
+  // joined-value backstop as the manifest: a secret split across separate
+  // report RECORDS (e.g. two omitted paths of six words each) only shows in
+  // the joined view - on a hit, the report's free-text carriers are replaced
+  // wholesale (kinds/reasons/findings are closed enums, fingerprints and
+  // timestamps are non-secret, so what remains cannot compose a word run).
+  let safeReport = redactSecretStrings(scrubReport, input.scrub?.extraDenyPatterns);
+  // Same-field COLUMNS are joined too: a phrase split across sibling records
+  // spreads through the same field (path/file), and interleaved enum fields
+  // (reason/kind) would otherwise break the joined run.
+  const reportColumns = [
+    collectStringValues(safeReport).join(' '),
+    safeReport.blocked.map((record) => record.file).join(' '),
+    safeReport.redactions.map((record) => record.file).join(' '),
+    safeReport.omitted.map((record) => record.path).join(' '),
+    safeReport.visualPassAttestations.map((record) => record.file).join(' '),
+    safeReport.visualPassAttestations.map((record) => record.attestedBy).join(' '),
+  ];
+  if (
+    scanForFloorSecrets(stableJson(safeReport), input.scrub?.extraDenyPatterns).length > 0 ||
+    reportColumns.some(
+      (column) => scanForFloorSecrets(column, input.scrub?.extraDenyPatterns).length > 0,
+    )
+  ) {
+    safeReport = {
+      ...safeReport,
+      blocked: safeReport.blocked.map((record, i) => ({
+        ...record,
+        file: `[REDACTED:entry-${i}]`,
+      })),
+      redactions: safeReport.redactions.map((record, i) => ({
+        ...record,
+        file: `[REDACTED:entry-${i}]`,
+      })),
+      omitted: safeReport.omitted.map((record, i) => ({
+        reason: record.reason,
+        path: `[REDACTED:entry-${i}]`,
+      })),
+      visualPassAttestations: safeReport.visualPassAttestations.map((record, i) => ({
+        ...record,
+        file: `[REDACTED:entry-${i}]`,
+        attestedBy: '[REDACTED]',
+      })),
+    };
+  }
   writeFileSync(path.join(quarantineDir, 'manifest.json'), stableJson(manifest));
-  writeFileSync(
-    path.join(quarantineDir, 'scrub-report.json'),
-    stableJson(redactSecretStrings(scrubReport, input.scrub?.extraDenyPatterns)),
-  );
+  writeFileSync(path.join(quarantineDir, 'scrub-report.json'), stableJson(safeReport));
   return quarantineDir;
 }
 

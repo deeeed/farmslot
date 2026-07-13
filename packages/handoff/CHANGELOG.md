@@ -4,6 +4,8 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Extend the joined-value backstop to the quarantine SCRUB REPORT: string values are joined overall AND per same-field column (blocked/redactions files, omitted paths, attestation files/attestedBy), so a mnemonic split across sibling records is wholesale-redacted from the audit trail - the blocked-output barrier holds on every quarantine file.
+- The validator requires every required file (manifest.json aside) to carry a manifest.files inventory entry - an unhashed required document is unverifiable and invalid.
 - Detect quoted cookie values: `Cookie: sid="<token>"` and quoted Set-Cookie pairs (raw and JSON-escaped) are floor hits; quote/backslash decoration is stripped before the value-length check.
 - Stale-pass barrier: when a reassembly at the same id blocks, any earlier pass-status staging dir for that id is removed before returning - the blocked result never leaves a publishable stale package behind.
 - Validate taskKey in the validator: format must be the normalized-ticket shape or task-<16hex>, and when manifest.task.ticket is present the taskKey must equal its normalized form. Hash-form keys are accepted as producer-derived (taskKey derivation is the producer's per spec section 1; the validator enforces safety, format, and ticket-correspondence, not hash provenance).

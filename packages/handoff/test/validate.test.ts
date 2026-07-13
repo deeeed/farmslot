@@ -32,34 +32,60 @@ function buildValidPackage(
   const packageId = overrides.packageId ?? PACKAGE_ID;
   const scrubStatus = overrides.scrubStatus ?? 'pass';
 
-  writeFileSync(path.join(dir, 'task.md'), '# Task\n\nBody.\n');
-  writeFileSync(path.join(dir, 'report.md'), '# Report\n\nDone.\n');
-  writeFileSync(path.join(dir, 'learnings.md'), '# Learnings\n\nInsight.\n');
-  writeJson(dir, 'source.json', { schemaVersion: 1, sourceKind: 'text' });
-  writeJson(dir, 'provenance.json', { schemaVersion: 1, resolutions: [] });
-
-  // Artifact records reference real, inventoried files with computed hashes.
+  // Every written file lands in the manifest.files inventory with its real
+  // hash (manifest.json aside), matching what the assembler produces.
   const files: Record<string, { sha256: string; role: string }> = {};
-  const artifactRecords = (overrides.artifacts ?? []).map((record) => {
-    const content = `artifact bytes for ${record.path}\n`;
-    const abs = path.join(dir, record.path);
+  const writeInventoried = (rel: string, content: string, role: string): void => {
+    const abs = path.join(dir, rel);
     mkdirSync(path.dirname(abs), { recursive: true });
     writeFileSync(abs, content);
-    files[record.path] = { sha256: sha256Of(content), role: 'optional' };
+    files[rel] = { sha256: sha256Of(content), role };
+  };
+
+  writeInventoried('task.md', '# Task\n\nBody.\n', 'required');
+  writeInventoried('report.md', '# Report\n\nDone.\n', 'required');
+  writeInventoried('learnings.md', '# Learnings\n\nInsight.\n', 'required');
+  writeInventoried(
+    'source.json',
+    `${JSON.stringify({ schemaVersion: 1, sourceKind: 'text' }, null, 2)}\n`,
+    'required',
+  );
+  writeInventoried(
+    'provenance.json',
+    `${JSON.stringify({ schemaVersion: 1, resolutions: [] }, null, 2)}\n`,
+    'required',
+  );
+
+  // Artifact records reference real, inventoried files with computed hashes.
+  const artifactRecords = (overrides.artifacts ?? []).map((record) => {
+    const content = `artifact bytes for ${record.path}\n`;
+    writeInventoried(record.path, content, 'optional');
     return { ...record, sha256: sha256Of(content) };
   });
-  writeJson(dir, 'artifacts/index.json', { schemaVersion: 1, artifacts: artifactRecords });
+  writeInventoried(
+    'artifacts/index.json',
+    `${JSON.stringify({ schemaVersion: 1, artifacts: artifactRecords }, null, 2)}\n`,
+    'required',
+  );
 
-  writeJson(dir, 'scrub-report.json', {
-    schemaVersion: 1,
-    status: scrubStatus,
-    scannedAt: '2026-07-03T15:45:00Z',
-    floorVersion: 1,
-    blocked: scrubStatus === 'blocked' ? [{ file: 'x', kind: 'srp' }] : [],
-    redactions: [],
-    omitted: [],
-    visualPassAttestations: overrides.visualPassAttestations ?? [],
-  });
+  writeInventoried(
+    'scrub-report.json',
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        status: scrubStatus,
+        scannedAt: '2026-07-03T15:45:00Z',
+        floorVersion: 1,
+        blocked: scrubStatus === 'blocked' ? [{ file: 'x', kind: 'srp' }] : [],
+        redactions: [],
+        omitted: [],
+        visualPassAttestations: overrides.visualPassAttestations ?? [],
+      },
+      null,
+      2,
+    )}\n`,
+    'required',
+  );
   writeJson(dir, 'manifest.json', {
     schemaVersion: 1,
     packageId,
@@ -366,5 +392,26 @@ test('taskKey format and ticket-correspondence are validated; hash form is produ
     assert.deepEqual(validateLearningPackage(hashKeyed).errors, []);
   } finally {
     rmSync(hashKeyed, { recursive: true, force: true });
+  }
+});
+
+test('a required file missing from the manifest.files inventory is invalid', () => {
+  const dir = buildValidPackage();
+  try {
+    const manifestPath = path.join(dir, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      files: Record<string, unknown>;
+    };
+    delete manifest.files['learnings.md']; // file stays on disk, only the entry goes
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const result = validateLearningPackage(dir);
+    assert.equal(result.valid, false);
+    assert.ok(
+      result.errors.some((e) =>
+        e.includes("required file 'learnings.md' missing from the inventory"),
+      ),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

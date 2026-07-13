@@ -201,6 +201,18 @@ export function validateLearningPackage(dir: string): ValidateResult {
   // uninventoried files before sharing.) Inventory keys are untrusted JSON:
   // traversal-shaped keys are collected errors and are NEVER read - the
   // validator itself must not touch anything outside the package dir.
+  // Every required file (manifest.json aside - it carries the inventory and
+  // never hashes itself) must have an inventory entry: an unhashed required
+  // document is unverifiable and therefore invalid.
+  if (manifest?.files) {
+    for (const required of REQUIRED_FILES) {
+      if (required === 'manifest.json') continue;
+      if (!(required in manifest.files)) {
+        errors.push(`manifest.json/files: required file '${required}' missing from the inventory`);
+      }
+    }
+  }
+
   const verifiedHashes = new Map<string, string>();
   for (const [rel, record] of Object.entries(manifest?.files ?? {})) {
     const unsafe = unsafeRelPathReason(rel);
