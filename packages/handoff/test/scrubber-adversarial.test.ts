@@ -381,3 +381,32 @@ test('legacy npm _authToken lines are floor hits (.npmrc canonical and JSON-esca
   // Prose naming the setting without a value stays clean.
   assert.equal(scanForFloorSecrets('set the _authToken setting in your npmrc').length, 0);
 });
+
+// Representative sample of the ported gitleaks vendor ruleset - one per major
+// vendor, each must hit RAW and through the JSON-unescape pipeline. Credential
+// literals are runtime-assembled so no contiguous credential-shaped string sits
+// in source (GitHub push protection rejects raw ones).
+test('a representative sample of ported gitleaks vendor rules hits raw and JSON-escaped', () => {
+  const rep = (chunk: string, times: number, tail = ''): string => chunk.repeat(times) + tail;
+  const fixtures: { vendor: string; value: string }[] = [
+    { vendor: 'gitlab', value: `${'glp'}${'at-'}${rep('a1B2c3D4', 2)}xyz1` },
+    { vendor: 'anthropic', value: `${'sk-'}${'ant-'}${'api03-'}${rep('a', 93)}AA` },
+    { vendor: 'huggingface', value: `${'hf'}_${'abcdefghijklmnopqrstuvwxyzabcdefgh'}` },
+    { vendor: 'age', value: `${'AGE-'}${'SECRET-'}${'KEY-1'}${rep('QPZRY9X8GF', 5)}QPZRY9X8` },
+    { vendor: 'databricks', value: `${'dap'}${'i'}${rep('a1f09b2c', 4)}` },
+    { vendor: 'linear', value: `${'lin'}_${'api'}_${rep('a1b2c3d4e5', 4)}` },
+    { vendor: 'digitalocean', value: `${'dop'}_${'v1'}_${rep('a1f0b2c3', 8)}` },
+    { vendor: 'grafana', value: `${'gls'}${'a_'}${rep('A1b2C3d4', 4)}_a1f0b2c3` },
+    { vendor: 'notion', value: `${'nt'}${'n_'}12345678901${rep('A1b2C3d4', 4)}xyz` },
+    { vendor: 'npm', value: `${'np'}${'m_'}${rep('a1b2c3d4e5f6', 3)}` },
+    { vendor: 'discord', value: `discord_token=${rep('a1f0b2c3', 8)}` },
+    { vendor: 'dropbox', value: `dropbox_key: ${'a1b2c3d4e5f6789'}` },
+  ];
+  for (const { vendor, value } of fixtures) {
+    assert.ok(scanForFloorSecrets(value).length > 0, `${vendor} raw missed`);
+    assert.ok(
+      scanForFloorSecrets(JSON.stringify({ config: value })).length > 0,
+      `${vendor} JSON-escaped missed`,
+    );
+  }
+});

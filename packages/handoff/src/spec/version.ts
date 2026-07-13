@@ -11,8 +11,11 @@ export const SCHEMA_VERSION = 1 as const;
  * v2: cookie headers/jars (multi-pair + structured objects), OAuth
  * bearer/access/refresh tokens, session tokens, JSON-escape passes,
  * metadata/caller-string gating.
+ * v3: ported the gitleaks vendor detector ruleset (config/gitleaks.toml
+ * @ 09242ce9, MIT) - 219 vendor rules as a UNION-only addition over the
+ * hand-authored floor.
  */
-export const SCRUB_FLOOR_VERSION = 2 as const;
+export const SCRUB_FLOOR_VERSION = 3 as const;
 
 /**
  * The eight files every valid package MUST contain (spec section 2). Paths are

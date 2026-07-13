@@ -63,25 +63,25 @@ yarn add @farmslot/handoff
 
 ## Source layout
 
-| Path                               | Owns                                                                                                   |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `schemas/*.schema.json`            | The normative format spec: the eight spec JSON-file schemas (Draft 2020-12). Shipped as assets.        |
-| `src/spec/version.ts`              | Format markers (`SCHEMA_VERSION`), the required-file set, and the run-slug grammar.                    |
-| `src/spec/types.ts`                | TypeScript types conforming to the shipped schemas.                                                    |
-| `src/spec/schemas.ts`              | Runtime loader for the shipped schema assets.                                                          |
-| `src/validate/json-schema.ts`      | Bounded JSON-Schema validator engine (the keyword subset the format uses, including `if`/`then`).      |
-| `src/validate/validate-package.ts` | `validateLearningPackage(dir)` — the section 8 reference validator.                                    |
-| `src/validate/run-slug.ts`         | Run-slug grammar check.                                                                                |
-| `src/scrub/floor.ts`               | The positive-identification crypto-secret floor (recovery phrases, keys, tokens).                      |
-| `src/scrub/scrubber.ts`            | The fail-closed five-layer scrub gate and `scrub-report.json` generation.                              |
-| `src/scrub/data/`                  | Reference data for detection (the standard BIP-39 English wordlist).                                   |
-| `src/learning-package/`            | `assembleLearningPackage` + `writeLearningPackage` and their input/result contracts.                   |
-| `src/resolve/`                     | The one override engine: `personal > domain > farm > default` first-match + shadow logging.            |
-| `src/task-io/`                     | Source normalization (`extractTaskDocument`) and task-doc rendering (`renderTaskMarkdown`).            |
-| `src/pr-publish/`                  | PR body/evidence composition (`buildPrPackage`) and the consent-guarded publish entry point.           |
-| `src/spec/task-key.ts`             | `deriveTaskKey` — the cross-attempt task-family key (ticket-normalized or content-hashed).             |
-| `templates/task-default.md`        | The shipped default task template (the `default` tier of the resolution chain).                        |
-| `schemas/grade.schema.json`        | Optional `grade.json` (human verdict, copied verbatim post-scrub); `hasGrade`/`gradeSemantic` in rows. |
+| Path                               | Owns                                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `schemas/*.schema.json`            | The normative format spec: the eight spec JSON-file schemas (Draft 2020-12). Shipped as assets.         |
+| `src/spec/version.ts`              | Format markers (`SCHEMA_VERSION`), the required-file set, and the run-slug grammar.                     |
+| `src/spec/types.ts`                | TypeScript types conforming to the shipped schemas.                                                     |
+| `src/spec/schemas.ts`              | Runtime loader for the shipped schema assets.                                                           |
+| `src/validate/json-schema.ts`      | Bounded JSON-Schema validator engine (the keyword subset the format uses, including `if`/`then`).       |
+| `src/validate/validate-package.ts` | `validateLearningPackage(dir)` — the section 8 reference validator.                                     |
+| `src/validate/run-slug.ts`         | Run-slug grammar check.                                                                                 |
+| `src/scrub/floor.ts`               | The positive-identification crypto-secret floor (recovery phrases, keys, tokens).                       |
+| `src/scrub/scrubber.ts`            | The fail-closed five-layer scrub gate and `scrub-report.json` generation.                               |
+| `src/scrub/data/`                  | Detection data: the BIP-39 English wordlist and the ported gitleaks vendor ruleset (see License notes). |
+| `src/learning-package/`            | `assembleLearningPackage` + `writeLearningPackage` and their input/result contracts.                    |
+| `src/resolve/`                     | The one override engine: `personal > domain > farm > default` first-match + shadow logging.             |
+| `src/task-io/`                     | Source normalization (`extractTaskDocument`) and task-doc rendering (`renderTaskMarkdown`).             |
+| `src/pr-publish/`                  | PR body/evidence composition (`buildPrPackage`) and the consent-guarded publish entry point.            |
+| `src/spec/task-key.ts`             | `deriveTaskKey` — the cross-attempt task-family key (ticket-normalized or content-hashed).              |
+| `templates/task-default.md`        | The shipped default task template (the `default` tier of the resolution chain).                         |
+| `schemas/grade.schema.json`        | Optional `grade.json` (human verdict, copied verbatim post-scrub); `hasGrade`/`gradeSemantic` in rows.  |
 
 Tests live under `test/`, mirroring the source directories. The adversarial scrub
 fixture suite lives in `test/scrubber.test.ts`, `test/scrubber-adversarial.test.ts`,
@@ -159,3 +159,12 @@ including the adversarial scrub fixture suite.
 ## License
 
 MIT
+
+### Third-party notices
+
+The scrub floor bundles vendor secret-detector patterns ported from the
+[gitleaks](https://github.com/gitleaks/gitleaks) default ruleset
+(`config/gitleaks.toml`), which is licensed **MIT** (Copyright (c) 2019 Zachary
+Rice). The port lives in `src/scrub/data/gitleaks-rules.ts` (generated by
+`scripts/generate-gitleaks-rules.mjs`, provenance/commit recorded in the file
+header). Gitleaks' generic high-entropy rules are deliberately excluded.

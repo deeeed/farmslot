@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { BIP39_ENGLISH } from './data/bip39-english.js';
+import { GITLEAKS_RULES } from './data/gitleaks-rules.js';
 
 /** A positive-identification hit from the crypto-secret floor. */
 export interface FloorHit {
@@ -225,17 +226,24 @@ export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] 
     current = next;
   }
 
+  // First-wins on a fingerprint: when two rules match the SAME bytes (e.g. our
+  // hand-authored `github-token` and gitleaks' `github-pat`), the earlier rule's
+  // kind label stands. Detection order is hand-authored first, so our labels
+  // remain authoritative where coverage overlaps - the BLOCK is identical either
+  // way; only the reported `kind` differs.
+  const record = (hit: FloorHit): void => {
+    if (!byFingerprint.has(hit.fingerprint)) byFingerprint.set(hit.fingerprint, hit);
+  };
+
   for (const variant of variants) {
-    for (const hit of detectMnemonics(variant)) {
-      byFingerprint.set(hit.fingerprint, hit);
-    }
-    for (const hit of detectCookies(variant)) {
-      byFingerprint.set(hit.fingerprint, hit);
-    }
-    for (const { kind, pattern } of [...FLOOR_PATTERNS, ...normalizedExtras]) {
+    for (const hit of detectMnemonics(variant)) record(hit);
+    for (const hit of detectCookies(variant)) record(hit);
+    // Hand-authored floor + farm extras + the ported gitleaks vendor ruleset.
+    // Gitleaks rules run through the SAME unescape variants and are UNION-only
+    // additions - they widen coverage, never narrow the hand-authored floor.
+    for (const { kind, pattern } of [...FLOOR_PATTERNS, ...normalizedExtras, ...GITLEAKS_RULES]) {
       for (const match of variant.matchAll(pattern)) {
-        const hit: FloorHit = { kind, fingerprint: fingerprint(match[0]) };
-        byFingerprint.set(hit.fingerprint, hit);
+        record({ kind, fingerprint: fingerprint(match[0]) });
       }
     }
   }
