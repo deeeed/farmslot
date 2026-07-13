@@ -3,7 +3,7 @@
 // and derivePRMergeState, shared by gateway (methods/pr.ts), CLI internal
 // verbs, and tests without importing services/gateway.
 //
-// Ported from services/gateway/src/methods/pr.ts as part of the Phase 4 CLI
+// Ported from services/gateway/src/methods/pr.ts as part of the Phase 3 CLI
 // overhaul (bash-decision-core-inventory.md item 4: reconcile pr-monitor.sh
 // rules with computePRRecommendation).
 

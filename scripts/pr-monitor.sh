@@ -133,6 +133,12 @@ for pr in sorted(prs_raw, key=lambda x: x.get('pr', 0)):
         display = 'CI FAILED (action needed)'
         detail  = f'Failed: {", ".join(failed_names)}. Worker session dead.'
         action  = None  # manual intervention
+    elif recommendation == 'WORKING':
+        p    = check_summary.get('passed', 0)
+        t    = check_summary.get('total', 0)
+        display = 'WORKING'
+        detail  = f'Worker session alive. CI: {p}/{t} pass.'
+        action  = None
     else:
         p    = check_summary.get('passed', 0)
         t    = check_summary.get('total', 0)
@@ -155,6 +161,13 @@ for pr in sorted(prs_raw, key=lambda x: x.get('pr', 0)):
         'prState':        pr_state,
         'merged':         merged,
         'workerActive':   worker_active,
+        # Historical schema keys (pre-port consumers parse these names).
+        'summary':        check_summary,
+        'failed_names':   failed_names,
+        'actionable_comments': actionable_count,
+        'pr_state':       pr_state,
+        'session':        slot if slot != '-' else None,
+        'session_alive':  worker_active,
     })
 
 # -- Output --

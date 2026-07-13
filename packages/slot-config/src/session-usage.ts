@@ -76,13 +76,20 @@ interface SnapshotData {
 
 // ─── JSONL safe iteration ─────────────────────────────────────────────────────
 
+// python urllib.parse.quote(value, safe='') — encodeURIComponent leaves
+// !'()* unescaped; percent-encode them too so path keys match the files the
+// runner wrote with python semantics.
+function pythonQuote(value: string): string {
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
 async function* safeJsonLines(filePath: string): AsyncGenerator<Record<string, unknown>> {
-  let content: string;
-  try {
-    content = await readFile(filePath, 'utf-8');
-  } catch {
-    return;
-  }
+  // Read failures propagate (a missing forced transcript must fail loudly, as
+  // the python original did); only malformed individual lines are tolerated.
+  const content = await readFile(filePath, 'utf-8');
   for (const line of content.split('\n')) {
     if (!line.trim()) continue;
     try {
@@ -231,9 +238,9 @@ async function latestCodexSession(
 
 async function grokSessionsDirs(home: string, repoPath: string): Promise<string[]> {
   const repoKey = await grokRepoKey(repoPath);
-  // encodeURIComponent matches Python's urllib.parse.quote(path, safe='') for
+  // pythonQuote matches Python's urllib.parse.quote(path, safe='') for
   // typical filesystem paths (same unreserved-character set on the common case).
-  const keys = new Set([encodeURIComponent(repoPath), encodeURIComponent(repoKey)]);
+  const keys = new Set([pythonQuote(repoPath), pythonQuote(repoKey)]);
   const dirs: string[] = [];
   for (const key of keys) {
     const candidate = path.join(home, '.grok', 'sessions', key);
@@ -580,7 +587,7 @@ async function sessionLineCount(sessionPath: string): Promise<number> {
     const s = await stat(sessionPath);
     if (s.isFile()) {
       const content = await readFile(sessionPath, 'utf-8');
-      return content.split('\n').length;
+      return content.split('\n').filter((line) => line.length > 0).length;
     }
     // Directory: count lines across all contained JSONL files.
     let total = 0;
@@ -670,12 +677,17 @@ export async function runSessionUsage(params: {
   }
 
   if (action === 'report') {
-    let snapData: SnapshotData;
+    let snapshotRaw: string;
     try {
-      snapData = JSON.parse(await readFile(snapshotFile, 'utf-8')) as SnapshotData;
-    } catch {
-      throw new Error("ERROR: No snapshot found. Run 'snapshot' before delivering the prompt.");
+      snapshotRaw = await readFile(snapshotFile, 'utf-8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error("ERROR: No snapshot found. Run 'snapshot' before delivering the prompt.");
+      }
+      // Permission/IO failures are real errors, not a missing snapshot.
+      throw err;
     }
+    const snapData = JSON.parse(snapshotRaw) as SnapshotData;
     const current = await summarize(runner, sessionFile, home);
     const base = snapData.totals;
     const header = [

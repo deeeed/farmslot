@@ -6,7 +6,12 @@
 
 import type { Command } from 'commander';
 
-import { parseBugInput, validateBugScore } from '@farmslot/protocol';
+import {
+  computePRRecommendation,
+  deriveScoreKey,
+  parseBugInput,
+  validateBugScore,
+} from '@farmslot/protocol';
 import {
   expandDispatchCmd,
   expandHook,
@@ -121,6 +126,7 @@ export function registerInternalCommand(program: Command): void {
         }
         emit.ok({ vars });
       } catch (err) {
+        if (opts.shell) return rawFail(err);
         emit.fail(err);
       }
     });
@@ -161,6 +167,7 @@ export function registerInternalCommand(program: Command): void {
           }
           emit.ok({ resolved });
         } catch (err) {
+          if (opts.raw) return rawFail(err);
           emit.fail(err);
         }
       },
@@ -194,6 +201,7 @@ export function registerInternalCommand(program: Command): void {
         const { projectJson: _projectJson, ...summary } = vars;
         emit.ok({ vars: summary });
       } catch (err) {
+        if (opts.shell) return rawFail(err);
         emit.fail(err);
       }
     });
@@ -214,6 +222,7 @@ export function registerInternalCommand(program: Command): void {
         }
         emit.ok({ dotpath, value });
       } catch (err) {
+        if (opts.raw) return rawFail(err);
         emit.fail(err);
       }
     });
@@ -257,6 +266,7 @@ export function registerInternalCommand(program: Command): void {
           }
           emit.ok({ expanded });
         } catch (err) {
+          if (opts.raw) return rawFail(err);
           emit.fail(err);
         }
       },
@@ -278,6 +288,7 @@ export function registerInternalCommand(program: Command): void {
         }
         emit.ok({ expanded });
       } catch (err) {
+        if (opts.raw) return rawFail(err);
         emit.fail(err);
       }
     });
@@ -286,9 +297,7 @@ export function registerInternalCommand(program: Command): void {
     .command('expand-template <slotId> <text>')
     .description('Expand {{var}} placeholders in a string with slot/project variables')
     .option('--var <key=value>', 'Extra template variable (repeatable)', collectVar, [])
-    .action(async (slotId: string, text: string, opts: { var: string[] }, cmd: Command) => {
-      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
-      const emit = createEmitter(output, cmd);
+    .action(async (slotId: string, text: string, opts: { var: string[] }, _cmd: Command) => {
       try {
         const extraVars = parseExtraVars(opts.var);
         const vars = await loadSlotVars(slotId);
@@ -296,16 +305,14 @@ export function registerInternalCommand(program: Command): void {
         // Raw plumbing output — the expand_slot_template contract.
         process.stdout.write(`${expandTemplate(text, vars, projectVars, extraVars)}\n`);
       } catch (err) {
-        emit.fail(err);
+        rawFail(err);
       }
     });
 
   internal
     .command('expand-platform-field <slotId> <field>')
     .description('Expand a project.json platforms.<platform>.<field> command for the slot')
-    .action(async (slotId: string, field: string, _opts: unknown, cmd: Command) => {
-      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
-      const emit = createEmitter(output, cmd);
+    .action(async (slotId: string, field: string, _opts: unknown, _cmd: Command) => {
       try {
         const vars = await loadSlotVars(slotId);
         const projectVars = await loadProjectVars(vars.projectName);
@@ -314,7 +321,7 @@ export function registerInternalCommand(program: Command): void {
           `${expandPlatformField(field, projectVars.projectJson, vars, projectVars)}\n`,
         );
       } catch (err) {
-        emit.fail(err);
+        rawFail(err);
       }
     });
 
@@ -322,9 +329,7 @@ export function registerInternalCommand(program: Command): void {
     .command('render-fixture-template <slotId> <srcPath>')
     .description('Render a fixture template file with slot/project variables to stdout')
     .option('--var <key=value>', 'Extra template variable (repeatable)', collectVar, [])
-    .action(async (slotId: string, srcPath: string, opts: { var: string[] }, cmd: Command) => {
-      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
-      const emit = createEmitter(output, cmd);
+    .action(async (slotId: string, srcPath: string, opts: { var: string[] }, _cmd: Command) => {
       try {
         const extraVars = parseExtraVars(opts.var);
         const vars = await loadSlotVars(slotId);
@@ -332,7 +337,7 @@ export function registerInternalCommand(program: Command): void {
         // Raw plumbing output — sync-fixtures.sh writes it to the slot repo.
         process.stdout.write(await renderFixtureTemplate(srcPath, vars, projectVars, extraVars));
       } catch (err) {
-        emit.fail(err);
+        rawFail(err);
       }
     });
 
@@ -368,6 +373,7 @@ export function registerInternalCommand(program: Command): void {
           }
           emit.ok({ hook: hookName, expanded });
         } catch (err) {
+          if (opts.raw) return rawFail(err);
           emit.fail(err);
         }
       },
@@ -376,9 +382,7 @@ export function registerInternalCommand(program: Command): void {
   internal
     .command('session-usage <slotId> <action>')
     .description('Extract runner session token usage (snapshot / report / total)')
-    .action(async (slotId: string, action: string, _opts: unknown, cmd: Command) => {
-      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
-      const emit = createEmitter(output, cmd);
+    .action(async (slotId: string, action: string, _opts: unknown, _cmd: Command) => {
       try {
         const vars = await loadSlotVars(slotId);
         const result = await runSessionUsage({
@@ -393,7 +397,7 @@ export function registerInternalCommand(program: Command): void {
         // Raw plumbing output — consumed by scripts and the gateway, never enveloped.
         process.stdout.write(result);
       } catch (err) {
-        emit.fail(err);
+        rawFail(err);
       }
     });
   internal
@@ -401,9 +405,7 @@ export function registerInternalCommand(program: Command): void {
     .description(
       'Parse a raw gh/Jira API response from stdin into BugInput JSON (source: github | jira)',
     )
-    .action(async (source: string, _opts: unknown, cmd: Command) => {
-      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
-      const emit = createEmitter(output, cmd);
+    .action(async (source: string, _opts: unknown, _cmd: Command) => {
       try {
         if (source !== 'github' && source !== 'jira') {
           throw Object.assign(new Error(`source must be "github" or "jira", got: "${source}"`), {
@@ -425,7 +427,7 @@ export function registerInternalCommand(program: Command): void {
         // Raw plumbing output — consumed by triage-bug.sh and download scripts.
         process.stdout.write(`${JSON.stringify(bugInput, null, 2)}\n`);
       } catch (err) {
-        emit.fail(err);
+        rawFail(err);
       }
     });
 
@@ -434,9 +436,7 @@ export function registerInternalCommand(program: Command): void {
     .description(
       'Validate scorer output JSON (difficulty enum, one_shot_probability ∈ [0,1], required fields); exit 0/1',
     )
-    .action(async (_opts: unknown, cmd: Command) => {
-      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
-      const emit = createEmitter(output, cmd);
+    .action(async (_opts: unknown, _cmd: Command) => {
       try {
         const raw = await readStdin();
         let parsed: unknown;
@@ -452,9 +452,97 @@ export function registerInternalCommand(program: Command): void {
         // Re-emit validated JSON — matches score-bug.sh contract (pretty-print to stdout).
         process.stdout.write(`${JSON.stringify(parsed, null, 2)}\n`);
       } catch (err) {
-        emit.fail(err);
+        rawFail(err);
       }
     });
+
+  internal
+    .command('pr-recommendation')
+    .description('Compute a PR recommendation from PR facts (decision core, gateway-free)')
+    .option('--state <state>', 'PR state: OPEN | CLOSED | MERGED', 'OPEN')
+    .option('--worker-active', 'A worker session is alive on the slot')
+    .option('--any-failed', 'At least one CI check failed')
+    .option('--merge-conflict', 'The PR has merge conflicts')
+    .option('--actionable <n>', 'Unresolved actionable comment count', '0')
+    .option('--all-passed', 'Every CI check passed')
+    .option('--approved', 'The PR has reviewer approval')
+    .option('--raw', 'Print only the recommendation token')
+    .action(
+      async (
+        opts: {
+          state: string;
+          workerActive?: boolean;
+          anyFailed?: boolean;
+          mergeConflict?: boolean;
+          actionable: string;
+          allPassed?: boolean;
+          approved?: boolean;
+          raw?: boolean;
+        },
+        cmd: Command,
+      ) => {
+        const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
+        const emit = createEmitter(output, cmd);
+        try {
+          const state = opts.state.toUpperCase();
+          if (state !== 'OPEN' && state !== 'CLOSED' && state !== 'MERGED') {
+            throw Object.assign(
+              new Error(`--state must be OPEN, CLOSED, or MERGED; got ${opts.state}`),
+              {
+                code: 'USAGE_ERROR',
+                userAction: 'Pass --state OPEN|CLOSED|MERGED.',
+              },
+            );
+          }
+          const recommendation = computePRRecommendation({
+            prState: state,
+            workerActive: Boolean(opts.workerActive),
+            anyFailed: Boolean(opts.anyFailed),
+            mergeConflict: Boolean(opts.mergeConflict),
+            actionableCount: Number(opts.actionable) || 0,
+            allPassed: Boolean(opts.allPassed),
+            approved: Boolean(opts.approved),
+            familyContext: null,
+          });
+          if (opts.raw) {
+            process.stdout.write(`${recommendation}\n`);
+            return;
+          }
+          emit.ok({ recommendation });
+        } catch (err) {
+          if (opts.raw) return rawFail(err);
+          emit.fail(err);
+        }
+      },
+    );
+
+  internal
+    .command('derive-score-key')
+    .description('Derive the scores/ file key from a bug-input.json on stdin')
+    .action(async (_opts: unknown, cmd: Command) => {
+      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
+      createEmitter(output, cmd);
+      try {
+        const raw = await readStdin();
+        const bug = JSON.parse(raw) as Parameters<typeof deriveScoreKey>[0];
+        // Raw plumbing output — triage-bug.sh captures the bare key.
+        process.stdout.write(`${deriveScoreKey(bug)}\n`);
+      } catch (err) {
+        rawFail(err);
+      }
+    });
+}
+
+/**
+ * Raw plumbing failure contract: nothing on stdout (the data channel),
+ * reason + Next line on stderr, exit 1. Envelope failures are only for the
+ * non-raw modes of these verbs.
+ */
+function rawFail(err: unknown): void {
+  const reason = err instanceof Error ? err.message : String(err);
+  const action = (err as { userAction?: string }).userAction;
+  process.stderr.write(`${reason}${action ? `\nNext: ${action}` : ''}\n`);
+  process.exitCode = 1;
 }
 
 function collectVar(value: string, previous: string[]): string[] {

@@ -20,17 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECTS_DIR="${PROJECTS_DIR:-${SCRIPT_DIR}/../projects}"
 
 # ── Resolve farmslot CLI (copied from scripts/lib/slot-common.sh) ─────────────
-if [ -z "${FARMSLOT_CLI:-}" ]; then
-  _cli_candidate="$(cd "${SCRIPT_DIR}/../packages/cli" && pwd)/bin/farmslot.mjs"
-  if [ -f "$_cli_candidate" ]; then
-    FARMSLOT_CLI="$_cli_candidate"
-  elif command -v farmslot >/dev/null 2>&1; then
-    FARMSLOT_CLI="$(command -v farmslot)"
-  else
-    echo "FAIL: farmslot CLI not found (no packages/cli next to scripts/ and no farmslot on PATH). Set FARMSLOT_CLI." >&2
-    exit 1
-  fi
-fi
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/resolve-farmslot-cli.sh"
 
 # ── Parse args ────────────────────────────────────────────────────
 INPUT=""

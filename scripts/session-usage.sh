@@ -15,5 +15,7 @@
 SLOT_ID="${1:?Usage: session-usage.sh <slot-id> <snapshot|report|total>}"
 ACTION="${2:?Usage: session-usage.sh <slot-id> <snapshot|report|total>}"
 
-FARMSLOT="$(cd "$(dirname "$0")/../packages/cli" && pwd)/bin/farmslot.mjs"
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/resolve-farmslot-cli.sh"
+FARMSLOT="$FARMSLOT_CLI"
 exec "$FARMSLOT" internal session-usage "$SLOT_ID" "$ACTION"
