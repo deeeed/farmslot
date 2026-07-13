@@ -520,3 +520,25 @@ test('a visual-pass attestation for a different file refuses assembly', () => {
   ];
   assert.throws(() => assembleLearningPackage(input, ctx), /does not match its media packagePath/);
 });
+
+test('a same-id pass package is removed when reassembly blocks (stale-pass barrier)', () => {
+  const { ctx, input } = scenario();
+  const first = assembleLearningPackage(input, ctx);
+  assert.equal(first.status, 'ok');
+  if (first.status !== 'ok') return;
+  assert.ok(existsSync(path.join(first.packageDir, 'manifest.json')));
+
+  // Same id reassembled, now with a planted secret: the earlier pass package
+  // must not survive beside the quarantine as a publishable stale artifact.
+  writeFileSync(
+    path.join(input.artifacts.artifactsDir, 'learnings.md'),
+    '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+  );
+  const second = assembleLearningPackage(input, ctx);
+  assert.equal(second.status, 'blocked');
+  assert.equal(
+    existsSync(first.packageDir),
+    false,
+    'stale pass-status package survived a blocked reassembly',
+  );
+});

@@ -304,3 +304,19 @@ test('structured cookie-jar objects are floor hits (single, array, and escaped f
   // Short benign cookie values stay clean.
   assert.equal(scanForFloorSecrets(JSON.stringify({ name: 'theme', value: 'light' })).length, 0);
 });
+
+test('quoted cookie values are floor hits (raw and JSON-escaped)', () => {
+  const cases: [string, string][] = [
+    ['quoted Cookie', 'Cookie: sid="123456789abcdef"'],
+    ['quoted Set-Cookie with attributes', 'Set-Cookie: session="8f4b2c1d9e0a7b6c"; Path=/'],
+    ['JSON-escaped quoted header', JSON.stringify({ dump: 'Cookie: sid="123456789abcdef"' })],
+  ];
+  for (const [label, text] of cases) {
+    assert.ok(
+      scanForFloorSecrets(text).some((h) => h.kind === 'cookie'),
+      `${label} missed`,
+    );
+  }
+  // Short benign quoted values stay clean.
+  assert.equal(scanForFloorSecrets('Cookie: theme="light"').length, 0);
+});

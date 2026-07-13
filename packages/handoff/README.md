@@ -117,6 +117,10 @@ decision, fail-open on the run._
 - Missing override file → the resolution chain falls through to the shipped default.
 - Broken override file → warn, record the fallback in `provenance.json`, use the
   default. Never a throw.
+- Override boundary: an EXPLICITLY configured path (e.g. `templateRef`) that
+  points at a missing file is a broken override and warns; a merely absent
+  TIER file (personal/domain/farm location without the file) falls through
+  silently by design.
 - Scrub floor hit → the assembly is `blocked`: local quarantine (manifest +
   scrub-report only, no raw artifacts) and no repo write, ever.
 - No approver present → assemble + `dryRun`; simply don't write. Not an error.

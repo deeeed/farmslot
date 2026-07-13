@@ -96,15 +96,17 @@ test('a path-shaped manifest field refuses the write - nothing lands outside the
     const destination = initDestinationRepo();
     const parent = path.dirname(destination);
 
+    // Path-shaped values are refused either by the segment guard or, for
+    // format-checked fields (taskKey), by spec validation - both before any IO.
     assert.throws(
       () => writeLearningPackage({ packageDir, destination, consent: CONSENT }),
-      /unsafe path segment/,
+      /unsafe path segment|fails spec validation/,
       `${label} traversal not refused`,
     );
     // Dry-run computes the same paths and must refuse identically.
     assert.throws(
       () => writeLearningPackage({ packageDir, destination, dryRun: true }),
-      /unsafe path segment/,
+      /unsafe path segment|fails spec validation/,
       `${label} traversal not refused in dryRun`,
     );
 
@@ -196,7 +198,10 @@ test('containment refuses traversal in plain text package paths (unit)', () => {
 });
 
 test('a path-shaped ticket is hyphen-normalized into a safe index filename, never a path', () => {
-  const packageDir = packageWithManifestField((m) => (m.task.ticket = '../../tick'));
+  const packageDir = packageWithManifestField((m) => {
+    m.task.ticket = '../../tick';
+    m.taskKey = 'tick'; // ticket-correspondence: taskKey equals the normalized ticket
+  });
   const destination = initDestinationRepo();
   const write = writeLearningPackage({
     packageDir,

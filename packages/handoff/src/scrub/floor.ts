@@ -85,10 +85,20 @@ const FLOOR_PATTERNS: FloorPattern[] = [
  * ATTRIBUTES (Path, Expires, ...) and short benign values are skipped.
  */
 // Matches plain headers (Cookie: ...) and JSON-object forms ("Cookie":"...",
-// escaped or not); the value capture stops at a closing quote so JSON string
-// boundaries end the pair list.
-const COOKIE_HEADER = /(?:set-cookie|cookie)["'\\]*\s*:\s*["'\\]*([^\n\r"]+)/gi;
+// escaped or not). The payload capture admits COMPLETE quoted segments (so
+// quoted cookie values like sid="..." survive intact) but stops at a lone
+// unmatched quote, which is how a JSON string boundary ends the pair list.
+const COOKIE_HEADER = /(?:set-cookie|cookie)["'\\]*\s*:\s*["'\\]*((?:[^\n\r"]|"[^\n\r"]*")+)/gi;
 const COOKIE_ATTRIBUTES = /^(?:path|expires|domain|samesite|max-age|secure|httponly|priority)$/i;
+
+/** Strip quote/backslash decoration a pair member picked up from quoting or
+ * JSON escaping, so `sid="<value>"` and `sid=\"<value>\"` both yield <value>. */
+function stripQuoting(part: string): string {
+  return part
+    .trim()
+    .replace(/^["'\\]+/, '')
+    .replace(/["'\\]+$/, '');
+}
 
 /**
  * Structured cookie-jar entries as exported by browser profiles/devtools:
@@ -108,8 +118,8 @@ function detectCookies(text: string): FloorHit[] {
     for (const pair of header[1].split(/[;,]/)) {
       const eq = pair.indexOf('=');
       if (eq === -1) continue;
-      const name = pair.slice(0, eq).trim();
-      const value = pair.slice(eq + 1).trim();
+      const name = stripQuoting(pair.slice(0, eq));
+      const value = stripQuoting(pair.slice(eq + 1));
       if (COOKIE_ATTRIBUTES.test(name)) continue;
       if (value.length < 8) continue;
       hits.push({ kind: 'cookie', fingerprint: fingerprint(`${name}=${value}`) });

@@ -3,6 +3,7 @@ import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadSchema, type SchemaName } from '../spec/schemas.js';
+import { normalizeTicket } from '../spec/task-key.js';
 import type {
   ArtifactsIndex,
   Manifest,
@@ -169,6 +170,29 @@ export function validateLearningPackage(dir: string): ValidateResult {
 
   if (manifest?.packageId !== undefined && !isValidRunSlug(manifest.packageId)) {
     errors.push(`manifest.json/packageId: '${manifest.packageId}' violates the run-slug grammar`);
+  }
+
+  // taskKey is producer-derived (spec section 1): the validator enforces
+  // safety + format + ticket-correspondence, NOT hash provenance - the
+  // content-hash form cannot be re-derived without the original source fields,
+  // so a well-formed task-<16hex> key is accepted as producer-derived.
+  if (manifest?.taskKey !== undefined) {
+    const hashForm = /^task-[a-f0-9]{16}$/;
+    const ticketForm = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+    if (!hashForm.test(manifest.taskKey) && !ticketForm.test(manifest.taskKey)) {
+      errors.push(
+        `manifest.json/taskKey: '${manifest.taskKey}' matches neither the normalized-ticket ` +
+          'shape nor task-<16hex>',
+      );
+    } else if (manifest.task?.ticket) {
+      const normalized = normalizeTicket(manifest.task.ticket);
+      if (normalized !== '' && manifest.taskKey !== normalized) {
+        errors.push(
+          `manifest.json/taskKey: '${manifest.taskKey}' does not correspond to ticket ` +
+            `'${manifest.task.ticket}' (expected '${normalized}')`,
+        );
+      }
+    }
   }
 
   // Integrity: every file the manifest inventories must exist with the recorded

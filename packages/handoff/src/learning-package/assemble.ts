@@ -14,6 +14,7 @@ import path from 'node:path';
 
 import { type FloorPattern, scanForFloorSecrets } from '../scrub/floor.js';
 import { scrubFiles, type ScrubInputFile } from '../scrub/scrubber.js';
+import { loadSchema } from '../spec/schemas.js';
 import { deriveTaskKey, normalizeTicket } from '../spec/task-key.js';
 import type {
   ArtifactKind,
@@ -27,6 +28,7 @@ import type {
   SourceDocument,
 } from '../spec/types.js';
 import { REQUIRED_FILES, SCHEMA_VERSION, SCRUB_FLOOR_VERSION } from '../spec/version.js';
+import { validateAgainstSchema } from '../validate/json-schema.js';
 
 import { assertContained, assertSafePathSegment } from './safe-path.js';
 import type {
@@ -344,10 +346,40 @@ export function assembleLearningPackage(
   ];
 
   // Optional human grade: copied verbatim (post-scrub) as grade.json. An
-  // absent or missing-on-disk grade is skipped - the package stays valid.
+  // absent or missing-on-disk grade is skipped - the package stays valid. A
+  // PRESENT but malformed grade is a hard refusal (same strictness as the
+  // required documents): optional content must be valid or absent.
   const gradeJson = input.artifacts.gradeJson;
   if (gradeJson && existsSync(gradeJson)) {
-    textInputs.push({ packagePath: 'grade.json', absolutePath: gradeJson });
+    let gradeRaw: string;
+    try {
+      gradeRaw = readFileSync(gradeJson, 'utf8');
+    } catch (error) {
+      throw new Error(
+        `assembleLearningPackage: grade.json at ${gradeJson} could not be read ` +
+          `(${(error as Error).message}). Next: fix the file or drop artifacts.gradeJson.`,
+      );
+    }
+    let parsedGrade: unknown;
+    try {
+      parsedGrade = JSON.parse(gradeRaw);
+    } catch (error) {
+      throw new Error(
+        `assembleLearningPackage: grade.json at ${gradeJson} is not valid JSON ` +
+          `(${(error as Error).message}). Next: fix the producer's grade output or drop ` +
+          'artifacts.gradeJson - optional content must be valid or absent.',
+      );
+    }
+    const gradeErrors = validateAgainstSchema(parsedGrade, loadSchema('grade'));
+    if (gradeErrors.length > 0) {
+      throw new Error(
+        `assembleLearningPackage: grade.json at ${gradeJson} fails the grade schema:\n` +
+          `${gradeErrors.map((e) => `  - ${e.path}: ${e.message}`).join('\n')}\n` +
+          "Next: fix the producer's grade output or drop artifacts.gradeJson - optional " +
+          'content must be valid or absent.',
+      );
+    }
+    textInputs.push({ packagePath: 'grade.json', content: gradeRaw });
   }
 
   const mediaInputs: ScrubInputFile[] = (input.media ?? []).map((m) => {
@@ -429,6 +461,15 @@ export function assembleLearningPackage(
   };
 
   if (report.status === 'blocked') {
+    // The blocked barrier covers the staging area too: a pass-status package
+    // from an EARLIER attempt at the same id must not survive beside the
+    // quarantine, or its stale artifacts would remain publishable.
+    const staleDir = assertContained(
+      ctx.stagingRoot,
+      path.join(ctx.stagingRoot, input.runRecord.packageId),
+      'staging dir',
+    );
+    rmSync(staleDir, { recursive: true, force: true });
     const quarantineDir = writeQuarantine(ctx, input, base, report);
     return { status: 'blocked', quarantineDir, scrubReport: report };
   }

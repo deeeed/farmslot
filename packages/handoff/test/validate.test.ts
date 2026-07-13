@@ -322,3 +322,49 @@ test('an included media file attested finding:"redacted" is invalid (spec 3.6)',
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('taskKey format and ticket-correspondence are validated; hash form is producer-derived', () => {
+  // Mismatch: ticket present but taskKey is a different well-formed key.
+  const mismatched = buildValidPackage();
+  try {
+    const manifestPath = path.join(mismatched, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      taskKey: string;
+      task: { ticket?: string };
+    };
+    manifest.task.ticket = 'PROJ-9';
+    manifest.taskKey = 'other-key';
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const result = validateLearningPackage(mismatched);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((e) => e.includes('does not correspond to ticket')));
+  } finally {
+    rmSync(mismatched, { recursive: true, force: true });
+  }
+
+  // Malformed shape: neither ticket form nor task-<16hex>.
+  const malformed = buildValidPackage();
+  try {
+    const manifestPath = path.join(malformed, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { taskKey: string };
+    manifest.taskKey = 'Not A Key!';
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const result = validateLearningPackage(malformed);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((e) => e.includes('matches neither')));
+  } finally {
+    rmSync(malformed, { recursive: true, force: true });
+  }
+
+  // Well-formed content-hash key with no ticket: accepted as producer-derived.
+  const hashKeyed = buildValidPackage();
+  try {
+    const manifestPath = path.join(hashKeyed, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { taskKey: string };
+    manifest.taskKey = `task-${'ab12'.repeat(4)}`;
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    assert.deepEqual(validateLearningPackage(hashKeyed).errors, []);
+  } finally {
+    rmSync(hashKeyed, { recursive: true, force: true });
+  }
+});

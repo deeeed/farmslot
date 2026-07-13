@@ -163,3 +163,29 @@ test('an explicitly configured templateRef that does not exist warns before fall
   assert.match(warnings[0], /templateRef/);
   assert.match(warnings[0], /Next:/);
 });
+
+test('override boundary: configured-and-absent warns; tier-absent stays silent', () => {
+  // Side 1: a merely ABSENT tier file (personal dir without the template)
+  // falls through silently by design.
+  const emptyHome = mkdtempSync(path.join(os.tmpdir(), 'handoff-empty-home-'));
+  const silentWarnings: string[] = [];
+  const silent = renderTaskMarkdown(
+    { task: { schemaVersion: 1, sourceKind: 'text', title: 'Fix the gate' }, flowType: 'dev' },
+    { farmslotHome: emptyHome, warn: (m) => silentWarnings.push(m) },
+  );
+  assert.equal(silent.templateProvenance.tier, 'default');
+  assert.deepEqual(silentWarnings, []);
+
+  // Side 2: an EXPLICITLY configured templateRef that is absent is a broken
+  // override and warns before degrading.
+  const warnings: string[] = [];
+  renderTaskMarkdown(
+    {
+      task: { schemaVersion: 1, sourceKind: 'text', title: 'Fix the gate' },
+      flowType: 'dev',
+      templateRef: path.join(emptyHome, 'missing-custom.md'),
+    },
+    { warn: (m) => warnings.push(m) },
+  );
+  assert.equal(warnings.length, 1);
+});

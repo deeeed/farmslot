@@ -4,6 +4,11 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Detect quoted cookie values: `Cookie: sid="<token>"` and quoted Set-Cookie pairs (raw and JSON-escaped) are floor hits; quote/backslash decoration is stripped before the value-length check.
+- Stale-pass barrier: when a reassembly at the same id blocks, any earlier pass-status staging dir for that id is removed before returning - the blocked result never leaves a publishable stale package behind.
+- Validate taskKey in the validator: format must be the normalized-ticket shape or task-<16hex>, and when manifest.task.ticket is present the taskKey must equal its normalized form. Hash-form keys are accepted as producer-derived (taskKey derivation is the producer's per spec section 1; the validator enforces safety, format, and ticket-correspondence, not hash provenance).
+- Optional content must be valid or absent: a present but malformed grade.json now refuses assembly with a teaching error (same strictness as required documents) instead of assembling a package the validator would reject.
+- Document the override boundary (README): an explicitly configured path pointing at a missing file warns as a broken override; a merely absent tier file falls through silently by design.
 - Never follow in-package symlinks: the validator lstat-gates every read (a symlink or non-regular file is a collected error, never read or hashed), and the writer refuses irregular entries BEFORE any file in the package - including manifest.json - is read or validated.
 - Enforce spec 3.6 in the validator: an included media file whose visual-pass finding is "redacted" is invalid (redacted means excluded/replaced; only "clear" permits inclusion).
 - Quarantine audit hardening: string VALUES are additionally joined (keys excluded) and floor-scanned, so a mnemonic split across separate metadata fields is wholesale-redacted from the audit trail; a slug carrying token-shaped material never becomes the quarantine DIRECTORY NAME (generic deterministic fallback). Cross-field DETECTION remains scope-capped per the cooperative model (documented in README known limits).

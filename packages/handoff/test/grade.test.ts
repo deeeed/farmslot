@@ -105,11 +105,21 @@ test('assemble without a grade is still a valid v1 package: no file, hasGrade fa
   assert.equal('gradeSemantic' in write.indexRows[0], false);
 });
 
-test('a malformed grade.json fails package validation (schema-checked when present)', () => {
+test('a malformed grade.json refuses assembly (optional content must be valid or absent)', () => {
   const { ctx, input } = scenario({ recipe_semantic: 'excellent', reasoning: 'nope' });
+  assert.throws(() => assembleLearningPackage(input, ctx), /fails the grade schema/);
+  assert.throws(() => assembleLearningPackage(input, ctx), /Next:/);
+});
+
+test('the validator still rejects a malformed grade.json in a hand-tampered package', () => {
+  const { ctx, input } = scenario(GRADE);
   const result = assembleLearningPackage(input, ctx);
   assert.equal(result.status, 'ok');
   if (result.status !== 'ok') return;
+  writeFileSync(
+    path.join(result.packageDir, 'grade.json'),
+    `${JSON.stringify({ recipe_semantic: 'excellent', reasoning: 'nope' }, null, 2)}\n`,
+  );
   const validation = validateLearningPackage(result.packageDir);
   assert.equal(validation.valid, false);
   assert.ok(validation.errors.some((e) => e.startsWith('grade.json')));
