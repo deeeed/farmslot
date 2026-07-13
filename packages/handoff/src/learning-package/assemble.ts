@@ -103,7 +103,8 @@ function harnessTextInputs(harnessDirs: HarnessOutputDir[]): {
 
 function buildSourceDocument(input: LearningPackageInput): SourceDocument {
   const source = input.runRecord.source ?? {};
-  return { schemaVersion: SCHEMA_VERSION, sourceKind: input.runRecord.task.sourceKind, ...source };
+  // Caller fields first; the authoritative stamps always win over anything the blob carries.
+  return { ...source, schemaVersion: SCHEMA_VERSION, sourceKind: input.runRecord.task.sourceKind };
 }
 
 /** Derive the cross-attempt family key from the run's task/source fields. */

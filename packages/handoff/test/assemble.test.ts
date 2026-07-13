@@ -13,7 +13,7 @@ import test from 'node:test';
 
 import { assembleLearningPackage } from '../src/learning-package/assemble.js';
 import type { HandoffContext, LearningPackageInput } from '../src/learning-package/types.js';
-import { REQUIRED_FILES } from '../src/spec/version.js';
+import { REQUIRED_FILES, SCHEMA_VERSION } from '../src/spec/version.js';
 import { validateLearningPackage } from '../src/validate/validate-package.js';
 
 function tempDir(prefix: string): string {
@@ -183,4 +183,23 @@ test('farm scrub options apply during assembly: extra deny pattern blocks, floor
   assert.equal(floorResult.status, 'blocked');
   if (floorResult.status !== 'blocked') return;
   assert.ok(floorResult.scrubReport.blocked.some((b) => b.kind === 'srp'));
+});
+
+test('authoritative source stamps win over caller blob fields', () => {
+  const { input, ctx } = scenario();
+  input.runRecord.source = {
+    ...input.runRecord.source,
+    schemaVersion: 99,
+    sourceKind: 'bogus',
+  } as never;
+
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+
+  const source = JSON.parse(
+    readFileSync(path.join(result.packageDir, 'source.json'), 'utf8'),
+  ) as Record<string, unknown>;
+  assert.equal(source.schemaVersion, SCHEMA_VERSION);
+  assert.equal(source.sourceKind, 'jira');
 });

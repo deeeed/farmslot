@@ -38,7 +38,7 @@
           },
           "shadows": {
             "type": "array",
-            "description": "Lower-precedence files that exist but were overridden. Non-empty iff shadowing occurred.",
+            "description": "Candidates that exist but did not win: lower-precedence files overridden by the winner, and broken higher-precedence candidates that were warned and skipped (amended broken-override contract). Non-empty iff shadowing occurred.",
             "items": {
               "type": "object",
               "additionalProperties": false,

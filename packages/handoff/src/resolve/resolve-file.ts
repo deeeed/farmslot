@@ -121,7 +121,8 @@ function buildResolution(
     kind: request.kind,
     resolvedPath: winner.path,
     tier: winner.tier,
-    // Every existing lower-precedence file is a shadow - non-silent overriding.
+    // Every existing non-winning candidate is a shadow - lower-precedence files AND
+    // broken higher-precedence candidates that were warned and skipped. Non-silent.
     shadows: existing
       .filter((c) => c.path !== winner.path)
       .map((c) => ({ path: c.path, tier: c.tier })),
