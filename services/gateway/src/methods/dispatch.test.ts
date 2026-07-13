@@ -702,7 +702,7 @@ test('resolveDispatchSafetyTier falls back to run record before project default'
   );
 });
 
-test('resolveDispatchSafetyTier uses project default when no Run (scripts/dispatch.sh path)', () => {
+test('resolveDispatchSafetyTier uses project default when no Run (scriptless dispatch path)', () => {
   assert.equal(
     resolveDispatchSafetyTier({
       paramsTier: undefined,

@@ -17,13 +17,9 @@ _farm_commands=(
   check-slot
   monitor-slot
   preflight-slot
-  prepare-slot
-  release-slot
   setup-slot
   show-slot
   sync-fixtures
-  dispatch
-  find-slot
   session-usage
   status
   pr-status
@@ -37,7 +33,7 @@ farm() {
 
   case "$cmd" in
     status)      bash "$FARMSLOT_DIR/scripts/farm-status.sh" "$@" ;;
-    pr-status)   bash "$FARMSLOT_DIR/scripts/pr-status.sh" "$@" ;;
+    pr-status)   "$FARMSLOT_DIR/packages/cli/bin/farmslot.mjs" pr list "$@" ;;
     pr-monitor)  bash "$FARMSLOT_DIR/scripts/pr-monitor.sh" "$@" ;;
     ""|--help|-h)
       echo "Usage: farm <command> [args]"

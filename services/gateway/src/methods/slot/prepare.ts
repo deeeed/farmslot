@@ -588,7 +588,7 @@ async function slotPrepareInner(
           ? `'${trackingBranch}' or '${defaultBranch}'`
           : `'${defaultBranch}'`;
         throw new Error(
-          `Slot is on '${current}', expected ${expected}. Run release-slot.sh first.`,
+          `Slot is on '${current}', expected ${expected}. Run 'farmslot slot release' first.`,
         );
       }
       const fetchDefaultR = await execOnSlot(
@@ -608,7 +608,7 @@ async function slotPrepareInner(
       const worktreeAtDefault = headR.exitCode === 0 && refs.length === 2 && refs[0] === refs[1];
       if (!worktreeAtDefault) {
         throw new Error(
-          `Slot is on '${current}', expected '${trackingBranch}' @ origin/${defaultBranch}. Run release-slot.sh first.`,
+          `Slot is on '${current}', expected '${trackingBranch}' @ origin/${defaultBranch}. Run 'farmslot slot release' first.`,
         );
       }
       step(

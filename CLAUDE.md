@@ -176,7 +176,7 @@ Auto-injected: `{{platform}}`, `{{slot_id}}`, `{{runtime_dir}}`, `{{artifact_dir
 bash scripts/farm-status.sh
 
 # Deep-check a single slot
-bash scripts/check-slot.sh <slot-id>
+yarn farmslot slot check <slot-id>   # (from apps/command-center)
 
 # Verify fixtures sync
 bash scripts/sync-fixtures.sh --slot <slot-id>

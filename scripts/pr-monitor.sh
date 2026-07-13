@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # pr-monitor.sh — PR status formatter with actionable recommendations.
 #
-# Fetches PR data from the gateway via pr-status.sh (which delegates to
-# `farmslot pr list/status --json`) and formats it as a human table or JSON.
+# Fetches PR data from the gateway via `farmslot pr list/status --json` and
+# formats it as a human table or JSON.
 # Recommendation logic lives in the gateway (computePRRecommendation in
 # @farmslot/protocol); this script is a pure formatter — no local rule engine.
 #
@@ -13,6 +13,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/resolve-farmslot-cli.sh"
 
 # -- Options ---------------------------------------------------------------
 PASS_THROUGH_ARGS=()
@@ -43,8 +45,18 @@ if [ -z "$FORMAT" ]; then
   if [ -t 1 ]; then FORMAT="human"; else FORMAT="json"; fi
 fi
 
-# -- Fetch PR data via pr-status.sh (delegates to farmslot pr list/status) --
-PR_JSON=$(bash "${SCRIPT_DIR}/pr-status.sh" --json "${PASS_THROUGH_ARGS[@]+"${PASS_THROUGH_ARGS[@]}"}" 2>/dev/null)
+# -- Fetch PR data via the CLI (pr-status.sh retired) -----------------------
+EXPLICIT_PR=""
+_prev=""
+for _arg in "${PASS_THROUGH_ARGS[@]+"${PASS_THROUGH_ARGS[@]}"}"; do
+  if [ "$_prev" = "--pr" ]; then EXPLICIT_PR="$_arg"; fi
+  _prev="$_arg"
+done
+if [ -n "$EXPLICIT_PR" ]; then
+  PR_JSON=$("$FARMSLOT_CLI" --json pr status "$EXPLICIT_PR" 2>/dev/null)
+else
+  PR_JSON=$("$FARMSLOT_CLI" --json pr list 2>/dev/null)
+fi
 
 # -- Format output from gateway PRStatus JSON --------------------------------
 _PR_JSON="$PR_JSON" _FORMAT="$FORMAT" _SCRIPT_DIR="$SCRIPT_DIR" python3 << 'PYEOF'
@@ -56,6 +68,8 @@ fmt = os.environ['_FORMAT']
 script_dir = os.environ['_SCRIPT_DIR']
 
 data = json.loads(pr_json)
+# Unwrap the CLI machine envelope ({schemaVersion, ..., data: {...}}) when present.
+data = data.get('data') or data
 
 # farmslot pr list → { "prs": [...] }
 # farmslot pr status N → { "pr": {...} }
@@ -90,7 +104,7 @@ for pr in sorted(prs_raw, key=lambda x: x.get('pr', 0)):
     actionable      = pr.get('actionableBotComments', [])
     actionable_count = len(actionable)
 
-    release_cmd = f'bash {script_dir}/release-slot.sh {slot} --keep-warm --reset' if slot != '-' else None
+    release_cmd = f'farmslot slot release {slot} --keep-warm --reset' if slot != '-' else None
 
     # First-match display rules (bash-compatible ordering, recommendation from gateway)
     if merged or pr_state == 'MERGED':

@@ -10,6 +10,8 @@
 #   farm-status.sh --json         # Output raw JSON cache
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/resolve-farmslot-cli.sh"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 STATUS_FILE="${PROJECT_DIR}/.farm-status.json"
 FARMSLOT="$(cd "${SCRIPT_DIR}/../packages/cli" && pwd)/bin/farmslot.mjs"
@@ -93,9 +95,9 @@ for s in data.get('slots', []):
   while IFS= read -r sid; do
     [ -z "$sid" ] && continue
     case "$ACTION" in
-      prepare) bash "${SCRIPT_DIR}/prepare-slot.sh" "$sid" ;;
+      prepare) "$FARMSLOT_CLI" slot prepare "$sid" ;;
       sync)    bash "${SCRIPT_DIR}/sync-fixtures.sh" --slot "$sid" ;;
-      recycle) bash "${SCRIPT_DIR}/release-slot.sh" "$sid" --keep-warm --reset ;;
+      recycle) "$FARMSLOT_CLI" slot release "$sid" --keep-warm --reset ;;
     esac
     [ $? -ne 0 ] && { echo "WARN: ${ACTION} failed for ${sid}" >&2; FAILED=$((FAILED + 1)); }
   done <<< "$BATCH_SLOTS"
