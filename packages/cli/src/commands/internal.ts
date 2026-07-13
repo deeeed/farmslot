@@ -519,9 +519,7 @@ export function registerInternalCommand(program: Command): void {
   internal
     .command('derive-score-key')
     .description('Derive the scores/ file key from a bug-input.json on stdin')
-    .action(async (_opts: unknown, cmd: Command) => {
-      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
-      createEmitter(output, cmd);
+    .action(async (_opts: unknown, _cmd: Command) => {
       try {
         const raw = await readStdin();
         const bug = JSON.parse(raw) as Parameters<typeof deriveScoreKey>[0];

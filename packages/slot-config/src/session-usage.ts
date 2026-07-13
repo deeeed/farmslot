@@ -596,7 +596,7 @@ async function sessionLineCount(sessionPath: string): Promise<number> {
       if (!entry.endsWith('.jsonl')) continue;
       try {
         const content = await readFile(path.join(sessionPath, entry), 'utf-8');
-        total += content.split('\n').length;
+        total += content.split('\n').filter((line) => line.length > 0).length;
       } catch {
         // Unreadable file — skip without aborting the count.
       }

@@ -166,8 +166,11 @@ for pr in sorted(prs_raw, key=lambda x: x.get('pr', 0)):
         'failed_names':   failed_names,
         'actionable_comments': actionable_count,
         'pr_state':       pr_state,
-        'session':        slot if slot != '-' else None,
-        'session_alive':  worker_active,
+        # session was the tmux session name; the gateway payload does not carry
+        # it, so honesty over fabrication: null unless the payload provides one.
+        'session':        pr.get('session'),
+        # historical string enum, not a boolean
+        'session_alive':  ('true' if worker_active else 'false') if 'workerActive' in pr else 'unknown',
     })
 
 # -- Output --
