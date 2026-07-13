@@ -159,6 +159,7 @@ if [ -n "${SLOT_ID}" ]; then
     fi
   }
 
+  # TODO(slot-config): compose selection still bash — port with the fixture-compose core
   # Apply all fixture templates (includes former plain files + compose entries)
   TEMPLATE_COUNT=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('fixtures',{}).get('templates',[])))")
   if [ "$TEMPLATE_COUNT" -gt 0 ]; then

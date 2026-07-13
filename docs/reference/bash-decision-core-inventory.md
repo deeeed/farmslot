@@ -153,6 +153,13 @@ function with a colocated unit test.**
 
 ## Follow-up port order (highest value first)
 
+0. **Port the fixture-compose core** (variant/include selection + the render
+   loop in `sync-fixtures.sh`) into `@farmslot/slot-config` behind one
+   `farmslot internal` batch verb. Besides killing the last compose python,
+   this removes the per-template CLI invocations the Phase 2 rewire introduced
+   (~0.3s node startup each; ~40 calls on the largest packs ≈ 13s per sync).
+   Fold in the fix for `scripts/tests/sync-fixtures-includes.test.sh`, which
+   fails on `main` today (variant include not composed; not CI-enforced).
 1. **Kill the slot-common.sh ↔ hooks.ts/config.ts drift.** Expose the already-ported
    `expand*`/`resolve*` as `farmslot internal …` verbs; delete the python heredocs in
    `lib/slot-common.sh`, `sync-fixtures.sh`, `session-usage.sh` that re-derive

@@ -124,8 +124,24 @@ export function registerFleetCommand(program: Command): void {
     .description('Pick the best free slot for a project (or validate a specific slot)')
     .option('--project <name>', 'Project to find a slot for')
     .option('--slot <slotId>', 'Validate this specific slot instead of picking one')
-    .action(async (opts: { project?: string; slot?: string }, cmd: Command) => {
-      const { client, output } = resolveContext(cmd);
+    .option('--raw', 'Print only the slot id (plumbing contract for scripts)')
+    .action(async (opts: { project?: string; slot?: string; raw?: boolean }, cmd: Command) => {
+      // Raw failure contract: empty stdout, reason on stderr, exit 1 — must
+      // also cover context/profile errors thrown before the main try.
+      const rawFail = (err: unknown) => {
+        const reason = err instanceof Error ? err.message : String(err);
+        const action = (err as { userAction?: string }).userAction;
+        process.stderr.write(`${reason}${action ? `\nNext: ${action}` : ''}\n`);
+        process.exitCode = 1;
+      };
+      let context;
+      try {
+        context = resolveContext(cmd);
+      } catch (err) {
+        if (opts.raw) return rawFail(err);
+        throw err;
+      }
+      const { client, output } = context;
       const emit = createEmitter(output, cmd);
       try {
         if (!opts.project && !opts.slot) {
@@ -151,12 +167,16 @@ export function registerFleetCommand(program: Command): void {
             details: result.details,
           });
         }
-        if (emit.machine) {
+        if (opts.raw) {
+          // Raw plumbing output — find-slot.sh captures the bare id.
+          process.stdout.write(`${result.slot.slot}\n`);
+        } else if (emit.machine) {
           emit.ok({ slot: result.slot });
         } else {
           output.write(`${result.slot.slot}\n`);
         }
       } catch (err) {
+        if (opts.raw) return rawFail(err);
         emit.fail(err);
       }
     });

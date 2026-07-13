@@ -24,8 +24,20 @@ function findBin(name) {
   }
 }
 
+// A parent tsx process (test runners, scripts run via run-tsx-tests.mjs)
+// exports TSX_TSCONFIG_PATH relative to ITS cwd; inheriting it makes the CLI
+// resolve a tsconfig that does not exist here. Always use our own resolution.
+const env = { ...process.env };
+delete env.TSX_TSCONFIG_PATH;
+
 try {
-  execFileSync(findBin('tsx'), [entry, ...process.argv.slice(2)], { stdio: 'inherit' });
+  // Pin our tsconfig: its paths map @farmslot/* to workspace src, so the CLI
+  // runs without built dist artifacts (fresh checkouts, CI jobs).
+  const tsconfig = resolve(root, 'tsconfig.json');
+  execFileSync(findBin('tsx'), ['--tsconfig', tsconfig, entry, ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env,
+  });
 } catch (e) {
   process.exit(e.status ?? 1);
 }

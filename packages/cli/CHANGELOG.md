@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat: `farmslot internal` plumbing verbs (gateway-free, powered by `@farmslot/slot-config`): `slot-vars --shell`, `resolve-slot [--by-repo] [--raw]`, `project-vars --shell`, `project-field --raw`, `expand-hook --raw`, `expand-dispatch-cmd --raw`, `expand-recycle-cmd --raw`, `render-fixture-template` — `scripts/lib/slot-common.sh` delegates to these instead of re-deriving slot/hook/template logic in python heredocs; `scripts/find-slot.sh` becomes a thin wrapper over `fleet find-slot`.
 - feat: guided dispatch wizard — bare `farmslot dispatch` (and `farmslot run create` without `--ticket`/`--task`) on a TTY opens a @clack/prompts picker: project → backlog item or ticket/PR ref + flow → slot (auto-picked via the shared selection core, overridable) → confirm. Backlog route dispatches through the same markReady→enqueue→tick pipeline as `backlog dispatch`; machine mode refuses with teaching `DISPATCH_WIZARD_REQUIRES_TTY`.
 - feat: `farmslot fleet status --watch` — live fleet table re-rendered from `fleet.updated` broadcast events over one authenticated connection (no polling); `q`/Ctrl+C exits; machine mode refuses with `WATCH_REQUIRES_TTY`.
 - chore: TUI stack upgraded to current majors — Ink 7 + React 19 (React 19 types drop the global `JSX` namespace; ADR-050 amended). Repo Node floor raised to 22 (Ink 7 requires it; the installer already provisions the engines version). `GatewayConnection` gains `onClose` so long-lived consumers (watch, TUI) can react to socket drops.

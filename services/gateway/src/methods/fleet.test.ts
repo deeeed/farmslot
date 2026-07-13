@@ -3,8 +3,7 @@ import test from 'node:test';
 
 import type { FleetStatus, Run, SlotStatus } from '@farmslot/protocol';
 
-import { resolveSlot } from '../core/config.js';
-import { GatewayMethodError } from '../core/method-error.js';
+import { resolveSlot, SlotConfigError } from '../core/config.js';
 import { markGhostSlots } from '../fleet/state.js';
 
 import { isFreeSlot } from './dispatch/slot-scoring.js';
@@ -460,7 +459,7 @@ test('resolveSlot failures teach the escape with a structured userAction', async
   await assert.rejects(
     () => resolveSlot('definitely-not-a-real-slot-xyz'),
     (err: unknown) => {
-      assert.ok(err instanceof GatewayMethodError);
+      assert.ok(err instanceof SlotConfigError);
       assert.ok(['SLOT_NOT_FOUND', 'POOL_DIR_NOT_FOUND'].includes(err.code));
       assert.ok(err.userAction && err.userAction.length > 0);
       assert.match(err.userAction, /farmslot doctor|farmslot fleet refresh|farmslot project add/u);

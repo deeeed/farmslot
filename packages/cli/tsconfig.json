@@ -6,7 +6,9 @@
       "@farmslot/recipe-harness/*": ["../recipe-harness/src/*"],
       "@farmslot/protocol": ["../protocol/src/index.ts"],
       "@farmslot/protocol/*": ["../protocol/src/*"],
-      "@farmslot/run-bundle": ["../run-bundle/src/index.ts"]
+      "@farmslot/run-bundle": ["../run-bundle/src/index.ts"],
+      "@farmslot/slot-config": ["../slot-config/src/index.ts"],
+      "@farmslot/slot-config/*": ["../slot-config/src/*"]
     },
     "jsx": "react-jsx"
   },
