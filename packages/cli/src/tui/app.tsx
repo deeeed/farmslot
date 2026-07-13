@@ -228,6 +228,7 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
             const result = await connection.call<{ run: Run }>('run.get', { runId: row.id });
             if (request === runDetailRequest.current) setRunDetail(result.run);
           } catch (err) {
+            if (request !== runDetailRequest.current) return; // stale request
             setNotice(`run.get failed: ${err instanceof Error ? err.message : String(err)}`);
           }
         })();
@@ -359,7 +360,20 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
             enter:details · on a pending gate: a:approve-publish h:hold s:close-as-shipped
           </Text>
           {(() => {
-            const { start, end } = windowFor(runsVm.length);
+            // Runs render 1 + pending-gate lines each — window by line budget,
+            // walking back from the cursor so it always stays visible.
+            const lineCost = (row: (typeof runsVm)[number]) => 1 + row.pendingDecisions.length;
+            let start = cursor;
+            let used = runsVm[cursor] ? lineCost(runsVm[cursor]) : 0;
+            while (start > 0 && used + lineCost(runsVm[start - 1]) <= listHeight) {
+              start--;
+              used += lineCost(runsVm[start]);
+            }
+            let end = cursor + 1;
+            while (end < runsVm.length && used + lineCost(runsVm[end]) <= listHeight) {
+              used += lineCost(runsVm[end]);
+              end++;
+            }
             return runsVm.slice(start, end).map((row, sliceIndex) => {
               const index = start + sliceIndex;
               return (

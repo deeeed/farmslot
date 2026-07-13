@@ -298,6 +298,15 @@ function fishCompletion(tree: CommandInfo[]): string {
         .map((sub) => sub.name)
         .join(' ')}'`,
     );
+    // Third level keyed on the intermediate subcommand name (fish has no
+    // positional dispatch; sub names are unique enough across the tree today).
+    for (const sub of c.subs.filter((candidate) => candidate.subs.length > 0)) {
+      lines.push(
+        `complete -c farmslot -n '__fish_seen_subcommand_from ${sub.name}' -a '${sub.subs
+          .map((g) => g.name)
+          .join(' ')}'`,
+      );
+    }
   }
   lines.push('');
   lines.push("complete -c farmslot -l url -d 'Gateway WebSocket URL'");
