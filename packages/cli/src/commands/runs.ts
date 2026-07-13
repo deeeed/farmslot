@@ -103,8 +103,8 @@ export function registerRunsCommand(program: Command): void {
           output.write(`  ${dim('profile')}   ${result.manifest.profile}\n`);
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -158,8 +158,8 @@ export function registerRunsCommand(program: Command): void {
           }
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -210,8 +210,8 @@ export function registerRunsCommand(program: Command): void {
         if (emit.machine) emit.ok({ deleted, runIds: targets });
         else output.write(`${green('Deleted')} ${bold(String(deleted))} run(s)\n`);
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -238,8 +238,8 @@ export function registerRunsCommand(program: Command): void {
           }
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 }

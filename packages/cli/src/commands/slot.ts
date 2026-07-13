@@ -104,7 +104,7 @@ export function registerSlotCommand(program: Command): void {
         else output.write(`${result.slotId}\n`);
       } catch (err) {
         emit.fail(err);
-        process.exit(1);
+        return;
       }
     });
 
@@ -129,7 +129,7 @@ export function registerSlotCommand(program: Command): void {
         }
       } catch (err) {
         emit.fail(err);
-        process.exit(1);
+        return;
       }
     });
 
@@ -186,7 +186,7 @@ export function registerSlotCommand(program: Command): void {
         }
       } catch (err) {
         emit.fail(err);
-        process.exit(1);
+        return;
       }
     });
 
@@ -225,7 +225,7 @@ export function registerSlotCommand(program: Command): void {
         }
       } catch (err) {
         emit.fail(err);
-        process.exit(1);
+        return;
       }
     });
 
@@ -242,8 +242,18 @@ export function registerSlotCommand(program: Command): void {
         const params = { slotId, mode: opts.force ? 'force' : 'safe' };
         if (emit.machine) {
           const result = await client.call<SlotRefreshResult>('slot.refresh', params);
+          if (!result.refreshed) {
+            emit.fail(
+              Object.assign(new Error(refreshFailureMessage(slotId, result)), {
+                code: 'SLOT_REFRESH_SKIPPED',
+                userAction:
+                  'Re-run with `--force` to refresh anyway, or `farmslot slot release <slot>` first.',
+                details: result,
+              }),
+            );
+            return;
+          }
           emit.ok(result);
-          if (!result.refreshed) process.exit(1);
         } else {
           const result = await client.callWithEvents<SlotRefreshResult>(
             'slot.refresh',
@@ -258,7 +268,7 @@ export function registerSlotCommand(program: Command): void {
         }
       } catch (err) {
         emit.fail(err);
-        process.exit(1);
+        return;
       }
     });
 
@@ -281,7 +291,6 @@ export function registerSlotCommand(program: Command): void {
       }
     } catch (err) {
       emit.fail(err);
-      process.exit(1);
     }
   };
 
@@ -320,7 +329,7 @@ export function registerSlotCommand(program: Command): void {
         else output.write(`Opened ${slotId} in ${opts.editor}\n`);
       } catch (err) {
         emit.fail(err);
-        process.exit(1);
+        return;
       }
     });
 
@@ -351,7 +360,7 @@ export function registerSlotCommand(program: Command): void {
         }
       } catch (err) {
         emit.fail(err);
-        process.exit(1);
+        return;
       }
     });
 
@@ -370,19 +379,29 @@ export function registerSlotCommand(program: Command): void {
           actionId,
         });
         if (emit.machine) {
+          if (!result.ok) {
+            emit.fail(
+              Object.assign(new Error(result.detail || `Action ${actionId} failed for ${slotId}`), {
+                code: 'SLOT_ACTION_FAILED',
+                userAction:
+                  'Inspect details, then re-run `farmslot slot action run <slot> <action>`; list actions with `farmslot slot action list <slot>`.',
+                details: result,
+              }),
+            );
+            return;
+          }
           emit.ok(result);
-          if (!result.ok) process.exit(1);
         } else {
           if (result.stdout) output.write(result.stdout);
           if (result.stderr) process.stderr.write(result.stderr);
           if (result.command) output.write(`${result.command}\n`);
           output.write(`${result.ok ? 'Action complete' : 'Action failed'} for ${slotId}\n`);
           if (result.detail) output.write(`${result.detail}\n`);
-          if (!result.ok) process.exit(1);
+          if (!result.ok) process.exitCode = 1;
         }
       } catch (err) {
         emit.fail(err);
-        process.exit(1);
+        return;
       }
     });
 
@@ -408,7 +427,7 @@ export function registerSlotCommand(program: Command): void {
         }
       } catch (err) {
         emit.fail(err);
-        process.exit(1);
+        return;
       }
     });
 }

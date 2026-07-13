@@ -60,7 +60,7 @@ function fallbackUserAction(err: unknown): string {
   if (err instanceof Error && err.name === 'GatewayConnectionError') {
     return 'Start the gateway with `farmslot up` (or `yarn farmdev` in a dev checkout), or target a running one via --url/--gateway. Diagnose with `farmslot doctor`.';
   }
-  return 'Re-run with --json for machine-readable details and diagnose with `farmslot doctor`.';
+  return 'Fix the reported input and re-run; see `farmslot <command> --help` for usage. Diagnose environment issues with `farmslot doctor`.';
 }
 
 /** Dotted command path, e.g. `slot.prepare`, derived from the commander tree (root name dropped). */

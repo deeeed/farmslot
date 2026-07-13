@@ -53,8 +53,8 @@ export function registerDispatchCommand(program: Command): void {
           );
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 

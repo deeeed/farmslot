@@ -57,6 +57,19 @@ test('commandPathOf derives dotted paths and drops the program root', () => {
   assert.equal(commandPathOf(slot), 'slot');
 });
 
+function spawnCli(args: string[], home: string) {
+  const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const repoRoot = path.resolve(packageDir, '../..');
+  const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
+  const entry = path.join(packageDir, 'src', 'entry.ts');
+  return spawnSync(tsxBin, [entry, ...args], {
+    cwd: packageDir,
+    env: { ...process.env, FARMSLOT_HOME: home },
+    encoding: 'utf-8',
+    timeout: 60_000,
+  });
+}
+
 test('machine-mode gateway failure emits one envelope on stdout with userAction and exits non-zero', () => {
   const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const repoRoot = path.resolve(packageDir, '../..');
@@ -81,6 +94,51 @@ test('machine-mode gateway failure emits one envelope on stdout with userAction 
     assert.equal(envelope.command, 'fleet.status');
     assert.equal(envelope.status, 'error');
     assert.equal(envelope.exitCode, 1);
+    assert.ok(envelope.error.userAction.length > 0);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('non-TTY stdout implies machine mode without --json', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-cli-envelope-tty-'));
+  try {
+    const result = spawnCli(
+      ['--url', 'ws://127.0.0.1:1', '--timeout', '3000', 'fleet', 'status'],
+      home,
+    );
+    assert.notEqual(result.status, 0);
+    const envelope = JSON.parse(result.stdout);
+    assert.equal(envelope.schemaVersion, 1);
+    assert.equal(envelope.status, 'error');
+    assert.ok(envelope.error.userAction.length > 0);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('commander usage errors emit a USAGE_ERROR envelope in machine mode', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-cli-envelope-usage-'));
+  try {
+    // slot prepare requires an argumentless id? use a subcommand with required arg missing: slot action run needs args
+    const result = spawnCli(['slot', 'action', 'run', '--json'], home);
+    assert.notEqual(result.status, 0);
+    const envelope = JSON.parse(result.stdout);
+    assert.equal(envelope.status, 'error');
+    assert.equal(envelope.error.code, 'USAGE_ERROR');
+    assert.match(envelope.error.userAction, /--help/u);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('wired command validation errors emit envelopes with fallback userAction', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-cli-envelope-validate-'));
+  try {
+    const result = spawnCli(['runs', 'export', '--json'], home);
+    assert.notEqual(result.status, 0);
+    const envelope = JSON.parse(result.stdout);
+    assert.equal(envelope.status, 'error');
     assert.ok(envelope.error.userAction.length > 0);
   } finally {
     rmSync(home, { recursive: true, force: true });

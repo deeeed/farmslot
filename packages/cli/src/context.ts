@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 
+import { commandPathOf, errorEnvelope, isMachineMode } from './envelope.js';
 import { GatewayClient } from './gateway-client.js';
 import { type GatewayTarget, resolveGatewayTarget } from './gateway-profiles.js';
 import { OutputContext } from './output.js';
@@ -22,9 +23,14 @@ export function resolveContext(cmd: Command, options: ResolveContextOptions = {}
   try {
     target = resolveGatewayTarget({ url: opts.url, gateway: opts.gateway });
   } catch (err) {
-    // Unknown --gateway etc. must print like every other CLI failure, not as a
-    // raw stack trace out of commander's action wrapper.
-    output.error(err instanceof Error ? err.message : String(err));
+    // Unknown --gateway etc. must print like every other CLI failure — an
+    // envelope in machine mode, teach-the-escape text otherwise — never a raw
+    // stack trace out of commander's action wrapper.
+    if (isMachineMode(output)) {
+      output.writeJson(errorEnvelope(commandPathOf(cmd), err));
+    } else {
+      output.failure(err);
+    }
     process.exit(1);
   }
   return {

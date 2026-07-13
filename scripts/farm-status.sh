@@ -44,7 +44,10 @@ if [ "$MODE" = "sync" ]; then
   exec bash "${SCRIPT_DIR}/sync-fixtures.sh" --slot "${SLOT_ARG}" "${SYNC_EXTRA[@]}"
 fi
 if [ "$MODE" = "json" ]; then
-  exec "$FARMSLOT" --json fleet status
+  # The CLI --json output is now a machine envelope; keep this script's
+  # long-standing raw fleet-status shape for existing consumers.
+  "$FARMSLOT" --json fleet status | jq '.data // .'
+  exit "${PIPESTATUS[0]}"
 fi
 if [ "$MODE" = "show" ]; then
   exec "$FARMSLOT" fleet status
