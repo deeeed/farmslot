@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -111,6 +112,25 @@ export function validateLearningPackage(dir: string): ValidateResult {
 
   if (manifest?.packageId !== undefined && !isValidRunSlug(manifest.packageId)) {
     errors.push(`manifest.json/packageId: '${manifest.packageId}' violates the run-slug grammar`);
+  }
+
+  // Integrity: every file the manifest inventories must exist with the recorded
+  // post-scrub hash. (Unknown EXTRA files stay tolerated here per the
+  // forward-compat consumer rule; the write path separately refuses
+  // uninventoried files before sharing.)
+  for (const [rel, record] of Object.entries(manifest?.files ?? {})) {
+    const abs = path.join(dir, rel);
+    if (!existsSync(abs)) {
+      errors.push(`manifest.json/files/${rel}: listed in the inventory but missing on disk`);
+      continue;
+    }
+    const sha256 = createHash('sha256').update(readFileSync(abs)).digest('hex');
+    if (record.sha256 !== sha256) {
+      errors.push(
+        `manifest.json/files/${rel}: sha256 mismatch - file changed after assembly ` +
+          `(expected ${record.sha256}, found ${sha256})`,
+      );
+    }
   }
 
   // A valid written package is scrubbed pass, and the manifest agrees with the report.

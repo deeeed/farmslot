@@ -4,6 +4,13 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Verify package integrity end to end: `validateLearningPackage` now checks every file in the `manifest.files` inventory exists with its recorded post-scrub sha256 (unknown extra files stay tolerated per the forward-compat consumer rule), and `writeLearningPackage` additionally refuses any on-disk file the assembler did not inventory - nothing that skipped the scrub gate can ride into the shared repo.
+- Assemble into a fresh staging dir every time (stale files from an earlier attempt can no longer survive into a pass-status package) and rebuild the quarantine dir fresh so it only ever contains manifest.json + scrub-report.json.
+- Refuse duplicate package-relative paths across assembly inputs so a second, unapproved input can never replace already-approved bytes.
+- Extend the floor for common accidental encodings: scan up to two JSON-unescape passes (single/double-stringified blobs), widen labeled-value separators to cover escaped quotes, parse cookie headers pair-by-pair (a benign first cookie no longer shields later session values), and add Authorization-Bearer / access_token / refresh_token detection.
+- Make containment symlink-aware: the deepest existing ancestor of every computed write path is realpath-checked against the real root, so a pre-existing symlinked directory cannot redirect staging or destination writes outside their roots.
+- Validate all repo-path key fields (surface/project/engineer/flow/domain/ticket) at assembly time too, so producers get the teaching error immediately instead of at the share step.
+- `deriveTaskKey`: a punctuation-only ticket now falls back to the content-hash family key instead of producing an empty (unwritable) key.
 - Fix path-traversal exposure in filesystem IO: every schema-unconstrained manifest/run field used as a path segment (surface, project, domain, engineer, flow, taskKey, ticket, packageId, harness names) is now validated by a safe-segment guard, and all computed staging/destination paths carry a containment assertion. A path-shaped value (e.g. `engineer: "../../x"`) refuses the write/assembly with teaching guidance and performs no IO. Code-level guard; the SPEC schemas may later add matching patterns.
 - Apply resolved scrub configuration during assembly: `LearningPackageInput.scrub` plumbs farm/personal `extraDenyPatterns` and `allowWalletAddresses` into the gate (UNION-only - the floor cannot be loosened).
 - Close a media-mislabel gap: inputs flagged media only take the attestation-gated path for actual media formats; text-eligible or unknown extensions flagged media are refused (`disallowed-type`) instead of bypassing the byte-level floor scan.

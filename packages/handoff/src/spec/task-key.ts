@@ -33,7 +33,10 @@ function normalizeText(text: string): string {
  */
 export function deriveTaskKey(input: TaskKeyInput): string {
   if (input.ticket !== undefined && input.ticket.trim() !== '') {
-    return normalizeTicket(input.ticket);
+    const normalized = normalizeTicket(input.ticket);
+    // A punctuation-only ticket normalizes to nothing - fall through to the
+    // content-hash path rather than producing an empty (unwritable) key.
+    if (normalized !== '') return normalized;
   }
   const normalized = [
     normalizeText(input.title ?? ''),

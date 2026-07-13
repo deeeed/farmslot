@@ -41,10 +41,12 @@ function fingerprint(match: string): string {
  */
 const FLOOR_PATTERNS: FloorPattern[] = [
   { kind: 'private-key', pattern: /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/g },
+  // Separator class includes backslash and stretches to 8 so labeled values
+  // inside JSON-stringified blobs (\":\" and \\\":\\\" separators) still match.
   {
     kind: 'private-key',
     pattern:
-      /(?:private[_\s-]?key|privkey|secret[_\s-]?key)["'\s:=>]{1,6}(?:0x)?[0-9a-fA-F]{64}\b/gi,
+      /(?:private[_\s-]?key|privkey|secret[_\s-]?key)["'\s:=>\\]{1,8}(?:0x)?[0-9a-fA-F]{64}\b/gi,
   },
   {
     kind: 'jwt',
@@ -60,14 +62,55 @@ const FLOOR_PATTERNS: FloorPattern[] = [
   { kind: 'openai-key', pattern: /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g },
   { kind: 'basic-auth', pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/gi },
   { kind: 'oauth-token', pattern: /\bya29\.[A-Za-z0-9_-]{20,}\b/g },
-  // HTTP cookie header carrying a session value (Cookie:/Set-Cookie: name=value...).
-  { kind: 'cookie', pattern: /\b(?:set-cookie|cookie):\s*[A-Za-z0-9_.-]+=[^\s;,]{8,}/gi },
+  // Authorization headers and OAuth token assignments with a value-shaped token.
+  {
+    kind: 'oauth-token',
+    pattern: /\bauthorization["'\s:=>\\]{1,8}bearer\s+[A-Za-z0-9._~+/=-]{16,}/gi,
+  },
+  {
+    kind: 'oauth-token',
+    pattern: /\b(?:access|refresh)[_-]?token["'\s:=>\\]{1,8}[A-Za-z0-9._~+/-]{20,}\b/gi,
+  },
   // Session/auth-token assignments with a value-shaped token on the right.
   {
     kind: 'session-token',
-    pattern: /\b(?:session[_-]?(?:id|token)|auth[_-]?token)["'\s:=>]{1,6}[A-Za-z0-9+/_.-]{16,}\b/gi,
+    pattern:
+      /\b(?:session[_-]?(?:id|token)|auth[_-]?token)["'\s:=>\\]{1,8}[A-Za-z0-9+/_.-]{16,}\b/gi,
   },
 ];
+
+/**
+ * Detect cookie-header session values pair by pair, so a benign first cookie
+ * (theme=light) never shields a later session value on the same header. Cookie
+ * ATTRIBUTES (Path, Expires, ...) and short benign values are skipped.
+ */
+const COOKIE_HEADER = /(?:set-cookie|cookie)\s*:\s*([^\n\r]+)/gi;
+const COOKIE_ATTRIBUTES = /^(?:path|expires|domain|samesite|max-age|secure|httponly|priority)$/i;
+
+function detectCookies(text: string): FloorHit[] {
+  const hits: FloorHit[] = [];
+  for (const header of text.matchAll(COOKIE_HEADER)) {
+    for (const pair of header[1].split(/[;,]/)) {
+      const eq = pair.indexOf('=');
+      if (eq === -1) continue;
+      const name = pair.slice(0, eq).trim();
+      const value = pair.slice(eq + 1).trim();
+      if (COOKIE_ATTRIBUTES.test(name)) continue;
+      if (value.length < 8) continue;
+      hits.push({ kind: 'cookie', fingerprint: fingerprint(`${name}=${value}`) });
+    }
+  }
+  return hits;
+}
+
+/**
+ * One unescape pass over JSON/string escape sequences. Secrets frequently
+ * arrive inside JSON-stringified blobs (embedded logs in summary.json); a pass
+ * reduces the escape depth by one so escaped content matches the patterns.
+ */
+function unescapeOnce(text: string): string {
+  return text.replace(/\\(["'\\/])/g, '$1').replace(/\\[ntr]/g, ' ');
+}
 
 /**
  * Detect BIP-39 recovery phrases: runs of >= 12 consecutive wordlist words.
@@ -117,13 +160,30 @@ function detectMnemonics(text: string): FloorHit[] {
 export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] = []): FloorHit[] {
   const byFingerprint = new Map<string, FloorHit>();
 
-  for (const hit of detectMnemonics(text)) {
-    byFingerprint.set(hit.fingerprint, hit);
+  // Scan the raw text plus up to two unescape passes so single- and
+  // double-JSON-escaped content (accidental JSON-in-JSON carriers) still
+  // matches. Deeper nesting is out of the cooperative-producer scope.
+  const variants = [text];
+  let current = text;
+  for (let depth = 0; depth < 2; depth += 1) {
+    const next = unescapeOnce(current);
+    if (next === current) break;
+    variants.push(next);
+    current = next;
   }
-  for (const { kind, pattern } of [...FLOOR_PATTERNS, ...extraPatterns]) {
-    for (const match of text.matchAll(pattern)) {
-      const hit: FloorHit = { kind, fingerprint: fingerprint(match[0]) };
+
+  for (const variant of variants) {
+    for (const hit of detectMnemonics(variant)) {
       byFingerprint.set(hit.fingerprint, hit);
+    }
+    for (const hit of detectCookies(variant)) {
+      byFingerprint.set(hit.fingerprint, hit);
+    }
+    for (const { kind, pattern } of [...FLOOR_PATTERNS, ...extraPatterns]) {
+      for (const match of variant.matchAll(pattern)) {
+        const hit: FloorHit = { kind, fingerprint: fingerprint(match[0]) };
+        byFingerprint.set(hit.fingerprint, hit);
+      }
     }
   }
 

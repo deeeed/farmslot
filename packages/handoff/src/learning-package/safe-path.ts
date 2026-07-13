@@ -1,3 +1,4 @@
+import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -28,19 +29,43 @@ export function assertSafePathSegment(value: string, field: string): string {
   return value;
 }
 
+/** Real (symlink-resolved) path of the deepest existing ancestor of `p`. */
+function realExistingAncestor(p: string): string {
+  let current = p;
+  while (!existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) break; // filesystem root
+    current = parent;
+  }
+  return realpathSync(current);
+}
+
 /**
  * Assert `candidate` resolves inside `root`. Belt-and-braces behind the segment
  * guard: no computed destination may escape the staging root or the destination
- * repo, whatever the inputs were.
+ * repo, whatever the inputs were. Checked both lexically and against the real
+ * (symlink-resolved) filesystem, so a pre-existing symlinked ancestor cannot
+ * redirect the write outside the root either.
  */
 export function assertContained(root: string, candidate: string, label: string): string {
   const resolvedRoot = path.resolve(root);
   const resolved = path.resolve(candidate);
-  if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
-    throw new Error(
+  const escape = (): Error =>
+    new Error(
       `${label} escapes its root: ${candidate} is outside ${root}. Next: this indicates a ` +
-        'path-shaped field in the inputs; fix the producing metadata.',
+        'path-shaped field or a symlinked directory in the way; fix the producing metadata ' +
+        'or remove the symlink.',
     );
+  if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
+    throw escape();
+  }
+  // Symlink-aware pass: the deepest existing ancestor of the candidate must
+  // really live inside the real root (the not-yet-existing tail is created
+  // fresh by the caller and cannot contain symlinks).
+  const realRoot = realExistingAncestor(resolvedRoot);
+  const realBase = realExistingAncestor(resolved);
+  if (realBase !== realRoot && !realBase.startsWith(realRoot + path.sep)) {
+    throw escape();
   }
   return resolved;
 }

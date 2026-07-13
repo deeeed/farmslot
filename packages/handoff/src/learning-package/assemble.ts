@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -118,6 +119,9 @@ function writeQuarantine(
   scrubReport: ScrubReport,
 ): string {
   const quarantineDir = path.join(ctx.stagingRoot, 'quarantine', input.runRecord.packageId);
+  // Fresh quarantine dir: it holds ONLY the block audit trail, so nothing from
+  // an earlier attempt at the same id (least of all raw files) may survive here.
+  rmSync(quarantineDir, { recursive: true, force: true });
   mkdirSync(quarantineDir, { recursive: true });
   const manifest: Manifest = {
     schemaVersion: SCHEMA_VERSION,
@@ -159,8 +163,20 @@ export function assembleLearningPackage(
   ctx: HandoffContext,
 ): AssembleResult {
   // The run-slug keys both the staging dir and the quarantine dir - a
-  // path-shaped id must never place either outside ctx.stagingRoot.
+  // path-shaped id must never place either outside ctx.stagingRoot. The other
+  // key fields become repo path segments at write time; failing fast here hands
+  // the producer the teaching error at assembly instead of at the share step.
   assertSafePathSegment(input.runRecord.packageId, 'runRecord.packageId');
+  assertSafePathSegment(input.surface, 'surface');
+  assertSafePathSegment(input.runRecord.project, 'runRecord.project');
+  assertSafePathSegment(input.runRecord.engineer, 'runRecord.engineer');
+  assertSafePathSegment(input.runRecord.run.flow, 'runRecord.run.flow');
+  if (input.runRecord.domain !== '') {
+    assertSafePathSegment(input.runRecord.domain, 'runRecord.domain');
+  }
+  if (input.runRecord.task.ticket) {
+    assertSafePathSegment(input.runRecord.task.ticket.toLowerCase(), 'runRecord.task.ticket');
+  }
   requirePath(input.taskDoc.taskMd, 'taskDoc.taskMd');
   const reportMd = path.join(input.artifacts.artifactsDir, 'report.md');
   const learningsMd = path.join(input.artifacts.artifactsDir, 'learnings.md');
@@ -206,14 +222,32 @@ export function assembleLearningPackage(
     visualPass: m.visualPass,
   }));
 
-  const outcome = scrubFiles([...textInputs, ...mediaInputs], tokens, input.scrub ?? {});
+  // One input per package-relative path: a duplicate would let a second,
+  // unapproved input replace already-approved bytes at staging time.
+  const allInputs = [...textInputs, ...mediaInputs];
+  const seenPaths = new Set<string>();
+  for (const { packagePath } of allInputs) {
+    if (seenPaths.has(packagePath)) {
+      throw new Error(
+        `assembleLearningPackage: duplicate package path '${packagePath}' across inputs. ` +
+          'Next: give each artifact a unique package-relative path (check media entries ' +
+          'and harness output dirs for collisions).',
+      );
+    }
+    seenPaths.add(packagePath);
+  }
+
+  const outcome = scrubFiles(allInputs, tokens, input.scrub ?? {});
 
   if (outcome.status === 'blocked') {
     const quarantineDir = writeQuarantine(ctx, input, outcome.report);
     return { status: 'blocked', quarantineDir, scrubReport: outcome.report };
   }
 
+  // Fresh staging dir per assemble: a reused dir could carry stale, unscanned
+  // files from an earlier attempt into a pass-status package.
   const packageDir = path.join(ctx.stagingRoot, input.runRecord.packageId);
+  rmSync(packageDir, { recursive: true, force: true });
   mkdirSync(packageDir, { recursive: true });
 
   // Stage retained text files (task/report/learnings/source/provenance/harness json).

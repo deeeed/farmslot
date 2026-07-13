@@ -4,6 +4,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmdirSync,
   rmSync,
@@ -55,6 +56,17 @@ export type WriteResult =
 
 function git(repo: string, args: string[]): string {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+}
+
+/** All files under `dir` as package-relative POSIX paths. */
+function walkRelativeFiles(dir: string, base = dir): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkRelativeFiles(abs, base));
+    else if (entry.isFile()) out.push(path.relative(base, abs).split(path.sep).join('/'));
+  }
+  return out;
 }
 
 /**
@@ -182,6 +194,21 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
       `writeLearningPackage: package ${manifest.packageId} fails spec validation:\n` +
         `${validation.errors.map((e) => `  - ${e}`).join('\n')}\n` +
         'Next: re-assemble with assembleLearningPackage; callers never hand-edit package files.',
+    );
+  }
+
+  // Inventory completeness (share gate, stricter than the consumer validator):
+  // validation already proved every inventoried file matches its post-scrub
+  // hash; additionally refuse any on-disk file the assembler did not inventory,
+  // so nothing that skipped the scrub gate can ride along into the shared repo.
+  const unlisted = walkRelativeFiles(options.packageDir).filter(
+    (rel) => rel !== 'manifest.json' && !(rel in manifest.files),
+  );
+  if (unlisted.length > 0) {
+    throw new Error(
+      `writeLearningPackage: package ${manifest.packageId} contains files not in the ` +
+        `manifest inventory: ${unlisted.join(', ')}. These were never scrubbed. ` +
+        'Next: re-assemble with assembleLearningPackage; never add files to a staged package.',
     );
   }
 

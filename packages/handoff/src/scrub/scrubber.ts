@@ -218,6 +218,10 @@ export function scrubFiles(
     try {
       content = file.content ?? readFileSync(file.absolutePath as string, 'utf8');
     } catch {
+      // Read failure (missing file, permissions, bad encoding) means the gate
+      // cannot scan the content - fail closed by omitting it (spec section 5.1
+      // layer 1: unscannable is never included), recorded in the report; the
+      // error detail itself is irrelevant to the caller.
       omitted.push({ path: file.packagePath, reason: 'unscannable' });
       continue;
     }

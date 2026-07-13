@@ -242,9 +242,17 @@ test('a mid-write failure rolls back: no partial package, no partial index rows,
     () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
     /rolled back/,
   );
-  assert.equal(existsSync(path.join(destination, 'packages')), false, 'package copy not removed');
+  assert.equal(
+    existsSync(path.join(destination, 'packages')),
+    false,
+    'rollback should have removed the copied package from the destination',
+  );
   assert.equal(readFileSync(path.join(destination, 'indexes'), 'utf8'), 'not-a-directory\n');
-  assert.equal(git(destination, ['status', '--porcelain']), '', 'tree left dirty');
+  assert.equal(
+    git(destination, ['status', '--porcelain']),
+    '',
+    'rollback should have left the destination tree clean',
+  );
   // The local assembled package is untouched and re-writable.
   assert.ok(existsSync(path.join(result.packageDir, 'manifest.json')));
 });

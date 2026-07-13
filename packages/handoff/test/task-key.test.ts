@@ -94,3 +94,9 @@ test('two attempts at the same ticketless task land in one family across machine
   // no coordinator - identical family key.
   assert.equal(deriveTaskKey(task), deriveTaskKey({ ...task }));
 });
+
+test('a punctuation-only ticket falls back to the content-hash family key', () => {
+  const withJunkTicket = deriveTaskKey({ ticket: '!!!', title: 'Fix the gate' });
+  assert.match(withJunkTicket, /^task-[a-f0-9]{16}$/);
+  assert.equal(withJunkTicket, deriveTaskKey({ title: 'Fix the gate' }));
+});

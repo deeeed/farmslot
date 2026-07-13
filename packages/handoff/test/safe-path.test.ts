@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { assembleLearningPackage } from '../src/learning-package/assemble.js';
+import { assertContained } from '../src/learning-package/safe-path.js';
 import type { HandoffContext, LearningPackageInput } from '../src/learning-package/types.js';
 import { writeLearningPackage } from '../src/learning-package/write.js';
 import type { Manifest } from '../src/spec/types.js';
@@ -146,4 +155,43 @@ test('a traversal media packagePath cannot copy outside the package dir', () => 
   ];
   assert.throws(() => assembleLearningPackage(input, ctx), /escapes its root/);
   assert.equal(existsSync(path.join(path.dirname(ctx.stagingRoot), 'smuggled.png')), false);
+});
+
+test('a symlinked ancestor in the destination cannot redirect the write outside the repo', () => {
+  const { ctx, input } = scenario();
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+
+  const destination = initDestinationRepo();
+  const outside = mkdtempSync(path.join(os.tmpdir(), 'handoff-outside-'));
+  // Commit a symlink at the exact ancestor the writer would use: packages -> outside.
+  symlinkSync(outside, path.join(destination, 'packages'));
+  git(destination, ['add', 'packages']);
+  git(destination, ['commit', '-q', '-m', 'chore: add symlink']);
+
+  assert.throws(
+    () =>
+      writeLearningPackage({
+        packageDir: result.packageDir,
+        destination,
+        consent: { humanApproval: true, approvedBy: 'eng-1', grantedAt: '2026-07-13T12:00:00Z' },
+      }),
+    /escapes its root/,
+  );
+  // Nothing landed in the symlink target.
+  assert.deepEqual(readdirSync(outside), []);
+});
+
+test('containment refuses traversal in plain text package paths (unit)', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'handoff-contain-'));
+  assert.throws(
+    () => assertContained(root, path.join(root, 'harness/../../escape.md'), 'package file'),
+    /escapes its root/,
+  );
+  // A well-formed nested text path is accepted.
+  assert.equal(
+    assertContained(root, path.join(root, 'harness/x/summary.json'), 'package file'),
+    path.join(root, 'harness/x/summary.json'),
+  );
 });

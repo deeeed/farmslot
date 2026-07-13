@@ -207,3 +207,49 @@ test('media mislabel guard: text-eligible or unknown extensions flagged media ar
   assert.equal(reasons.get('harness/x/dump.bin'), 'disallowed-type');
   assert.deepEqual(outcome.retainedMedia, ['harness/x/shot.png']);
 });
+
+test('double-JSON-escaped labeled private key is still a floor hit', () => {
+  const key = ['0x4c0883a69102937d6231471b5dbb', '6204fe512961708279e1ba1cf8f3e2c9d1a7'].join('');
+  // JSON-in-JSON: an inner document stringified into an outer JSON string.
+  const inner = JSON.stringify({ privateKey: key });
+  const outer = JSON.stringify({ log: inner });
+  const doubled = JSON.stringify({ envelope: outer });
+  for (const [label, text] of [
+    ['single-escaped', outer],
+    ['double-escaped', doubled],
+  ] as const) {
+    const hits = scanForFloorSecrets(text);
+    assert.ok(
+      hits.some((h) => h.kind === 'private-key'),
+      `${label} labeled key missed`,
+    );
+  }
+});
+
+test('a benign first cookie does not shield later session values on the same header', () => {
+  const header = 'Cookie: theme=light; sid=8f4b2c1d9e0a7b6c5d4e3f2a; consent=ok';
+  const hits = scanForFloorSecrets(header);
+  assert.ok(hits.some((h) => h.kind === 'cookie'));
+  // Attribute-style pairs on Set-Cookie never hit by themselves.
+  assert.equal(
+    scanForFloorSecrets('Set-Cookie: theme=light; Path=/; SameSite=Lax; HttpOnly').length,
+    0,
+  );
+});
+
+test('authorization bearer headers and OAuth token assignments are floor hits', () => {
+  const cases = [
+    `Authorization: Bearer ${'a1B2c3D4'.repeat(4)}`,
+    `access_token: ${'e5F6g7H8'.repeat(4)}`,
+    `"refresh_token": "${'i9J0k1L2'.repeat(4)}"`,
+  ];
+  for (const text of cases) {
+    const hits = scanForFloorSecrets(text);
+    assert.ok(
+      hits.some((h) => h.kind === 'oauth-token'),
+      `missed: ${text.slice(0, 24)}...`,
+    );
+  }
+  // Prose about tokens stays clean.
+  assert.equal(scanForFloorSecrets('the access token refresh flow worked as designed').length, 0);
+});
