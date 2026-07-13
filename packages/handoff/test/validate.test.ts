@@ -415,3 +415,54 @@ test('a required file missing from the manifest.files inventory is invalid', () 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('RFC 3339-impossible offsets fail date-time validation; real offsets pass', () => {
+  const dir = buildValidPackage();
+  try {
+    const manifestPath = path.join(dir, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      run: { startedAt: string };
+    };
+    const rewrite = (startedAt: string): void => {
+      manifest.run.startedAt = startedAt;
+      writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    };
+
+    for (const bad of ['2026-07-13T10:00:00+99:99', '2026-07-13T10:00:00+24:00']) {
+      rewrite(bad);
+      const result = validateLearningPackage(dir);
+      assert.equal(result.valid, false, `${bad} accepted`);
+      assert.ok(result.errors.some((e) => e.includes('startedAt')));
+    }
+    for (const good of [
+      '2026-07-13T10:00:00+09:00',
+      '2026-07-13T10:00:00-05:30',
+      '2026-07-13T10:00:00Z',
+    ]) {
+      rewrite(good);
+      assert.deepEqual(validateLearningPackage(dir).errors, [], `${good} rejected`);
+    }
+
+    // The same format check guards optional content: graded_at with an
+    // impossible offset invalidates grade.json.
+    rewrite('2026-07-13T10:00:00Z');
+    writeFileSync(
+      path.join(dir, 'grade.json'),
+      `${JSON.stringify(
+        {
+          recipe_semantic: 'good',
+          reasoning: 'fine',
+          graded_by: 'eng-1',
+          graded_at: '2026-07-13T10:00:00+99:99',
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const withBadGrade = validateLearningPackage(dir);
+    assert.equal(withBadGrade.valid, false);
+    assert.ok(withBadGrade.errors.some((e) => e.includes('graded_at')));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

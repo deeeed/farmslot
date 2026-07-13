@@ -7,17 +7,22 @@ export interface SchemaError {
 }
 
 const DATE_TIME =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
 function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
-/** Shape AND calendar validity - 2026-99-99T99:99:99Z must not pass. */
+/** Shape AND calendar validity, offset included - neither 2026-99-99T99:99:99Z
+ * nor an RFC 3339-impossible offset like +99:99 or +24:00 must pass. */
 function isValidDateTime(value: string): boolean {
   const match = DATE_TIME.exec(value);
   if (!match) return false;
-  const [, year, month, day, hours, minutes, seconds] = match.map(Number);
+  const [, year, month, day, hours, minutes, seconds, offsetHours, offsetMinutes] =
+    match.map(Number);
+  if (!Number.isNaN(offsetHours) && (offsetHours > 23 || offsetMinutes > 59)) {
+    return false;
+  }
   return (
     month >= 1 &&
     month <= 12 &&
