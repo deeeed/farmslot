@@ -17,6 +17,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECTS_DIR="${PROJECTS_DIR:-${SCRIPT_DIR}/../projects}"
 
+# ── Resolve farmslot CLI (copied from scripts/lib/slot-common.sh) ─────────────
+if [ -z "${FARMSLOT_CLI:-}" ]; then
+  _cli_candidate="$(cd "${SCRIPT_DIR}/../packages/cli" && pwd)/bin/farmslot.mjs"
+  if [ -f "$_cli_candidate" ]; then
+    FARMSLOT_CLI="$_cli_candidate"
+  elif command -v farmslot >/dev/null 2>&1; then
+    FARMSLOT_CLI="$(command -v farmslot)"
+  else
+    echo "FAIL: farmslot CLI not found (no packages/cli next to scripts/ and no farmslot on PATH). Set FARMSLOT_CLI." >&2
+    exit 1
+  fi
+fi
+
 # ── Parse args ────────────────────────────────────────────────────
 INPUT=""
 GITHUB_REF=""
@@ -72,22 +85,14 @@ PROJECT_CONFIG="${PROJECT_DIR}/project.json"
 
 # ── Early exit for --skip-existing ────────────────────────────────
 if $SKIP_EXISTING; then
-  # Derive the score key to check if file already exists
+  # Derive the score key to check if file already exists (bash regex, no subprocess)
   SKIP_KEY=""
   if [ -n "$GITHUB_REF" ]; then
-    SKIP_KEY=$(python3 -c "
-import re, sys
-ref = '${GITHUB_REF}'
-m = re.match(r'https?://github\.com/[^/]+/[^/]+/issues/(\d+)', ref)
-if m:
-    print(f'gh-{m.group(1)}')
-    sys.exit(0)
-m = re.match(r'[^#]+#(\d+)$', ref)
-if m:
-    print(f'gh-{m.group(1)}')
-    sys.exit(0)
-sys.exit(1)
-" 2>/dev/null) || true
+    if [[ "$GITHUB_REF" =~ /issues/([0-9]+)$ ]]; then
+      SKIP_KEY="gh-${BASH_REMATCH[1]}"
+    elif [[ "$GITHUB_REF" =~ \#([0-9]+)$ ]]; then
+      SKIP_KEY="gh-${BASH_REMATCH[1]}"
+    fi
   elif [ -n "$JIRA_KEY" ]; then
     SKIP_KEY=$(echo "$JIRA_KEY" | tr '[:upper:]' '[:lower:]')
   fi
@@ -95,11 +100,7 @@ sys.exit(1)
   if [ -n "$SKIP_KEY" ]; then
     SKIP_FILE="${SCORES_DIR_OVERRIDE:-${PROJECT_DIR}/scores}/${SKIP_KEY}.json"
     if [ -f "$SKIP_FILE" ]; then
-      HAS_HEURISTIC=$(python3 -c "
-import json
-d = json.load(open('${SKIP_FILE}'))
-print('yes' if 'heuristic' in d and d['heuristic'] else 'no')
-" 2>/dev/null) || HAS_HEURISTIC="no"
+      HAS_HEURISTIC=$(jq -r 'if .heuristic then "yes" else "no" end' "$SKIP_FILE" 2>/dev/null || echo "no")
       if [ "$HAS_HEURISTIC" = "yes" ]; then
         echo "  Skipped (already scored): ${SKIP_KEY}" >&2
         exit 0
@@ -112,27 +113,17 @@ fi
 CLEANUP_INPUT=false
 
 if [ -n "$GITHUB_REF" ]; then
-  # Parse owner/repo and number from URL or shorthand
-  read -r REPO NUMBER <<< "$(python3 -c "
-import sys, re
-
-ref = '${GITHUB_REF}'
-
-# https://github.com/owner/repo/issues/123
-m = re.match(r'https?://github\.com/([^/]+/[^/]+)/issues/(\d+)', ref)
-if m:
-    print(m.group(1), m.group(2))
-    sys.exit(0)
-
-# owner/repo#123
-m = re.match(r'([^#]+)#(\d+)$', ref)
-if m:
-    print(m.group(1), m.group(2))
-    sys.exit(0)
-
-print(f'ERROR: cannot parse GitHub ref: {ref}', file=sys.stderr)
-sys.exit(1)
-")"
+  # Parse owner/repo and number from URL or shorthand using bash regex
+  if [[ "$GITHUB_REF" =~ ^https?://github\.com/([^/]+/[^/]+)/issues/([0-9]+) ]]; then
+    REPO="${BASH_REMATCH[1]}"
+    NUMBER="${BASH_REMATCH[2]}"
+  elif [[ "$GITHUB_REF" =~ ^([^#]+)\#([0-9]+)$ ]]; then
+    REPO="${BASH_REMATCH[1]}"
+    NUMBER="${BASH_REMATCH[2]}"
+  else
+    echo "ERROR: cannot parse GitHub ref: ${GITHUB_REF}" >&2
+    exit 1
+  fi
 
   echo "Fetching ${REPO}#${NUMBER}..." >&2
 
@@ -142,82 +133,19 @@ sys.exit(1)
     exit 1
   }
 
-  # Build bug-input.json from GitHub API response
+  # Build bug-input.json via the CLI parser (ported from the Python heredoc)
   INPUT=$(mktemp)
   CLEANUP_INPUT=true
   trap "rm -f '$INPUT'" EXIT
 
-  python3 -c "
-import json, re, sys
+  echo "$GH_JSON" | "$FARMSLOT_CLI" internal parse-bug-input github > "$INPUT"
 
-gh = json.loads(sys.argv[1])
-repo = '${REPO}'
-number = '${NUMBER}'
-body = gh.get('body', '') or ''
-
-# Parse acceptance criteria
-ac = []
-ac_match = re.search(r'##\s*(?:Acceptance Criteria|Expected Behavior)\s*\n(.*?)(?=\n##|\Z)', body, re.DOTALL)
-if ac_match:
-    for line in ac_match.group(1).strip().split('\n'):
-        line = re.sub(r'^[\s*-]+', '', line).strip()
-        if line:
-            ac.append(line)
-
-# Parse steps to reproduce
-steps = []
-steps_match = re.search(r'##\s*(?:Steps to Reproduce|Repro Steps)\s*\n(.*?)(?=\n##|\Z)', body, re.DOTALL)
-if steps_match:
-    for line in steps_match.group(1).strip().split('\n'):
-        line = re.sub(r'^[\s\d.*-]+', '', line).strip()
-        if line:
-            steps.append(line)
-
-# Extract image filenames from body
-screenshots = []
-for m in re.finditer(r'!\[[^\]]*\]\(([^)]+)\)', body):
-    screenshots.append(m.group(1).rsplit('/', 1)[-1][:50])
-for m in re.finditer(r'<img[^>]+src=[\"\\']([^\"\\'>]+)[\"\\']', body):
-    screenshots.append(m.group(1).rsplit('/', 1)[-1][:50])
-
-# Extract linked PRs
-linked_prs = []
-for m in re.finditer(r'(?:' + re.escape(repo) + r')?#(\d+)', body):
-    pr_num = m.group(1)
-    if pr_num != number:
-        linked_prs.append(f'{repo}#{pr_num}')
-
-labels = [l.get('name', l) if isinstance(l, dict) else l for l in gh.get('labels', [])]
-
-bug_input = {
-    'source': 'github',
-    'github_issue': f'{repo}#{number}',
-    'jira_key': '',
-    'title': gh.get('title', ''),
-    'description': body,
-    'acceptance_criteria': ac,
-    'affected_area': '',
-    'steps_to_reproduce': steps,
-    'labels': labels,
-    'components': [],
-    'screenshots': screenshots,
-    'state': gh.get('state', 'open').lower(),
-    'linked_prs': list(set(linked_prs))
-}
-
-json.dump(bug_input, open('${INPUT}', 'w'), indent=2)
-" "$GH_JSON"
-
-  echo "  Fetched: $(python3 -c "import json; print(json.load(open('${INPUT}'))['title'])")" >&2
+  echo "  Fetched: $(jq -r '.title' "$INPUT")" >&2
 
 elif [ -n "$JIRA_KEY" ]; then
   # Resolve Jira base URL from project.json
   [ -f "$PROJECT_CONFIG" ] || { echo "ERROR: project config not found: $PROJECT_CONFIG" >&2; exit 1; }
-  JIRA_BASE_URL=$(python3 -c "
-import json
-d = json.load(open('${PROJECT_CONFIG}'))
-print(d.get('jira', {}).get('base_url', ''))
-")
+  JIRA_BASE_URL=$(jq -r '.jira.base_url // empty' "$PROJECT_CONFIG")
   [ -z "$JIRA_BASE_URL" ] && { echo "ERROR: jira.base_url not set in project.json" >&2; exit 1; }
   [ -z "${JIRA_EMAIL:-}" ] && { echo "ERROR: JIRA_EMAIL env var required" >&2; exit 1; }
   [ -z "${JIRA_TOKEN:-}" ] && { echo "ERROR: JIRA_TOKEN env var required" >&2; exit 1; }
@@ -236,76 +164,9 @@ print(d.get('jira', {}).get('base_url', ''))
   CLEANUP_INPUT=true
   trap "rm -f '$INPUT'" EXIT
 
-  python3 -c "
-import json, re, sys
+  echo "$JIRA_JSON" | "$FARMSLOT_CLI" internal parse-bug-input jira > "$INPUT"
 
-jira = json.loads(sys.argv[1])
-if 'errorMessages' in jira:
-    print(f'ERROR: Jira API: {jira[\"errorMessages\"]}', file=sys.stderr)
-    sys.exit(1)
-
-fields = jira.get('fields', {})
-key = jira.get('key', '${JIRA_KEY}')
-
-# Description: Jira uses ADF (Atlassian Document Format), flatten to text
-desc_raw = fields.get('description', '')
-if isinstance(desc_raw, dict):
-    # ADF → extract text nodes recursively
-    def flatten_adf(node):
-        if isinstance(node, str):
-            return node
-        if isinstance(node, dict):
-            if node.get('type') == 'text':
-                return node.get('text', '')
-            return ' '.join(flatten_adf(c) for c in node.get('content', []))
-        if isinstance(node, list):
-            return ' '.join(flatten_adf(c) for c in node)
-        return ''
-    body = flatten_adf(desc_raw)
-else:
-    body = desc_raw or ''
-
-# Parse AC
-ac = []
-ac_match = re.search(r'(?:Acceptance Criteria|Expected Behavior)[:\s]*\n(.*?)(?=\n[A-Z]|\Z)', body, re.DOTALL)
-if ac_match:
-    for line in ac_match.group(1).strip().split('\n'):
-        line = re.sub(r'^[\s*-]+', '', line).strip()
-        if line:
-            ac.append(line)
-
-# Parse steps
-steps = []
-steps_match = re.search(r'(?:Steps to Reproduce|Repro Steps)[:\s]*\n(.*?)(?=\n[A-Z]|\Z)', body, re.DOTALL)
-if steps_match:
-    for line in steps_match.group(1).strip().split('\n'):
-        line = re.sub(r'^[\s\d.*-]+', '', line).strip()
-        if line:
-            steps.append(line)
-
-labels = fields.get('labels', [])
-components = [c.get('name', c) if isinstance(c, dict) else c for c in fields.get('components', [])]
-
-bug_input = {
-    'source': 'jira',
-    'github_issue': '',
-    'jira_key': key,
-    'title': fields.get('summary', ''),
-    'description': body,
-    'acceptance_criteria': ac,
-    'affected_area': '',
-    'steps_to_reproduce': steps,
-    'labels': labels,
-    'components': components,
-    'screenshots': [],
-    'state': (fields.get('status', {}).get('name', 'open') if isinstance(fields.get('status'), dict) else 'open').lower(),
-    'linked_prs': []
-}
-
-json.dump(bug_input, open('${INPUT}', 'w'), indent=2)
-" "$JIRA_JSON"
-
-  echo "  Fetched: $(python3 -c "import json; print(json.load(open('${INPUT}'))['title'])")" >&2
+  echo "  Fetched: $(jq -r '.title' "$INPUT")" >&2
 
 elif $USE_STDIN; then
   INPUT=$(mktemp)
@@ -317,21 +178,15 @@ fi
 [ -f "$INPUT" ] || { echo "ERROR: file not found: $INPUT" >&2; exit 1; }
 
 # ── Derive score key from bug-input.json ──────────────────────────
-SCORE_KEY=$(python3 -c "
-import json, sys
-bug = json.load(open('${INPUT}'))
-gh = bug.get('github_issue', '')
-jira = bug.get('jira_key', '')
-if gh:
-    # you/example-app#12345 → gh-12345
-    num = gh.rsplit('#', 1)[-1] if '#' in gh else gh
-    print(f'gh-{num}')
-elif jira:
-    print(jira.lower())
-else:
-    print('unknown', file=sys.stderr)
-    sys.exit(1)
-")
+SCORE_KEY=$(jq -r '
+  if .github_issue != "" then
+    "gh-\(.github_issue | split("#") | last)"
+  elif .jira_key != "" then
+    .jira_key | ascii_downcase
+  else
+    error("bug_input has neither github_issue nor jira_key")
+  end
+' "$INPUT")
 
 SCORES_DIR="${SCORES_DIR_OVERRIDE:-${PROJECT_DIR}/scores}"
 SCORE_FILE="${SCORES_DIR}/${SCORE_KEY}.json"
@@ -374,15 +229,11 @@ print()
 
 echo "Scored: ${SCORE_FILE}"
 # Display scoring details if heuristic was produced
-HAS_HEURISTIC=$(python3 -c "
-import json
-d = json.load(open('${SCORE_FILE}'))
-print('yes' if 'heuristic' in d and d['heuristic'] else 'no')
-")
+HAS_HEURISTIC=$(jq -r 'if .heuristic then "yes" else "no" end' "$SCORE_FILE")
 if [ "$HAS_HEURISTIC" = "yes" ]; then
-  echo "  difficulty:  $(python3 -c "import json; print(json.load(open('${SCORE_FILE}'))['heuristic']['difficulty'])")"
-  echo "  category:    $(python3 -c "import json; print(json.load(open('${SCORE_FILE}'))['heuristic']['category'])")"
-  echo "  p(one-shot): $(python3 -c "import json; print(json.load(open('${SCORE_FILE}'))['heuristic']['one_shot_probability'])")"
+  echo "  difficulty:  $(jq -r '.heuristic.difficulty' "$SCORE_FILE")"
+  echo "  category:    $(jq -r '.heuristic.category' "$SCORE_FILE")"
+  echo "  p(one-shot): $(jq -r '.heuristic.one_shot_probability' "$SCORE_FILE")"
 else
   echo "  scoring: not configured (bug_input saved without heuristic)"
 fi

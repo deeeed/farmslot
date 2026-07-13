@@ -1,10 +1,8 @@
-import { execFile } from 'node:child_process';
-
 import type { RunnerSessionUsage } from '@farmslot/protocol';
+import { runSessionUsage } from '@farmslot/slot-config';
 
 import type { SlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
-import { farmslotRoot } from '../fleet/state.js';
 
 function parseNumberLine(lines: string[], prefix: string): number | null {
   const line = lines.find((candidate) => candidate.startsWith(prefix));
@@ -92,36 +90,26 @@ export async function extractRunnerSessionUsage({
       error: 'runner transcript usage extraction for remote slots is not implemented',
     });
   }
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    RUNNER_SESSION_PATH: runnerSessionPath,
-    RUNNER_SESSION_RUNNER: runner ?? '',
-  };
-  return await new Promise<RunnerSessionUsage>((resolve) => {
-    execFile(
-      'bash',
-      [`${farmslotRoot}/scripts/session-usage.sh`, slotId, 'total'],
-      { env, timeout: 30_000 },
-      (err, stdout) => {
-        if (err) {
-          resolve(
-            unavailableRunnerSessionUsage({
-              runner,
-              runnerSessionId,
-              runnerSessionPath,
-              error: err.message,
-            }),
-          );
-          return;
-        }
-        resolve(
-          parseSessionUsageOutput(stdout, {
-            runner: runner ?? null,
-            runnerSessionId: runnerSessionId ?? null,
-            runnerSessionPath,
-          }),
-        );
-      },
-    );
-  });
+  try {
+    const output = await runSessionUsage({
+      // repo is unused when forcedPath is set; pass empty string.
+      repo: '',
+      slotId,
+      action: 'total',
+      forcedPath: runnerSessionPath,
+      forcedRunner: runner ?? null,
+    });
+    return parseSessionUsageOutput(output, {
+      runner: runner ?? null,
+      runnerSessionId: runnerSessionId ?? null,
+      runnerSessionPath,
+    });
+  } catch (err) {
+    return unavailableRunnerSessionUsage({
+      runner,
+      runnerSessionId,
+      runnerSessionPath,
+      error: (err as Error).message,
+    });
+  }
 }

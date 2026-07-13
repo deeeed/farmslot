@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# pr-monitor.sh — Deterministic PR status monitor with actionable recommendations.
+# pr-monitor.sh — PR status formatter with actionable recommendations.
 #
-# Scans all farm PRs (from ci-watch slots + active working slots) via pr-status.sh,
-# applies rules to determine recommendations, outputs human-readable table or JSON.
+# Fetches PR data from the gateway via pr-status.sh (which delegates to
+# `farmslot pr list/status --json`) and formats it as a human table or JSON.
+# Recommendation logic lives in the gateway (computePRRecommendation in
+# @farmslot/protocol); this script is a pure formatter — no local rule engine.
 #
 # Usage:
 #   pr-monitor.sh               # Human table (default if tty)
@@ -41,117 +43,125 @@ if [ -z "$FORMAT" ]; then
   if [ -t 1 ]; then FORMAT="human"; else FORMAT="json"; fi
 fi
 
-# -- Fetch CI data via pr-status.sh ----------------------------------------
-CI_JSON=$(bash "${SCRIPT_DIR}/pr-status.sh" --json "${PASS_THROUGH_ARGS[@]+"${PASS_THROUGH_ARGS[@]}"}" 2>/dev/null)
+# -- Fetch PR data via pr-status.sh (delegates to farmslot pr list/status) --
+PR_JSON=$(bash "${SCRIPT_DIR}/pr-status.sh" --json "${PASS_THROUGH_ARGS[@]+"${PASS_THROUGH_ARGS[@]}"}" 2>/dev/null)
 
-# -- Apply rules and generate output ---------------------------------------
-_CI_JSON="$CI_JSON" _FORMAT="$FORMAT" _SCRIPT_DIR="$SCRIPT_DIR" python3 << 'PYEOF'
+# -- Format output from gateway PRStatus JSON --------------------------------
+_PR_JSON="$PR_JSON" _FORMAT="$FORMAT" _SCRIPT_DIR="$SCRIPT_DIR" python3 << 'PYEOF'
 import json, os, sys
 from datetime import datetime, timezone
 
-ci_json = os.environ['_CI_JSON']
+pr_json = os.environ['_PR_JSON']
 fmt = os.environ['_FORMAT']
 script_dir = os.environ['_SCRIPT_DIR']
 
-data = json.loads(ci_json)
-prs = data.get('prs', [])
-checked_at = data.get('checked_at', '')
+data = json.loads(pr_json)
 
-if not prs:
+# farmslot pr list → { "prs": [...] }
+# farmslot pr status N → { "pr": {...} }
+prs_raw = data.get('prs') or ([data['pr']] if 'pr' in data else [])
+
+if not prs_raw:
     if fmt == 'json':
-        json.dump({'checked_at': checked_at, 'prs': [], 'message': 'No active PRs found'}, sys.stdout, indent=2)
+        json.dump({'checked_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                   'prs': [], 'message': 'No active PRs found'}, sys.stdout, indent=2)
         print()
     else:
         print('No active PRs found.')
     sys.exit(0)
 
-# -- Apply rules per PR (first match wins) --
+# -- Apply display rules per PR (matches bash pr-monitor.sh first-match semantics) --
+# Recommendation strings come from the gateway; detail/action are formatter-specific.
+# Intentional diff vs. TS: we re-check merged/prState before workerActive so
+# MERGED/CLOSED display correctly even on the rare race where worker is still alive.
 results = []
-for pr in sorted(prs, key=lambda x: x.get('pr', 0)):
-    pr_num = pr.get('pr', '?')
-    slot = pr.get('slot') or '-'
-    session = pr.get('session') or ''
-    session_alive = pr.get('session_alive', 'unknown')
-    is_alive = session_alive == 'true'
-    pr_state = pr.get('pr_state', '')
-    merged = pr.get('merged', False)
-    all_passed = pr.get('all_passed', False)
-    any_failed = pr.get('any_failed', False)
-    summary = pr.get('summary', {})
-    merge_conflict = pr.get('merge_conflict', False)
-    actionable = pr.get('actionable_bot_comments', [])
-    has_actionable = len(actionable) > 0
-    failed_names = pr.get('failed_names', [])
+for pr in sorted(prs_raw, key=lambda x: x.get('pr', 0)):
+    pr_num          = pr.get('pr', '?')
+    slot            = pr.get('slot') or '-'
+    merged          = pr.get('merged', False)
+    pr_state        = pr.get('prState', 'OPEN')
+    merge_conflict  = pr.get('mergeConflict', False)
+    any_failed      = pr.get('anyFailed', False)
+    all_passed      = pr.get('allPassed', False)
+    worker_active   = pr.get('workerActive', False)
+    recommendation  = pr.get('recommendation', 'IN_REVIEW')
+    check_summary   = pr.get('checkSummary', {})
+    failed_names    = pr.get('failedNames', [])
+    actionable      = pr.get('actionableBotComments', [])
+    actionable_count = len(actionable)
 
-    # First-match rule evaluation
-    if merged:
-        recommendation = 'MERGED'
-        detail = 'PR merged.'
-        action = f'bash {script_dir}/release-slot.sh {slot} --keep-warm --reset' if slot != '-' else None
+    release_cmd = f'bash {script_dir}/release-slot.sh {slot} --keep-warm --reset' if slot != '-' else None
+
+    # First-match display rules (bash-compatible ordering, recommendation from gateway)
+    if merged or pr_state == 'MERGED':
+        display = 'MERGED'
+        detail  = 'PR merged.'
+        action  = release_cmd
     elif pr_state == 'CLOSED':
-        recommendation = 'CLOSED'
-        detail = 'PR closed without merge.'
-        action = f'bash {script_dir}/release-slot.sh {slot} --keep-warm --reset' if slot != '-' else None
-    elif merge_conflict and is_alive:
-        recommendation = 'MERGE CONFLICT (worker active)'
-        detail = 'PR has merge conflicts. Worker session alive — nudge to merge main.'
-        action = None
-    elif merge_conflict and not is_alive:
-        recommendation = 'MERGE CONFLICT (action needed)'
-        detail = 'PR has merge conflicts. Worker session dead.'
-        action = f'/farm-rebase {pr_num}'
-    elif all_passed and not has_actionable:
-        recommendation = 'READY'
-        p = summary.get('passed', 0)
-        t = summary.get('total', 0)
-        detail = f'CI: {p}/{t} pass. No unresolved comments. Ready for human review.'
-        action = f'bash {script_dir}/release-slot.sh {slot} --keep-warm --reset' if slot != '-' else None
-    elif has_actionable and is_alive:
-        labels = set(a.get('label', 'bot') for a in actionable)
-        detail = f'{", ".join(labels)}: {len(actionable)} unresolved comment(s). Worker session alive.'
-        recommendation = 'COMMENTS (worker active)'
-        action = None
-    elif has_actionable and not is_alive:
-        labels = set(a.get('label', 'bot') for a in actionable)
-        detail = f'{", ".join(labels)}: {len(actionable)} unresolved comment(s). Worker session dead.'
-        recommendation = 'COMMENTS (action needed)'
-        action = f'/farm-pr-complete {pr_num}'
-    elif any_failed and is_alive:
-        recommendation = 'CI FAILED (worker active)'
-        detail = f'Failed: {", ".join(failed_names)}. Worker session alive.'
-        action = None
-    elif any_failed and not is_alive:
-        recommendation = 'CI FAILED (action needed)'
-        detail = f'Failed: {", ".join(failed_names)}. Worker session dead.'
-        action = None  # manual intervention
+        display = 'CLOSED'
+        detail  = 'PR closed without merge.'
+        action  = release_cmd
+    elif merge_conflict and worker_active:
+        display = 'MERGE CONFLICT (worker active)'
+        detail  = 'PR has merge conflicts. Worker session alive — nudge to merge main.'
+        action  = None
+    elif merge_conflict and not worker_active:
+        display = 'MERGE CONFLICT (action needed)'
+        detail  = 'PR has merge conflicts. Worker session dead.'
+        action  = f'/farm-rebase {pr_num}'
+    elif recommendation in ('READY', 'WAITING_FOR_MERGE') and not merge_conflict and not any_failed and actionable_count == 0:
+        p = check_summary.get('passed', 0)
+        t = check_summary.get('total', 0)
+        display = recommendation  # preserve WAITING_FOR_MERGE distinction
+        detail  = f'CI: {p}/{t} pass. No unresolved comments. Ready for human review.'
+        action  = release_cmd
+    elif actionable_count > 0 and worker_active:
+        labels  = sorted(set(a.get('label', 'bot') for a in actionable))
+        display = 'COMMENTS (worker active)'
+        detail  = f'{", ".join(labels)}: {actionable_count} unresolved comment(s). Worker session alive.'
+        action  = None
+    elif actionable_count > 0 and not worker_active:
+        labels  = sorted(set(a.get('label', 'bot') for a in actionable))
+        display = 'COMMENTS (action needed)'
+        detail  = f'{", ".join(labels)}: {actionable_count} unresolved comment(s). Worker session dead.'
+        action  = f'/farm-pr-complete {pr_num}'
+    elif any_failed and worker_active:
+        display = 'CI FAILED (worker active)'
+        detail  = f'Failed: {", ".join(failed_names)}. Worker session alive.'
+        action  = None
+    elif any_failed and not worker_active:
+        display = 'CI FAILED (action needed)'
+        detail  = f'Failed: {", ".join(failed_names)}. Worker session dead.'
+        action  = None  # manual intervention
     else:
-        p = summary.get('passed', 0)
-        t = summary.get('total', 0)
-        pend = summary.get('pending', 0)
-        detail = f'CI: {p}/{t} pass, {pend} pending.'
-        if not has_actionable:
+        p    = check_summary.get('passed', 0)
+        t    = check_summary.get('total', 0)
+        pend = check_summary.get('pending', 0)
+        display = 'PENDING'
+        detail  = f'CI: {p}/{t} pass, {pend} pending.'
+        if not actionable_count:
             detail += ' No comments yet.'
-        recommendation = 'PENDING'
         action = None
 
     results.append({
-        'pr': pr_num,
-        'slot': slot,
-        'session': session,
-        'session_alive': session_alive,
-        'recommendation': recommendation,
-        'detail': detail,
-        'action': action,
-        'summary': summary,
-        'failed_names': failed_names,
-        'actionable_comments': len(actionable),
-        'pr_state': pr_state,
-        'merged': merged,
+        'pr':             pr_num,
+        'slot':           slot,
+        'recommendation': display,
+        'detail':         detail,
+        'action':         action,
+        'checkSummary':   check_summary,
+        'failedNames':    failed_names,
+        'actionableComments': actionable_count,
+        'prState':        pr_state,
+        'merged':         merged,
+        'workerActive':   worker_active,
     })
 
 # -- Output --
+now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
 if fmt == 'json':
-    out = {'checked_at': checked_at, 'prs': results}
+    out = {'checked_at': now, 'prs': results}
     json.dump(out, sys.stdout, indent=2)
     print()
 else:
@@ -163,13 +173,11 @@ else:
         return f'\033[{code}m{text}\033[0m'
 
     def rec_color(rec):
-        if rec in ('READY', 'MERGED'):
+        if rec in ('READY', 'MERGED', 'WAITING_FOR_MERGE'):
             return c('1;32', rec)
         if rec == 'CLOSED':
             return c('2', rec)
-        if rec == 'MERGE CONFLICT':
-            return c('1;31', rec)
-        if 'action needed' in rec:
+        if 'CONFLICT' in rec or 'action needed' in rec:
             return c('1;31', rec)
         if 'worker active' in rec:
             return c('0;33', rec)
@@ -177,21 +185,20 @@ else:
             return c('0;33', rec)
         return rec
 
-    now = checked_at or datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    print(f'PR Monitor \u2014 {now}')
+    print(f'PR Monitor — {now}')
     print('=' * 64)
 
     for r in results:
         pr_num = r['pr']
-        slot = r['slot']
-        rec = r['recommendation']
+        slot   = r['slot']
+        rec    = r['recommendation']
         detail = r['detail']
         action = r.get('action')
 
         print(f'PR #{pr_num}  [{slot}]  {rec_color(rec)}')
         print(f'  {detail}')
         if action:
-            print(f'  \u2192 {action}')
+            print(f'  → {action}')
         print()
 
     print('=' * 64)

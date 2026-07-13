@@ -7,7 +7,9 @@ import { join as pathJoin, resolve as pathResolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
+  computePRRecommendation,
   DEFAULT_BRANCH,
+  derivePRMergeState,
   isSlotRefreshStaleBranch,
   isTerminalRunStatus,
   type PRForSlotParams,
@@ -433,6 +435,7 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
     mergeConflict,
     reviewDecision: reviewDecision || '',
     recommendation,
+    workerActive: Boolean(workerActive),
     ownedFamily: Boolean(ownedFamilyContext),
     familyId: ownedFamilyContext?.familyId ?? null,
     familyRootTicketOrPr: ownedFamilyContext?.familyRootTicketOrPr ?? null,
@@ -454,72 +457,15 @@ export function derivePRFamilyContext(
   return findFamilyStateSummaryForPR(runs, { prNumber: prNum, project });
 }
 
-export function isPassiveMergeWaitCandidate(params: {
-  prState: 'OPEN' | 'CLOSED' | 'MERGED';
-  familyContext: PRFamilyContext | null;
-  anyFailed: boolean;
-  mergeConflict: boolean;
-  actionableCount: number;
-  allPassed: boolean;
-  approved: boolean;
-}): boolean {
-  return Boolean(
-    params.familyContext &&
-    params.prState === 'OPEN' &&
-    params.familyContext.workflowState === 'complete' &&
-    !params.anyFailed &&
-    !params.mergeConflict &&
-    params.actionableCount === 0 &&
-    params.allPassed &&
-    params.approved,
-  );
-}
-
-export function derivePRMergeState(params: {
-  prState: 'OPEN' | 'CLOSED' | 'MERGED';
-  familyContext: PRFamilyContext | null;
-  anyFailed: boolean;
-  mergeConflict: boolean;
-  actionableCount: number;
-  allPassed: boolean;
-  approved: boolean;
-}): PRStatus['mergeState'] {
-  if (!params.familyContext) return 'not_applicable';
-  if (params.prState === 'MERGED') return 'merged';
-  if (params.prState === 'CLOSED') return 'closed_without_merge';
-  return isPassiveMergeWaitCandidate(params) ? 'waiting_for_merge' : 'not_applicable';
-}
-
-export function computePRRecommendation(params: {
-  prState: 'OPEN' | 'CLOSED' | 'MERGED';
-  workerActive: boolean;
-  anyFailed: boolean;
-  mergeConflict: boolean;
-  actionableCount: number;
-  allPassed: boolean;
-  approved: boolean;
-  familyContext: PRFamilyContext | null;
-}): PRStatus['recommendation'] {
-  if (params.workerActive) return 'WORKING';
-  if (params.prState === 'MERGED') return 'MERGED';
-  if (params.prState === 'CLOSED') return 'CLOSED_WITHOUT_MERGE';
-  if (params.anyFailed || params.mergeConflict || params.actionableCount > 0)
-    return 'NEEDS_ATTENTION';
-  if (
-    isPassiveMergeWaitCandidate({
-      prState: params.prState,
-      familyContext: params.familyContext,
-      anyFailed: params.anyFailed,
-      mergeConflict: params.mergeConflict,
-      actionableCount: params.actionableCount,
-      allPassed: params.allPassed,
-      approved: params.approved,
-    })
-  )
-    return 'WAITING_FOR_MERGE';
-  if (params.allPassed && params.approved && params.actionableCount === 0) return 'READY';
-  return 'IN_REVIEW';
-}
+// isPassiveMergeWaitCandidate, derivePRMergeState, computePRRecommendation
+// moved to @farmslot/protocol (contracts/pr-recommendation.ts); re-exported
+// from there via @farmslot/protocol for backward compatibility with callers
+// that imported them from './pr.js'.
+export {
+  computePRRecommendation,
+  derivePRMergeState,
+  isPassiveMergeWaitCandidate,
+} from '@farmslot/protocol';
 
 export function shouldIncludePRInDashboard(pr: PRStatus): boolean {
   return pr.prState === 'OPEN' || Boolean(pr.ownedFamily);

@@ -6,6 +6,7 @@
 
 import type { Command } from 'commander';
 
+import { parseBugInput, validateBugScore } from '@farmslot/protocol';
 import {
   expandDispatchCmd,
   expandHook,
@@ -19,6 +20,8 @@ import {
   resolveProjectTaskDirName,
   resolveSlot,
   resolveSlotByRepo,
+  runSessionUsage,
+  type SessionAction,
   type SlotVars,
 } from '@farmslot/slot-config';
 
@@ -369,8 +372,103 @@ export function registerInternalCommand(program: Command): void {
         }
       },
     );
+
+  internal
+    .command('session-usage <slotId> <action>')
+    .description('Extract runner session token usage (snapshot / report / total)')
+    .action(async (slotId: string, action: string, _opts: unknown, cmd: Command) => {
+      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
+      const emit = createEmitter(output, cmd);
+      try {
+        const vars = await loadSlotVars(slotId);
+        const result = await runSessionUsage({
+          repo: vars.remoteRepo,
+          slotId,
+          action: action as SessionAction,
+          // RUNNER_SESSION_PATH / RUNNER_SESSION_RUNNER flow through exec from
+          // the thin bash wrapper; treat empty string the same as unset.
+          forcedPath: process.env.RUNNER_SESSION_PATH || undefined,
+          forcedRunner: process.env.RUNNER_SESSION_RUNNER || undefined,
+        });
+        // Raw plumbing output — consumed by scripts and the gateway, never enveloped.
+        process.stdout.write(result);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+  internal
+    .command('parse-bug-input <source>')
+    .description(
+      'Parse a raw gh/Jira API response from stdin into BugInput JSON (source: github | jira)',
+    )
+    .action(async (source: string, _opts: unknown, cmd: Command) => {
+      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
+      const emit = createEmitter(output, cmd);
+      try {
+        if (source !== 'github' && source !== 'jira') {
+          throw Object.assign(new Error(`source must be "github" or "jira", got: "${source}"`), {
+            code: 'USAGE_ERROR',
+            userAction: 'Run `farmslot internal parse-bug-input <github|jira>`.',
+          });
+        }
+        const raw = await readStdin();
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          throw Object.assign(new Error('stdin is not valid JSON'), {
+            code: 'INVALID_JSON',
+            userAction: 'Pipe the raw `gh issue view --json ...` or Jira API response to stdin.',
+          });
+        }
+        const bugInput = parseBugInput(source, parsed);
+        // Raw plumbing output — consumed by triage-bug.sh and download scripts.
+        process.stdout.write(`${JSON.stringify(bugInput, null, 2)}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  internal
+    .command('validate-bug-score')
+    .description(
+      'Validate scorer output JSON (difficulty enum, one_shot_probability ∈ [0,1], required fields); exit 0/1',
+    )
+    .action(async (_opts: unknown, cmd: Command) => {
+      const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
+      const emit = createEmitter(output, cmd);
+      try {
+        const raw = await readStdin();
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          throw Object.assign(new Error('scorer output is not valid JSON'), {
+            code: 'INVALID_JSON',
+            userAction: 'Ensure the scoring script emits valid JSON to stdout.',
+          });
+        }
+        validateBugScore(parsed);
+        // Re-emit validated JSON — matches score-bug.sh contract (pretty-print to stdout).
+        process.stdout.write(`${JSON.stringify(parsed, null, 2)}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
 }
 
 function collectVar(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function readStdin(): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk: string) => {
+      data += chunk;
+    });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('error', reject);
+  });
 }

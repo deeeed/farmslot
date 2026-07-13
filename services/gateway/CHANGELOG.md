@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- refactor: `runtime/session-usage.ts` consumes the ported `@farmslot/slot-config` core directly instead of shelling out to `scripts/session-usage.sh`; `computePRRecommendation` moved to `@farmslot/protocol` (re-imported) with the bash pr-monitor rules folded in — `PRStatus` gains `workerActive` so formatters can derive the worker-active sub-labels.
 - refactor: `core/config.ts` and `core/hooks.ts` moved to the new `@farmslot/slot-config` package (gateway files remain as re-export shims; `SlotConfigError` serializes like `GatewayMethodError` in RPC responses). No behavior change.
 - refactor: dispatch `isCdpLive` now delegates to the shared protocol `isCdpLiveValue` (no behavior change).
 - feat: `backlog.closeShipped` RPC — operator terminal transition to `done` with merged-PR provenance (survives reconcile and persistence round-trips); publication gates detect out-of-band merged PRs and offer a `close-as-shipped` action that links the PR and skips re-publication; PR linkage falls back to `--state all` so merged PRs are discoverable.
