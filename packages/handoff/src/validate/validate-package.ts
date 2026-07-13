@@ -53,10 +53,41 @@ function validateJsonFile(
 
 function checkNonEmptyMarkdown(dir: string, relativePath: string, errors: string[]): void {
   const abs = path.join(dir, relativePath);
-  const content = readFileSync(abs, 'utf8');
+  // The validator is total: an unreadable-but-existing file is a collected
+  // error, never a thrown one.
+  let content: string;
+  try {
+    content = readFileSync(abs, 'utf8');
+  } catch (error) {
+    errors.push(`${relativePath}: unreadable (${(error as Error).message})`);
+    return;
+  }
   if (content.trim() === '') {
     errors.push(`${relativePath}: must not be empty`);
   }
+}
+
+/**
+ * Traversal-safety reason for an untrusted package-relative path from a JSON
+ * file (manifest.files keys, artifacts/index.json paths). The validator itself
+ * must never read outside the package dir it was pointed at.
+ */
+function unsafeRelPathReason(rel: string): string | undefined {
+  if (rel === '' || rel.includes('\\')) return 'empty or contains a backslash';
+  if (path.isAbsolute(rel)) return 'absolute path';
+  for (const segment of rel.split('/')) {
+    if (segment === '' || segment === '.' || segment === '..') {
+      return `unsafe segment '${segment}'`;
+    }
+  }
+  return undefined;
+}
+
+/** Containment-checked join for validator reads; undefined when out of bounds. */
+function containedPath(dir: string, rel: string): string | undefined {
+  const resolved = path.resolve(path.join(dir, rel));
+  const root = path.resolve(dir);
+  return resolved === root || resolved.startsWith(root + path.sep) ? resolved : undefined;
 }
 
 /**
@@ -117,19 +148,69 @@ export function validateLearningPackage(dir: string): ValidateResult {
   // Integrity: every file the manifest inventories must exist with the recorded
   // post-scrub hash. (Unknown EXTRA files stay tolerated here per the
   // forward-compat consumer rule; the write path separately refuses
-  // uninventoried files before sharing.)
+  // uninventoried files before sharing.) Inventory keys are untrusted JSON:
+  // traversal-shaped keys are collected errors and are NEVER read - the
+  // validator itself must not touch anything outside the package dir.
+  const verifiedHashes = new Map<string, string>();
   for (const [rel, record] of Object.entries(manifest?.files ?? {})) {
-    const abs = path.join(dir, rel);
+    const unsafe = unsafeRelPathReason(rel);
+    const abs = unsafe === undefined ? containedPath(dir, rel) : undefined;
+    if (unsafe !== undefined || abs === undefined) {
+      errors.push(
+        `manifest.json/files/${rel}: unsafe inventory key (${unsafe ?? 'escapes the package dir'})`,
+      );
+      continue;
+    }
     if (!existsSync(abs)) {
       errors.push(`manifest.json/files/${rel}: listed in the inventory but missing on disk`);
       continue;
     }
-    const sha256 = createHash('sha256').update(readFileSync(abs)).digest('hex');
+    let sha256: string;
+    try {
+      sha256 = createHash('sha256').update(readFileSync(abs)).digest('hex');
+    } catch (error) {
+      errors.push(
+        `manifest.json/files/${rel}: not a readable regular file (${(error as Error).message})`,
+      );
+      continue;
+    }
+    verifiedHashes.set(rel, sha256);
     if (record.sha256 !== sha256) {
       errors.push(
         `manifest.json/files/${rel}: sha256 mismatch - file changed after assembly ` +
           `(expected ${record.sha256}, found ${sha256})`,
       );
+    }
+  }
+
+  // artifacts/index.json records must correspond to real, inventoried files:
+  // safe path, present in manifest.files, and hash-consistent - fabricated
+  // artifact records must not validate.
+  if (artifactsIndex?.artifacts && manifest?.files) {
+    for (const artifact of artifactsIndex.artifacts) {
+      const unsafe = unsafeRelPathReason(artifact.path);
+      if (unsafe !== undefined) {
+        errors.push(`artifacts/index.json: artifact path '${artifact.path}' is unsafe (${unsafe})`);
+        continue;
+      }
+      const record = manifest.files[artifact.path];
+      if (record === undefined) {
+        errors.push(
+          `artifacts/index.json: artifact '${artifact.path}' is not in the manifest.files inventory`,
+        );
+        continue;
+      }
+      if (artifact.sha256 !== record.sha256) {
+        errors.push(
+          `artifacts/index.json: artifact '${artifact.path}' sha256 disagrees with manifest.files`,
+        );
+      }
+      const onDisk = verifiedHashes.get(artifact.path);
+      if (onDisk !== undefined && artifact.sha256 !== onDisk) {
+        errors.push(
+          `artifacts/index.json: artifact '${artifact.path}' sha256 disagrees with the file on disk`,
+        );
+      }
     }
   }
 

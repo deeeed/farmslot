@@ -4,6 +4,10 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Make the validator itself traversal-safe and total: `manifest.files` inventory keys are untrusted JSON, so path-shaped keys are collected errors and never read (the validator cannot be pointed outside the package dir); directory/unreadable targets and unreadable required markdown are collected errors instead of throws.
+- Cross-check `artifacts/index.json` in the validator: every record needs a safe path, a matching `manifest.files` inventory entry, and hash agreement with both the inventory and the file on disk - fabricated artifact records no longer validate.
+- Post-assembly conformance check: an `ok` assembly proves all eight MUST files were staged; a required document the gate classified unscannable (e.g. binary/NUL content) is a hard teaching-error failure instead of a silent 7-file "pass".
+- Document deliberate detection choices as known limits (README + floor.ts): >=12-word runs block (not only exact mnemonic lengths, a fail-closed trade), cookie-jar detection matches the adjacent-ordered name/value shape, and escape handling covers up to double-stringified JSON per the cooperative model.
 - Floor-gate every caller-provided string that lands in written files: package-relative paths and visual-pass attestation fields are scanned before staging (a secret in a FILENAME or attestation blocks assembly), and the quarantined scrub report is redacted so it never echoes a secret-bearing path.
 - Deepen quarantine redaction: object KEYS are redacted and arrays whose joined string members carry a floor hit (mnemonic-as-word-array, the realistic wallet-fixture form) are redacted wholesale instead of per element.
 - Recognize structured cookie-jar objects ({"name":...,"value":...}, single or in arrays, through the unescape passes) with a token-shaped value requirement so prose-ish name/value data never false-blocks.

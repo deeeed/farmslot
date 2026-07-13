@@ -129,6 +129,11 @@ function unescapeOnce(text: string): string {
 
 /**
  * Detect BIP-39 recovery phrases: runs of >= 12 consecutive wordlist words.
+ * DELIBERATE fail-closed trade: any run of 12+ blocks, not only the exact
+ * 12/15/18/21/24 mnemonic lengths - wallet dumps carry adjacent wordlist words
+ * (labels, prefixes) that would break exact-length matching, while 12+
+ * consecutive BIP-39 words in genuine prose is practically nonexistent (the
+ * clean-prose suite guards the false-positive side).
  * Tokenizing on any non-letter boundary catches common accidental separators —
  * newlines, commas, numbered list prefixes — since natural prose breaks such
  * runs with stopwords long before 12 words. Literal escape sequences (\n, \t,

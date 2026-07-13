@@ -413,3 +413,21 @@ test('the write path can never derive NaN date segments', () => {
   );
   assert.equal(existsSync(path.join(destination, 'packages')), false);
 });
+
+test('a binary (NUL-containing) required document is a hard assembly failure, never ok-with-7-files', () => {
+  const { ctx, input } = scenario();
+  writeFileSync(
+    path.join(input.artifacts.artifactsDir, 'learnings.md'),
+    `# Learnings${String.fromCharCode(0)}binary tail`,
+  );
+  assert.throws(
+    () => assembleLearningPackage(input, ctx),
+    /required file\(s\) missing.*learnings\.md \(unscannable\)/,
+  );
+  // Nothing half-assembled is left claiming ok status.
+  assert.equal(
+    existsSync(path.join(ctx.stagingRoot, input.runRecord.packageId, 'manifest.json')),
+    true,
+    'staging leftovers are local-only and harmless; manifest exists but assemble threw',
+  );
+});

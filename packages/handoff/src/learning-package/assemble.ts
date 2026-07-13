@@ -459,5 +459,23 @@ export function assembleLearningPackage(
   };
   writePackageFile(packageDir, 'manifest.json', stableJson(manifest));
 
+  // Conformance: an ok result means all eight MUST files were staged. A
+  // required document the gate classified unscannable (e.g. binary content)
+  // is a hard assembly failure, never a silent 7-file "pass".
+  const missingRequired = REQUIRED_FILES.filter(
+    (required) => !existsSync(path.join(packageDir, required)),
+  );
+  if (missingRequired.length > 0) {
+    const reasons = new Map(report.omitted.map((o) => [o.path, o.reason]));
+    const detail = missingRequired
+      .map((file) => `${file}${reasons.has(file) ? ` (${reasons.get(file)})` : ''}`)
+      .join(', ');
+    throw new Error(
+      `assembleLearningPackage: required file(s) missing from the staged package: ${detail}. ` +
+        'Next: required documents must be readable UTF-8 text - fix the source files and ' +
+        're-assemble; a package without its MUST files is never valid.',
+    );
+  }
+
   return { status: 'ok', packageDir, manifest, scrubReport: report };
 }

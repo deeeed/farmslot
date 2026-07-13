@@ -39,6 +39,18 @@ producer instruction and the human gate, not the regex.
 The scrubber reduces surface area between those two controls. It does not attempt
 to defeat adversarial obfuscation.
 
+Deliberate detection choices and known limits:
+
+- Recovery-phrase detection blocks ANY run of 12+ consecutive wordlist words,
+  not only exact mnemonic lengths — a fail-closed trade (wallet dumps carry
+  adjacent wordlist words; 12+ in genuine prose is practically nonexistent).
+- Structured cookie-jar detection matches the common `{"name":...,"value":...}`
+  adjacent-ordered shape; reordered or intervening-field variants are a known,
+  accepted limit of the heuristic backstop.
+- JSON-escape handling covers up to double-stringified content; deeper nesting,
+  non-JSON serializations, and homoglyph tricks are out of the cooperative
+  model's scope.
+
 ## Install
 
 ```bash
