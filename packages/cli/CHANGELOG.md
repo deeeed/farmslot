@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat: `farmslot fleet find-slot --project <name> [--prefer-cdp]` / `--slot <id>` — TypeScript port of the `scripts/find-slot.sh` decision core (selection scoring + per-slot blocker reasons), envelope-emitting with a teaching `NO_SLOT_AVAILABLE` error.
 - feat: `farmslot tui` — interactive Ink operator TUI over one authenticated gateway connection: fleet (stale banner, ghost suppression), backlog (dispatch / close-shipped), runs (gate resolution), recovery diagnosis, and live `slot prepare` progress; refreshes from `fleet.updated`/`backlog.updated`/`run.updated` events. Machine mode (`--json`/non-TTY) refuses with a teaching `TUI_REQUIRES_TTY` error. Architecture in ADR-050.
 - feat: backlog operator loop — `farmslot backlog list|get|create|update|enqueue|dispatch|close-shipped` and `farmslot run list|get|gate|cancel|archive`, all envelope-emitting and RPC-only.
 - feat: machine envelope — `fleet`, `slot`, `run`, `runs`, `dispatch`, and `doctor` emit `{schemaVersion, command, status, exitCode, data|error}` under `--json` or non-TTY stdout; error envelopes always carry `userAction`; documented at `docs/reference/cli-machine-envelope.md`.

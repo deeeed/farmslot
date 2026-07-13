@@ -51,6 +51,7 @@
     "quality:imports": "node scripts/quality/check-import-boundaries.mjs",
     "quality:workspaces": "node scripts/quality/run-workspace-quality.mjs",
     "quality:changelogs": "node scripts/quality/check-workspace-changelogs.mjs",
+    "quality:method-matrix": "node scripts/quality/check-method-matrix.mjs",
     "quality:changelogs:pr": "node scripts/quality/check-workspace-changelogs.mjs --pr-diff",
     "release:status": "node scripts/release/release-status.mjs",
     "release:cut": "node scripts/release/cut-release.mjs",
