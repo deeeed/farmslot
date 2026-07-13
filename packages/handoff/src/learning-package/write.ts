@@ -5,6 +5,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -14,6 +15,7 @@ import {
   truncateSync,
   writeSync,
 } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { normalizeTicket } from '../spec/task-key.js';
@@ -357,6 +359,7 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
   // FILE carrying a `gitdir:` pointer, and worktrees are valid destinations.
   const lockPath = path.join(resolveGitDir(options.destination), 'farmslot-handoff.lock');
   const lockFd = acquireWriteLock(lockPath, options.destination);
+  let stagingDir: string | undefined;
   try {
     // A clean tree means a failed write can be rolled back precisely and the
     // resulting commit contains exactly this package.
@@ -392,6 +395,30 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
       return { indexFile, abs, priorBytes: existsSync(abs) ? statSync(abs).size : -1 };
     });
 
+    // TOCTOU-safe snapshot: copy the inventoried files into a PRIVATE staging
+    // dir, validate THAT exact snapshot, and publish only from it. The source
+    // package dir is never read again after this copy, so a concurrent mutation
+    // of the source between validation and publish cannot commit unverified
+    // bytes - the destination only ever receives validated-staging bytes.
+    stagingDir = mkdtempSync(path.join(os.tmpdir(), 'handoff-write-snapshot-'));
+    for (const rel of ['manifest.json', ...Object.keys(manifest.files)]) {
+      const src = path.join(options.packageDir, rel);
+      const dest = assertContained(stagingDir, path.join(stagingDir, rel), `snapshot ${rel}`);
+      mkdirSync(path.dirname(dest), { recursive: true });
+      copyFileSync(src, dest);
+    }
+    const snapshotValidation = validateLearningPackage(stagingDir);
+    if (!snapshotValidation.valid) {
+      throw new Error(
+        `writeLearningPackage: the package snapshot failed validation - the source at ` +
+          `${options.packageDir} changed between validation and copy (TOCTOU):\n` +
+          `${snapshotValidation.errors.map((e) => `  - ${e}`).join('\n')}\n` +
+          'Next: re-assemble with assembleLearningPackage and do not mutate the package ' +
+          'dir while a write is in progress.',
+      );
+    }
+    const snapshotDir = stagingDir;
+
     // Remove now-empty ancestor dirs the failed write created, up to the repo root.
     const removeEmptyParents = (from: string): void => {
       const stop = path.resolve(options.destination);
@@ -423,10 +450,10 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
 
     let commitSha: string;
     try {
-      // Copy strictly the inventoried files (plus the manifest that carries the
-      // inventory) - never a blind tree copy, so only verified bytes are shared.
+      // Publish from the validated SNAPSHOT, never the source - the bytes
+      // committed are exactly the bytes that just passed validation.
       for (const rel of ['manifest.json', ...Object.keys(manifest.files)]) {
-        const src = path.join(options.packageDir, rel);
+        const src = path.join(snapshotDir, rel);
         const dest = assertContained(destPackageDir, path.join(destPackageDir, rel), `copy ${rel}`);
         mkdirSync(path.dirname(dest), { recursive: true });
         copyFileSync(src, dest);
@@ -494,6 +521,7 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
       ...(pushError !== undefined ? { pushError } : {}),
     };
   } finally {
+    if (stagingDir !== undefined) rmSync(stagingDir, { recursive: true, force: true });
     closeSync(lockFd);
     rmSync(lockPath, { force: true });
   }

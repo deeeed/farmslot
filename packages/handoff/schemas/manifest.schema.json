@@ -36,11 +36,13 @@
     "surface": {
       "type": "string",
       "examples": ["fleet", "skill"],
-      "description": "Producer surface. Open vocabulary; consumers preserve unknown values."
+      "description": "Producer surface. Open vocabulary; consumers preserve unknown values. Safe-segment shape (writer additionally enforces path containment): no separators, no '..', no leading dot.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
     "project": {
       "type": "string",
-      "description": "Project/repo key, e.g. my-project-farm."
+      "description": "Project/repo key, e.g. my-project-farm. Safe-segment shape (writer additionally enforces path containment): no separators, no '..', no leading dot.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
     "repo": {
       "type": "string",
@@ -48,11 +50,13 @@
     },
     "domain": {
       "type": "string",
-      "description": "Domain/team tier key. Empty string if none."
+      "description": "Domain/team tier key. Empty string if none. Safe-segment shape or empty (writer additionally enforces path containment): no separators, no '..', no leading dot.",
+      "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*)?$"
     },
     "engineer": {
       "type": "string",
-      "description": "Stable engineer key chosen by the producer. SHOULD be a pseudonymous handle-free identifier (see spec section 3.2 PII floor). Keys the by-engineer index."
+      "description": "Stable engineer key chosen by the producer. SHOULD be a pseudonymous handle-free identifier (see spec section 3.2 PII floor). Keys the by-engineer index. Safe-segment shape (writer additionally enforces path containment): no separators, no '..', no leading dot.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
     "run": {
       "type": "object",
@@ -69,7 +73,8 @@
         },
         "flow": {
           "type": "string",
-          "description": "e.g. dev, fix-bug, review."
+          "description": "e.g. dev, fix-bug, review. Safe-segment shape (writer additionally enforces path containment): no separators, no '..', no leading dot.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
         },
         "outcome": {
           "type": "string",

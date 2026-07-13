@@ -22,9 +22,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const [, , tomlPath, commitSha] = process.argv;
+const [, , tomlPath, commitSha, outArg] = process.argv;
 if (!tomlPath || !commitSha) {
-  console.error('usage: generate-gitleaks-rules.mjs <gitleaks.toml> <commit-sha>');
+  console.error('usage: generate-gitleaks-rules.mjs <gitleaks.toml> <commit-sha> [out-path]');
   process.exit(2);
 }
 
@@ -166,15 +166,31 @@ ${kept
 ];
 `;
 
-const outPath = fileURLToPath(new URL('../src/scrub/data/gitleaks-rules.ts', import.meta.url));
+const outPath = outArg
+  ? outArg
+  : fileURLToPath(new URL('../src/scrub/data/gitleaks-rules.ts', import.meta.url));
 writeFileSync(outPath, header);
 
 // Format the generated file so regeneration stays prettier-clean and
-// reproducible (matches the bip39 data file convention).
-execFileSync('npx', ['prettier', '--write', '--ignore-path', '../../.prettierignore', outPath], {
-  cwd: fileURLToPath(new URL('..', import.meta.url)),
-  stdio: 'ignore',
-});
+// reproducible (matches the bip39 data file convention). The config is pinned
+// explicitly so the output is byte-identical regardless of where `outPath`
+// lives - prettier would otherwise resolve config by walking up from the file,
+// giving a different result for an out-of-tree path (e.g. the repro test's
+// temp file).
+const pkgRoot = fileURLToPath(new URL('..', import.meta.url));
+execFileSync(
+  'npx',
+  [
+    'prettier',
+    '--write',
+    '--config',
+    '../../.prettierrc.json',
+    '--ignore-path',
+    '../../.prettierignore',
+    outPath,
+  ],
+  { cwd: pkgRoot, stdio: 'ignore' },
+);
 
 console.log(`ported ${kept.length} rules, dropped ${dropped.length}`);
 for (const d of dropped) console.log(`  drop ${d.id}: ${d.reason}`);

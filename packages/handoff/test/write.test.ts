@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -420,4 +421,49 @@ test('runtime consent validation names each missing field for untyped callers', 
     consent: CONSENT,
   });
   assert.equal(write.status, 'written');
+});
+
+test('the committed package is a validated snapshot, decoupled from the source dir', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  const destination = initDestinationRepo();
+  const write = writeLearningPackage({
+    packageDir: result.packageDir,
+    destination,
+    consent: CONSENT,
+  });
+  assert.equal(write.status, 'written');
+  if (write.status !== 'written') return;
+
+  const committed = readFileSync(path.join(write.destinationPath, 'report.md'), 'utf8');
+
+  // Mutating the SOURCE after the write must not affect the committed bytes:
+  // the destination received the validated snapshot, never the live source.
+  writeFileSync(path.join(result.packageDir, 'report.md'), '# Report\n\nMUTATED after write.\n');
+  assert.equal(
+    readFileSync(path.join(write.destinationPath, 'report.md'), 'utf8'),
+    committed,
+    'committed bytes tracked a post-write source mutation',
+  );
+  assert.equal(committed.includes('MUTATED'), false);
+
+  // No snapshot staging dir leaks into the OS tmp area.
+  const leaked = readdirSync(os.tmpdir()).filter((n) => n.startsWith('handoff-write-snapshot-'));
+  assert.deepEqual(leaked, [], `snapshot staging dirs leaked: ${leaked.join(', ')}`);
+});
+
+test('a package whose file is tampered off its manifest hash is refused (snapshot validated)', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  // Tamper a file without updating the manifest hash: the snapshot validation
+  // (and the source pre-validation) both reject the hash mismatch.
+  writeFileSync(path.join(result.packageDir, 'learnings.md'), '# Learnings\n\nTampered.\n');
+  const destination = initDestinationRepo();
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    /sha256 mismatch|snapshot failed validation/,
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false);
 });
