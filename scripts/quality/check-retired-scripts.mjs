@@ -33,22 +33,27 @@ for (const name of RETIRED) {
   if (existsSync(resolve(repoRoot, 'scripts', name))) {
     problems.push(`retired script still exists: scripts/${name}`);
   }
-  // Match only path-shaped references (…/name) — invocations are always
-  // path-qualified; bare-name provenance comments are historical narration.
+  // Bare-name search; prose/comment lines are tolerated, anything that looks
+  // like an invocation or path reference is flagged.
   let hits = '';
   try {
-    hits = execFileSync('git', ['grep', '-nF', '--', `/${name}`], {
+    hits = execFileSync('git', ['grep', '-nF', '--', name], {
       cwd: repoRoot,
       encoding: 'utf8',
     });
-  } catch {
-    // git grep exits 1 when there are no matches — that is the desired state.
-    continue;
+  } catch (err) {
+    // git grep exits 1 for "no matches" — the desired state. Anything else
+    // (bad repo, tool failure) must fail the guard, not fake a pass.
+    if (err && err.status === 1) continue;
+    throw err;
   }
   for (const line of hits.split('\n')) {
     if (!line.trim()) continue;
-    const file = line.split(':', 1)[0];
+    const [file, , ...rest] = line.split(':');
     if (HISTORICAL.some((pattern) => pattern.test(file))) continue;
+    const text = rest.join(':').trim();
+    // Comment / prose mentions are historical narration.
+    if (/^(#|\/\/|\*|<!--|- )/.test(text)) continue;
     problems.push(`live reference to retired ${name}: ${line}`);
   }
 }

@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
         shift
       done
       ;;
-    --since) PASS_THROUGH_ARGS+=("--since" "$2"); shift 2 ;;
+    --since) shift 2 ;; # accepted for backward compat; the CLI list has no since filter
     -h|--help)
       echo "Usage: pr-monitor.sh [--pr <N>...] [--since <ISO>] [--json|--human]"
       exit 0 ;;
@@ -46,20 +46,22 @@ if [ -z "$FORMAT" ]; then
 fi
 
 # -- Fetch PR data via the CLI (pr-status.sh retired) -----------------------
-EXPLICIT_PR=""
-_prev=""
+EXPLICIT_PRS=()
+_collect=false
 for _arg in "${PASS_THROUGH_ARGS[@]+"${PASS_THROUGH_ARGS[@]}"}"; do
-  if [ "$_prev" = "--pr" ]; then EXPLICIT_PR="$_arg"; fi
-  _prev="$_arg"
+  case "$_arg" in
+    --pr) _collect=true ;;
+    --*)  _collect=false ;;
+    *)    [ "$_collect" = true ] && EXPLICIT_PRS+=("$_arg") ;;
+  esac
 done
-if [ -n "$EXPLICIT_PR" ]; then
-  PR_JSON=$("$FARMSLOT_CLI" --json pr status "$EXPLICIT_PR" 2>/dev/null)
-else
-  PR_JSON=$("$FARMSLOT_CLI" --json pr list 2>/dev/null)
-fi
+# Always fetch the full list; requested PR numbers are filtered in python.
+# (`farmslot pr status <N>` needs --project, which this wrapper never had.)
+PR_JSON=$("$FARMSLOT_CLI" --json pr list 2>/dev/null)
+EXPLICIT_PR_FILTER="${EXPLICIT_PRS[*]+"${EXPLICIT_PRS[*]}"}"
 
 # -- Format output from gateway PRStatus JSON --------------------------------
-_PR_JSON="$PR_JSON" _FORMAT="$FORMAT" _SCRIPT_DIR="$SCRIPT_DIR" python3 << 'PYEOF'
+_PR_JSON="$PR_JSON" _FORMAT="$FORMAT" _SCRIPT_DIR="$SCRIPT_DIR" _PR_FILTER="${EXPLICIT_PR_FILTER:-}" python3 << 'PYEOF'
 import json, os, sys
 from datetime import datetime, timezone
 
@@ -70,10 +72,12 @@ script_dir = os.environ['_SCRIPT_DIR']
 data = json.loads(pr_json)
 # Unwrap the CLI machine envelope ({schemaVersion, ..., data: {...}}) when present.
 data = data.get('data') or data
-
-# farmslot pr list → { "prs": [...] }
-# farmslot pr status N → { "pr": {...} }
 prs_raw = data.get('prs') or ([data['pr']] if 'pr' in data else [])
+
+# --pr filtering happens here: keep only the requested PR numbers.
+pr_filter = {int(n) for n in os.environ.get('_PR_FILTER', '').split() if n.isdigit()}
+if pr_filter:
+    prs_raw = [p for p in prs_raw if p.get('pr') in pr_filter]
 
 if not prs_raw:
     if fmt == 'json':
