@@ -1,15 +1,18 @@
 import { execFileSync } from 'node:child_process';
 import {
   appendFileSync,
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmdirSync,
   rmSync,
   statSync,
   truncateSync,
+  writeSync,
 } from 'node:fs';
 import path from 'node:path';
 
@@ -191,6 +194,34 @@ function indexFilesFor(manifest: Manifest): string[] {
 }
 
 /**
+ * Serialize destination writes: concurrent approved writers would race the
+ * clean-tree check, the index appends, and the commit - and one writer's
+ * rollback could truncate another's freshly appended rows. The lock file is
+ * exclusive-create in the destination's .git dir and held across
+ * check -> copy -> append -> commit (and any rollback).
+ */
+function acquireWriteLock(lockPath: string, destination: string): number {
+  try {
+    const fd = openSync(lockPath, 'wx');
+    writeSync(fd, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`);
+    return fd;
+  } catch {
+    let holder = '';
+    try {
+      holder = readFileSync(lockPath, 'utf8').trim();
+    } catch {
+      holder = '';
+    }
+    throw new Error(
+      `writeLearningPackage: another write to ${destination} is in progress` +
+        (holder !== '' ? ` (lock holder: ${holder})` : '') +
+        `. Next: wait for it to finish and retry; if that process is gone (stale lock), ` +
+        `remove ${lockPath} and retry.`,
+    );
+  }
+}
+
+/**
  * Write one assembled learning package to the learnings repo (spec section 5 of
  * the API design): append-only package copy + one JSONL row per index file,
  * committed to git. Never rewrites an existing package or index line.
@@ -282,139 +313,147 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
     );
   }
 
-  // A clean tree means a failed write can be rolled back precisely and the
-  // resulting commit contains exactly this package.
-  if (git(options.destination, ['status', '--porcelain']) !== '') {
-    throw new Error(
-      `writeLearningPackage: destination ${options.destination} has uncommitted changes. ` +
-        'Next: commit or stash them first - the writer needs a clean tree so a failed ' +
-        'write can be rolled back without touching unrelated work.',
-    );
-  }
-
-  const destPackageDir = assertContained(
-    options.destination,
-    path.join(options.destination, packagePath),
-    'package destination',
-  );
-  if (existsSync(destPackageDir)) {
-    throw new Error(
-      `writeLearningPackage: ${packagePath} already exists in the destination - the ` +
-        'learnings repo is append-only and packages are never rewritten. Next: a re-run ' +
-        'of the same work is a NEW package (new run-slug); re-assemble instead of re-writing.',
-    );
-  }
-
-  // Record index-file sizes so a mid-write failure can truncate the appends
-  // back out (best-effort rollback; the clean-tree precondition makes it exact).
-  const indexFiles = indexFilesFor(manifest).map((indexFile) => {
-    const abs = assertContained(
-      options.destination,
-      path.join(options.destination, indexFile),
-      `index file ${indexFile}`,
-    );
-    return { indexFile, abs, priorBytes: existsSync(abs) ? statSync(abs).size : -1 };
-  });
-
-  // Remove now-empty ancestor dirs the failed write created, up to the repo root.
-  const removeEmptyParents = (from: string): void => {
-    const stop = path.resolve(options.destination);
-    let current = path.dirname(path.resolve(from));
-    while (current !== stop) {
-      try {
-        rmdirSync(current); // throws when non-empty or missing - both mean stop
-      } catch {
-        break;
-      }
-      current = path.dirname(current);
-    }
-  };
-
-  const rollback = (): void => {
-    rmSync(destPackageDir, { recursive: true, force: true });
-    removeEmptyParents(destPackageDir);
-    for (const { abs, priorBytes } of indexFiles) {
-      if (priorBytes === -1) {
-        // An index file that never came to exist (e.g. its mkdir failed) needs
-        // no removal - existsSync also shields rm from unreachable paths.
-        if (existsSync(abs)) rmSync(abs, { force: true });
-        removeEmptyParents(abs);
-      } else if (existsSync(abs)) {
-        truncateSync(abs, priorBytes);
-      }
-    }
-  };
-
-  let commitSha: string;
+  // Exclusive destination lock for the whole check->copy->append->commit span.
+  const lockPath = path.join(options.destination, '.git', 'farmslot-handoff.lock');
+  const lockFd = acquireWriteLock(lockPath, options.destination);
   try {
-    // Copy strictly the inventoried files (plus the manifest that carries the
-    // inventory) - never a blind tree copy, so only verified bytes are shared.
-    for (const rel of ['manifest.json', ...Object.keys(manifest.files)]) {
-      const src = path.join(options.packageDir, rel);
-      const dest = assertContained(destPackageDir, path.join(destPackageDir, rel), `copy ${rel}`);
-      mkdirSync(path.dirname(dest), { recursive: true });
-      copyFileSync(src, dest);
-    }
-
-    const line = `${JSON.stringify(row)}\n`;
-    const touched = [packagePath];
-    for (const { indexFile, abs } of indexFiles) {
-      mkdirSync(path.dirname(abs), { recursive: true });
-      appendFileSync(abs, line);
-      touched.push(indexFile);
-    }
-
-    git(options.destination, ['add', '--', ...touched]);
-    // Destination-repo hooks run and may reject the commit; that surfaces as a
-    // rolled-back failure below rather than being bypassed.
-    git(options.destination, [
-      'commit',
-      '-m',
-      `chore(learnings): add package ${manifest.packageId}`,
-    ]);
-    commitSha = git(options.destination, ['rev-parse', 'HEAD']);
-  } catch (error) {
-    try {
-      rollback();
-      git(options.destination, ['reset', '-q']);
-    } catch (rollbackError) {
-      // Never claim a clean rollback that did not happen: restoration stopped
-      // midway, so the destination may hold partial state.
+    // A clean tree means a failed write can be rolled back precisely and the
+    // resulting commit contains exactly this package.
+    if (git(options.destination, ['status', '--porcelain']) !== '') {
       throw new Error(
-        `writeLearningPackage: write to ${options.destination} failed ` +
-          `(${(error as Error).message}) AND rollback could not fully restore it ` +
-          `(${(rollbackError as Error).message}). Partial state may remain under ` +
-          `${packagePath} and indexes/. Next: run \`git -C ${options.destination} status\`, ` +
-          'remove the leftover package dir, restore index files with ' +
-          '`git checkout -- indexes`, then retry.',
+        `writeLearningPackage: destination ${options.destination} has uncommitted changes. ` +
+          'Next: commit or stash them first - the writer needs a clean tree so a failed ' +
+          'write can be rolled back without touching unrelated work.',
       );
     }
-    throw new Error(
-      `writeLearningPackage: write to ${options.destination} failed and was rolled back ` +
-        `(${(error as Error).message}). Next: check destination permissions/hooks and git ` +
-        'state, then retry - the local package dir is untouched and re-writable.',
+
+    const destPackageDir = assertContained(
+      options.destination,
+      path.join(options.destination, packagePath),
+      'package destination',
     );
-  }
-
-  let pushed = false;
-  let pushError: string | undefined;
-  if (git(options.destination, ['remote']) !== '') {
-    try {
-      git(options.destination, ['push']);
-      pushed = true;
-    } catch (error) {
-      // Push failure is non-fatal: the commit is local and retriable. The share
-      // itself succeeded append-only; the caller may sync later. The reason is
-      // surfaced so callers never mistake a failed push for a missing remote.
-      pushError = (error as Error).message;
+    if (existsSync(destPackageDir)) {
+      throw new Error(
+        `writeLearningPackage: ${packagePath} already exists in the destination - the ` +
+          'learnings repo is append-only and packages are never rewritten. Next: a re-run ' +
+          'of the same work is a NEW package (new run-slug); re-assemble instead of re-writing.',
+      );
     }
-  }
 
-  return {
-    status: 'written',
-    destinationPath: destPackageDir,
-    commitSha,
-    pushed,
-    ...(pushError !== undefined ? { pushError } : {}),
-  };
+    // Record index-file sizes so a mid-write failure can truncate the appends
+    // back out (best-effort rollback; the clean-tree precondition makes it exact).
+    const indexFiles = indexFilesFor(manifest).map((indexFile) => {
+      const abs = assertContained(
+        options.destination,
+        path.join(options.destination, indexFile),
+        `index file ${indexFile}`,
+      );
+      return { indexFile, abs, priorBytes: existsSync(abs) ? statSync(abs).size : -1 };
+    });
+
+    // Remove now-empty ancestor dirs the failed write created, up to the repo root.
+    const removeEmptyParents = (from: string): void => {
+      const stop = path.resolve(options.destination);
+      let current = path.dirname(path.resolve(from));
+      while (current !== stop) {
+        try {
+          rmdirSync(current); // throws when non-empty or missing - both mean stop
+        } catch {
+          break;
+        }
+        current = path.dirname(current);
+      }
+    };
+
+    const rollback = (): void => {
+      rmSync(destPackageDir, { recursive: true, force: true });
+      removeEmptyParents(destPackageDir);
+      for (const { abs, priorBytes } of indexFiles) {
+        if (priorBytes === -1) {
+          // An index file that never came to exist (e.g. its mkdir failed) needs
+          // no removal - existsSync also shields rm from unreachable paths.
+          if (existsSync(abs)) rmSync(abs, { force: true });
+          removeEmptyParents(abs);
+        } else if (existsSync(abs)) {
+          truncateSync(abs, priorBytes);
+        }
+      }
+    };
+
+    let commitSha: string;
+    try {
+      // Copy strictly the inventoried files (plus the manifest that carries the
+      // inventory) - never a blind tree copy, so only verified bytes are shared.
+      for (const rel of ['manifest.json', ...Object.keys(manifest.files)]) {
+        const src = path.join(options.packageDir, rel);
+        const dest = assertContained(destPackageDir, path.join(destPackageDir, rel), `copy ${rel}`);
+        mkdirSync(path.dirname(dest), { recursive: true });
+        copyFileSync(src, dest);
+      }
+
+      const line = `${JSON.stringify(row)}\n`;
+      const touched = [packagePath];
+      for (const { indexFile, abs } of indexFiles) {
+        mkdirSync(path.dirname(abs), { recursive: true });
+        appendFileSync(abs, line);
+        touched.push(indexFile);
+      }
+
+      git(options.destination, ['add', '--', ...touched]);
+      // Destination-repo hooks run and may reject the commit; that surfaces as a
+      // rolled-back failure below rather than being bypassed.
+      git(options.destination, [
+        'commit',
+        '-m',
+        `chore(learnings): add package ${manifest.packageId}`,
+      ]);
+      commitSha = git(options.destination, ['rev-parse', 'HEAD']);
+    } catch (error) {
+      try {
+        rollback();
+        git(options.destination, ['reset', '-q']);
+      } catch (rollbackError) {
+        // Never claim a clean rollback that did not happen: restoration stopped
+        // midway, so the destination may hold partial state.
+        throw new Error(
+          `writeLearningPackage: write to ${options.destination} failed ` +
+            `(${(error as Error).message}) AND rollback could not fully restore it ` +
+            `(${(rollbackError as Error).message}). Partial state may remain under ` +
+            `${packagePath} and indexes/. Next: run \`git -C ${options.destination} status\`, ` +
+            'remove the leftover package dir, restore index files with ' +
+            '`git checkout -- indexes`, then retry.',
+        );
+      }
+      throw new Error(
+        `writeLearningPackage: write to ${options.destination} failed and was rolled back ` +
+          `(${(error as Error).message}). Next: check destination permissions/hooks and git ` +
+          'state, then retry - the local package dir is untouched and re-writable.',
+      );
+    }
+
+    let pushed = false;
+    let pushError: string | undefined;
+    if (git(options.destination, ['remote']) !== '') {
+      try {
+        git(options.destination, ['push']);
+        pushed = true;
+      } catch (error) {
+        // Push failure is non-fatal: the commit is local and retriable. The share
+        // itself succeeded append-only; the caller may sync later. The reason is
+        // surfaced so callers never mistake a failed push for a missing remote.
+        pushError = (error as Error).message;
+      }
+    }
+
+    return {
+      status: 'written',
+      destinationPath: destPackageDir,
+      commitSha,
+      pushed,
+      ...(pushError !== undefined ? { pushError } : {}),
+    };
+  } finally {
+    closeSync(lockFd);
+    rmSync(lockPath, { force: true });
+  }
 }

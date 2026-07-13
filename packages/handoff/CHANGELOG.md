@@ -4,6 +4,9 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Detect column-aligned and multiline labeled assignments: the labeled-value separator is now an actual assignment operator with UNBOUNDED quote/backslash/whitespace decoration on both sides (private_key/authorization-bearer/access-refresh/session-token patterns), so aligned config/env dumps match while prose stays clean (the operator requirement tightened the false-positive guard).
+- Rescan the quarantine wholesale fallback's preserved fixed fields: schema-valid segments can still compose a phrase across values (hyphenated wordlist segments in taskKey/surface/project/domain/engineer), so a residual hit now degrades the audit manifest to fully generic placeholders - only timestamps and closed enums remain.
+- Serialize destination writes with an exclusive lock file in the destination's .git dir, held across check -> copy -> append -> commit (and any rollback); a held lock refuses with a stale-lock teaching escape, and the lock is released on success and failure alike.
 - Complete date-time validation with RFC 3339 offset semantics: impossible offsets (+99:99, +24:00) now fail validation alongside impossible calendar dates; real offsets (+09:00, -05:30, Z) pass.
 - Sanitize the blocked scrub report ONCE and share the object: the quarantine file on disk and the returned `AssembleResult.scrubReport` are the same sanitized report, so a caller logging or persisting the in-memory result can never see the raw secret either.
 - Extend the joined-value backstop to the quarantine SCRUB REPORT: string values are joined overall AND per same-field column (blocked/redactions files, omitted paths, attestation files/attestedBy), so a mnemonic split across sibling records is wholesale-redacted from the audit trail - the blocked-output barrier holds on every quarantine file.

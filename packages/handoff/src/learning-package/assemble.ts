@@ -291,6 +291,32 @@ function writeQuarantine(
       },
       task: { title: '[REDACTED:residual-secret]', sourceKind: safeBase.task.sourceKind },
     };
+    // The preserved fixed fields are rescanned too: schema-valid segments can
+    // still compose a phrase across values (hyphenated wordlist segments in
+    // surface/project/domain/engineer/flow/taskKey). On a residual hit the
+    // audit manifest goes fully generic - only timestamps and closed enums
+    // remain, which cannot compose a word run.
+    const fallbackJoined = collectStringValues(safeBase).join(' ');
+    if (
+      scanForFloorSecrets(stableJson(safeBase), input.scrub?.extraDenyPatterns).length > 0 ||
+      scanForFloorSecrets(fallbackJoined, input.scrub?.extraDenyPatterns).length > 0
+    ) {
+      safeBase = {
+        schemaVersion: safeBase.schemaVersion,
+        packageId: `redacted-${createHash('sha256').update(base.packageId).digest('hex').slice(0, 8)}`,
+        taskKey: '[REDACTED:residual-secret]',
+        surface: '[REDACTED]',
+        project: '[REDACTED]',
+        domain: '[REDACTED]',
+        engineer: '[REDACTED]',
+        run: {
+          startedAt: safeBase.run.startedAt,
+          flow: '[REDACTED]',
+          outcome: safeBase.run.outcome,
+        },
+        task: { title: '[REDACTED:residual-secret]', sourceKind: safeBase.task.sourceKind },
+      };
+    }
   }
   const manifest: Manifest = {
     ...safeBase,

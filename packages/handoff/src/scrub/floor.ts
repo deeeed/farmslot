@@ -41,12 +41,15 @@ function fingerprint(match: string): string {
  */
 const FLOOR_PATTERNS: FloorPattern[] = [
   { kind: 'private-key', pattern: /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/g },
-  // Separator class includes backslash and stretches to 8 so labeled values
-  // inside JSON-stringified blobs (\":\" and \\\":\\\" separators) still match.
+  // Labeled-value separator: an actual assignment operator (: = >) with
+  // UNBOUNDED quote/backslash/whitespace decoration on both sides - covers
+  // JSON-stringified blobs (\":\") and column-aligned config/env dumps
+  // (`private_key         = ...`) alike, while the required operator keeps
+  // plain prose ("the private key was rotated") from matching.
   {
     kind: 'private-key',
     pattern:
-      /(?:private[_\s-]?key|privkey|secret[_\s-]?key)["'\s:=>\\]{1,8}(?:0x)?[0-9a-fA-F]{64}\b/gi,
+      /(?:private[_\s-]?key|privkey|secret[_\s-]?key)["'\s\\]*[:=>]+["'\s\\]*(?:0x)?[0-9a-fA-F]{64}\b/gi,
   },
   {
     kind: 'jwt',
@@ -65,17 +68,17 @@ const FLOOR_PATTERNS: FloorPattern[] = [
   // Authorization headers and OAuth token assignments with a value-shaped token.
   {
     kind: 'oauth-token',
-    pattern: /\bauthorization["'\s:=>\\]{1,8}bearer\s+[A-Za-z0-9._~+/=-]{16,}/gi,
+    pattern: /\bauthorization["'\s\\]*[:=>]+["'\s\\]*bearer\s+[A-Za-z0-9._~+/=-]{16,}/gi,
   },
   {
     kind: 'oauth-token',
-    pattern: /\b(?:access|refresh)[_-]?token["'\s:=>\\]{1,8}[A-Za-z0-9._~+/-]{20,}\b/gi,
+    pattern: /\b(?:access|refresh)[_-]?token["'\s\\]*[:=>]+["'\s\\]*[A-Za-z0-9._~+/-]{20,}\b/gi,
   },
   // Session/auth-token assignments with a value-shaped token on the right.
   {
     kind: 'session-token',
     pattern:
-      /\b(?:session[_-]?(?:id|token)|auth[_-]?token)["'\s:=>\\]{1,8}[A-Za-z0-9+/_.-]{16,}\b/gi,
+      /\b(?:session[_-]?(?:id|token)|auth[_-]?token)["'\s\\]*[:=>]+["'\s\\]*[A-Za-z0-9+/_.-]{16,}\b/gi,
   },
 ];
 

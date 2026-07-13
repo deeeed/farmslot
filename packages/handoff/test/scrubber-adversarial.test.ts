@@ -320,3 +320,25 @@ test('quoted cookie values are floor hits (raw and JSON-escaped)', () => {
   // Short benign quoted values stay clean.
   assert.equal(scanForFloorSecrets('Cookie: theme="light"').length, 0);
 });
+
+test('column-aligned and multiline labeled assignments are floor hits', () => {
+  const key = '4c0883a69102937d6231471b5dbb6204fe512961708279e1ba1cf8f3e2c9d1a7';
+  const cases: [string, string, string][] = [
+    ['aligned private_key', 'private-key', `private_key         = 0x${key}`],
+    [
+      'aligned Authorization',
+      'oauth-token',
+      `Authorization         : Bearer ${'a1B2c3D4'.repeat(4)}`,
+    ],
+    ['aligned session_token', 'session-token', `session_token         = ${'9f8e7d6c'.repeat(4)}`],
+    ['multiline private_key', 'private-key', `private_key\n          = 0x${key}`],
+  ];
+  for (const [label, kind, text] of cases) {
+    assert.ok(
+      scanForFloorSecrets(text).some((h) => h.kind === kind),
+      `${label} missed`,
+    );
+  }
+  // The required operator keeps plain prose clean.
+  assert.equal(scanForFloorSecrets('the private key was rotated and stored safely').length, 0);
+});

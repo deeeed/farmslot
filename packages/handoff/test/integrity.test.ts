@@ -585,3 +585,28 @@ test('quarantine scrub-report never carries a mnemonic split across separate rec
   assert.ok(returned.includes('[REDACTED:entry-'));
   assert.ok(result.scrubReport.omitted.every((o) => o.path.startsWith('[REDACTED:entry-')));
 });
+
+test('quarantine manifest never carries a mnemonic split across schema-valid fixed fields', () => {
+  // The package blocks for an unrelated reason (SRP in learnings) - cross-field
+  // DETECTION at the gate stays scope-capped; the invariant under test is that
+  // the QUARANTINE audit never carries the composed phrase.
+  const { ctx, input } = scenario(
+    '# Learnings\n\nlegal winner thank year wave sausage worth useful legal winner thank year\n',
+  );
+  // Twelve wordlist words spread across segment-valid identity fields - every
+  // value passes the path-segment guard, only the joined view shows the phrase.
+  input.runRecord.task.ticket = 'ACCESS-ACCIDENT'; // taskKey normalizes to access-accident
+  input.surface = 'abandon-ability-able';
+  input.runRecord.project = 'about-above-absent';
+  input.runRecord.domain = 'absorb-abstract';
+  input.runRecord.engineer = 'absurd-abuse';
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'blocked');
+  if (result.status !== 'blocked') return;
+  const quarantined = readFileSync(path.join(result.quarantineDir, 'manifest.json'), 'utf8');
+  const survivors = quarantined.match(/abandon|ability|absorb|accident/g) ?? [];
+  assert.equal(survivors.length, 0, 'fixed-field mnemonic survived in the quarantine manifest');
+  // The audit stays structurally intact: timestamps/enums remain.
+  assert.ok(quarantined.includes('2026-07-13T12:00:00Z'));
+  assert.ok(quarantined.includes('"blocked"'));
+});

@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -274,4 +275,84 @@ test('destination-repo hooks are respected: a rejecting pre-commit hook rolls th
   assert.equal(git(destination, ['status', '--porcelain']), '');
   // No commit was created.
   assert.equal(git(destination, ['rev-list', '--count', 'HEAD']), '1');
+});
+
+test('destination writes are serialized by a lock: held lock refuses with escape guidance', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  const destination = initDestinationRepo();
+  const lockPath = path.join(destination, '.git/farmslot-handoff.lock');
+  writeFileSync(lockPath, '{"pid":99999,"startedAt":"2026-07-13T10:00:00Z"}\n');
+
+  // A held lock refuses the write and teaches the stale-lock escape.
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    (error: Error) => {
+      assert.match(error.message, /another write .* is in progress/);
+      assert.match(error.message, /stale lock/);
+      assert.match(error.message, /Next:/);
+      return true;
+    },
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false);
+
+  // Removing the stale lock unblocks the writer; the lock is released after.
+  rmSync(lockPath);
+  const write = writeLearningPackage({
+    packageDir: result.packageDir,
+    destination,
+    consent: CONSENT,
+  });
+  assert.equal(write.status, 'written');
+  assert.equal(existsSync(lockPath), false, 'lock not released after a successful write');
+});
+
+test('the lock is released after a failed (rolled back) write too', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  const destination = initDestinationRepo();
+  const hookPath = path.join(destination, '.git/hooks/pre-commit');
+  writeFileSync(hookPath, '#!/bin/sh\nexit 1\n');
+  chmodSync(hookPath, 0o755);
+
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    /rolled back/,
+  );
+  assert.equal(
+    existsSync(path.join(destination, '.git/farmslot-handoff.lock')),
+    false,
+    'lock not released after a rolled-back write',
+  );
+
+  // With the hook gone, back-to-back writes of two packages both land intact.
+  rmSync(hookPath);
+  const first = writeLearningPackage({
+    packageDir: result.packageDir,
+    destination,
+    consent: CONSENT,
+  });
+  assert.equal(first.status, 'written');
+
+  const second = assembled();
+  assert.equal(second.result.status, 'ok');
+  if (second.result.status !== 'ok') return;
+  const manifestPath = path.join(second.result.packageDir, 'manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { packageId: string };
+  manifest.packageId = '20260703T180000Z-fleet-dev-proj-123-0000ffff';
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  const secondWrite = writeLearningPackage({
+    packageDir: second.result.packageDir,
+    destination,
+    consent: CONSENT,
+  });
+  assert.equal(secondWrite.status, 'written');
+
+  const family = readFileSync(path.join(destination, 'indexes/by-task/proj-123.jsonl'), 'utf8')
+    .trim()
+    .split('\n');
+  assert.equal(family.length, 2, 'both writers rows must be intact');
+  assert.equal(existsSync(path.join(destination, '.git/farmslot-handoff.lock')), false);
 });
