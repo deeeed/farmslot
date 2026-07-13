@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -157,4 +165,125 @@ test('duplicate package-relative paths across inputs refuse assembly', () => {
     },
   ];
   assert.throws(() => assembleLearningPackage(input, ctx), /duplicate package path/);
+});
+
+test('a planted symlink inside a staged package refuses the write; nothing is copied', () => {
+  const { ctx, input } = scenario();
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+
+  // Post-assembly tamper: a symlink pointing at an outside secret file.
+  const outsideSecret = path.join(mkdtempSync(path.join(os.tmpdir(), 'handoff-secret-')), 's.md');
+  writeFileSync(outsideSecret, 'outside-secret-content\n');
+  symlinkSync(outsideSecret, path.join(result.packageDir, 'linked.md'));
+
+  const destination = initDestinationRepo();
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    /non-regular-file/,
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false);
+  assert.equal(git(destination, ['status', '--porcelain']), '');
+});
+
+test('metadata secrets block assembly and the quarantine manifest never carries them raw', () => {
+  const srp =
+    'abandon ability able about above absent absorb abstract absurd abuse access accident';
+  const titleCase = scenario();
+  titleCase.input.runRecord.task.title = `restore with ${srp}`;
+  const blockedByTitle = assembleLearningPackage(titleCase.input, titleCase.ctx);
+  assert.equal(blockedByTitle.status, 'blocked');
+  if (blockedByTitle.status !== 'blocked') return;
+  assert.ok(
+    blockedByTitle.scrubReport.blocked.some((b) => b.file === 'manifest.json' && b.kind === 'srp'),
+  );
+  const quarantined = readFileSync(
+    path.join(blockedByTitle.quarantineDir, 'manifest.json'),
+    'utf8',
+  );
+  assert.equal(quarantined.includes(srp), false, 'quarantine manifest carries the raw SRP');
+  assert.ok(quarantined.includes('[REDACTED:srp]'));
+
+  const extCase = scenario();
+  extCase.input.runRecord.extensions = { note: `token ghp_${'a'.repeat(36)}` };
+  const blockedByExtension = assembleLearningPackage(extCase.input, extCase.ctx);
+  assert.equal(blockedByExtension.status, 'blocked');
+  if (blockedByExtension.status !== 'blocked') return;
+  assert.ok(
+    blockedByExtension.scrubReport.blocked.some(
+      (b) => b.file === 'manifest.json' && b.kind === 'github-token',
+    ),
+  );
+  assert.equal(
+    readFileSync(path.join(blockedByExtension.quarantineDir, 'manifest.json'), 'utf8').includes(
+      `ghp_${'a'.repeat(36)}`,
+    ),
+    false,
+  );
+});
+
+test('end-to-end: a punctuation-only ticket assembles and writes under the content-hash family', () => {
+  const { ctx, input } = scenario();
+  input.runRecord.task.ticket = '!!!';
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  assert.match(result.manifest.taskKey, /^task-[a-f0-9]{16}$/);
+  assert.equal('ticket' in result.manifest.task, false, 'unusable ticket should be dropped');
+
+  const destination = initDestinationRepo();
+  const write = writeLearningPackage({
+    packageDir: result.packageDir,
+    destination,
+    consent: CONSENT,
+  });
+  assert.equal(write.status, 'written');
+  assert.ok(existsSync(path.join(destination, `indexes/by-task/${result.manifest.taskKey}.jsonl`)));
+  assert.equal(existsSync(path.join(destination, 'indexes/by-ticket')), false);
+});
+
+test('a symlinked quarantine root cannot redirect the destructive rm or the audit writes', () => {
+  const { ctx, input } = scenario(
+    '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+  );
+  const outside = mkdtempSync(path.join(os.tmpdir(), 'handoff-outside-q-'));
+  writeFileSync(path.join(outside, 'precious.md'), 'do not delete\n');
+  symlinkSync(outside, path.join(ctx.stagingRoot, 'quarantine'));
+
+  assert.throws(() => assembleLearningPackage(input, ctx), /escapes its root/);
+  assert.ok(existsSync(path.join(outside, 'precious.md')), 'outside content was destroyed');
+  assert.equal(existsSync(path.join(outside, input.runRecord.packageId)), false);
+});
+
+test('a symlinked staging path cannot redirect package staging', () => {
+  const { ctx, input } = scenario();
+  const outside = mkdtempSync(path.join(os.tmpdir(), 'handoff-outside-s-'));
+  symlinkSync(outside, path.join(ctx.stagingRoot, input.runRecord.packageId));
+  assert.throws(() => assembleLearningPackage(input, ctx), /escapes its root/);
+  assert.deepEqual(readdirSync(outside), []);
+});
+
+test('a rollback that cannot restore the destination throws a distinct partial-state error', () => {
+  const { ctx, input } = scenario();
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  assert.ok(ctx.stagingRoot);
+
+  const destination = initDestinationRepo();
+  // An empty DIRECTORY at an index-file path: invisible to git status (clean
+  // tree), fails appendFileSync mid-write, and fails truncateSync in rollback.
+  mkdirSync(path.join(destination, 'indexes/by-engineer/eng-1.jsonl'), { recursive: true });
+
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    (error: Error) => {
+      assert.match(error.message, /could not fully restore/);
+      assert.match(error.message, /Partial state may remain/);
+      assert.match(error.message, /Next:/);
+      assert.doesNotMatch(error.message, /was rolled back/);
+      return true;
+    },
+  );
 });

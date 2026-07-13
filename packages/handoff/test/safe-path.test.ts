@@ -90,7 +90,6 @@ test('a path-shaped manifest field refuses the write - nothing lands outside the
     { label: 'domain', mutate: (m) => (m.domain = '..') },
     { label: 'flow', mutate: (m) => (m.run.flow = '.hidden') },
     { label: 'taskKey', mutate: (m) => (m.taskKey = '../family') },
-    { label: 'ticket', mutate: (m) => (m.task.ticket = '../../tick') },
   ];
   for (const { label, mutate } of cases) {
     const packageDir = packageWithManifestField(mutate);
@@ -194,4 +193,18 @@ test('containment refuses traversal in plain text package paths (unit)', () => {
     assertContained(root, path.join(root, 'harness/x/summary.json'), 'package file'),
     path.join(root, 'harness/x/summary.json'),
   );
+});
+
+test('a path-shaped ticket is hyphen-normalized into a safe index filename, never a path', () => {
+  const packageDir = packageWithManifestField((m) => (m.task.ticket = '../../tick'));
+  const destination = initDestinationRepo();
+  const write = writeLearningPackage({
+    packageDir,
+    destination,
+    consent: { humanApproval: true, approvedBy: 'eng-1', grantedAt: '2026-07-13T12:00:00Z' },
+  });
+  assert.equal(write.status, 'written');
+  // Normalization strips the separators: the row lands under 'tick'.
+  assert.ok(existsSync(path.join(destination, 'indexes/by-ticket/tick.jsonl')));
+  assert.equal(existsSync(path.join(path.dirname(destination), 'tick.jsonl')), false);
 });

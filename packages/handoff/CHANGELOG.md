@@ -4,6 +4,14 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Close the symlink gap in the share gate: the write-time walk now classifies every dirent type and refuses non-regular-file entries (symlinks are invisible to hash inventories yet carry content), and the destination copy is strictly per-inventory-file instead of a blind tree copy.
+- Gate manifest metadata through the floor: the composed manifest core (title, description, run fields, extensions) is scanned before anything is staged - a secret in task.title blocks assembly like any file, and the quarantine manifest is string-level redacted so the block audit never reproduces the raw secret.
+- Derive the task family key before ticket validation and DROP a ticket that hyphen-normalizes to nothing (ticket is optional), so punctuation-only tickets assemble and write under the content-hash family end to end. Tickets are hyphen-normalized wherever they become index filenames.
+- Detect cookie headers inside JSON-object forms ("Cookie":"...", escaped or not) through the existing unescape passes.
+- Assert symlink-aware containment on the staging and quarantine dirs BEFORE their destructive rm/recreate, so a symlinked staging ancestor cannot redirect removal or writes.
+- Rollback failures now throw a distinct partial-state error with recovery guidance instead of falsely claiming a clean rollback; `WriteResult` gains `pushError` so a failed push is distinguishable from a missing remote.
+- Warn when an EXPLICITLY configured `templateRef` points at a nonexistent file (a broken override) before degrading through the resolution chain; merely absent tier files still fall through silently per the unhappy-path contract.
+- Normalize non-global farm deny patterns (re-created with /g) instead of throwing mid-scan.
 - Verify package integrity end to end: `validateLearningPackage` now checks every file in the `manifest.files` inventory exists with its recorded post-scrub sha256 (unknown extra files stay tolerated per the forward-compat consumer rule), and `writeLearningPackage` additionally refuses any on-disk file the assembler did not inventory - nothing that skipped the scrub gate can ride into the shared repo.
 - Assemble into a fresh staging dir every time (stale files from an earlier attempt can no longer survive into a pass-status package) and rebuild the quarantine dir fresh so it only ever contains manifest.json + scrub-report.json.
 - Refuse duplicate package-relative paths across assembly inputs so a second, unapproved input can never replace already-approved bytes.

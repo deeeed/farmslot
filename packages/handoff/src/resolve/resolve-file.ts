@@ -119,6 +119,10 @@ export function resolveContent<T>(
         `(${(error as Error).message}); falling back to the shipped default. ` +
         'Next: fix or remove the override file - the run continues on defaults.',
     );
+    // Deliberately straight to the shipped default, not the next tier down:
+    // the unhappy-path contract prescribes "use the default" for a broken
+    // override, keeping degradation predictable (one warning, one known-good
+    // tier) instead of cascading through possibly-also-broken files.
     const fallback = { tier: 'default' as const, path: request.defaultPath };
     const value = parse(readFileSync(fallback.path, 'utf8'), fallback.path);
     const resolution = buildResolution(request, fallback, existing);

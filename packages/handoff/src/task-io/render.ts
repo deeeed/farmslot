@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -73,6 +74,18 @@ export function renderTaskMarkdown(
   ctx: RenderContext = {},
 ): RenderTaskMarkdownResult {
   const flowFile = `${options.flowType}.md`;
+
+  // An EXPLICITLY configured template path that does not exist is a broken
+  // override (unlike a merely absent tier file, which falls through silently
+  // per the unhappy-path contract): warn before degrading through the chain.
+  if (options.templateRef && !existsSync(options.templateRef)) {
+    ctx.warn?.(
+      `renderTaskMarkdown: configured templateRef ${options.templateRef} does not exist; ` +
+        'falling back through the resolution chain. Next: fix or remove the explicit ' +
+        'template path - the run continues on the resolved template.',
+    );
+  }
+
   const resolved = resolveContent(
     {
       kind: 'task-template',

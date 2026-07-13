@@ -143,3 +143,19 @@ test('a broken personal template warns and degrades to the shipped default', () 
   assert.equal(warnings.length, 1);
   assert.ok(result.templateProvenance.shadows.some((s) => s.tier === 'personal'));
 });
+
+test('an explicitly configured templateRef that does not exist warns before falling back', () => {
+  const warnings: string[] = [];
+  const result = renderTaskMarkdown(
+    {
+      task: { schemaVersion: 1, sourceKind: 'text', title: 'Fix the gate' },
+      flowType: 'dev',
+      templateRef: '/nonexistent/custom-template.md',
+    },
+    { warn: (m) => warnings.push(m) },
+  );
+  assert.equal(result.templateProvenance.tier, 'default');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /templateRef/);
+  assert.match(warnings[0], /Next:/);
+});

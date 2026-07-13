@@ -13,8 +13,9 @@ export interface TaskKeyInput {
   acceptanceCriteria?: string;
 }
 
-/** Lowercase, collapse runs of non-alphanumerics to single hyphens, trim hyphens. */
-function normalizeTicket(ticket: string): string {
+/** Lowercase, collapse runs of non-alphanumerics to single hyphens, trim hyphens.
+ * Also the normalization applied wherever a ticket becomes a path segment. */
+export function normalizeTicket(ticket: string): string {
   return ticket
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')

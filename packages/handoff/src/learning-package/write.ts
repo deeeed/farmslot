@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import {
   appendFileSync,
-  cpSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 
+import { normalizeTicket } from '../spec/task-key.js';
 import type { GradeSemantic, HumanGrade, IndexRow, Manifest } from '../spec/types.js';
 import { SCHEMA_VERSION } from '../spec/version.js';
 import { validateLearningPackage } from '../validate/validate-package.js';
@@ -51,22 +52,43 @@ export interface WriteLearningPackageOptions {
  * pushed when the repo has a remote.
  */
 export type WriteResult =
-  | { status: 'written'; destinationPath: string; commitSha: string; pushed: boolean }
+  | {
+      status: 'written';
+      destinationPath: string;
+      commitSha: string;
+      pushed: boolean;
+      /** Set iff a push was attempted and failed (commit is local and retriable);
+       * absent when pushed or when the destination has no remote. */
+      pushError?: string;
+    }
   | { status: 'dry-run'; wouldWritePath: string; indexRows: IndexRow[]; pushed: false };
 
 function git(repo: string, args: string[]): string {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 }
 
-/** All files under `dir` as package-relative POSIX paths. */
-function walkRelativeFiles(dir: string, base = dir): string[] {
-  const out: string[] = [];
+/**
+ * Every entry under `dir` as package-relative POSIX paths, split by dirent
+ * type. Anything that is not a plain directory or regular file (symlinks,
+ * fifos, sockets, ...) is collected separately: such entries are invisible to
+ * hash inventories yet can smuggle or redirect content, so the writer refuses
+ * them outright.
+ */
+function walkEntries(dir: string, base = dir): { files: string[]; irregular: string[] } {
+  const files: string[] = [];
+  const irregular: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...walkRelativeFiles(abs, base));
-    else if (entry.isFile()) out.push(path.relative(base, abs).split(path.sep).join('/'));
+    const rel = path.relative(base, abs).split(path.sep).join('/');
+    if (entry.isSymbolicLink()) irregular.push(rel);
+    else if (entry.isDirectory()) {
+      const nested = walkEntries(abs, base);
+      files.push(...nested.files);
+      irregular.push(...nested.irregular);
+    } else if (entry.isFile()) files.push(rel);
+    else irregular.push(rel);
   }
-  return out;
+  return { files, irregular };
 }
 
 /**
@@ -83,9 +105,11 @@ function assertSafeManifestSegments(manifest: Manifest): void {
   assertSafePathSegment(manifest.engineer, 'manifest.engineer');
   assertSafePathSegment(manifest.run.flow, 'manifest.run.flow');
   if (manifest.domain !== '') assertSafePathSegment(manifest.domain, 'manifest.domain');
-  if (manifest.task.ticket) {
-    assertSafePathSegment(manifest.task.ticket.toLowerCase(), 'manifest.task.ticket');
-  }
+  // The ticket is hyphen-normalized before becoming a filename (matching the
+  // run-slug grammar), so only the normalized form needs the segment guard; a
+  // ticket that normalizes to nothing simply gets no by-ticket index.
+  const ticket = manifest.task.ticket ? normalizeTicket(manifest.task.ticket) : '';
+  if (ticket !== '') assertSafePathSegment(ticket, 'manifest.task.ticket');
 }
 
 /** Repo-relative package path (spec section 1): packages/YYYY/MM/DD/surface/project/run-slug. */
@@ -152,9 +176,8 @@ function indexFilesFor(manifest: Manifest): string[] {
     `indexes/by-task/${manifest.taskKey}.jsonl`,
   ];
   if (manifest.domain !== '') files.push(`indexes/by-domain/${manifest.domain}.jsonl`);
-  if (manifest.task.ticket) {
-    files.push(`indexes/by-ticket/${manifest.task.ticket.toLowerCase()}.jsonl`);
-  }
+  const ticket = manifest.task.ticket ? normalizeTicket(manifest.task.ticket) : '';
+  if (ticket !== '') files.push(`indexes/by-ticket/${ticket}.jsonl`);
   return files;
 }
 
@@ -200,8 +223,18 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
   // Inventory completeness (share gate, stricter than the consumer validator):
   // validation already proved every inventoried file matches its post-scrub
   // hash; additionally refuse any on-disk file the assembler did not inventory,
-  // so nothing that skipped the scrub gate can ride along into the shared repo.
-  const unlisted = walkRelativeFiles(options.packageDir).filter(
+  // and any non-regular entry (symlinks etc. are invisible to hash inventories
+  // yet carry content), so nothing that skipped the scrub gate reaches the repo.
+  const entries = walkEntries(options.packageDir);
+  if (entries.irregular.length > 0) {
+    throw new Error(
+      `writeLearningPackage: package ${manifest.packageId} contains non-regular-file ` +
+        `entries: ${entries.irregular.join(', ')}. Symlinks and special files cannot be ` +
+        'inventory-verified and are never shared. Next: re-assemble with ' +
+        'assembleLearningPackage; never add entries to a staged package.',
+    );
+  }
+  const unlisted = entries.files.filter(
     (rel) => rel !== 'manifest.json' && !(rel in manifest.files),
   );
   if (unlisted.length > 0) {
@@ -289,7 +322,9 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
     removeEmptyParents(destPackageDir);
     for (const { abs, priorBytes } of indexFiles) {
       if (priorBytes === -1) {
-        rmSync(abs, { force: true });
+        // An index file that never came to exist (e.g. its mkdir failed) needs
+        // no removal - existsSync also shields rm from unreachable paths.
+        if (existsSync(abs)) rmSync(abs, { force: true });
         removeEmptyParents(abs);
       } else if (existsSync(abs)) {
         truncateSync(abs, priorBytes);
@@ -299,7 +334,14 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
 
   let commitSha: string;
   try {
-    cpSync(options.packageDir, destPackageDir, { recursive: true });
+    // Copy strictly the inventoried files (plus the manifest that carries the
+    // inventory) - never a blind tree copy, so only verified bytes are shared.
+    for (const rel of ['manifest.json', ...Object.keys(manifest.files)]) {
+      const src = path.join(options.packageDir, rel);
+      const dest = assertContained(destPackageDir, path.join(destPackageDir, rel), `copy ${rel}`);
+      mkdirSync(path.dirname(dest), { recursive: true });
+      copyFileSync(src, dest);
+    }
 
     const line = `${JSON.stringify(row)}\n`;
     const touched = [packagePath];
@@ -322,8 +364,17 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
     try {
       rollback();
       git(options.destination, ['reset', '-q']);
-    } catch {
-      // Rollback is best-effort; the original failure below is the actionable one.
+    } catch (rollbackError) {
+      // Never claim a clean rollback that did not happen: restoration stopped
+      // midway, so the destination may hold partial state.
+      throw new Error(
+        `writeLearningPackage: write to ${options.destination} failed ` +
+          `(${(error as Error).message}) AND rollback could not fully restore it ` +
+          `(${(rollbackError as Error).message}). Partial state may remain under ` +
+          `${packagePath} and indexes/. Next: run \`git -C ${options.destination} status\`, ` +
+          'remove the leftover package dir, restore index files with ' +
+          '`git checkout -- indexes`, then retry.',
+      );
     }
     throw new Error(
       `writeLearningPackage: write to ${options.destination} failed and was rolled back ` +
@@ -333,16 +384,24 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
   }
 
   let pushed = false;
+  let pushError: string | undefined;
   if (git(options.destination, ['remote']) !== '') {
     try {
       git(options.destination, ['push']);
       pushed = true;
-    } catch {
+    } catch (error) {
       // Push failure is non-fatal: the commit is local and retriable. The share
-      // itself succeeded append-only; the caller may sync later.
-      pushed = false;
+      // itself succeeded append-only; the caller may sync later. The reason is
+      // surfaced so callers never mistake a failed push for a missing remote.
+      pushError = (error as Error).message;
     }
   }
 
-  return { status: 'written', destinationPath: destPackageDir, commitSha, pushed };
+  return {
+    status: 'written',
+    destinationPath: destPackageDir,
+    commitSha,
+    pushed,
+    ...(pushError !== undefined ? { pushError } : {}),
+  };
 }

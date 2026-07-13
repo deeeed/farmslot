@@ -253,3 +253,26 @@ test('authorization bearer headers and OAuth token assignments are floor hits', 
   // Prose about tokens stays clean.
   assert.equal(scanForFloorSecrets('the access token refresh flow worked as designed').length, 0);
 });
+
+test('cookie headers inside JSON objects are floor hits (raw, single- and double-escaped)', () => {
+  const inner = JSON.stringify({ Cookie: 'sid=123456789abcdef' });
+  const single = JSON.stringify({ headers: inner });
+  const double = JSON.stringify({ envelope: single });
+  for (const [label, text] of [
+    ['raw JSON', inner],
+    ['single-escaped', single],
+    ['double-escaped', double],
+  ] as const) {
+    assert.ok(
+      scanForFloorSecrets(text).some((h) => h.kind === 'cookie'),
+      `${label} cookie missed`,
+    );
+  }
+});
+
+test('a non-global farm deny pattern is normalized instead of throwing', () => {
+  const hits = scanForFloorSecrets('uses FARM-TAG-77 twice: FARM-TAG-78', [
+    { kind: 'farm-tag', pattern: /FARM-TAG-\d+/ },
+  ]);
+  assert.equal(hits.filter((h) => h.kind === 'farm-tag').length, 2);
+});

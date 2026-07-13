@@ -84,7 +84,10 @@ const FLOOR_PATTERNS: FloorPattern[] = [
  * (theme=light) never shields a later session value on the same header. Cookie
  * ATTRIBUTES (Path, Expires, ...) and short benign values are skipped.
  */
-const COOKIE_HEADER = /(?:set-cookie|cookie)\s*:\s*([^\n\r]+)/gi;
+// Matches plain headers (Cookie: ...) and JSON-object forms ("Cookie":"...",
+// escaped or not); the value capture stops at a closing quote so JSON string
+// boundaries end the pair list.
+const COOKIE_HEADER = /(?:set-cookie|cookie)["'\\]*\s*:\s*["'\\]*([^\n\r"]+)/gi;
 const COOKIE_ATTRIBUTES = /^(?:path|expires|domain|samesite|max-age|secure|httponly|priority)$/i;
 
 function detectCookies(text: string): FloorHit[] {
@@ -160,6 +163,14 @@ function detectMnemonics(text: string): FloorHit[] {
 export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] = []): FloorHit[] {
   const byFingerprint = new Map<string, FloorHit>();
 
+  // Farm patterns arrive from config: matchAll requires the global flag, so a
+  // non-global pattern is re-created with /g instead of throwing mid-scan.
+  const normalizedExtras = extraPatterns.map(({ kind, pattern }) =>
+    pattern.global
+      ? { kind, pattern }
+      : { kind, pattern: new RegExp(pattern.source, `${pattern.flags}g`) },
+  );
+
   // Scan the raw text plus up to two unescape passes so single- and
   // double-JSON-escaped content (accidental JSON-in-JSON carriers) still
   // matches. Deeper nesting is out of the cooperative-producer scope.
@@ -179,7 +190,7 @@ export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] 
     for (const hit of detectCookies(variant)) {
       byFingerprint.set(hit.fingerprint, hit);
     }
-    for (const { kind, pattern } of [...FLOOR_PATTERNS, ...extraPatterns]) {
+    for (const { kind, pattern } of [...FLOOR_PATTERNS, ...normalizedExtras]) {
       for (const match of variant.matchAll(pattern)) {
         const hit: FloorHit = { kind, fingerprint: fingerprint(match[0]) };
         byFingerprint.set(hit.fingerprint, hit);

@@ -200,6 +200,10 @@ export function scrubFiles(
         continue;
       }
       if (file.visualPass) visualPassAttestations.push(file.visualPass);
+      // Residual accepted risk: the BYTES of a selected, clear-attested media
+      // file are not content-scanned - the agent visual pass is the control
+      // for on-screen secrets (spec sections 3.6 / 5.1 layer 4), backed by the
+      // human approval gate.
       const reason = mediaOmitReason(file);
       if (reason) {
         omitted.push({ path: file.packagePath, reason });

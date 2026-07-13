@@ -22,6 +22,10 @@ everything else is caller-supplied config or a resolved override file.
 The scrubber is a **light heuristic backstop**, not a completeness guarantee.
 It catches obvious accidental inclusions by a cooperative producing agent: literal
 seed phrases, labeled private-key assignments, PEM blocks, known provider tokens.
+Note the floor matches hex keys only when LABELED (`privateKey:`, `PRIVATE_KEY=`,
+...): a bare unlabeled 64-hex string is deliberately not matched, so integrity
+hashes and tx ids never false-block - an unlabeled raw key is handled by the
+producer instruction and the human gate, not the regex.
 
 **The two real controls are:**
 

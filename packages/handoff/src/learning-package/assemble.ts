@@ -12,14 +12,16 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 
+import { type FloorPattern, scanForFloorSecrets } from '../scrub/floor.js';
 import { scrubFiles, type ScrubInputFile } from '../scrub/scrubber.js';
-import { deriveTaskKey } from '../spec/task-key.js';
+import { deriveTaskKey, normalizeTicket } from '../spec/task-key.js';
 import type {
   ArtifactKind,
   ArtifactRecord,
   ArtifactsIndex,
   Manifest,
   ManifestFileRecord,
+  ManifestTask,
   Provenance,
   ScrubReport,
   SourceDocument,
@@ -113,17 +115,12 @@ function taskKeyFor(input: LearningPackageInput): string {
   });
 }
 
-function writeQuarantine(
-  ctx: HandoffContext,
+/** The manifest core shared by pass and quarantine manifests (no files/scrubbing). */
+function manifestBase(
   input: LearningPackageInput,
-  scrubReport: ScrubReport,
-): string {
-  const quarantineDir = path.join(ctx.stagingRoot, 'quarantine', input.runRecord.packageId);
-  // Fresh quarantine dir: it holds ONLY the block audit trail, so nothing from
-  // an earlier attempt at the same id (least of all raw files) may survive here.
-  rmSync(quarantineDir, { recursive: true, force: true });
-  mkdirSync(quarantineDir, { recursive: true });
-  const manifest: Manifest = {
+  task: ManifestTask,
+): Omit<Manifest, 'files' | 'scrubbing'> {
+  return {
     schemaVersion: SCHEMA_VERSION,
     packageId: input.runRecord.packageId,
     taskKey: taskKeyFor(input),
@@ -133,14 +130,61 @@ function writeQuarantine(
     domain: input.runRecord.domain,
     engineer: input.runRecord.engineer,
     run: input.runRecord.run,
-    task: input.runRecord.task,
+    task,
+    ...(input.runRecord.extensions ? { extensions: input.runRecord.extensions } : {}),
+  };
+}
+
+/**
+ * Replace any string value carrying a floor hit with a redaction marker,
+ * recursively. Used on the quarantine manifest so the block audit trail never
+ * reproduces the raw secret that caused the block.
+ */
+function redactSecretStrings<T>(value: T, extraPatterns?: FloorPattern[]): T {
+  if (typeof value === 'string') {
+    const hits = scanForFloorSecrets(value, extraPatterns);
+    if (hits.length > 0) {
+      const kinds = [...new Set(hits.map((h) => h.kind))].join('+');
+      return `[REDACTED:${kinds}]` as unknown as T;
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSecretStrings(item, extraPatterns)) as unknown as T;
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, redactSecretStrings(child, extraPatterns)]),
+    ) as T;
+  }
+  return value;
+}
+
+function writeQuarantine(
+  ctx: HandoffContext,
+  input: LearningPackageInput,
+  base: Omit<Manifest, 'files' | 'scrubbing'>,
+  scrubReport: ScrubReport,
+): string {
+  const quarantineDir = assertContained(
+    ctx.stagingRoot,
+    path.join(ctx.stagingRoot, 'quarantine', input.runRecord.packageId),
+    'quarantine dir',
+  );
+  // Fresh quarantine dir: it holds ONLY the block audit trail, so nothing from
+  // an earlier attempt at the same id (least of all raw files) may survive here.
+  rmSync(quarantineDir, { recursive: true, force: true });
+  mkdirSync(quarantineDir, { recursive: true });
+  const manifest: Manifest = {
+    // The block may have been caused by the metadata itself - the audit copy
+    // must never carry the raw secret.
+    ...redactSecretStrings(base, input.scrub?.extraDenyPatterns),
     files: {},
     scrubbing: {
       status: 'blocked',
       scrubReport: 'scrub-report.json',
       floorVersion: SCRUB_FLOOR_VERSION,
     },
-    ...(input.runRecord.extensions ? { extensions: input.runRecord.extensions } : {}),
   };
   // Quarantine keeps only the block audit trail - never raw artifacts.
   writeFileSync(path.join(quarantineDir, 'manifest.json'), stableJson(manifest));
@@ -174,9 +218,19 @@ export function assembleLearningPackage(
   if (input.runRecord.domain !== '') {
     assertSafePathSegment(input.runRecord.domain, 'runRecord.domain');
   }
-  if (input.runRecord.task.ticket) {
-    assertSafePathSegment(input.runRecord.task.ticket.toLowerCase(), 'runRecord.task.ticket');
+
+  // Ticket handling: tickets are hyphen-normalized wherever they become path
+  // segments (matching the run-slug grammar), and a ticket that normalizes to
+  // nothing (punctuation-only) is DROPPED - the ticket is optional and the
+  // taskKey derivation falls back to the content hash on its own.
+  const rawTicket = input.runRecord.task.ticket;
+  const normalizedTicket = rawTicket ? normalizeTicket(rawTicket) : '';
+  const task: ManifestTask = { ...input.runRecord.task };
+  if (rawTicket !== undefined && normalizedTicket === '') delete task.ticket;
+  if (normalizedTicket !== '') {
+    assertSafePathSegment(normalizedTicket, 'runRecord.task.ticket');
   }
+
   requirePath(input.taskDoc.taskMd, 'taskDoc.taskMd');
   const reportMd = path.join(input.artifacts.artifactsDir, 'report.md');
   const learningsMd = path.join(input.artifacts.artifactsDir, 'learnings.md');
@@ -237,16 +291,41 @@ export function assembleLearningPackage(
     seenPaths.add(packagePath);
   }
 
-  const outcome = scrubFiles(allInputs, tokens, input.scrub ?? {});
+  const base = manifestBase(input, task);
+  // The manifest metadata (title, description, run fields, extensions) is
+  // caller-composed content: it passes the same floor gate as every file,
+  // BEFORE anything is staged - a secret in task.title blocks like any other.
+  const metadataHits = scanForFloorSecrets(stableJson(base), input.scrub?.extraDenyPatterns);
 
-  if (outcome.status === 'blocked') {
-    const quarantineDir = writeQuarantine(ctx, input, outcome.report);
-    return { status: 'blocked', quarantineDir, scrubReport: outcome.report };
+  const outcome = scrubFiles(allInputs, tokens, input.scrub ?? {});
+  const blockedRecords = [
+    ...outcome.report.blocked,
+    ...metadataHits.map((hit) => ({
+      file: 'manifest.json',
+      kind: hit.kind,
+      fingerprint: hit.fingerprint,
+    })),
+  ];
+  const report: ScrubReport = {
+    ...outcome.report,
+    status: blockedRecords.length > 0 ? 'blocked' : 'pass',
+    blocked: blockedRecords,
+  };
+
+  if (report.status === 'blocked') {
+    const quarantineDir = writeQuarantine(ctx, input, base, report);
+    return { status: 'blocked', quarantineDir, scrubReport: report };
   }
 
   // Fresh staging dir per assemble: a reused dir could carry stale, unscanned
-  // files from an earlier attempt into a pass-status package.
-  const packageDir = path.join(ctx.stagingRoot, input.runRecord.packageId);
+  // files from an earlier attempt into a pass-status package. Containment is
+  // asserted BEFORE the destructive rm so a symlinked ancestor cannot redirect
+  // either the removal or the staging writes outside the staging root.
+  const packageDir = assertContained(
+    ctx.stagingRoot,
+    path.join(ctx.stagingRoot, input.runRecord.packageId),
+    'staging dir',
+  );
   rmSync(packageDir, { recursive: true, force: true });
   mkdirSync(packageDir, { recursive: true });
 
@@ -298,7 +377,7 @@ export function assembleLearningPackage(
   }
   const artifactsIndex: ArtifactsIndex = { schemaVersion: SCHEMA_VERSION, artifacts };
   writePackageFile(packageDir, 'artifacts/index.json', stableJson(artifactsIndex));
-  writePackageFile(packageDir, 'scrub-report.json', stableJson(outcome.report));
+  writePackageFile(packageDir, 'scrub-report.json', stableJson(report));
 
   // Hash every stored file except manifest.json (which carries the hashes).
   const files: Record<string, ManifestFileRecord> = {};
@@ -313,25 +392,15 @@ export function assembleLearningPackage(
   }
 
   const manifest: Manifest = {
-    schemaVersion: SCHEMA_VERSION,
-    packageId: input.runRecord.packageId,
-    taskKey: taskKeyFor(input),
-    surface: input.surface,
-    project: input.runRecord.project,
-    ...(input.runRecord.repo ? { repo: input.runRecord.repo } : {}),
-    domain: input.runRecord.domain,
-    engineer: input.runRecord.engineer,
-    run: input.runRecord.run,
-    task: input.runRecord.task,
+    ...base,
     files,
     scrubbing: {
       status: 'pass',
       scrubReport: 'scrub-report.json',
       floorVersion: SCRUB_FLOOR_VERSION,
     },
-    ...(input.runRecord.extensions ? { extensions: input.runRecord.extensions } : {}),
   };
   writePackageFile(packageDir, 'manifest.json', stableJson(manifest));
 
-  return { status: 'ok', packageDir, manifest, scrubReport: outcome.report };
+  return { status: 'ok', packageDir, manifest, scrubReport: report };
 }
