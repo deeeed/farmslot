@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { SlotVars } from './config.js';
+import type { ProjectVars, SlotVars } from './config.js';
 import { expandDispatchCmd, expandTemplate } from './hooks.js';
 
 test('expandTemplate exposes the full slot id for configured actions', () => {
@@ -224,4 +224,43 @@ test('expandTemplate substitutes {{repo}} with the shell-usable remote repo path
     resourceVars: {},
   };
   assert.equal(expandTemplate("cd '{{repo}}'", slotVars), "cd '/Users/dev/dev/checkout'");
+});
+
+test('{{domain}} precedence: extras > project vars > pool default > empty', () => {
+  const base: SlotVars = {
+    slotId: 's1',
+    machine: 'm',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: 'x',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/r',
+    session: 's',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'x@localhost',
+    remoteRepo: '/tmp/r',
+    projectName: 'demo',
+    resourceVars: {},
+  };
+  const projectVars = {
+    projectName: 'demo',
+    projectConfig: '/x/project.json',
+    projectFixturesDir: '/x/fixtures',
+    projectTemplatesDir: '/x/templates',
+    projectJson: { vars: { domain: 'static' } },
+    runtimeDir: '.agent',
+    artifactDir: '.task',
+  } as ProjectVars;
+  assert.equal(expandTemplate('{{domain}}', base), '');
+  assert.equal(expandTemplate('{{domain}}', { ...base, domain: 'pool' }), 'pool');
+  assert.equal(expandTemplate('{{domain}}', base, projectVars), 'static');
+  assert.equal(expandTemplate('{{domain}}', base, projectVars, { domain: 'runtime' }), 'runtime');
 });

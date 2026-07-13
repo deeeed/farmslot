@@ -126,7 +126,22 @@ export function registerFleetCommand(program: Command): void {
     .option('--slot <slotId>', 'Validate this specific slot instead of picking one')
     .option('--raw', 'Print only the slot id (plumbing contract for scripts)')
     .action(async (opts: { project?: string; slot?: string; raw?: boolean }, cmd: Command) => {
-      const { client, output } = resolveContext(cmd);
+      // Raw failure contract: empty stdout, reason on stderr, exit 1 — must
+      // also cover context/profile errors thrown before the main try.
+      const rawFail = (err: unknown) => {
+        const reason = err instanceof Error ? err.message : String(err);
+        const action = (err as { userAction?: string }).userAction;
+        process.stderr.write(`${reason}${action ? `\nNext: ${action}` : ''}\n`);
+        process.exitCode = 1;
+      };
+      let context;
+      try {
+        context = resolveContext(cmd);
+      } catch (err) {
+        if (opts.raw) return rawFail(err);
+        throw err;
+      }
+      const { client, output } = context;
       const emit = createEmitter(output, cmd);
       try {
         if (!opts.project && !opts.slot) {
@@ -161,14 +176,7 @@ export function registerFleetCommand(program: Command): void {
           output.write(`${result.slot.slot}\n`);
         }
       } catch (err) {
-        if (opts.raw) {
-          // Raw failure contract: empty stdout, reason on stderr, exit 1.
-          const reason = err instanceof Error ? err.message : String(err);
-          const action = (err as { userAction?: string }).userAction;
-          process.stderr.write(`${reason}${action ? `\nNext: ${action}` : ''}\n`);
-          process.exitCode = 1;
-          return;
-        }
+        if (opts.raw) return rawFail(err);
         emit.fail(err);
       }
     });
