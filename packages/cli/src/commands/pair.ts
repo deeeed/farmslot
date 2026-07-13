@@ -17,6 +17,7 @@ import { type PairingCreateResult, parseTailscaleDnsNameFromStatus } from '@farm
 
 import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
+import { createEmitter } from '../envelope.js';
 
 const PAIRING_QR_TYPE = 'farmslot.gateway-pairing.v1';
 
@@ -82,13 +83,18 @@ export function registerPairCommand(program: Command): void {
     .description('Show a QR to pair the mobile companion app for tmux control')
     .action(async (_opts: unknown, cmd: Command) => {
       const { client, output, target } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       const port = new URL(target.url).port || '7777';
       const addresses = reachableAddresses(port);
       if (addresses.length === 0) {
-        output.error(
-          'no reachable LAN or Tailscale address found — connect to a network, or install Tailscale for remote pairing',
+        emit.fail(
+          Object.assign(new Error('No reachable LAN or Tailscale address found.'), {
+            code: 'NO_PAIRING_ADDRESS',
+            userAction:
+              'Connect to a network, or install and sign in to Tailscale for away-from-LAN pairing, then re-run `farmslot pair`.',
+          }),
         );
-        process.exit(1);
+        return;
       }
 
       const profiles: PairingCreateResult[] = [];
@@ -102,8 +108,10 @@ export function registerPairCommand(program: Command): void {
       }
       const payload: PairingQrPayload = { type: PAIRING_QR_TYPE, profiles };
 
-      if (output.json) {
-        output.writeJson(payload);
+      if (emit.machine) {
+        // Machine envelope (matrix: legacy raw-JSON output resolved); the QR
+        // payload lives under data.payload.
+        emit.ok({ payload });
         return;
       }
 

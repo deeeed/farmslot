@@ -51,9 +51,11 @@ Human mode renders the same information as an `Error:` line followed by
 
 ## Covered commands
 
-`fleet`, `slot`, `run`, `runs`, `dispatch`, and `doctor` subcommands emit the
-envelope. Remaining commands are migrated as they are touched; until then their
-`--json` output is the raw RPC result without an envelope.
+`fleet`, `slot`, `run`, `runs`, `dispatch`, `backlog`, `pair`, `doctor`, and
+the `internal` plumbing verbs emit the envelope (for `pair` the QR payload
+lives under `data.payload`). `internal` raw/`--shell` modes are the one
+exception by design: their stdout is a raw data channel for scripts, so
+failures go to stderr with a non-zero exit instead of a stdout envelope.
 
 Implementation: `packages/cli/src/envelope.ts` (`createEmitter`). Contract
 tests: `packages/cli/src/envelope.test.ts`.

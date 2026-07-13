@@ -5,7 +5,7 @@
 // surfaces (fleet / backlog / runs / recovery), live event-driven refresh.
 // Business rules stay in the gateway + shared view-models (ADR-050).
 
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { BacklogItem, EventFrame, FleetStatus, Run } from '@farmslot/protocol';
@@ -34,6 +34,13 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
     running: boolean;
     steps: Array<{ name: string; detail: string }>;
   } | null>(null);
+  const [runDetail, setRunDetail] = useState<Run | null>(null);
+  // Invalidates in-flight run.get fetches when the pane closes or the
+  // surface changes, so a late response cannot reopen a stale detail.
+  const runDetailRequest = useRef(0);
+  const { stdout } = useStdout();
+  // Rows available for list bodies: total minus header/banner/hints/notice.
+  const listHeight = Math.max(5, (stdout?.rows ?? 40) - 8);
 
   // Guards against an older, slower refresh committing over newer data.
   // Fleet has its own generation because fleet.updated events replace only
@@ -99,6 +106,15 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
   const runsVm = useMemo(() => runsViewModel(runs), [runs]);
   const diagnosis = useMemo(() => (fleet ? diagnoseFleet(fleet) : null), [fleet]);
 
+  // Scroll window: keep the cursor visible inside listHeight rows.
+  const windowFor = useCallback(
+    (length: number) => {
+      const start = Math.max(0, Math.min(cursor - listHeight + 1, length - listHeight));
+      return { start, end: Math.min(length, start + listHeight) };
+    },
+    [cursor, listHeight],
+  );
+
   const rowsForSurface = useMemo(() => {
     if (surface === 'fleet') return fleetVm?.rows.length ?? 0;
     if (surface === 'backlog') return backlogVm.length;
@@ -114,12 +130,25 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
   const switchTo = useCallback((next: Surface) => {
     setSurface(next);
     setCursor(0);
+    runDetailRequest.current++;
+    setRunDetail(null);
   }, []);
 
   useInput((input, key) => {
     if (input === 'q') {
       // The tui command owns the connection and closes it after unmount.
       exit();
+      return;
+    }
+    if (runDetail) {
+      // Modal detail pane: swallow everything except close/refresh so gate
+      // keys can never act on the hidden list cursor behind the pane.
+      if (key.escape) {
+        runDetailRequest.current++;
+        setRunDetail(null);
+      } else if (input === 'r') {
+        void refresh();
+      }
       return;
     }
     if (input === '1') switchTo('fleet');
@@ -190,6 +219,23 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
       }
     }
 
+    if (surface === 'runs' && key.return) {
+      const row = runsVm[cursor];
+      if (row) {
+        const request = ++runDetailRequest.current;
+        void (async () => {
+          try {
+            const result = await connection.call<{ run: Run }>('run.get', { runId: row.id });
+            if (request === runDetailRequest.current) setRunDetail(result.run);
+          } catch (err) {
+            if (request !== runDetailRequest.current) return; // stale request
+            setNotice(`run.get failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        })();
+      }
+      return;
+    }
+
     if (surface === 'runs') {
       const row = runsVm[cursor];
       const decision = row?.pendingDecisions[0];
@@ -218,6 +264,9 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
     }
   });
 
+  // Set during the runs-list IIFE render below; read by the scroll hint.
+  let runsWindowClipped = false;
+
   return (
     <Box flexDirection="column">
       <Box gap={2}>
@@ -243,47 +292,118 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
           <Text dimColor>
             checked {fleetVm.checkedAt} · {fleetVm.summary}
           </Text>
-          {fleetVm.rows.map((row, index) => (
-            <Text key={row.slot} inverse={surface === 'fleet' && index === cursor}>
-              {row.slot.padEnd(18)} {row.lifecycle.padEnd(9)} {row.agent.padEnd(8)}{' '}
-              {row.ghost ? 'GHOST (not in live pools)' : row.branch.slice(0, 40).padEnd(40)}{' '}
-              {row.task}
+          {(() => {
+            const { start, end } = windowFor(fleetVm.rows.length);
+            return fleetVm.rows.slice(start, end).map((row, sliceIndex) => {
+              const index = start + sliceIndex;
+              return (
+                <Text key={row.slot} inverse={surface === 'fleet' && index === cursor}>
+                  {row.slot.padEnd(18)} {row.lifecycle.padEnd(9)} {row.agent.padEnd(8)}{' '}
+                  {row.ghost ? 'GHOST (not in live pools)' : row.branch.slice(0, 40).padEnd(40)}{' '}
+                  {row.task}
+                </Text>
+              );
+            });
+          })()}
+          {fleetVm.rows.length > listHeight && (
+            <Text dimColor>
+              {cursor + 1}/{fleetVm.rows.length} — scroll with arrows
             </Text>
-          ))}
+          )}
         </Box>
       )}
 
       {surface === 'backlog' && (
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>d:dispatch c:close-shipped (on selected row)</Text>
-          {backlogVm.map((row, index) => (
-            <Text key={row.itemId} inverse={index === cursor}>
-              {row.ref.padEnd(15)} {row.status.padEnd(16)} p{row.priority.padEnd(3)}{' '}
-              {row.title.slice(0, 70)}
+          {(() => {
+            const { start, end } = windowFor(backlogVm.length);
+            return backlogVm.slice(start, end).map((row, sliceIndex) => {
+              const index = start + sliceIndex;
+              return (
+                <Text key={row.itemId} inverse={index === cursor}>
+                  {row.ref.padEnd(15)} {row.status.padEnd(16)} p{row.priority.padEnd(3)}{' '}
+                  {row.title.slice(0, 70)}
+                </Text>
+              );
+            });
+          })()}
+          {backlogVm.length > listHeight && (
+            <Text dimColor>
+              {cursor + 1}/{backlogVm.length} — scroll with arrows
+            </Text>
+          )}
+        </Box>
+      )}
+
+      {surface === 'runs' && runDetail && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold color="cyan">
+            run {runDetail.id.slice(0, 8)} — {String(runDetail.status)} (Esc to close)
+          </Text>
+          <Text>
+            flow {String(runDetail.flowType)} · ticket {String(runDetail.ticketOrPr ?? '-')} · slot{' '}
+            {String(runDetail.slotId ?? '-')} · mode {String(runDetail.mode ?? '-')}
+          </Text>
+          {(runDetail.decisions ?? []).map((decision) => (
+            <Text key={decision.id} color={decision.resolvedAt ? 'green' : 'yellow'}>
+              {'  gate: '}
+              {decision.title ?? decision.type}{' '}
+              {decision.resolvedAt
+                ? `resolved (${String(decision.resolvedAction ?? 'done')})`
+                : `pending [${(decision.actions ?? []).map((a) => a.id).join(', ')}]`}
             </Text>
           ))}
         </Box>
       )}
 
-      {surface === 'runs' && (
+      {surface === 'runs' && !runDetail && (
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>
-            on a run with a pending gate: a:approve-publish h:hold s:close-as-shipped
+            enter:details · on a pending gate: a:approve-publish h:hold s:close-as-shipped
           </Text>
-          {runsVm.map((row, index) => (
-            <Box key={row.id} flexDirection="column">
-              <Text inverse={index === cursor}>
-                {row.shortId} {row.status.padEnd(14)} {row.flowType.padEnd(12)}{' '}
-                {row.ticket.padEnd(16)} {row.slot}
-              </Text>
-              {row.pendingDecisions.map((decision) => (
-                <Text key={decision.id} color="yellow">
-                  {'  gate: '}
-                  {decision.title} [{decision.actions.join(', ')}]
-                </Text>
-              ))}
-            </Box>
-          ))}
+          {(() => {
+            // Runs render 1 + pending-gate lines each — window by line budget,
+            // walking back from the cursor so it always stays visible.
+            const lineCost = (row: (typeof runsVm)[number]) => 1 + row.pendingDecisions.length;
+            // The shared clamp effect runs post-render; guard against a
+            // shrunken list leaving the cursor momentarily out of range.
+            const safeCursor = Math.min(cursor, Math.max(0, runsVm.length - 1));
+            let start = safeCursor;
+            let used = runsVm[safeCursor] ? lineCost(runsVm[safeCursor]) : 0;
+            while (start > 0 && used + lineCost(runsVm[start - 1]) <= listHeight) {
+              start--;
+              used += lineCost(runsVm[start]);
+            }
+            let end = Math.min(safeCursor + 1, runsVm.length);
+            while (end < runsVm.length && used + lineCost(runsVm[end]) <= listHeight) {
+              used += lineCost(runsVm[end]);
+              end++;
+            }
+            runsWindowClipped = start > 0 || end < runsVm.length;
+            return runsVm.slice(start, end).map((row, sliceIndex) => {
+              const index = start + sliceIndex;
+              return (
+                <Box key={row.id} flexDirection="column">
+                  <Text inverse={index === cursor}>
+                    {row.shortId} {row.status.padEnd(14)} {row.flowType.padEnd(12)}{' '}
+                    {row.ticket.padEnd(16)} {row.slot}
+                  </Text>
+                  {row.pendingDecisions.map((decision) => (
+                    <Text key={decision.id} color="yellow">
+                      {'  gate: '}
+                      {decision.title} [{decision.actions.join(', ')}]
+                    </Text>
+                  ))}
+                </Box>
+              );
+            });
+          })()}
+          {runsWindowClipped && (
+            <Text dimColor>
+              {Math.min(cursor + 1, runsVm.length)}/{runsVm.length} — scroll with arrows
+            </Text>
+          )}
         </Box>
       )}
 
