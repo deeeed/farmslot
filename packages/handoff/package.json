@@ -30,6 +30,21 @@
       "import": "./dist/learning-package/index.js",
       "default": "./dist/learning-package/index.js"
     },
+    "./resolve": {
+      "types": "./dist/resolve/index.d.ts",
+      "import": "./dist/resolve/index.js",
+      "default": "./dist/resolve/index.js"
+    },
+    "./task-io": {
+      "types": "./dist/task-io/index.d.ts",
+      "import": "./dist/task-io/index.js",
+      "default": "./dist/task-io/index.js"
+    },
+    "./pr-publish": {
+      "types": "./dist/pr-publish/index.d.ts",
+      "import": "./dist/pr-publish/index.js",
+      "default": "./dist/pr-publish/index.js"
+    },
     "./schemas/*": "./schemas/*"
   },
   "scripts": {
@@ -74,6 +89,7 @@
     "LICENSE",
     "CHANGELOG.md",
     "schemas/**/*.json",
+    "templates/**/*.md",
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",

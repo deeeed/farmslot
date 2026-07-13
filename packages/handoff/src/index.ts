@@ -3,7 +3,8 @@
  *
  * The format spec ships as JSON Schema assets under `schemas/`; this package
  * provides the matching TypeScript types, the reference validator, the
- * fail-closed scrubber, and the fleet-layout assembler. The schemas, not this
+ * fail-closed scrubber, the assembler/writer pair, the one override-resolution
+ * engine, and the task-io/pr-publish boundary helpers. The schemas, not this
  * code, are the authority: any producer whose output validates is conformant.
  */
 export {
@@ -16,17 +17,40 @@ export {
   type MediaInput,
   type RunMeta,
   type TaskDocPaths,
+  type WriteConsent,
+  writeLearningPackage,
+  type WriteLearningPackageOptions,
+  type WriteResult,
 } from './learning-package/index.js';
 export {
+  buildPrPackage,
+  type BuildPrPackageOptions,
+  type BuildPrPackageResult,
+  type PrEvidenceItem,
+  publishPrEvidence,
+  type PublishPrEvidenceOptions,
+  type PublishPrEvidenceResult,
+} from './pr-publish/index.js';
+export {
+  resolveContent,
+  type ResolveContext,
+  type ResolvedContent,
+  resolveFile,
+  type ResolveRequest,
+} from './resolve/index.js';
+export {
   type FloorHit,
+  type FloorPattern,
   type RedactionTokens,
   type RetainedTextFile,
   scanForFloorSecrets,
   scrubFiles,
   type ScrubInputFile,
+  type ScrubOptions,
   type ScrubOutcome,
 } from './scrub/index.js';
 export {
+  deriveTaskKey,
   type JsonSchema,
   loadAllSchemas,
   loadSchema,
@@ -37,6 +61,7 @@ export {
   type SchemaName,
   SCRUB_FLOOR_VERSION,
   SPEC_VERSION,
+  type TaskKeyInput,
 } from './spec/index.js';
 export type {
   ArtifactKind,
@@ -57,6 +82,15 @@ export type {
   SourceKind,
   VisualPassAttestation,
 } from './spec/types.js';
+export {
+  extractTaskDocument,
+  type RawTaskSource,
+  type RenderContext,
+  renderTaskMarkdown,
+  type RenderTaskMarkdownOptions,
+  type RenderTaskMarkdownResult,
+  type TaskIoConfig,
+} from './task-io/index.js';
 export {
   isValidRunSlug,
   type SchemaError,

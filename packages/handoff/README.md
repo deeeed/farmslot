@@ -2,12 +2,14 @@
 
 Reference implementation of the **Learning Package Format v1** — the self-contained,
 project-agnostic package one completed agent run hands off for later mining.
+Guide: <https://farmslot.io/docs/guides/learning-package>.
 
 The format itself is defined by JSON Schemas shipped as package assets under
 `schemas/`. Those schemas, not this code, are the authority: any producer whose
 output validates against them is conformant, with or without a farmslot
 dependency. This package provides the matching TypeScript types, the reference
-validator, the fail-closed scrubber, and the fleet-layout assembler.
+validator, the fail-closed scrubber, the assemble/write pair, the one
+override-resolution engine, and the task-io/pr-publish boundary helpers.
 
 The package is tool-chain-agnostic: no Jira, GitHub, or wallet vocabulary appears
 in the harness defaults or assembler logic. Tool-chain specifics that legitimately
@@ -53,24 +55,53 @@ yarn add @farmslot/handoff
 | `src/scrub/floor.ts`               | The positive-identification crypto-secret floor (recovery phrases, keys, tokens).                   |
 | `src/scrub/scrubber.ts`            | The fail-closed five-layer scrub gate and `scrub-report.json` generation.                           |
 | `src/scrub/data/`                  | Reference data for detection (the standard BIP-39 English wordlist).                                |
-| `src/learning-package/`            | `assembleLearningPackage` (fleet layout) and its input/result contracts.                            |
+| `src/learning-package/`            | `assembleLearningPackage` + `writeLearningPackage` and their input/result contracts.                |
+| `src/resolve/`                     | The one override engine: `personal > domain > farm > default` first-match + shadow logging.         |
+| `src/task-io/`                     | Source normalization (`extractTaskDocument`) and task-doc rendering (`renderTaskMarkdown`).         |
+| `src/pr-publish/`                  | PR body/evidence composition (`buildPrPackage`) and the consent-guarded publish entry point.        |
+| `src/spec/task-key.ts`             | `deriveTaskKey` — the cross-attempt task-family key (ticket-normalized or content-hashed).          |
+| `templates/task-default.md`        | The shipped default task template (the `default` tier of the resolution chain).                     |
 
 Tests live under `test/`, mirroring the source directories. The adversarial scrub
-fixture suite lives in `test/scrubber.test.ts` + `test/fixtures/`.
+fixture suite lives in `test/scrubber.test.ts`, `test/scrubber-adversarial.test.ts`,
+and `test/fixtures/`.
 
 ## Public API map
 
-| Export                          | Purpose                                                                        |
-| ------------------------------- | ------------------------------------------------------------------------------ |
-| `validateLearningPackage`       | Validate a package directory against the format spec.                          |
-| `assembleLearningPackage`       | Assemble one package from a completed fleet run, with the blocked-return gate. |
-| `scrubFiles`                    | Run the fail-closed scrub gate over candidate files.                           |
-| `scanForFloorSecrets`           | Positive-identification secret scan of a text string.                          |
-| `loadSchema` / `loadAllSchemas` | Load the shipped spec schema assets.                                           |
-| `isValidRunSlug`                | Check the run-slug grammar.                                                    |
+| Export                           | Purpose                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------- |
+| `validateLearningPackage`        | Validate a package directory against the format spec.                           |
+| `assembleLearningPackage`        | Assemble one package from a completed run, with the blocked-return gate.        |
+| `writeLearningPackage`           | Append-only git write + index rows; per-call human approval required; `dryRun`. |
+| `deriveTaskKey`                  | Derive the cross-attempt task-family key (never coordinator-assigned).          |
+| `resolveFile` / `resolveContent` | First-match override resolution with shadow logging; broken overrides degrade.  |
+| `extractTaskDocument`            | Normalize a raw task source to `source.json` (allowlist-only PII floor).        |
+| `renderTaskMarkdown`             | Render the task doc from the resolved template chain.                           |
+| `buildPrPackage`                 | Compose PR description + evidence block (pure/local, writes nothing).           |
+| `publishPrEvidence`              | Consent-guarded publish; `dryRun` upload plan (transport stubbed in v1).        |
+| `scrubFiles`                     | Run the fail-closed scrub gate over candidate files (UNION-only extension).     |
+| `scanForFloorSecrets`            | Positive-identification secret scan of a text string.                           |
+| `loadSchema` / `loadAllSchemas`  | Load the shipped spec schema assets.                                            |
+| `isValidRunSlug`                 | Check the run-slug grammar.                                                     |
 
 Subpath exports: `@farmslot/handoff/spec`, `/validate`, `/scrub`,
-`/learning-package`, and the raw assets at `/schemas/<name>.schema.json`.
+`/learning-package`, `/resolve`, `/task-io`, `/pr-publish`, and the raw assets at
+`/schemas/<name>.schema.json`.
+
+## Unhappy-path contract (binding)
+
+Closeout packaging is post-run and best-effort: _fail-closed on the share
+decision, fail-open on the run._
+
+- Missing override file → the resolution chain falls through to the shipped default.
+- Broken override file → warn, record the fallback in `provenance.json`, use the
+  default. Never a throw.
+- Scrub floor hit → the assembly is `blocked`: local quarantine (manifest +
+  scrub-report only, no raw artifacts) and no repo write, ever.
+- No approver present → assemble + `dryRun`; simply don't write. Not an error.
+- `writeLearningPackage` refusals (invalid package, missing approval, append-only
+  violation) throw with `Next:` guidance; callers treat them as warn-and-skip,
+  never as a run failure.
 
 ## Maintenance rules
 
