@@ -8,7 +8,7 @@ import {
   slotSelectionScore,
   slotUnavailableReason,
 } from '../../src/contracts/slot-selection.js';
-import type { SlotStatus } from '../../src/contracts/slots.js';
+import type { FleetStatus, SlotStatus } from '../../src/contracts/slots.js';
 
 function slot(overrides: Partial<SlotStatus> & { slot: string }): SlotStatus {
   return {
@@ -34,6 +34,24 @@ function slot(overrides: Partial<SlotStatus> & { slot: string }): SlotStatus {
     taskStepProgress: null,
     ...overrides,
   } as SlotStatus;
+}
+
+function fleet(slots: SlotStatus[], overrides: Partial<FleetStatus> = {}): FleetStatus {
+  return {
+    checkedAt: '2026-07-13T00:00:00Z',
+    slots,
+    summary: {
+      total: slots.length,
+      ready: slots.length,
+      busy: 0,
+      held: 0,
+      manual: 0,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
+    ...overrides,
+  };
 }
 
 test('slotUnavailableReason blocks dispatch states but not degraded health', () => {
@@ -110,7 +128,7 @@ test('slotSelectionScore prefers live CDP, then warm, then device, then fixtures
 
 test('selectSlot picks the best-scoring free slot for a project', () => {
   const result = selectSlot(
-    [
+    fleet([
       slot({
         slot: 'worse',
         warm: false,
@@ -119,7 +137,7 @@ test('selectSlot picks the best-scoring free slot for a project', () => {
       slot({ slot: 'best' }),
       slot({ slot: 'busy-one', lifecycle: 'busy', phase: 'working' }),
       slot({ slot: 'other-project', project: 'elsewhere' }),
-    ],
+    ]),
     { project: 'demo-farm' },
   );
   assert.ok(result.ok);
@@ -128,10 +146,10 @@ test('selectSlot picks the best-scoring free slot for a project', () => {
 
 test('selectSlot failure codes discriminate not-found from occupied', () => {
   const occupied = selectSlot(
-    [
+    fleet([
       slot({ slot: 'w1', agent: 'working' }),
       slot({ slot: 'w2', lifecycle: 'held', phase: 'pr-watch' }),
-    ],
+    ]),
     { project: 'demo-farm' },
   );
   assert.ok(!occupied.ok);
@@ -139,9 +157,9 @@ test('selectSlot failure codes discriminate not-found from occupied', () => {
   assert.match(occupied.reason, /occupied/u);
   assert.deepEqual(occupied.details, ['w1: agent working', 'w2: lifecycle=held (pr-watch)']);
 
-  const noProject = selectSlot([slot({ slot: 'a' })], { project: 'nope' });
+  const noProject = selectSlot(fleet([slot({ slot: 'a' })]), { project: 'nope' });
   assert.ok(!noProject.ok);
-  assert.equal(noProject.code, 'PROJECT_NOT_FOUND');
+  assert.equal(noProject.code, 'NO_PROJECT_SLOTS');
 });
 
 test('selectSlot validate mode uses the explicit-slot predicate', () => {
@@ -150,18 +168,28 @@ test('selectSlot validate mode uses the explicit-slot predicate', () => {
     slot({ slot: 'blocked', agent: 'working' }),
   ];
   // Held is selectable when named explicitly (PR affinity reuse) …
-  const held = selectSlot(slots, { slotId: 'target' });
+  const held = selectSlot(fleet(slots), { slotId: 'target' });
   assert.ok(held.ok);
   // … but never auto-selected.
-  const auto = selectSlot(slots, { project: 'demo-farm' });
+  const auto = selectSlot(fleet(slots), { project: 'demo-farm' });
   assert.ok(!auto.ok);
 
-  const blocked = selectSlot(slots, { slotId: 'blocked' });
+  const blocked = selectSlot(fleet(slots), { slotId: 'blocked' });
   assert.ok(!blocked.ok);
   assert.equal(blocked.code, 'SLOT_UNAVAILABLE');
   assert.match(blocked.reason, /agent working/u);
 
-  const missing = selectSlot(slots, { slotId: 'ghost-9' });
+  const missing = selectSlot(fleet(slots), { slotId: 'ghost-9' });
   assert.ok(!missing.ok);
   assert.equal(missing.code, 'SLOT_NOT_FOUND');
+});
+
+test('selectSlot refuses stale fleet snapshots for both modes', () => {
+  const stale = fleet([slot({ slot: 'a' })], { stale: true });
+  const auto = selectSlot(stale, { project: 'demo-farm' });
+  assert.ok(!auto.ok);
+  assert.equal(auto.code, 'FLEET_STALE');
+  const explicit = selectSlot(stale, { slotId: 'a' });
+  assert.ok(!explicit.ok);
+  assert.equal(explicit.code, 'FLEET_STALE');
 });

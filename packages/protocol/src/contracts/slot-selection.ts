@@ -7,7 +7,7 @@
 // richer, separate core in services/gateway/src/methods/dispatch/slot-scoring.ts —
 // this module answers the simpler operator question find-slot.sh answered.
 
-import type { SlotStatus } from './slots.js';
+import type { FleetStatus, SlotStatus } from './slots.js';
 
 export interface SelectSlotOptions {
   project?: string;
@@ -16,9 +16,10 @@ export interface SelectSlotOptions {
 }
 
 export type SelectSlotFailureCode =
+  | 'FLEET_STALE'
   | 'SLOT_NOT_FOUND'
   | 'SLOT_UNAVAILABLE'
-  | 'PROJECT_NOT_FOUND'
+  | 'NO_PROJECT_SLOTS'
   | 'NO_SLOT_AVAILABLE';
 
 export type SelectSlotResult =
@@ -80,7 +81,18 @@ export function slotSelectionScore(slot: SlotStatus): number {
   return score;
 }
 
-export function selectSlot(slots: SlotStatus[], options: SelectSlotOptions): SelectSlotResult {
+export function selectSlot(fleet: FleetStatus, options: SelectSlotOptions): SelectSlotResult {
+  // Fleet honesty (Phase 0): never pick from a stale snapshot — the slot
+  // states may no longer be true and a re-probe is already running.
+  if (fleet.stale) {
+    return {
+      ok: false,
+      code: 'FLEET_STALE',
+      reason: `Fleet snapshot is stale (checked ${fleet.checkedAt}); refusing to pick a slot.`,
+      details: [],
+    };
+  }
+  const slots = fleet.slots;
   if (options.slotId) {
     const slot = slots.find((candidate) => candidate.slot === options.slotId);
     if (!slot) {
@@ -105,9 +117,11 @@ export function selectSlot(slots: SlotStatus[], options: SelectSlotOptions): Sel
 
   const projectSlots = slots.filter((slot) => slot.project === options.project);
   if (projectSlots.length === 0) {
+    // The fleet snapshot cannot distinguish an unknown project from a
+    // registered project with no pool slots — the code says only what is true.
     return {
       ok: false,
-      code: 'PROJECT_NOT_FOUND',
+      code: 'NO_PROJECT_SLOTS',
       reason: `No slots found for project ${options.project}.`,
       details: [],
     };

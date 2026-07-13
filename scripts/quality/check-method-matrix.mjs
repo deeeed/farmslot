@@ -23,7 +23,12 @@ function registryMethods() {
   if (start === -1 || end === -1) {
     throw new Error(`Methods block not found in ${registryPath} — did the registry format change?`);
   }
-  const methods = [...source.slice(start, end).matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  const block = source
+    .slice(start, end)
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n');
+  const methods = [...block.matchAll(/'([^']+)'/g)].map((match) => match[1]);
   if (methods.length === 0) {
     throw new Error(`No methods parsed from ${registryPath} — did the registry format change?`);
   }
@@ -88,17 +93,18 @@ for (const method of methods) {
   if (!SURFACES.has(entry.surface)) {
     problems.push(`invalid surface '${entry.surface}' for ${method}`);
   }
-  if (entry.surface === 'typed-command' && typeof entry.command !== 'string') {
+  const nonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
+  if (entry.surface === 'typed-command' && !nonEmptyString(entry.command)) {
     problems.push(`typed-command without a command string: ${method}`);
   }
-  if (entry.surface === 'na' && typeof entry.note !== 'string') {
+  if (entry.surface === 'na' && !nonEmptyString(entry.note)) {
     problems.push(`na without a justification note: ${method}`);
   }
-  if ('command' in entry && typeof entry.command !== 'string') {
-    problems.push(`non-string command for ${method}`);
+  if ('command' in entry && !nonEmptyString(entry.command)) {
+    problems.push(`empty or non-string command for ${method}`);
   }
-  if ('note' in entry && typeof entry.note !== 'string') {
-    problems.push(`non-string note for ${method}`);
+  if ('note' in entry && !nonEmptyString(entry.note)) {
+    problems.push(`empty or non-string note for ${method}`);
   }
   if ('tui' in entry && typeof entry.tui !== 'boolean') {
     problems.push(`non-boolean tui flag for ${method}`);

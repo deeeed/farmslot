@@ -34,10 +34,11 @@ export function registerFleetCommand(program: Command): void {
     });
 
   const FIND_SLOT_ACTIONS: Record<string, string> = {
+    FLEET_STALE: 'Re-probe the fleet first: `farmslot fleet status --force-refresh`.',
     SLOT_NOT_FOUND: 'List slot ids with `farmslot fleet status`.',
     SLOT_UNAVAILABLE: 'Pick another slot or wait: `farmslot fleet status` shows each state.',
-    PROJECT_NOT_FOUND:
-      'Check the project name: `farmslot config projects` lists registered projects.',
+    NO_PROJECT_SLOTS:
+      'Check the project name (`farmslot config projects`) or add slots for it to a pool.',
     NO_SLOT_AVAILABLE:
       'Free a slot or check the fleet: `farmslot fleet status`. Details list each blocked slot.',
   };
@@ -63,7 +64,7 @@ export function registerFleetCommand(program: Command): void {
           () => client.call<FleetStatusResult>('fleet.status'),
           !emit.machine,
         );
-        const result = selectSlot(status.fleet.slots, {
+        const result = selectSlot(status.fleet, {
           project: opts.project,
           slotId: opts.slot,
         });
