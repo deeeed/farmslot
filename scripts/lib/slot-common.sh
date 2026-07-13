@@ -13,7 +13,23 @@ if [[ -n "${POOL_DIR:-}" && ! -d "${POOL_DIR}" && -d "${HOME}/farmslot-node/pool
   POOL_DIR="${HOME}/farmslot-node/pool"
 fi
 
-FARMSLOT_CLI="${FARMSLOT_CLI:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../packages/cli" && pwd)/bin/farmslot.mjs}"
+# Checkout-local CLI, overridable; relocated script trees (deploy-node copies,
+# test sandboxes) fall back to the installed farmslot, which resolves the same
+# slot-config core. Fail loudly when neither exists.
+if [ -z "${FARMSLOT_CLI:-}" ]; then
+  _slot_common_cli="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../packages/cli" 2>/dev/null && pwd || true)"
+  if [ -n "$_slot_common_cli" ] && [ -f "${_slot_common_cli}/bin/farmslot.mjs" ]; then
+    FARMSLOT_CLI="${_slot_common_cli}/bin/farmslot.mjs"
+  elif command -v farmslot >/dev/null 2>&1; then
+    FARMSLOT_CLI="$(command -v farmslot)"
+  else
+    echo "FAIL: farmslot CLI not found (no packages/cli next to scripts/ and no farmslot on PATH). Set FARMSLOT_CLI." >&2
+    return 1 2>/dev/null || exit 1
+  fi
+fi
+# The CLI verbs honor the historical POOL_DIR/PROJECTS_DIR overrides via env.
+[ -n "${POOL_DIR:-}" ] && export FARMSLOT_POOL_DIR="${FARMSLOT_POOL_DIR:-$POOL_DIR}"
+[ -n "${PROJECTS_DIR:-}" ] && export FARMSLOT_PROJECTS_DIR="${FARMSLOT_PROJECTS_DIR:-$PROJECTS_DIR}"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
@@ -79,7 +95,9 @@ load_slot_vars() {
   # resolve_slot is kept so SLOT_RESULT/POOL_FILE globals remain populated for
   # parse_slot consumers (e.g. load_project_config reads PROJECT_NAME from them).
   resolve_slot "$slot_id" || return 1
-  eval "$("$FARMSLOT_CLI" internal slot-vars "$slot_id" --shell)" || return 1
+  local _slot_shell_vars
+  _slot_shell_vars=$("$FARMSLOT_CLI" internal slot-vars "$slot_id" --shell) || return 1
+  eval "$_slot_shell_vars"
 }
 
 # ── check_slot_enabled ───────────────────────────────────────────
@@ -446,7 +464,9 @@ load_project_config() {
 
   # Delegate path vars to CLI (sets PROJECT_CONFIG, PROJECT_FIXTURES_DIR,
   # PROJECT_TEMPLATES_DIR, RUNTIME_DIR, ARTIFACT_DIR, RECIPE_DIR, WORKER_TASK_DIR_NAME).
-  eval "$("$FARMSLOT_CLI" internal project-vars "$PROJECT_NAME" --shell)" || return 1
+  local _project_shell_vars
+  _project_shell_vars=$("$FARMSLOT_CLI" internal project-vars "$PROJECT_NAME" --shell) || return 1
+  eval "$_project_shell_vars"
 
   # Resolve reference repos using the updated get_project_field (now CLI-backed).
   MOBILE_REPO=""
@@ -511,7 +531,9 @@ apply_project_command_env_current_shell() {
 expand_slot_template() {
   local text="${1:-}"
   [ -z "$text" ] && { printf '\n'; return 0; }
-  "$FARMSLOT_CLI" internal expand-template "${SLOT_ID:?expand_slot_template requires load_slot_vars}" "$text"
+  # DOMAIN is a runtime overlay (sync-fixtures --domain), not a slot var.
+  "$FARMSLOT_CLI" internal expand-template "${SLOT_ID:?expand_slot_template requires load_slot_vars}" "$text" \
+    ${DOMAIN:+--var "domain=$DOMAIN"}
 }
 
 # ── expand_hook <hook-name> ──────────────────────────────────────────
@@ -525,8 +547,6 @@ expand_hook() {
 
 # ── expand_platform_field <field> ────────────────────────────────────
 # Reads platforms.<PLATFORM>.<field> from project.json, substitutes vars.
-# No CLI verb available for platforms.<platform>.<field> yet; this function
-# stays bash until a dedicated verb is added to internal.ts.
 expand_platform_field() {
   [ -z "${PROJECT_NAME:-}" ] && return 0
   "$FARMSLOT_CLI" internal expand-platform-field "${SLOT_ID:?expand_platform_field requires load_slot_vars}" "$1"
@@ -541,7 +561,8 @@ render_fixture_template() {
   [ ! -f "$src_file" ] && return 1
   local rendered
   rendered=$(mktemp)
-  "$FARMSLOT_CLI" internal render-fixture-template "$SLOT_ID" "$src_file" > "$rendered" || {
+  "$FARMSLOT_CLI" internal render-fixture-template "$SLOT_ID" "$src_file" \
+    ${DOMAIN:+--var "domain=$DOMAIN"} > "$rendered" || {
     rm -f "$rendered"
     return 1
   }

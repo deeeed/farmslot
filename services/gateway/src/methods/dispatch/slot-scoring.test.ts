@@ -126,8 +126,14 @@ test('findBestSlot honors allow-list, identity policy, and CDP preference', () =
     findBestSlot([claimed], 'demo-farm', { familyId: 'other-family', lane: 'comparison' }),
     null,
   );
-  // CDP-live candidates win even when a CDP-less one scores equal.
-  assert.equal(findBestSlot([noCdp, best], 'demo-farm')?.slot, 'best');
+  // CDP-live candidates win even at equal score: noCdp (cdp 5) vs a live slot
+  // with a device penalty (5) tie on points; the hard CDP filter decides.
+  const liveButDegraded = slot({
+    slot: 'live-degraded',
+    health: { ssh: 'LOCAL', device: 'sim:OFF', devserver: 'OK', cdp: 'Wallet', fixtures: 'OK' },
+  });
+  assert.equal(slotScore(liveButDegraded), slotScore(noCdp));
+  assert.equal(findBestSlot([noCdp, liveButDegraded], 'demo-farm')?.slot, 'live-degraded');
 });
 
 test('validateSlot explains disabled/manual/working/busy and accepts held', () => {

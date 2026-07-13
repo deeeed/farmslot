@@ -83,9 +83,13 @@ function expandTemplateInternal(
   result = result.replaceAll('{{slot_id}}', slotVars.slotId);
   result = result.replaceAll('{{SESSION}}', session);
   result = result.replaceAll('{{session}}', session);
-  // REPO = slot checkout path; primary_repo = canonical project tree (worktree sandboxes).
-  result = result.replaceAll('{{REPO}}', slotVars.repo);
-  result = result.replaceAll('{{repo}}', slotVars.repo);
+  // REPO = slot checkout path as a shell-usable path: the bash implementation
+  // substituted REMOTE_REPO (tilde-expanded for the slot's machine) because a
+  // quoted '~/...' never expands in hooks. primary_repo = canonical project
+  // tree (worktree sandboxes).
+  const repoForShell = slotVars.remoteRepo || slotVars.repo;
+  result = result.replaceAll('{{REPO}}', repoForShell);
+  result = result.replaceAll('{{repo}}', repoForShell);
   const primaryRepo =
     typeof projectVars?.projectJson.primary_repo === 'string' &&
     projectVars.projectJson.primary_repo.trim()
@@ -119,6 +123,11 @@ function expandTemplateInternal(
       result = result.replaceAll(`{{${key.toUpperCase()}}}`, value);
     }
   }
+  // {{domain}} always renders (empty when no overlay is active) — the bash
+  // fixture-sync sed substituted ${DOMAIN:-} unconditionally.
+  const domainValue = extraVars?.domain ?? slotVars.domain ?? '';
+  result = result.replaceAll('{{domain}}', domainValue);
+  result = result.replaceAll('{{DOMAIN}}', domainValue);
   return result;
 }
 
@@ -262,7 +271,8 @@ export async function renderFixtureTemplate(
   srcPath: string,
   slotVars: SlotVars,
   projectVars?: ProjectVars,
+  extraVars?: Record<string, string>,
 ): Promise<string> {
   const content = await readFile(srcPath, 'utf-8');
-  return expandTemplate(content, slotVars, projectVars);
+  return expandTemplate(content, slotVars, projectVars, extraVars);
 }

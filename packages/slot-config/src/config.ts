@@ -20,8 +20,16 @@ import {
 import { SlotConfigError } from './error.js';
 import { farmslotRoot } from './repo-root.js';
 
-const poolDir = path.join(farmslotRoot, 'pool');
-const projectsDir = path.join(farmslotRoot, 'projects');
+// FARMSLOT_POOL_DIR / FARMSLOT_PROJECTS_DIR are the historical script-level
+// overrides (session-usage.sh tests, fixture harnesses); default to the
+// checkout layout. Captured at module load — long-lived consumers (gateway)
+// read them once at boot, per-invocation CLI verbs read them fresh.
+const poolDir = process.env.FARMSLOT_POOL_DIR
+  ? path.resolve(process.env.FARMSLOT_POOL_DIR)
+  : path.join(farmslotRoot, 'pool');
+const projectsDir = process.env.FARMSLOT_PROJECTS_DIR
+  ? path.resolve(process.env.FARMSLOT_PROJECTS_DIR)
+  : path.join(farmslotRoot, 'projects');
 const PROJECT_CONFIG_NOT_FOUND_PREFIX = 'Project config not found:';
 
 export function isMissingProjectConfigError(err: unknown): boolean {
@@ -388,7 +396,15 @@ export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
 // Prefers a slot on the local machine when several pools map the same path.
 
 export async function resolveSlotByRepo(targetDir: string): Promise<ResolvedSlot> {
-  const resolvedTarget = await realpath(path.resolve(targetDir)).catch(() => null);
+  const resolvedTarget = await realpath(path.resolve(targetDir)).catch((err) => {
+    // Missing paths are the expected lookup miss; real IO failures must surface.
+    if (
+      (err as NodeJS.ErrnoException).code === 'ENOENT' ||
+      (err as NodeJS.ErrnoException).code === 'ENOTDIR'
+    )
+      return null;
+    throw err;
+  });
   if (!resolvedTarget) {
     throw new SlotConfigError('REPO_DIR_NOT_FOUND', `Directory does not exist: ${targetDir}`, {
       userAction: 'Pass an existing slot checkout directory, or resolve by id instead.',
@@ -404,8 +420,10 @@ export async function resolveSlotByRepo(targetDir: string): Promise<ResolvedSlot
     });
   }
   const localHost = os.hostname().replace(/\.local$/, '');
+  const isLocalHost = (host: string) =>
+    host === 'localhost' || host === '127.0.0.1' || host.replace(/\.local$/, '') === localHost;
   let fallback: ResolvedSlot | null = null;
-  for (const file of files) {
+  for (const file of [...files].sort()) {
     if (isIgnoredPoolFile(file)) continue;
     let pool: RawPoolJson;
     try {
@@ -419,11 +437,18 @@ export async function resolveSlotByRepo(targetDir: string): Promise<ResolvedSlot
       if (!repo) continue;
       const expanded = repo.startsWith('~/') ? path.join(os.homedir(), repo.slice(2)) : repo;
       if (!path.isAbsolute(expanded)) continue;
-      const real = await realpath(expanded).catch(() => null);
+      const real = await realpath(expanded).catch((err) => {
+        // A pool entry pointing at a missing checkout is a normal non-match.
+        if (
+          (err as NodeJS.ErrnoException).code === 'ENOENT' ||
+          (err as NodeJS.ErrnoException).code === 'ENOTDIR'
+        )
+          return null;
+        throw err;
+      });
       if (real !== resolvedTarget) continue;
       const resolved: ResolvedSlot = { pool, slot, poolFile: path.join(poolDir, file) };
-      const host = (pool.host ?? '').replace(/\.local$/, '');
-      if (host === localHost || pool.machine === localHost) return resolved;
+      if (isLocalHost(pool.host ?? '') || pool.machine === localHost) return resolved;
       fallback = fallback ?? resolved;
     }
   }

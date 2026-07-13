@@ -37,6 +37,8 @@ if [ -z "$PROJECT" ] && [ -z "$SLOT" ]; then
   exit 1
 fi
 
-exec "$FARMSLOT_CLI" fleet find-slot \
+# --raw keeps the historical bare-slot-id stdout contract (errors go to the
+# envelope on stdout with exit 1, which callers already treat as failure).
+exec "$FARMSLOT_CLI" fleet find-slot --raw \
   ${PROJECT:+--project "$PROJECT"} \
   ${SLOT:+--slot "$SLOT"}

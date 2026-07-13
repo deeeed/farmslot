@@ -124,7 +124,8 @@ export function registerFleetCommand(program: Command): void {
     .description('Pick the best free slot for a project (or validate a specific slot)')
     .option('--project <name>', 'Project to find a slot for')
     .option('--slot <slotId>', 'Validate this specific slot instead of picking one')
-    .action(async (opts: { project?: string; slot?: string }, cmd: Command) => {
+    .option('--raw', 'Print only the slot id (plumbing contract for scripts)')
+    .action(async (opts: { project?: string; slot?: string; raw?: boolean }, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
@@ -151,7 +152,10 @@ export function registerFleetCommand(program: Command): void {
             details: result.details,
           });
         }
-        if (emit.machine) {
+        if (opts.raw) {
+          // Raw plumbing output — find-slot.sh captures the bare id.
+          process.stdout.write(`${result.slot.slot}\n`);
+        } else if (emit.machine) {
           emit.ok({ slot: result.slot });
         } else {
           output.write(`${result.slot.slot}\n`);

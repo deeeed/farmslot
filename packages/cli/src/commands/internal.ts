@@ -68,7 +68,18 @@ export function slotVarsShellLines(vars: SlotVars): string[] {
     ['SSH_TARGET', vars.sshTarget],
     ['REMOTE_REPO', vars.remoteRepo],
   ];
-  return pairs.map(([key, value]) => `${key}=${shellQuote(value)}`);
+  const validName = /^[A-Za-z_][A-Za-z0-9_]*$/;
+  return pairs
+    .filter(([key]) => {
+      if (validName.test(key)) return true;
+      // A resource field that is not a valid shell identifier cannot become an
+      // eval-able assignment; surface it instead of emitting broken syntax.
+      process.stderr.write(
+        `slot-vars: skipping resource field '${key}' — not a shell identifier\n`,
+      );
+      return false;
+    })
+    .map(([key, value]) => `${key}=${shellQuote(value)}`);
 }
 
 function parseExtraVars(extras: string[]): Record<string, string> {
@@ -271,14 +282,16 @@ export function registerInternalCommand(program: Command): void {
   internal
     .command('expand-template <slotId> <text>')
     .description('Expand {{var}} placeholders in a string with slot/project variables')
-    .action(async (slotId: string, text: string, _opts: unknown, cmd: Command) => {
+    .option('--var <key=value>', 'Extra template variable (repeatable)', collectVar, [])
+    .action(async (slotId: string, text: string, opts: { var: string[] }, cmd: Command) => {
       const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
       const emit = createEmitter(output, cmd);
       try {
+        const extraVars = parseExtraVars(opts.var);
         const vars = await loadSlotVars(slotId);
         const projectVars = await loadProjectVars(vars.projectName);
         // Raw plumbing output — the expand_slot_template contract.
-        process.stdout.write(`${expandTemplate(text, vars, projectVars)}\n`);
+        process.stdout.write(`${expandTemplate(text, vars, projectVars, extraVars)}\n`);
       } catch (err) {
         emit.fail(err);
       }
@@ -305,14 +318,16 @@ export function registerInternalCommand(program: Command): void {
   internal
     .command('render-fixture-template <slotId> <srcPath>')
     .description('Render a fixture template file with slot/project variables to stdout')
-    .action(async (slotId: string, srcPath: string, _opts: unknown, cmd: Command) => {
+    .option('--var <key=value>', 'Extra template variable (repeatable)', collectVar, [])
+    .action(async (slotId: string, srcPath: string, opts: { var: string[] }, cmd: Command) => {
       const output = new OutputContext(Boolean(cmd.optsWithGlobals().json));
       const emit = createEmitter(output, cmd);
       try {
+        const extraVars = parseExtraVars(opts.var);
         const vars = await loadSlotVars(slotId);
         const projectVars = await loadProjectVars(vars.projectName);
         // Raw plumbing output — sync-fixtures.sh writes it to the slot repo.
-        process.stdout.write(await renderFixtureTemplate(srcPath, vars, projectVars));
+        process.stdout.write(await renderFixtureTemplate(srcPath, vars, projectVars, extraVars));
       } catch (err) {
         emit.fail(err);
       }

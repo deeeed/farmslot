@@ -198,3 +198,30 @@ test('expandDispatchCmd supports Grok runner path placeholders', () => {
     'cd /repo && grok /Users/deeeed/.grok/bin/grok /Users/deeeed/.grok/bin/grok --permission-mode auto --model grok-build Read TASK.md',
   );
 });
+
+test('expandTemplate substitutes {{repo}} with the shell-usable remote repo path', () => {
+  const slotVars: SlotVars = {
+    slotId: 'gohan-1',
+    machine: 'gohan',
+    platform: 'ios',
+    host: 'gohan.local',
+    sshUser: 'dev',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '~/dev/checkout',
+    session: 's1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'dev@gohan.local',
+    remoteRepo: '/Users/dev/dev/checkout',
+    projectName: 'demo',
+    resourceVars: {},
+  };
+  assert.equal(expandTemplate("cd '{{repo}}'", slotVars), "cd '/Users/dev/dev/checkout'");
+});

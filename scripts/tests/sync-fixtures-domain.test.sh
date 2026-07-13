@@ -10,6 +10,11 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Relocate the real scripts into a sandbox root so pool/ and projects/ are ours.
 cp -R "$REPO_ROOT/scripts" "$TMP/scripts"
+# The relocated tree has no packages/cli — pin the checkout CLI and point the
+# slot-config core at the sandbox pool/projects.
+export FARMSLOT_CLI="$REPO_ROOT/packages/cli/bin/farmslot.mjs"
+export FARMSLOT_POOL_DIR="$TMP/pool"
+export FARMSLOT_PROJECTS_DIR="$TMP/projects"
 mkdir -p "$TMP/pool" "$TMP/projects/domain-test-farm/fixtures" "$TMP/repo"
 git init -q "$TMP/repo"
 
