@@ -4,6 +4,8 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Detect JWTs with any payload shape: only the header segment is eyJ-anchored (the payload can be any base64url - e30, an empty-claims payload, is valid), with minimum header/signature lengths so short dotted identifiers and prose fragments never match.
+- Runtime-require all three consent fields for a real write (humanApproval === true, non-empty approvedBy, calendar-valid grantedAt) with a teaching error naming the missing field - untyped callers can no longer pass a partial approval.
 - Unify broken-override handling per the clarified unhappy-path contract: parse-broken content of a selected candidate now warns, records the candidate in shadows/provenance, and CONTINUES the tier walk exactly like stat-broken candidates - the next tier's valid candidate wins and the shipped default is the terminal fallback only (one rule for all broken shapes).
 - Resolution candidate discovery is lstat-aware: a DANGLING symlink override is classified as a broken override (warned, skipped, recorded in shadows) instead of silently vanishing behind existsSync's link-following.
 - Linked git worktrees are valid write destinations: the destination lock now lives in the RESOLVED git dir (`.git` may be a file carrying a `gitdir:` pointer), with a teaching error for unrecognized `.git` entries.

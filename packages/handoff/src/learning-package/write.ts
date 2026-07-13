@@ -19,6 +19,7 @@ import path from 'node:path';
 import { normalizeTicket } from '../spec/task-key.js';
 import type { GradeSemantic, HumanGrade, IndexRow, Manifest } from '../spec/types.js';
 import { SCHEMA_VERSION } from '../spec/version.js';
+import { isValidDateTime } from '../validate/json-schema.js';
 import { validateLearningPackage } from '../validate/validate-package.js';
 
 import { assertContained, assertSafePathSegment } from './safe-path.js';
@@ -315,12 +316,32 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
     return { status: 'dry-run', wouldWritePath: packagePath, indexRows: [row], pushed: false };
   }
 
+  // All three consent fields are runtime-required: untyped callers can omit
+  // what the type system would demand, and an approval without WHO and WHEN is
+  // not an audit-grade approval.
   if (options.consent?.humanApproval !== true) {
     throw new Error(
       'writeLearningPackage: a real write requires per-call human approval ' +
         '(consent: { humanApproval: true, approvedBy, grantedAt }). Approval is never ' +
         'sticky and never read from a file. Next: get an explicit approval, or use ' +
         'dryRun: true to preview without writing.',
+    );
+  }
+  if (typeof options.consent.approvedBy !== 'string' || options.consent.approvedBy.trim() === '') {
+    throw new Error(
+      'writeLearningPackage: consent.approvedBy is missing or empty - the approval must ' +
+        'name who granted it (a pseudonymous engineer key is fine). Next: pass the ' +
+        "approver's identifier with the consent.",
+    );
+  }
+  if (
+    typeof options.consent.grantedAt !== 'string' ||
+    !isValidDateTime(options.consent.grantedAt)
+  ) {
+    throw new Error(
+      `writeLearningPackage: consent.grantedAt '${String(options.consent.grantedAt)}' is ` +
+        'missing or not a valid ISO date-time - the approval must record when it was ' +
+        'granted. Next: stamp the grant time (e.g. new Date().toISOString()).',
     );
   }
 

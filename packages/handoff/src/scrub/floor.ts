@@ -51,9 +51,13 @@ const FLOOR_PATTERNS: FloorPattern[] = [
     pattern:
       /(?:private[_\s-]?key|privkey|secret[_\s-]?key)["'\s\\]*[:=>]+["'\s\\]*(?:0x)?[0-9a-fA-F]{64}\b/gi,
   },
+  // Only the HEADER reliably starts with eyJ (it always encodes {"alg"/{"typ");
+  // the payload can be any base64url - e30 ({}) is a valid empty-claims payload.
+  // Minimum lengths on header tail and signature keep short a.b.c identifiers
+  // and prose fragments from matching.
   {
     kind: 'jwt',
-    pattern: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+    pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/g,
   },
   { kind: 'github-token', pattern: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g },
   { kind: 'github-token', pattern: /\bgithub_pat_[A-Za-z0-9_]{40,}\b/g },

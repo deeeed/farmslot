@@ -342,3 +342,24 @@ test('column-aligned and multiline labeled assignments are floor hits', () => {
   // The required operator keeps plain prose clean.
   assert.equal(scanForFloorSecrets('the private key was rotated and stored safely').length, 0);
 });
+
+test('JWTs are detected regardless of payload shape; short dotted identifiers stay clean', () => {
+  const signature = 'aQiDoLpZ9k3jH2xVbNmC';
+  // Valid empty-claims payload: e30 = base64url({}), which does not start eyJ.
+  assert.ok(
+    scanForFloorSecrets(`token eyJhbGciOiJIUzI1NiJ9.e30.${signature}`).some(
+      (h) => h.kind === 'jwt',
+    ),
+    'e30-payload JWT missed',
+  );
+  // Classic {"...}-payload JWT still hits.
+  assert.ok(
+    scanForFloorSecrets(
+      `bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.${signature}`,
+    ).some((h) => h.kind === 'jwt'),
+  );
+  // Prose fragments and short dotted identifiers never match.
+  assert.equal(scanForFloorSecrets('the eyJ prefix marks a JWT header').length, 0);
+  assert.equal(scanForFloorSecrets('version a.b.c and module x.y.z are fine').length, 0);
+  assert.equal(scanForFloorSecrets('eyJshort.ab.cd is not a token').length, 0);
+});

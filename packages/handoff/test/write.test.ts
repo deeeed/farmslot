@@ -387,3 +387,37 @@ test('a linked git worktree is a valid destination (.git is a file, not a dir)',
     git(mainRepo, ['worktree', 'remove', '--force', worktree]);
   }
 });
+
+test('runtime consent validation names each missing field for untyped callers', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  const destination = initDestinationRepo();
+  const attempt = (consent: unknown): void => {
+    writeLearningPackage({
+      packageDir: result.packageDir,
+      destination,
+      consent: consent as typeof CONSENT,
+    });
+  };
+
+  assert.throws(() => attempt({ humanApproval: true, grantedAt: CONSENT.grantedAt }), /approvedBy/);
+  assert.throws(
+    () => attempt({ humanApproval: true, approvedBy: '   ', grantedAt: CONSENT.grantedAt }),
+    /approvedBy/,
+  );
+  assert.throws(() => attempt({ humanApproval: true, approvedBy: 'eng-1' }), /grantedAt/);
+  assert.throws(
+    () => attempt({ humanApproval: true, approvedBy: 'eng-1', grantedAt: 'yesterday' }),
+    /grantedAt/,
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false);
+
+  // The complete consent still writes.
+  const write = writeLearningPackage({
+    packageDir: result.packageDir,
+    destination,
+    consent: CONSENT,
+  });
+  assert.equal(write.status, 'written');
+});

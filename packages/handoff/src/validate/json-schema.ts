@@ -15,7 +15,7 @@ function daysInMonth(year: number, month: number): number {
 
 /** Shape AND calendar validity, offset included - neither 2026-99-99T99:99:99Z
  * nor an RFC 3339-impossible offset like +99:99 or +24:00 must pass. */
-function isValidDateTime(value: string): boolean {
+export function isValidDateTime(value: string): boolean {
   const match = DATE_TIME.exec(value);
   if (!match) return false;
   const [, year, month, day, hours, minutes, seconds, offsetHours, offsetMinutes] =
