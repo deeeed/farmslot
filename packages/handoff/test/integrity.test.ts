@@ -610,3 +610,30 @@ test('quarantine manifest never carries a mnemonic split across schema-valid fix
   assert.ok(quarantined.includes('2026-07-13T12:00:00Z'));
   assert.ok(quarantined.includes('"blocked"'));
 });
+
+test('a planted .npmrc credential line yields quarantine-only output with no raw token', () => {
+  // Assembled from parts so no contiguous credential-shaped literal sits in
+  // the source file (push-protection-safe) while the planted content is real.
+  const token = ['12345678-1234-1234', '1234-123456789abc'].join('-');
+  const { ctx, input } = scenario(
+    `# Learnings\n\npublish needed //registry.npmjs.org/:${'_auth'}${'Token'}=${token} in CI\n`,
+  );
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'blocked');
+  if (result.status !== 'blocked') return;
+  // No package dir - quarantine only.
+  assert.equal(existsSync(path.join(ctx.stagingRoot, input.runRecord.packageId)), false);
+  assert.deepEqual(readdirSync(result.quarantineDir).sort(), [
+    'manifest.json',
+    'scrub-report.json',
+  ]);
+  // The raw token appears in NO quarantine file and not on the returned report.
+  for (const file of ['manifest.json', 'scrub-report.json']) {
+    assert.equal(
+      readFileSync(path.join(result.quarantineDir, file), 'utf8').includes(token),
+      false,
+      `${file} carries the raw token`,
+    );
+  }
+  assert.equal(JSON.stringify(result.scrubReport).includes(token), false);
+});

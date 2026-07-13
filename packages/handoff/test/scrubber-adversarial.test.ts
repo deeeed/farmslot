@@ -363,3 +363,21 @@ test('JWTs are detected regardless of payload shape; short dotted identifiers st
   assert.equal(scanForFloorSecrets('version a.b.c and module x.y.z are fine').length, 0);
   assert.equal(scanForFloorSecrets('eyJshort.ab.cd is not a token').length, 0);
 });
+
+test('legacy npm _authToken lines are floor hits (.npmrc canonical and JSON-escaped)', () => {
+  // Assembled from parts so no contiguous credential-shaped literal sits in
+  // the source file (which would trip upstream push-protection scanners)
+  // while the runtime value still exercises the floor.
+  const token = ['12345678-1234-1234', '1234-123456789abc'].join('-');
+  const line = `//registry.npmjs.org/:${'_auth'}${'Token'}=${token}`;
+  assert.ok(
+    scanForFloorSecrets(line).some((h) => h.kind === 'npm-token'),
+    'canonical .npmrc line missed',
+  );
+  assert.ok(
+    scanForFloorSecrets(JSON.stringify({ npmrc: line })).some((h) => h.kind === 'npm-token'),
+    'JSON-escaped .npmrc line missed',
+  );
+  // Prose naming the setting without a value stays clean.
+  assert.equal(scanForFloorSecrets('set the _authToken setting in your npmrc').length, 0);
+});

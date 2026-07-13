@@ -4,6 +4,8 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Detect legacy npm registry credentials: the canonical `.npmrc` line (`//registry.../:_authToken=<token>`) is a floor hit in raw and JSON-escaped forms (underscore-tolerant label, structured separator, token-shaped value); prose naming the setting stays clean.
+- Encode the taskKey shape in the schemas as the normative contract: `manifest.schema.json` and `index-row.schema.json` now carry the pattern (normalized-ticket form or task-<16hex>, exactly what derivation emits), so schema-valid packages can no longer diverge from the reference validator. Ticket-correspondence remains a validator-enforced cross-field rule (documented in the schema descriptions - JSON Schema cannot express it).
 - Detect JWTs with any payload shape: only the header segment is eyJ-anchored (the payload can be any base64url - e30, an empty-claims payload, is valid), with minimum header/signature lengths so short dotted identifiers and prose fragments never match.
 - Runtime-require all three consent fields for a real write (humanApproval === true, non-empty approvedBy, calendar-valid grantedAt) with a teaching error naming the missing field - untyped callers can no longer pass a partial approval.
 - Unify broken-override handling per the clarified unhappy-path contract: parse-broken content of a selected candidate now warns, records the candidate in shadows/provenance, and CONTINUES the tier walk exactly like stat-broken candidates - the next tier's valid candidate wins and the shipped default is the terminal fallback only (one rule for all broken shapes).

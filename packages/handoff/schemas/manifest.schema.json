@@ -30,7 +30,8 @@
     },
     "taskKey": {
       "type": "string",
-      "description": "Cross-attempt family key (spec section 1). Normalized ticket when present (e.g. proj-1), else a hash of the normalized task (title+description+AC). Derived, never coordinator-assigned; keys indexes/by-task/. Non-secret."
+      "description": "Cross-attempt family key (spec section 1). Normalized ticket when present (e.g. proj-1), else a hash of the normalized task (title+description+AC). Derived, never coordinator-assigned; keys indexes/by-task/. Non-secret. Shape is normative: the normalized-ticket form (lowercase alnum runs joined by single hyphens, exactly what derivation emits) or task-<16hex> for ticketless work. Ticket-correspondence (taskKey equals the normalized manifest.task.ticket when present) is a cross-field rule the reference validator enforces - JSON Schema cannot express it.",
+      "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*|task-[a-f0-9]{16})$"
     },
     "surface": {
       "type": "string",
@@ -58,9 +59,18 @@
       "additionalProperties": false,
       "required": ["startedAt", "flow", "outcome"],
       "properties": {
-        "startedAt": { "type": "string", "format": "date-time" },
-        "finishedAt": { "type": "string", "format": "date-time" },
-        "flow": { "type": "string", "description": "e.g. dev, fix-bug, review." },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finishedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "flow": {
+          "type": "string",
+          "description": "e.g. dev, fix-bug, review."
+        },
         "outcome": {
           "type": "string",
           "enum": ["success", "failed", "aborted", "partial"]
@@ -70,9 +80,18 @@
           "description": "The evidence producer. Any producer stamps its own runner; no default is a package constant.",
           "additionalProperties": false,
           "properties": {
-            "name": { "type": "string", "examples": ["example-runner"] },
-            "package": { "type": "string", "examples": ["@scope/example-harness"] },
-            "version": { "type": "string", "examples": ["0.2.0"] }
+            "name": {
+              "type": "string",
+              "examples": ["example-runner"]
+            },
+            "package": {
+              "type": "string",
+              "examples": ["@scope/example-harness"]
+            },
+            "version": {
+              "type": "string",
+              "examples": ["0.2.0"]
+            }
           }
         },
         "model": {
@@ -90,7 +109,9 @@
       "additionalProperties": false,
       "required": ["title", "sourceKind"],
       "properties": {
-        "title": { "type": "string" },
+        "title": {
+          "type": "string"
+        },
         "sourceKind": {
           "type": "string",
           "enum": ["text", "file", "github-pr", "github-issue", "jira"]
@@ -117,8 +138,14 @@
             "pattern": "^[a-f0-9]{64}$",
             "description": "Hash of the stored (post-scrub) file."
           },
-          "bytes": { "type": "integer", "minimum": 0 },
-          "role": { "type": "string", "enum": ["required", "optional"] }
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "role": {
+            "type": "string",
+            "enum": ["required", "optional"]
+          }
         }
       }
     },
@@ -132,7 +159,10 @@
           "enum": ["pass", "blocked"],
           "description": "MUST be 'pass' for any written package. 'blocked' packages are never written to a shared destination."
         },
-        "scrubReport": { "type": "string", "const": "scrub-report.json" },
+        "scrubReport": {
+          "type": "string",
+          "const": "scrub-report.json"
+        },
         "floorVersion": {
           "type": "integer",
           "description": "Version of the crypto-secret floor deny-set applied."

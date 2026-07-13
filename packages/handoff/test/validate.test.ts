@@ -466,3 +466,29 @@ test('RFC 3339-impossible offsets fail date-time validation; real offsets pass',
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('the taskKey shape is normative in the schemas, not only in the validator', () => {
+  const dir = buildValidPackage();
+  try {
+    const manifestPath = path.join(dir, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { taskKey: string };
+    const rewrite = (taskKey: string): void => {
+      manifest.taskKey = taskKey;
+      writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    };
+
+    // Free-form keys are rejected at the SCHEMA level (pattern violation).
+    rewrite('Not A Key!');
+    const rejected = validateLearningPackage(dir);
+    assert.equal(rejected.valid, false);
+    assert.ok(rejected.errors.some((e) => e.includes('pattern')));
+
+    // Both legitimate forms pass schema AND validator.
+    rewrite('proj-1234');
+    assert.deepEqual(validateLearningPackage(dir).errors, []);
+    rewrite(`task-${'ab12'.repeat(4)}`);
+    assert.deepEqual(validateLearningPackage(dir).errors, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

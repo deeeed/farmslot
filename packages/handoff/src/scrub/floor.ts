@@ -62,6 +62,14 @@ const FLOOR_PATTERNS: FloorPattern[] = [
   { kind: 'github-token', pattern: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g },
   { kind: 'github-token', pattern: /\bgithub_pat_[A-Za-z0-9_]{40,}\b/g },
   { kind: 'npm-token', pattern: /\bnpm_[A-Za-z0-9]{36}\b/g },
+  // Legacy npm registry credentials: the canonical .npmrc line is
+  // `//registry.../:_authToken=<token>` - the leading underscore defeats a
+  // word boundary, so the label is matched bare (case-insensitive) with the
+  // structured separator and a token-shaped value (UUID/base64/hex).
+  {
+    kind: 'npm-token',
+    pattern: /_auth[_-]?token["'\s\\]*[:=>]+["'\s\\]*[A-Za-z0-9+/_.~=-]{8,}/gi,
+  },
   { kind: 'slack-token', pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
   { kind: 'aws-access-key', pattern: /\bAKIA[0-9A-Z]{16}\b/g },
   { kind: 'google-api-key', pattern: /\bAIza[0-9A-Za-z_-]{35}\b/g },
