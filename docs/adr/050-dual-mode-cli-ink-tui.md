@@ -35,7 +35,10 @@ command core, and which terminal UI stack to build on.
 
 ### Stack: Ink (React for terminals)
 
-Chosen: **Ink 5 + React 18**, colocated under `packages/cli/src/tui/`.
+Chosen: **Ink + React current majors**, colocated under `packages/cli/src/tui/`.
+Shipped on Ink 5 + React 18 (2026-07-13), upgraded to Ink 7 + React 19 the same
+week (React 19 types drop the global `JSX` namespace — import `type { JSX }`
+from `react`). Guided wizards use **@clack/prompts** as anticipated below.
 
 - Ink is the de-facto standard for interactive Node CLIs, renders to any TTY,
   and its component model matches the existing Lit-based Command Center

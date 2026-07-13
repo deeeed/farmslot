@@ -7,6 +7,46 @@ import { createEmitter } from '../envelope.js';
 import { formatFleetStatus } from '../formatters/fleet.js';
 import { withProgress } from '../progress.js';
 
+/**
+ * Event-driven watch: one persistent authenticated connection, re-render on
+ * fleet.updated broadcasts — no polling loop. q or Ctrl+C exits.
+ */
+async function watchFleet(
+  client: ReturnType<typeof resolveContext>['client'],
+  output: ReturnType<typeof resolveContext>['output'],
+): Promise<void> {
+  const connection = await client.connect();
+  const render = (result: FleetStatusResult) => {
+    output.write(`\x1b[2J\x1b[H${formatFleetStatus(result)}\nwatching — q to quit\n`);
+  };
+  try {
+    render(await connection.call<FleetStatusResult>('fleet.status'));
+    await new Promise<void>((resolve) => {
+      const unsubscribe = connection.onEvent((event) => {
+        if (event.event !== 'fleet.updated') return;
+        const payload = event.payload as { fleet?: FleetStatusResult['fleet'] };
+        if (payload?.fleet) render({ fleet: payload.fleet });
+      });
+      const stdin = process.stdin;
+      stdin.setRawMode?.(true);
+      stdin.resume();
+      const onKey = (key: Buffer) => {
+        const char = key.toString();
+        if (char === 'q' || char === '\u0003') {
+          unsubscribe();
+          stdin.setRawMode?.(false);
+          stdin.pause();
+          stdin.off('data', onKey);
+          resolve();
+        }
+      };
+      stdin.on('data', onKey);
+    });
+  } finally {
+    connection.close();
+  }
+}
+
 export function registerFleetCommand(program: Command): void {
   const fleet = program.command('fleet').description('Fleet management');
 
@@ -14,10 +54,22 @@ export function registerFleetCommand(program: Command): void {
     .command('status')
     .description('Show fleet status')
     .option('--force-refresh', 'Force refresh from machines')
+    .option('--watch', 'Keep rendering as fleet.updated events arrive (TTY only)')
     .action(async (opts: any, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
+        if (opts.watch) {
+          if (emit.machine || !process.stdin.isTTY) {
+            throw Object.assign(new Error('--watch requires an interactive terminal.'), {
+              code: 'WATCH_REQUIRES_TTY',
+              userAction:
+                'Drop --watch for one-shot output, or poll `farmslot fleet status --json` from scripts.',
+            });
+          }
+          await watchFleet(client, output);
+          return;
+        }
         const result = await withProgress(
           'Fetching fleet status',
           () => client.call<FleetStatusResult>('fleet.status', { forceRefresh: opts.forceRefresh }),

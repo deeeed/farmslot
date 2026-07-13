@@ -6,7 +6,7 @@
 // Business rules stay in the gateway + shared view-models (ADR-050).
 
 import { Box, Text, useApp, useInput } from 'ink';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { BacklogItem, EventFrame, FleetStatus, Run } from '@farmslot/protocol';
 
