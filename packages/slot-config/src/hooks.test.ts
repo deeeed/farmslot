@@ -262,5 +262,7 @@ test('{{domain}} precedence: extras > project vars > pool default > empty', () =
   assert.equal(expandTemplate('{{domain}}', base), '');
   assert.equal(expandTemplate('{{domain}}', { ...base, domain: 'pool' }), 'pool');
   assert.equal(expandTemplate('{{domain}}', base, projectVars), 'static');
+  // Project vars beat the pool-level default when both are present.
+  assert.equal(expandTemplate('{{domain}}', { ...base, domain: 'pool' }, projectVars), 'static');
   assert.equal(expandTemplate('{{domain}}', base, projectVars, { domain: 'runtime' }), 'runtime');
 });
