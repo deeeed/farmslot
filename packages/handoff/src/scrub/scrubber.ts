@@ -18,6 +18,20 @@ import { type FloorPattern, scanForFloorSecrets } from './floor.js';
 /** Text file types eligible for the package (spec section 5.1 layer 1 allowlist). */
 const ELIGIBLE_EXTENSIONS = new Set(['.md', '.json', '.jsonl', '.txt', '.diff', '.patch']);
 
+/** Media formats the attestation-gated media path applies to (spec section 5.1 layer 4). */
+const MEDIA_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.avif',
+  '.mp4',
+  '.mov',
+  '.webm',
+  '.m4v',
+]);
+
 /** Path prefixes redacted to portable tokens (spec section 5.1 layer 3). */
 export interface RedactionTokens {
   workspace?: string;
@@ -178,6 +192,13 @@ export function scrubFiles(
 
   for (const file of files) {
     if (file.isMedia) {
+      // The media path (attestation-gated, no content scan) is only for actual
+      // media formats. A text-eligible or unknown extension flagged as media
+      // would bypass the byte-level floor scan - refuse it instead.
+      if (!MEDIA_EXTENSIONS.has(path.extname(file.packagePath).toLowerCase())) {
+        omitted.push({ path: file.packagePath, reason: 'disallowed-type' });
+        continue;
+      }
       if (file.visualPass) visualPassAttestations.push(file.visualPass);
       const reason = mediaOmitReason(file);
       if (reason) {

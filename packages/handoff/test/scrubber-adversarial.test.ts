@@ -168,3 +168,42 @@ test('redaction tokens do not corrupt JSON files', () => {
   assert.match(parsed.contact, /^\[REDACTED:email:/);
   assert.equal(parsed.note, 'fine');
 });
+
+test('media mislabel guard: text-eligible or unknown extensions flagged media are refused', () => {
+  const attested = (file: string) => ({
+    file,
+    passedAt: '2026-07-13T12:00:00Z',
+    attestedBy: 'agent-model',
+    finding: 'clear' as const,
+  });
+  const outcome = scrubFiles([
+    // A markdown file smuggled down the media path would skip the floor scan.
+    {
+      packagePath: 'harness/x/notes.md',
+      content: MNEMONIC_24,
+      isMedia: true,
+      evidenceManifestSelected: true,
+      visualPass: attested('harness/x/notes.md'),
+    },
+    // Unknown binary extension flagged media is refused too.
+    {
+      packagePath: 'harness/x/dump.bin',
+      content: 'whatever',
+      isMedia: true,
+      evidenceManifestSelected: true,
+      visualPass: attested('harness/x/dump.bin'),
+    },
+    // A real media format still takes the attestation-gated path.
+    {
+      packagePath: 'harness/x/shot.png',
+      content: 'pretend-png',
+      isMedia: true,
+      evidenceManifestSelected: true,
+      visualPass: attested('harness/x/shot.png'),
+    },
+  ]);
+  const reasons = new Map(outcome.report.omitted.map((o) => [o.path, o.reason]));
+  assert.equal(reasons.get('harness/x/notes.md'), 'disallowed-type');
+  assert.equal(reasons.get('harness/x/dump.bin'), 'disallowed-type');
+  assert.deepEqual(outcome.retainedMedia, ['harness/x/shot.png']);
+});

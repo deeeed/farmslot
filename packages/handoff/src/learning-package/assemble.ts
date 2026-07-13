@@ -25,6 +25,7 @@ import type {
 } from '../spec/types.js';
 import { REQUIRED_FILES, SCHEMA_VERSION, SCRUB_FLOOR_VERSION } from '../spec/version.js';
 
+import { assertContained, assertSafePathSegment } from './safe-path.js';
 import type {
   AssembleResult,
   HandoffContext,
@@ -43,7 +44,9 @@ function stableJson(value: unknown): string {
 }
 
 function writePackageFile(root: string, relativePath: string, content: string): void {
-  const abs = path.join(root, relativePath);
+  // Package-relative paths are caller-influenced (harness names, media paths):
+  // nothing may stage outside the package root.
+  const abs = assertContained(root, path.join(root, relativePath), `package file ${relativePath}`);
   mkdirSync(path.dirname(abs), { recursive: true });
   writeFileSync(abs, content);
 }
@@ -79,6 +82,7 @@ function harnessTextInputs(harnessDirs: HarnessOutputDir[]): {
 }[] {
   const out: { input: ScrubInputFile; kind: ArtifactKind }[] = [];
   for (const { name, dir } of harnessDirs) {
+    assertSafePathSegment(name, 'harnessOutputDirs[].name');
     if (!existsSync(dir)) continue;
     for (const abs of walkFiles(dir)) {
       const rel = path.relative(dir, abs).split(path.sep).join('/');
@@ -154,6 +158,9 @@ export function assembleLearningPackage(
   input: LearningPackageInput,
   ctx: HandoffContext,
 ): AssembleResult {
+  // The run-slug keys both the staging dir and the quarantine dir - a
+  // path-shaped id must never place either outside ctx.stagingRoot.
+  assertSafePathSegment(input.runRecord.packageId, 'runRecord.packageId');
   requirePath(input.taskDoc.taskMd, 'taskDoc.taskMd');
   const reportMd = path.join(input.artifacts.artifactsDir, 'report.md');
   const learningsMd = path.join(input.artifacts.artifactsDir, 'learnings.md');
@@ -199,7 +206,7 @@ export function assembleLearningPackage(
     visualPass: m.visualPass,
   }));
 
-  const outcome = scrubFiles([...textInputs, ...mediaInputs], tokens);
+  const outcome = scrubFiles([...textInputs, ...mediaInputs], tokens, input.scrub ?? {});
 
   if (outcome.status === 'blocked') {
     const quarantineDir = writeQuarantine(ctx, input, outcome.report);
@@ -219,7 +226,11 @@ export function assembleLearningPackage(
   for (const packagePath of outcome.retainedMedia) {
     const media = mediaByPackagePath.get(packagePath);
     if (!media) continue;
-    const dest = path.join(packageDir, packagePath);
+    const dest = assertContained(
+      packageDir,
+      path.join(packageDir, packagePath),
+      `media file ${packagePath}`,
+    );
     mkdirSync(path.dirname(dest), { recursive: true });
     copyFileSync(media.absolutePath, dest);
   }

@@ -1,3 +1,4 @@
+import type { ScrubOptions } from '../scrub/scrubber.js';
 import type {
   ArtifactKind,
   Manifest,
@@ -101,6 +102,12 @@ export interface LearningPackageInput {
   artifacts: ArtifactPaths;
   /** Evidence-manifest-selected media with resolved visual-pass state. */
   media?: MediaInput[];
+  /**
+   * Resolved farm/personal scrub configuration applied during assembly.
+   * UNION-only (spec section 5.1 layer 5): extra deny patterns ADD to the
+   * crypto-secret floor; nothing here can loosen it.
+   */
+  scrub?: ScrubOptions;
 }
 
 /**

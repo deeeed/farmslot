@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -205,4 +212,58 @@ test('passing a blocked AssembleResult to writeLearningPackage is a compile-time
   // @ts-expect-error - property 'packageDir' does not exist on a blocked result
   const packageDir: string = blocked.packageDir;
   assert.equal(packageDir, undefined);
+});
+
+test('a dirty destination tree refuses the write before any IO', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  const destination = initDestinationRepo();
+  writeFileSync(path.join(destination, 'uncommitted.txt'), 'wip\n');
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    /uncommitted changes/,
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false);
+});
+
+test('a mid-write failure rolls back: no partial package, no partial index rows, clean tree', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  const destination = initDestinationRepo();
+  // Commit `indexes` as a FILE so the index-dir mkdir fails mid-write,
+  // after the package copy already happened.
+  writeFileSync(path.join(destination, 'indexes'), 'not-a-directory\n');
+  git(destination, ['add', 'indexes']);
+  git(destination, ['commit', '-q', '-m', 'chore: block indexes dir']);
+
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    /rolled back/,
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false, 'package copy not removed');
+  assert.equal(readFileSync(path.join(destination, 'indexes'), 'utf8'), 'not-a-directory\n');
+  assert.equal(git(destination, ['status', '--porcelain']), '', 'tree left dirty');
+  // The local assembled package is untouched and re-writable.
+  assert.ok(existsSync(path.join(result.packageDir, 'manifest.json')));
+});
+
+test('destination-repo hooks are respected: a rejecting pre-commit hook rolls the write back', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  const destination = initDestinationRepo();
+  const hookPath = path.join(destination, '.git/hooks/pre-commit');
+  writeFileSync(hookPath, '#!/bin/sh\necho "policy: rejected" >&2\nexit 1\n');
+  chmodSync(hookPath, 0o755);
+
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    /rolled back/,
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false);
+  assert.equal(git(destination, ['status', '--porcelain']), '');
+  // No commit was created.
+  assert.equal(git(destination, ['rev-list', '--count', 'HEAD']), '1');
 });

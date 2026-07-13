@@ -1,10 +1,22 @@
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+  truncateSync,
+} from 'node:fs';
 import path from 'node:path';
 
 import type { GradeSemantic, HumanGrade, IndexRow, Manifest } from '../spec/types.js';
 import { SCHEMA_VERSION } from '../spec/version.js';
 import { validateLearningPackage } from '../validate/validate-package.js';
+
+import { assertContained, assertSafePathSegment } from './safe-path.js';
 
 /**
  * The per-call human approval that authorizes a repo write. MANUAL APPROVAL
@@ -43,6 +55,25 @@ export type WriteResult =
 
 function git(repo: string, args: string[]): string {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+}
+
+/**
+ * Manifest fields the schemas leave as unconstrained strings but that this
+ * writer uses as filesystem path segments. Each is validated before ANY path is
+ * computed (dry-run included) so a path-shaped value (e.g. `engineer: "../x"`)
+ * can never place IO outside the destination repo.
+ */
+function assertSafeManifestSegments(manifest: Manifest): void {
+  assertSafePathSegment(manifest.packageId, 'manifest.packageId');
+  assertSafePathSegment(manifest.taskKey, 'manifest.taskKey');
+  assertSafePathSegment(manifest.surface, 'manifest.surface');
+  assertSafePathSegment(manifest.project, 'manifest.project');
+  assertSafePathSegment(manifest.engineer, 'manifest.engineer');
+  assertSafePathSegment(manifest.run.flow, 'manifest.run.flow');
+  if (manifest.domain !== '') assertSafePathSegment(manifest.domain, 'manifest.domain');
+  if (manifest.task.ticket) {
+    assertSafePathSegment(manifest.task.ticket.toLowerCase(), 'manifest.task.ticket');
+  }
 }
 
 /** Repo-relative package path (spec section 1): packages/YYYY/MM/DD/surface/project/run-slug. */
@@ -154,6 +185,7 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
     );
   }
 
+  assertSafeManifestSegments(manifest);
   const packagePath = repoRelativePath(manifest);
   const row = buildIndexRow(manifest, packagePath, gradeSemanticFor(options.packageDir));
 
@@ -177,7 +209,21 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
     );
   }
 
-  const destPackageDir = path.join(options.destination, packagePath);
+  // A clean tree means a failed write can be rolled back precisely and the
+  // resulting commit contains exactly this package.
+  if (git(options.destination, ['status', '--porcelain']) !== '') {
+    throw new Error(
+      `writeLearningPackage: destination ${options.destination} has uncommitted changes. ` +
+        'Next: commit or stash them first - the writer needs a clean tree so a failed ' +
+        'write can be rolled back without touching unrelated work.',
+    );
+  }
+
+  const destPackageDir = assertContained(
+    options.destination,
+    path.join(options.destination, packagePath),
+    'package destination',
+  );
   if (existsSync(destPackageDir)) {
     throw new Error(
       `writeLearningPackage: ${packagePath} already exists in the destination - the ` +
@@ -186,25 +232,78 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
     );
   }
 
-  cpSync(options.packageDir, destPackageDir, { recursive: true });
+  // Record index-file sizes so a mid-write failure can truncate the appends
+  // back out (best-effort rollback; the clean-tree precondition makes it exact).
+  const indexFiles = indexFilesFor(manifest).map((indexFile) => {
+    const abs = assertContained(
+      options.destination,
+      path.join(options.destination, indexFile),
+      `index file ${indexFile}`,
+    );
+    return { indexFile, abs, priorBytes: existsSync(abs) ? statSync(abs).size : -1 };
+  });
 
-  const line = `${JSON.stringify(row)}\n`;
-  const touched = [packagePath];
-  for (const indexFile of indexFilesFor(manifest)) {
-    const abs = path.join(options.destination, indexFile);
-    mkdirSync(path.dirname(abs), { recursive: true });
-    appendFileSync(abs, line);
-    touched.push(indexFile);
+  // Remove now-empty ancestor dirs the failed write created, up to the repo root.
+  const removeEmptyParents = (from: string): void => {
+    const stop = path.resolve(options.destination);
+    let current = path.dirname(path.resolve(from));
+    while (current !== stop) {
+      try {
+        rmdirSync(current); // throws when non-empty or missing - both mean stop
+      } catch {
+        break;
+      }
+      current = path.dirname(current);
+    }
+  };
+
+  const rollback = (): void => {
+    rmSync(destPackageDir, { recursive: true, force: true });
+    removeEmptyParents(destPackageDir);
+    for (const { abs, priorBytes } of indexFiles) {
+      if (priorBytes === -1) {
+        rmSync(abs, { force: true });
+        removeEmptyParents(abs);
+      } else if (existsSync(abs)) {
+        truncateSync(abs, priorBytes);
+      }
+    }
+  };
+
+  let commitSha: string;
+  try {
+    cpSync(options.packageDir, destPackageDir, { recursive: true });
+
+    const line = `${JSON.stringify(row)}\n`;
+    const touched = [packagePath];
+    for (const { indexFile, abs } of indexFiles) {
+      mkdirSync(path.dirname(abs), { recursive: true });
+      appendFileSync(abs, line);
+      touched.push(indexFile);
+    }
+
+    git(options.destination, ['add', '--', ...touched]);
+    // Destination-repo hooks run and may reject the commit; that surfaces as a
+    // rolled-back failure below rather than being bypassed.
+    git(options.destination, [
+      'commit',
+      '-m',
+      `chore(learnings): add package ${manifest.packageId}`,
+    ]);
+    commitSha = git(options.destination, ['rev-parse', 'HEAD']);
+  } catch (error) {
+    try {
+      rollback();
+      git(options.destination, ['reset', '-q']);
+    } catch {
+      // Rollback is best-effort; the original failure below is the actionable one.
+    }
+    throw new Error(
+      `writeLearningPackage: write to ${options.destination} failed and was rolled back ` +
+        `(${(error as Error).message}). Next: check destination permissions/hooks and git ` +
+        'state, then retry - the local package dir is untouched and re-writable.',
+    );
   }
-
-  git(options.destination, ['add', '--', ...touched]);
-  git(options.destination, [
-    'commit',
-    '-m',
-    `chore(learnings): add package ${manifest.packageId}`,
-    '--no-verify',
-  ]);
-  const commitSha = git(options.destination, ['rev-parse', 'HEAD']);
 
   let pushed = false;
   if (git(options.destination, ['remote']) !== '') {
