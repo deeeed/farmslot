@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -99,4 +99,70 @@ test('a missing shipped default is a packaging bug and throws with escape guidan
       }),
     /Next:/,
   );
+});
+
+test('a directory-as-override is a broken override: warned, skipped, chain continues', () => {
+  const { root, write } = tierDirs();
+  const req = request(root, 'default-content');
+  // The personal candidate path EXISTS but is a directory.
+  mkdirSync(path.join(root, 'personal/template.md'), { recursive: true });
+  // A valid farm-tier file further down the chain must still win (the walk
+  // continues tier by tier, it does not jump straight to default).
+  write('farm/template.md', 'farm-content');
+
+  const warnings: string[] = [];
+  const result = resolveFile(req, { warn: (m) => warnings.push(m) });
+  assert.equal(result.tier, 'farm');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /is a directory/);
+  assert.match(warnings[0], /Next:/);
+  // The broken candidate still shows in shadows (it exists and was passed over).
+  assert.ok(result.shadows.some((s) => s.tier === 'personal'));
+
+  // resolveContent takes the same walk.
+  const contentWarnings: string[] = [];
+  const resolved = resolveContent(req, (raw) => raw, { warn: (m) => contentWarnings.push(m) });
+  assert.equal(resolved.value, 'farm-content');
+  assert.equal(contentWarnings.length, 1);
+});
+
+test('an unreadable override is warned and skipped; default resolves', () => {
+  const { root, write } = tierDirs();
+  const req = request(root, 'default-content');
+  const personal = write('personal/template.md', 'locked away');
+  chmodSync(personal, 0o000);
+  try {
+    const warnings: string[] = [];
+    const resolved = resolveContent(req, (raw) => raw, { warn: (m) => warnings.push(m) });
+    assert.equal(resolved.resolution.tier, 'default');
+    assert.equal(resolved.value, 'default-content');
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /is not readable/);
+  } finally {
+    chmodSync(personal, 0o644);
+  }
+});
+
+test('a symlinked override is treated as broken, consistent with the rest of the gate', () => {
+  const { root, write } = tierDirs();
+  const req = request(root, 'default-content');
+  const target = write('elsewhere/real.md', 'linked content');
+  mkdirSync(path.join(root, 'personal'), { recursive: true });
+  symlinkSync(target, path.join(root, 'personal/template.md'));
+
+  const warnings: string[] = [];
+  const result = resolveFile(req, { warn: (m) => warnings.push(m) });
+  assert.equal(result.tier, 'default');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /symlink/);
+});
+
+test('a valid override wins with zero warnings', () => {
+  const { root, write } = tierDirs();
+  const req = request(root);
+  write('personal/template.md', 'mine');
+  const warnings: string[] = [];
+  const result = resolveFile(req, { warn: (m) => warnings.push(m) });
+  assert.equal(result.tier, 'personal');
+  assert.deepEqual(warnings, []);
 });

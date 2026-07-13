@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, readFileSync } from 'node:fs';
 
 import type { ResolutionSource, ResolutionTier } from '../spec/types.js';
 
@@ -37,6 +37,65 @@ function candidatesByTier(request: ResolveRequest): { tier: ResolutionTier; path
   return out;
 }
 
+/**
+ * Reason a PRESENT candidate cannot be used as an override: a valid candidate
+ * is a plain, readable, regular FILE (lstat - symlinks are excluded, consistent
+ * with the rest of the gate). A directory, special file, or unreadable file is
+ * a BROKEN override per the unhappy-path contract: warn and continue the walk.
+ */
+function brokenCandidateReason(candidatePath: string): string | undefined {
+  let stats;
+  try {
+    stats = lstatSync(candidatePath);
+  } catch (error) {
+    return `cannot be inspected (${(error as Error).message})`;
+  }
+  if (stats.isSymbolicLink()) return 'is a symlink';
+  if (stats.isDirectory()) return 'is a directory';
+  if (!stats.isFile()) return 'is not a regular file';
+  try {
+    accessSync(candidatePath, constants.R_OK);
+  } catch {
+    return 'is not readable';
+  }
+  return undefined;
+}
+
+/**
+ * Walk the existing candidates in precedence order, warning past broken ones
+ * (directory/symlink/unreadable) until a valid file wins. A broken or missing
+ * shipped default is a packaging bug and throws.
+ */
+function selectWinner(
+  request: ResolveRequest,
+  ctx: ResolveContext,
+  label: string,
+): {
+  winner: { tier: ResolutionTier; path: string };
+  existing: { tier: ResolutionTier; path: string }[];
+} {
+  const existing = candidatesByTier(request).filter((c) => existsSync(c.path));
+  for (const candidate of existing) {
+    const broken = brokenCandidateReason(candidate.path);
+    if (broken === undefined) return { winner: candidate, existing };
+    if (candidate.tier === 'default') {
+      throw new Error(
+        `${label}(${request.kind}): shipped default at ${candidate.path} ${broken}. ` +
+          'Next: this is a packaging bug - reinstall @farmslot/handoff.',
+      );
+    }
+    ctx.warn?.(
+      `${label}(${request.kind}): ${candidate.tier} override ${candidate.path} ${broken}; ` +
+        'skipping it and continuing down the resolution chain. Next: fix or remove the ' +
+        'override - the run continues.',
+    );
+  }
+  throw new Error(
+    `${label}(${request.kind}): shipped default missing at ${request.defaultPath}. ` +
+      'Next: this is a packaging bug - reinstall @farmslot/handoff.',
+  );
+}
+
 function buildResolution(
   request: ResolveRequest,
   winner: { tier: ResolutionTier; path: string },
@@ -59,14 +118,8 @@ function buildResolution(
  * plus every shadowed lower-tier file, and logs the event via `ctx.logger`.
  */
 export function resolveFile(request: ResolveRequest, ctx: ResolveContext = {}): ResolutionSource {
-  const existing = candidatesByTier(request).filter((c) => existsSync(c.path));
-  if (existing.length === 0) {
-    throw new Error(
-      `resolveFile(${request.kind}): shipped default missing at ${request.defaultPath}. ` +
-        'Next: this is a packaging bug - reinstall @farmslot/handoff.',
-    );
-  }
-  const resolution = buildResolution(request, existing[0], existing);
+  const { winner, existing } = selectWinner(request, ctx, 'resolveFile');
+  const resolution = buildResolution(request, winner, existing);
   ctx.logger?.(resolution);
   return resolution;
 }
@@ -93,15 +146,7 @@ export function resolveContent<T>(
   parse: (raw: string, path: string) => T,
   ctx: ResolveContext = {},
 ): ResolvedContent<T> {
-  const existing = candidatesByTier(request).filter((c) => existsSync(c.path));
-  if (existing.length === 0) {
-    throw new Error(
-      `resolveContent(${request.kind}): shipped default missing at ${request.defaultPath}. ` +
-        'Next: this is a packaging bug - reinstall @farmslot/handoff.',
-    );
-  }
-
-  const winner = existing[0];
+  const { winner, existing } = selectWinner(request, ctx, 'resolveContent');
   try {
     const value = parse(readFileSync(winner.path, 'utf8'), winner.path);
     const resolution = buildResolution(request, winner, existing);
