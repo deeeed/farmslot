@@ -4,6 +4,7 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Sanitize the blocked scrub report ONCE and share the object: the quarantine file on disk and the returned `AssembleResult.scrubReport` are the same sanitized report, so a caller logging or persisting the in-memory result can never see the raw secret either.
 - Extend the joined-value backstop to the quarantine SCRUB REPORT: string values are joined overall AND per same-field column (blocked/redactions files, omitted paths, attestation files/attestedBy), so a mnemonic split across sibling records is wholesale-redacted from the audit trail - the blocked-output barrier holds on every quarantine file.
 - The validator requires every required file (manifest.json aside) to carry a manifest.files inventory entry - an unhashed required document is unverifiable and invalid.
 - Detect quoted cookie values: `Cookie: sid="<token>"` and quoted Set-Cookie pairs (raw and JSON-escaped) are floor hits; quote/backslash decoration is stripped before the value-length check.

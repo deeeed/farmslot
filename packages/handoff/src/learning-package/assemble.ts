@@ -184,11 +184,65 @@ function collectStringValues(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * Sanitize a blocked scrub report for exposure ANYWHERE outside the gate: its
+ * omitted/attestation entries echo caller strings (paths, attestation fields)
+ * that may themselves carry the secret. Beyond granular redaction, string
+ * values are scanned joined - overall AND per same-field COLUMN (a phrase
+ * split across sibling records spreads through the same field, and the
+ * interleaved enum fields would otherwise break the joined run). On any hit
+ * the free-text carriers are replaced wholesale; kinds/reasons/findings are
+ * closed enums and fingerprints/timestamps are non-secret, so what remains
+ * cannot compose a word run. The SAME sanitized object is persisted to the
+ * quarantine AND returned in the blocked AssembleResult - a caller logging
+ * result.scrubReport must never see the raw secret either.
+ */
+function quarantineSafeReport(
+  scrubReport: ScrubReport,
+  extraPatterns?: FloorPattern[],
+): ScrubReport {
+  const safeReport = redactSecretStrings(scrubReport, extraPatterns);
+  const reportColumns = [
+    collectStringValues(safeReport).join(' '),
+    safeReport.blocked.map((record) => record.file).join(' '),
+    safeReport.redactions.map((record) => record.file).join(' '),
+    safeReport.omitted.map((record) => record.path).join(' '),
+    safeReport.visualPassAttestations.map((record) => record.file).join(' '),
+    safeReport.visualPassAttestations.map((record) => record.attestedBy).join(' '),
+  ];
+  if (
+    scanForFloorSecrets(stableJson(safeReport), extraPatterns).length === 0 &&
+    !reportColumns.some((column) => scanForFloorSecrets(column, extraPatterns).length > 0)
+  ) {
+    return safeReport;
+  }
+  return {
+    ...safeReport,
+    blocked: safeReport.blocked.map((record, i) => ({
+      ...record,
+      file: `[REDACTED:entry-${i}]`,
+    })),
+    redactions: safeReport.redactions.map((record, i) => ({
+      ...record,
+      file: `[REDACTED:entry-${i}]`,
+    })),
+    omitted: safeReport.omitted.map((record, i) => ({
+      reason: record.reason,
+      path: `[REDACTED:entry-${i}]`,
+    })),
+    visualPassAttestations: safeReport.visualPassAttestations.map((record, i) => ({
+      ...record,
+      file: `[REDACTED:entry-${i}]`,
+      attestedBy: '[REDACTED]',
+    })),
+  };
+}
+
 function writeQuarantine(
   ctx: HandoffContext,
   input: LearningPackageInput,
   base: Omit<Manifest, 'files' | 'scrubbing'>,
-  scrubReport: ScrubReport,
+  safeReport: ScrubReport,
 ): string {
   // The dir NAME is filesystem metadata: a slug carrying secret material
   // (e.g. a token-shaped ticket segment) must not land there either - fall
@@ -248,52 +302,8 @@ function writeQuarantine(
     },
   };
   // Quarantine keeps only the block audit trail - never raw artifacts. The
-  // report is redacted too: its omitted/attestation entries echo caller strings
-  // (paths, attestation fields) that may themselves carry the secret. Same
-  // joined-value backstop as the manifest: a secret split across separate
-  // report RECORDS (e.g. two omitted paths of six words each) only shows in
-  // the joined view - on a hit, the report's free-text carriers are replaced
-  // wholesale (kinds/reasons/findings are closed enums, fingerprints and
-  // timestamps are non-secret, so what remains cannot compose a word run).
-  let safeReport = redactSecretStrings(scrubReport, input.scrub?.extraDenyPatterns);
-  // Same-field COLUMNS are joined too: a phrase split across sibling records
-  // spreads through the same field (path/file), and interleaved enum fields
-  // (reason/kind) would otherwise break the joined run.
-  const reportColumns = [
-    collectStringValues(safeReport).join(' '),
-    safeReport.blocked.map((record) => record.file).join(' '),
-    safeReport.redactions.map((record) => record.file).join(' '),
-    safeReport.omitted.map((record) => record.path).join(' '),
-    safeReport.visualPassAttestations.map((record) => record.file).join(' '),
-    safeReport.visualPassAttestations.map((record) => record.attestedBy).join(' '),
-  ];
-  if (
-    scanForFloorSecrets(stableJson(safeReport), input.scrub?.extraDenyPatterns).length > 0 ||
-    reportColumns.some(
-      (column) => scanForFloorSecrets(column, input.scrub?.extraDenyPatterns).length > 0,
-    )
-  ) {
-    safeReport = {
-      ...safeReport,
-      blocked: safeReport.blocked.map((record, i) => ({
-        ...record,
-        file: `[REDACTED:entry-${i}]`,
-      })),
-      redactions: safeReport.redactions.map((record, i) => ({
-        ...record,
-        file: `[REDACTED:entry-${i}]`,
-      })),
-      omitted: safeReport.omitted.map((record, i) => ({
-        reason: record.reason,
-        path: `[REDACTED:entry-${i}]`,
-      })),
-      visualPassAttestations: safeReport.visualPassAttestations.map((record, i) => ({
-        ...record,
-        file: `[REDACTED:entry-${i}]`,
-        attestedBy: '[REDACTED]',
-      })),
-    };
-  }
+  // report arrives pre-sanitized (quarantineSafeReport) - the SAME object the
+  // blocked AssembleResult returns to the caller.
   writeFileSync(path.join(quarantineDir, 'manifest.json'), stableJson(manifest));
   writeFileSync(path.join(quarantineDir, 'scrub-report.json'), stableJson(safeReport));
   return quarantineDir;
@@ -511,8 +521,12 @@ export function assembleLearningPackage(
       'staging dir',
     );
     rmSync(staleDir, { recursive: true, force: true });
-    const quarantineDir = writeQuarantine(ctx, input, base, report);
-    return { status: 'blocked', quarantineDir, scrubReport: report };
+    // Sanitize ONCE: the persisted quarantine copy and the returned result
+    // carry the same object, so a caller logging result.scrubReport can never
+    // see the raw secret either.
+    const safeReport = quarantineSafeReport(report, input.scrub?.extraDenyPatterns);
+    const quarantineDir = writeQuarantine(ctx, input, base, safeReport);
+    return { status: 'blocked', quarantineDir, scrubReport: safeReport };
   }
 
   // Fresh staging dir per assemble: a reused dir could carry stale, unscanned

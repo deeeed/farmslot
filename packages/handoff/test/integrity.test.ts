@@ -573,4 +573,15 @@ test('quarantine scrub-report never carries a mnemonic split across separate rec
   assert.equal(survivors.length, 0, 'cross-record mnemonic survived in the quarantine report');
   // The audit structure itself survives: reasons/kinds remain enumerable.
   assert.ok(report.includes('[REDACTED:entry-'));
+
+  // The RETURNED report is the same sanitized object - a caller logging
+  // result.scrubReport must never see the raw secret either.
+  const returned = JSON.stringify(result.scrubReport);
+  assert.equal(
+    (returned.match(/abandon|ability|absorb|accident/g) ?? []).length,
+    0,
+    'cross-record mnemonic exposed on the returned scrubReport',
+  );
+  assert.ok(returned.includes('[REDACTED:entry-'));
+  assert.ok(result.scrubReport.omitted.every((o) => o.path.startsWith('[REDACTED:entry-')));
 });
