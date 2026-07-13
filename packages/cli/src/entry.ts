@@ -82,31 +82,52 @@ try {
 } catch (err) {
   const commanderError = err as { code?: string; exitCode?: number };
   if (typeof commanderError?.code !== 'string' || !commanderError.code.startsWith('commander.')) {
-    throw err;
-  }
-  const benign = ['commander.helpDisplayed', 'commander.help', 'commander.version'];
-  if (benign.includes(commanderError.code)) {
-    process.exitCode = commanderError.exitCode ?? 0;
-  } else {
-    // Commander already printed usage on stderr; machine consumers still need
-    // exactly one envelope on stdout.
+    // Non-commander failure that escaped an action (e.g. gateway profile
+    // resolution in a command not yet envelope-wired): one envelope or one
+    // teach-the-escape line, never a raw stack trace.
     if (process.argv.includes('--json') || !(process.stdout.isTTY ?? false)) {
-      const command =
-        process.argv
-          .slice(2)
-          .filter((arg) => !arg.startsWith('-'))
-          .slice(0, 2)
-          .join('.') || 'farmslot';
-      new OutputContext(true).writeJson(
-        errorEnvelope(
-          command,
-          Object.assign(err instanceof Error ? err : new Error(String(err)), {
-            code: 'USAGE_ERROR',
-            userAction: `Run \`farmslot ${command.replace(/\./g, ' ')} --help\` for usage.`,
-          }),
-        ),
-      );
+      new OutputContext(true).writeJson(errorEnvelope(cliCommandFromArgv(), err));
+    } else {
+      new OutputContext(false).failure(err);
     }
-    process.exitCode = commanderError.exitCode || 1;
+    process.exitCode = 1;
+  } else {
+    const benign = ['commander.helpDisplayed', 'commander.help', 'commander.version'];
+    if (benign.includes(commanderError.code)) {
+      process.exitCode = commanderError.exitCode ?? 0;
+    } else {
+      // Commander already printed usage on stderr; machine consumers still need
+      // exactly one envelope on stdout.
+      if (process.argv.includes('--json') || !(process.stdout.isTTY ?? false)) {
+        const command = cliCommandFromArgv();
+        new OutputContext(true).writeJson(
+          errorEnvelope(
+            command,
+            Object.assign(err instanceof Error ? err : new Error(String(err)), {
+              code: 'USAGE_ERROR',
+              userAction: `Run \`farmslot ${command.replace(/\./g, ' ')} --help\` for usage.`,
+            }),
+          ),
+        );
+      }
+      process.exitCode = commanderError.exitCode || 1;
+    }
   }
+}
+
+/** Best-effort dotted command path from argv: skips flags and the values of value-taking globals. */
+function cliCommandFromArgv(): string {
+  const valueOptions = new Set(['--url', '--gateway', '--timeout']);
+  const tokens: string[] = [];
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length && tokens.length < 3; i++) {
+    const arg = args[i];
+    if (valueOptions.has(arg)) {
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('-')) continue;
+    tokens.push(arg);
+  }
+  return tokens.join('.') || 'farmslot';
 }

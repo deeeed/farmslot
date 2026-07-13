@@ -384,7 +384,7 @@ export function registerSlotCommand(program: Command): void {
               Object.assign(new Error(result.detail || `Action ${actionId} failed for ${slotId}`), {
                 code: 'SLOT_ACTION_FAILED',
                 userAction:
-                  'Inspect details, then re-run `farmslot slot action run <slot> <action>`; list actions with `farmslot slot action list <slot>`.',
+                  'Inspect details, then re-run `farmslot slot action run <action> [slot]`; list actions with `farmslot slot action list [slot]`.',
                 details: result,
               }),
             );

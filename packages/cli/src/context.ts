@@ -1,6 +1,5 @@
 import type { Command } from 'commander';
 
-import { commandPathOf, errorEnvelope, isMachineMode } from './envelope.js';
 import { GatewayClient } from './gateway-client.js';
 import { type GatewayTarget, resolveGatewayTarget } from './gateway-profiles.js';
 import { OutputContext } from './output.js';
@@ -23,15 +22,15 @@ export function resolveContext(cmd: Command, options: ResolveContextOptions = {}
   try {
     target = resolveGatewayTarget({ url: opts.url, gateway: opts.gateway });
   } catch (err) {
-    // Unknown --gateway etc. must print like every other CLI failure — an
-    // envelope in machine mode, teach-the-escape text otherwise — never a raw
-    // stack trace out of commander's action wrapper.
-    if (isMachineMode(output)) {
-      output.writeJson(errorEnvelope(commandPathOf(cmd), err));
-    } else {
-      output.failure(err);
-    }
-    process.exit(1);
+    // Unknown --gateway etc. must fail like every other CLI error: enrich and
+    // rethrow so the action's emitter (or the entry-level fallback) prints one
+    // envelope / teach-the-escape line — never print-and-exit here, which can
+    // truncate stdout and double-report.
+    throw Object.assign(err instanceof Error ? err : new Error(String(err)), {
+      code: 'GATEWAY_PROFILE_ERROR',
+      userAction:
+        'List gateway profiles with `farmslot gateway list`, or pass an explicit --url. Diagnose with `farmslot doctor`.',
+    });
   }
   return {
     client: new GatewayClient({
