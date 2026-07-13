@@ -276,3 +276,31 @@ test('a non-global farm deny pattern is normalized instead of throwing', () => {
   ]);
   assert.equal(hits.filter((h) => h.kind === 'farm-tag').length, 2);
 });
+
+test('structured cookie-jar objects are floor hits (single, array, and escaped forms)', () => {
+  const single = JSON.stringify({ name: 'sid', value: '123456789abcdef' });
+  const jar = JSON.stringify({
+    cookies: [
+      { name: 'theme', value: 'light' },
+      { name: 'session', value: '8f4b2c1d9e0a7b6c5d4e' },
+    ],
+  });
+  const escaped = JSON.stringify({ dump: jar });
+  for (const [label, text] of [
+    ['single object', single],
+    ['cookie jar array', jar],
+    ['escaped jar', escaped],
+  ] as const) {
+    assert.ok(
+      scanForFloorSecrets(text).some((h) => h.kind === 'cookie'),
+      `${label} missed`,
+    );
+  }
+  // Prose-ish name/value data does not false-block (value not token-shaped).
+  assert.equal(
+    scanForFloorSecrets(JSON.stringify({ name: 'query', value: 'how to center a div' })).length,
+    0,
+  );
+  // Short benign cookie values stay clean.
+  assert.equal(scanForFloorSecrets(JSON.stringify({ name: 'theme', value: 'light' })).length, 0);
+});

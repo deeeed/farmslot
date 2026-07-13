@@ -63,7 +63,11 @@ test('jira ships no default map: extraction demands an opt-in fieldMap, then nor
       reporter: { displayName: 'Jane Doe' },
     },
   };
+  // Designed behavior: no Jira defaults ship in the package (Jira is opt-in);
+  // the refusal is a teaching error, and the never-fail-the-run guarantee lives
+  // at the closeout caller, not here.
   assert.throws(() => extractTaskDocument({ sourceKind: 'jira', raw }), /opt-in/);
+  assert.throws(() => extractTaskDocument({ sourceKind: 'jira', raw }), /Next:/);
 
   const document = extractTaskDocument(
     { sourceKind: 'jira', raw },

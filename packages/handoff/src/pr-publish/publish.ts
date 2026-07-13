@@ -10,9 +10,11 @@ export interface PublishPrEvidenceOptions {
   prRef?: string;
   /**
    * Explicit per-call consent (design section 3): NEVER resolved from any file,
-   * never sticky. Both grants must be literally true for a real publish.
+   * never sticky. Both grants must be literally true for a real publish;
+   * `dryRun` needs none (aligned with writeLearningPackage: no approver
+   * present = preview only, not an error).
    */
-  consent: PrConsent;
+  consent?: PrConsent;
   /** Compute the upload plan without any network or GitHub write. */
   dryRun?: boolean;
 }
@@ -25,19 +27,24 @@ export interface PublishPrEvidenceResult {
 }
 
 /**
- * Publish PR evidence. The consent guard is fully enforced: without an explicit
- * per-call grant nothing proceeds, dry-run or not.
+ * Publish PR evidence. A REAL publish requires explicit per-call consent; a
+ * dry-run computes the local upload plan without consent (same asymmetry as
+ * writeLearningPackage - no approver present means preview, not an error).
  *
  * v1 STUB for the write path: only `dryRun: true` is implemented (returns the
  * upload plan from artifacts/index.json). The actual upload/PR-update transport
  * is not implemented yet and throws a clear error rather than pretending.
  */
 export function publishPrEvidence(options: PublishPrEvidenceOptions): PublishPrEvidenceResult {
-  if (options.consent?.githubWrite !== true || options.consent?.publicUpload !== true) {
+  if (
+    !options.dryRun &&
+    (options.consent?.githubWrite !== true || options.consent?.publicUpload !== true)
+  ) {
     throw new Error(
       'publishPrEvidence: refusing without explicit per-call consent ' +
         '({ githubWrite: true, publicUpload: true, grantedAt }). Consent is never read ' +
-        'from a file and never sticky. Next: pass the consent the caller just granted.',
+        'from a file and never sticky. Next: pass the consent the caller just granted, ' +
+        'or use dryRun: true to preview the upload plan.',
     );
   }
 

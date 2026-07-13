@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -286,4 +287,129 @@ test('a rollback that cannot restore the destination throws a distinct partial-s
       return true;
     },
   );
+});
+
+test('caller strings that land in written files are floor-gated: filenames and attestations', () => {
+  const srpPath =
+    'notes/abandon ability able about above absent absorb abstract absurd abuse access accident.md';
+  const fileNameCase = scenario();
+  const shotA = path.join(fileNameCase.ctx.workspace as string, 'a.png');
+  writeFileSync(shotA, 'png-bytes');
+  fileNameCase.input.media = [
+    {
+      absolutePath: shotA,
+      packagePath: srpPath,
+      kind: 'screenshot',
+      evidenceManifestSelected: false,
+    },
+  ];
+  const blockedByPath = assembleLearningPackage(fileNameCase.input, fileNameCase.ctx);
+  assert.equal(blockedByPath.status, 'blocked');
+  if (blockedByPath.status !== 'blocked') return;
+  assert.ok(
+    blockedByPath.scrubReport.blocked.some((b) => b.file === 'input-metadata' && b.kind === 'srp'),
+  );
+  // The quarantined report never echoes the secret-bearing path raw.
+  const report = readFileSync(path.join(blockedByPath.quarantineDir, 'scrub-report.json'), 'utf8');
+  assert.equal(report.includes('abandon ability able'), false);
+
+  const attestedCase = scenario();
+  const shotB = path.join(attestedCase.ctx.workspace as string, 'b.png');
+  writeFileSync(shotB, 'png-bytes');
+  const token = `ghp_${'a'.repeat(36)}`;
+  attestedCase.input.media = [
+    {
+      absolutePath: shotB,
+      packagePath: 'harness/x/b.png',
+      kind: 'screenshot',
+      evidenceManifestSelected: true,
+      visualPass: {
+        file: 'harness/x/b.png',
+        passedAt: '2026-07-13T13:00:00Z',
+        attestedBy: `agent ${token}`,
+        finding: 'clear',
+      },
+    },
+  ];
+  const blockedByAttestation = assembleLearningPackage(attestedCase.input, attestedCase.ctx);
+  assert.equal(blockedByAttestation.status, 'blocked');
+  if (blockedByAttestation.status !== 'blocked') return;
+  assert.ok(
+    blockedByAttestation.scrubReport.blocked.some(
+      (b) => b.file === 'input-metadata' && b.kind === 'github-token',
+    ),
+  );
+  assert.equal(
+    readFileSync(
+      path.join(blockedByAttestation.quarantineDir, 'scrub-report.json'),
+      'utf8',
+    ).includes(token),
+    false,
+  );
+});
+
+test('quarantine redaction covers object KEYS and mnemonics split across array values', () => {
+  const token = `ghp_${'b'.repeat(36)}`;
+  const words = [
+    'abandon',
+    'ability',
+    'able',
+    'about',
+    'above',
+    'absent',
+    'absorb',
+    'abstract',
+    'absurd',
+    'abuse',
+    'access',
+    'accident',
+  ];
+  const { ctx, input } = scenario();
+  input.runRecord.extensions = { [token]: 'value-under-secret-key', mnemonicWords: words };
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'blocked');
+  if (result.status !== 'blocked') return;
+  const quarantined = readFileSync(path.join(result.quarantineDir, 'manifest.json'), 'utf8');
+  assert.equal(quarantined.includes(token), false, 'secret KEY survived quarantine redaction');
+  // No 12-word run survives in any form (per-element values would evade
+  // per-value scanning; the array is redacted wholesale).
+  assert.equal(quarantined.includes('"abandon"'), false);
+  assert.ok(quarantined.includes('[REDACTED:srp]'));
+});
+
+test('an unreadable required document is a HARD assembly failure, never a silent omission', () => {
+  const { ctx, input } = scenario();
+  const learningsMd = path.join(input.artifacts.artifactsDir, 'learnings.md');
+  chmodSync(learningsMd, 0o000);
+  try {
+    assert.throws(
+      () => assembleLearningPackage(input, ctx),
+      /required learnings\.md.*could not be read/,
+    );
+  } finally {
+    chmodSync(learningsMd, 0o644);
+  }
+});
+
+test('the write path can never derive NaN date segments', () => {
+  const { ctx, input } = scenario();
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  // Force an unparseable timestamp into the stored manifest (bypassing schema
+  // validation is not possible on the write path - this asserts the belt-and-
+  // braces guard message shape via the validator refusing first).
+  const manifestPath = path.join(result.packageDir, 'manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    run: { startedAt: string };
+  };
+  manifest.run.startedAt = '2026-99-99T99:99:99Z';
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  const destination = initDestinationRepo();
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    /invalid date-time|fails spec validation/,
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false);
 });

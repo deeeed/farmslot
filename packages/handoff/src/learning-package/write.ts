@@ -115,6 +115,15 @@ function assertSafeManifestSegments(manifest: Manifest): void {
 /** Repo-relative package path (spec section 1): packages/YYYY/MM/DD/surface/project/run-slug. */
 function repoRelativePath(manifest: Manifest): string {
   const started = new Date(manifest.run.startedAt);
+  // Validation enforces calendar-valid timestamps; this guard makes sure a
+  // path like packages/NaN/NaN/... can never be derived regardless.
+  if (Number.isNaN(started.getTime())) {
+    throw new Error(
+      `writeLearningPackage: run.startedAt '${manifest.run.startedAt}' is not a valid ` +
+        'date-time, so no destination path can be derived. Next: stamp a real ISO ' +
+        'timestamp in the run record and re-assemble.',
+    );
+  }
   const yyyy = String(started.getUTCFullYear());
   const mm = String(started.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(started.getUTCDate()).padStart(2, '0');

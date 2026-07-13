@@ -90,8 +90,20 @@ const FLOOR_PATTERNS: FloorPattern[] = [
 const COOKIE_HEADER = /(?:set-cookie|cookie)["'\\]*\s*:\s*["'\\]*([^\n\r"]+)/gi;
 const COOKIE_ATTRIBUTES = /^(?:path|expires|domain|samesite|max-age|secure|httponly|priority)$/i;
 
+/**
+ * Structured cookie-jar entries as exported by browser profiles/devtools:
+ * `{"name":"sid","value":"<token>"}` objects (single or in arrays). The value
+ * must be token-shaped (no spaces) and >= 8 chars so prose-ish name/value data
+ * never false-blocks.
+ */
+const COOKIE_OBJECT =
+  /"name"\s*:\s*"[A-Za-z0-9_.-]{1,64}"\s*,\s*"value"\s*:\s*"[A-Za-z0-9+/_.~%=-]{8,}"/g;
+
 function detectCookies(text: string): FloorHit[] {
   const hits: FloorHit[] = [];
+  for (const jarEntry of text.matchAll(COOKIE_OBJECT)) {
+    hits.push({ kind: 'cookie', fingerprint: fingerprint(jarEntry[0]) });
+  }
   for (const header of text.matchAll(COOKIE_HEADER)) {
     for (const pair of header[1].split(/[;,]/)) {
       const eq = pair.indexOf('=');

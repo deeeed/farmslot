@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -160,6 +160,31 @@ test('a media artifact with a matching attestation validates', () => {
   });
   try {
     assert.deepEqual(validateLearningPackage(dir).errors, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('semantically impossible timestamps fail date-time validation', () => {
+  const dir = buildValidPackage();
+  try {
+    const manifestPath = path.join(dir, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      run: { startedAt: string };
+    };
+    manifest.run.startedAt = '2026-99-99T99:99:99Z';
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const result = validateLearningPackage(dir);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((e) => e.includes('startedAt')));
+    // A real leap-day date still validates.
+    manifest.run.startedAt = '2028-02-29T12:00:00Z';
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    assert.deepEqual(validateLearningPackage(dir).errors, []);
+    // A non-leap-year Feb 29 does not.
+    manifest.run.startedAt = '2026-02-29T12:00:00Z';
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    assert.equal(validateLearningPackage(dir).valid, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

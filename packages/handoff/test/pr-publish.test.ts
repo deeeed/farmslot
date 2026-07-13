@@ -34,17 +34,21 @@ function packageDirWithIndex(): string {
   return dir;
 }
 
-test('publishPrEvidence refuses without explicit per-call consent - even for dryRun', () => {
+test('a real publish refuses without explicit per-call consent; dryRun needs none', () => {
   const packageDir = packageDirWithIndex();
+  // Partial or missing grants refuse the real publish.
   for (const consent of [
+    undefined,
     { githubWrite: false, publicUpload: true, grantedAt: '2026-07-13T10:00:00Z' },
     { githubWrite: true, publicUpload: false, grantedAt: '2026-07-13T10:00:00Z' },
   ]) {
-    assert.throws(
-      () => publishPrEvidence({ packageDir, consent, dryRun: true }),
-      /explicit per-call consent/,
-    );
+    assert.throws(() => publishPrEvidence({ packageDir, consent }), /explicit per-call consent/);
   }
+  // dryRun previews the plan without consent - same asymmetry as
+  // writeLearningPackage (no approver = preview, not an error).
+  const preview = publishPrEvidence({ packageDir, dryRun: true });
+  assert.equal(preview.status, 'dry-run');
+  assert.deepEqual(preview.wouldUpload, ['harness/x/summary.json']);
 });
 
 test('publishPrEvidence dryRun returns the upload plan with no writes', () => {

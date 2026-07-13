@@ -136,25 +136,37 @@ function manifestBase(
 }
 
 /**
- * Replace any string value carrying a floor hit with a redaction marker,
- * recursively. Used on the quarantine manifest so the block audit trail never
+ * Replace anything carrying a floor hit with a redaction marker, recursively:
+ * string values, object KEYS, and whole arrays whose JOINED string members hit
+ * (the realistic accidental form - wallet fixtures store mnemonics as word
+ * arrays, so per-element scanning alone would miss the run). Used on the
+ * quarantine manifest and scrub report so the block audit trail never
  * reproduces the raw secret that caused the block.
  */
 function redactSecretStrings<T>(value: T, extraPatterns?: FloorPattern[]): T {
+  const marker = (hits: { kind: string }[]): string =>
+    `[REDACTED:${[...new Set(hits.map((h) => h.kind))].join('+')}]`;
+
   if (typeof value === 'string') {
     const hits = scanForFloorSecrets(value, extraPatterns);
-    if (hits.length > 0) {
-      const kinds = [...new Set(hits.map((h) => h.kind))].join('+');
-      return `[REDACTED:${kinds}]` as unknown as T;
-    }
-    return value;
+    return hits.length > 0 ? (marker(hits) as unknown as T) : value;
   }
   if (Array.isArray(value)) {
+    // A secret split across array elements only shows in the joined view.
+    const joined = value.filter((item) => typeof item === 'string').join(' ');
+    const joinedHits = scanForFloorSecrets(joined, extraPatterns);
+    if (joinedHits.length > 0) return [marker(joinedHits)] as unknown as T;
     return value.map((item) => redactSecretStrings(item, extraPatterns)) as unknown as T;
   }
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [key, redactSecretStrings(child, extraPatterns)]),
+      Object.entries(value).map(([key, child]) => {
+        const keyHits = scanForFloorSecrets(key, extraPatterns);
+        return [
+          keyHits.length > 0 ? marker(keyHits) : key,
+          redactSecretStrings(child, extraPatterns),
+        ];
+      }),
     ) as T;
   }
   return value;
@@ -186,9 +198,14 @@ function writeQuarantine(
       floorVersion: SCRUB_FLOOR_VERSION,
     },
   };
-  // Quarantine keeps only the block audit trail - never raw artifacts.
+  // Quarantine keeps only the block audit trail - never raw artifacts. The
+  // report is redacted too: its omitted/attestation entries echo caller strings
+  // (paths, attestation fields) that may themselves carry the secret.
   writeFileSync(path.join(quarantineDir, 'manifest.json'), stableJson(manifest));
-  writeFileSync(path.join(quarantineDir, 'scrub-report.json'), stableJson(scrubReport));
+  writeFileSync(
+    path.join(quarantineDir, 'scrub-report.json'),
+    stableJson(redactSecretStrings(scrubReport, input.scrub?.extraDenyPatterns)),
+  );
   return quarantineDir;
 }
 
@@ -237,6 +254,24 @@ export function assembleLearningPackage(
   requirePath(reportMd, 'artifacts/report.md');
   requirePath(learningsMd, 'artifacts/learnings.md');
 
+  // The three required documents are read eagerly: a read failure here is a
+  // HARD assembly failure (a MUST file silently omitted as unscannable would
+  // otherwise produce a pass-status package missing its terminal contract).
+  const readRequired = (absolutePath: string, label: string): string => {
+    try {
+      return readFileSync(absolutePath, 'utf8');
+    } catch (error) {
+      throw new Error(
+        `assembleLearningPackage: required ${label} at ${absolutePath} could not be read ` +
+          `(${(error as Error).message}). Next: fix the file permissions/encoding - the ` +
+          'terminal contract requires this document.',
+      );
+    }
+  };
+  const taskMdContent = readRequired(input.taskDoc.taskMd, 'task.md');
+  const reportMdContent = readRequired(reportMd, 'report.md');
+  const learningsMdContent = readRequired(learningsMd, 'learnings.md');
+
   const tokens = {
     workspace: ctx.workspace,
     farmslotHome: ctx.farmslotHome,
@@ -253,9 +288,9 @@ export function assembleLearningPackage(
   const harnessKinds = new Map(harness.map((h) => [h.input.packagePath, h.kind]));
 
   const textInputs: ScrubInputFile[] = [
-    { packagePath: 'task.md', absolutePath: input.taskDoc.taskMd },
-    { packagePath: 'report.md', absolutePath: reportMd },
-    { packagePath: 'learnings.md', absolutePath: learningsMd },
+    { packagePath: 'task.md', content: taskMdContent },
+    { packagePath: 'report.md', content: reportMdContent },
+    { packagePath: 'learnings.md', content: learningsMdContent },
     { packagePath: 'source.json', content: stableJson(sourceDocument) },
     { packagePath: 'provenance.json', content: stableJson(provenance) },
     ...harness.map((h) => h.input),
@@ -297,9 +332,31 @@ export function assembleLearningPackage(
   // BEFORE anything is staged - a secret in task.title blocks like any other.
   const metadataHits = scanForFloorSecrets(stableJson(base), input.scrub?.extraDenyPatterns);
 
+  // Caller-provided strings that land in WRITTEN files without being file
+  // content themselves: package-relative paths (scrub report entries,
+  // artifacts/index.json, manifest.files keys) and visual-pass attestation
+  // fields. A secret in a filename or attestation blocks like any other.
+  const callerStrings = [
+    ...allInputs.map((file) => file.packagePath),
+    ...(input.media ?? []).flatMap((m) =>
+      m.visualPass
+        ? [m.visualPass.file, m.visualPass.attestedBy, m.visualPass.passedAt, m.visualPass.finding]
+        : [],
+    ),
+  ];
+  const inputStringHits = scanForFloorSecrets(
+    callerStrings.join('\n'),
+    input.scrub?.extraDenyPatterns,
+  );
+
   const outcome = scrubFiles(allInputs, tokens, input.scrub ?? {});
   const blockedRecords = [
     ...outcome.report.blocked,
+    ...inputStringHits.map((hit) => ({
+      file: 'input-metadata',
+      kind: hit.kind,
+      fingerprint: hit.fingerprint,
+    })),
     ...metadataHits.map((hit) => ({
       file: 'manifest.json',
       kind: hit.kind,

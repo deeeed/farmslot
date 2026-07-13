@@ -4,6 +4,12 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Floor-gate every caller-provided string that lands in written files: package-relative paths and visual-pass attestation fields are scanned before staging (a secret in a FILENAME or attestation blocks assembly), and the quarantined scrub report is redacted so it never echoes a secret-bearing path.
+- Deepen quarantine redaction: object KEYS are redacted and arrays whose joined string members carry a floor hit (mnemonic-as-word-array, the realistic wallet-fixture form) are redacted wholesale instead of per element.
+- Recognize structured cookie-jar objects ({"name":...,"value":...}, single or in arrays, through the unescape passes) with a token-shaped value requirement so prose-ish name/value data never false-blocks.
+- Validate date-times semantically (calendar-real months/days/times; leap years honored) and guard the write path so a NaN date segment can never be derived.
+- Required documents (task.md/report.md/learnings.md) are read eagerly at assembly: a read failure is a hard teaching-error failure instead of a silent unscannable omission of a MUST file.
+- Align publishPrEvidence with writeLearningPackage: dryRun previews the upload plan without consent (no approver = preview, not an error); a real publish still requires both explicit grants.
 - Close the symlink gap in the share gate: the write-time walk now classifies every dirent type and refuses non-regular-file entries (symlinks are invisible to hash inventories yet carry content), and the destination copy is strictly per-inventory-file instead of a blind tree copy.
 - Gate manifest metadata through the floor: the composed manifest core (title, description, run fields, extensions) is scanned before anything is staged - a secret in task.title blocks assembly like any file, and the quarantine manifest is string-level redacted so the block audit never reproduces the raw secret.
 - Derive the task family key before ticket validation and DROP a ticket that hyphen-normalizes to nothing (ticket is optional), so punctuation-only tickets assemble and write under the content-hash family end to end. Tickets are hyphen-normalized wherever they become index filenames.

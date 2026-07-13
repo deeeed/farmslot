@@ -6,7 +6,28 @@ export interface SchemaError {
   message: string;
 }
 
-const DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const DATE_TIME =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** Shape AND calendar validity - 2026-99-99T99:99:99Z must not pass. */
+function isValidDateTime(value: string): boolean {
+  const match = DATE_TIME.exec(value);
+  if (!match) return false;
+  const [, year, month, day, hours, minutes, seconds] = match.map(Number);
+  return (
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= daysInMonth(year, month) &&
+    hours <= 23 &&
+    minutes <= 59 &&
+    seconds <= 59
+  );
+}
 
 function jsonType(value: unknown): string {
   if (value === null) return 'null';
@@ -23,7 +44,7 @@ function typeMatches(value: unknown, type: string): boolean {
 }
 
 function checkFormat(value: string, format: string): boolean {
-  if (format === 'date-time') return DATE_TIME.test(value);
+  if (format === 'date-time') return isValidDateTime(value);
   if (format === 'uri') {
     try {
       return Boolean(new URL(value));
