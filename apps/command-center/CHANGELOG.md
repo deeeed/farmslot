@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- chore: prune the type-escape baseline entry for `packages/cli/src/gateway-client.ts` (file is now escape-free).
 - Add passive UI observation support to the Command Center recipe runner.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

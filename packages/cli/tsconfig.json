@@ -7,7 +7,8 @@
       "@farmslot/protocol": ["../protocol/src/index.ts"],
       "@farmslot/protocol/*": ["../protocol/src/*"],
       "@farmslot/run-bundle": ["../run-bundle/src/index.ts"]
-    }
+    },
+    "jsx": "react-jsx"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

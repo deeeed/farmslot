@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { WebSocket as NodeWebSocket } from 'ws';
 
-import type { EventFrame } from '@farmslot/protocol';
+import type { EventFrame, Frame } from '@farmslot/protocol';
 
 export interface GatewayClientOpts {
   url: string;
@@ -39,6 +39,13 @@ export class GatewayRpcError extends Error {
   }
 }
 
+export interface GatewayConnection {
+  call<T = unknown>(method: string, params?: unknown, options?: { timeoutMs?: number }): Promise<T>;
+  /** Subscribe to broadcast events; returns an unsubscribe function. */
+  onEvent(handler: (event: EventFrame) => void): () => void;
+  close(): void;
+}
+
 interface GatewayCredential {
   token?: string;
   password?: string;
@@ -57,6 +64,164 @@ export class GatewayClient {
 
   async call<T = unknown>(method: string, params: unknown = {}): Promise<T> {
     return this.callWithEvents<T>(method, params);
+  }
+
+  /**
+   * Long-lived authenticated connection for the TUI: multiplexes calls over
+   * one socket and forwards broadcast events. One-shot commands keep using
+   * per-invocation sockets via call().
+   */
+  async connect(): Promise<GatewayConnection> {
+    const WebSocketCtor = globalThis.WebSocket ?? NodeWebSocket;
+    const ws = new WebSocketCtor(this.url);
+    const pending = new Map<
+      string,
+      { resolve: (v: unknown) => void; reject: (e: Error) => void }
+    >();
+    const eventHandlers = new Set<(event: EventFrame) => void>();
+    let closed = false;
+    let seq = 0;
+
+    const failPending = (reason: Error) => {
+      const entries = [...pending.values()];
+      pending.clear();
+      for (const entry of entries) entry.reject(reason);
+    };
+
+    // Persistent handlers go on before the handshake so a close during auth
+    // is observed and no post-auth frame can slip past.
+    ws.addEventListener('message', (evt) => {
+      let frame: Frame;
+      try {
+        frame = JSON.parse(String((evt as MessageEvent).data)) as Frame;
+      } catch {
+        // Non-JSON frames (binary capture relay) are not for this handler.
+        return;
+      }
+      if (frame.type === 'event') {
+        for (const handler of eventHandlers) handler(frame);
+        return;
+      }
+      if (frame.type !== 'res') return;
+      const entry = pending.get(frame.id);
+      if (!entry) return;
+      pending.delete(frame.id);
+      if (frame.ok) entry.resolve(frame.payload);
+      else
+        entry.reject(
+          new GatewayRpcError(
+            frame.error?.message || 'Unknown gateway error',
+            frame.error?.code || 'METHOD_ERROR',
+            frame.error?.userAction,
+            frame.error?.details,
+          ),
+        );
+    });
+    ws.addEventListener('close', () => {
+      closed = true;
+      failPending(new GatewayConnectionError('Connection closed unexpectedly'));
+    });
+
+    // The auth response is a regular res frame, so the persistent message
+    // handler above settles the handshake through its pending-map entry.
+    const authId = 'connect-auth';
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const needsAuth = Boolean(this.credential?.token || this.credential?.password);
+        const opened = setTimeout(
+          () => reject(new GatewayConnectionError(`Timeout — no activity for ${this.timeout}ms`)),
+          this.timeout,
+        );
+        pending.set(authId, {
+          resolve: () => {
+            clearTimeout(opened);
+            resolve();
+          },
+          reject: (err) => {
+            clearTimeout(opened);
+            reject(err);
+          },
+        });
+        ws.addEventListener('open', () => {
+          if (!needsAuth) {
+            pending.delete(authId);
+            clearTimeout(opened);
+            resolve();
+            return;
+          }
+          ws.send(
+            JSON.stringify({
+              type: 'req',
+              id: authId,
+              method: 'auth.connect',
+              params: {
+                clientKind: 'ui',
+                clientName: 'farmslot-tui',
+                ...(this.credential?.token ? { token: this.credential.token } : {}),
+                ...(this.credential?.password ? { password: this.credential.password } : {}),
+              },
+            }),
+          );
+        });
+        ws.addEventListener('error', () => {
+          clearTimeout(opened);
+          reject(new GatewayConnectionError('Connection failed — is the gateway running?'));
+        });
+      });
+    } catch (err) {
+      // Handshake failed (timeout, refused, bad credentials): release the
+      // socket so the process does not stay alive on a dead connection.
+      closed = true;
+      ws.close();
+      throw err;
+    } finally {
+      pending.delete(authId);
+    }
+
+    const timeout = this.timeout;
+    return {
+      call<T = unknown>(
+        method: string,
+        params: unknown = {},
+        options?: { timeoutMs?: number },
+      ): Promise<T> {
+        if (closed) {
+          return Promise.reject(new GatewayConnectionError('Connection is closed'));
+        }
+        const id = `tui-${++seq}`;
+        const callTimeout = options?.timeoutMs ?? timeout;
+        return new Promise<T>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            if (pending.delete(id)) {
+              reject(new GatewayConnectionError(`Timeout — no response for ${callTimeout}ms`));
+            }
+          }, callTimeout);
+          pending.set(id, {
+            resolve: (value) => {
+              clearTimeout(timer);
+              resolve(value as T);
+            },
+            reject: (err) => {
+              clearTimeout(timer);
+              reject(err);
+            },
+          });
+          ws.send(JSON.stringify({ type: 'req', id, method, params }));
+        });
+      },
+      onEvent(handler: (event: EventFrame) => void): () => void {
+        eventHandlers.add(handler);
+        return () => eventHandlers.delete(handler);
+      },
+      close(): void {
+        if (closed) return;
+        closed = true;
+        eventHandlers.clear();
+        // Reject in-flight calls now — the ws 'close' event arrives async.
+        failPending(new GatewayConnectionError('Connection closed'));
+        ws.close();
+      },
+    };
   }
 
   async callWithEvents<T = unknown>(
@@ -123,10 +288,11 @@ export class GatewayClient {
 
       ws.addEventListener('message', (evt) => {
         resetTimer();
-        let frame: any;
+        let frame: Frame;
         try {
-          frame = JSON.parse(String(evt.data));
+          frame = JSON.parse(String(evt.data)) as Frame;
         } catch {
+          // Non-JSON frames (binary capture relay) are not for this handler.
           return;
         }
 
