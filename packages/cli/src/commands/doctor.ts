@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 
 import { bold, dim, green, red, yellow } from '../colors.js';
+import { isMachineMode, okEnvelope } from '../envelope.js';
 import { runDoctor } from '../onboarding/doctor.js';
 import { maybePromptGithubStar, starSupportHint } from '../onboarding/star-prompt.js';
 import { resolveWorkspace } from '../onboarding/workspace.js';
@@ -13,8 +14,11 @@ export function registerDoctorCommand(program: Command): void {
     .action(async (_: unknown, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       const report = await runDoctor(resolveWorkspace());
-      if (output.json) {
-        output.writeJson(report);
+      if (isMachineMode(output)) {
+        // Doctor "checks failed" is still a successful diagnosis — the envelope
+        // stays ok with report data; the process exit code carries the verdict.
+        const envelope = okEnvelope('doctor', report);
+        output.writeJson(report.ok ? envelope : { ...envelope, exitCode: 1 });
       } else {
         for (const section of report.sections) {
           output.write(`${bold(section.title)}\n`);
@@ -35,7 +39,7 @@ export function registerDoctorCommand(program: Command): void {
         );
       }
       if (!report.ok) process.exit(1);
-      if (!output.json && report.ok) {
+      if (!isMachineMode(output) && report.ok) {
         const prompted = await maybePromptGithubStar();
         if (!prompted) {
           const hint = starSupportHint();
