@@ -4,6 +4,10 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.3.0 - 2026-07-13
+
 - feat: TUI viewport windowing — fleet/backlog lists scroll inside the terminal height with a position indicator (38 slots no longer overflow a 30-row terminal); Enter on a runs row opens a run-detail pane (status, flow, ticket, slot, mode, gate history via `run.get`), Esc closes it.
 - feat: `farmslot pair` emits the machine envelope in `--json`/non-TTY mode (QR payload under `data.payload`; teaching `NO_PAIRING_ADDRESS` error) — the last raw-JSON command migrated.
 - feat: shell completions are generated from the live commander tree (zsh/bash/fish), so `backlog`, `tui`, `internal`, `fleet find-slot`, and every future command complete without manual list updates.
@@ -18,7 +22,6 @@ All notable changes to `@farmslot/cli` are tracked here.
 - feat: backlog operator loop — `farmslot backlog list|get|create|update|enqueue|dispatch|close-shipped` and `farmslot run list|get|gate|cancel|archive`, all envelope-emitting and RPC-only.
 - feat: machine envelope — `fleet`, `slot`, `run`, `runs`, `dispatch`, and `doctor` emit `{schemaVersion, command, status, exitCode, data|error}` under `--json` or non-TTY stdout; error envelopes always carry `userAction`; documented at `docs/reference/cli-machine-envelope.md`.
 - feat: fleet status shows a loud stale banner and never suggests prepare/dispatch from stale or ghost slots; gateway errors surface their `userAction` as a `Next:` line; failed commands exit non-zero; `fleet refresh` no longer probes machines twice.
-
 - docs: `pickStreamOutput` describes prepare's single `script.output` channel; the slot stream filter already ignores every other event (comment/test only, no behavior change).
 - feat: `farmslot recipe validate` accepts multiple recipe files (`recipes/*.recipe.json`) and exits non-zero if any is invalid, so it works as a PR gate. Adds `--library-source <name=path|path>` (repeatable) for a static resolve-check of library-composed recipes, and `--emit-resolved` to write each recipe's self-contained `resolved-recipe.json` (the full composition).
 - feat: `farmslot recipe artifacts validate` checks the recipe document against Recipe Protocol v1 (validating `$schema` matches `schema_version` when present) and no longer double-counts recipe-document findings.
@@ -38,4 +41,3 @@ All notable changes to `@farmslot/cli` are tracked here.
 - feat: runner auth detection (missing / inactive / authenticated) gating install, workspace init, and doctor
 - feat: `--json` output for doctor, project add, update, and workspace init (child output routed to stderr)
 - fix: `farmslot uninstall --purge` no longer crashes with `ENOTEMPTY` — tears down each slot's tmux session (exact-match `kill-session`, drops its watchman watch if any) before removing repos, and `rmSync` now retries on `ENOTEMPTY`/`EBUSY` as a safety net for any straggler write
-- Active-development baseline; add user-facing changes here before release or package publication.

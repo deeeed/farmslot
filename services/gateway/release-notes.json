@@ -1,11 +1,11 @@
 {
-  "version": "0.2.2",
-  "date": "2026-07-09",
+  "version": "0.3.0",
+  "date": "2026-07-13",
   "items": [
-    "fix(gateway): stream prepare output on the single `script.output` channel and record output lines by event name, so a run's persisted `lastOutput` no longer doubles every prepare log line",
-    "fix(gateway): recover the real signal exit code (129 SIGHUP / 143 SIGTERM) when a prepare tmux window is torn down externally instead of masking it as a generic exit 1, surface a \"window killed externally\" hint, and scope the pre-launch `prepare-*` sweep so it never SIGHUPs the current run's own windows",
-    "fix(gateway): drop stale step-owned decisions (`monitor_*` / `ci_*`) when replaying a run from an earlier step, so a prior generation's interactive handoff no longer re-blocks the reset run",
-    "feat(gateway): backlog archive/delete/restore support; the archivable-status set is now imported from `@farmslot/protocol` instead of a local duplicate",
-    "fix(gateway): thread the resolved install workspace into slot prepare/provision subprocesses. The prepare tmux window inherits the gateway env, which may not carry `FARMSLOT_WORKSPACE`; pack runway scripts then default the workspace to `$HOME/farmslot`, so a dev-farm slot wrote `.runway-resolved` and provision artifacts into the base install's workspace. `buildPrepareWrappedCommand` now exports the workspace root resolved via `resolveWorkspaceRoot` (mirroring the CLI's `resolveWorkspace` contract: `FARMSLOT_WORKSPACE` env → parent of the farmslot clone holding `state.json`). No-op when the env already sets the workspace; unset when no workspace resolves so the pack default still applies"
+    "fix: slot-prepare branch-mismatch errors teach `farmslot slot release` instead of the retired release-slot.sh",
+    "feat: `backlog.closeShipped` RPC — operator terminal transition to `done` with merged-PR provenance (survives reconcile and persistence round-trips); publication gates detect out-of-band merged PRs and offer a `close-as-shipped` action that links the PR and skips re-publication; PR linkage falls back to `--state all` so merged PRs are discoverable",
+    "feat: honest `fleet.status` — stale snapshots are flagged `stale: true` with dispatch suppressed and a background re-probe; `forceRefresh` runs a real machine probe; ghost slots absent from live pools are marked `missingFromPool` at load time and excluded from dispatch selection and auto-dispatch; `resolveSlot` failures carry `SLOT_NOT_FOUND` with a `userAction` teaching the exact next commands",
+    "feat(gateway): add runtime recovery helpers that can reconcile stale slot state and restore tmux worker sessions from runner session history",
+    "fix(gateway): make publication-gate review requests non-destructive: explicit review failures are recorded instead of failing/tearing down gate-held slots, human-requested reviews no longer become permanent publish policy, package refresh restores configured review depth, and recovered role shells use the account default shell instead of hardcoded bash"
   ]
 }

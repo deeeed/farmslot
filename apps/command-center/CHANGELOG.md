@@ -6,8 +6,12 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 - chore: recipe operational gate runs the hook-expansion tests from their new `@farmslot/slot-config` home.
 - chore: prune the type-escape baseline entry for `packages/cli/src/gateway-client.ts` (file is now escape-free).
-- Add passive UI observation support to the Command Center recipe runner.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.3.0 - 2026-07-13
+
+- passive UI observation support to the Command Center recipe runner
 
 ## 0.2.1 - 2026-07-03
 
