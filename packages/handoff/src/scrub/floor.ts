@@ -9,6 +9,12 @@ export interface FloorHit {
   fingerprint: string;
 }
 
+/** One deny pattern: a match is a positive secret identification, never a maybe. */
+export interface FloorPattern {
+  kind: string;
+  pattern: RegExp;
+}
+
 const BIP39_SET = new Set<string>(BIP39_ENGLISH);
 
 /**
@@ -33,7 +39,7 @@ function fingerprint(match: string): string {
  * primary control is the producer-instruction in the closeout prompt; the human
  * approval gate is the reliability guarantee.
  */
-const FLOOR_PATTERNS: { kind: string; pattern: RegExp }[] = [
+const FLOOR_PATTERNS: FloorPattern[] = [
   { kind: 'private-key', pattern: /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/g },
   {
     kind: 'private-key',
@@ -53,16 +59,30 @@ const FLOOR_PATTERNS: { kind: string; pattern: RegExp }[] = [
   { kind: 'stripe-key', pattern: /\b(?:sk|rk)_live_[A-Za-z0-9]{20,}\b/g },
   { kind: 'openai-key', pattern: /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g },
   { kind: 'basic-auth', pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/gi },
+  { kind: 'oauth-token', pattern: /\bya29\.[A-Za-z0-9_-]{20,}\b/g },
+  // HTTP cookie header carrying a session value (Cookie:/Set-Cookie: name=value...).
+  { kind: 'cookie', pattern: /\b(?:set-cookie|cookie):\s*[A-Za-z0-9_.-]+=[^\s;,]{8,}/gi },
+  // Session/auth-token assignments with a value-shaped token on the right.
+  {
+    kind: 'session-token',
+    pattern: /\b(?:session[_-]?(?:id|token)|auth[_-]?token)["'\s:=>]{1,6}[A-Za-z0-9+/_.-]{16,}\b/gi,
+  },
 ];
 
 /**
  * Detect BIP-39 recovery phrases: runs of >= 12 consecutive wordlist words.
  * Tokenizing on any non-letter boundary catches common accidental separators —
  * newlines, commas, numbered list prefixes — since natural prose breaks such
- * runs with stopwords long before 12 words.
+ * runs with stopwords long before 12 words. Literal escape sequences (\n, \t,
+ * \r) become separators first so a phrase inside a JSON-stringified blob (a
+ * very common accidental carrier: embedded logs in summary.json) still tokenizes
+ * as a word run instead of gluing the escape letter onto the next word.
  */
 function detectMnemonics(text: string): FloorHit[] {
-  const tokens = text.toLowerCase().split(/[^a-z]+/);
+  const tokens = text
+    .toLowerCase()
+    .replace(/\\[ntr]/g, ' ')
+    .split(/[^a-z]+/);
   const hits: FloorHit[] = [];
   let runStart = -1;
   for (let i = 0; i <= tokens.length; i += 1) {
@@ -89,14 +109,18 @@ function detectMnemonics(text: string): FloorHit[] {
  * producer-instruction contract ("never include raw secrets; reference by name
  * only"). The human approval gate is the reliability guarantee. The scrubber
  * does not attempt to defeat adversarial obfuscation.
+ *
+ * `extraPatterns` (farm/personal config) is UNION-only (spec section 5.1 layer 5):
+ * it can only ADD deny patterns on top of the floor. There is no parameter, flag,
+ * or config path that removes or replaces a floor pattern.
  */
-export function scanForFloorSecrets(text: string): FloorHit[] {
+export function scanForFloorSecrets(text: string, extraPatterns: FloorPattern[] = []): FloorHit[] {
   const byFingerprint = new Map<string, FloorHit>();
 
   for (const hit of detectMnemonics(text)) {
     byFingerprint.set(hit.fingerprint, hit);
   }
-  for (const { kind, pattern } of FLOOR_PATTERNS) {
+  for (const { kind, pattern } of [...FLOOR_PATTERNS, ...extraPatterns]) {
     for (const match of text.matchAll(pattern)) {
       const hit: FloorHit = { kind, fingerprint: fingerprint(match[0]) };
       byFingerprint.set(hit.fingerprint, hit);
