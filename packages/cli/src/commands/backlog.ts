@@ -19,19 +19,30 @@ import { createEmitter } from '../envelope.js';
 import { TableRenderer } from '../table.js';
 
 /** Accepts a sourceRef (MANUAL-000015), an item id, or an id prefix. */
-async function resolveItem(ctx: CommandContext, ref: string): Promise<BacklogItem> {
+export async function resolveItem(ctx: CommandContext, ref: string): Promise<BacklogItem> {
   const { items } = await ctx.client.call<BacklogListResult>('backlog.list', {});
-  const match = items.find(
-    (item) => item.sourceRef === ref || item.id === ref || item.id.startsWith(ref),
-  );
-  if (!match) {
-    throw Object.assign(new Error(`No backlog item matches '${ref}'.`), {
-      code: 'BACKLOG_ITEM_NOT_FOUND',
-      userAction:
-        'List items with `farmslot backlog list` and pass a sourceRef (e.g. MANUAL-000015) or item id.',
-    });
+  const exact = items.find((item) => item.sourceRef === ref || item.id === ref);
+  if (exact) return exact;
+  const prefixed = items.filter((item) => item.id.startsWith(ref));
+  if (prefixed.length === 1) return prefixed[0];
+  if (prefixed.length > 1) {
+    throw Object.assign(
+      new Error(
+        `Ambiguous ref '${ref}' matches ${prefixed.length} items: ${prefixed
+          .map((item) => item.sourceRef ?? item.id.slice(0, 12))
+          .join(', ')}.`,
+      ),
+      {
+        code: 'BACKLOG_ITEM_AMBIGUOUS',
+        userAction: 'Pass the full sourceRef (e.g. MANUAL-000015) or a longer id prefix.',
+      },
+    );
   }
-  return match;
+  throw Object.assign(new Error(`No backlog item matches '${ref}'.`), {
+    code: 'BACKLOG_ITEM_NOT_FOUND',
+    userAction:
+      'List items with `farmslot backlog list` and pass a sourceRef (e.g. MANUAL-000015) or item id.',
+  });
 }
 
 function renderItems(items: BacklogItem[]): string {
@@ -185,6 +196,24 @@ export function registerBacklogCommand(program: Command): void {
     );
 
   backlog
+    .command('ready <ref>')
+    .description('Mark a candidate item ready for dispatch')
+    .action(async (ref: string, _opts: unknown, cmd: Command) => {
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
+      try {
+        const item = await resolveItem(ctx, ref);
+        const result = await ctx.client.call<{ item: BacklogItem }>('backlog.markReady', {
+          itemId: item.id,
+        });
+        if (emit.machine) emit.ok(result);
+        else ctx.output.write(`${green('Ready')} ${cyan(item.sourceRef ?? item.id)}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  backlog
     .command('enqueue <ref>')
     .description('Queue a backlog item for dispatch')
     .action(async (ref: string, _opts: unknown, cmd: Command) => {
@@ -212,7 +241,15 @@ export function registerBacklogCommand(program: Command): void {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
-        const item = await resolveItem(ctx, ref);
+        let item = await resolveItem(ctx, ref);
+        if (item.status === 'candidate') {
+          // Dispatch implies readiness — promote instead of failing enqueue.
+          const ready = await ctx.client.call<{ item: BacklogItem }>('backlog.markReady', {
+            itemId: item.id,
+          });
+          item = ready.item;
+          if (!emit.machine) ctx.output.write(`Promoted ${item.sourceRef ?? item.id} to ready\n`);
+        }
         const enqueue = await ctx.client.call<BacklogEnqueueResult>('backlog.enqueue', {
           itemId: item.id,
         });

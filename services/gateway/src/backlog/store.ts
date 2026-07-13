@@ -195,6 +195,18 @@ export async function removeOrphanBacklogQueueItem(params: { itemId: string }): 
   return { ok: true };
 }
 
+function isPersistedShipped(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function sanitizeShipped(raw: Record<string, unknown>): NonNullable<BacklogItem['shipped']> {
+  return {
+    ...(typeof raw.prRef === 'string' && raw.prRef ? { prRef: raw.prRef } : {}),
+    ...(typeof raw.note === 'string' && raw.note ? { note: raw.note } : {}),
+    closedAt: typeof raw.closedAt === 'string' ? raw.closedAt : new Date(0).toISOString(),
+  };
+}
+
 async function persist(): Promise<void> {
   await mkdir(path.dirname(BACKLOG_FILE), { recursive: true });
   const tmpFile = `${BACKLOG_FILE}.tmp`;
@@ -547,9 +559,7 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
     ...(typeof raw.lastObservedRunStatus === 'string'
       ? { lastObservedRunStatus: raw.lastObservedRunStatus as RunStatus }
       : {}),
-    ...(raw.shipped && typeof raw.shipped === 'object'
-      ? { shipped: raw.shipped as BacklogItem['shipped'] }
-      : {}),
+    ...(isPersistedShipped(raw.shipped) ? { shipped: sanitizeShipped(raw.shipped) } : {}),
     ...(typeof raw.lastDispatchAttempt === 'string'
       ? { lastDispatchAttempt: raw.lastDispatchAttempt }
       : {}),
@@ -1395,6 +1405,22 @@ export async function closeShippedBacklogItem(params: {
         `Backlog item ${item.sourceRef ?? item.id} is already ${item.status}.`,
         { userAction: 'Nothing to close. Inspect items with `farmslot backlog list`.' },
       );
+    }
+    if (item.status === 'running' || item.status === 'dispatching') {
+      throw new GatewayMethodError(
+        'BACKLOG_ITEM_ACTIVE',
+        `Backlog item ${item.sourceRef ?? item.id} has an active run (${item.runId ?? 'unknown'}).`,
+        {
+          userAction: `Cancel it first with \`farmslot run cancel ${item.runId ?? '<runId>'}\`, then re-run close-shipped.`,
+        },
+      );
+    }
+    // Remove any pending queue row — reconcile would otherwise force the item
+    // back to queued (and auto-dispatch could still pick it up) after close.
+    if (item.queuedQueueItemId) {
+      removeQueueItemInternal(item.queuedQueueItemId, 'close-shipped');
+      await persistQueueNow();
+      delete item.queuedQueueItemId;
     }
     item.status = 'done';
     item.shipped = {

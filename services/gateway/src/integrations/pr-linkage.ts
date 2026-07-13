@@ -168,25 +168,29 @@ export async function findPRNumber(
  * gate to detect out-of-band merges (work shipped while the run sat at the
  * gate) so the operator can close-as-shipped instead of re-reviewing.
  */
+const MERGED_PR_PROBE_TIMEOUT_MS = 15_000;
+
 export async function findMergedPRNumber(run: Run, ciRepo: string): Promise<number | null> {
   if (!run.branch) return null;
   try {
-    const { stdout } = await ghRequest(
-      [
-        'pr',
-        'list',
-        '--repo',
-        ciRepo,
-        '--head',
-        run.branch,
-        '--state',
-        'merged',
-        '--json',
-        'number',
-        '--limit',
-        '1',
-      ],
-      { force: true },
+    const { stdout } = await withProbeTimeout(
+      ghRequest(
+        [
+          'pr',
+          'list',
+          '--repo',
+          ciRepo,
+          '--head',
+          run.branch,
+          '--state',
+          'merged',
+          '--json',
+          'number',
+          '--limit',
+          '1',
+        ],
+        { force: true },
+      ),
     );
     const prs = JSON.parse(stdout || '[]') as Array<{ number: number }>;
     return prs.length > 0 ? prs[0].number : null;
@@ -196,6 +200,18 @@ export async function findMergedPRNumber(run: Run, ciRepo: string): Promise<numb
     );
     return null;
   }
+}
+
+function withProbeTimeout<T>(probe: Promise<T>): Promise<T> {
+  return Promise.race([
+    probe,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`merged-PR probe timed out after ${MERGED_PR_PROBE_TIMEOUT_MS}ms`)),
+        MERGED_PR_PROBE_TIMEOUT_MS,
+      ).unref?.(),
+    ),
+  ]);
 }
 
 export async function persistRunPrNumber(runId: string, prNumber: number): Promise<void> {

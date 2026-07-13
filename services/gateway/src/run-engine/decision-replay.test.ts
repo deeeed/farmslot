@@ -185,3 +185,20 @@ test('human gate approvals remain replayable after resume', () => {
     true,
   );
 });
+
+test('latestResolvedHumanGateDecision(approvalOnly) accepts close-as-shipped resolutions', () => {
+  const decisions = [
+    {
+      id: 'gate-1',
+      type: 'engine_human_gate',
+      title: 'gate',
+      description: '',
+      actions: [],
+      createdAt: '2026-07-13T00:00:00Z',
+      resolvedAt: '2026-07-13T00:05:00Z',
+      resolvedAction: 'close-as-shipped',
+    },
+  ] as unknown as RunDecision[];
+  const latest = latestResolvedHumanGateDecision(decisions, true);
+  assert.equal(latest?.resolvedAction, 'close-as-shipped');
+});

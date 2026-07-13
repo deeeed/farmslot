@@ -244,23 +244,30 @@ export async function executeFinalizeStep(
       detail: 'Branch already merged — linking PR and skipping publication',
     });
     if (!publishedPrNumber && ciRepo) {
-      const { findMergedPRNumber } = await import('../integrations/pr-linkage.js');
+      const { findMergedPRNumber, persistRunPrNumber } =
+        await import('../integrations/pr-linkage.js');
       publishedPrNumber = await findMergedPRNumber(current, ciRepo);
-      if (publishedPrNumber) {
-        const { persistRunPrNumber } = await import('../integrations/pr-linkage.js');
-        await persistRunPrNumber(current.id, publishedPrNumber);
-      }
+      if (publishedPrNumber) await persistRunPrNumber(current.id, publishedPrNumber);
     }
-    publicationStatus = 'published_ready';
-    updateRun(runId, {
-      engineState: {
-        ...getRun(runId)!.engineState,
-        publishGate: {
-          ...getRun(runId)!.engineState?.publishGate,
-          publicationStatus,
+    if (publishedPrNumber) {
+      // Only claim publication when a PR is actually linked; the zero-ahead
+      // variant (no discoverable PR) completes without publication linkage.
+      publicationStatus = 'published_ready';
+      updateRun(runId, {
+        engineState: {
+          ...getRun(runId)!.engineState,
+          publishGate: {
+            ...getRun(runId)!.engineState?.publishGate,
+            publicationStatus,
+          },
         },
-      },
-    });
+      });
+    } else {
+      emitWithBroadcast('substep', {
+        name: 'close-as-shipped',
+        detail: 'No PR link found — completing without publication linkage',
+      });
+    }
   } else if (publicationApprovalGate) {
     if (!isPublishApprovalAction(resolvedAction)) {
       throw blockedRunError(

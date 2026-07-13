@@ -16,6 +16,7 @@ export const BacklogMethods = {
   update: Methods.BACKLOG_UPDATE,
   delete: Methods.BACKLOG_DELETE,
   markReady: Methods.BACKLOG_MARK_READY,
+  closeShipped: Methods.BACKLOG_CLOSE_SHIPPED,
   archive: Methods.BACKLOG_ARCHIVE,
   enqueue: Methods.BACKLOG_ENQUEUE,
   dequeue: Methods.BACKLOG_DEQUEUE,
