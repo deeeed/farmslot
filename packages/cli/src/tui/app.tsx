@@ -264,6 +264,9 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
     }
   });
 
+  // Set during the runs-list IIFE render below; read by the scroll hint.
+  let runsWindowClipped = false;
+
   return (
     <Box flexDirection="column">
       <Box gap={2}>
@@ -363,17 +366,21 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
             // Runs render 1 + pending-gate lines each — window by line budget,
             // walking back from the cursor so it always stays visible.
             const lineCost = (row: (typeof runsVm)[number]) => 1 + row.pendingDecisions.length;
-            let start = cursor;
-            let used = runsVm[cursor] ? lineCost(runsVm[cursor]) : 0;
+            // The shared clamp effect runs post-render; guard against a
+            // shrunken list leaving the cursor momentarily out of range.
+            const safeCursor = Math.min(cursor, Math.max(0, runsVm.length - 1));
+            let start = safeCursor;
+            let used = runsVm[safeCursor] ? lineCost(runsVm[safeCursor]) : 0;
             while (start > 0 && used + lineCost(runsVm[start - 1]) <= listHeight) {
               start--;
               used += lineCost(runsVm[start]);
             }
-            let end = cursor + 1;
+            let end = Math.min(safeCursor + 1, runsVm.length);
             while (end < runsVm.length && used + lineCost(runsVm[end]) <= listHeight) {
               used += lineCost(runsVm[end]);
               end++;
             }
+            runsWindowClipped = start > 0 || end < runsVm.length;
             return runsVm.slice(start, end).map((row, sliceIndex) => {
               const index = start + sliceIndex;
               return (
@@ -392,9 +399,9 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
               );
             });
           })()}
-          {runsVm.length > listHeight && (
+          {runsWindowClipped && (
             <Text dimColor>
-              {cursor + 1}/{runsVm.length} — scroll with arrows
+              {Math.min(cursor + 1, runsVm.length)}/{runsVm.length} — scroll with arrows
             </Text>
           )}
         </Box>
