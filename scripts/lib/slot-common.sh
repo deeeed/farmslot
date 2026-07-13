@@ -29,7 +29,6 @@ if [ -z "${FARMSLOT_CLI:-}" ]; then
 fi
 # The CLI verbs honor the historical POOL_DIR/PROJECTS_DIR overrides via env.
 [ -n "${POOL_DIR:-}" ] && export FARMSLOT_POOL_DIR="${FARMSLOT_POOL_DIR:-$POOL_DIR}"
-[ -n "${PROJECTS_DIR:-}" ] && export FARMSLOT_PROJECTS_DIR="${FARMSLOT_PROJECTS_DIR:-$PROJECTS_DIR}"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
@@ -442,6 +441,8 @@ expand_recycle_cmd() {
 SLOT_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FARMSLOT_ROOT="${FARMSLOT_ROOT:-$(cd "${SLOT_COMMON_DIR}/../.." && pwd)}"
 PROJECTS_DIR="${PROJECTS_DIR:-${FARMSLOT_ROOT}/projects}"
+# Point the CLI verbs at this tree's projects (relocated script trees included).
+export FARMSLOT_PROJECTS_DIR="${FARMSLOT_PROJECTS_DIR:-$PROJECTS_DIR}"
 
 # ── load_project_config ──────────────────────────────────────────────
 # Reads project.json for the slot's project. Sets:

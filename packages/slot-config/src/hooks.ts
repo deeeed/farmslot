@@ -34,6 +34,19 @@ function expandTemplateInternal(
   extraVars?: Record<string, string>,
 ): string {
   let result = template;
+  // Runtime extras (e.g. --domain overlays) take precedence over project vars
+  // and resource fields — apply them first so later passes see no placeholder.
+  if (extraVars) {
+    for (const [key, value] of Object.entries(extraVars)) {
+      result = result.replaceAll(`{{${key}}}`, value);
+      result = result.replaceAll(`{{${key.toUpperCase()}}}`, value);
+    }
+  }
+  // {{domain}} always renders (empty when no overlay is active) — the bash
+  // fixture-sync sed substituted ${DOMAIN:-} unconditionally.
+  const domainValue = extraVars?.domain ?? slotVars.domain ?? '';
+  result = result.replaceAll('{{domain}}', domainValue);
+  result = result.replaceAll('{{DOMAIN}}', domainValue);
   // Dynamic resource vars
   for (const [field, value] of Object.entries(slotVars.resourceVars)) {
     result = result.replaceAll(`{{${field}}}`, value);
@@ -117,17 +130,6 @@ function expandTemplateInternal(
   // Per-call variables supplied by the caller (e.g. the prepare-requirement
   // check threading the run's target ref). Applied last so callers can inject
   // runtime values that are neither slot resources nor static project vars.
-  if (extraVars) {
-    for (const [key, value] of Object.entries(extraVars)) {
-      result = result.replaceAll(`{{${key}}}`, value);
-      result = result.replaceAll(`{{${key.toUpperCase()}}}`, value);
-    }
-  }
-  // {{domain}} always renders (empty when no overlay is active) — the bash
-  // fixture-sync sed substituted ${DOMAIN:-} unconditionally.
-  const domainValue = extraVars?.domain ?? slotVars.domain ?? '';
-  result = result.replaceAll('{{domain}}', domainValue);
-  result = result.replaceAll('{{DOMAIN}}', domainValue);
   return result;
 }
 

@@ -161,6 +161,14 @@ export function registerFleetCommand(program: Command): void {
           output.write(`${result.slot.slot}\n`);
         }
       } catch (err) {
+        if (opts.raw) {
+          // Raw failure contract: empty stdout, reason on stderr, exit 1.
+          const reason = err instanceof Error ? err.message : String(err);
+          const action = (err as { userAction?: string }).userAction;
+          process.stderr.write(`${reason}${action ? `\nNext: ${action}` : ''}\n`);
+          process.exitCode = 1;
+          return;
+        }
         emit.fail(err);
       }
     });
