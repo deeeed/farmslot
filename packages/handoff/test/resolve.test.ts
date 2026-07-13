@@ -188,3 +188,23 @@ test('a DANGLING symlink override is a broken override, not a silent absence', (
   assert.equal(resolved.value, 'default-content');
   assert.equal(contentWarnings.length, 1);
 });
+
+test('parse-broken personal continues the walk: a valid farm candidate wins', () => {
+  const { root, write } = tierDirs();
+  const req = request(root, '{"tier":"default"}');
+  write('personal/template.md', 'not json at all');
+  write('farm/template.md', '{"tier":"farm"}');
+
+  const warnings: string[] = [];
+  const resolved = resolveContent(req, (raw) => JSON.parse(raw) as { tier: string }, {
+    warn: (m) => warnings.push(m),
+  });
+  // The next tier's valid candidate wins - the shipped default is terminal only.
+  assert.deepEqual(resolved.value, { tier: 'farm' });
+  assert.equal(resolved.resolution.tier, 'farm');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /is broken/);
+  assert.match(warnings[0], /Next:/);
+  // The parse-broken candidate is recorded in shadows for provenance.
+  assert.ok(resolved.resolution.shadows.some((s) => s.tier === 'personal'));
+});

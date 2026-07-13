@@ -115,8 +115,10 @@ Closeout packaging is post-run and best-effort: _fail-closed on the share
 decision, fail-open on the run._
 
 - Missing override file → the resolution chain falls through to the shipped default.
-- Broken override file → warn, record the fallback in `provenance.json`, use the
-  default. Never a throw.
+- Broken override file (parse-broken content, or a directory/symlink/unreadable
+  candidate) → warn, record it in `shadows`/provenance, and continue the tier
+  walk; the next tier's valid candidate wins and the shipped default is the
+  terminal fallback only. Never a throw.
 - Override boundary: an EXPLICITLY configured path (e.g. `templateRef`) that
   points at a missing file is a broken override and warns; a merely absent
   TIER file (personal/domain/farm location without the file) falls through

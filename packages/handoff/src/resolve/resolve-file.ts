@@ -43,6 +43,22 @@ function candidatesByTier(request: ResolveRequest): { tier: ResolutionTier; path
  * with the rest of the gate). A directory, special file, or unreadable file is
  * a BROKEN override per the unhappy-path contract: warn and continue the walk.
  */
+/**
+ * Discovery is lstat-aware: existsSync FOLLOWS symlinks, so a dangling symlink
+ * override would silently vanish instead of being classified as the broken
+ * override it is (warned, skipped, recorded in shadows).
+ */
+function discoverCandidates(request: ResolveRequest): { tier: ResolutionTier; path: string }[] {
+  return candidatesByTier(request).filter((c) => {
+    try {
+      lstatSync(c.path);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function brokenCandidateReason(candidatePath: string): string | undefined {
   let stats;
   try {
@@ -74,17 +90,7 @@ function selectWinner(
   winner: { tier: ResolutionTier; path: string };
   existing: { tier: ResolutionTier; path: string }[];
 } {
-  // Discovery is lstat-aware: existsSync FOLLOWS symlinks, so a dangling
-  // symlink override would silently vanish instead of being classified as the
-  // broken override it is (warned, skipped, recorded in shadows).
-  const existing = candidatesByTier(request).filter((c) => {
-    try {
-      lstatSync(c.path);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+  const existing = discoverCandidates(request);
   for (const candidate of existing) {
     const broken = brokenCandidateReason(candidate.path);
     if (broken === undefined) return { winner: candidate, existing };
@@ -142,11 +148,11 @@ export interface ResolvedContent<T> {
 
 /**
  * Resolve, read, and parse - with the binding unhappy-path contract: a BROKEN
- * override (unreadable file, parse error) degrades to the shipped default with a
- * warning, never a throw. The returned resolution then records `tier: 'default'`
- * with the broken override listed in `shadows`, so provenance.json carries the
- * fallback audit (a default winner shadowed by a higher-tier file is exactly the
- * fallback signature).
+ * override at any tier (stat-broken like a directory/symlink/unreadable file,
+ * or parse-broken content) is warned, recorded in `shadows`/provenance, and
+ * SKIPPED - the walk continues to the next tier's candidate; the shipped
+ * default is the TERMINAL fallback only. One rule for all broken shapes,
+ * never a throw for a customization error.
  *
  * Only a broken/missing shipped default still throws - that is a packaging bug,
  * not a customization error.
@@ -156,32 +162,33 @@ export function resolveContent<T>(
   parse: (raw: string, path: string) => T,
   ctx: ResolveContext = {},
 ): ResolvedContent<T> {
-  const { winner, existing } = selectWinner(request, ctx, 'resolveContent');
-  try {
-    const value = parse(readFileSync(winner.path, 'utf8'), winner.path);
-    const resolution = buildResolution(request, winner, existing);
-    ctx.logger?.(resolution);
-    return { value, resolution };
-  } catch (error) {
-    if (winner.tier === 'default') {
+  const existing = discoverCandidates(request);
+  for (const candidate of existing) {
+    let failure = brokenCandidateReason(candidate.path);
+    if (failure === undefined) {
+      try {
+        const value = parse(readFileSync(candidate.path, 'utf8'), candidate.path);
+        const resolution = buildResolution(request, candidate, existing);
+        ctx.logger?.(resolution);
+        return { value, resolution };
+      } catch (error) {
+        failure = `is broken (${(error as Error).message})`;
+      }
+    }
+    if (candidate.tier === 'default') {
       throw new Error(
-        `resolveContent(${request.kind}): shipped default at ${winner.path} is broken ` +
-          `(${(error as Error).message}). Next: this is a packaging bug - reinstall @farmslot/handoff.`,
+        `resolveContent(${request.kind}): shipped default at ${candidate.path} ${failure}. ` +
+          'Next: this is a packaging bug - reinstall @farmslot/handoff.',
       );
     }
     ctx.warn?.(
-      `resolveContent(${request.kind}): ${winner.tier} override ${winner.path} is broken ` +
-        `(${(error as Error).message}); falling back to the shipped default. ` +
-        'Next: fix or remove the override file - the run continues on defaults.',
+      `resolveContent(${request.kind}): ${candidate.tier} override ${candidate.path} ${failure}; ` +
+        'skipping it and continuing down the resolution chain. Next: fix or remove the ' +
+        'override - the run continues.',
     );
-    // Deliberately straight to the shipped default, not the next tier down:
-    // the unhappy-path contract prescribes "use the default" for a broken
-    // override, keeping degradation predictable (one warning, one known-good
-    // tier) instead of cascading through possibly-also-broken files.
-    const fallback = { tier: 'default' as const, path: request.defaultPath };
-    const value = parse(readFileSync(fallback.path, 'utf8'), fallback.path);
-    const resolution = buildResolution(request, fallback, existing);
-    ctx.logger?.(resolution);
-    return { value, resolution };
   }
+  throw new Error(
+    `resolveContent(${request.kind}): shipped default missing at ${request.defaultPath}. ` +
+      'Next: this is a packaging bug - reinstall @farmslot/handoff.',
+  );
 }

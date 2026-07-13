@@ -37,7 +37,7 @@ export interface RenderTaskMarkdownResult {
 const DEFAULT_TEMPLATE = fileURLToPath(new URL('../../templates/task-default.md', import.meta.url));
 
 /** An empty template renders an empty task doc - treat as broken so the chain
- * degrades to the shipped default instead (unhappy-path contract). */
+ * degrades through the resolution chain instead (unhappy-path contract). */
 function parseTemplate(raw: string, templatePath: string): string {
   if (raw.trim() === '') {
     throw new Error(`template ${templatePath} is empty`);
@@ -65,7 +65,8 @@ function substitutions(task: SourceDocument, vars: Record<string, string>): Reco
 /**
  * Render the task document markdown (spec section 3.1) from the first-match
  * template in the `personal > domain > farm > default` chain. A broken override
- * template warns and degrades to the shipped default - it never aborts. Which
+ * template warns and degrades through the chain (next tier, shipped default
+ * terminal) - it never aborts. Which
  * template won (and what it shadowed) is returned for provenance.json; it is
  * never embedded in the markdown itself.
  */
