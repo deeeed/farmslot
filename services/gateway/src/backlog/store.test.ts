@@ -1330,3 +1330,28 @@ test('closeShipped refuses items with an active run', async () => {
     },
   );
 });
+
+test('closeShipped refuses items whose queue row is mid-dispatch', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Mid-dispatch handoff',
+    sourceKind: 'manual',
+    flowType: 'dev',
+  });
+  await backlog.markBacklogItemReady({ itemId: created.item.id });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  const row = queue.getQueueSnapshot().find((candidate) => candidate.id === enqueued.queueItem.id);
+  assert.ok(row);
+  row.status = 'dispatching';
+
+  await assert.rejects(
+    () => backlog.closeShippedBacklogItem({ itemId: created.item.id }),
+    (err: unknown) => {
+      const rich = err as { code?: string; userAction?: string };
+      assert.equal(rich.code, 'BACKLOG_ITEM_ACTIVE');
+      assert.match(rich.userAction ?? '', /run cancel/u);
+      return true;
+    },
+  );
+});

@@ -1418,6 +1418,21 @@ export async function closeShippedBacklogItem(params: {
     // Remove any pending queue row — reconcile would otherwise force the item
     // back to queued (and auto-dispatch could still pick it up) after close.
     if (item.queuedQueueItemId) {
+      const queueRow = getQueueSnapshot().find(
+        (candidate) => candidate.id === item.queuedQueueItemId,
+      );
+      if (queueRow?.status === 'dispatching') {
+        // Queue→run handoff is in flight: the row is dispatching but the run
+        // does not exist yet. Removing it now would strand an untracked run.
+        throw new GatewayMethodError(
+          'BACKLOG_ITEM_ACTIVE',
+          `Backlog item ${item.sourceRef ?? item.id} is mid-dispatch.`,
+          {
+            userAction:
+              'Wait for the run to appear (`farmslot run list --active`), cancel it with `farmslot run cancel <runId>`, then re-run close-shipped.',
+          },
+        );
+      }
       removeQueueItemInternal(item.queuedQueueItemId, 'close-shipped');
       await persistQueueNow();
       delete item.queuedQueueItemId;
