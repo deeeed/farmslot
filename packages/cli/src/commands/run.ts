@@ -8,6 +8,7 @@ import type { EventFrame, Run } from '@farmslot/protocol';
 
 import { bold, green } from '../colors.js';
 import { resolveContext } from '../context.js';
+import { createEmitter } from '../envelope.js';
 
 // Map task subdirectory names to FlowType values.
 const SUBDIR_TO_FLOW: Record<string, string> = {
@@ -248,6 +249,7 @@ export function registerRunCommand(program: Command): void {
     .option('--variant <name>', 'Run variant, required for comparison siblings')
     .action(async (opts: RunCreateCliOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const params = buildRunCreateParams(opts);
         const result = await client.callWithEvents<{ run: Run }>(
@@ -261,8 +263,8 @@ export function registerRunCommand(program: Command): void {
             }
           },
         );
-        if (output.json) {
-          output.writeJson(result);
+        if (emit.machine) {
+          emit.ok(result);
         } else {
           output.write(
             `${green('Run created')} ${bold(result.run.id.slice(0, 8))} for ${bold(
@@ -271,8 +273,8 @@ export function registerRunCommand(program: Command): void {
           );
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 }

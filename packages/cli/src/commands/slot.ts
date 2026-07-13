@@ -11,6 +11,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { resolveContext } from '../context.js';
+import { createEmitter } from '../envelope.js';
 import { formatSlotCheck } from '../formatters/slot.js';
 import { withProgress } from '../progress.js';
 import { resolveCurrentSlot, resolveSlotId } from '../slot-context.js';
@@ -95,14 +96,15 @@ export function registerSlotCommand(program: Command): void {
     .description('Print the slot inferred from the current working directory')
     .action((_opts: unknown, cmd: Command) => {
       const { output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const result = resolveCurrentSlot();
         if (!result) throw new Error('Could not infer slot from current directory.');
-        if (output.json) output.writeJson(result);
+        if (emit.machine) emit.ok(result);
         else output.write(`${result.slotId}\n`);
       } catch (err) {
-        output.failure(err);
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -112,21 +114,22 @@ export function registerSlotCommand(program: Command): void {
     .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
     .action(async (id: string | undefined, _opts: unknown, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
         const result = await withProgress(
           `Checking ${slotId}`,
           () => client.call<SlotCheckResult>('slot.check', { slotId }),
-          !output.json,
+          !emit.machine,
         );
-        if (output.json) {
-          output.writeJson(result);
+        if (emit.machine) {
+          emit.ok(result);
         } else {
           output.write(formatSlotCheck(result));
         }
       } catch (err) {
-        output.failure(err);
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -157,6 +160,7 @@ export function registerSlotCommand(program: Command): void {
       const { client, output } = resolveContext(cmd, {
         timeout: resolveSlotPrepareGatewayTimeoutMs(cmd.optsWithGlobals().timeout),
       });
+      const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
         const vars: Record<string, string> = opts.var ?? {};
@@ -169,9 +173,9 @@ export function registerSlotCommand(program: Command): void {
           prepareProfile: opts.prepareProfile,
           vars: Object.keys(vars).length > 0 ? vars : undefined,
         };
-        if (output.json) {
+        if (emit.machine) {
           const result = await client.call<ScriptActionResult>('slot.prepare', params);
-          output.writeJson(result);
+          emit.ok(result);
         } else {
           await client.callWithEvents<ScriptActionResult>(
             'slot.prepare',
@@ -181,8 +185,8 @@ export function registerSlotCommand(program: Command): void {
           output.write(`Prepare complete for ${slotId}\n`);
         }
       } catch (err) {
-        output.failure(err);
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -197,6 +201,7 @@ export function registerSlotCommand(program: Command): void {
     .option('--kill-tmux', 'Kill tmux session after release')
     .action(async (id: string | undefined, opts: ReleaseOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
         const params = {
@@ -207,9 +212,9 @@ export function registerSlotCommand(program: Command): void {
           forceReset: opts.reset,
           killTmux: opts.killTmux,
         };
-        if (output.json) {
+        if (emit.machine) {
           const result = await client.call<ScriptActionResult>('slot.release', params);
-          output.writeJson(result);
+          emit.ok(result);
         } else {
           await client.callWithEvents<ScriptActionResult>(
             'slot.release',
@@ -219,8 +224,8 @@ export function registerSlotCommand(program: Command): void {
           output.write(`Release complete for ${slotId}\n`);
         }
       } catch (err) {
-        output.failure(err);
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -231,13 +236,24 @@ export function registerSlotCommand(program: Command): void {
     .option('--force', 'Hard-reset through dirty or stale branch state')
     .action(async (id: string | undefined, opts: RefreshOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
         const params = { slotId, mode: opts.force ? 'force' : 'safe' };
-        if (output.json) {
+        if (emit.machine) {
           const result = await client.call<SlotRefreshResult>('slot.refresh', params);
-          output.writeJson(result);
-          if (!result.refreshed) process.exit(1);
+          if (!result.refreshed) {
+            emit.fail(
+              Object.assign(new Error(refreshFailureMessage(slotId, result)), {
+                code: 'SLOT_REFRESH_SKIPPED',
+                userAction:
+                  'Re-run with `--force` to refresh anyway, or `farmslot slot release <slot>` first.',
+                details: result,
+              }),
+            );
+            return;
+          }
+          emit.ok(result);
         } else {
           const result = await client.callWithEvents<SlotRefreshResult>(
             'slot.refresh',
@@ -251,19 +267,20 @@ export function registerSlotCommand(program: Command): void {
           output.write(`Refresh complete for ${slotId}\n`);
         }
       } catch (err) {
-        output.failure(err);
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
   const refreshFixtures = async (id: string | undefined, opts: FixtureOptions, cmd: Command) => {
     const { client, output } = resolveContext(cmd);
+    const emit = createEmitter(output, cmd);
     try {
       const slotId = resolveSlotId(id);
       const params = actionParams(slotId, { flowType: opts.flowType, app: opts.app });
-      if (output.json) {
+      if (emit.machine) {
         const result = await client.call<SlotFixtureRefreshResult>('slot.fixtureRefresh', params);
-        output.writeJson(result);
+        emit.ok(result);
       } else {
         await client.callWithEvents<SlotFixtureRefreshResult>(
           'slot.fixtureRefresh',
@@ -273,8 +290,7 @@ export function registerSlotCommand(program: Command): void {
         output.write(`Fixtures refreshed for ${slotId}\n`);
       }
     } catch (err) {
-      output.failure(err);
-      process.exit(1);
+      emit.fail(err);
     }
   };
 
@@ -302,17 +318,18 @@ export function registerSlotCommand(program: Command): void {
     .option('--editor <name>', 'Editor app/CLI (cursor or vscode)', 'cursor')
     .action(async (id: string | undefined, opts: OpenOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
         const result = await client.call<{ opened: boolean }>('slot.openEditor', {
           slotId,
           editor: opts.editor,
         });
-        if (output.json) output.writeJson(result);
+        if (emit.machine) emit.ok(result);
         else output.write(`Opened ${slotId} in ${opts.editor}\n`);
       } catch (err) {
-        output.failure(err);
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -325,14 +342,15 @@ export function registerSlotCommand(program: Command): void {
     .option('--placement <placement>', 'Filter by placement (slot-header or resource-panel)')
     .action(async (id: string | undefined, opts: ActionListOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
         const result = await client.call<SlotActionListResult>(
           'slot.action.list',
           actionParams(slotId, { placement: opts.placement }),
         );
-        if (output.json) {
-          output.writeJson(result);
+        if (emit.machine) {
+          emit.ok(result);
         } else if (result.actions.length === 0) {
           output.write(`No actions configured for ${slotId}\n`);
         } else {
@@ -341,8 +359,8 @@ export function registerSlotCommand(program: Command): void {
           }
         }
       } catch (err) {
-        output.failure(err);
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -353,26 +371,37 @@ export function registerSlotCommand(program: Command): void {
     .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
     .action(async (actionId: string, id: string | undefined, _opts: unknown, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
         const result = await client.call<SlotActionRunResult>('slot.action.run', {
           slotId,
           actionId,
         });
-        if (output.json) {
-          output.writeJson(result);
-          if (!result.ok) process.exit(1);
+        if (emit.machine) {
+          if (!result.ok) {
+            emit.fail(
+              Object.assign(new Error(result.detail || `Action ${actionId} failed for ${slotId}`), {
+                code: 'SLOT_ACTION_FAILED',
+                userAction:
+                  'Inspect details, then re-run `farmslot slot action run <action> [slot]`; list actions with `farmslot slot action list [slot]`.',
+                details: result,
+              }),
+            );
+            return;
+          }
+          emit.ok(result);
         } else {
           if (result.stdout) output.write(result.stdout);
           if (result.stderr) process.stderr.write(result.stderr);
           if (result.command) output.write(`${result.command}\n`);
           output.write(`${result.ok ? 'Action complete' : 'Action failed'} for ${slotId}\n`);
           if (result.detail) output.write(`${result.detail}\n`);
-          if (!result.ok) process.exit(1);
+          if (!result.ok) process.exitCode = 1;
         }
       } catch (err) {
-        output.failure(err);
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -382,11 +411,12 @@ export function registerSlotCommand(program: Command): void {
     .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
     .action(async (id: string | undefined, _opts: unknown, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
-        if (output.json) {
+        if (emit.machine) {
           const result = await client.call<ScriptActionResult>('slot.recycle', { slotId });
-          output.writeJson(result);
+          emit.ok(result);
         } else {
           await client.callWithEvents<ScriptActionResult>(
             'slot.recycle',
@@ -396,8 +426,8 @@ export function registerSlotCommand(program: Command): void {
           output.write(`Recycle complete for ${slotId}\n`);
         }
       } catch (err) {
-        output.failure(err);
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 }

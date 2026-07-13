@@ -25,6 +25,27 @@ test('depsCheck reports missing install markers', async () => {
   }
 });
 
+test('depsCheck requires node_modules state for the node-modules linker', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
+  try {
+    await writeFile(path.join(root, 'package.json'), '{"name":"stub"}\n');
+    await writeFile(path.join(root, '.yarnrc.yml'), 'nodeLinker: node-modules\n');
+    await mkdir(path.join(root, '.yarn'), { recursive: true });
+    await writeFile(path.join(root, '.yarn/install-state.gz'), 'stale install marker\n');
+
+    const check = depsCheck(root);
+    assert.equal(check.installed, false);
+    assert.equal(check.status, 'missing');
+
+    await rm(path.join(root, '.yarnrc.yml'));
+    const unknownLinker = depsCheck(root);
+    assert.equal(unknownLinker.installed, true);
+    assert.equal(unknownLinker.status, 'current');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('depsCheck records and compares baseline fingerprint', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
   try {

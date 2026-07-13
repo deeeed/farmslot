@@ -4,6 +4,7 @@ import type { DispatchPreviewResult } from '@farmslot/protocol';
 
 import { bold, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
+import { createEmitter } from '../envelope.js';
 import { withProgress } from '../progress.js';
 
 export function registerDispatchCommand(program: Command): void {
@@ -19,6 +20,7 @@ export function registerDispatchCommand(program: Command): void {
     .option('--domain <name>', 'Domain overlay carried by the dispatch')
     .action(async (opts: any, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const result = await withProgress(
           'Computing dispatch plan',
@@ -30,10 +32,10 @@ export function registerDispatchCommand(program: Command): void {
               slotId: opts.slot,
               ...(opts.domain ? { domain: opts.domain } : {}),
             }),
-          !output.json,
+          !emit.machine,
         );
-        if (output.json) {
-          output.writeJson(result);
+        if (emit.machine) {
+          emit.ok(result);
         } else {
           const p = result.preview;
           output.write(
@@ -51,8 +53,8 @@ export function registerDispatchCommand(program: Command): void {
           );
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 

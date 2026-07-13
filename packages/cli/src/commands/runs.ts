@@ -12,6 +12,7 @@ import {
 
 import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
+import { createEmitter } from '../envelope.js';
 import { OutputContext } from '../output.js';
 
 import { resolveRunsExportProfile, resolveRunsImportMode } from './runs-cli-options.js';
@@ -69,6 +70,7 @@ export function registerRunsCommand(program: Command): void {
     )
     .action((runId: string | undefined, opts: ExportOptions, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
+      const emit = createEmitter(output, cmd);
       try {
         const farmslotRoot = resolveRootFlag(opts.root);
         if (opts.asPackage) {
@@ -78,7 +80,7 @@ export function registerRunsCommand(program: Command): void {
             runId,
             outputPath: path.resolve(opts.asPackage),
           });
-          if (output.json) output.writeJson({ packagePath: out });
+          if (emit.machine) emit.ok({ packagePath: out });
           else output.write(`${green('Package exported')} ${cyan(out)}\n`);
           return;
         }
@@ -92,7 +94,7 @@ export function registerRunsCommand(program: Command): void {
           positionalRunId: runId,
           runIds: opts.runId ?? [],
         });
-        if (output.json) output.writeJson(result);
+        if (emit.machine) emit.ok(result);
         else {
           output.write(
             `${green('Bundle exported')} ${bold(String(result.runCount))} run(s) → ${cyan(result.outputPath)}\n`,
@@ -101,8 +103,8 @@ export function registerRunsCommand(program: Command): void {
           output.write(`  ${dim('profile')}   ${result.manifest.profile}\n`);
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -121,6 +123,7 @@ export function registerRunsCommand(program: Command): void {
     )
     .action(async (bundlePath: string, opts: ImportOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const farmslotRoot = resolveRootFlag(opts.root);
         const mode = resolveRunsImportMode(opts);
@@ -137,7 +140,7 @@ export function registerRunsCommand(program: Command): void {
               mode,
               force: opts.force,
             });
-        if (output.json) output.writeJson(result);
+        if (emit.machine) emit.ok(result);
         else {
           output.write(
             `${green('Bundle imported')} ${bold(String(result.importedRunIds.length))} run(s) · ${dim(mode)}\n`,
@@ -155,8 +158,8 @@ export function registerRunsCommand(program: Command): void {
           }
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -172,6 +175,7 @@ export function registerRunsCommand(program: Command): void {
     .option('--limit <n>', 'Max runs to delete (default 200)', '200')
     .action(async (opts: PruneOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
       try {
         const statuses = new Set(
           (opts.status ?? 'failed,cancelled')
@@ -191,7 +195,7 @@ export function registerRunsCommand(program: Command): void {
           .slice(0, limit)
           .map((run) => run.id);
         if (opts.dryRun) {
-          if (output.json) output.writeJson({ dryRun: true, runIds: targets });
+          if (emit.machine) emit.ok({ dryRun: true, runIds: targets });
           else {
             output.write(`Would delete ${targets.length} run(s)\n`);
             for (const id of targets) output.write(`  ${id}\n`);
@@ -203,11 +207,11 @@ export function registerRunsCommand(program: Command): void {
           await client.call('run.delete', { runId });
           deleted++;
         }
-        if (output.json) output.writeJson({ deleted, runIds: targets });
+        if (emit.machine) emit.ok({ deleted, runIds: targets });
         else output.write(`${green('Deleted')} ${bold(String(deleted))} run(s)\n`);
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 
@@ -217,9 +221,10 @@ export function registerRunsCommand(program: Command): void {
     .description('List manifest summary for a .farmrun bundle')
     .action((bundlePath: string, _opts: unknown, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
+      const emit = createEmitter(output, cmd);
       try {
         const manifest = listBundle(path.resolve(bundlePath));
-        if (output.json) output.writeJson({ manifest });
+        if (emit.machine) emit.ok({ manifest });
         else {
           output.write(`${bold(manifest.bundleId)} ${dim(manifest.exportedAt)}\n`);
           output.write(
@@ -233,8 +238,8 @@ export function registerRunsCommand(program: Command): void {
           }
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
-        process.exit(1);
+        emit.fail(err);
+        return;
       }
     });
 }

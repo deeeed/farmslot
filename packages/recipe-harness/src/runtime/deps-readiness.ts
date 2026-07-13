@@ -63,6 +63,20 @@ function missingProductMarkers(target: string, markers: string[]): string[] {
   return markers.filter((rel) => !fs.existsSync(path.join(target, rel)));
 }
 
+function readYarnNodeLinker(target: string): string | undefined {
+  const yarnrcPath = path.join(target, '.yarnrc.yml');
+  if (!fs.existsSync(yarnrcPath)) return undefined;
+  const yarnrc = fs.readFileSync(yarnrcPath, 'utf8');
+  return /^nodeLinker:\s*["']?([^"'\s#]+)["']?/mu.exec(yarnrc)?.[1];
+}
+
+function hasInstallSurface(target: string): boolean {
+  if (readYarnNodeLinker(target) === 'node-modules') {
+    return fs.existsSync(path.join(target, 'node_modules/.yarn-state.yml'));
+  }
+  return INSTALL_MARKERS.some((rel) => fs.existsSync(path.join(target, rel)));
+}
+
 /** Record the current deps fingerprint as the install baseline (OS temp dir). */
 export function recordDepsBaseline(target: string): void {
   writeBaseline(target, 'deps-state.json', { fingerprint: depsFingerprint(target) });
@@ -91,8 +105,7 @@ export function clearDecisionState(target: string, name: string): void {
 export function depsCheck(target: string, options: { productMarkers?: string[] } = {}): DepsCheck {
   const productMarkers = options.productMarkers ?? [];
   const inputs = DEPS_INPUTS.filter((rel) => fs.existsSync(path.join(target, rel)));
-  const installed =
-    inputs.length > 0 && INSTALL_MARKERS.some((rel) => fs.existsSync(path.join(target, rel)));
+  const installed = inputs.length > 0 && hasInstallSurface(target);
   if (!installed) return { installed: false, status: 'missing', hasBaseline: false };
 
   const missingProducts = missingProductMarkers(target, productMarkers);
