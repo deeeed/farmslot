@@ -144,3 +144,16 @@ test('wired command validation errors emit envelopes with fallback userAction', 
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('usage-error command derivation ignores positionals', () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'farmslot-cli-envelope-positional-'));
+  try {
+    const result = spawnCli(['slot', 'check', 'some-slot-id', '--bogus-flag', '--json'], home);
+    assert.notEqual(result.status, 0);
+    const envelope = JSON.parse(result.stdout);
+    assert.equal(envelope.command, 'slot.check');
+    assert.match(envelope.error.userAction, /farmslot slot check --help/u);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

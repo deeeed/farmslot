@@ -115,19 +115,28 @@ try {
   }
 }
 
-/** Best-effort dotted command path from argv: skips flags and the values of value-taking globals. */
+/**
+ * Dotted command path from argv, resolved against the registered commander
+ * tree so positionals (slot ids, tickets) are never mistaken for subcommands.
+ */
 function cliCommandFromArgv(): string {
   const valueOptions = new Set(['--url', '--gateway', '--timeout']);
   const tokens: string[] = [];
+  let scope: Command = program;
   const args = process.argv.slice(2);
-  for (let i = 0; i < args.length && tokens.length < 3; i++) {
+  for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (valueOptions.has(arg)) {
       i += 1;
       continue;
     }
     if (arg.startsWith('-')) continue;
-    tokens.push(arg);
+    const next = scope.commands.find(
+      (candidate) => candidate.name() === arg || candidate.aliases().includes(arg),
+    );
+    if (!next) break;
+    tokens.push(next.name());
+    scope = next;
   }
   return tokens.join('.') || 'farmslot';
 }
