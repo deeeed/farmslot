@@ -222,6 +222,8 @@ export interface BacklogItem {
   queuedQueueItemId?: string;
   runId?: string;
   lastObservedRunStatus?: RunStatus;
+  /** Operator close-out provenance for work that shipped outside the run engine (e.g. out-of-band merged PR). */
+  shipped?: { prRef?: string; note?: string; closedAt: string };
   lastDispatchAttempt?: string;
   lastDispatchError?: string;
 }

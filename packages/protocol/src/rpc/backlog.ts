@@ -46,6 +46,16 @@ export interface BacklogUpdateResult {
   item: BacklogItem;
 }
 
+export interface BacklogCloseShippedParams {
+  itemId: string;
+  /** Merged PR reference (e.g. owner/repo#123 or a PR URL) proving the work shipped. */
+  prRef?: string;
+  note?: string;
+}
+export interface BacklogCloseShippedResult {
+  item: BacklogItem;
+}
+
 export interface BacklogDeleteParams {
   itemId: string;
 }

@@ -144,8 +144,58 @@ export async function findPRNumber(
       );
     }
   }
+  // Open-PR search exhausted: the PR may have merged (or been closed) before
+  // linkage ran — e.g. an operator merged out-of-band while the run sat at a
+  // gate. Fall back to all states once so recovery paths can still link it.
+  try {
+    const { stdout } = await ghRequest([...listArgs, '--state', 'all'], { force: true });
+    const prs = JSON.parse(stdout || '[]') as Array<{ number: number }>;
+    if (prs.length > 0) {
+      setBinding(run.branch, ciRepo, prs[0].number);
+      return prs[0].number;
+    }
+  } catch (err) {
+    console.warn(
+      `[pr-linkage] gh pr list --state all fallback failed runId=${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+    );
+  }
   console.warn(`[pr-linkage] findPRNumber miss runId=${run.id.slice(0, 8)} branch=${run.branch}`);
   return null;
+}
+
+/**
+ * One-shot probe for a MERGED PR on the run's branch. Used by the publication
+ * gate to detect out-of-band merges (work shipped while the run sat at the
+ * gate) so the operator can close-as-shipped instead of re-reviewing.
+ */
+export async function findMergedPRNumber(run: Run, ciRepo: string): Promise<number | null> {
+  if (!run.branch) return null;
+  try {
+    const { stdout } = await ghRequest(
+      [
+        'pr',
+        'list',
+        '--repo',
+        ciRepo,
+        '--head',
+        run.branch,
+        '--state',
+        'merged',
+        '--json',
+        'number',
+        '--limit',
+        '1',
+      ],
+      { force: true },
+    );
+    const prs = JSON.parse(stdout || '[]') as Array<{ number: number }>;
+    return prs.length > 0 ? prs[0].number : null;
+  } catch (err) {
+    console.warn(
+      `[pr-linkage] merged-PR probe failed runId=${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+    );
+    return null;
+  }
 }
 
 export async function persistRunPrNumber(runId: string, prNumber: number): Promise<void> {

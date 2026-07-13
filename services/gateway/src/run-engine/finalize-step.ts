@@ -33,6 +33,7 @@ import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import {
   assertPublicationReviewPolicySatisfied,
+  CLOSE_AS_SHIPPED_ACTION,
   isPublishApprovalAction,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
@@ -234,7 +235,33 @@ export async function executeFinalizeStep(
   let publishedPrNumber: number | null = current.prNumber ?? null;
   let publishPackageHash: string | undefined;
   let publishBodyPostProcessed = false;
-  if (publicationApprovalGate) {
+  if (publicationApprovalGate && resolvedAction === CLOSE_AS_SHIPPED_ACTION) {
+    // Work already merged out-of-band: link the merged PR and skip publication
+    // entirely — package-hash/HEAD verification would rightly fail here, and
+    // there is nothing left to publish.
+    emitWithBroadcast('substep', {
+      name: 'close-as-shipped',
+      detail: 'Branch already merged — linking PR and skipping publication',
+    });
+    if (!publishedPrNumber && ciRepo) {
+      const { findMergedPRNumber } = await import('../integrations/pr-linkage.js');
+      publishedPrNumber = await findMergedPRNumber(current, ciRepo);
+      if (publishedPrNumber) {
+        const { persistRunPrNumber } = await import('../integrations/pr-linkage.js');
+        await persistRunPrNumber(current.id, publishedPrNumber);
+      }
+    }
+    publicationStatus = 'published_ready';
+    updateRun(runId, {
+      engineState: {
+        ...getRun(runId)!.engineState,
+        publishGate: {
+          ...getRun(runId)!.engineState?.publishGate,
+          publicationStatus,
+        },
+      },
+    });
+  } else if (publicationApprovalGate) {
     if (!isPublishApprovalAction(resolvedAction)) {
       throw blockedRunError(
         'Local-first publication requires approve-publish before finalize',

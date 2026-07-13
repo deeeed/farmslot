@@ -59,6 +59,7 @@ import {
   assertPublicationReviewPolicySatisfied,
   buildEvidenceRefreshAction,
   buildPublishGateReviewStatus,
+  CLOSE_AS_SHIPPED_ACTION,
   countStalePublicationReviews,
   hasValidPrNumber,
   isPublishApprovalAction,
@@ -392,6 +393,15 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const diffStat = await getDiffStat(current);
 
   const videoProofWarning = localVideoProofWarning(preparedPackage?.evidenceManifest);
+  // Out-of-band merge detection: if this branch already has a MERGED PR the
+  // package is shipped — offer close-as-shipped instead of inviting a
+  // pointless review/approve cycle (the MANUAL-000010 stranded-gate incident).
+  let mergedPrNumber: number | null = null;
+  if (publicationApprovalGate && ciRepo) {
+    const { findMergedPRNumber } = await import('../integrations/pr-linkage.js');
+    mergedPrNumber = await findMergedPRNumber(current, ciRepo);
+  }
+
   const desc =
     publicationApprovalGate && preparedPackage
       ? [
@@ -399,6 +409,12 @@ export async function executeReadyGate(runId: string): Promise<string> {
           `**Target:** ${preparedPackage.publicationTarget}`,
           `**Branch:** ${preparedPackage.branch || current.branch || 'unknown'}`,
           `**Files:** ${preparedPackage.diffStat.files} (+${preparedPackage.diffStat.additions} -${preparedPackage.diffStat.deletions})`,
+          ...(mergedPrNumber
+            ? [
+                '',
+                `**Already merged:** PR #${mergedPrNumber} for this branch is merged — the work has shipped. Use Close as Shipped instead of re-reviewing.`,
+              ]
+            : []),
           ...(videoProofWarning ? ['', videoProofWarning] : []),
           '',
           report?.slice(0, 300) ?? 'Review the local package before public PR publication.',
@@ -434,6 +450,15 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }> =
     publicationApprovalGate
       ? [
+          ...(mergedPrNumber
+            ? [
+                {
+                  id: CLOSE_AS_SHIPPED_ACTION,
+                  label: `Close as Shipped (PR #${mergedPrNumber} merged)`,
+                  style: 'primary' as const,
+                },
+              ]
+            : []),
           ...(reviewSatisfied
             ? [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }]
             : []),

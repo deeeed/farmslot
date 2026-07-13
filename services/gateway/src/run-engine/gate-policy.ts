@@ -38,6 +38,13 @@ export const APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION = 'approve-publish-evidence
  * resolve freshness check all recognize the same set rather than scattering
  * string literals that drift apart.
  */
+/**
+ * Gate action offered when the run's branch already has a MERGED PR (work
+ * shipped out-of-band while the gate was open). Resolving it links the merged
+ * PR and completes the run without re-publishing.
+ */
+export const CLOSE_AS_SHIPPED_ACTION = 'close-as-shipped';
+
 export const PUBLISH_APPROVAL_ACTIONS: ReadonlySet<string> = new Set([
   'approve-publish',
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,

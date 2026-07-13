@@ -47,6 +47,7 @@ import {
 } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
 import { farmslotRoot, loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import {
@@ -545,6 +546,9 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
     ...(typeof raw.runId === 'string' ? { runId: raw.runId } : {}),
     ...(typeof raw.lastObservedRunStatus === 'string'
       ? { lastObservedRunStatus: raw.lastObservedRunStatus as RunStatus }
+      : {}),
+    ...(raw.shipped && typeof raw.shipped === 'object'
+      ? { shipped: raw.shipped as BacklogItem['shipped'] }
       : {}),
     ...(typeof raw.lastDispatchAttempt === 'string'
       ? { lastDispatchAttempt: raw.lastDispatchAttempt }
@@ -1373,6 +1377,34 @@ export async function archiveBacklogItem(params: {
     delete item.queuedQueueItemId;
     item.updatedAt = new Date().toISOString();
     schedulePersist('archive');
+    broadcastBacklog();
+    return { item };
+  });
+}
+
+export async function closeShippedBacklogItem(params: {
+  itemId: string;
+  prRef?: string;
+  note?: string;
+}): Promise<{ item: BacklogItem }> {
+  return withBacklogMutation(async () => {
+    const item = getItem(params.itemId);
+    if (item.status === 'done' || item.status === 'archived') {
+      throw new GatewayMethodError(
+        'BACKLOG_ALREADY_TERMINAL',
+        `Backlog item ${item.sourceRef ?? item.id} is already ${item.status}.`,
+        { userAction: 'Nothing to close. Inspect items with `farmslot backlog list`.' },
+      );
+    }
+    item.status = 'done';
+    item.shipped = {
+      ...(params.prRef ? { prRef: params.prRef } : {}),
+      ...(params.note ? { note: params.note } : {}),
+      closedAt: new Date().toISOString(),
+    };
+    delete item.queuedQueueItemId;
+    item.updatedAt = new Date().toISOString();
+    schedulePersist('close-shipped');
     broadcastBacklog();
     return { item };
   });

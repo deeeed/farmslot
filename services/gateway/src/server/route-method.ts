@@ -6,6 +6,7 @@ import {
   type AnalyticsQueryParams,
   type BacklogArchiveParams,
   type BacklogAutoDispatchTickParams,
+  type BacklogCloseShippedParams,
   type BacklogCreateParams,
   type BacklogDeleteParams,
   type BacklogDequeueParams,
@@ -194,6 +195,7 @@ import { analyticsBackfill, analyticsQuery } from '../methods/analytics.js';
 import {
   backlogArchive,
   backlogAutoDispatchTick,
+  backlogCloseShipped,
   backlogCreate,
   backlogDelete,
   backlogDequeue,
@@ -544,6 +546,8 @@ export async function routeMethod(
       return backlogUpcoming((p ?? {}) as BacklogUpcomingParams);
     case Methods.BACKLOG_SPEC_GET:
       return backlogSpecGet(p as BacklogSpecGetParams);
+    case Methods.BACKLOG_CLOSE_SHIPPED:
+      return backlogCloseShipped(p as BacklogCloseShippedParams);
 
     // Work Graph
     case Methods.WORK_GRAPH_CREATE:
