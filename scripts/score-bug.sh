@@ -19,6 +19,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECTS_DIR="${PROJECTS_DIR:-${SCRIPT_DIR}/../projects}"
 
+# ── Resolve farmslot CLI (copied from scripts/lib/slot-common.sh) ─────────────
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/resolve-farmslot-cli.sh"
+
 # ── Parse args ────────────────────────────────────────────────────
 INPUT=""
 PROJECT=""
@@ -56,12 +60,7 @@ fi
 PROJECT_CONFIG="${PROJECTS_DIR}/${PROJECT}/project.json"
 [ -f "$PROJECT_CONFIG" ] || { echo "ERROR: project config not found: $PROJECT_CONFIG" >&2; exit 1; }
 
-SCORING_SCRIPT=$(python3 -c "
-import json
-with open('${PROJECT_CONFIG}') as f:
-    d = json.load(f)
-print(d.get('scoring', {}).get('script', ''))
-")
+SCORING_SCRIPT=$(jq -r '.scoring.script // empty' "$PROJECT_CONFIG")
 
 # Skip if project doesn't define a scoring script
 if [ -z "$SCORING_SCRIPT" ]; then
@@ -92,32 +91,5 @@ else
   }
 fi
 
-# ── Validate output JSON ─────────────────────────────────────────
-echo "$OUTPUT" | python3 -c "
-import json, sys
-
-try:
-    d = json.load(sys.stdin)
-except Exception as e:
-    print(f'ERROR: scorer output is not valid JSON: {e}', file=sys.stderr)
-    sys.exit(1)
-
-required = ['difficulty', 'one_shot_probability', 'category']
-missing = [f for f in required if f not in d]
-if missing:
-    print(f'ERROR: missing required fields: {missing}', file=sys.stderr)
-    sys.exit(1)
-
-valid_difficulties = ['low', 'medium', 'high', 'extreme']
-if d['difficulty'] not in valid_difficulties:
-    print(f'ERROR: difficulty must be one of {valid_difficulties}, got: {d[\"difficulty\"]}', file=sys.stderr)
-    sys.exit(1)
-
-prob = d['one_shot_probability']
-if not isinstance(prob, (int, float)) or not (0 <= prob <= 1):
-    print(f'ERROR: one_shot_probability must be 0-1, got: {prob}', file=sys.stderr)
-    sys.exit(1)
-
-json.dump(d, sys.stdout, indent=2)
-print()
-"
+# ── Validate output JSON via CLI (ported from Python heredoc) ────
+echo "$OUTPUT" | "$FARMSLOT_CLI" internal validate-bug-score

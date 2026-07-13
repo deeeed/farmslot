@@ -71,6 +71,8 @@ export interface PRStatus {
   mergeConflict: boolean;
   reviewDecision: string;
   recommendation: PRRecommendation;
+  /** True when a dispatch worker is actively running against this PR. */
+  workerActive?: boolean;
   ownedFamily?: boolean;
   familyId?: string | null;
   familyRootTicketOrPr?: string | null;

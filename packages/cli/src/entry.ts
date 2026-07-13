@@ -103,8 +103,14 @@ try {
       process.exitCode = commanderError.exitCode ?? 0;
     } else {
       // Commander already printed usage on stderr; machine consumers still need
-      // exactly one envelope on stdout.
-      if (process.argv.includes('--json') || !(process.stdout.isTTY ?? false)) {
+      // exactly one envelope on stdout — except the `internal` plumbing verbs,
+      // whose stdout is a raw data channel (scripts capture it): their usage
+      // errors stay on stderr with a bare non-zero exit.
+      const isInternalPlumbing = cliCommandFromArgv().startsWith('internal');
+      if (
+        !isInternalPlumbing &&
+        (process.argv.includes('--json') || !(process.stdout.isTTY ?? false))
+      ) {
         const command = cliCommandFromArgv();
         new OutputContext(true).writeJson(
           errorEnvelope(

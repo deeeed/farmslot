@@ -43,18 +43,12 @@ if [ -z "$ATTACHMENTS" ]; then
   exit 1
 fi
 
-# Parse image attachments
-IMAGE_DATA=$(echo "$ATTACHMENTS" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-attachments = data.get('fields', {}).get('attachment', [])
-for a in attachments:
-    mime = a.get('mimeType', '')
-    if mime.startswith('image/'):
-        # Sanitize filename: replace spaces, remove special chars
-        name = a['filename'].replace(' ', '-').replace(\"'\", '')
-        print(f\"{a['id']}|{name}|{a.get('size', 0)}\")
-" 2>/dev/null)
+# Parse image attachments via jq (ported from Python heredoc)
+IMAGE_DATA=$(echo "$ATTACHMENTS" | jq -r '
+  .fields.attachment[]?
+  | select(.mimeType | startswith("image/"))
+  | "\(.id)|\(.filename | gsub(" "; "-") | gsub("'"'"'"; ""))|\(.size // 0)"
+' 2>/dev/null)
 
 if [ -z "$IMAGE_DATA" ]; then
   echo "No image attachments found for ${ISSUE_KEY}" >&2

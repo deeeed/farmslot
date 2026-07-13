@@ -12,6 +12,12 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Resolve farmslot CLI (copied from scripts/lib/slot-common.sh) ─────────────
+# shellcheck disable=SC1091
+source "$(dirname "$0")/lib/resolve-farmslot-cli.sh"
+
 INPUT="${1:?Usage: download-github-images.sh <owner/repo#number> <output-dir>}"
 OUTPUT_DIR="${2:?Usage: download-github-images.sh <owner/repo#number> <output-dir>}"
 
@@ -24,44 +30,19 @@ if [ -z "$REPO" ] || [ -z "$NUMBER" ] || [ "$REPO" = "$INPUT" ]; then
   exit 1
 fi
 
-# Fetch issue body via gh CLI
-BODY=$(gh issue view "$NUMBER" --repo "$REPO" --json body --jq '.body' 2>/dev/null) || {
+# Fetch full issue JSON via gh CLI (title,body,labels,state,url needed by parse-bug-input)
+GH_JSON=$(gh issue view "$NUMBER" --repo "$REPO" --json title,body,labels,state,url 2>/dev/null) || {
   echo "ERROR: Failed to fetch issue ${INPUT}" >&2
   exit 1
 }
 
-if [ -z "$BODY" ]; then
+if [ -z "$GH_JSON" ]; then
   echo "No issue body found for ${INPUT}" >&2
   exit 0
 fi
 
-# Extract image URLs from markdown body
-IMAGE_URLS=$(echo "$BODY" | python3 -c "
-import re, sys
-
-body = sys.stdin.read()
-urls = set()
-
-# ![alt](url)
-for m in re.finditer(r'!\[[^\]]*\]\(([^)]+)\)', body):
-    urls.add(m.group(1))
-
-# <img src=\"url\">
-for m in re.finditer(r'<img[^>]+src=[\"\\']([^\"\\'>]+)[\"\\']', body):
-    urls.add(m.group(1))
-
-# Bare GitHub user-content URLs on their own line
-for m in re.finditer(r'(https://(?:user-images\.githubusercontent\.com|github\.com/user-attachments/assets)/[^\s)\"\\'>]+)', body):
-    urls.add(m.group(1))
-
-for url in sorted(urls):
-    # Only keep image-like URLs
-    lower = url.lower()
-    is_image = any(lower.endswith(ext) for ext in ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'))
-    is_gh_content = 'githubusercontent.com' in lower or 'github.com/user-attachments' in lower
-    if is_image or is_gh_content:
-        print(url)
-" 2>/dev/null)
+# Extract image URLs via CLI (ported from Python heredoc; shared extractImageUrls implementation)
+IMAGE_URLS=$(echo "$GH_JSON" | "$FARMSLOT_CLI" internal parse-bug-input github | jq -r '.image_urls[]? // empty' 2>/dev/null)
 
 if [ -z "$IMAGE_URLS" ]; then
   echo "No images found in issue body for ${INPUT}" >&2
