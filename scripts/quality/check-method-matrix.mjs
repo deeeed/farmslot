@@ -16,9 +16,23 @@ const SURFACES = new Set(['typed-command', 'tui', 'rpc-only', 'na']);
 
 function registryMethods() {
   const source = readFileSync(registryPath, 'utf8');
-  const methods = [...source.matchAll(/^\s+[A-Z0-9_]+: '([^']+)'/gm)].map((match) => match[1]);
+  // Take every quoted string inside the Methods block so a prettier-wrapped
+  // property (key and value on separate lines) is still counted.
+  const start = source.indexOf('export const Methods = {');
+  const end = source.indexOf('} as const', start);
+  if (start === -1 || end === -1) {
+    throw new Error(`Methods block not found in ${registryPath} — did the registry format change?`);
+  }
+  const methods = [...source.slice(start, end).matchAll(/'([^']+)'/g)].map((match) => match[1]);
   if (methods.length === 0) {
     throw new Error(`No methods parsed from ${registryPath} — did the registry format change?`);
+  }
+  const seen = new Set();
+  for (const method of methods) {
+    if (seen.has(method)) {
+      throw new Error(`Duplicate method value in registry: ${method}`);
+    }
+    seen.add(method);
   }
   return methods;
 }
@@ -74,11 +88,26 @@ for (const method of methods) {
   if (!SURFACES.has(entry.surface)) {
     problems.push(`invalid surface '${entry.surface}' for ${method}`);
   }
-  if (entry.surface === 'typed-command' && !entry.command) {
-    problems.push(`typed-command without a command: ${method}`);
+  if (entry.surface === 'typed-command' && typeof entry.command !== 'string') {
+    problems.push(`typed-command without a command string: ${method}`);
   }
-  if (entry.surface === 'na' && !entry.note) {
+  if (entry.surface === 'na' && typeof entry.note !== 'string') {
     problems.push(`na without a justification note: ${method}`);
+  }
+  if ('command' in entry && typeof entry.command !== 'string') {
+    problems.push(`non-string command for ${method}`);
+  }
+  if ('note' in entry && typeof entry.note !== 'string') {
+    problems.push(`non-string note for ${method}`);
+  }
+  if ('tui' in entry && typeof entry.tui !== 'boolean') {
+    problems.push(`non-boolean tui flag for ${method}`);
+  }
+  const unknownFields = Object.keys(entry).filter(
+    (field) => !['surface', 'command', 'note', 'tui'].includes(field),
+  );
+  if (unknownFields.length > 0) {
+    problems.push(`unknown field(s) ${unknownFields.join(', ')} on ${method}`);
   }
 }
 const known = new Set(methods);
@@ -95,7 +124,14 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-const markdown = renderMarkdown(matrix, methods);
+// Format through the repo prettier config so the generated file is stable
+// under `yarn format` (table cells get column-aligned).
+const prettier = await import('prettier');
+const prettierConfig = await prettier.resolveConfig(markdownPath);
+const markdown = await prettier.format(renderMarkdown(matrix, methods), {
+  ...prettierConfig,
+  parser: 'markdown',
+});
 if (process.argv.includes('--write-markdown')) {
   writeFileSync(markdownPath, markdown);
   console.log(`Wrote ${markdownPath}`);

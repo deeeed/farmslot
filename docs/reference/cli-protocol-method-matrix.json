@@ -23,18 +23,21 @@
       "command": "farmslot fleet"
     },
     "auth.connect": {
-      "surface": "na",
-      "note": "Transport handshake sent implicitly by every authenticated client connection."
+      "surface": "typed-command",
+      "command": "farmslot login",
+      "note": "Also the implicit transport handshake on every authenticated client connection."
     },
     "pairing.create": {
       "surface": "typed-command",
-      "command": "farmslot pair"
+      "command": "farmslot pair",
+      "note": "Legacy raw-JSON output; envelope migration pending."
     },
     "pairing.candidates": {
       "surface": "rpc-only"
     },
     "pairing.exchange": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot login --code"
     },
     "slot.check": {
       "surface": "typed-command",

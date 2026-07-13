@@ -18,9 +18,9 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## auth.\*
 
-| Method         | Surface | CLI command | TUI | Note                                                                          |
-| -------------- | ------- | ----------- | --- | ----------------------------------------------------------------------------- |
-| `auth.connect` | na      |             |     | Transport handshake sent implicitly by every authenticated client connection. |
+| Method         | Surface       | CLI command      | TUI | Note                                                                            |
+| -------------- | ------------- | ---------------- | --- | ------------------------------------------------------------------------------- |
+| `auth.connect` | typed-command | `farmslot login` |     | Also the implicit transport handshake on every authenticated client connection. |
 
 ## backlog.\*
 
@@ -230,11 +230,11 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## pairing.\*
 
-| Method               | Surface       | CLI command     | TUI | Note |
-| -------------------- | ------------- | --------------- | --- | ---- |
-| `pairing.create`     | typed-command | `farmslot pair` |     |      |
-| `pairing.candidates` | rpc-only      |                 |     |      |
-| `pairing.exchange`   | rpc-only      |                 |     |      |
+| Method               | Surface       | CLI command             | TUI | Note                                                |
+| -------------------- | ------------- | ----------------------- | --- | --------------------------------------------------- |
+| `pairing.create`     | typed-command | `farmslot pair`         |     | Legacy raw-JSON output; envelope migration pending. |
+| `pairing.candidates` | rpc-only      |                         |     |                                                     |
+| `pairing.exchange`   | typed-command | `farmslot login --code` |     |                                                     |
 
 ## pr.\*
 

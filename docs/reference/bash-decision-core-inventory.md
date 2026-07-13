@@ -145,7 +145,7 @@ function with a colocated unit test.**
 - **`find-slot.sh` decision core** → `packages/protocol/src/contracts/slot-selection.ts`
   (`slotUnavailableReason` / `cdpLive` / `slotSelectionScore` / `selectSlot`), unit-tested in
   `packages/protocol/test/slots/slot-selection.test.ts`, consumed by
-  `farmslot fleet find-slot --project <p> [--prefer-cdp]` / `--slot <id>`. The bash
+  `farmslot fleet find-slot --project <p>` / `--slot <id>`. The bash
   script keeps working during coexistence; the TS module is canonical for operator
   slot picks. Dispatch-time scoring stays in
   `services/gateway/src/methods/dispatch/slot-scoring.ts` (richer criteria: branch
