@@ -14,14 +14,35 @@ function isCompletionShell(value: string): value is CompletionShell {
   return value === 'zsh' || value === 'bash' || value === 'fish';
 }
 
-function completionForShell(shell: CompletionShell): string {
+interface CommandInfo {
+  name: string;
+  description: string;
+  subs: Array<{ name: string; description: string }>;
+}
+
+/** Derive the completion vocabulary from the live commander tree — the lists
+ * can never go stale when commands are added. */
+export function commandTree(program: Command): CommandInfo[] {
+  return program.commands
+    .filter((command) => command.name() !== 'help')
+    .map((command) => ({
+      name: command.name(),
+      description: command.description().split('\n')[0] ?? '',
+      subs: command.commands
+        .filter((sub) => sub.name() !== 'help')
+        .map((sub) => ({ name: sub.name(), description: sub.description().split('\n')[0] ?? '' })),
+    }));
+}
+
+function completionForShell(shell: CompletionShell, program: Command): string {
+  const tree = commandTree(program);
   switch (shell) {
     case 'zsh':
-      return ZSH_COMPLETION;
+      return zshCompletion(tree);
     case 'bash':
-      return BASH_COMPLETION;
+      return bashCompletion(tree);
     case 'fish':
-      return FISH_COMPLETION;
+      return fishCompletion(tree);
   }
 }
 
@@ -76,7 +97,7 @@ function insecureZshAncestor(installDir: string): string | undefined {
   }
 }
 
-function installZshCompletion(): string {
+function installZshCompletion(program: Command): string {
   const installDir = zshInstallDir();
   mkdirSync(installDir, { recursive: true });
   secureHomeCompletionPath(installDir);
@@ -87,7 +108,7 @@ function installZshCompletion(): string {
     );
   }
   const completionPath = path.join(installDir, '_farmslot');
-  writeFileSync(completionPath, ZSH_COMPLETION, 'utf8');
+  writeFileSync(completionPath, completionForShell('zsh', program), 'utf8');
 
   const zshrc = path.join(os.homedir(), '.zshrc');
   const block = [
@@ -106,13 +127,13 @@ function installZshCompletion(): string {
   return completionPath;
 }
 
-function installCompletion(shell: CompletionShell): string {
+function installCompletion(shell: CompletionShell, program: Command): string {
   if (shell !== 'zsh') {
     throw new Error(
       `Install is currently supported for zsh only. Run 'farmslot completion ${shell}' to print ${shell} completions.`,
     );
   }
-  return installZshCompletion();
+  return installZshCompletion(program);
 }
 
 export function registerCompletionCommand(program: Command): void {
@@ -132,7 +153,7 @@ export function registerCompletionCommand(program: Command): void {
 
       if (install) {
         try {
-          const installedPath = installCompletion(shell);
+          const installedPath = installCompletion(shell, program);
           process.stdout.write(`Installed ${shell} completion: ${installedPath}\n`);
           if (shell === 'zsh') {
             process.stdout.write(
@@ -150,197 +171,110 @@ export function registerCompletionCommand(program: Command): void {
         return;
       }
 
-      process.stdout.write(completionForShell(shell));
+      process.stdout.write(completionForShell(shell, program));
     });
 }
 
-const ZSH_COMPLETION = `#compdef farmslot
+function sanitizeDescription(value: string): string {
+  return value.replace(/['\\]/gu, '').replace(/:/gu, ' -');
+}
+
+function zshCompletion(tree: CommandInfo[]): string {
+  const top = tree
+    .map((c) => `    ${shellQuoteForZsh(`${c.name}:${sanitizeDescription(c.description)}`)}`)
+    .join('\n');
+  const subFns = tree
+    .filter((c) => c.subs.length > 0)
+    .map(
+      (c) => `_farmslot_${c.name.replaceAll('-', '_')}() {
+  local -a commands
+  commands=(
+${c.subs.map((sub) => `    ${shellQuoteForZsh(`${sub.name}:${sanitizeDescription(sub.description)}`)}`).join('\n')}
+  )
+  _describe 'subcommand' commands
+}`,
+    )
+    .join('\n\n');
+  const dispatchArms = tree
+    .filter((c) => c.subs.length > 0)
+    .map((c) => `        ${c.name}) _farmslot_${c.name.replaceAll('-', '_')} ;;`)
+    .join('\n');
+  return `#compdef farmslot
 
 _farmslot() {
   local context state state_descr line
   typeset -A opt_args
 
   _arguments -C \\
-    '(--url)--url[Gateway WebSocket URL]:url:' \\
-    '(--timeout)--timeout[Timeout in ms]:ms:' \\
-    '(--json)--json[Output raw JSON]' \\
-    '1: :_farmslot_commands' \\
-    '*::arg:->args'
+    '1: :->command' \\
+    '*:: :->args'
 
   case $state in
+    command)
+      local -a commands
+      commands=(
+${top}
+      )
+      _describe 'command' commands
+      ;;
     args)
-      case \${words[1]} in
-        fleet) _farmslot_fleet ;;
-        gateway) _farmslot_gateway ;;
-        slot) _farmslot_slot ;;
-        dispatch) _farmslot_dispatch ;;
-        pr) _farmslot_pr ;;
-        config) _farmslot_config ;;
-        rpc) _arguments '1:method:' '2:params:' '(--stream)--stream[Show streaming events]' ;;
-        recipe) _farmslot_recipe ;;
-        run) _farmslot_run ;;
-        runs) _farmslot_runs ;;
-        completion) _farmslot_completion ;;
-        node) _farmslot_node ;;
-      esac ;;
+      case $words[1] in
+${dispatchArms}
+      esac
+      ;;
   esac
 }
 
-_farmslot_commands() {
-  local -a commands
-  commands=(
-    'fleet:Fleet management'
-    'gateway:Gateway management'
-    'slot:Slot lifecycle operations'
-    'dispatch:Dispatch planning'
-    'pr:PR status and monitoring'
-    'config:View configuration'
-    'rpc:Raw gateway RPC call'
-    'recipe:Recipe protocol helpers'
-    'run:Run lifecycle operations'
-    'runs:Portable run bundle export/import'
-    'completion:Generate or install shell completions'
-    'node:Node management'
-    'doctor:Check workspace health'
-    'project:Project pack management'
-    'update:Update workspace clone and packs'
-    'login:Authenticate a gateway profile'
-    'logout:Forget a gateway credential'
-    'auth:Gateway authentication'
-  )
-  _describe 'command' commands
-}
-
-_farmslot_fleet() {
-  local -a commands
-  commands=('status:Show fleet status' 'refresh:Force refresh')
-  _describe 'subcommand' commands
-}
-
-_farmslot_gateway() {
-  local -a commands
-  commands=('status:Show Gateway health' 'add:Add gateway profile' 'remove:Remove gateway profile' 'list:List gateway profiles' 'use:Set active gateway profile')
-  _describe 'subcommand' commands
-}
-
-_farmslot_slot() {
-  local -a commands
-  commands=('current:Print current slot' 'check:Check slot health' 'prepare:Prepare slot' 'release:Release slot' 'refresh:Refresh slot' 'fixtures:Refresh fixtures' 'fixture-refresh:Refresh fixtures' 'sync:Quick-sync fixtures' 'open:Open slot repo' 'action:Project slot actions' 'recycle:Recycle slot')
-  _describe 'subcommand' commands
-}
-
-_farmslot_dispatch() {
-  local -a commands
-  commands=('preview:Preview dispatch plan')
-  _describe 'subcommand' commands
-}
-
-_farmslot_run() {
-  local -a commands
-  commands=('create:Create a supervised run')
-  _describe 'subcommand' commands
-}
-
-_farmslot_runs() {
-  local -a commands
-  commands=('export:Export portable run bundle' 'import:Import portable run bundle' 'bundle:Inspect bundles')
-  _describe 'subcommand' commands
-}
-
-_farmslot_recipe() {
-  local -a commands
-  commands=('validate:Validate recipe' 'run:Run a recipe through the harness')
-  _describe 'subcommand' commands
-}
-
-_farmslot_pr() {
-  local -a commands
-  commands=('status:Show PR status' 'list:List active PRs')
-  _describe 'subcommand' commands
-}
-
-_farmslot_config() {
-  local -a commands
-  commands=('pools:Show pool configurations' 'projects:Show project configurations')
-  _describe 'subcommand' commands
-}
-
-_farmslot_completion() {
-  local -a commands
-  commands=('zsh:Print zsh completion' 'bash:Print bash completion' 'fish:Print fish completion' 'install:Install shell completion')
-  _describe 'subcommand' commands
-}
-
-_farmslot_node() {
-  local -a commands
-  commands=('status:Show connected nodes' 'deploy:Deploy/update node')
-  _describe 'subcommand' commands
-}
+${subFns}
 
 _farmslot "$@"
 `;
+}
 
-const BASH_COMPLETION = `_farmslot_completions() {
+function bashCompletion(tree: CommandInfo[]): string {
+  const top = tree.map((c) => c.name).join(' ');
+  const arms = tree
+    .filter((c) => c.subs.length > 0)
+    .map(
+      (c) =>
+        `        ${c.name}) COMPREPLY=($(compgen -W "${c.subs.map((sub) => sub.name).join(' ')}" -- "$cur")) ;;`,
+    )
+    .join('\n');
+  return `_farmslot_completions() {
   local cur prev
   COMPREPLY=()
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
   case \${COMP_CWORD} in
-    1) COMPREPLY=($(compgen -W "fleet gateway slot dispatch pr config rpc recipe run runs completion node doctor project update login logout auth" -- "$cur")) ;;
+    1) COMPREPLY=($(compgen -W "${top}" -- "$cur")) ;;
     2)
       case \${COMP_WORDS[1]} in
-        fleet) COMPREPLY=($(compgen -W "status refresh" -- "$cur")) ;;
-        gateway) COMPREPLY=($(compgen -W "status add remove list use" -- "$cur")) ;;
-        slot) COMPREPLY=($(compgen -W "current check prepare release refresh fixtures fixture-refresh sync open action recycle" -- "$cur")) ;;
-        dispatch) COMPREPLY=($(compgen -W "preview" -- "$cur")) ;;
-        pr) COMPREPLY=($(compgen -W "status list" -- "$cur")) ;;
-        config) COMPREPLY=($(compgen -W "pools projects" -- "$cur")) ;;
-        recipe) COMPREPLY=($(compgen -W "validate run" -- "$cur")) ;;
-        run) COMPREPLY=($(compgen -W "create" -- "$cur")) ;;
-        runs) COMPREPLY=($(compgen -W "export import bundle" -- "$cur")) ;;
-        completion) COMPREPLY=($(compgen -W "zsh bash fish install" -- "$cur")) ;;
-        node) COMPREPLY=($(compgen -W "status deploy" -- "$cur")) ;;
+${arms}
       esac ;;
   esac
 }
 
 complete -F _farmslot_completions farmslot
 `;
+}
 
-const FISH_COMPLETION = `# farmslot completions for fish
-complete -c farmslot -n '__fish_use_subcommand' -a fleet -d 'Fleet management'
-complete -c farmslot -n '__fish_use_subcommand' -a gateway -d 'Gateway management'
-complete -c farmslot -n '__fish_use_subcommand' -a doctor -d 'Check workspace health'
-complete -c farmslot -n '__fish_use_subcommand' -a project -d 'Project pack management'
-complete -c farmslot -n '__fish_use_subcommand' -a update -d 'Update workspace clone and packs'
-complete -c farmslot -n '__fish_use_subcommand' -a login -d 'Authenticate a gateway profile'
-complete -c farmslot -n '__fish_use_subcommand' -a logout -d 'Forget a gateway credential'
-complete -c farmslot -n '__fish_use_subcommand' -a auth -d 'Gateway authentication'
-complete -c farmslot -n '__fish_use_subcommand' -a slot -d 'Slot lifecycle'
-complete -c farmslot -n '__fish_use_subcommand' -a dispatch -d 'Dispatch planning'
-complete -c farmslot -n '__fish_use_subcommand' -a pr -d 'PR status'
-complete -c farmslot -n '__fish_use_subcommand' -a config -d 'Configuration'
-complete -c farmslot -n '__fish_use_subcommand' -a rpc -d 'Raw RPC call'
-complete -c farmslot -n '__fish_use_subcommand' -a recipe -d 'Recipe protocol helpers'
-complete -c farmslot -n '__fish_use_subcommand' -a run -d 'Run lifecycle operations'
-complete -c farmslot -n '__fish_use_subcommand' -a runs -d 'Portable run bundle export/import'
-complete -c farmslot -n '__fish_use_subcommand' -a completion -d 'Shell completions'
-complete -c farmslot -n '__fish_use_subcommand' -a node -d 'Node management'
-
-complete -c farmslot -n '__fish_seen_subcommand_from fleet' -a 'status refresh'
-complete -c farmslot -n '__fish_seen_subcommand_from gateway' -a 'status add remove list use'
-complete -c farmslot -n '__fish_seen_subcommand_from slot' -a 'current check prepare release refresh fixtures fixture-refresh sync open action recycle'
-complete -c farmslot -n '__fish_seen_subcommand_from dispatch' -a 'preview'
-complete -c farmslot -n '__fish_seen_subcommand_from pr' -a 'status list'
-complete -c farmslot -n '__fish_seen_subcommand_from config' -a 'pools projects'
-complete -c farmslot -n '__fish_seen_subcommand_from recipe' -a 'validate run'
-complete -c farmslot -n '__fish_seen_subcommand_from run' -a 'create'
-complete -c farmslot -n '__fish_seen_subcommand_from runs' -a 'export import bundle'
-complete -c farmslot -n '__fish_seen_subcommand_from completion' -a 'zsh bash fish install'
-complete -c farmslot -n '__fish_seen_subcommand_from node' -a 'status deploy'
-
-complete -c farmslot -l url -d 'Gateway WebSocket URL'
-complete -c farmslot -l timeout -d 'Timeout in ms'
-complete -c farmslot -l json -d 'Output raw JSON'
-`;
+function fishCompletion(tree: CommandInfo[]): string {
+  const lines: string[] = ['# farmslot completions for fish (generated from the command tree)'];
+  for (const c of tree) {
+    lines.push(
+      `complete -c farmslot -n '__fish_use_subcommand' -a ${c.name} -d '${sanitizeDescription(c.description)}'`,
+    );
+  }
+  lines.push('');
+  for (const c of tree.filter((cmd) => cmd.subs.length > 0)) {
+    lines.push(
+      `complete -c farmslot -n '__fish_seen_subcommand_from ${c.name}' -a '${c.subs.map((sub) => sub.name).join(' ')}'`,
+    );
+  }
+  lines.push('');
+  lines.push("complete -c farmslot -l url -d 'Gateway WebSocket URL'");
+  lines.push("complete -c farmslot -l timeout -d 'Timeout in ms'");
+  lines.push("complete -c farmslot -l json -d 'Output raw JSON'");
+  return `${lines.join('\n')}\n`;
+}

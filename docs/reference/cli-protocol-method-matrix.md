@@ -230,11 +230,11 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## pairing.\*
 
-| Method               | Surface       | CLI command             | TUI | Note                                                |
-| -------------------- | ------------- | ----------------------- | --- | --------------------------------------------------- |
-| `pairing.create`     | typed-command | `farmslot pair`         |     | Legacy raw-JSON output; envelope migration pending. |
-| `pairing.candidates` | rpc-only      |                         |     |                                                     |
-| `pairing.exchange`   | typed-command | `farmslot login --code` |     |                                                     |
+| Method               | Surface       | CLI command             | TUI | Note |
+| -------------------- | ------------- | ----------------------- | --- | ---- |
+| `pairing.create`     | typed-command | `farmslot pair`         |     |      |
+| `pairing.candidates` | rpc-only      |                         |     |      |
+| `pairing.exchange`   | typed-command | `farmslot login --code` |     |      |
 
 ## pr.\*
 

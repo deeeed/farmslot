@@ -29,8 +29,7 @@
     },
     "pairing.create": {
       "surface": "typed-command",
-      "command": "farmslot pair",
-      "note": "Legacy raw-JSON output; envelope migration pending."
+      "command": "farmslot pair"
     },
     "pairing.candidates": {
       "surface": "rpc-only"
