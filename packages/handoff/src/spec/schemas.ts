@@ -28,7 +28,7 @@ export interface JsonSchema {
   examples?: unknown[];
 }
 
-/** The required-JSON-file schemas keyed by the package-relative file they govern. */
+/** The spec's JSON-file schemas keyed by the package-relative file they govern. */
 export type SchemaName =
   | 'manifest'
   | 'source'
@@ -36,7 +36,8 @@ export type SchemaName =
   | 'artifacts-index'
   | 'scrub-report'
   | 'pr-publication'
-  | 'index-row';
+  | 'index-row'
+  | 'grade';
 
 const SCHEMA_FILES: Record<SchemaName, string> = {
   manifest: 'manifest.schema.json',
@@ -46,6 +47,7 @@ const SCHEMA_FILES: Record<SchemaName, string> = {
   'scrub-report': 'scrub-report.schema.json',
   'pr-publication': 'pr-publication.schema.json',
   'index-row': 'index-row.schema.json',
+  grade: 'grade.schema.json',
 };
 
 /**

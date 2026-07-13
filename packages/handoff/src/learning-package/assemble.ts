@@ -184,6 +184,13 @@ export function assembleLearningPackage(
     ...harness.map((h) => h.input),
   ];
 
+  // Optional human grade: copied verbatim (post-scrub) as grade.json. An
+  // absent or missing-on-disk grade is skipped - the package stays valid.
+  const gradeJson = input.artifacts.gradeJson;
+  if (gradeJson && existsSync(gradeJson)) {
+    textInputs.push({ packagePath: 'grade.json', absolutePath: gradeJson });
+  }
+
   const mediaInputs: ScrubInputFile[] = (input.media ?? []).map((m) => ({
     packagePath: m.packagePath,
     absolutePath: m.absolutePath,

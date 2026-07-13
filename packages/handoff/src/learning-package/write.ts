@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import type { IndexRow, Manifest } from '../spec/types.js';
+import type { GradeSemantic, HumanGrade, IndexRow, Manifest } from '../spec/types.js';
 import { SCHEMA_VERSION } from '../spec/version.js';
 import { validateLearningPackage } from '../validate/validate-package.js';
 
@@ -56,7 +56,27 @@ function repoRelativePath(manifest: Manifest): string {
   );
 }
 
-function buildIndexRow(manifest: Manifest, packagePath: string): IndexRow {
+/** Read grade.json:recipe_semantic from the package when present and well-formed. */
+function gradeSemanticFor(packageDir: string): GradeSemantic | undefined {
+  const gradePath = path.join(packageDir, 'grade.json');
+  if (!existsSync(gradePath)) return undefined;
+  try {
+    const grade = JSON.parse(readFileSync(gradePath, 'utf8')) as HumanGrade;
+    return grade.recipe_semantic === 'good' ||
+      grade.recipe_semantic === 'ok' ||
+      grade.recipe_semantic === 'bad'
+      ? grade.recipe_semantic
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildIndexRow(
+  manifest: Manifest,
+  packagePath: string,
+  gradeSemantic: GradeSemantic | undefined,
+): IndexRow {
   const storedFiles = Object.keys(manifest.files);
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -75,6 +95,8 @@ function buildIndexRow(manifest: Manifest, packagePath: string): IndexRow {
     packageSchemaVersion: manifest.schemaVersion,
     hasPr: storedFiles.some((f) => f.startsWith('pr/')),
     hasHarnessEvidence: storedFiles.some((f) => f.startsWith('harness/')),
+    hasGrade: storedFiles.includes('grade.json'),
+    ...(gradeSemantic ? { gradeSemantic } : {}),
   };
 }
 
@@ -133,7 +155,7 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
   }
 
   const packagePath = repoRelativePath(manifest);
-  const row = buildIndexRow(manifest, packagePath);
+  const row = buildIndexRow(manifest, packagePath, gradeSemanticFor(options.packageDir));
 
   if (options.dryRun) {
     return { status: 'dry-run', wouldWritePath: packagePath, indexRows: [row], pushed: false };

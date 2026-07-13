@@ -69,6 +69,12 @@ export interface ArtifactPaths {
   evidenceManifest?: string;
   /** Raw runner output dirs, folded in post-scrub. */
   harnessOutputDirs?: HarnessOutputDir[];
+  /**
+   * Absolute path to the run's canonical grade.json (human verdict), when the
+   * run was graded. Copied verbatim (post-scrub) into the package as
+   * `grade.json`. Absent input = absent file, still a valid package.
+   */
+  gradeJson?: string;
 }
 
 /**

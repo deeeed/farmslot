@@ -49,6 +49,15 @@
       "description": "The schemaVersion of the package this row indexes. Mining passes MUST record which schemaVersions they consumed."
     },
     "hasPr": { "type": "boolean" },
-    "hasHarnessEvidence": { "type": "boolean" }
+    "hasHarnessEvidence": { "type": "boolean" },
+    "hasGrade": {
+      "type": "boolean",
+      "description": "True iff the package includes grade.json. Lets consumers filter graded runs without opening packages."
+    },
+    "gradeSemantic": {
+      "type": "string",
+      "enum": ["good", "ok", "bad"],
+      "description": "Copied from grade.json:recipe_semantic when present. Enables corpus-level filters straight from the index."
+    }
   }
 }

@@ -105,6 +105,10 @@ export function validateLearningPackage(dir: string): ValidateResult {
     validateJsonFile(dir, 'pr/publication.json', 'pr-publication', errors);
   }
 
+  if (existsSync(path.join(dir, 'grade.json'))) {
+    validateJsonFile(dir, 'grade.json', 'grade', errors);
+  }
+
   if (manifest?.packageId !== undefined && !isValidRunSlug(manifest.packageId)) {
     errors.push(`manifest.json/packageId: '${manifest.packageId}' violates the run-slug grammar`);
   }
