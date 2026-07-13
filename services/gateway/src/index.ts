@@ -60,7 +60,7 @@ import {
 import { refreshBranches } from './methods/dispatch.js';
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
-import { fleetRefresh } from './methods/fleet.js';
+import { fleetRefresh, isFleetCheckedAtStale } from './methods/fleet.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
 import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
@@ -258,8 +258,13 @@ async function main(): Promise<void> {
   const missingFile = !existsSync(statusFile);
   await loadFleetStatus();
   const cached = getCachedFleet();
-  // Re-bootstrap when the file is missing OR the cache is empty (read failed or file was corrupt).
-  const needsBootstrap = missingFile || !cached || cached.slots.length === 0;
+  // Re-bootstrap when the file is missing, the cache is empty (read failed or
+  // file was corrupt), OR the snapshot is stale — a days-old status file must
+  // not seed ghost prepare/dispatch hints after startup.
+  const staleFile = Boolean(
+    cached && cached.slots.length > 0 && isFleetCheckedAtStale(cached.checkedAt),
+  );
+  const needsBootstrap = missingFile || !cached || cached.slots.length === 0 || staleFile;
 
   // Restore active runs from .runs/ + init engine + monitor
   await loadAllRuns();
@@ -608,7 +613,11 @@ async function main(): Promise<void> {
 
   // Bootstrap fleet from pool configs if file is missing or cache is empty.
   if (needsBootstrap) {
-    const reason = missingFile ? 'no .farm-status.json' : 'cached fleet is empty';
+    const reason = missingFile
+      ? 'no .farm-status.json'
+      : staleFile
+        ? 'cached fleet is stale'
+        : 'cached fleet is empty';
     console.log(`[startup] ${reason} — running initial fleet refresh`);
     fleetRefresh()
       .then(({ fleet }) => {

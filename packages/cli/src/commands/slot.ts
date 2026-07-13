@@ -101,7 +101,7 @@ export function registerSlotCommand(program: Command): void {
         if (output.json) output.writeJson(result);
         else output.write(`${result.slotId}\n`);
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
+        output.failure(err);
         process.exit(1);
       }
     });
@@ -125,7 +125,7 @@ export function registerSlotCommand(program: Command): void {
           output.write(formatSlotCheck(result));
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
+        output.failure(err);
         process.exit(1);
       }
     });
@@ -181,7 +181,7 @@ export function registerSlotCommand(program: Command): void {
           output.write(`Prepare complete for ${slotId}\n`);
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
+        output.failure(err);
         process.exit(1);
       }
     });
@@ -219,7 +219,7 @@ export function registerSlotCommand(program: Command): void {
           output.write(`Release complete for ${slotId}\n`);
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
+        output.failure(err);
         process.exit(1);
       }
     });
@@ -251,7 +251,7 @@ export function registerSlotCommand(program: Command): void {
           output.write(`Refresh complete for ${slotId}\n`);
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
+        output.failure(err);
         process.exit(1);
       }
     });
@@ -273,7 +273,7 @@ export function registerSlotCommand(program: Command): void {
         output.write(`Fixtures refreshed for ${slotId}\n`);
       }
     } catch (err) {
-      output.error(err instanceof Error ? err.message : String(err));
+      output.failure(err);
       process.exit(1);
     }
   };
@@ -311,7 +311,7 @@ export function registerSlotCommand(program: Command): void {
         if (output.json) output.writeJson(result);
         else output.write(`Opened ${slotId} in ${opts.editor}\n`);
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
+        output.failure(err);
         process.exit(1);
       }
     });
@@ -341,7 +341,7 @@ export function registerSlotCommand(program: Command): void {
           }
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
+        output.failure(err);
         process.exit(1);
       }
     });
@@ -371,7 +371,7 @@ export function registerSlotCommand(program: Command): void {
           if (!result.ok) process.exit(1);
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
+        output.failure(err);
         process.exit(1);
       }
     });
@@ -396,7 +396,7 @@ export function registerSlotCommand(program: Command): void {
           output.write(`Recycle complete for ${slotId}\n`);
         }
       } catch (err) {
-        output.error(err instanceof Error ? err.message : String(err));
+        output.failure(err);
         process.exit(1);
       }
     });

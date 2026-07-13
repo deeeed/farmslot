@@ -38,10 +38,11 @@ export function registerFleetCommand(program: Command): void {
     .action(async (_: any, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       try {
-        await withProgress('Refreshing fleet', () => client.call('fleet.refresh'), !output.json);
+        // fleet.refresh already returns the freshly probed fleet — a second
+        // forceRefresh status call would run the whole machine probe again.
         const result = await withProgress(
-          'Fetching fleet status',
-          () => client.call<FleetStatusResult>('fleet.status', { forceRefresh: true }),
+          'Refreshing fleet',
+          () => client.call<FleetStatusResult>('fleet.refresh'),
           !output.json,
         );
         if (output.json) {

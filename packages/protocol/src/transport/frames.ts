@@ -13,7 +13,13 @@ export interface ResponseFrame {
   id: string;
   ok: boolean;
   payload?: unknown;
-  error?: { code: string; message: string };
+  error?: {
+    code: string;
+    message: string;
+    /** Exact next command(s) that resolve THIS error (teach-the-escape). */
+    userAction?: string;
+    details?: unknown;
+  };
 }
 
 export interface EventFrame {

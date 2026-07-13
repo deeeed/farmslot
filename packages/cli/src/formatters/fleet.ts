@@ -24,6 +24,12 @@ export function formatFleetStatus(result: FleetStatusResult): string {
   const age = fleet.checkedAt ? formatAge(fleet.checkedAt) : '';
   lines.push('');
   lines.push(`${bold('Farm Status')}${age ? `  ${dim(age)}` : ''}`);
+  if (fleet.stale) {
+    lines.push(
+      red(bold(`STALE STATUS (checked ${age || 'at unknown time'}) — a re-probe is running.`)),
+    );
+    lines.push(red('Run `farmslot fleet status --force-refresh` for live data.'));
+  }
   lines.push(bold('='.repeat(Math.min(termWidth, 140))));
 
   // Table
@@ -34,9 +40,12 @@ export function formatFleetStatus(result: FleetStatusResult): string {
   // Summary
   lines.push(buildSummary(fleet.slots));
 
-  // Hints
-  const hints = buildHints(fleet.slots);
-  if (hints) lines.push(hints);
+  // Hints — never emit prepare/dispatch suggestions from a stale snapshot; a
+  // days-old status file recommends slots that may no longer exist.
+  if (!fleet.stale) {
+    const hints = buildHints(fleet.slots);
+    if (hints) lines.push(hints);
+  }
 
   // Active tasks
   const active = formatActiveTasks(fleet.slots);
@@ -152,6 +161,10 @@ function buildHints(slots: SlotStatus[]): string {
 
   for (const s of slots) {
     if (s.lifecycle === 'disabled' || s.lifecycle === 'manual') continue;
+    // Ghost slots (present in the status file, absent from live pools) must
+    // never receive prepare/dispatch suggestions — preparing them fails with
+    // SLOT_NOT_FOUND.
+    if (s.missingFromPool) continue;
     const sid = s.slot;
     if (s.lifecycle === 'busy') {
       monitoring.push(sid);

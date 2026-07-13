@@ -23,6 +23,9 @@ const DEVICE_MISSING_PENALTY = 5;
 const FIXTURE_STALE_PENALTY = 1;
 
 export function isFreeSlot(slot: SlotStatus): boolean {
+  // Ghost slots (status-file entries absent from live pools) can never be
+  // dispatched — selecting one fails run creation with SLOT_NOT_FOUND.
+  if (slot.missingFromPool) return false;
   if (slot.lifecycle !== 'ready') return false;
   return slot.agent !== 'working';
 }
@@ -66,11 +69,15 @@ export function isDispatchStaleBranch(
   slot: SlotStatus,
   projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>,
 ): boolean {
-  return isSlotRefreshStaleBranch(slot.branch ?? '', slotTrackingConfigForSlot(slot, projectConfigs), {
-    session: slot.session,
-    slotId: slot.slot,
-    linkedWorktree: slot.linkedWorktree,
-  });
+  return isSlotRefreshStaleBranch(
+    slot.branch ?? '',
+    slotTrackingConfigForSlot(slot, projectConfigs),
+    {
+      session: slot.session,
+      slotId: slot.slot,
+      linkedWorktree: slot.linkedWorktree,
+    },
+  );
 }
 
 export function slotScore(

@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import type {
   AgentContextSummary,
+  FleetStatus,
   FleetStatusParams,
   FleetStatusResult,
   Run,
@@ -46,9 +47,55 @@ const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
 let fleetRefreshInFlight: Promise<FleetStatusResult> | null = null;
 
-export async function fleetStatus(params?: FleetStatusParams): Promise<FleetStatusResult> {
-  const fleet = await loadFleetStatus(params?.forceRefresh);
-  return { fleet };
+const FLEET_STALE_MS_DEFAULT = 5 * 60_000;
+
+export function fleetStaleThresholdMs(): number {
+  const raw = Number(process.env.FARMSLOT_FLEET_STALE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : FLEET_STALE_MS_DEFAULT;
+}
+
+export function isFleetCheckedAtStale(checkedAt: string, nowMs = Date.now()): boolean {
+  const ts = Date.parse(checkedAt);
+  if (!Number.isFinite(ts)) return true;
+  return nowMs - ts > fleetStaleThresholdMs();
+}
+
+export interface FleetStatusDeps {
+  load(): Promise<FleetStatus>;
+  refresh(): Promise<FleetStatusResult>;
+}
+
+const defaultFleetStatusDeps: FleetStatusDeps = {
+  load: () => loadFleetStatus(),
+  refresh: () => fleetRefresh(),
+};
+
+export async function fleetStatus(
+  params?: FleetStatusParams,
+  deps: FleetStatusDeps = defaultFleetStatusDeps,
+): Promise<FleetStatusResult> {
+  // forceRefresh means a real machine re-probe, never just a re-read of the
+  // cached status file — that re-read is what produced ghost prepare hints.
+  // Ghost marking happens inside loadFleetStatus, so both branches are honest.
+  const fleet = params?.forceRefresh ? (await deps.refresh()).fleet : await deps.load();
+  if (!isFleetCheckedAtStale(fleet.checkedAt)) return { fleet };
+  // Still stale: serve it honestly (stale flag, nothing dispatchable). Kick a
+  // background re-probe only when this call did not just refresh AND probeable
+  // slots exist — with zero live pool slots a refresh can never freshen the
+  // snapshot, so re-kicking on every status call would spin no-op refreshes.
+  const probeable = fleet.slots.some((slot) => !slot.missingFromPool);
+  if (!params?.forceRefresh && probeable) {
+    deps.refresh().catch((err) => {
+      console.error(`[fleet.status] background stale refresh failed: ${(err as Error).message}`);
+    });
+  }
+  return {
+    fleet: {
+      ...fleet,
+      stale: true,
+      slots: fleet.slots.map((slot) => ({ ...slot, dispatchable: false })),
+    },
+  };
 }
 
 // ─── fleetRefresh — native TS port of farm-status.sh collect mode ───

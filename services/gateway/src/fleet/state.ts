@@ -559,6 +559,21 @@ function transformFleet(raw: RawStatus): FleetStatus {
   };
 }
 
+/**
+ * Mark status-file slots that no longer resolve in live pool JSONs. Applied at
+ * load time so every fleet consumer (fleet.status, dispatch selection, UI
+ * events) sees the same truth: ghost slots must never be prepared/dispatched.
+ */
+export function markGhostSlots(fleet: FleetStatus, liveIds: ReadonlySet<string>): FleetStatus {
+  if (fleet.slots.every((slot) => liveIds.has(slot.slot))) return fleet;
+  return {
+    ...fleet,
+    slots: fleet.slots.map((slot) =>
+      liveIds.has(slot.slot) ? slot : { ...slot, missingFromPool: true, dispatchable: false },
+    ),
+  };
+}
+
 // ─── Public API ───
 
 export async function loadFleetStatus(forceRefresh = false): Promise<FleetStatus> {
@@ -566,7 +581,10 @@ export async function loadFleetStatus(forceRefresh = false): Promise<FleetStatus
   try {
     const content = await readFile(statusFile, 'utf-8');
     const raw: RawStatus = JSON.parse(content);
-    cachedFleet = transformFleet(raw);
+    const liveIds = new Set(
+      (await loadPoolConfigs()).flatMap((pool) => pool.slots.map((slot) => slot.id)),
+    );
+    cachedFleet = markGhostSlots(transformFleet(raw), liveIds);
   } catch (err) {
     console.error(
       `[state] loadFleetStatus failed: ${(err as Error).message} — falling back to empty fleet`,

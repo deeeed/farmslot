@@ -47,6 +47,7 @@ export {
   expandTemplate,
   renderFixtureTemplate,
 } from './hooks.js';
+export { GatewayMethodError } from './method-error.js';
 export { isPathInside } from './path.js';
 export { applyProjectCommandEnv, buildProjectCommandEnvPrefix } from './project-env.js';
 export { loadPromptTemplate } from './prompt-templates.js';
