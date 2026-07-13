@@ -66,7 +66,9 @@ export function backlogViewModel(items: BacklogItem[]): BacklogRow[] {
       project: item.project,
       title: item.title,
       canDispatch: item.status === 'candidate' || item.status === 'ready',
-      canCloseShipped: item.status !== 'done' && item.status !== 'archived',
+      // Mirrors the gateway guards: terminal → BACKLOG_ALREADY_TERMINAL,
+      // running/dispatching → BACKLOG_ITEM_ACTIVE.
+      canCloseShipped: !['done', 'archived', 'running', 'dispatching'].includes(item.status),
     }));
 }
 

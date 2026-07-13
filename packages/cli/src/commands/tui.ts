@@ -10,7 +10,8 @@ export function registerTuiCommand(program: Command): void {
     .action(async (_: unknown, cmd: Command) => {
       const { client, output, target } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
-      if (emit.machine) {
+      // Ink needs raw-mode stdin as well as a TTY stdout.
+      if (emit.machine || !process.stdin.isTTY) {
         emit.fail(
           Object.assign(new Error('The TUI requires an interactive terminal.'), {
             code: 'TUI_REQUIRES_TTY',
@@ -22,14 +23,20 @@ export function registerTuiCommand(program: Command): void {
       }
       try {
         const connection = await client.connect();
-        // Dynamic imports keep React/Ink out of every non-TUI invocation.
-        const [{ render }, { App }, react] = await Promise.all([
-          import('ink'),
-          import('../tui/app.js'),
-          import('react'),
-        ]);
-        const instance = render(react.createElement(App, { connection, gatewayUrl: target.url }));
-        await instance.waitUntilExit();
+        try {
+          // Dynamic imports keep React/Ink out of every non-TUI invocation.
+          const [{ render }, { App }, react] = await Promise.all([
+            import('ink'),
+            import('../tui/app.js'),
+            import('react'),
+          ]);
+          const instance = render(react.createElement(App, { connection, gatewayUrl: target.url }));
+          await instance.waitUntilExit();
+        } finally {
+          // The command owns the connection: close on every exit path
+          // (q, Ctrl+C via Ink, render failure), not just the q handler.
+          connection.close();
+        }
       } catch (err) {
         emit.fail(err);
       }

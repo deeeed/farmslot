@@ -6,7 +6,7 @@
 // Business rules stay in the gateway + shared view-models (ADR-050).
 
 import { Box, Text, useApp, useInput } from 'ink';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { BacklogItem, EventFrame, FleetStatus, Run } from '@farmslot/protocol';
 
@@ -32,16 +32,22 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
   const [prepare, setPrepare] = useState<{
     slotId: string;
     running: boolean;
-    steps: Array<{ name: string; status: string }>;
+    steps: Array<{ name: string; detail: string }>;
   } | null>(null);
 
+  // Guards against an older, slower refresh committing over newer data
+  // (a later refresh or a fleet.updated event bumps the generation).
+  const refreshGeneration = useRef(0);
+
   const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
     try {
       const [fleetResult, backlogResult, runsResult] = await Promise.all([
         connection.call<{ fleet: FleetStatus }>('fleet.status'),
         connection.call<{ items: BacklogItem[] }>('backlog.list'),
         connection.call<{ runs: Run[] }>('run.list', { limit: 15 }),
       ]);
+      if (generation !== refreshGeneration.current) return;
       setFleet(fleetResult.fleet);
       setItems(backlogResult.items);
       setRuns(runsResult.runs);
@@ -54,14 +60,17 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
     void refresh();
     const unsubscribe = connection.onEvent((event: EventFrame) => {
       if (event.event === 'slot.prepare.step') {
-        const payload = event.payload as { step?: string; name?: string; status?: string };
-        const name = payload?.name ?? payload?.step ?? 'step';
-        const status = payload?.status ?? 'running';
+        // Gateway payload: { requestId, slotId, name, detail } — steps announce
+        // start only; completion is the slot.prepare RPC resolving.
+        const payload = event.payload as { slotId?: string; name?: string; detail?: string };
         setPrepare((current) =>
-          current
+          current && current.running && payload?.slotId === current.slotId
             ? {
                 ...current,
-                steps: [...current.steps.filter((step) => step.name !== name), { name, status }],
+                steps: [
+                  ...current.steps,
+                  { name: payload.name ?? 'step', detail: payload.detail ?? '' },
+                ],
               }
             : current,
         );
@@ -69,7 +78,11 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
       }
       if (event.event === 'fleet.updated') {
         const payload = event.payload as { fleet?: FleetStatus };
-        if (payload?.fleet) setFleet(payload.fleet);
+        if (payload?.fleet) {
+          // Invalidate any in-flight refresh so it cannot overwrite this.
+          refreshGeneration.current++;
+          setFleet(payload.fleet);
+        }
       } else if (event.event === 'backlog.updated' || event.event === 'run.updated') {
         void refresh();
       }
@@ -82,33 +95,47 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
   const runsVm = useMemo(() => runsViewModel(runs), [runs]);
   const diagnosis = useMemo(() => (fleet ? diagnoseFleet(fleet) : null), [fleet]);
 
-  const rowsForSurface =
-    surface === 'fleet'
-      ? (fleetVm?.rows.length ?? 0)
-      : surface === 'backlog'
-        ? backlogVm.length
-        : runsVm.length;
+  const rowsForSurface = useMemo(() => {
+    if (surface === 'fleet') return fleetVm?.rows.length ?? 0;
+    if (surface === 'backlog') return backlogVm.length;
+    if (surface === 'runs') return runsVm.length;
+    return 0; // recovery and prepare have no selectable rows
+  }, [surface, fleetVm, backlogVm, runsVm]);
+
+  // Keep the cursor on a real row when the surface changes or data shrinks.
+  useEffect(() => {
+    setCursor((current) => Math.min(current, Math.max(0, rowsForSurface - 1)));
+  }, [rowsForSurface]);
+
+  const switchTo = useCallback((next: Surface) => {
+    setSurface(next);
+    setCursor(0);
+  }, []);
 
   useInput((input, key) => {
     if (input === 'q') {
-      connection.close();
+      // The tui command owns the connection and closes it after unmount.
       exit();
       return;
     }
-    if (input === '1') setSurface('fleet');
-    if (input === '2') setSurface('backlog');
-    if (input === '3') setSurface('runs');
-    if (input === '4') setSurface('recovery');
-    if (input === '5') setSurface('prepare');
+    if (input === '1') switchTo('fleet');
+    if (input === '2') switchTo('backlog');
+    if (input === '3') switchTo('runs');
+    if (input === '4') switchTo('recovery');
+    if (input === '5') switchTo('prepare');
     if (input === 'r') void refresh();
 
     if (surface === 'fleet' && input === 'p' && fleetVm) {
       const row = fleetVm.rows[cursor];
-      if (!row || row.ghost || row.lifecycle !== 'ready') {
-        setNotice('prepare needs a live ready slot');
+      if (fleetVm.stale || !row || row.ghost || !row.dispatchable || row.lifecycle !== 'ready') {
+        setNotice('prepare needs a fresh fleet snapshot and a live, dispatchable ready slot');
         return;
       }
-      setSurface('prepare');
+      if (prepare?.running) {
+        setNotice(`prepare already running for ${prepare.slotId}`);
+        return;
+      }
+      switchTo('prepare');
       setPrepare({ slotId: row.slot, running: true, steps: [] });
       void (async () => {
         try {
@@ -279,15 +306,13 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
               <Text bold>
                 prepare {prepare.slotId} {prepare.running ? '(running)' : '(finished)'}
               </Text>
-              {prepare.steps.map((step) => (
+              {prepare.steps.map((step, index) => (
                 <Text
-                  key={step.name}
-                  color={
-                    step.status === 'fail' ? 'red' : step.status === 'done' ? 'green' : 'yellow'
-                  }
+                  key={`${index}-${step.name}`}
+                  color={prepare.running && index === prepare.steps.length - 1 ? 'yellow' : 'green'}
                 >
                   {'  '}
-                  {step.status.padEnd(8)} {step.name}
+                  {step.name.padEnd(16)} {step.detail}
                 </Text>
               ))}
             </Box>

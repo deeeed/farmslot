@@ -62,10 +62,6 @@
       "count": 1
     },
     {
-      "key": "packages/cli/src/gateway-client.ts:type-any:: any",
-      "count": 1
-    },
-    {
       "key": "services/gateway/src/chat/chat-actions.ts:as-unknown:as unknown",
       "count": 4
     },

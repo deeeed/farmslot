@@ -86,16 +86,27 @@ test('backlogViewModel sorts by priority and derives loop actions from status', 
       project: 'p',
       title: 'todo',
     },
+    {
+      id: 'c',
+      sourceRef: 'MANUAL-3',
+      status: 'running',
+      priority: 3,
+      project: 'p',
+      title: 'active',
+    },
   ] as unknown as BacklogItem[];
   const vm = backlogViewModel(items);
   assert.deepEqual(
     vm.map((row) => row.ref),
-    ['MANUAL-2', 'MANUAL-1'],
+    ['MANUAL-2', 'MANUAL-1', 'MANUAL-3'],
   );
   assert.equal(vm[0].canDispatch, false);
   assert.equal(vm[0].canCloseShipped, false);
   assert.equal(vm[1].canDispatch, true);
   assert.equal(vm[1].canCloseShipped, true);
+  // Active items are rejected by the gateway (BACKLOG_ITEM_ACTIVE).
+  assert.equal(vm[2].canDispatch, false);
+  assert.equal(vm[2].canCloseShipped, false);
 });
 
 test('runsViewModel surfaces pending gate decisions with their action ids', () => {
