@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(gateway): self-review issue parsing is scoped to the `## Issues` section (whole-document fallback for legacy artifacts), strips fenced code blocks before section extraction (backtick/tilde, info-string-aware closing, unterminated → EOF), accepts CommonMark 0–3-space indentation and numbered/title-style findings with indent-aware nested-bullet folding, prefers path-looking backtick locations, and skips placeholder bullets — Evidence/Validation bullets no longer leak into fix passes and numbered findings are no longer dropped. An incomplete post-fix re-review now surfaces as skipped instead of silently clearing the reviewer's issues.
 - refactor: `runtime/session-usage.ts` consumes the ported `@farmslot/slot-config` core directly instead of shelling out to `scripts/session-usage.sh`; `computePRRecommendation` moved to `@farmslot/protocol` (re-imported) with the bash pr-monitor rules folded in — `PRStatus` gains `workerActive` so formatters can derive the worker-active sub-labels.
 - refactor: `core/config.ts` and `core/hooks.ts` moved to the new `@farmslot/slot-config` package (gateway files remain as re-export shims; `SlotConfigError` serializes like `GatewayMethodError` in RPC responses). No behavior change.
 - refactor: dispatch `isCdpLive` now delegates to the shared protocol `isCdpLiveValue` (no behavior change).
