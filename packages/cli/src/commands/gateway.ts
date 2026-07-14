@@ -7,6 +7,7 @@ import type { NodesListResult } from '@farmslot/protocol';
 
 import { bold, cyan, dim, green, red } from '../colors.js';
 import { resolveContext } from '../context.js';
+import { isMachineMode } from '../envelope.js';
 import {
   assertGatewayUrl,
   assertProfileName,
@@ -16,6 +17,7 @@ import {
   saveProfiles,
 } from '../gateway-profiles.js';
 import { OutputContext } from '../output.js';
+import { withProgress } from '../progress.js';
 
 interface GatewayHealthResult {
   status?: string;
@@ -117,9 +119,17 @@ export function registerGatewayCommand(program: Command): void {
       const timeoutMs = Number(opts.timeout);
       const healthUrl = gatewayHealthUrl(url);
       try {
-        const health = await readHealth(healthUrl, timeoutMs);
+        const health = await withProgress(
+          `Probing ${url}`,
+          () => readHealth(healthUrl, timeoutMs),
+          !isMachineMode(output),
+        );
         try {
-          const nodes = await client.call<NodesListResult>('nodes.list');
+          const nodes = await withProgress(
+            'Loading nodes',
+            () => client.call<NodesListResult>('nodes.list'),
+            !isMachineMode(output),
+          );
           const result: GatewayStatusResult = { url, healthUrl, reachable: true, health, nodes };
           if (output.json) output.writeJson(result);
           else output.write(`${formatGatewayStatus(result)}\n`);

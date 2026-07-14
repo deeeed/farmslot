@@ -32,7 +32,9 @@ import {
 
 import { green, red, yellow } from '../colors.js';
 import { resolveContext } from '../context.js';
+import { isMachineMode } from '../envelope.js';
 import { OutputContext } from '../output.js';
+import { withProgress } from '../progress.js';
 
 import { resolveRecipeProjectHookGatewayTimeoutMs } from './recipe-project-hook-timeout.js';
 
@@ -581,15 +583,17 @@ export function registerRecipeCommand(program: Command): void {
       const output = new OutputContext(Boolean(globals.json));
       const { client } = resolveContext(cmd);
       try {
-        const result = await client.call<RecipeProjectHookCommandResult>(
-          Methods.RECIPE_PROJECT_HOOK_COMMAND,
-          {
-            hook,
-            project: opts.project,
-            slotId: opts.slot,
-            recipePath: opts.recipePath,
-            artifactsDir: opts.artifactsDir,
-          },
+        const result = await withProgress(
+          `Resolving ${hook} for ${opts.slot}`,
+          () =>
+            client.call<RecipeProjectHookCommandResult>(Methods.RECIPE_PROJECT_HOOK_COMMAND, {
+              hook,
+              project: opts.project,
+              slotId: opts.slot,
+              recipePath: opts.recipePath,
+              artifactsDir: opts.artifactsDir,
+            }),
+          !isMachineMode(output),
         );
         if (output.json) {
           output.writeJson(result);
@@ -625,16 +629,18 @@ export function registerRecipeCommand(program: Command): void {
         const { client } = resolveContext(cmd, {
           timeout: resolveRecipeProjectHookGatewayTimeoutMs(globals.timeout, timeoutMs),
         });
-        const result = await client.call<RecipeProjectHookRunResult>(
-          Methods.RECIPE_PROJECT_HOOK_RUN,
-          {
-            hook,
-            project: opts.project,
-            slotId: opts.slot,
-            timeoutMs,
-            recipePath: opts.recipePath,
-            artifactsDir: opts.artifactsDir,
-          },
+        const result = await withProgress(
+          `Running ${hook} for ${opts.slot}`,
+          () =>
+            client.call<RecipeProjectHookRunResult>(Methods.RECIPE_PROJECT_HOOK_RUN, {
+              hook,
+              project: opts.project,
+              slotId: opts.slot,
+              timeoutMs,
+              recipePath: opts.recipePath,
+              artifactsDir: opts.artifactsDir,
+            }),
+          !isMachineMode(output),
         );
         if (output.json) {
           output.writeJson(result);

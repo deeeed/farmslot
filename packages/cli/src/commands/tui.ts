@@ -21,8 +21,14 @@ export function registerTuiCommand(program: Command): void {
         );
         return;
       }
+      // Ink only mounts after connect resolves, so its in-App `connecting…`
+      // line can't cover the connect wait itself. Acknowledge on stderr up front
+      // so a slow/unreachable gateway doesn't leave the TUI silent.
+      const notifyTty = process.stderr.isTTY ?? false;
+      if (notifyTty) process.stderr.write(`connecting to ${target.url}…`);
       try {
         const connection = await client.connect();
+        if (notifyTty) process.stderr.write('\r\x1b[K');
         try {
           // Dynamic imports keep React/Ink out of every non-TUI invocation.
           const [{ render }, { App }, react] = await Promise.all([
@@ -38,6 +44,7 @@ export function registerTuiCommand(program: Command): void {
           connection.close();
         }
       } catch (err) {
+        if (notifyTty) process.stderr.write('\r\x1b[K');
         emit.fail(err);
       }
     });

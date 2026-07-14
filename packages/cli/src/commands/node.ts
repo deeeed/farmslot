@@ -4,6 +4,7 @@ import type { NodeDeployResult, NodesListResult } from '@farmslot/protocol';
 
 import { bold, dim, green, red, yellow } from '../colors.js';
 import { resolveContext } from '../context.js';
+import { isMachineMode } from '../envelope.js';
 import { withProgress } from '../progress.js';
 
 function formatNodeStatus(result: NodesListResult): string {
@@ -75,7 +76,11 @@ export function registerNodeCommand(program: Command): void {
     .action(async (_: any, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       try {
-        const result = await client.call<NodesListResult>('nodes.list');
+        const result = await withProgress(
+          'Loading nodes',
+          () => client.call<NodesListResult>('nodes.list'),
+          !isMachineMode(output),
+        );
         if (output.json) {
           output.writeJson(result);
         } else {
@@ -96,7 +101,7 @@ export function registerNodeCommand(program: Command): void {
         const result = await withProgress(
           `Deploying node to ${machine}`,
           () => client.call<NodeDeployResult>('nodes.deploy', { machine }),
-          !output.json,
+          !isMachineMode(output),
         );
         if (output.json) {
           output.writeJson(result);

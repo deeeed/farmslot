@@ -9,6 +9,7 @@ import type { EventFrame, Run } from '@farmslot/protocol';
 import { bold, green } from '../colors.js';
 import { type CommandContext, resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
+import { withProgress, withStreamProgress } from '../progress.js';
 import { collectRunCreatePlan } from '../wizard/run-create-wizard.js';
 
 import { dispatchBacklogItem, resolveItem } from './backlog.js';
@@ -20,16 +21,17 @@ export async function executeRunCreate(
   opts: RunCreateCliOptions,
 ): Promise<void> {
   const params = buildRunCreateParams(opts);
-  const result = await ctx.client.callWithEvents<{ run: Run }>(
-    'run.create',
-    params,
-    (event: EventFrame) => {
-      const payload = event.payload;
-      if (payload && typeof payload === 'object' && 'data' in payload) {
-        const data = payload.data;
-        if (typeof data === 'string') process.stderr.write(data);
-      }
-    },
+  const result = await withStreamProgress(
+    'Creating run',
+    (onData) =>
+      ctx.client.callWithEvents<{ run: Run }>('run.create', params, (event: EventFrame) => {
+        const payload = event.payload;
+        if (payload && typeof payload === 'object' && 'data' in payload) {
+          const data = payload.data;
+          if (typeof data === 'string') onData(data);
+        }
+      }),
+    !emit.machine,
   );
   if (emit.machine) {
     emit.ok(result);
@@ -278,11 +280,16 @@ export function registerRunCommand(program: Command): void {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
-        const result = await client.call<{ runs: Array<Record<string, unknown>> }>('run.list', {
-          limit: Number(opts.limit),
-          ...(opts.active ? { active: true } : {}),
-          ...(opts.project ? { project: opts.project } : {}),
-        });
+        const result = await withProgress(
+          'Loading runs',
+          () =>
+            client.call<{ runs: Array<Record<string, unknown>> }>('run.list', {
+              limit: Number(opts.limit),
+              ...(opts.active ? { active: true } : {}),
+              ...(opts.project ? { project: opts.project } : {}),
+            }),
+          !emit.machine,
+        );
         if (emit.machine) {
           emit.ok(result);
         } else {
@@ -304,7 +311,11 @@ export function registerRunCommand(program: Command): void {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
-        const result = await client.call<{ run: Record<string, unknown> }>('run.get', { runId });
+        const result = await withProgress(
+          `Loading run ${runId.slice(0, 8)}`,
+          () => client.call<{ run: Record<string, unknown> }>('run.get', { runId }),
+          !emit.machine,
+        );
         if (emit.machine) emit.ok(result);
         else output.write(`${JSON.stringify(result.run, null, 2)}\n`);
       } catch (err) {
@@ -321,16 +332,21 @@ export function registerRunCommand(program: Command): void {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
-        const { run: current } = await client.call<{
-          run: {
-            decisions?: Array<{
-              id: string;
-              title?: string;
-              resolvedAt?: string;
-              actions?: Array<{ id: string; label: string }>;
-            }>;
-          };
-        }>('run.get', { runId });
+        const { run: current } = await withProgress(
+          `Loading gates for ${runId.slice(0, 8)}`,
+          () =>
+            client.call<{
+              run: {
+                decisions?: Array<{
+                  id: string;
+                  title?: string;
+                  resolvedAt?: string;
+                  actions?: Array<{ id: string; label: string }>;
+                }>;
+              };
+            }>('run.get', { runId }),
+          !emit.machine,
+        );
         const pending = (current.decisions ?? []).filter((d) => !d.resolvedAt);
         if (!opts.action) {
           if (emit.machine) {
@@ -353,11 +369,16 @@ export function registerRunCommand(program: Command): void {
               'List them with `farmslot run gate <runId>` and pass --decision <id> with --action.',
           });
         }
-        const result = await client.call('run.resolveDecision', {
-          runId,
-          decisionId,
-          actionId: opts.action,
-        });
+        const result = await withProgress(
+          `Resolving ${decisionId} with ${opts.action}`,
+          () =>
+            client.call('run.resolveDecision', {
+              runId,
+              decisionId,
+              actionId: opts.action,
+            }),
+          !emit.machine,
+        );
         if (emit.machine) emit.ok(result);
         else output.write(`Resolved ${decisionId} with ${opts.action}\n`);
       } catch (err) {
@@ -373,10 +394,15 @@ export function registerRunCommand(program: Command): void {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
-        const result = await client.call('run.cancel', {
-          runId,
-          ...(opts.reason ? { reason: opts.reason } : {}),
-        });
+        const result = await withProgress(
+          `Cancelling ${runId.slice(0, 8)}`,
+          () =>
+            client.call('run.cancel', {
+              runId,
+              ...(opts.reason ? { reason: opts.reason } : {}),
+            }),
+          !emit.machine,
+        );
         if (emit.machine) emit.ok(result);
         else output.write(`Cancelled ${runId}\n`);
       } catch (err) {
@@ -391,7 +417,11 @@ export function registerRunCommand(program: Command): void {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
-        const result = await client.call('run.archive', { runId });
+        const result = await withProgress(
+          `Archiving ${runId.slice(0, 8)}`,
+          () => client.call('run.archive', { runId }),
+          !emit.machine,
+        );
         if (emit.machine) emit.ok(result);
         else output.write(`Archived ${runId}\n`);
       } catch (err) {

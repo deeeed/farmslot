@@ -32,8 +32,9 @@ It does **not** own Gateway behavior, protocol definitions, recipe execution sem
 1. **Stay client-side.** Add Gateway behavior to `services/gateway`, then call it from the CLI.
 2. **Use protocol names.** Prefer `@farmslot/protocol` method/type exports over stringly typed copies.
 3. **Keep output modes paired.** New commands should support `--json` for automation and a concise human format for terminal use.
-4. **Keep command files scoped.** Add a focused file under `src/commands/` for new command families; do not grow `entry.ts`.
-5. **Tests live beside command helpers.** Parser/validation helpers should have colocated `*.test.ts` coverage.
+4. **Acknowledge within ~200ms (human mode).** Every command must show first feedback fast — wrap one-shot RPCs in `withProgress`, stream long ops via `withStreamProgress`, and give TUI actions an immediate pending notice. Never sit silent until completion. Machine mode and raw plumbing (`internal` raw/`--shell`, `rpc`) are exempt. See [`cli-machine-envelope.md` → Instant-feedback rule](../../docs/reference/cli-machine-envelope.md#instant-feedback-rule-human-mode).
+5. **Keep command files scoped.** Add a focused file under `src/commands/` for new command families; do not grow `entry.ts`.
+6. **Tests live beside command helpers.** Parser/validation helpers should have colocated `*.test.ts` coverage.
 
 ## Local quality
 

@@ -18,6 +18,7 @@ import { type PairingCreateResult, parseTailscaleDnsNameFromStatus } from '@farm
 import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
+import { withProgress } from '../progress.js';
 
 const PAIRING_QR_TYPE = 'farmslot.gateway-pairing.v1';
 
@@ -97,15 +98,22 @@ export function registerPairCommand(program: Command): void {
         return;
       }
 
-      const profiles: PairingCreateResult[] = [];
-      for (const address of addresses) {
-        profiles.push(
-          await client.call<PairingCreateResult>('pairing.create', {
-            gatewayUrl: address.url,
-            profileName: address.name,
-          }),
-        );
-      }
+      const profiles = await withProgress(
+        'Creating pairing codes',
+        async () => {
+          const list: PairingCreateResult[] = [];
+          for (const address of addresses) {
+            list.push(
+              await client.call<PairingCreateResult>('pairing.create', {
+                gatewayUrl: address.url,
+                profileName: address.name,
+              }),
+            );
+          }
+          return list;
+        },
+        !emit.machine,
+      );
       const payload: PairingQrPayload = { type: PAIRING_QR_TYPE, profiles };
 
       if (emit.machine) {

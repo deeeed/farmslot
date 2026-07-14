@@ -49,6 +49,48 @@ Human mode renders the same information as an `Error:` line followed by
 - `status: "error"` → process exits non-zero, matching `exitCode`.
 - Unknown commands exit non-zero.
 
+## Instant-feedback rule (human mode)
+
+Every human-mode invocation MUST acknowledge within ~200ms — a spinner, the
+first stream line, or an explicit pending state. No command sits silent until it
+completes. This keeps the terminal responsive: the operator always knows the CLI
+received the command and is working.
+
+| First-feedback class | When to use                                           | Helper                                     |
+| -------------------- | ----------------------------------------------------- | ------------------------------------------ |
+| instant              | pure-local work; a header printed before any RPC      | (synchronous `output.write`)               |
+| spinner              | one-shot RPCs (`client.call`)                         | `withProgress(label, work, !machine)`      |
+| streams              | long ops emitting `script.output` (prepare/release/…) | `withStreamProgress(label, run, !machine)` |
+
+- **One-shot RPCs**: wrap the human-branch `client.call` in `withProgress` so a
+  spinner shows within ~80ms. Gate it on `!emit.machine` (or `!output.json`) —
+  never spin in machine mode.
+- **Streaming ops**: `withStreamProgress` shows the label immediately, then
+  clears it the instant the first `script.output` byte arrives and streams the
+  rest. This closes the silent gap before the gateway's first stream line.
+- **TUI actions**: set an immediate pending notice on keypress (e.g.
+  `dispatching MANUAL-000014…`) before awaiting the RPC, and show
+  `connecting to <url>…` until the first `fleet.status` snapshot lands.
+
+Spinners and pending output go to **stderr only**, so machine-mode stdout stays
+a single pure envelope. Sub-200ms responses need no visible spinner — the frame
+interval simply never fires before the call resolves.
+
+**Exemptions:** machine mode (`--json` / non-TTY stdout — one envelope is the
+contract) and the raw plumbing escape hatches (`internal` raw/`--shell` modes
+and `rpc`), whose stdout is a raw data channel for scripts.
+
+Implementation: `packages/cli/src/progress.ts` (`withProgress`,
+`withStreamProgress`). Tests: `packages/cli/src/progress.test.ts`.
+
+## `run get` envelope shape
+
+`run get [--json]` returns `{ run: Run }` under `data`; `run.status` is a
+required `RunStatus` (never null). A stray "`.data.run.status` is null" reading
+comes from indexing a **`run list`** envelope (whose payload is `data.runs[]`,
+so `data.run` is `undefined`) — read `data.runs[i].status` for lists and
+`data.run.status` for a single `run get`.
+
 ## Covered commands
 
 `fleet`, `slot`, `run`, `runs`, `dispatch`, `backlog`, `pair`, `doctor`, and

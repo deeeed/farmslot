@@ -7,6 +7,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { resolveContext } from '../context.js';
+import { isMachineMode } from '../envelope.js';
 import { withProgress } from '../progress.js';
 
 function fmtMs(ms: number | null): string {
@@ -51,7 +52,7 @@ export function registerAnalyticsCommand(program: Command): void {
         const result = await withProgress(
           'Backfilling analytics',
           () => client.call<AnalyticsBackfillResult>('analytics.backfill'),
-          !output.json,
+          !isMachineMode(output),
         );
         if (output.json) output.writeJson(result);
         else
@@ -89,7 +90,7 @@ export function registerAnalyticsCommand(program: Command): void {
         const result = await withProgress(
           'Querying analytics',
           () => client.call<AnalyticsQueryResult>('analytics.query', params),
-          !output.json,
+          !isMachineMode(output),
         );
         if (output.json) output.writeJson(result);
         else output.write(formatQuery(result));

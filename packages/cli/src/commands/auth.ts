@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 
 import { dim, green, red, yellow } from '../colors.js';
+import { isMachineMode } from '../envelope.js';
 import { describeProbe, exchangePairingCode, probeGatewayAuth } from '../gateway-auth.js';
 import {
   type GatewayProfilesFile,
@@ -10,6 +11,7 @@ import {
   saveProfiles,
 } from '../gateway-profiles.js';
 import { OutputContext } from '../output.js';
+import { withProgress } from '../progress.js';
 
 function requireProfile(
   profiles: GatewayProfilesFile,
@@ -57,7 +59,11 @@ export function registerAuthCommands(program: Command): void {
         const profile = profiles.gateways[name];
 
         if (opts.code) {
-          const exchanged = await exchangePairingCode(profile.url, opts.code);
+          const exchanged = await withProgress(
+            `Exchanging pairing code for ${name}`,
+            () => exchangePairingCode(profile.url, opts.code as string),
+            !isMachineMode(output),
+          );
           profile.authMode = exchanged.authMode;
           profile.secret = exchanged.secret;
         } else if (opts.token) {
@@ -69,7 +75,11 @@ export function registerAuthCommands(program: Command): void {
         }
         // No credential flags: verify whatever is stored (or that none is needed).
 
-        const probe = await probeGatewayAuth(profile.url, profileCredential(profile));
+        const probe = await withProgress(
+          `Verifying ${name}`,
+          () => probeGatewayAuth(profile.url, profileCredential(profile)),
+          !isMachineMode(output),
+        );
         if (probe.state === 'authenticated' || probe.state === 'no-auth') {
           // Persist ONLY what the gateway actually verified: a no-auth gateway
           // cannot validate a supplied secret, so storing one would keep an
@@ -152,12 +162,17 @@ export function registerAuthCommands(program: Command): void {
         names = [requireProfile(profiles, profileArg, output).name];
       }
 
-      const results = await Promise.all(
-        names.map(async (name) => {
-          const profile = profiles.gateways[name];
-          const probe = await probeGatewayAuth(profile.url, profileCredential(profile));
-          return { name, profile, probe };
-        }),
+      const results = await withProgress(
+        names.length === 1 ? `Checking ${names[0]}` : `Checking ${names.length} profiles`,
+        () =>
+          Promise.all(
+            names.map(async (name) => {
+              const profile = profiles.gateways[name];
+              const probe = await probeGatewayAuth(profile.url, profileCredential(profile));
+              return { name, profile, probe };
+            }),
+          ),
+        !isMachineMode(output),
       );
 
       const ok = results.every(
