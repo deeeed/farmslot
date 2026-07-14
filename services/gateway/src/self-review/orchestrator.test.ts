@@ -171,6 +171,55 @@ test('parseSelfReviewIssueBullets prefers path-looking backtick tokens for title
   assert.equal(issues[0].line, 42);
 });
 
+test('parseSelfReviewIssueBullets: inner fence-with-info lines do not close an open fence', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+- **src/a.ts:1** — real finding
+
+\`\`\`markdown
+\`\`\`diff
+- **phantom.ts:5** — still inside the outer fence
+\`\`\`
+
+- **src/b.ts:2** — finding after the fence closes
+`);
+
+  assert.deepEqual(issues, [
+    { file: 'src/a.ts', line: 1, description: 'real finding' },
+    { file: 'src/b.ts', line: 2, description: 'finding after the fence closes' },
+  ]);
+});
+
+test('parseSelfReviewIssueBullets folds nested sub-bullets but splits uniformly indented lists', () => {
+  const nested = parseSelfReviewIssueBullets(`
+## Issues
+- **src/a.ts:1** — finding with evidence
+  - nested evidence bullet
+  - more evidence
+- **src/b.ts:2** — second finding
+`);
+  assert.equal(nested.length, 2);
+  assert.match(nested[0].description, /nested evidence bullet/);
+
+  const uniform = parseSelfReviewIssueBullets(
+    '## Issues\n' + '   - **src/a.ts:1** — first\n' + '   - **src/b.ts:2** — second\n',
+  );
+  assert.deepEqual(
+    uniform.map((i) => i.file),
+    ['src/a.ts', 'src/b.ts'],
+  );
+});
+
+test('parseSelfReviewIssueBullets ranks slash/:line tokens above extension-only tokens', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+1. **The \`foo.bar\` config key is stale.** Real location is \`src/foo.ts:42\`.
+`);
+
+  assert.equal(issues[0].file, 'src/foo.ts');
+  assert.equal(issues[0].line, 42);
+});
+
 test('parseSelfReviewIssueBullets falls back to whole document without an Issues heading', () => {
   const issues = parseSelfReviewIssueBullets(`
 - **src/legacy.ts:3** — legacy artifact without sections.

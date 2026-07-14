@@ -12,9 +12,18 @@ function stripFencedBlocks(content: string): string {
   const out: string[] = [];
   let fence: { char: string; len: number } | null = null;
   for (const line of content.split('\n')) {
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (fence) {
-      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.len) fence = null;
+      // A closing fence carries no info string — only whitespace may follow
+      // the markers (an inner ```lang line is content, not a close).
+      if (
+        marker &&
+        marker[1][0] === fence.char &&
+        marker[1].length >= fence.len &&
+        marker[2].trim() === ''
+      ) {
+        fence = null;
+      }
       continue;
     }
     if (marker) {
@@ -47,11 +56,17 @@ const ITEM_START = /^ {0,3}(?:[-*]|\d+[.)])\s+(.*)$/;
 function listItems(scope: string): string[] {
   const items: string[] = [];
   let current: string[] | null = null;
+  let currentIndent = 0;
   for (const line of scope.split('\n')) {
     const start = line.match(ITEM_START);
-    if (start) {
+    const indent = line.match(/^ */)?.[0].length ?? 0;
+    // A marker indented deeper than the open item is a nested sub-bullet —
+    // fold it as continuation. Markers at the same or shallower indent start
+    // a new item (handles uniformly indented lists).
+    if (start && (!current || indent <= currentIndent)) {
       if (current) items.push(current.join(' '));
       current = [start[1].trim()];
+      currentIndent = indent;
       continue;
     }
     if (current && /^[ \t]+\S/.test(line)) {
@@ -67,10 +82,19 @@ function listItems(scope: string): string[] {
   return items;
 }
 
-/** Prefer a path-looking backtick token (has a slash, extension, or :line) over identifiers. */
+/**
+ * Prefer a path-looking backtick token over identifiers, strongest signal
+ * first: slash or :line beats extension-only (`foo.bar` must not outrank a
+ * later `src/foo.ts:42`), which beats the first token.
+ */
 function pathToken(text: string): string | null {
   const tokens = [...text.matchAll(/`([^`\s]+)`/g)].map((m) => m[1]);
-  return tokens.find((t) => /[/\\]|:\d+$|\.[a-zA-Z]{1,6}$/.test(t)) ?? tokens[0] ?? null;
+  return (
+    tokens.find((t) => /[/\\]|:\d+$/.test(t)) ??
+    tokens.find((t) => /\.[a-zA-Z]{1,6}$/.test(t)) ??
+    tokens[0] ??
+    null
+  );
 }
 
 function pushIssue(issues: SelfReviewIssue[], loc: string, description: string): void {
