@@ -13,7 +13,7 @@ import {
 
 import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
-import { cancelRunEngine, startRun } from '../../run-engine/orchestrator.js';
+import { bumpRunGeneration, cancelRunEngine, startRun } from '../../run-engine/orchestrator.js';
 import {
   normalizeRunner,
   runnerContinueCommand,
@@ -187,6 +187,10 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
     updateRun(params.runId, { status });
   }
 
+  // Take ownership from any stale pre-pause loop still unwinding (e.g. a
+  // push-verification wait that saw the abort after this resume): the bumped
+  // generation makes the old loop bail instead of racing the new one.
+  bumpRunGeneration(params.runId);
   // Re-drive the engine (restarts monitor/ci-watch loop)
   startRun(params.runId).catch((err) => {
     console.error(

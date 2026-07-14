@@ -416,12 +416,12 @@ export async function runSelfReviewRetryLoop({
   const attempts: IndependentReviewAttempt[] = [reviewAttemptFromResult(result, retryCount + 1)];
 
   while (result.verdict === 'issues' && result.issues.length > 0 && retryCount < maxRetries) {
-    debugSelfReviewLog(
+    console.log(
       `[self-review] run ${runId.slice(0, 8)} — ${result.issues.length} issue(s) found (retry ${retryCount + 1}/${maxRetries})`,
     );
     let workerAlive = await deps.isWorkerAlive(vars, workerRunner, runId);
     if (!workerAlive) {
-      debugSelfReviewLog(
+      console.log(
         `[self-review] run ${runId.slice(0, 8)} — worker exited, re-launching primary worker`,
       );
       const run = deps.getRun(runId);
@@ -432,7 +432,7 @@ export async function runSelfReviewRetryLoop({
         runId,
       );
       if (!workerAlive) {
-        debugSelfReviewLog(
+        console.warn(
           `[self-review] run ${runId.slice(0, 8)} — failed to re-launch worker, skipping feedback`,
         );
         return {
@@ -465,7 +465,7 @@ export async function runSelfReviewRetryLoop({
     retryCount += 1;
     feedbackSent = true;
     const nextLoopNumber = retryCount + 1;
-    debugSelfReviewLog(
+    console.log(
       `[self-review] run ${runId.slice(0, 8)} — feedback sent to worker, waiting for fix`,
     );
 
@@ -483,9 +483,7 @@ export async function runSelfReviewRetryLoop({
       );
       fixCompletedAt = new Date().toISOString();
       if (!fixSignal) {
-        debugSelfReviewLog(
-          `[self-review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`,
-        );
+        console.warn(`[self-review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`);
         await deps.markAgentContextStatus(runId, 'self-review-fix', 'failed');
         await deps.unwatchContext(slotId, 'self-review-fix');
         if (retryCount >= maxRetries) {
@@ -969,16 +967,45 @@ async function sendFeedbackToWorker(
       taskFile: fixTaskFile,
       taskDir,
     });
-    const sent = await sendRunnerInstructionSafely(
+    let sent = await sendRunnerInstructionSafely(
       vars,
       workerTarget,
       normalizeRunner(run?.metrics.runner),
       cmd,
       'self-review',
     );
-    debugSelfReviewLog(
-      `[self-review] fix task ${sent ? 'sent' : 'deferred'} to worker: ${fixTaskFile}`,
+    if (!sent) {
+      // A deferred send never retries on its own — the fix wait would burn its
+      // whole timeout against a worker that never received the task. Retry
+      // once forcing the busy-composer poll before giving up.
+      console.warn(
+        `[self-review] run ${runId.slice(0, 8)} — fix task send deferred; retrying with busy-poll`,
+      );
+      sent = await sendRunnerInstructionSafely(
+        vars,
+        workerTarget,
+        normalizeRunner(run?.metrics.runner),
+        cmd,
+        'self-review',
+        undefined,
+        { forceBusyPoll: true },
+      );
+    }
+    // Always-on: delivery state is the first question when a fix loop stalls.
+    console.log(
+      `[self-review] run ${runId.slice(0, 8)} — fix task ${sent ? 'sent' : 'NOT delivered (deferred twice)'}: ${fixTaskFile}`,
     );
+    if (!sent) {
+      // Waiting on a fix the worker never received would burn the whole
+      // FEEDBACK_TIMEOUT; fail loudly instead. Clear the fix context created
+      // above (it was optimistically marked working and watched); the catch
+      // below restores the worker checklist target and active task file.
+      await markAgentContextStatus(runId, 'self-review-fix', 'failed');
+      await unwatchContext(vars.slotId, 'self-review-fix');
+      throw new Error(
+        `self-review fix task delivery deferred twice — worker is not accepting prompts (${fixTaskFile})`,
+      );
+    }
     return fixSignalBaseline;
   } catch (err) {
     await restoreWorkerChecklistTargetFromSlot(vars, taskDir);

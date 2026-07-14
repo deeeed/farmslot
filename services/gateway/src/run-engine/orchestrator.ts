@@ -357,6 +357,14 @@ export async function startRun(runId: string): Promise<void> {
       // Re-check cancellation/pause after async step
       const after = getRun(runId);
       if (!after || after.status === 'cancelled' || after.status === 'paused') return;
+      // A replay/resume that bumped the generation mid-step owns the run now —
+      // the stale loop must not mark this step done or advance concurrently.
+      if (getRunGeneration(runId) !== myGen) {
+        console.log(
+          `[run-engine] run ${runId.slice(0, 8)} — stale loop after step ${stepName} (gen ${myGen} != ${getRunGeneration(runId)}), bailing`,
+        );
+        return;
+      }
 
       // Mark step done with I/O data BEFORE checking for terminal flip — executeStep returned
       // normally, so this step itself completed. A blocked/failed run-level status flipped by
