@@ -28,7 +28,12 @@ function pushIssue(issues: SelfReviewIssue[], loc: string, description: string):
 export function parseSelfReviewIssueBullets(content: string): SelfReviewIssue[] {
   // Scope to the Issues section when present — Validation/Evidence sections use
   // the same `- **x** — y` bullet shape and must not be mistaken for findings.
-  const scope = issuesSection(content) ?? content;
+  // Fenced code blocks are illustration (diff snippets contain `-` lines), not
+  // findings — drop them before scanning for list items.
+  const scope = (issuesSection(content) ?? content).replace(
+    /^[ \t]*```[^\n]*\n[\s\S]*?^[ \t]*```[ \t]*$/gm,
+    '',
+  );
   const issues: SelfReviewIssue[] = [];
   // Top-level list item: `- `, `* `, or numbered `1. `/`1) `, plus its indented
   // continuation lines.
@@ -37,6 +42,8 @@ export function parseSelfReviewIssueBullets(content: string): SelfReviewIssue[] 
   while ((match = itemRegex.exec(scope)) !== null) {
     const text = match[1].replace(/\s*\n\s*/g, ' ').trim();
     if (!text) continue;
+    // Template placeholder bullets like `- <empty for PASS>` are not findings.
+    if (/^<[^>]*>$/.test(text)) continue;
     // Canonical shape from the reviewer template: `**file:line** — description`
     // (or backticked location).
     const strict = text.match(/^(?:\*\*([^*]+)\*\*|`([^`]+)`)\s*[—–-]\s*(.*)$/);

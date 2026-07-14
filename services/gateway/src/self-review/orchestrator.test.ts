@@ -93,6 +93,25 @@ Publishable after fixing the above.
   assert.match(issues[1].description, /zero production callers/);
 });
 
+test('parseSelfReviewIssueBullets ignores fenced code blocks and placeholder bullets', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+- **src/a.ts:1** — wrong return type
+
+\`\`\`diff
+- removed line
++ added line
+\`\`\`
+- <empty for PASS>
+- \`src/b.ts:2\` — second real finding
+`);
+
+  assert.deepEqual(issues, [
+    { file: 'src/a.ts', line: 1, description: 'wrong return type' },
+    { file: 'src/b.ts', line: 2, description: 'second real finding' },
+  ]);
+});
+
 test('parseSelfReviewIssueBullets falls back to whole document without an Issues heading', () => {
   const issues = parseSelfReviewIssueBullets(`
 - **src/legacy.ts:3** — legacy artifact without sections.
