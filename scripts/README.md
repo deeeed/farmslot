@@ -7,7 +7,7 @@ Root-level scripts are the public Farmslot command surface. Keep them framework-
 - Slot lifecycle: `setup-slot.sh`, `preflight-slot.sh`, `teardown-slot.sh`, refresh helpers. Prepare/check/release moved to the CLI: `farmslot slot prepare|check|release` (`prepare-slot.sh`/`check-slot.sh` remain as deprecated shims).
 - Fleet commands: `farm-status.sh`, `show-slot.sh`, `monitor-slot.sh`, `deploy-node.sh`. Slot picking is `farmslot fleet find-slot`.
 - Dispatch and PR workflows: `post-fix.sh`, `post-review.sh`, `pr-monitor.sh`. Dispatch and PR status are CLI-first: `farmslot run create`, `farmslot pr status|list`.
-- Fixtures and config: `sync-fixtures.sh`, `validate-config.sh`, media download helpers.
+- Fixtures and config: `sync-fixtures.sh`, `validate-config.sh`, media download helpers. `sync-fixtures.sh` is now a thin edge driver: the template/compose variant/include selection + render loop lives in `@farmslot/slot-config` (`computeFixturePlan`), invoked once per sync via `farmslot internal fixture-plan`; the script only owns the remote copy (ssh/scp), skip-worktree marking, and directory rsync.
 - Triage and scoring: `triage-bug.sh`, `batch-triage.sh`, `score-bug.sh`, `grade-bug.sh`, `validate-bug.sh`.
 
 ## Internal Areas
