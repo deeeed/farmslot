@@ -6,6 +6,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 - feat: `computeFixturePlan` + `expandFixturePath` — fixture variant/include selection and compose/render loop ported from `sync-fixtures.sh`, shared with the gateway and `farmslot internal fixture-plan`. An unresolved `{{domain}}` in a fixture path stays literal so an unselected optional overlay skips quietly instead of resolving to a bogus `domains//…`.
 - fix: `computeFixturePlan` rejects a fixture destination containing a tab or newline (`INVALID_FIXTURE_DST`) so it can't corrupt the tab-delimited copy manifest, and logs files it will copy as `[PLAN]` — the `[OK]` line is emitted by `sync-fixtures.sh` only after the copy lands, so a failed copy no longer leaves a log claiming success.
+- fix: `loadProjectVars` distinguishes a genuinely-absent config (`ENOENT` → `Project config not found`) from a malformed/unreadable one (now surfaced as `Failed to read project config …`) instead of masking every read/parse failure as "not found", so callers can no longer silently treat corrupt config as missing.
 
 ## 0.1.0 - 2026-07-13
 

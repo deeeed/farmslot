@@ -260,11 +260,21 @@ export async function slotShow(
 /** Validate a RECIPE_HARNESS_ROOT: relative, safe charset, no '.'/'..' components —
  * so a hostile value can't escape the repo. Mirrors soft-refresh-slot.sh. */
 export function validateHarnessRoot(harnessRoot: string): void {
+  const fixEnv =
+    "unset RECIPE_HARNESS_ROOT (or set it to a repo-relative path like 'temp/recipe/harness')";
   if (harnessRoot === '' || harnessRoot.startsWith('/') || /[^A-Za-z0-9._/-]/.test(harnessRoot)) {
-    throw new Error(`invalid RECIPE_HARNESS_ROOT: '${harnessRoot}'`);
+    throw new GatewayMethodError(
+      'SLOT_HARNESS_ROOT_INVALID',
+      `invalid RECIPE_HARNESS_ROOT: '${harnessRoot}'`,
+      { userAction: fixEnv },
+    );
   }
   if (`/${harnessRoot}/`.includes('/../') || `/${harnessRoot}/`.includes('/./')) {
-    throw new Error(`RECIPE_HARNESS_ROOT must not contain '.'/'..' components`);
+    throw new GatewayMethodError(
+      'SLOT_HARNESS_ROOT_INVALID',
+      `RECIPE_HARNESS_ROOT must not contain '.'/'..' components`,
+      { userAction: fixEnv },
+    );
   }
 }
 
@@ -436,6 +446,9 @@ export async function slotAutoRefresh(
     throw new GatewayMethodError(
       'SLOT_AUTO_REFRESH_NO_SCRIPT',
       `auto refresh script not found for project ${pv.projectName}: ${scriptPath}`,
+      {
+        userAction: `add setup/auto-refresh.sh to the ${pv.projectName} project pack (projects/${pv.projectName}/setup/auto-refresh.sh)`,
+      },
     );
   }
 
