@@ -48,6 +48,8 @@ export interface ManifestScrubbing {
 export interface Manifest {
   schemaVersion: 1;
   packageId: string;
+  /** Cross-attempt task-family key (spec section 1): derived, never assigned. */
+  taskKey: string;
   surface: string;
   project: string;
   repo?: string;
@@ -177,9 +179,34 @@ export interface PrPublication {
   extensions?: Record<string, unknown>;
 }
 
+export type GradeSemantic = 'good' | 'ok' | 'bad';
+
+export interface ProofTargetVerdict {
+  id: string;
+  target: string;
+  verdict: 'pass' | 'fail' | 'not-applicable';
+  note?: string;
+}
+
+/**
+ * Optional `grade.json`: verbatim post-scrub copy of the producer's canonical
+ * human grade - the loop's verdict signal. Copied, never authored, by the
+ * assembler; unknown extra fields are preserved (forward-compat).
+ */
+export interface HumanGrade {
+  recipe_semantic: GradeSemantic;
+  reasoning: string;
+  graded_by: string;
+  graded_at: string;
+  proof_target_verdicts?: ProofTargetVerdict[];
+  [key: string]: unknown;
+}
+
 export interface IndexRow {
   schemaVersion: 1;
   packageId: string;
+  /** Matches manifest.taskKey; keys indexes/by-task/<taskKey>.jsonl. */
+  taskKey: string;
   packagePath: string;
   surface: string;
   project: string;
@@ -193,4 +220,8 @@ export interface IndexRow {
   packageSchemaVersion?: number;
   hasPr?: boolean;
   hasHarnessEvidence?: boolean;
+  /** True iff the package includes grade.json. */
+  hasGrade?: boolean;
+  /** grade.json:recipe_semantic when present - corpus-level filter key. */
+  gradeSemantic?: GradeSemantic;
 }

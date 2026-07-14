@@ -17,14 +17,31 @@ test('package exports expose the stable public handoff surface', async () => {
   assert.equal(typeof root.isValidRunSlug, 'function');
   assert.equal(root.SCHEMA_VERSION, 1);
 
+  assert.equal(typeof root.writeLearningPackage, 'function');
+  assert.equal(typeof root.deriveTaskKey, 'function');
+  assert.equal(typeof root.resolveFile, 'function');
+  assert.equal(typeof root.resolveContent, 'function');
+  assert.equal(typeof root.extractTaskDocument, 'function');
+  assert.equal(typeof root.renderTaskMarkdown, 'function');
+  assert.equal(typeof root.buildPrPackage, 'function');
+  assert.equal(typeof root.publishPrEvidence, 'function');
+
   const validate = await dynamicImport('@farmslot/handoff/validate');
   const scrub = await dynamicImport('@farmslot/handoff/scrub');
   const learning = await dynamicImport('@farmslot/handoff/learning-package');
   const spec = await dynamicImport('@farmslot/handoff/spec');
+  const resolve = await dynamicImport('@farmslot/handoff/resolve');
+  const taskIo = await dynamicImport('@farmslot/handoff/task-io');
+  const prPublish = await dynamicImport('@farmslot/handoff/pr-publish');
   assert.equal(typeof validate.validateLearningPackage, 'function');
   assert.equal(typeof scrub.scrubFiles, 'function');
   assert.equal(typeof learning.assembleLearningPackage, 'function');
+  assert.equal(typeof learning.writeLearningPackage, 'function');
   assert.equal(typeof spec.loadSchema, 'function');
+  assert.equal(typeof spec.deriveTaskKey, 'function');
+  assert.equal(typeof resolve.resolveFile, 'function');
+  assert.equal(typeof taskIo.extractTaskDocument, 'function');
+  assert.equal(typeof prPublish.buildPrPackage, 'function');
 });
 
 test('the shipped schema assets are reachable as package subpaths', () => {

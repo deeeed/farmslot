@@ -137,6 +137,30 @@ const packages = [
     importCheck:
       "const m = await import('./packages/skills/dist/index.js'); if (!m.FARMSLOT_SKILL_NAMES?.includes('recipe-cook')) throw new Error('missing recipe-cook export');",
   },
+  {
+    name: '@farmslot/handoff',
+    dir: 'packages/handoff',
+    publicDoc: 'https://farmslot.io/docs/guides/learning-package',
+    requiredFiles: [
+      'README.md',
+      'LICENSE',
+      'src/index.ts',
+      'schemas/manifest.schema.json',
+      'schemas/index-row.schema.json',
+      'templates/task-default.md',
+    ],
+    packRequiredFiles: [
+      'README.md',
+      'LICENSE',
+      'dist/index.js',
+      'dist/index.d.ts',
+      'schemas/manifest.schema.json',
+      'schemas/index-row.schema.json',
+      'templates/task-default.md',
+    ],
+    importCheck:
+      "const m = await import('./packages/handoff/dist/index.js'); if (typeof m.assembleLearningPackage !== 'function' || m.SCHEMA_VERSION !== 1) throw new Error('missing handoff root exports');",
+  },
 ];
 
 const failures = [];

@@ -58,6 +58,23 @@ fi
 
 export GATEWAY_PORT="${GATEWAY_PORT:-7777}"
 export VITE_PORT="${VITE_PORT:-5174}"
+# The dev stack co-launches the local node agent (yarn dev runs it via
+# concurrently); point it at this stack's gateway so the machine is not
+# NODE DEGRADED (no device feed / file-watch / metrics). MACHINE_NAME
+# defaults to the hostname inside the node service. Always derived from
+# GATEWAY_PORT — an inherited GATEWAY_URL (e.g. sandbox dev.sh spawned by
+# the operator gateway) must not leak the parent stack's address in.
+export GATEWAY_URL="ws://127.0.0.1:$GATEWAY_PORT"
+
+# Fail hard if another gateway already owns the port (e.g. a `farmslot up`
+# prod stack on the default 7777): the gateway would fail to bind and the
+# co-launched node would register onto the OTHER gateway under this
+# machine's identity, flapping its node registration.
+if (exec 3<>"/dev/tcp/127.0.0.1/$GATEWAY_PORT") 2>/dev/null; then
+  echo "[dev] ERROR: port $GATEWAY_PORT is already in use — another gateway (farmslot up?) owns it." >&2
+  echo "[dev] Stop it, or set GATEWAY_PORT / .env.ports to a free port." >&2
+  exit 1
+fi
 if [ -z "${GATEWAY_HOST:-}" ]; then
   if [ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ] || [ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]; then
     export GATEWAY_HOST=0.0.0.0
@@ -71,6 +88,7 @@ export FARMSLOT_DEMO_POOL="${FARMSLOT_DEMO_POOL:-1}"
 
 echo "[dev] Gateway: http://localhost:$GATEWAY_PORT (bind: $GATEWAY_HOST)"
 echo "[dev] UI:      http://localhost:$VITE_PORT"
+echo "[dev] Node:    $GATEWAY_URL (machine: $(hostname -s))"
 if [ "$GATEWAY_HOST" = "127.0.0.1" ] || [ "$GATEWAY_HOST" = "localhost" ]; then
   echo "[dev] WARN: gateway is loopback-only — Companion LAN QR pairing will fail until GATEWAY_HOST=0.0.0.0"
 fi

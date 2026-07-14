@@ -1,3 +1,4 @@
+import type { ScrubOptions } from '../scrub/scrubber.js';
 import type {
   ArtifactKind,
   Manifest,
@@ -42,8 +43,9 @@ export interface RunMeta {
   engineer: string;
   run: ManifestRun;
   task: ManifestTask;
-  /** Normalized source fields for source.json (work-only, per spec section 3.2). */
-  source?: Omit<SourceDocument, 'schemaVersion'>;
+  /** Normalized source fields for source.json (work-only, per spec section 3.2).
+   * `sourceKind` comes from `task.sourceKind`; the assembler stamps both. */
+  source?: Partial<Omit<SourceDocument, 'schemaVersion' | 'sourceKind'>>;
   /** Open manifest extensions. */
   extensions?: Record<string, unknown>;
 }
@@ -64,10 +66,14 @@ export interface HarnessOutputDir {
 export interface ArtifactPaths {
   /** Absolute path; MUST contain report.md + learnings.md. */
   artifactsDir: string;
-  /** Absolute path to evidence-manifest.json, when present (spec section 3.5). */
-  evidenceManifest?: string;
   /** Raw runner output dirs, folded in post-scrub. */
   harnessOutputDirs?: HarnessOutputDir[];
+  /**
+   * Absolute path to the run's canonical grade.json (human verdict), when the
+   * run was graded. Copied verbatim (post-scrub) into the package as
+   * `grade.json`. Absent input = absent file, still a valid package.
+   */
+  gradeJson?: string;
 }
 
 /**
@@ -94,6 +100,12 @@ export interface LearningPackageInput {
   artifacts: ArtifactPaths;
   /** Evidence-manifest-selected media with resolved visual-pass state. */
   media?: MediaInput[];
+  /**
+   * Resolved farm/personal scrub configuration applied during assembly.
+   * UNION-only (spec section 5.1 layer 5): extra deny patterns ADD to the
+   * crypto-secret floor; nothing here can loosen it.
+   */
+  scrub?: ScrubOptions;
 }
 
 /**
