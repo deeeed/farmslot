@@ -8,6 +8,7 @@
   "required": [
     "schemaVersion",
     "packageId",
+    "taskKey",
     "packagePath",
     "surface",
     "project",
@@ -18,32 +19,81 @@
     "startedAt"
   ],
   "properties": {
-    "schemaVersion": { "type": "integer", "const": 1 },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
     "packageId": {
       "type": "string",
       "description": "Matches manifest.json:packageId."
+    },
+    "taskKey": {
+      "type": "string",
+      "description": "Matches manifest.json:taskKey. Keys indexes/by-task/<taskKey>.jsonl - the cross-attempt family. Shape is normative: the normalized-ticket form (lowercase alnum runs joined by single hyphens, exactly what derivation emits) or task-<16hex> for ticketless work. Ticket-correspondence (taskKey equals the normalized manifest.task.ticket when present) is a cross-field rule the reference validator enforces - JSON Schema cannot express it.",
+      "pattern": "^(?:[a-z0-9]+(?:-[a-z0-9]+)*|task-[a-f0-9]{16})$"
     },
     "packagePath": {
       "type": "string",
       "description": "Repo-relative path to the package directory, e.g. packages/2026/07/03/fleet/.../run-slug."
     },
-    "surface": { "type": "string" },
-    "project": { "type": "string" },
-    "domain": { "type": "string" },
-    "engineer": { "type": "string" },
-    "flow": { "type": "string" },
-    "ticket": { "type": "string" },
+    "surface": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "Safe-segment shape (writer additionally enforces path containment): no separators, no '..', no leading dot."
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "Safe-segment shape (writer additionally enforces path containment): no separators, no '..', no leading dot."
+    },
+    "domain": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*)?$",
+      "description": "Safe-segment shape or empty (writer additionally enforces path containment): no separators, no '..', no leading dot."
+    },
+    "engineer": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "Safe-segment shape (writer additionally enforces path containment): no separators, no '..', no leading dot."
+    },
+    "flow": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "Safe-segment shape (writer additionally enforces path containment): no separators, no '..', no leading dot."
+    },
+    "ticket": {
+      "type": "string"
+    },
     "outcome": {
       "type": "string",
       "enum": ["success", "failed", "aborted", "partial"]
     },
-    "startedAt": { "type": "string", "format": "date-time" },
-    "finishedAt": { "type": "string", "format": "date-time" },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finishedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
     "packageSchemaVersion": {
       "type": "integer",
       "description": "The schemaVersion of the package this row indexes. Mining passes MUST record which schemaVersions they consumed."
     },
-    "hasPr": { "type": "boolean" },
-    "hasHarnessEvidence": { "type": "boolean" }
+    "hasPr": {
+      "type": "boolean"
+    },
+    "hasHarnessEvidence": {
+      "type": "boolean"
+    },
+    "hasGrade": {
+      "type": "boolean",
+      "description": "True iff the package includes grade.json. Lets consumers filter graded runs without opening packages."
+    },
+    "gradeSemantic": {
+      "type": "string",
+      "enum": ["good", "ok", "bad"],
+      "description": "Copied from grade.json:recipe_semantic when present. Enables corpus-level filters straight from the index."
+    }
   }
 }

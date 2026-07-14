@@ -9,3 +9,9 @@ export type {
   RunMeta,
   TaskDocPaths,
 } from './types.js';
+export {
+  type WriteConsent,
+  writeLearningPackage,
+  type WriteLearningPackageOptions,
+  type WriteResult,
+} from './write.js';

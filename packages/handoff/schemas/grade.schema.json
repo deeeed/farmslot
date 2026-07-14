@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.dev/spec/learning-package/1/grade.schema.json",
+  "title": "Human Grade",
+  "description": "Optional grade.json: verbatim post-scrub copy of the producer's canonical human grade (the loop's verdict signal). additionalProperties are tolerated for forward-compat - the file is copied, not authored, by the package assembler.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["recipe_semantic", "reasoning", "graded_by", "graded_at"],
+  "properties": {
+    "recipe_semantic": {
+      "type": "string",
+      "enum": ["good", "ok", "bad"],
+      "description": "The human verdict on the run's recipe/approach."
+    },
+    "reasoning": {
+      "type": "string",
+      "description": "Why the grade was given. Subject to the scrub gate like any package text."
+    },
+    "graded_by": {
+      "type": "string",
+      "description": "Grader identifier (pseudonymous engineer key is fine)."
+    },
+    "graded_at": { "type": "string", "format": "date-time" },
+    "proof_target_verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "target", "verdict"],
+        "properties": {
+          "id": { "type": "string" },
+          "target": { "type": "string" },
+          "verdict": { "type": "string", "enum": ["pass", "fail", "not-applicable"] },
+          "note": { "type": "string" }
+        }
+      }
+    }
+  }
+}

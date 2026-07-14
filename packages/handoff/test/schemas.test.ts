@@ -4,9 +4,9 @@ import test from 'node:test';
 import { loadAllSchemas, SCHEMA_NAMES } from '../src/spec/schemas.js';
 import { validateAgainstSchema } from '../src/validate/json-schema.js';
 
-test('all seven spec schemas load as valid JSON with the right $id base', () => {
+test('all eight spec schemas load as valid JSON with the right $id base', () => {
   const schemas = loadAllSchemas();
-  assert.equal(SCHEMA_NAMES.length, 7);
+  assert.equal(SCHEMA_NAMES.length, 8);
   for (const name of SCHEMA_NAMES) {
     const schema = schemas[name];
     assert.ok(schema.$id?.startsWith('https://farmslot.dev/spec/learning-package/1/'), name);
