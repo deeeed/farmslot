@@ -17,7 +17,12 @@ import type { ProjectVars, SlotVars } from './config.js';
 import { expandFixturePath, expandTemplate } from './hooks.js';
 
 export interface FixturePlanLog {
-  level: 'OK' | 'SKIP' | 'WARN';
+  /**
+   * `PLAN` marks a file the plan will render for copy — the caller emits the
+   * `[OK]` line only after the copy actually lands, so a failed scp/update-index
+   * never leaves a log claiming success for a file that was never installed.
+   */
+  level: 'PLAN' | 'SKIP' | 'WARN';
   /** Operator-facing message, without the leading indent sync-fixtures.sh adds. */
   message: string;
 }
@@ -83,6 +88,20 @@ export async function computeFixturePlan(opts: FixturePlanOptions): Promise<Fixt
 
   for (const entry of templates) {
     const dst = expandPath(entry.dst);
+    // The dst→staged-file manifest sync-fixtures.sh reads is tab/newline
+    // delimited (unvalidated project.json input). A tab or newline in a
+    // destination would split one record into two and copy from the wrong
+    // staged path, so reject it at plan time with a clear error.
+    if (/[\t\n]/.test(dst)) {
+      throw Object.assign(
+        new Error(`Fixture destination must not contain a tab or newline: ${JSON.stringify(dst)}`),
+        {
+          code: 'INVALID_FIXTURE_DST',
+          userAction:
+            'Fix the fixtures.templates[].dst value in project.json — destinations are file paths without tabs or newlines.',
+        },
+      );
+    }
     const src = entry.src ? expandPath(entry.src) : '';
     const optional = Boolean(entry.optional);
     const compose = (entry.compose as Record<string, unknown> | undefined) ?? undefined;
@@ -139,13 +158,13 @@ export async function computeFixturePlan(opts: FixturePlanOptions): Promise<Fixt
       }
 
       files.push({ dst, content: render(composed) });
-      logs.push({ level: 'OK', message: `${dst} (composed: ${variantFile || 'includes'})` });
+      logs.push({ level: 'PLAN', message: `${dst} (composed: ${variantFile || 'includes'})` });
     } else if (src) {
       // === Template or plain file entry ===
       const localTpl = path.join(fixturesDir, src);
       if (await fileExists(localTpl)) {
         files.push({ dst, content: render(await readFile(localTpl, 'utf-8')) });
-        logs.push({ level: 'OK', message: dst });
+        logs.push({ level: 'PLAN', message: dst });
       } else if (optional) {
         logs.push({ level: 'SKIP', message: `${dst} — optional src ${src} not present` });
       } else {

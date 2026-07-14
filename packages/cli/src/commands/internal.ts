@@ -370,9 +370,24 @@ export function registerInternalCommand(program: Command): void {
         try {
           const vars = await loadSlotVars(slotId);
           const projectVars = await loadProjectVars(vars.projectName);
+          // Compose selection vars. Bash used indirect expansion
+          // (`${!COMPOSE_VAR:-}`), so a project's `compose.var` could name ANY
+          // exported variable (e.g. `TARGET`), not just FLOW_TYPE/APP/DOMAIN.
+          // Seed from the inherited environment to keep that reach, then overlay
+          // the explicit flags — a passed flag wins (mirroring bash's
+          // `export FLOW_TYPE=...`), an absent flag leaves the env value. The
+          // decision core stays env-free; this CLI edge does the env read.
+          const selectionVars: Record<string, string> = {};
+          for (const [key, value] of Object.entries(process.env)) {
+            if (typeof value === 'string') selectionVars[key] = value;
+          }
+          if (opts.flowType !== undefined) selectionVars.FLOW_TYPE = opts.flowType;
+          if (opts.app !== undefined) selectionVars.APP = opts.app;
+          if (opts.domain !== undefined) selectionVars.DOMAIN = opts.domain;
           // Custom slots default to the 'custom' compose variant (sync-fixtures.sh parity).
-          let flowType = opts.flowType ?? '';
-          if (!flowType && vars.slotMode === 'custom') flowType = 'custom';
+          if (!selectionVars.FLOW_TYPE && vars.slotMode === 'custom') {
+            selectionVars.FLOW_TYPE = 'custom';
+          }
           // Only DOMAIN flows into template expansion as an extra var, matching the
           // bash expand_slot_template contract (--var domain=$DOMAIN); FLOW_TYPE/APP
           // are compose-selection keys, not {{placeholders}}.
@@ -380,7 +395,7 @@ export function registerInternalCommand(program: Command): void {
           const plan = await computeFixturePlan({
             slotVars: vars,
             projectVars,
-            selectionVars: { FLOW_TYPE: flowType, APP: opts.app ?? '', DOMAIN: opts.domain ?? '' },
+            selectionVars,
             extraVars,
           });
           const manifestLines: string[] = [];

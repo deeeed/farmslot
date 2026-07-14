@@ -108,7 +108,7 @@ test('computeFixturePlan composes overlay includes in order when the domain reso
     const messages = plan.logs.map((l) => `[${l.level}] ${l.message}`);
     assert.ok(messages.includes('[SKIP] optional include domains/blue/absent.md not present'));
     assert.ok(messages.includes('[WARN] include missing-required.md not found'));
-    assert.ok(messages.includes('[OK] COMPOSED.md (composed: base.md)'));
+    assert.ok(messages.includes('[PLAN] COMPOSED.md (composed: base.md)'));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -177,6 +177,95 @@ test('computeFixturePlan skips a compose entry when its selection var is unset',
     );
     const messages = plan.logs.map((l) => `[${l.level}] ${l.message}`);
     assert.ok(messages.some((m) => m.startsWith('[SKIP] COMPOSED.md — FLOW_TYPE not set')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('computeFixturePlan selects a variant by a non-standard compose.var', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'fixplan-'));
+  const dir = path.join(root, 'fixtures');
+  await mkdir(dir, { recursive: true });
+  try {
+    await writeFile(path.join(dir, 'target.md'), 'TARGET BASE\n');
+    const pv = projectVars(dir, {
+      name: 'inc-test-farm',
+      fixtures: {
+        templates: [
+          {
+            dst: 'TARGETED.md',
+            compose: { var: 'TARGET', variants: { alpha: { file: 'target.md' } } },
+          },
+        ],
+      },
+    } as RawProjectJson);
+    // A project whose compose.var is neither FLOW_TYPE/APP/DOMAIN must still
+    // resolve — the caller threads the value through selectionVars.
+    const plan = await computeFixturePlan({
+      slotVars: slotVars(),
+      projectVars: pv,
+      selectionVars: { TARGET: 'alpha' },
+    });
+    assert.equal(plan.files.find((f) => f.dst === 'TARGETED.md')?.content, 'TARGET BASE\n');
+    const messages = plan.logs.map((l) => `[${l.level}] ${l.message}`);
+    assert.ok(messages.includes('[PLAN] TARGETED.md (composed: target.md)'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('computeFixturePlan rejects a destination with a tab or newline', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'fixplan-'));
+  const dir = path.join(root, 'fixtures');
+  await mkdir(dir, { recursive: true });
+  try {
+    await writeFile(path.join(dir, 'plain.md'), 'PLAIN\n');
+    for (const badDst of ['bad\tdst.md', 'bad\ndst.md']) {
+      const pv = projectVars(dir, {
+        name: 'inc-test-farm',
+        fixtures: { templates: [{ src: 'plain.md', dst: badDst }] },
+      } as RawProjectJson);
+      await assert.rejects(
+        () => computeFixturePlan({ slotVars: slotVars(), projectVars: pv }),
+        (err: Error & { code?: string }) => {
+          assert.equal(err.code, 'INVALID_FIXTURE_DST');
+          return true;
+        },
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('computeFixturePlan marks files to copy as PLAN, never OK (OK is emitted post-copy)', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'fixplan-'));
+  const dir = path.join(root, 'fixtures');
+  await mkdir(dir, { recursive: true });
+  try {
+    await seedFixtures(dir);
+    const pv = projectVars(dir, {
+      name: 'inc-test-farm',
+      vars: { domain: 'blue' },
+      fixtures: composeTemplates,
+    } as RawProjectJson);
+    const plan = await computeFixturePlan({
+      slotVars: slotVars(),
+      projectVars: pv,
+      selectionVars: { FLOW_TYPE: 'fix-bug' },
+    });
+    // Every file the plan will copy is logged as PLAN; the shell prints [OK]
+    // only after the copy lands, so a copy failure can't leave a stale [OK].
+    assert.equal(
+      plan.logs.some((l) => (l.level as string) === 'OK'),
+      false,
+    );
+    for (const file of plan.files) {
+      assert.ok(
+        plan.logs.some((l) => l.level === 'PLAN' && l.message.startsWith(file.dst)),
+        `expected a PLAN log for ${file.dst}`,
+      );
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

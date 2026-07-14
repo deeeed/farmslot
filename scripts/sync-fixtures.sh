@@ -164,7 +164,9 @@ if [ -n "${SLOT_ID}" ]; then
   # shared with the gateway — one node start instead of one per template/include
   # (~0.3s each, ~40 on the largest packs). The plan renders each destination
   # into a stage file and lists "<dst>\t<staged-file>" in the manifest; the
-  # remote copy + skip-worktree marking below stay shell edges.
+  # remote copy + skip-worktree marking below stay shell edges. The plan streams
+  # [PLAN]/[SKIP]/[WARN] lines; [OK] is printed here, after each copy lands, so a
+  # failed scp/update-index never leaves a log claiming a file was installed.
   FIXTURE_STAGE=$(mktemp -d)
   FIXTURE_MANIFEST=$(mktemp)
   "$FARMSLOT_CLI" internal fixture-plan "$SLOT_ID" \
@@ -176,6 +178,9 @@ if [ -n "${SLOT_ID}" ]; then
     [ -z "$TPL_DST" ] && continue
     copy_to_slot "$STAGED_FILE" "${REMOTE_REPO}/${TPL_DST}"
     mark_forced_patch_if_tracked "$TPL_DST"
+    # set -e aborts before this on any copy/mark failure, so [OK] only prints
+    # once the file is actually installed.
+    echo "  [OK] ${TPL_DST}"
   done < "$FIXTURE_MANIFEST"
   rm -rf "$FIXTURE_STAGE" "$FIXTURE_MANIFEST"
 
