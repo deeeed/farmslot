@@ -615,6 +615,29 @@ export async function runSelfReviewRetryLoop({
     }
   }
 
+  if (result.incomplete) {
+    // A re-review after a fix pass exited without writing feedback. Its verdict
+    // is a placeholder 'pass' from readReviewFeedback — returning it would
+    // silently clear the previous reviewer's unresolved issues. Surface as
+    // skipped (like the initial-review incomplete path) so the gate re-presents.
+    console.warn(
+      `[self-review] run ${runId.slice(0, 8)} — INCOMPLETE: re-review exited without writing feedback`,
+    );
+    return {
+      skipped: true,
+      reason: 'no-feedback-file',
+      retryCount,
+      maxRetries,
+      feedbackSent,
+      validationDepth,
+      usage: result.usage,
+      reviewSnapshot: result.reviewSnapshot,
+      attempts,
+      timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
+      durationMs: Date.now() - start,
+    };
+  }
+
   return {
     verdict: result.verdict,
     issues: result.issues,

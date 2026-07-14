@@ -48,6 +48,188 @@ test('parseSelfReviewIssueBullets accepts review-feedback backtick locations', (
   ]);
 });
 
+test('parseSelfReviewIssueBullets ignores bullets outside the Issues section', () => {
+  const issues = parseSelfReviewIssueBullets(`
+# Self-Review: MANUAL-000014
+
+## Verdict: ISSUES
+
+## Validation
+- \`yarn typecheck\` — pass.
+
+## Evidence
+- **before-flow-selector.png** — FLOW pills end in \`merge-main\`. ✔ baseline.
+- **after-flow-selector.png** — same row now ends in \`update-branch\`; delta is real.
+
+## Issues
+- **src/real-problem.ts:12** — the only actual finding.
+`);
+
+  assert.deepEqual(issues, [
+    { file: 'src/real-problem.ts', line: 12, description: 'the only actual finding.' },
+  ]);
+});
+
+test('parseSelfReviewIssueBullets parses numbered title-style items', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues (cheap, introduced by this PR — non-blocking)
+
+1. **Inaccurate JSDoc — wrong threading claim.**
+   \`packages/protocol/src/contracts/runs.ts:1247\` says the field is threaded
+   into prepare. It is not.
+
+2. **\`resolveBranchUpdateStrategy\` has zero production callers.**
+   Exported and unit-tested but never invoked.
+
+## Recommended action
+
+Publishable after fixing the above.
+`);
+
+  assert.equal(issues.length, 2);
+  assert.equal(issues[0].file, 'packages/protocol/src/contracts/runs.ts');
+  assert.equal(issues[0].line, 1247);
+  assert.match(issues[0].description, /Inaccurate JSDoc/);
+  assert.match(issues[1].description, /zero production callers/);
+});
+
+test('parseSelfReviewIssueBullets ignores fenced code blocks and placeholder bullets', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+- **src/a.ts:1** — wrong return type
+
+\`\`\`diff
+- removed line
++ added line
+\`\`\`
+- <empty for PASS>
+- \`src/b.ts:2\` — second real finding
+`);
+
+  assert.deepEqual(issues, [
+    { file: 'src/a.ts', line: 1, description: 'wrong return type' },
+    { file: 'src/b.ts', line: 2, description: 'second real finding' },
+  ]);
+});
+
+test('parseSelfReviewIssueBullets survives headings and fences inside the Issues section', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+- **src/a.ts:1** — first finding
+
+\`\`\`markdown
+## Example
+- **fake.ts:9** — not a finding
+\`\`\`
+
+~~~
+- also not a finding
+~~~
+
+- **src/b.ts:2** — finding after the fences
+
+## Recommended action
+- **not-an-issue.md** — different section
+`);
+
+  assert.deepEqual(issues, [
+    { file: 'src/a.ts', line: 1, description: 'first finding' },
+    { file: 'src/b.ts', line: 2, description: 'finding after the fences' },
+  ]);
+});
+
+test('parseSelfReviewIssueBullets strips unterminated fences to end of input', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+- **src/a.ts:1** — real finding
+
+\`\`\`diff
+- **phantom.ts:5** — inside an unterminated fence
+`);
+
+  assert.deepEqual(issues, [{ file: 'src/a.ts', line: 1, description: 'real finding' }]);
+});
+
+test('parseSelfReviewIssueBullets accepts CommonMark 1-3 space indentation', () => {
+  const issues = parseSelfReviewIssueBullets(
+    '  ## Issues\n' + '   - **src/indented.ts:7** — heading and bullet both indented\n',
+  );
+
+  assert.deepEqual(issues, [
+    { file: 'src/indented.ts', line: 7, description: 'heading and bullet both indented' },
+  ]);
+});
+
+test('parseSelfReviewIssueBullets prefers path-looking backtick tokens for title-style items', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+1. **\`resolveFoo\` is wrong.** See \`src/foo.ts:42\` for the call site.
+`);
+
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].file, 'src/foo.ts');
+  assert.equal(issues[0].line, 42);
+});
+
+test('parseSelfReviewIssueBullets: inner fence-with-info lines do not close an open fence', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+- **src/a.ts:1** — real finding
+
+\`\`\`markdown
+\`\`\`diff
+- **phantom.ts:5** — still inside the outer fence
+\`\`\`
+
+- **src/b.ts:2** — finding after the fence closes
+`);
+
+  assert.deepEqual(issues, [
+    { file: 'src/a.ts', line: 1, description: 'real finding' },
+    { file: 'src/b.ts', line: 2, description: 'finding after the fence closes' },
+  ]);
+});
+
+test('parseSelfReviewIssueBullets folds nested sub-bullets but splits uniformly indented lists', () => {
+  const nested = parseSelfReviewIssueBullets(`
+## Issues
+- **src/a.ts:1** — finding with evidence
+  - nested evidence bullet
+  - more evidence
+- **src/b.ts:2** — second finding
+`);
+  assert.equal(nested.length, 2);
+  assert.match(nested[0].description, /nested evidence bullet/);
+
+  const uniform = parseSelfReviewIssueBullets(
+    '## Issues\n' + '   - **src/a.ts:1** — first\n' + '   - **src/b.ts:2** — second\n',
+  );
+  assert.deepEqual(
+    uniform.map((i) => i.file),
+    ['src/a.ts', 'src/b.ts'],
+  );
+});
+
+test('parseSelfReviewIssueBullets ranks slash/:line tokens above extension-only tokens', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+1. **The \`foo.bar\` config key is stale.** Real location is \`src/foo.ts:42\`.
+`);
+
+  assert.equal(issues[0].file, 'src/foo.ts');
+  assert.equal(issues[0].line, 42);
+});
+
+test('parseSelfReviewIssueBullets falls back to whole document without an Issues heading', () => {
+  const issues = parseSelfReviewIssueBullets(`
+- **src/legacy.ts:3** — legacy artifact without sections.
+`);
+
+  assert.deepEqual(issues, [
+    { file: 'src/legacy.ts', line: 3, description: 'legacy artifact without sections.' },
+  ]);
+});
+
 test('canRecoverSelfReviewFixPass requires a working context for the current fix task', () => {
   const current = {
     role: 'self-review-fix',
@@ -126,7 +308,7 @@ const ISSUES: SelfReviewIssue[] = [{ file: 'a.ts', line: 1, description: 'x' }];
 const fakeVars = { remoteRepo: '/repo' } as any;
 
 interface ScriptedDepsOptions {
-  reviewVerdicts: Array<'pass' | 'issues'>;
+  reviewVerdicts: Array<'pass' | 'issues' | 'incomplete'>;
   workerAlive?: boolean;
   relaunchOk?: boolean;
   fixSignals?: Array<WorkerSignal | undefined>; // undefined = timeout
@@ -208,12 +390,17 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     ) => {
       calls.artifactScopes.push(artifactScope);
       calls.reviewAgent += 1;
-      const verdict = opts.reviewVerdicts[reviewIdx] ?? 'issues';
+      const scripted = opts.reviewVerdicts[reviewIdx] ?? 'issues';
       reviewIdx += 1;
+      // 'incomplete' models readReviewFeedback's placeholder result when the
+      // reviewer exits without writing feedback: verdict 'pass' + incomplete.
+      const incomplete = scripted === 'incomplete';
+      const verdict = incomplete ? 'pass' : scripted;
       const startedAt = new Date().toISOString();
       const completedAt = new Date(Date.now() + 1).toISOString();
       return {
         verdict,
+        ...(incomplete ? { incomplete: true } : {}),
         issues: verdict === 'pass' ? [] : ISSUES,
         timeline: [
           {
@@ -246,6 +433,25 @@ const baseArgs = {
   model: 'sonnet',
   reviewTimeoutMs: 15 * 60_000,
 };
+
+test('runSelfReviewRetryLoop: incomplete re-review surfaces as skipped, not a false pass', async () => {
+  const { deps } = buildDeps({
+    reviewVerdicts: ['incomplete'],
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    reviewResult: { verdict: 'issues', issues: ISSUES } satisfies ReviewAgentResult,
+    retryCount: 0,
+    deps,
+  });
+
+  assert.equal(result.skipped, true, 'incomplete re-review must not clear unresolved issues');
+  assert.equal(result.reason, 'no-feedback-file');
+  assert.notEqual(result.verdict, 'pass');
+});
 
 test('runSelfReviewRetryLoop: exhausts retries when every re-review still finds issues', async () => {
   const { deps, calls } = buildDeps({
