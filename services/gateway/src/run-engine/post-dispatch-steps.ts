@@ -279,7 +279,7 @@ export async function executeMonitorStep(
   try {
     monitorResult = await monitorRun(runId, current.slotId, controller.signal);
   } catch (err) {
-    activeMonitors.delete(runId);
+    if (activeMonitors.get(runId) === controller) activeMonitors.delete(runId);
     throw err;
   }
   // The controller stays registered through push verification below so run
@@ -325,9 +325,11 @@ export async function executeMonitorStep(
         stepOutputs,
       });
     }
-    if (workerSignal?.status === 'complete') {
+    if (workerSignal?.status === 'complete' || workerSignal?.status === 'done') {
       // Worker-owned-push flows must have the branch published before the run
       // advances — otherwise ci-watch evaluates a stale remote SHA and loops.
+      // `done` is an accepted terminal alias for `complete` (isTerminalWorkerSignal),
+      // so it must take the same verification path.
       const pushVerification = await verifyWorkerPushedBranch(
         runId,
         current.slotId,
@@ -348,7 +350,10 @@ export async function executeMonitorStep(
     }
     return { inputs, outputs: stepOutputs };
   } finally {
-    activeMonitors.delete(runId);
+    // Guarded delete: a pause→resume can register a NEW controller for this
+    // run while the old verifier is still in its bounded wait — the stale
+    // step must not clobber the live monitor's registration.
+    if (activeMonitors.get(runId) === controller) activeMonitors.delete(runId);
   }
 }
 

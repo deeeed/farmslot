@@ -136,8 +136,9 @@ export async function verifyWorkerPushedBranch(
     const target = await resolveAgentTarget(slotId, { runId, role: 'primary' });
     const instruction =
       `Your completion signal was received but the branch is not published. In ${vars.remoteRepo}: ` +
-      `stage and commit ALL pending changes with a Conventional Commit message describing the fix, ` +
-      `then publish the branch with: git push. Verify with git status (clean) before finishing.`;
+      `stage and commit the changes that belong to your task (leave any unrelated files alone) ` +
+      `with a Conventional Commit message describing the fix, then publish the branch with: git push. ` +
+      `Verify with git status before finishing.`;
     nudged = await sendRunnerInstructionSafely(
       vars,
       target.target,
