@@ -112,6 +112,65 @@ test('parseSelfReviewIssueBullets ignores fenced code blocks and placeholder bul
   ]);
 });
 
+test('parseSelfReviewIssueBullets survives headings and fences inside the Issues section', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+- **src/a.ts:1** — first finding
+
+\`\`\`markdown
+## Example
+- **fake.ts:9** — not a finding
+\`\`\`
+
+~~~
+- also not a finding
+~~~
+
+- **src/b.ts:2** — finding after the fences
+
+## Recommended action
+- **not-an-issue.md** — different section
+`);
+
+  assert.deepEqual(issues, [
+    { file: 'src/a.ts', line: 1, description: 'first finding' },
+    { file: 'src/b.ts', line: 2, description: 'finding after the fences' },
+  ]);
+});
+
+test('parseSelfReviewIssueBullets strips unterminated fences to end of input', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+- **src/a.ts:1** — real finding
+
+\`\`\`diff
+- **phantom.ts:5** — inside an unterminated fence
+`);
+
+  assert.deepEqual(issues, [{ file: 'src/a.ts', line: 1, description: 'real finding' }]);
+});
+
+test('parseSelfReviewIssueBullets accepts CommonMark 1-3 space indentation', () => {
+  const issues = parseSelfReviewIssueBullets(
+    '  ## Issues\n' + '   - **src/indented.ts:7** — heading and bullet both indented\n',
+  );
+
+  assert.deepEqual(issues, [
+    { file: 'src/indented.ts', line: 7, description: 'heading and bullet both indented' },
+  ]);
+});
+
+test('parseSelfReviewIssueBullets prefers path-looking backtick tokens for title-style items', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+1. **\`resolveFoo\` is wrong.** See \`src/foo.ts:42\` for the call site.
+`);
+
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].file, 'src/foo.ts');
+  assert.equal(issues[0].line, 42);
+});
+
 test('parseSelfReviewIssueBullets falls back to whole document without an Issues heading', () => {
   const issues = parseSelfReviewIssueBullets(`
 - **src/legacy.ts:3** — legacy artifact without sections.
@@ -200,7 +259,7 @@ const ISSUES: SelfReviewIssue[] = [{ file: 'a.ts', line: 1, description: 'x' }];
 const fakeVars = { remoteRepo: '/repo' } as any;
 
 interface ScriptedDepsOptions {
-  reviewVerdicts: Array<'pass' | 'issues'>;
+  reviewVerdicts: Array<'pass' | 'issues' | 'incomplete'>;
   workerAlive?: boolean;
   relaunchOk?: boolean;
   fixSignals?: Array<WorkerSignal | undefined>; // undefined = timeout
@@ -282,12 +341,17 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     ) => {
       calls.artifactScopes.push(artifactScope);
       calls.reviewAgent += 1;
-      const verdict = opts.reviewVerdicts[reviewIdx] ?? 'issues';
+      const scripted = opts.reviewVerdicts[reviewIdx] ?? 'issues';
       reviewIdx += 1;
+      // 'incomplete' models readReviewFeedback's placeholder result when the
+      // reviewer exits without writing feedback: verdict 'pass' + incomplete.
+      const incomplete = scripted === 'incomplete';
+      const verdict = incomplete ? 'pass' : scripted;
       const startedAt = new Date().toISOString();
       const completedAt = new Date(Date.now() + 1).toISOString();
       return {
         verdict,
+        ...(incomplete ? { incomplete: true } : {}),
         issues: verdict === 'pass' ? [] : ISSUES,
         timeline: [
           {
@@ -320,6 +384,25 @@ const baseArgs = {
   model: 'sonnet',
   reviewTimeoutMs: 15 * 60_000,
 };
+
+test('runSelfReviewRetryLoop: incomplete re-review surfaces as skipped, not a false pass', async () => {
+  const { deps } = buildDeps({
+    reviewVerdicts: ['incomplete'],
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    reviewResult: { verdict: 'issues', issues: ISSUES } satisfies ReviewAgentResult,
+    retryCount: 0,
+    deps,
+  });
+
+  assert.equal(result.skipped, true, 'incomplete re-review must not clear unresolved issues');
+  assert.equal(result.reason, 'no-feedback-file');
+  assert.notEqual(result.verdict, 'pass');
+});
 
 test('runSelfReviewRetryLoop: exhausts retries when every re-review still finds issues', async () => {
   const { deps, calls } = buildDeps({
