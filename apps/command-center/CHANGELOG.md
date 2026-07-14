@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- fix: `yarn dev` co-launches the local `@farmslot/node` agent alongside gateway + UI, and `scripts/dev.sh` derives `GATEWAY_URL` from `GATEWAY_PORT` (with a fail-hard guard when the port is already bound), so dev machines no longer sit NODE DEGRADED.
 - chore: recipe operational gate runs the hook-expansion tests from their new `@farmslot/slot-config` home.
 - chore: prune the type-escape baseline entry for `packages/cli/src/gateway-client.ts` (file is now escape-free).
 
