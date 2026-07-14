@@ -48,6 +48,61 @@ test('parseSelfReviewIssueBullets accepts review-feedback backtick locations', (
   ]);
 });
 
+test('parseSelfReviewIssueBullets ignores bullets outside the Issues section', () => {
+  const issues = parseSelfReviewIssueBullets(`
+# Self-Review: MANUAL-000014
+
+## Verdict: ISSUES
+
+## Validation
+- \`yarn typecheck\` — pass.
+
+## Evidence
+- **before-flow-selector.png** — FLOW pills end in \`merge-main\`. ✔ baseline.
+- **after-flow-selector.png** — same row now ends in \`update-branch\`; delta is real.
+
+## Issues
+- **src/real-problem.ts:12** — the only actual finding.
+`);
+
+  assert.deepEqual(issues, [
+    { file: 'src/real-problem.ts', line: 12, description: 'the only actual finding.' },
+  ]);
+});
+
+test('parseSelfReviewIssueBullets parses numbered title-style items', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues (cheap, introduced by this PR — non-blocking)
+
+1. **Inaccurate JSDoc — wrong threading claim.**
+   \`packages/protocol/src/contracts/runs.ts:1247\` says the field is threaded
+   into prepare. It is not.
+
+2. **\`resolveBranchUpdateStrategy\` has zero production callers.**
+   Exported and unit-tested but never invoked.
+
+## Recommended action
+
+Publishable after fixing the above.
+`);
+
+  assert.equal(issues.length, 2);
+  assert.equal(issues[0].file, 'packages/protocol/src/contracts/runs.ts');
+  assert.equal(issues[0].line, 1247);
+  assert.match(issues[0].description, /Inaccurate JSDoc/);
+  assert.match(issues[1].description, /zero production callers/);
+});
+
+test('parseSelfReviewIssueBullets falls back to whole document without an Issues heading', () => {
+  const issues = parseSelfReviewIssueBullets(`
+- **src/legacy.ts:3** — legacy artifact without sections.
+`);
+
+  assert.deepEqual(issues, [
+    { file: 'src/legacy.ts', line: 3, description: 'legacy artifact without sections.' },
+  ]);
+});
+
 test('canRecoverSelfReviewFixPass requires a working context for the current fix task', () => {
   const current = {
     role: 'self-review-fix',
