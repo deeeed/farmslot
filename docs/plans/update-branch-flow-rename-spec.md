@@ -87,8 +87,8 @@ Start with these files; expand only where the compiler/tests force it:
   after adding load-time normalization for local history.
 - Normalize existing local persisted runs/actions from the previous name to
   `update-branch` at load/migration boundaries.
-- Update artifact contract defaults to prefer `artifacts/branch-update-report.md`
-  or `artifacts/report.md`.
+- Update artifact contract defaults to `artifacts/report.md` (matches the
+  worker terminal contract and the update-branch template output).
 - Rename WorkGraph `rebase-onto` flow targets to `update-branch`.
 
 ### 2. Gateway dispatch and CI-watch

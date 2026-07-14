@@ -120,7 +120,8 @@ export interface RunCreateParams {
   /**
    * Branch-update strategy for `update-branch` runs (rebase | merge |
    * project-default). Ignored for other flows. Persisted on the run and
-   * threaded into prepare as the merge/rebase strategy.
+   * rendered into the worker task as the `BRANCH_UPDATE_STRATEGY` template var
+   * (not the prepare-time ADR-042 `merge_main_strategy`).
    */
   branchUpdateStrategy?: import('../contracts/index.js').BranchUpdateStrategy;
   /** Branch-affinity nudge — operator picked "Nudge worker" in the dispatch wizard for a

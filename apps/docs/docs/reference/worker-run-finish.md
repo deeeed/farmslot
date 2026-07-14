@@ -60,7 +60,7 @@ cd temp/tasks/recipe-dev/...
 | **fix-bug**                            | `artifacts/pr-description.md`                                             | same                                                            |
 | **review-pr**                          | `artifacts/review.md`, `artifacts/line-comments.json` (may be `[]`)       | same                                                            |
 | **pr-complete**                        | `artifacts/comments-report.md`                                            | same                                                            |
-| **update-branch**                      | `artifacts/report.md` or `merge-report.md`                                | same                                                            |
+| **update-branch**                      | `artifacts/report.md`                                                     | same                                                            |
 | **Standalone recipe-dev / fix-ticket** | `artifacts/report.md` (no auto-PR)                                        | same                                                            |
 
 Do **not** write both `report.md` and `pr-description.md` on dev/fix-bug — `pr-description.md` is the single outcome file.

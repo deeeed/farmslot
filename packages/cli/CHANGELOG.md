@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the `run` command flow-type map.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.3.0 - 2026-07-13

@@ -67,6 +67,7 @@ test('buildCIWatchChainedRunParams inherits parent runner+model unchanged for up
     lane: 'production',
     variant: null,
     ticketOrPr: 'owner/repo#500',
+    prNumber: 500,
     metrics: {
       nudgeCount: 0,
       model: 'gpt-5.5-mini',
@@ -105,6 +106,21 @@ test('buildCIWatchChainedRunParams inherits claude parent into update-branch wit
   assert(chain);
   assert.equal(chain.createParams.model, 'sonnet');
   assert.equal(chain.createParams.runner, 'claude');
+});
+
+test('buildCIWatchChainedRunParams converts a manual-rooted update-branch chain to a PR ref', () => {
+  // Regression: update-branch is PR-bound, so a chain inheriting a manual/Jira
+  // ticket (e.g. MANUAL-000014) would throw `Invalid PR reference` at runCreate.
+  // The CI-conflict path has an authoritative prNumber — convert to owner/repo#N.
+  const current = makeRun({
+    familyRootTicketOrPr: 'MANUAL-000014',
+    ticketOrPr: 'MANUAL-000014',
+    prNumber: 321,
+  });
+  const chain = buildCIWatchChainedRunParams(current, 'dispatch-update-branch', 'owner/repo');
+  assert(chain);
+  assert.equal(chain.flowType, 'update-branch');
+  assert.equal(chain.createParams.ticketOrPr, 'owner/repo#321');
 });
 
 test('buildCIWatchChainedRunParams inherits parent safetyTier so chained flows keep posture', () => {

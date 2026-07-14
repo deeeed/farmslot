@@ -8,7 +8,6 @@ import {
   isBranchUpdateStrategy,
   normalizeCiActionId,
   normalizeFlowType,
-  resolveBranchUpdateStrategy,
 } from '../../src/contracts/runs.js';
 
 test('normalizeFlowType maps legacy branch-maintenance flow to update-branch', () => {
@@ -38,10 +37,7 @@ test('normalizeCiActionId renames the legacy merge-conflict dispatch action', ()
 
 test('update-branch is a first-class flow with steps and outcome artifacts', () => {
   assert.ok(FLOW_STEPS['update-branch'].length > 0);
-  assert.deepEqual(FLOW_WORKER_REPORT_ARTIFACTS['update-branch'], [
-    'branch-update-report.md',
-    'report.md',
-  ]);
+  assert.deepEqual(FLOW_WORKER_REPORT_ARTIFACTS['update-branch'], ['report.md']);
   assert.equal((FLOW_STEPS as Record<string, unknown>)['merge-main'], undefined);
 });
 
@@ -51,17 +47,4 @@ test('isBranchUpdateStrategy accepts only the three strategy values', () => {
   }
   assert.equal(isBranchUpdateStrategy('force'), false);
   assert.equal(isBranchUpdateStrategy(undefined), false);
-});
-
-test('resolveBranchUpdateStrategy prefers rebase and downgrades when force-push disallowed', () => {
-  // default (undefined) defers to project policy
-  assert.equal(resolveBranchUpdateStrategy(undefined), undefined);
-  assert.equal(resolveBranchUpdateStrategy('project-default'), undefined);
-  // rebase stays rebase when force-push allowed / unknown
-  assert.equal(resolveBranchUpdateStrategy('rebase'), 'rebase');
-  assert.equal(resolveBranchUpdateStrategy('rebase', { allowForcePush: true }), 'rebase');
-  // rebase downgrades to merge when the project disallows force-push
-  assert.equal(resolveBranchUpdateStrategy('rebase', { allowForcePush: false }), 'merge');
-  // explicit merge is always honored
-  assert.equal(resolveBranchUpdateStrategy('merge', { allowForcePush: false }), 'merge');
 });

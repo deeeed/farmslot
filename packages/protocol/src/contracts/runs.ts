@@ -1241,8 +1241,10 @@ export interface Run {
   prepareProfile?: string;
   /**
    * Branch-update strategy for `update-branch` runs (rebase | merge |
-   * project-default). Ignored for other flows. Threaded into prepare as the
-   * merge/rebase strategy; `project-default` defers to the project policy.
+   * project-default). Ignored for other flows. Rendered into the worker task
+   * as the `BRANCH_UPDATE_STRATEGY` template var (see tasks/writer.ts); the
+   * worker applies it. `project-default` defers to project policy at runtime.
+   * (Distinct from the prepare-time ADR-042 `merge_main_strategy`.)
    */
   branchUpdateStrategy?: BranchUpdateStrategy;
   effort?: string;
@@ -1618,9 +1620,10 @@ export type RunLane = 'production' | 'validation' | 'comparison';
 /**
  * Explicit branch-update strategy for the `update-branch` follow-up flow.
  * Kept off the flow name (the flow is "update this PR branch against its base";
- * how we do it is policy). `project-default` defers to the project's
- * `merge_main_strategy` (ADR-042); the default resolver prefers `rebase` for
- * agent-owned PR branches, and any rebase push uses `--force-with-lease`.
+ * how we do it is policy). Chained update-branch runs default to `rebase`;
+ * `project-default` defers to the project's `merge_main_strategy` (ADR-042).
+ * The worker resolves rebase-vs-merge against project force-push policy at
+ * runtime and uses `--force-with-lease` for rebase pushes.
  */
 export type BranchUpdateStrategy = 'rebase' | 'merge' | 'project-default';
 
@@ -1634,23 +1637,6 @@ export function isBranchUpdateStrategy(value: unknown): value is BranchUpdateStr
   return (
     typeof value === 'string' && (BRANCH_UPDATE_STRATEGIES as readonly string[]).includes(value)
   );
-}
-
-/**
- * Resolve the concrete prepare strategy for an `update-branch` run. Prefers
- * `rebase` for agent-owned PR branches when the project allows force-push;
- * falls back to `merge` when force-push is disallowed (shared/protected
- * branches). Returns `undefined` for `project-default` so prepare uses the
- * project's own `merge_main_strategy`.
- */
-export function resolveBranchUpdateStrategy(
-  requested: BranchUpdateStrategy | undefined,
-  policy?: { allowForcePush?: boolean },
-): 'rebase' | 'merge' | undefined {
-  const strategy = requested ?? 'project-default';
-  if (strategy === 'project-default') return undefined;
-  if (strategy === 'rebase' && policy && policy.allowForcePush === false) return 'merge';
-  return strategy;
 }
 
 /**
@@ -1795,7 +1781,7 @@ export const FLOW_WORKER_REPORT_ARTIFACTS: Record<FlowType, string[]> = {
   'review-pr': ['review.md', 'report.md'],
   dev: ['pr-description.md', 'report.md'],
   'pr-complete': ['comments-report.md', 'report.md'],
-  'update-branch': ['branch-update-report.md', 'report.md'],
+  'update-branch': ['report.md'],
 };
 
 /** Default branch fallback. Projects should set `default_branch` in project.json. */

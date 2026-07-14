@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
+import { normalizeFlowType } from '@farmslot/protocol';
+
 export type FlowFilter = '' | 'fix-bug' | 'review-pr' | 'dev' | 'pr-complete' | 'update-branch';
 export type LaneFilter = '' | 'production' | 'validation' | 'comparison';
 export type SortOption = 'newest' | 'oldest' | 'duration';
@@ -39,8 +41,13 @@ export const useRunFilterStore = create<RunFilterStore>((set, get) => ({
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
+        const merged: RunFilters = { ...DEFAULTS, ...parsed, search: '' };
+        // Normalize a legacy persisted flow selection (e.g. pre-rename
+        // 'merge-main') so the saved filter still matches runs after a flow
+        // rename. Mirrors the gateway store's load-time migration.
+        merged.flow = merged.flow ? normalizeFlowType(merged.flow) : merged.flow;
         set({
-          filters: { ...DEFAULTS, ...parsed, search: '' },
+          filters: merged,
           initialized: true,
         });
       } else {

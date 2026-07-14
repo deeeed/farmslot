@@ -71,7 +71,7 @@ See also [Worker signal protocol](worker-signal-protocol.md) and [Customize work
 | dev / fix-bug | `learnings.md`, `report.md`                                                      |
 | review-pr     | `learnings.md`, `review.md`, `line-comments.json` (when posting inline comments) |
 | pr-complete   | `learnings.md`, `comments-report.md`                                             |
-| update-branch | `learnings.md`, `merge-report.md` or `report.md` (project override)              |
+| update-branch | `learnings.md`, `report.md`                                                      |
 | ci-fix        | `learnings.md`, `report.md`                                                      |
 | self-review   | `learnings.md` (no report required)                                              |
 

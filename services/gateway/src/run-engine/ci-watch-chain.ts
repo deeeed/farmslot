@@ -1,4 +1,10 @@
-import { type FlowType, modeForFlow, type Run, type RunCreateParams } from '@farmslot/protocol';
+import {
+  type FlowType,
+  modeForFlow,
+  PR_BOUND_FLOW_TYPES,
+  type Run,
+  type RunCreateParams,
+} from '@farmslot/protocol';
 
 import {
   buildFollowUpClassification,
@@ -42,10 +48,14 @@ export function buildCIWatchChainedRunParams(
   const flowType = resolveCIWatchChainFlowType(dispatchAction);
   if (!flowType) return null;
   // prNumber === 0 is the invalid sentinel (review-input capture rejects it);
-  // chaining a pr-complete on owner/repo#0 would dispatch against an invalid PR.
+  // chaining a PR-bound flow on owner/repo#0 would dispatch against an invalid PR.
   const validPr = hasValidPrNumber(current);
+  // Both chained flows (pr-complete, update-branch) are PR-bound: they must carry
+  // an owner/repo#N ref, not the parent's inherited MANUAL-*/PROJ-* ticket, or
+  // runCreate's validateTicketRef rejects them. There is a valid prNumber by
+  // construction on the CI-conflict / CI-fail chain paths.
   const ticketOrPr =
-    flowType === 'pr-complete' && validPr && ciRepo
+    PR_BOUND_FLOW_TYPES.has(flowType) && validPr && ciRepo
       ? `${ciRepo}#${current.prNumber}`
       : current.ticketOrPr;
   return {

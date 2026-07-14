@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the worker terminal contract, checklist marker, and task artifact contract.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.2.0 - 2026-07-12

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(gateway): chained CI-watch merge-conflict follow-ups dispatch as `update-branch` (renamed from `merge-main`) with a default `branchUpdateStrategy: rebase`, resolving the PR ref (`owner/repo#N`) from CI metadata for all PR-bound chains — including manual/Jira-rooted families that previously threw `Invalid PR reference`. Load-time run-store migration normalizes legacy `flowType` and CI decision action ids/labels so the old name never surfaces.
 - refactor: `runtime/session-usage.ts` consumes the ported `@farmslot/slot-config` core directly instead of shelling out to `scripts/session-usage.sh`; `computePRRecommendation` moved to `@farmslot/protocol` (re-imported) with the bash pr-monitor rules folded in — `PRStatus` gains `workerActive` so formatters can derive the worker-active sub-labels.
 - refactor: `core/config.ts` and `core/hooks.ts` moved to the new `@farmslot/slot-config` package (gateway files remain as re-export shims; `SlotConfigError` serializes like `GatewayMethodError` in RPC responses). No behavior change.
 - refactor: dispatch `isCdpLive` now delegates to the shared protocol `isCdpLiveValue` (no behavior change).
