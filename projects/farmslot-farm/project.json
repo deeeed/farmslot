@@ -154,7 +154,12 @@
     "fixtures_dir": "test-data"
   },
   "self_review": {
-    "enabled": false
+    "enabled": false,
+    "review_timeout_min": 75
+  },
+  "ci": {
+    "enabled": true,
+    "repo": "deeeed/farmslot"
   },
   "publication_review": {
     "fix-bug": {

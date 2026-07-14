@@ -634,10 +634,10 @@
         },
         "review_timeout_min": {
           "type": "integer",
-          "description": "Per-pass review-agent timeout in minutes (covers reading the diff + rerunning recipes). Bump if reviews repeatedly time out.",
+          "description": "Per-pass review-agent timeout in minutes (covers reading the diff + rerunning recipes). Bump if reviews repeatedly time out — publication-gate reviews of large diffs have been observed taking 35-45 minutes.",
           "default": 30,
           "minimum": 5,
-          "maximum": 60
+          "maximum": 120
         }
       },
       "additionalProperties": false
