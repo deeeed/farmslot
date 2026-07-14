@@ -94,6 +94,36 @@ export function slotVarsShellLines(vars: SlotVars): string[] {
     .map(([key, value]) => `${key}=${shellQuote(value)}`);
 }
 
+/**
+ * Assemble the compose selection vars for `fixture-plan`, restoring the retired
+ * bash `${!COMPOSE_VAR:-}` reach: a project's `compose.var` may name ANY exported
+ * variable (e.g. `TARGET`), not just FLOW_TYPE/APP/DOMAIN. The environment is
+ * seeded first, then the explicit flags overlay it — a passed flag wins
+ * (mirroring bash `export FLOW_TYPE=...`), an absent flag leaves the env value.
+ * Custom slots default the FLOW_TYPE variant to `custom` (sync-fixtures.sh
+ * parity). The `computeFixturePlan` decision core stays env-free; this CLI edge
+ * does the env read.
+ */
+export function buildFixtureSelectionVars(opts: {
+  env: NodeJS.ProcessEnv;
+  flowType?: string;
+  app?: string;
+  domain?: string;
+  slotMode?: string;
+}): Record<string, string> {
+  const selectionVars: Record<string, string> = {};
+  for (const [key, value] of Object.entries(opts.env)) {
+    if (typeof value === 'string') selectionVars[key] = value;
+  }
+  if (opts.flowType !== undefined) selectionVars.FLOW_TYPE = opts.flowType;
+  if (opts.app !== undefined) selectionVars.APP = opts.app;
+  if (opts.domain !== undefined) selectionVars.DOMAIN = opts.domain;
+  if (!selectionVars.FLOW_TYPE && opts.slotMode === 'custom') {
+    selectionVars.FLOW_TYPE = 'custom';
+  }
+  return selectionVars;
+}
+
 function parseExtraVars(extras: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const entry of extras) {
@@ -348,7 +378,7 @@ export function registerInternalCommand(program: Command): void {
   internal
     .command('fixture-plan <slotId>')
     .description(
-      'Render the fixture template/compose plan for a slot in one pass: writes each rendered file into --stage and lists "<dst>\\t<staged-file>" in --manifest; prints the [OK]/[SKIP]/[WARN] log',
+      'Render the fixture template/compose plan for a slot in one pass: writes each rendered file into --stage and lists "<dst>\\t<staged-file>" in --manifest; prints the [PLAN]/[SKIP]/[WARN] log ([OK] is emitted by the copy step once each file lands)',
     )
     .option('--flow-type <type>', 'Compose selection value (the FLOW_TYPE variant key)')
     .option('--app <path>', 'APP compose selection value')
@@ -370,24 +400,16 @@ export function registerInternalCommand(program: Command): void {
         try {
           const vars = await loadSlotVars(slotId);
           const projectVars = await loadProjectVars(vars.projectName);
-          // Compose selection vars. Bash used indirect expansion
-          // (`${!COMPOSE_VAR:-}`), so a project's `compose.var` could name ANY
-          // exported variable (e.g. `TARGET`), not just FLOW_TYPE/APP/DOMAIN.
-          // Seed from the inherited environment to keep that reach, then overlay
-          // the explicit flags — a passed flag wins (mirroring bash's
-          // `export FLOW_TYPE=...`), an absent flag leaves the env value. The
-          // decision core stays env-free; this CLI edge does the env read.
-          const selectionVars: Record<string, string> = {};
-          for (const [key, value] of Object.entries(process.env)) {
-            if (typeof value === 'string') selectionVars[key] = value;
-          }
-          if (opts.flowType !== undefined) selectionVars.FLOW_TYPE = opts.flowType;
-          if (opts.app !== undefined) selectionVars.APP = opts.app;
-          if (opts.domain !== undefined) selectionVars.DOMAIN = opts.domain;
-          // Custom slots default to the 'custom' compose variant (sync-fixtures.sh parity).
-          if (!selectionVars.FLOW_TYPE && vars.slotMode === 'custom') {
-            selectionVars.FLOW_TYPE = 'custom';
-          }
+          // Compose selection vars — env-seeded with flag overlay, so a project's
+          // `compose.var` may name any exported variable (bash `${!COMPOSE_VAR}`
+          // parity). See buildFixtureSelectionVars.
+          const selectionVars = buildFixtureSelectionVars({
+            env: process.env,
+            flowType: opts.flowType,
+            app: opts.app,
+            domain: opts.domain,
+            slotMode: vars.slotMode,
+          });
           // Only DOMAIN flows into template expansion as an extra var, matching the
           // bash expand_slot_template contract (--var domain=$DOMAIN); FLOW_TYPE/APP
           // are compose-selection keys, not {{placeholders}}.
