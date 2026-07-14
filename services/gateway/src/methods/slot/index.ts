@@ -1,6 +1,20 @@
 export { slotCheck } from './check.js';
 export { slotOpenEditor } from './editor.js';
 export { slotFixtureRefresh } from './fixtures.js';
+export {
+  autoRefreshSessionName,
+  buildAutoRefreshCommand,
+  buildMonitorCommand,
+  buildReopenCommand,
+  buildShowScript,
+  buildSoftRefreshCommand,
+  slotAutoRefresh,
+  slotMonitor,
+  slotReopen,
+  slotShow,
+  slotSoftRefresh,
+  validateHarnessRoot,
+} from './helpers.js';
 export { slotPrepare } from './prepare.js';
 export {
   buildDevServerPortCleanup,

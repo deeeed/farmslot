@@ -1,4 +1,4 @@
-import type { SlotActionPlacement, SlotStatus } from '../contracts/index.js';
+import type { ExecResult, SlotActionPlacement, SlotStatus } from '../contracts/index.js';
 import type { RecipeValidationResult } from '../recipe/index.js';
 
 import { Methods } from './registry.js';
@@ -22,6 +22,11 @@ export const SlotMethods = {
   actionList: Methods.SLOT_ACTION_LIST,
   actionRun: Methods.SLOT_ACTION_RUN,
   prepareStatus: Methods.SLOT_PREPARE_STATUS,
+  monitor: Methods.SLOT_MONITOR,
+  show: Methods.SLOT_SHOW,
+  softRefresh: Methods.SLOT_SOFT_REFRESH,
+  reopen: Methods.SLOT_REOPEN,
+  autoRefresh: Methods.SLOT_AUTO_REFRESH,
 } as const;
 
 /** One structured prepare sub-step (ADR-037) — phase, profile resolution, or
@@ -210,6 +215,49 @@ export interface ScriptActionResult {
   requestId: string;
   artifactRoot?: string;
   // Output streams via events
+}
+
+// ─── Slot helper verbs (ports of monitor/show/soft-refresh/reopen/auto-refresh scripts) ───
+
+export interface SlotMonitorParams {
+  slotId: string;
+}
+
+/** Composed worker-progress report: TASK status + branch + agent/tmux state + token usage. */
+export interface SlotMonitorResult {
+  report: string;
+}
+
+export interface SlotShowParams {
+  slotId: string;
+  /** Pre-allocated progress id for the emulator-toggle output stream. */
+  requestId?: string;
+}
+
+export interface SlotSoftRefreshParams {
+  slotId: string;
+  requestId?: string;
+}
+
+export interface SlotReopenParams {
+  slotId: string;
+  requestId?: string;
+}
+
+/** Result of a streamed slot side-effect verb (show/soft-refresh/reopen). */
+export interface SlotCommandResult extends ExecResult {
+  requestId: string;
+}
+
+export interface SlotAutoRefreshParams {
+  slotId: string;
+  action?: 'start' | 'stop';
+}
+
+export interface SlotAutoRefreshResult {
+  action: 'start' | 'stop';
+  /** tmux session name driving the auto-refresh monitor. */
+  session: string;
 }
 
 export interface RecipeRerunParams {

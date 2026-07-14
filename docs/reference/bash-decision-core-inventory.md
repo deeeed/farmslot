@@ -67,20 +67,15 @@ standing drift hazard (e.g. hooks.ts already has `{safety_flags}`, `cursor_path`
 
 ## `scripts/*.sh` — EDGE (side-effect first, keep shell + contract checks)
 
-| Script                         | Purpose                                                                                                                 | Class                       | Edge contract                                                                   |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------- |
-| `preflight-slot.sh` (311L)     | Verify a slot is dispatch-ready: fixtures synced, sim/emulator up, dev server on port, health check live (ssh/tmux/adb) | **EDGE**                    | Given slot id → returns pass/fail per check; assert exit code + per-check lines |
-| `teardown-slot.sh` (59L)       | Gateway-free slot teardown via `teardown_slot_infra` hooks (works when gateway down)                                    | **EDGE**                    | Thin driver over lib; assert infra stopped                                      |
-| `monitor-slot.sh` (80L)        | Read worker progress: TASK.md status + last 30 lines of agent output (tmux/git)                                         | **EDGE**                    | Read-only status probe                                                          |
-| `show-slot.sh` (102L)          | Toggle headless→visible emulator for review (Xvfb/adb/simctl)                                                           | **EDGE**                    | Device-visibility side-effect                                                   |
-| `soft-refresh-slot.sh` (49L)   | Reload the active extension page for a slot via CDP without relaunch                                                    | **EDGE**                    | CDP reload side-effect                                                          |
-| `reopen-slot-browser.sh` (65L) | Relaunch a prepared browser for continued work                                                                          | **EDGE**                    | Browser relaunch side-effect                                                    |
-| `auto-refresh-slot.sh` (50L)   | Opt-in tmux monitor loop that auto-refreshes a slot                                                                     | **EDGE**                    | Long-running monitor; assert start/stop                                         |
-| `record-window.sh` (297L)      | Record a macOS window to MP4 (capture-helper + ffmpeg via FIFO, signal-safe)                                            | **EDGE**                    | Given pid → valid MP4 with moov atom on SIGTERM                                 |
-| `gh-upload-asset.sh` (127L)    | Upload file(s) to a per-project artifacts repo via git push over SSH                                                    | **EDGE**                    | Returns raw.githubusercontent URL; assert push + URL                            |
-| `backup-runs.sh` (66L)         | Copy tasks/ and runs/ into `.backups/` (rsync)                                                                          | **EDGE**                    | Filesystem copy                                                                 |
-| `audit-remote-path.sh` (99L)   | SSH every remote machine, probe for required binaries, print table, non-zero if missing                                 | **EDGE**                    | ssh `command -v` probe; assert table + exit code                                |
-| `run-project-hook.sh` (52L)    | Expand `hooks.<name>` from project.json and run in slot repo (generic, no hardcoded hooks)                              | **EDGE (thin lib wrapper)** | Delegates to lib `expand_hook`; assert hook ran in repo                         |
+| Script                       | Purpose                                                                                                                 | Class                       | Edge contract                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------- |
+| `preflight-slot.sh` (311L)   | Verify a slot is dispatch-ready: fixtures synced, sim/emulator up, dev server on port, health check live (ssh/tmux/adb) | **EDGE**                    | Given slot id → returns pass/fail per check; assert exit code + per-check lines |
+| `teardown-slot.sh` (59L)     | Gateway-free slot teardown via `teardown_slot_infra` hooks (works when gateway down)                                    | **EDGE**                    | Thin driver over lib; assert infra stopped                                      |
+| `record-window.sh` (297L)    | Record a macOS window to MP4 (capture-helper + ffmpeg via FIFO, signal-safe)                                            | **EDGE**                    | Given pid → valid MP4 with moov atom on SIGTERM                                 |
+| `gh-upload-asset.sh` (127L)  | Upload file(s) to a per-project artifacts repo via git push over SSH                                                    | **EDGE**                    | Returns raw.githubusercontent URL; assert push + URL                            |
+| `backup-runs.sh` (66L)       | Copy tasks/ and runs/ into `.backups/` (rsync)                                                                          | **EDGE**                    | Filesystem copy                                                                 |
+| `audit-remote-path.sh` (99L) | SSH every remote machine, probe for required binaries, print table, non-zero if missing                                 | **EDGE**                    | ssh `command -v` probe; assert table + exit code                                |
+| `run-project-hook.sh` (52L)  | Expand `hooks.<name>` from project.json and run in slot repo (generic, no hardcoded hooks)                              | **EDGE (thin lib wrapper)** | Delegates to lib `expand_hook`; assert hook ran in repo                         |
 
 ## `scripts/*.sh` — WRAPPER / DELEGATOR (already thin CLI callers)
 
@@ -188,7 +183,8 @@ script outside historical records (ADRs, archives, changelogs, this file).
 
 Retired (deleted, callers repointed to the CLI): `release-slot.sh`,
 `pr-status.sh`, `migrate-task-root.sh`, `validate-tmux-driver.sh`,
-`find-slot.sh`, `dispatch.sh`.
+`find-slot.sh`, `dispatch.sh`, `monitor-slot.sh`, `show-slot.sh`,
+`soft-refresh-slot.sh`, `reopen-slot-browser.sh`, `auto-refresh-slot.sh`.
 
 Deprecated shims kept (project packs still print/document them):
 `check-slot.sh` → `farmslot slot check`, `prepare-slot.sh` →
@@ -205,13 +201,18 @@ those repos repoint.
 ### scripts/ shrink follow-ups (MANUAL-000027, 2026-07-14)
 
 - **Fixture-compose batch verb — DONE** (follow-up #0 above).
-- **Slot helpers → CLI verbs** (`monitor-slot.sh`, `show-slot.sh`,
-  `soft-refresh-slot.sh`, `reopen-slot-browser.sh`, `auto-refresh-slot.sh`) and
-  **bug pipeline → `farmslot bug`** (`triage-bug.sh`, `score-bug.sh`,
+- **Slot helpers → CLI verbs — DONE** (MANUAL-000033, slice 2). `monitor-slot.sh`,
+  `show-slot.sh`, `soft-refresh-slot.sh`, `reopen-slot-browser.sh`, and
+  `auto-refresh-slot.sh` are ported to `farmslot slot monitor|show|soft-refresh|reopen|auto-refresh`
+  (decision logic in `services/gateway/src/methods/slot/helpers.ts`; ssh/tmux/CDP
+  side-effects run through `execOnSlot`/`execLocal`). Caller audit repointed
+  `scripts/completions.sh` and `scripts/lib/farm-status-display.py`; the scripts are
+  deleted and guarded by `yarn quality:retired-scripts`. Verbs validated live against
+  the dev gateway (monitor report + show/soft-refresh/reopen/auto-refresh guard paths).
+- **bug pipeline → `farmslot bug`** (`triage-bug.sh`, `score-bug.sh`,
   `grade-bug.sh`, `validate-bug.sh`, `batch-triage.sh`, `download-*-images.sh`):
   **deferred.** These are side-effect edges whose port can only be _proven_ against
-  live infra (tmux sessions, emulators/CDP for the slot helpers; `gh`/Jira/`claude`
-  for the bug family). The protocol cores (`parseBugInput`, `validateBugScore`,
+  live infra (`gh`/Jira/`claude`). The protocol cores (`parseBugInput`, `validateBugScore`,
   `deriveScoreKey`, `computePRRecommendation`) already exist and are exposed via
   `farmslot internal`; the retirement itself needs a caller audit + live-infra
   validation and is tracked as its own review-gated PR rather than shipped

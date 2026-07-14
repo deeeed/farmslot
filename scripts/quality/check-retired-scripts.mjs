@@ -16,6 +16,13 @@ const RETIRED = [
   'validate-tmux-driver.sh',
   'find-slot.sh',
   'dispatch.sh',
+  // Slot helpers ported to `farmslot slot monitor|show|soft-refresh|reopen|auto-refresh`
+  // (MANUAL-000033, scripts-shrink slice 2).
+  'monitor-slot.sh',
+  'show-slot.sh',
+  'soft-refresh-slot.sh',
+  'reopen-slot-browser.sh',
+  'auto-refresh-slot.sh',
 ];
 
 // Paths whose mentions are historical narration, not live callers.

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat: slot helper RPCs — `Methods.SLOT_MONITOR`/`SLOT_SHOW`/`SLOT_SOFT_REFRESH`/`SLOT_REOPEN`/`SLOT_AUTO_REFRESH` (+ matching `SlotMethods` entries) and their params/results (`SlotMonitorParams`/`Result`, `SlotShowParams`, `SlotSoftRefreshParams`, `SlotReopenParams`, `SlotCommandResult` extending `ExecResult`, `SlotAutoRefreshParams`/`Result`) for the ported slot helper CLI verbs.
 - **BREAKING** feat: rename the branch-maintenance flow `merge-main` → `update-branch` in `FlowType`. Adds load-boundary migrations `normalizeFlowType` (`merge-main`→`update-branch`, `feature`→`dev`) and `normalizeCiActionId` (`dispatch-merge-main`→`dispatch-update-branch`), the `BranchUpdateStrategy` type + `BRANCH_UPDATE_STRATEGIES`/`isBranchUpdateStrategy`, and `Run.branchUpdateStrategy`/`RunCreateParams.branchUpdateStrategy`. `update-branch` is PR-bound; its worker report artifact is `report.md`.
 - docs: slot-selection comments reference the retired find-slot.sh script (comment-only; no behavior change).
 

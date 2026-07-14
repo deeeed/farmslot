@@ -23,6 +23,11 @@ export const Methods = {
   SLOT_CLEANUP: 'slot.cleanup',
   SLOT_PREPARE_STATUS: 'slot.prepareStatus',
   SLOT_FIXTURE_REFRESH: 'slot.fixtureRefresh',
+  SLOT_MONITOR: 'slot.monitor',
+  SLOT_SHOW: 'slot.show',
+  SLOT_SOFT_REFRESH: 'slot.softRefresh',
+  SLOT_REOPEN: 'slot.reopen',
+  SLOT_AUTO_REFRESH: 'slot.autoRefresh',
 
   // Fleet-bulk
   FLEET_REFRESH_SLOTS: 'fleet.refreshSlots',
