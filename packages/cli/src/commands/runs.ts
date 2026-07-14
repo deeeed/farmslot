@@ -129,23 +129,36 @@ export function registerRunsCommand(program: Command): void {
         const farmslotRoot = resolveRootFlag(opts.root);
         const mode = resolveRunsImportMode(opts);
         const useGateway = Boolean(cmd.optsWithGlobals().gateway || cmd.optsWithGlobals().url);
-        const result = await withProgress(
-          `Importing ${path.basename(bundlePath)}`,
-          async () =>
-            useGateway
-              ? await client.call<ReturnType<typeof importBundle>>('run.bundle.import', {
-                  bundlePath: path.resolve(bundlePath),
-                  mode,
-                  force: opts.force || undefined,
-                })
-              : importBundle({
-                  farmslotRoot,
-                  bundlePath: path.resolve(bundlePath),
-                  mode,
-                  force: opts.force,
-                }),
-          !emit.machine,
-        );
+        const label = `Importing ${path.basename(bundlePath)}`;
+        let result: ReturnType<typeof importBundle>;
+        if (useGateway) {
+          result = await withProgress(
+            label,
+            () =>
+              client.call<ReturnType<typeof importBundle>>('run.bundle.import', {
+                bundlePath: path.resolve(bundlePath),
+                mode,
+                force: opts.force || undefined,
+              }),
+            !emit.machine,
+          );
+        } else {
+          // importBundle is synchronous and blocks the event loop, so the
+          // spinner's 80ms interval could never fire. Print an immediate
+          // notice before the blocking work instead.
+          const showNotice = !emit.machine && (process.stderr.isTTY ?? false);
+          if (showNotice) process.stderr.write(`${label}…`);
+          try {
+            result = importBundle({
+              farmslotRoot,
+              bundlePath: path.resolve(bundlePath),
+              mode,
+              force: opts.force,
+            });
+          } finally {
+            if (showNotice) process.stderr.write('\r\x1b[K');
+          }
+        }
         if (emit.machine) emit.ok(result);
         else {
           output.write(

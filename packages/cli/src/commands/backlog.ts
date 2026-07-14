@@ -305,15 +305,20 @@ export function registerBacklogCommand(program: Command): void {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
-        const item = await withProgress(
+        // Keep the spinner up through the whole pipeline — markReady → enqueue →
+        // autoDispatchTick is the slow part, not the item lookup.
+        const { item, enqueue, tick } = await withProgress(
           `Dispatching ${ref}`,
-          () => resolveItem(ctx, ref),
+          async () => {
+            const item = await resolveItem(ctx, ref);
+            const { enqueue, tick } = await dispatchBacklogItem(ctx, item, (promoted) => {
+              if (!emit.machine)
+                ctx.output.write(`Promoted ${promoted.sourceRef ?? promoted.id} to ready\n`);
+            });
+            return { item, enqueue, tick };
+          },
           !emit.machine,
         );
-        const { enqueue, tick } = await dispatchBacklogItem(ctx, item, (promoted) => {
-          if (!emit.machine)
-            ctx.output.write(`Promoted ${promoted.sourceRef ?? promoted.id} to ready\n`);
-        });
         if (emit.machine) emit.ok({ enqueue, tick });
         else
           ctx.output.write(

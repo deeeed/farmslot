@@ -4,6 +4,7 @@ import type { ConfigPoolsResult, ConfigProjectsResult } from '@farmslot/protocol
 
 import { bold, dim } from '../colors.js';
 import { resolveContext } from '../context.js';
+import { isMachineMode } from '../envelope.js';
 import { withProgress } from '../progress.js';
 
 export function registerConfigCommand(program: Command): void {
@@ -18,7 +19,7 @@ export function registerConfigCommand(program: Command): void {
         const result = await withProgress(
           'Fetching pools',
           () => client.call<ConfigPoolsResult>('config.pools'),
-          !output.json,
+          !isMachineMode(output),
         );
         if (output.json) {
           output.writeJson(result);
@@ -49,7 +50,7 @@ export function registerConfigCommand(program: Command): void {
         const result = await withProgress(
           'Fetching projects',
           () => client.call<ConfigProjectsResult>('config.projects'),
-          !output.json,
+          !isMachineMode(output),
         );
         if (output.json) {
           output.writeJson(result);

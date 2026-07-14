@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 
 import { dim, green, red, yellow } from '../colors.js';
+import { isMachineMode } from '../envelope.js';
 import { describeProbe, exchangePairingCode, probeGatewayAuth } from '../gateway-auth.js';
 import {
   type GatewayProfilesFile,
@@ -61,7 +62,7 @@ export function registerAuthCommands(program: Command): void {
           const exchanged = await withProgress(
             `Exchanging pairing code for ${name}`,
             () => exchangePairingCode(profile.url, opts.code as string),
-            !output.json,
+            !isMachineMode(output),
           );
           profile.authMode = exchanged.authMode;
           profile.secret = exchanged.secret;
@@ -77,7 +78,7 @@ export function registerAuthCommands(program: Command): void {
         const probe = await withProgress(
           `Verifying ${name}`,
           () => probeGatewayAuth(profile.url, profileCredential(profile)),
-          !output.json,
+          !isMachineMode(output),
         );
         if (probe.state === 'authenticated' || probe.state === 'no-auth') {
           // Persist ONLY what the gateway actually verified: a no-auth gateway
@@ -171,7 +172,7 @@ export function registerAuthCommands(program: Command): void {
               return { name, profile, probe };
             }),
           ),
-        !output.json,
+        !isMachineMode(output),
       );
 
       const ok = results.every(

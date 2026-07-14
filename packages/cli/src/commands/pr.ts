@@ -3,6 +3,7 @@ import type { Command } from 'commander';
 import type { PRListResult, PRStatusResult } from '@farmslot/protocol';
 
 import { resolveContext } from '../context.js';
+import { isMachineMode } from '../envelope.js';
 import { formatPRList, formatPRStatus } from '../formatters/pr.js';
 import { withProgress } from '../progress.js';
 
@@ -18,7 +19,7 @@ export function registerPRCommand(program: Command): void {
         const result = await withProgress(
           `Fetching PR #${num}`,
           () => client.call<PRStatusResult>('pr.status', { pr: Number(num) }),
-          !output.json,
+          !isMachineMode(output),
         );
         if (output.json) {
           output.writeJson(result);
@@ -40,7 +41,7 @@ export function registerPRCommand(program: Command): void {
         const result = await withProgress(
           'Fetching PRs',
           () => client.call<PRListResult>('pr.list', { project: opts.project }),
-          !output.json,
+          !isMachineMode(output),
         );
         if (output.json) {
           output.writeJson(result);

@@ -7,6 +7,7 @@ import type { NodesListResult } from '@farmslot/protocol';
 
 import { bold, cyan, dim, green, red } from '../colors.js';
 import { resolveContext } from '../context.js';
+import { isMachineMode } from '../envelope.js';
 import {
   assertGatewayUrl,
   assertProfileName,
@@ -121,13 +122,13 @@ export function registerGatewayCommand(program: Command): void {
         const health = await withProgress(
           `Probing ${url}`,
           () => readHealth(healthUrl, timeoutMs),
-          !output.json,
+          !isMachineMode(output),
         );
         try {
           const nodes = await withProgress(
             'Loading nodes',
             () => client.call<NodesListResult>('nodes.list'),
-            !output.json,
+            !isMachineMode(output),
           );
           const result: GatewayStatusResult = { url, healthUrl, reachable: true, health, nodes };
           if (output.json) output.writeJson(result);

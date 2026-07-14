@@ -32,6 +32,7 @@ import {
 
 import { green, red, yellow } from '../colors.js';
 import { resolveContext } from '../context.js';
+import { isMachineMode } from '../envelope.js';
 import { OutputContext } from '../output.js';
 import { withProgress } from '../progress.js';
 
@@ -592,7 +593,7 @@ export function registerRecipeCommand(program: Command): void {
               recipePath: opts.recipePath,
               artifactsDir: opts.artifactsDir,
             }),
-          !output.json,
+          !isMachineMode(output),
         );
         if (output.json) {
           output.writeJson(result);
@@ -639,7 +640,7 @@ export function registerRecipeCommand(program: Command): void {
               recipePath: opts.recipePath,
               artifactsDir: opts.artifactsDir,
             }),
-          !output.json,
+          !isMachineMode(output),
         );
         if (output.json) {
           output.writeJson(result);
