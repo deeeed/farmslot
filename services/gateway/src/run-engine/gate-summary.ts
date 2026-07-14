@@ -31,7 +31,7 @@ import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { listRuns } from '../runs/store.js';
 
 /** Family flows whose token cost rolls up into a root gate's grand total. */
-const FIX_LOOP_FLOWS: ReadonlySet<FlowType> = new Set<FlowType>(['pr-complete', 'merge-main']);
+const FIX_LOOP_FLOWS: ReadonlySet<FlowType> = new Set<FlowType>(['pr-complete', 'update-branch']);
 
 function num(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -235,7 +235,7 @@ function buildReviewSummaryText(
 }
 
 /**
- * Pure roll-up of family fix-loops (pr-complete / merge-main) that ran with
+ * Pure roll-up of family fix-loops (pr-complete / update-branch) that ran with
  * their own worker session. Excludes the gate's own run. Returns `undefined`
  * when none qualify so the optional field stays absent. Store-free for testability.
  */

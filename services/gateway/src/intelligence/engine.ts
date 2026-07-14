@@ -215,7 +215,7 @@ ${ticket.labels?.length ? `Labels: ${ticket.labels.join(', ')}` : ''}`;
 const FLOW_DIR_MAP: Record<string, string> = {
   'fix-bug': 'fix',
   'review-pr': 'review',
-  'merge-main': 'fix',
+  'update-branch': 'fix',
   dev: 'feat',
   'pr-complete': 'fix',
 };

@@ -83,18 +83,18 @@ export function findLatestResolvedDecision(
 
 /**
  * Single source of truth for which flows should pay the task-dir collision
- * precheck. Maintenance flows (merge-main, pr-complete) intentionally reuse
+ * precheck. Maintenance flows (update-branch, pr-complete) intentionally reuse
  * the prior task dir for an existing PR — colliding on them is the *point*.
  * Pulled into a helper so the FIND_SLOT precheck and the WRITE_TASK
  * skipCollisionCheck branch can't drift if a new flow is added to one site
  * but not the other.
  *
- * Note: `merge-main` has no FIND_SLOT step today (see FLOW_STEPS), so the
+ * Note: `update-branch` has no FIND_SLOT step today (see FLOW_STEPS), so the
  * in-FIND_SLOT short-circuit is defensive against future FLOW_STEPS changes
  * — keep the predicate aligned with WRITE_TASK rather than narrowing it here.
  */
 export function requiresCollisionPrecheck(flowType: FlowType): boolean {
-  return flowType !== 'merge-main' && flowType !== 'pr-complete';
+  return flowType !== 'update-branch' && flowType !== 'pr-complete';
 }
 
 /**

@@ -193,11 +193,11 @@ export function filterPointsForTrajectory(
     .filter(
       (point) =>
         point.flowType === 'pr-complete' ||
-        point.flowType === 'merge-main' ||
+        point.flowType === 'update-branch' ||
         point.runId === familyId,
     )
     .map((point) => {
-      if (point.flowType === 'pr-complete' || point.flowType === 'merge-main') {
+      if (point.flowType === 'pr-complete' || point.flowType === 'update-branch') {
         milestoneIndex += 1;
         return { ...point, label: `${point.flowType} #${milestoneIndex}` };
       }

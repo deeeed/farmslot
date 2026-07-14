@@ -725,3 +725,44 @@ test('loadAllRuns migrates legacy farmslot project to farmslot-farm', async () =
   const disk = JSON.parse(await readFile(path.join(tmp, `${runId}.json`), 'utf8'));
   assert.equal(disk.project, 'farmslot-farm');
 });
+
+test('loadAllRuns migrates a persisted merge-main.md worker template to update-branch.md', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'farmslot-run-template-migrate-'));
+  const runId = 'ffffffff-1111-2222-3333-444444444444';
+  const legacy = {
+    id: runId,
+    familyId: runId,
+    parentRunId: null,
+    familyRootTicketOrPr: 'owner/repo#1',
+    lane: 'production',
+    variant: null,
+    flowType: 'merge-main',
+    mode: 'headless',
+    status: 'done',
+    project: 'farmslot-farm',
+    ticketOrPr: 'owner/repo#1',
+    taskTemplate: { fileName: 'merge-main.md', variant: null },
+    steps: [],
+    decisions: [],
+    metrics: {},
+    createdAt: '2026-06-01T00:00:00.000Z',
+    updatedAt: '2026-06-01T00:00:00.000Z',
+    completedAt: '2026-06-01T00:00:00.000Z',
+  };
+  await writeFile(path.join(tmp, `${runId}.json`), JSON.stringify(legacy));
+  const gatewayRoot = path.resolve(import.meta.dirname, '../..');
+  const script = `
+    process.env.FARMSLOT_RUNS_DIR = ${JSON.stringify(tmp)};
+    const { loadAllRuns, getRun } = await import('./src/runs/store.js');
+    await loadAllRuns();
+    const run = getRun(${JSON.stringify(runId)});
+    if (!run || run.flowType !== 'update-branch') process.exit(2);
+    if (run.taskTemplate?.fileName !== 'update-branch.md') process.exit(3);
+  `;
+  await execFileAsync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+    cwd: gatewayRoot,
+  });
+  const disk = JSON.parse(await readFile(path.join(tmp, `${runId}.json`), 'utf8'));
+  assert.equal(disk.flowType, 'update-branch');
+  assert.equal(disk.taskTemplate.fileName, 'update-branch.md');
+});

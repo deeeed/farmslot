@@ -213,7 +213,7 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   if (devInteractiveProfile) params.devInteractiveProfile = devInteractiveProfile;
 
   // For PR flows, resolve bare numbers and branch names to owner/repo#number
-  const PR_FLOWS = ['review-pr', 'pr-complete', 'merge-main'];
+  const PR_FLOWS = ['review-pr', 'pr-complete', 'update-branch'];
   if (PR_FLOWS.includes(params.flowType)) {
     if (projectConfig?.ci?.repo) {
       params.ticketOrPr = await resolvePrRef(params.ticketOrPr, projectConfig.ci.repo);
@@ -827,7 +827,7 @@ export async function runRehydratePrNumber(
   }
   // Reclaim: restore full slot identity so S.CI_WATCH's markSlotHeld writes a
   // coherent record AND any chained follow-up dispatch (pr-complete,
-  // merge-main) passes evaluateSlotIdentityPolicy. Completion's resetSlot
+  // update-branch) passes evaluateSlotIdentityPolicy. Completion's resetSlot
   // clears family_id/lane/variant alongside current_run_id, so replaying
   // without them would break same-family reuse checks in dispatch.ts:480-483.
   if (slotStatus.currentRunId !== params.runId) {
@@ -978,14 +978,24 @@ export async function runResolveDecision(
         const runningStep = afterResolve.steps.find((s) => s.status === 'running');
         if (
           runningStep?.name === 'ci-watch' &&
-          (params.actionId === 'dispatch-merge-main' ||
+          (params.actionId === 'dispatch-update-branch' ||
             params.actionId === 'dispatch-pr-complete') &&
           afterResolve.slotId
         ) {
-          const ciRepo = (await loadProjectVars(afterResolve.project).catch(() => null))
-            ?.projectJson?.ci?.repo as string | undefined;
+          // Resolve ci.repo for the chained PR-bound flow. Do NOT swallow a
+          // project-config failure: if ciRepo is missing, buildCIWatchChainedRunParams
+          // falls back to the parent's MANUAL-*/PROJ-* ref, and createRun below skips
+          // runCreate's validateTicketRef — the follow-up would then wedge downstream.
+          // Let the load error surface via the outer .catch so the run stays blocked.
+          const ciRepo = (await loadProjectVars(afterResolve.project))?.projectJson?.ci?.repo as
+            | string
+            | undefined;
           const chainSpec = buildCIWatchChainedRunParams(afterResolve, params.actionId, ciRepo);
           if (chainSpec) {
+            // createRun bypasses runCreate's entry validation, so guard the chained
+            // ref here: a PR-bound flow still carrying an inherited MANUAL-*/PROJ-*
+            // ref (unresolved ciRepo) fails hard now instead of at write-task.
+            validateTicketRef(chainSpec.createParams.ticketOrPr, chainSpec.flowType);
             console.log(
               `[run] run ${params.runId.slice(0, 8)} — chaining ${chainSpec.flowType} after resolved CI decision`,
             );

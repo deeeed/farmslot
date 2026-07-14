@@ -101,7 +101,7 @@ const RECIPE_QUALITY_FLOW_TYPES = [
   'review-pr',
   'dev',
   'pr-complete',
-  'merge-main',
+  'update-branch',
 ] as const;
 
 export interface RecipeQualityCompactProjection {

@@ -52,7 +52,7 @@ The family answers: “what objective are these trials related to?”
 
 Examples:
 
-- the original `fix-bug` run and its follow-up `pr-complete` / `merge-main` runs,
+- the original `fix-bug` run and its follow-up `pr-complete` / `update-branch` runs,
 - multiple comparison-lane trials for the same ticket,
 - a reference PR and one or more recreated candidate trials,
 - future corpus items for recurring prompt/template/harness regression checks.
@@ -71,7 +71,7 @@ A lane is not an eval. A lane is not a second object called a line. It is just e
 
 A **run** remains the operational execution record:
 
-- flow type / task profile (`dev`, `fix-bug`, `review-pr`, `pr-complete`, `merge-main`),
+- flow type / task profile (`dev`, `fix-bug`, `review-pr`, `pr-complete`, `update-branch`),
 - lane,
 - runner/model/template metadata,
 - task file and artifacts,

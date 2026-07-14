@@ -133,7 +133,7 @@ test('buildReviewSummary surfaces skip reason when self-review is a skipped entr
   assert.equal(summary.independentReviews.length, 0);
 });
 
-test('aggregateFamilyChainedLoops rolls up pr-complete/merge-main loops only', () => {
+test('aggregateFamilyChainedLoops rolls up pr-complete/update-branch loops only', () => {
   const root = makeRun({
     id: 'root',
     familyId: 'fam',

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- docs: rename the branch-maintenance flow `merge-main` → `update-branch` across the worker-artifacts/finish/quality reference pages, the customize-worker-prompts guide, and generated template-variable docs.
 - Document passive UI observations in Recipe Protocol v1 and refresh the published recipe schema.
 - Regenerate the gateway API reference to drop the removed `slot.prepare.output` event.
 - Publish the canonical Recipe Protocol v1 JSON Schema at `/schemas/recipe-v1.schema.json`.

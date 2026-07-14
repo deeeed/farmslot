@@ -16,11 +16,11 @@ The current system partially supports each of these, but not as a unified model:
 
 - `run.create` currently rejects duplicate active runs for the same `ticketOrPr` + `project`.
 - `task-writer.ts` already creates timestamped task directories, which is useful for comparisons, but collisions are still surfaced as decisions.
-- `review-pr`, `pr-complete`, `merge-main`, self-review, and CI-fix already form a de facto family of follow-up runs, but that relationship is not documented as a first-class model.
+- `review-pr`, `pr-complete`, `update-branch`, self-review, and CI-fix already form a de facto family of follow-up runs, but that relationship is not documented as a first-class model.
 - Validation mode now exists and can auto-resolve routine decisions, but the product/docs do not yet define how it differs from production runs or how it relates to comparison runs.
 - Slot contamination was observed in practice when multiple related runs reused the same slot/pane without an explicit run-family contract.
 
-This makes similar/comparison runs feel ad hoc, and it makes the relationship between `fix-bug`, `review-pr`, `pr-complete`, `merge-main`, self-review, and CI-fix harder to reason about than it should be.
+This makes similar/comparison runs feel ad hoc, and it makes the relationship between `fix-bug`, `review-pr`, `pr-complete`, `update-branch`, self-review, and CI-fix harder to reason about than it should be.
 
 Current documentation and implementation already imply part of the model, but only in fragments:
 
@@ -48,7 +48,7 @@ Within runtime classification, the model must not reuse one word for several job
 
 | Concept                  | Answers                                    | Owns                                                                                                                           | Must not be used for                                  |
 | ------------------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
-| `flowType`               | “Which worker pipeline/template executes?” | Step sequence and task writer carrier: `dev`, `fix-bug`, `review-pr`, `pr-complete`, `merge-main`.                             | Product evaluation identity or candidate grouping.    |
+| `flowType`               | “Which worker pipeline/template executes?” | Step sequence and task writer carrier: `dev`, `fix-bug`, `review-pr`, `pr-complete`, `update-branch`.                          | Product evaluation identity or candidate grouping.    |
 | `mode`                   | “How interactive/autonomous is this run?”  | Operator/autonomy behavior such as `interactive`, `autonomous`, or the validation convenience preset.                          | Duplicating siblings or labeling eval candidates.     |
 | `lane`                   | “What policy bucket is this run in?”       | Duplicate-run policy, slot isolation, side-effect posture: `production`, `validation`, `comparison`.                           | Flow selection or rubric semantics.                   |
 | `variant`                | “Which sibling is this comparison trial?”  | Human-readable runtime identity inside one comparison family, e.g. `claude`, `codex`, `current-template`, `proposed-template`. | A mode, flow, or experiment ID.                       |
@@ -118,7 +118,7 @@ A run family groups related runs such as:
 
 - the original `fix-bug` run for a ticket
 - its chained `pr-complete` follow-up
-- a later `merge-main` conflict-fix run
+- a later `update-branch` conflict-fix run
 - sibling comparison runs like `claude` vs `codex`
 
 At minimum, a run family should carry:
@@ -131,7 +131,7 @@ At minimum, a run family should carry:
 
 This identity should be visible both in persisted run state and in slot state so contamination is detectable. Follow-up family runs inherit the parent run's `safetyTier` unless explicitly overridden at dispatch time, so a `full-auto` fix does not silently escalate to `dangerous` during `pr-complete` chaining.
 
-Run families should also be treated as the source of truth for **inherited context**. A follow-up run should not behave like an isolated fresh task when a family root already exists. In particular, family members such as `review-pr`, `pr-complete`, and `merge-main` should be able to resolve and inherit earlier artifacts like:
+Run families should also be treated as the source of truth for **inherited context**. A follow-up run should not behave like an isolated fresh task when a family root already exists. In particular, family members such as `review-pr`, `pr-complete`, and `update-branch` should be able to resolve and inherit earlier artifacts like:
 
 - original task path / task dir
 - original worker `report.md`
@@ -240,7 +240,7 @@ That means the system should behave as if there is one visible family containing
 - the root fix/dev run
 - review siblings
 - pr-complete follow-ups
-- merge-main follow-ups
+- update-branch follow-ups
 - self-review / CI-fix subpasses
 - comparison variants
 
@@ -264,14 +264,14 @@ The existing flow types remain useful, but their relationship should be explicit
 - `fix-bug` / `dev` — primary work-producing flows
 - `review-pr` — review-oriented sibling of a PR state, not a different ticket family
 - `pr-complete` — maintenance / follow-up run on an existing PR
-- `merge-main` — maintenance / follow-up run on an existing PR branch
+- `update-branch` — maintenance / follow-up run on an existing PR branch
 - self-review — an internal quality pass attached to a worker run, not its own family root
 - CI-fix — a follow-up artifact/task within the same PR-complete family, not a separate conceptual lane
 
 Recommended model:
 
 - `fix-bug` / `dev` typically create the family root
-- `review-pr`, `pr-complete`, and `merge-main` should explicitly reference the same `familyId`
+- `review-pr`, `pr-complete`, and `update-branch` should explicitly reference the same `familyId`
 - self-review should be recorded as a **phase or child pass** of the current run, not a new family root
 - CI-fix tasks are artifacts or subpasses within a `pr-complete` family member
 
@@ -338,7 +338,7 @@ Flags are useful implementation details, but the product/documentation problem i
 
 **Rejected.**
 
-This loses the relationship between `fix-bug`, `pr-complete`, `merge-main`, self-review, and CI-fix, and it makes contamination/recovery logic harder rather than easier.
+This loses the relationship between `fix-bug`, `pr-complete`, `update-branch`, self-review, and CI-fix, and it makes contamination/recovery logic harder rather than easier.
 
 ## Consequences
 
@@ -366,7 +366,7 @@ This loses the relationship between `fix-bug`, `pr-complete`, `merge-main`, self
 4. Make the duplicate-run guard lane-aware.
 5. Make comparison branch/task naming explicit and machine-enforced.
 6. Keep self-review as a phase/child pass, not a family root.
-7. Treat `pr-complete` and `merge-main` as follow-up family members of an existing PR/ticket lineage.
+7. Treat `pr-complete` and `update-branch` as follow-up family members of an existing PR/ticket lineage.
 
 ### Phase 1 slice: family-context inheritance for follow-up runs
 
@@ -380,7 +380,7 @@ Recommended Phase 1 behavior:
    - `familyRootTicketOrPr`
    - optional `lane`
    - optional `variant`
-2. Ensure chained follow-up runs (`review-pr`, `pr-complete`, `merge-main`) preserve the same `familyId` and point back to the parent/root run.
+2. Ensure chained follow-up runs (`review-pr`, `pr-complete`, `update-branch`) preserve the same `familyId` and point back to the parent/root run.
 3. Teach the task writer to resolve original-family artifacts and inject them into worker prompts as inherited context, rather than forcing the worker or human to rediscover them manually.
 4. Require follow-up worker templates to explicitly evaluate whether the current run addresses the **full original family scope** or only a **partial symptom**.
 5. Prefer family-context inheritance over shallow artifact copying. The goal is not merely “copy `learnings.md` into the new folder”; the goal is to preserve the reasoning context of the original work so later runs can make correct decisions.
@@ -432,21 +432,21 @@ This ADR does not require immediate full implementation, but it implies future w
 
 ### Problem
 
-ci-watch currently creates human decisions for every detected issue (CI failures, merge conflicts, bot comments). The operator must approve chaining a pr-complete or merge-main run even for clearly auto-fixable problems like lint errors or simple conflicts. This blocks the pipeline on human attention for mechanical work.
+ci-watch currently creates human decisions for every detected issue (CI failures, merge conflicts, bot comments). The operator must approve chaining a pr-complete or update-branch run even for clearly auto-fixable problems like lint errors or simple conflicts. This blocks the pipeline on human attention for mechanical work.
 
 Additionally, the system holds slots in `ci-watch` phase for up to 2 hours regardless of CI outcome. When CI has passed and the only remaining blocker is human review (which may take days), the slot is wasted.
 
 ### Decision: auto-dispatch for known-fixable categories
 
-ci-watch should **auto-dispatch** the appropriate chained run (pr-complete or merge-main) without creating a human decision, for configured issue categories:
+ci-watch should **auto-dispatch** the appropriate chained run (pr-complete or update-branch) without creating a human decision, for configured issue categories:
 
-| Issue Category                            | Current                               | New Default                   |
-| ----------------------------------------- | ------------------------------------- | ----------------------------- |
-| CI failures (lint, format, type errors)   | Inline fix (already auto)             | Same                          |
-| Test failures                             | Decision → human approves pr-complete | **Auto-dispatch** pr-complete |
-| Merge conflicts                           | Decision → human approves merge-main  | **Auto-dispatch** merge-main  |
-| Bot comments (bugbot, sonarcloud, CLABot) | Decision → human approves pr-complete | **Auto-dispatch** pr-complete |
-| Human review comments                     | Decision → human approves pr-complete | Decision (keep manual)        |
+| Issue Category                            | Current                                 | New Default                     |
+| ----------------------------------------- | --------------------------------------- | ------------------------------- |
+| CI failures (lint, format, type errors)   | Inline fix (already auto)               | Same                            |
+| Test failures                             | Decision → human approves pr-complete   | **Auto-dispatch** pr-complete   |
+| Merge conflicts                           | Decision → human approves update-branch | **Auto-dispatch** update-branch |
+| Bot comments (bugbot, sonarcloud, CLABot) | Decision → human approves pr-complete   | **Auto-dispatch** pr-complete   |
+| Human review comments                     | Decision → human approves pr-complete   | Decision (keep manual)          |
 
 Human review comments remain manual by default — a human chose to write them, a human should decide how to respond. This slice does not add human-comment auto-dispatch.
 
@@ -471,7 +471,7 @@ No slot is held waiting for human reviewer activity. Human review is always long
 
 ### Decision: keep all flow types
 
-All five flow types (fix-bug, review-pr, dev, pr-complete, merge-main) remain. Each has its own worker template (11+ steps), its own Run object, its own step I/O and artifacts. The observability and failure isolation this provides is worth the ~30-60s chaining overhead per follow-up run.
+All five flow types (fix-bug, review-pr, dev, pr-complete, update-branch) remain. Each has its own worker template (11+ steps), its own Run object, its own step I/O and artifacts. The observability and failure isolation this provides is worth the ~30-60s chaining overhead per follow-up run.
 
 What changes is not the flow types themselves but how they are **triggered**: auto-dispatch replaces human decisions for configured categories.
 
@@ -566,6 +566,29 @@ What changed:
 - **Protocol + gateway**: `run.activateOnSlot` (the re-drive) is **kept** as an operator escape hatch, reachable via RPC/CLI only (`node apps/command-center/scripts/cdp.mjs gateway run.activateOnSlot '{…}'`). It remains the right tool for the genuine cases the addendum targeted — re-running a terminal run, moving a run to a _different_ slot, or recovering a dead worker — none of which apply to a gate-held run on its own slot.
 
 The `slotId`-omitted warm-auto-pick and recently-released-slot follow-ups (a1/a2) stay deferred and are now lower priority, since the only consumer is the RPC/CLI hatch rather than a primary UI flow.
+
+## Addendum (2026-07-14): branch-maintenance flow renamed `merge-main` → `update-branch`
+
+The branch-maintenance follow-up flow, originally `merge-main`, is renamed to
+`update-branch` (MANUAL-000014). The product intent was never "make a merge
+commit from main" — it is "update this PR branch against its base branch, then
+resume CI/finalization". The five flow types are now: `fix-bug`, `review-pr`,
+`dev`, `pr-complete`, `update-branch`.
+
+- **No public dual-name period.** Protocol, gateway, Command Center, worker
+  templates, and public docs use `update-branch` only. Pre-rename local records
+  and CI-watch decision actions are normalized at load (`normalizeFlowType`,
+  `normalizeCiActionId`), so the UI never surfaces `merge-main`.
+- **Strategy is a policy value, not part of the flow name.** The flow carries an
+  explicit `BranchUpdateStrategy` (`rebase | merge | project-default`). The
+  default resolver prefers `rebase` for agent-owned PR branches (pushed with
+  `--force-with-lease`) and falls back to `merge` when project policy disallows
+  force-push or a merge commit is explicitly safer. This composes with the
+  prepare-time `merge_main_strategy` mechanism from [ADR-042](042-slot-tracking-branches.md),
+  which is a separate integrate-main concern and keeps its name.
+- **Chained runs** (CI-watch merge-conflict auto-dispatch) resolve the real PR
+  number/ref from family context / GitHub metadata, never from manual ticket
+  suffixes.
 
 ## References
 

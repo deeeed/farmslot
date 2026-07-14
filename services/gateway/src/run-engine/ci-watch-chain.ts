@@ -1,4 +1,10 @@
-import { type FlowType, modeForFlow, type Run, type RunCreateParams } from '@farmslot/protocol';
+import {
+  type FlowType,
+  modeForFlow,
+  PR_BOUND_FLOW_TYPES,
+  type Run,
+  type RunCreateParams,
+} from '@farmslot/protocol';
 
 import {
   buildFollowUpClassification,
@@ -42,10 +48,14 @@ export function buildCIWatchChainedRunParams(
   const flowType = resolveCIWatchChainFlowType(dispatchAction);
   if (!flowType) return null;
   // prNumber === 0 is the invalid sentinel (review-input capture rejects it);
-  // chaining a pr-complete on owner/repo#0 would dispatch against an invalid PR.
+  // chaining a PR-bound flow on owner/repo#0 would dispatch against an invalid PR.
   const validPr = hasValidPrNumber(current);
+  // Both chained flows (pr-complete, update-branch) are PR-bound: they must carry
+  // an owner/repo#N ref, not the parent's inherited MANUAL-*/PROJ-* ticket, or
+  // runCreate's validateTicketRef rejects them. There is a valid prNumber by
+  // construction on the CI-conflict / CI-fail chain paths.
   const ticketOrPr =
-    flowType === 'pr-complete' && validPr && ciRepo
+    PR_BOUND_FLOW_TYPES.has(flowType) && validPr && ciRepo
       ? `${ciRepo}#${current.prNumber}`
       : current.ticketOrPr;
   return {
@@ -59,12 +69,12 @@ export function buildCIWatchChainedRunParams(
       // Chained runs inherit the parent's runner+model unchanged. The parent
       // already validated that combo at runCreate, so propagating it can't
       // produce an impossible runner+model wedge. Flow-specific model
-      // preferences (e.g. "merge-main wants the strongest model") belong in
+      // preferences (e.g. "update-branch wants the strongest model") belong in
       // project config, not hard-coded constants — see project.json.
       model: current.metrics.model ?? undefined,
       runner: current.metrics.runner ?? undefined,
       effort: current.effort,
-      // Headless CI-watch follow-ups (pr-complete / merge-main) always use the
+      // Headless CI-watch follow-ups (pr-complete / update-branch) always use the
       // flow baseline mode. Interactive belongs on the operator's initial worker
       // (e.g. dev), not on chained fix loops inherited via current.mode.
       mode: modeForFlow(flowType),
@@ -73,6 +83,9 @@ export function buildCIWatchChainedRunParams(
       // doesn't leak onto a machine the user filtered out.
       safetyTier: current.safetyTier,
       backlogItemId: current.backlogItemId,
+      // update-branch prefers rebase for agent-owned PR branches (ADR-042); the
+      // worker downgrades to merge when project policy disallows force-push.
+      ...(flowType === 'update-branch' ? { branchUpdateStrategy: 'rebase' as const } : {}),
       allowedSlots:
         current.allowedSlots && current.allowedSlots.length > 0
           ? [...current.allowedSlots]

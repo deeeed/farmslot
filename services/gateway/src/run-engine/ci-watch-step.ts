@@ -80,7 +80,10 @@ export async function executeCIWatchStep(
     );
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
+      await slotRelease(
+        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        noopEmit,
+      );
     } catch (err) {
       console.warn(
         `[run-engine] slot release after no-code ci-watch skip failed: ${(err as Error).message}`,
@@ -109,7 +112,10 @@ export async function executeCIWatchStep(
     );
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
+      await slotRelease(
+        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        noopEmit,
+      );
     } catch (err) {
       console.warn(
         `[run-engine] slot release after artifact-only ci-watch skip failed: ${(err as Error).message}`,
@@ -138,7 +144,10 @@ export async function executeCIWatchStep(
     );
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
+      await slotRelease(
+        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        noopEmit,
+      );
     } catch (err) {
       console.warn(
         `[run-engine] slot release after unpublished ci-watch skip failed: ${(err as Error).message}`,
@@ -173,7 +182,10 @@ export async function executeCIWatchStep(
     console.log(`[run-engine] run ${runId.slice(0, 8)} — ci disabled, skipping ci-watch`);
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
+      await slotRelease(
+        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        noopEmit,
+      );
     } catch (err) {
       console.warn(
         `[run-engine] slot release after disabled ci-watch skip failed: ${(err as Error).message}`,
@@ -216,7 +228,10 @@ export async function executeCIWatchStep(
     console.warn(`[run-engine] run ${runId.slice(0, 8)} — no PR number, skipping ci-watch`);
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
+      await slotRelease(
+        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        noopEmit,
+      );
     } catch (err) {
       console.warn(
         `[run-engine] slot release after no-pr ci-watch skip failed: ${(err as Error).message}`,
@@ -264,7 +279,8 @@ export async function executeCIWatchStep(
   const resolvedChainDecision = current.decisions.find(
     (d) =>
       d.resolvedAt &&
-      (d.resolvedAction === 'dispatch-merge-main' || d.resolvedAction === 'dispatch-pr-complete'),
+      (d.resolvedAction === 'dispatch-update-branch' ||
+        d.resolvedAction === 'dispatch-pr-complete'),
   );
   if (resolvedChainDecision) {
     const chainAction = resolvedChainDecision.resolvedAction!;
@@ -351,12 +367,15 @@ export async function executeCIWatchStep(
     // No chaining means this CI-watch run is the terminal PR lifecycle step.
     // Create the family-level retrospective here even when the flow had a
     // human-gate; the gate approved publication but did not capture CI,
-    // review-comment follow-ups, merge-main friction, or final PR outcome.
+    // review-comment follow-ups, update-branch friction, or final PR outcome.
     await createRetrospectiveForRun(runId);
     // Release slot
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
+      await slotRelease(
+        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        noopEmit,
+      );
     } catch (err) {
       console.warn(`[run-engine] slot release after ci-watch failed: ${(err as Error).message}`);
     }

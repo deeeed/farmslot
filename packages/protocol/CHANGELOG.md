@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **BREAKING** feat: rename the branch-maintenance flow `merge-main` → `update-branch` in `FlowType`. Adds load-boundary migrations `normalizeFlowType` (`merge-main`→`update-branch`, `feature`→`dev`) and `normalizeCiActionId` (`dispatch-merge-main`→`dispatch-update-branch`), the `BranchUpdateStrategy` type + `BRANCH_UPDATE_STRATEGIES`/`isBranchUpdateStrategy`, and `Run.branchUpdateStrategy`/`RunCreateParams.branchUpdateStrategy`. `update-branch` is PR-bound; its worker report artifact is `report.md`.
 - docs: slot-selection comments reference the retired find-slot.sh script (comment-only; no behavior change).
 
 - Active-development baseline; add user-facing changes here before release or package publication.

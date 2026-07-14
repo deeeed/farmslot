@@ -14,7 +14,7 @@ import {
 
 const FLOW_OPTIONS: { label: string; value: FlowFilter; color: string }[] = [
   { label: 'All', value: '', color: colors.textMuted },
-  ...(['fix-bug', 'review-pr', 'dev', 'pr-complete', 'merge-main'] as const).map((flow) => ({
+  ...(['fix-bug', 'review-pr', 'dev', 'pr-complete', 'update-branch'] as const).map((flow) => ({
     label: FLOW_LABELS[flow] ?? flow,
     value: flow as FlowFilter,
     color: FLOW_COLORS[flow] ?? colors.textMuted,

@@ -35,9 +35,9 @@ test('complete-step retrospective gating defers only CI-watch flows', () => {
     'dev retro belongs after terminal CI-watch, not complete',
   );
   assert.equal(
-    shouldSkipRetrospectiveAtComplete(makeRun({ flowType: 'merge-main' })),
+    shouldSkipRetrospectiveAtComplete(makeRun({ flowType: 'update-branch' })),
     true,
-    'merge-main retro belongs after terminal CI-watch, not complete',
+    'update-branch retro belongs after terminal CI-watch, not complete',
   );
   assert.equal(
     shouldSkipRetrospectiveAtComplete(makeRun({ flowType: 'review-pr' })),
@@ -45,8 +45,6 @@ test('complete-step retrospective gating defers only CI-watch flows', () => {
     'review-pr has human-gate but no CI-watch, so complete is terminal',
   );
 });
-
-
 
 test('local-first complete contract uses gate-held disposition for dev and fix-bug', () => {
   assert.equal(shouldPrepareLocalFirstPackage(makeRun({ flowType: 'fix-bug' })), true);

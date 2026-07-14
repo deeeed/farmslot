@@ -71,7 +71,7 @@ function sortByTerminalTimeDesc(a: Run, b: Run): number {
 }
 
 function terminalRank(run: Run): number {
-  if (run.flowType === 'merge-main') return 3;
+  if (run.flowType === 'update-branch') return 3;
   if (run.flowType === 'pr-complete') return 2;
   if (run.flowType === 'fix-bug' || run.flowType === 'dev') return 1;
   return 0;
@@ -143,7 +143,7 @@ async function findCandidates(args: Args): Promise<Candidate[]> {
     const shouldUseFamilySignal =
       Boolean(terminalRun.parentRunId) ||
       terminalRun.flowType === 'pr-complete' ||
-      terminalRun.flowType === 'merge-main';
+      terminalRun.flowType === 'update-branch';
     const reason = await familySignal(shouldUseFamilySignal ? runs : [terminalRun]);
     if (!reason) continue;
     candidates.push({ familyId, terminalRun, reason, familyRunCount: runs.length });

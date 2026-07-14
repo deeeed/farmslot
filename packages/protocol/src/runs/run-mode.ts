@@ -10,7 +10,7 @@ export const DEFAULT_WORKER_TEMPLATE_BY_FLOW: Record<string, string> = {
   'review-pr': 'review-pr.md',
   dev: 'dev.md',
   'pr-complete': 'pr-complete.md',
-  'merge-main': 'merge-main.md',
+  'update-branch': 'update-branch.md',
 };
 
 export function defaultWorkerTemplateFileName(flowType: FlowType | string): string {
@@ -19,7 +19,7 @@ export function defaultWorkerTemplateFileName(flowType: FlowType | string): stri
 
 /**
  * Baseline mode when no template-aware override applies (ADR-018).
- * `dev`, `review-pr`, and `merge-main` fall through to interactive — the
+ * `dev`, `review-pr`, and `update-branch` fall through to interactive — the
  * dispatch wizard promotes them to autonomous only when an interactive
  * sibling template exists (see selectedTemplateMode).
  */

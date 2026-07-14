@@ -471,7 +471,7 @@ export interface GateTokenSummary {
     turns?: number;
     nudgeCount?: number;
   };
-  /** pr-complete / merge-main fix loops in the same family that ran after this gate's run. */
+  /** pr-complete / update-branch fix loops in the same family that ran after this gate's run. */
   familyChainedLoops?: Array<{
     runId: string;
     flowType: FlowType;
@@ -1239,6 +1239,14 @@ export interface Run {
   domain?: string;
   /** Named prepare profile requested for this run (ADR-037). */
   prepareProfile?: string;
+  /**
+   * Branch-update strategy for `update-branch` runs (rebase | merge |
+   * project-default). Ignored for other flows. Rendered into the worker task
+   * as the `BRANCH_UPDATE_STRATEGY` template var (see tasks/writer.ts); the
+   * worker applies it. `project-default` defers to project policy at runtime.
+   * (Distinct from the prepare-time ADR-042 `merge_main_strategy`.)
+   */
+  branchUpdateStrategy?: BranchUpdateStrategy;
   effort?: string;
   /** Worker scripted-runner config when metrics.runner='scripted'. */
   scripted?: ScriptedRunnerConfig;
@@ -1606,8 +1614,59 @@ export interface FamilyChangeLedger {
   entries: FamilyChangeLedgerEntry[];
 }
 
-export type FlowType = 'fix-bug' | 'review-pr' | 'dev' | 'pr-complete' | 'merge-main';
+export type FlowType = 'fix-bug' | 'review-pr' | 'dev' | 'pr-complete' | 'update-branch';
 export type RunLane = 'production' | 'validation' | 'comparison';
+
+/**
+ * Explicit branch-update strategy for the `update-branch` follow-up flow.
+ * Kept off the flow name (the flow is "update this PR branch against its base";
+ * how we do it is policy). Chained update-branch runs default to `rebase`;
+ * `project-default` defers to the project's `merge_main_strategy` (ADR-042).
+ * The worker resolves rebase-vs-merge against project force-push policy at
+ * runtime and uses `--force-with-lease` for rebase pushes.
+ */
+export type BranchUpdateStrategy = 'rebase' | 'merge' | 'project-default';
+
+export const BRANCH_UPDATE_STRATEGIES: readonly BranchUpdateStrategy[] = [
+  'rebase',
+  'merge',
+  'project-default',
+];
+
+export function isBranchUpdateStrategy(value: unknown): value is BranchUpdateStrategy {
+  return (
+    typeof value === 'string' && (BRANCH_UPDATE_STRATEGIES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Map legacy/persisted flow-type strings onto the current public {@link FlowType}
+ * union. Applied at every load/migration boundary so pre-rename records (and any
+ * legacy `feature` runs) never surface the old name in the UI:
+ *   - `merge-main` → `update-branch` (branch-maintenance flow rename)
+ *   - `feature`    → `dev`
+ * Unknown values pass through unchanged so a genuinely new flow is not silently
+ * rewritten.
+ */
+export function normalizeFlowType(value: string | null | undefined): FlowType {
+  switch (value) {
+    case 'merge-main':
+      return 'update-branch';
+    case 'feature':
+      return 'dev';
+    default:
+      return (value ?? 'fix-bug') as FlowType;
+  }
+}
+
+/**
+ * Normalize a persisted CI-watch decision action id so pre-rename records
+ * resolve to the current action without ever rendering the old label.
+ * `dispatch-merge-main` → `dispatch-update-branch`; all other ids pass through.
+ */
+export function normalizeCiActionId(actionId: string): string {
+  return actionId === 'dispatch-merge-main' ? 'dispatch-update-branch' : actionId;
+}
 
 export type DevInteractiveProfile = 'lightweight' | 'reviewed';
 
@@ -1695,7 +1754,7 @@ export const FLOW_STEPS: Record<FlowType, PipelineStep[]> = {
     S.FINALIZE,
     S.CI_WATCH,
   ],
-  'merge-main': [
+  'update-branch': [
     S.WRITE_TASK,
     S.DISPATCH,
     S.MONITOR,
@@ -1722,7 +1781,7 @@ export const FLOW_WORKER_REPORT_ARTIFACTS: Record<FlowType, string[]> = {
   'review-pr': ['review.md', 'report.md'],
   dev: ['pr-description.md', 'report.md'],
   'pr-complete': ['comments-report.md', 'report.md'],
-  'merge-main': ['report.md', 'merge-report.md'],
+  'update-branch': ['report.md'],
 };
 
 /** Default branch fallback. Projects should set `default_branch` in project.json. */

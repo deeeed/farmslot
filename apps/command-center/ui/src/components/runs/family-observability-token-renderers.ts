@@ -306,7 +306,7 @@ function renderFamilyTokenBody(
   const maxRunTotal = Math.max(...trajectoryPoints.map((point) => point.stepTokens), 1);
   const trajectoryHint =
     trajectory === 'pr-complete-milestones'
-      ? 'Cumulative family total after each pr-complete / merge-main step (plus family root).'
+      ? 'Cumulative family total after each pr-complete / update-branch step (plus family root).'
       : 'Every family run in chronological order.';
 
   return html`

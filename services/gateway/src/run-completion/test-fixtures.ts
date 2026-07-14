@@ -8,7 +8,7 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     familyRootTicketOrPr: overrides.familyRootTicketOrPr ?? 'PROJ-1',
     lane: overrides.lane ?? 'production',
     variant: overrides.variant ?? null,
-    flowType: overrides.flowType ?? 'merge-main',
+    flowType: overrides.flowType ?? 'update-branch',
     mode: overrides.mode ?? 'interactive',
     status: overrides.status ?? 'done',
     project: overrides.project ?? 'example-browser-farm',

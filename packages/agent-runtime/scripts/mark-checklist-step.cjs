@@ -19,13 +19,13 @@ const FLOW_REPORT_ARTIFACTS = {
   'review-pr': ['review.md', 'report.md'],
   dev: ['pr-description.md', 'report.md'],
   'pr-complete': ['comments-report.md', 'report.md'],
-  'merge-main': ['report.md', 'merge-report.md'],
+  'update-branch': ['branch-update-report.md', 'report.md'],
 };
 const FALLBACK_REPORT_ARTIFACTS = [
   'report.md',
   'review.md',
   'comments-report.md',
-  'merge-report.md',
+  'branch-update-report.md',
 ];
 
 const usageLine =
@@ -45,7 +45,7 @@ function printHelp() {
       '  ./mark no-change --reason "..." [--already-fixed] [--mark-last] [--skip-learnings] [--skip-checklist]',
       '  ./mark blocked --reason "..." [--mark-last]',
       'Terminal success paths require non-empty artifacts/learnings.md and a flow outcome artifact (complete) or no-change-report (no-change).',
-      'PR flows (dev, fix-bug): write artifacts/pr-description.md. Other flows: review.md, merge-report.md, report.md, etc.',
+      'PR flows (dev, fix-bug): write artifacts/pr-description.md. Other flows: review.md, branch-update-report.md, report.md, etc.',
       'With --mark-last, every checklist box must be [x] unless --skip-checklist. complete also runs check-task-artifact-contract.mjs.',
       'Do not write SIGNAL.json by hand or with echo.',
     ].join('\n'),
@@ -244,7 +244,7 @@ function inferFlowType(taskPath) {
     if (label.includes('fix-bug') || label.includes('fix bug')) return 'fix-bug';
     if (label.includes('review-pr') || label.includes('review pr')) return 'review-pr';
     if (label.includes('pr-complete') || label.includes('pr complete')) return 'pr-complete';
-    if (label.includes('merge-main') || label.includes('merge main')) return 'merge-main';
+    if (label.includes('update-branch') || label.includes('update branch')) return 'update-branch';
     if (label.includes('interactive dev')) return 'dev';
     if (/\bdev\b/.test(label) && !label.includes('review')) return 'dev';
   }

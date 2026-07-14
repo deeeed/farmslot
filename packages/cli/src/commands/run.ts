@@ -80,7 +80,7 @@ const SUBDIR_TO_FLOW: Record<string, string> = {
   review: 'review-pr',
   dev: 'dev',
   'pr-complete': 'pr-complete',
-  'merge-main': 'merge-main',
+  'update-branch': 'update-branch',
 };
 
 const FARMSLOT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');

@@ -75,7 +75,7 @@ import {
 } from './backlog-panel-model.js';
 
 const STATUSES: Array<BacklogStatus | 'all'> = ['all', ...BACKLOG_STATUSES];
-const FLOWS: FlowType[] = ['fix-bug', 'dev', 'review-pr', 'pr-complete', 'merge-main'];
+const FLOWS: FlowType[] = ['fix-bug', 'dev', 'review-pr', 'pr-complete', 'update-branch'];
 const SOURCES: BacklogSourceKind[] = [...BACKLOG_SOURCE_KINDS];
 const BACKLOG_PROJECT_PARAM = 'backlogProject';
 const BACKLOG_STATUS_PARAM = 'backlogStatus';

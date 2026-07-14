@@ -35,7 +35,10 @@ test('prNumberFromRunInput derives PR-bound flow numbers from canonical refs', (
     prNumberFromRunInput({ flowType: 'pr-complete', ticketOrPr: 'owner/repo#456' }),
     456,
   );
-  assert.equal(prNumberFromRunInput({ flowType: 'merge-main', ticketOrPr: 'owner/repo#789' }), 789);
+  assert.equal(
+    prNumberFromRunInput({ flowType: 'update-branch', ticketOrPr: 'owner/repo#789' }),
+    789,
+  );
 });
 
 test('prNumberFromRunInput honors explicit numbers and ignores non-PR flows', () => {

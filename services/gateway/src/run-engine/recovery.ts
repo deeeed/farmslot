@@ -325,7 +325,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
           const chainDecision = run.decisions.find(
             (d) =>
               d.resolvedAt &&
-              (d.resolvedAction === 'dispatch-merge-main' ||
+              (d.resolvedAction === 'dispatch-update-branch' ||
                 d.resolvedAction === 'dispatch-pr-complete'),
           );
           if (chainDecision) {
@@ -379,7 +379,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         const resolvedChain = run.decisions.find(
           (d) =>
             d.resolvedAt &&
-            (d.resolvedAction === 'dispatch-merge-main' ||
+            (d.resolvedAction === 'dispatch-update-branch' ||
               d.resolvedAction === 'dispatch-pr-complete'),
         );
         const ciStep = run.steps.find((s) => s.name === 'ci-watch');

@@ -95,7 +95,7 @@ test('requiresCollisionPrecheck exempts only maintenance flows that reuse task d
   // Iterate FLOW_STEPS so a new flow added to the protocol auto-participates —
   // an explicit allow list of exempt flows + the inverse via FLOW_STEPS keys
   // guarantees the predicate stays aligned with both call sites.
-  const EXEMPT: ReadonlySet<FlowType> = new Set(['merge-main', 'pr-complete']);
+  const EXEMPT: ReadonlySet<FlowType> = new Set(['update-branch', 'pr-complete']);
   for (const flow of Object.keys(FLOW_STEPS) as FlowType[]) {
     assert.equal(
       requiresCollisionPrecheck(flow),

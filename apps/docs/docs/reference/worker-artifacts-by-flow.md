@@ -21,15 +21,15 @@ For the short worker checklist, see [Finish a worker run](worker-run-finish.md).
 
 PR-producing flows use **`pr-description.md`** as the single outcome artifact (internal operator summary + publishable PR body). Do **not** also write `report.md` for dev/fix-bug.
 
-| Flow                                              | Outcome artifact                                     | Notes                                                                                                                          |
-| ------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **dev**                                           | `artifacts/pr-description.md`                        | Gateway publishes this after the publication gate. Include summary, test plan, evidence placeholders, validation recipe block. |
-| **fix-bug**                                       | `artifacts/pr-description.md`                        | Same — root cause, fix, validation, repo template sections.                                                                    |
-| **review-pr**                                     | `artifacts/review.md`                                | Primary review output. Also `artifacts/line-comments.json` (may be `[]`).                                                      |
-| **pr-complete**                                   | `artifacts/comments-report.md`                       | Comment triage + fixes; interactive handoff may omit worker terminal signal.                                                   |
-| **merge-main**                                    | `artifacts/report.md` or `artifacts/merge-report.md` | Conflicts resolved, validation, risk notes.                                                                                    |
-| **no-change** (any flow)                          | `artifacts/no-change-report.md`                      | Use `./mark no-change --reason "…" --mark-last`.                                                                               |
-| **ci-fix**, **validate-dep**, **self-review-fix** | `artifacts/report.md`                                | Secondary/utility flows — no PR package.                                                                                       |
+| Flow                                              | Outcome artifact                | Notes                                                                                                                          |
+| ------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **dev**                                           | `artifacts/pr-description.md`   | Gateway publishes this after the publication gate. Include summary, test plan, evidence placeholders, validation recipe block. |
+| **fix-bug**                                       | `artifacts/pr-description.md`   | Same — root cause, fix, validation, repo template sections.                                                                    |
+| **review-pr**                                     | `artifacts/review.md`           | Primary review output. Also `artifacts/line-comments.json` (may be `[]`).                                                      |
+| **pr-complete**                                   | `artifacts/comments-report.md`  | Comment triage + fixes; interactive handoff may omit worker terminal signal.                                                   |
+| **update-branch**                                 | `artifacts/report.md`           | Conflicts resolved, validation, risk notes.                                                                                    |
+| **no-change** (any flow)                          | `artifacts/no-change-report.md` | Use `./mark no-change --reason "…" --mark-last`.                                                                               |
+| **ci-fix**, **validate-dep**, **self-review-fix** | `artifacts/report.md`           | Secondary/utility flows — no PR package.                                                                                       |
 
 ### Standalone recipe skills (no Farmslot dispatch)
 

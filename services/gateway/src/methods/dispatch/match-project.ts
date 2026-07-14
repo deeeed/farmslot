@@ -96,7 +96,7 @@ export async function dispatchMatchProject(
   }
 
   // Branch name (for PR flows): look up PR by head branch across all projects
-  if (flowType && ['review-pr', 'pr-complete', 'merge-main'].includes(flowType)) {
+  if (flowType && ['review-pr', 'pr-complete', 'update-branch'].includes(flowType)) {
     const withRepo = configs.filter((p) => p.ci?.repo);
     for (const proj of withRepo) {
       try {

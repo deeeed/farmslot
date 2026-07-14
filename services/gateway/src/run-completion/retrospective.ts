@@ -278,7 +278,8 @@ async function readTextFromArtifacts(taskDir: string, fileName: string): Promise
 export async function createRetrospective(run: Run, report: string | null): Promise<void> {
   const ownLearnings = await readTaskArtifactText(run, 'learnings.md');
   const isFamilyTerminalFlow =
-    Boolean(run.parentRunId) && (run.flowType === 'pr-complete' || run.flowType === 'merge-main');
+    Boolean(run.parentRunId) &&
+    (run.flowType === 'pr-complete' || run.flowType === 'update-branch');
   const needsFamilyScan = isFamilyTerminalFlow || run.flowType === 'pr-complete';
   let rootRun: Run | null = null;
   let commentsTriageSummary: CommentsTriageSummary | null = null;
@@ -323,9 +324,9 @@ export async function createRetrospective(run: Run, report: string | null): Prom
     !(commentsTriageSummary && commentsTriageSummary.real > 0)
   )
     return;
-  // merge-main is only useful as a family-level terminal retrospective. If a
-  // standalone merge-main somehow has no report and no family learnings, skip it.
-  if (run.flowType === 'merge-main' && !familyLearnings?.trim() && !report?.trim()) return;
+  // update-branch is only useful as a family-level terminal retrospective. If a
+  // standalone update-branch somehow has no report and no family learnings, skip it.
+  if (run.flowType === 'update-branch' && !familyLearnings?.trim() && !report?.trim()) return;
 
   // Build the new retrospective payload + decision FIRST so any IO failure
   // here aborts cleanly without leaving the root retrospective marked

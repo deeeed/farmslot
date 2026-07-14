@@ -98,7 +98,7 @@ export function slotScore(
     if (slot.hostLoad.headroom === 'yellow') score += YELLOW_HOST_PENALTY;
   }
   // Branch matching — PR-bound flows pass the PR's head branch as targetBranch.
-  // A slot already sitting on that branch has no merge-main / checkout cost,
+  // A slot already sitting on that branch has no update-branch / checkout cost,
   // so flip the usual stale penalty into a decisive bonus. Without this, the
   // PR's own slot would score +50 (stale) and lose to any slot on main.
   if (targetBranch && slot.branch === targetBranch && !hostRed) {
@@ -107,7 +107,7 @@ export function slotScore(
     // Stale branch is the primary penalty — prepare must reset to idle baseline first
     score += STALE_BRANCH_PENALTY;
   }
-  // Family matching — follow-up flows (review-pr / pr-complete / merge-main) often
+  // Family matching — follow-up flows (review-pr / pr-complete / update-branch) often
   // target a PR whose head branch is not discoverable yet from pr.list/gh, but the
   // run store can still tell us which dev/fix family produced it. Prefer the slot
   // already carrying that family over clean main so the operator lands back in the

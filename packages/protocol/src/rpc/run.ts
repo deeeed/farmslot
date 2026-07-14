@@ -117,6 +117,13 @@ export interface RunCreateParams {
   startRefSkipPrepareVerified?: boolean;
   /** Named prepare profile from the project's prepare.profiles (ADR-037). */
   prepareProfile?: string;
+  /**
+   * Branch-update strategy for `update-branch` runs (rebase | merge |
+   * project-default). Ignored for other flows. Persisted on the run and
+   * rendered into the worker task as the `BRANCH_UPDATE_STRATEGY` template var
+   * (not the prepare-time ADR-042 `merge_main_strategy`).
+   */
+  branchUpdateStrategy?: import('../contracts/index.js').BranchUpdateStrategy;
   /** Branch-affinity nudge — operator picked "Nudge worker" in the dispatch wizard for a
    * busy slot already on this PR's branch. Engine binds `slotId`, skips PREPARE, and routes
    * DISPATCH through `nudgeDispatch` (send-keys into the existing tmux session) instead of

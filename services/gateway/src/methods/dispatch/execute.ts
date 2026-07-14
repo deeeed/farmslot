@@ -875,7 +875,7 @@ export async function dispatchExecute(
   if (!params.skipPrepare) {
     step('prepare', 'Preparing slot...');
     try {
-      // pr-complete and merge-main leave integration to the worker. review-pr
+      // pr-complete and update-branch leave integration to the worker. review-pr
       // checks out origin/<branch> unless mergeMain is explicitly requested on prepare.
       const mergeMain = false;
       await slotPrepare(

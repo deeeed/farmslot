@@ -14,7 +14,7 @@ Today idle/prepare/release behavior is **asymmetric**:
 1. **Prepare understands worktrees; release does not.** `slot.prepare` allows idle worktrees on `wt/ff-*` when `HEAD === origin/defaultBranch`, resets linked worktrees to `origin/main` without checking out `main`, and checks out feature branches from that base ([`prepare.ts`](../../services/gateway/src/methods/slot/prepare.ts)). `slot.release` still runs `git checkout main` with stderr swallowed — it logs success but often leaves the worktree on the feature branch ([`release.ts`](../../services/gateway/src/methods/slot/release.ts)).
 2. **Tracking branch naming is hardcoded.** `isDefaultWorktreeTrackingBranch()` only accepts `^wt/ff-[A-Za-z0-9._-]+$`. That matches the current `farmslot-wt/farmslot-*` sandboxes but cannot express MetaMask farms (`wt/mm-*`), companion-only slots, or per-pool conventions without code changes.
 3. **Idle semantics are implicit.** Operators expect "slot released = back to baseline," but baseline for a worktree is **commit equality with `origin/defaultBranch` on a stable tracking branch**, not the branch name `main`. Fleet status and prepare guards encode this partially; release and bash `release-slot.sh` do not.
-4. **`merge-main` in prepare creates merge commits.** `review-pr` auto-enables `mergeMain` in prepare ([`dispatch-lifecycle-steps.ts`](../../services/gateway/src/run-engine/dispatch-lifecycle-steps.ts)); prepare runs `git merge ${defaultBranch} --no-edit`. That is correct for abort-on-conflict reviewer flows but produces noisy history when chained with worker-side merges or when operators prefer rebase.
+4. **`update-branch` in prepare creates merge commits.** `review-pr` auto-enables `mergeMain` in prepare ([`dispatch-lifecycle-steps.ts`](../../services/gateway/src/run-engine/dispatch-lifecycle-steps.ts)); prepare runs `git merge ${defaultBranch} --no-edit`. That is correct for abort-on-conflict reviewer flows but produces noisy history when chained with worker-side merges or when operators prefer rebase.
 
 The immediate failure mode: after E2E or demo dispatches, worktrees stay on `feat/*` branches. The next prepare either fails the idle guard or dispatches from the wrong base. Manual `git checkout wt/ff-N && git reset --hard origin/main` is the current operator workaround.
 
@@ -86,7 +86,7 @@ Flow policy from [`dispatch-lifecycle-steps.ts`](../../services/gateway/src/run-
 
 - `review-pr` — **does not** auto-enable `mergeMain` (see 2026-07-02 addendum). Optional
   `mergeMain: true` uses merge-only integration with soft-fail on conflict.
-- `pr-complete`, `merge-main` — worker owns integration; prepare does not auto-merge.
+- `pr-complete`, `update-branch` — worker owns integration; prepare does not auto-merge.
 - Other flows — `mergeMain` only when explicitly requested.
 
 Rebase is opt-in because some runner templates and operator habits assume merge commits; farms with linear-history preference (e.g. `farmslot-farm`) may set `rebase` after validation.
@@ -121,7 +121,7 @@ Rebase is opt-in because some runner templates and operator habits assume merge 
 ## Non-goals
 
 - Auto-provisioning worktrees or changing `worktree_base` layout.
-- Replacing worker-side `merge-main` / `pr-complete` templates. _(Superseded by 2026-06-29 addendum for `pr-complete` rebase policy; `merge-main` templates unchanged.)_
+- Replacing worker-side `update-branch` / `pr-complete` templates. _(Superseded by 2026-06-29 addendum for `pr-complete` rebase policy; `update-branch` templates unchanged.)_
 - Enforcing linear history on `main` (branch protection remains a GitHub concern).
 - Cross-project tracking branch names (each project owns its template).
 
@@ -148,7 +148,7 @@ for `pr-complete` still mandated `git merge origin/main` on every run (see MetaM
    `integration-status` in task artifacts (`skipped` | `rebased` | `blocked`). Push with
    `--force-with-lease` after a rebase.
 
-2. **Worker integration (`merge-main`)** — unchanged: explicit merge flow for hard conflicts.
+2. **Worker integration (`update-branch`)** — unchanged: explicit merge flow for hard conflicts.
 
 3. **Prepare-time (`review-pr`)** — projects MAY set `"merge_main_strategy": "rebase"` in
    `project.json` (same field as §4).
@@ -172,7 +172,7 @@ for `pr-complete` still mandated `git merge origin/main` on every run (see MetaM
 
 ### Non-goals (unchanged)
 
-- Gateway auto-merge during prepare for `pr-complete` / `merge-main` (worker still owns integration).
+- Gateway auto-merge during prepare for `pr-complete` / `update-branch` (worker still owns integration).
 - Enforcing linear history on protected branches.
 
 ---
@@ -187,7 +187,7 @@ for `pr-complete` still mandated `git merge origin/main` on every run (see MetaM
 `review-pr` auto-enabled `mergeMain` in prepare and used project `merge_main_strategy`
 (often `rebase` on core farms). That blocked reviews when local rebase conflicted even
 though GitHub reported the PR mergeable. Review and worker integration are different jobs:
-reviewers read the PR as pushed; authors (or `pr-complete` / `merge-main` workers) resolve
+reviewers read the PR as pushed; authors (or `pr-complete` / `update-branch` workers) resolve
 integration.
 
 ### Decision
@@ -202,7 +202,7 @@ integration.
    a future run flag). For `review-pr`, integration always uses **merge commits** (never
    rebase). On conflict: abort, reset to `origin/<branch>`, warn in prepare output, continue
    review on branch-as-is.
-4. **Worker flows unchanged** — `pr-complete` / `merge-main` still own integration;
+4. **Worker flows unchanged** — `pr-complete` / `update-branch` still own integration;
    `merge_main_strategy: rebase` remains valid there via worker templates, not review prepare.
 
 ### Consequences
@@ -210,3 +210,18 @@ integration.
 - Reviews no longer blocked by author rebase debt.
 - Slot worktrees may review slightly stale vs `main`; TASK.md carries explicit merge signals.
 - Local merge-for-review (opt-in) is disposable slot state — does not rewrite PR history.
+
+## Addendum (2026-07-14): `update-branch` flow strategy vs prepare-time `merge_main_strategy`
+
+The branch-maintenance follow-up flow (formerly `merge-main`) is renamed to
+`update-branch` (see [ADR-024](024-run-lanes-and-run-family-model.md), MANUAL-000014).
+Two related-but-distinct strategy surfaces now coexist and keep separate names:
+
+- **`merge_main_strategy` (this ADR, §4)** — prepare-time integrate-main for
+  `review-pr` opt-in (`mergeMain` on `slot.prepare`). Unchanged.
+- **`BranchUpdateStrategy` (new)** — the `update-branch` flow's explicit
+  `rebase | merge | project-default` policy, threaded to the worker as a task
+  input (`BRANCH_UPDATE_STRATEGY`). The worker owns integration; the default
+  resolver prefers `rebase` for agent-owned PR branches (`--force-with-lease`)
+  and downgrades to `merge` when force-push is disallowed. `project-default`
+  defers to this ADR's `merge_main_strategy`.

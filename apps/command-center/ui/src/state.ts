@@ -243,7 +243,7 @@ const PR_PRODUCING_FLOWS = new Set<Run['flowType']>([
   'fix-bug',
   'review-pr',
   'pr-complete',
-  'merge-main',
+  'update-branch',
 ]);
 function isActiveRun(run: Run): boolean {
   return !isTerminalRunStatus(run.status);

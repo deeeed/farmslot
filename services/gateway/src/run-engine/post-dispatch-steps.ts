@@ -364,8 +364,8 @@ export async function executeSelfReviewStep(
     };
   }
 
-  // merge-main: check worker's signal to decide if self-review is needed
-  if (current.flowType === 'merge-main') {
+  // update-branch: check worker's signal to decide if self-review is needed
+  if (current.flowType === 'update-branch') {
     try {
       const vars = await loadSlotVars(current.slotId);
       const taskDir = current.taskFile ? path.dirname(current.taskFile) : null;
@@ -377,7 +377,7 @@ export async function executeSelfReviewStep(
           const signal = JSON.parse(await readFile(signalPath, 'utf-8'));
           if (signal.needsSelfReview === false) {
             console.log(
-              `[run-engine] run ${runId.slice(0, 8)} — merge-main worker says self-review not needed (trivial conflicts)`,
+              `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (trivial conflicts)`,
             );
             return {
               inputs: { ...inputs, enabled: false },
@@ -389,7 +389,7 @@ export async function executeSelfReviewStep(
     } catch (err) {
       // Signal not found or unreadable — default to running self-review
       console.warn(
-        `[run-engine] merge-main worker signal unavailable for ${runId.slice(0, 8)}; running self-review: ${(err as Error).message.slice(0, 200)}`,
+        `[run-engine] update-branch worker signal unavailable for ${runId.slice(0, 8)}; running self-review: ${(err as Error).message.slice(0, 200)}`,
       );
     }
   }

@@ -54,10 +54,10 @@ test('buildCIWatchChainedRunParams skips prepare only when a warm source slot is
   assert.deepEqual(withoutSlot.engineFlags, {});
 });
 
-test('buildCIWatchChainedRunParams inherits parent runner+model unchanged for merge-main (no auto-upgrade to opus)', () => {
-  // The historic "force opus on merge-main" upgrade caused the codex+opus
+test('buildCIWatchChainedRunParams inherits parent runner+model unchanged for update-branch (no auto-upgrade to opus)', () => {
+  // The historic "force opus on update-branch" upgrade caused the codex+opus
   // wedge — codex CLI accepted --model opus but the API rejected it with
-  // HTTP 400. Removing the heuristic: chained merge-main now inherits the
+  // HTTP 400. Removing the heuristic: chained update-branch now inherits the
   // parent's model, which is by construction compatible with the parent's
   // (and child's) runner. Flow-specific model preferences belong in project
   // config, not in chained-run logic.
@@ -67,6 +67,7 @@ test('buildCIWatchChainedRunParams inherits parent runner+model unchanged for me
     lane: 'production',
     variant: null,
     ticketOrPr: 'owner/repo#500',
+    prNumber: 500,
     metrics: {
       nudgeCount: 0,
       model: 'gpt-5.5-mini',
@@ -76,9 +77,9 @@ test('buildCIWatchChainedRunParams inherits parent runner+model unchanged for me
     },
   });
 
-  const chain = buildCIWatchChainedRunParams(current, 'dispatch-merge-main', 'owner/repo');
+  const chain = buildCIWatchChainedRunParams(current, 'dispatch-update-branch', 'owner/repo');
   assert(chain);
-  assert.equal(chain.flowType, 'merge-main');
+  assert.equal(chain.flowType, 'update-branch');
   assert.equal(chain.createParams.ticketOrPr, 'owner/repo#500');
   assert.equal(chain.createParams.model, 'gpt-5.5-mini');
   assert.equal(chain.createParams.runner, 'codex');
@@ -86,7 +87,7 @@ test('buildCIWatchChainedRunParams inherits parent runner+model unchanged for me
   assert.equal(chain.createParams.variant, undefined);
 });
 
-test('buildCIWatchChainedRunParams inherits claude parent into merge-main without forcing opus', () => {
+test('buildCIWatchChainedRunParams inherits claude parent into update-branch without forcing opus', () => {
   const current = makeRun({
     id: 'followup-run-claude',
     familyId: 'family-3',
@@ -101,10 +102,25 @@ test('buildCIWatchChainedRunParams inherits claude parent into merge-main withou
       runnerSessionPath: null,
     },
   });
-  const chain = buildCIWatchChainedRunParams(current, 'dispatch-merge-main', 'owner/repo');
+  const chain = buildCIWatchChainedRunParams(current, 'dispatch-update-branch', 'owner/repo');
   assert(chain);
   assert.equal(chain.createParams.model, 'sonnet');
   assert.equal(chain.createParams.runner, 'claude');
+});
+
+test('buildCIWatchChainedRunParams converts a manual-rooted update-branch chain to a PR ref', () => {
+  // Regression: update-branch is PR-bound, so a chain inheriting a manual/Jira
+  // ticket (e.g. MANUAL-000014) would throw `Invalid PR reference` at runCreate.
+  // The CI-conflict path has an authoritative prNumber — convert to owner/repo#N.
+  const current = makeRun({
+    familyRootTicketOrPr: 'MANUAL-000014',
+    ticketOrPr: 'MANUAL-000014',
+    prNumber: 321,
+  });
+  const chain = buildCIWatchChainedRunParams(current, 'dispatch-update-branch', 'owner/repo');
+  assert(chain);
+  assert.equal(chain.flowType, 'update-branch');
+  assert.equal(chain.createParams.ticketOrPr, 'owner/repo#321');
 });
 
 test('buildCIWatchChainedRunParams inherits parent safetyTier so chained flows keep posture', () => {
@@ -116,7 +132,7 @@ test('buildCIWatchChainedRunParams inherits parent safetyTier so chained flows k
 
 test('buildCIWatchChainedRunParams leaves safetyTier undefined when parent has none', () => {
   const current = makeRun({ safetyTier: undefined });
-  const chain = buildCIWatchChainedRunParams(current, 'dispatch-merge-main', 'owner/repo');
+  const chain = buildCIWatchChainedRunParams(current, 'dispatch-update-branch', 'owner/repo');
   assert(chain);
   assert.equal(chain.createParams.safetyTier, undefined);
 });
@@ -162,7 +178,7 @@ test('buildCIWatchChainedRunParams uses flow baseline mode for chained pr-comple
   assert.equal(chain.createParams.mode, 'autonomous');
 });
 
-test('buildCIWatchChainedRunParams uses flow baseline mode for chained merge-main', () => {
+test('buildCIWatchChainedRunParams uses flow baseline mode for chained update-branch', () => {
   const current = makeRun({
     id: 'autonomous-parent',
     flowType: 'pr-complete',
@@ -170,7 +186,7 @@ test('buildCIWatchChainedRunParams uses flow baseline mode for chained merge-mai
     prNumber: 500,
     ticketOrPr: 'owner/repo#500',
   });
-  const chain = buildCIWatchChainedRunParams(current, 'dispatch-merge-main', 'owner/repo');
+  const chain = buildCIWatchChainedRunParams(current, 'dispatch-update-branch', 'owner/repo');
   assert(chain);
   assert.equal(chain.createParams.mode, 'interactive');
 });

@@ -84,7 +84,7 @@ const ROOT_FLOW_TYPES = new Set<Run['flowType']>(['fix-bug', 'dev']);
 
 /**
  * Find the best parent run for a follow-up flow (review-pr / pr-complete /
- * merge-main) when the caller didn't specify `parentRunId` explicitly.
+ * update-branch) when the caller didn't specify `parentRunId` explicitly.
  *
  * Used by runCreate to auto-link a freshly dispatched pr-complete back to the
  * original fix-bug/dev run on the same PR/ticket so materializeInheritedContext

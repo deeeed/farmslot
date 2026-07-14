@@ -111,8 +111,8 @@ function flowTypeLabel(flowType: FamilyChangeLedgerEntry['flowType']): string {
       return 'Dev';
     case 'pr-complete':
       return 'PR complete';
-    case 'merge-main':
-      return 'Merge main';
+    case 'update-branch':
+      return 'Update branch';
     default:
       return flowType;
   }

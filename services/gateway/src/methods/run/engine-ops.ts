@@ -108,7 +108,7 @@ export async function runActivateOnSlot(
     );
   }
 
-  // Activate re-drives from PREPARE; flows without a PREPARE step (e.g. merge-main)
+  // Activate re-drives from PREPARE; flows without a PREPARE step (e.g. update-branch)
   // have no prepare step object to replay and cannot be re-bound this way.
   if (!FLOW_STEPS[run.flowType]?.includes(PipelineSteps.PREPARE)) {
     throw new Error(

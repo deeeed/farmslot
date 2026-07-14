@@ -9,6 +9,7 @@ import path from 'node:path';
 import {
   type ArtifactRef,
   type FlowType,
+  isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type Run,
   type TaskSchema,
@@ -726,11 +727,11 @@ export async function writeTaskFile(
           .join('\n\n---\n\n')
       : '_No linked tickets_';
 
-  // PR-specific vars (review-pr, pr-complete, merge-main).
+  // PR-specific vars (review-pr, pr-complete, update-branch).
   if (
     run.flowType === 'review-pr' ||
     run.flowType === 'pr-complete' ||
-    run.flowType === 'merge-main'
+    run.flowType === 'update-branch'
   ) {
     const prMatch = run.ticketOrPr.match(/#?(\d+)$/);
     const prNumber = prMatch?.[1] ?? '';
@@ -745,6 +746,14 @@ export async function writeTaskFile(
     vars.PR_BODY = ticket.description || '';
     vars.REVIEW_TIER = run.reviewTier || 'standard';
     vars.RECIPE_STRATEGY = opts?.extraVars?.RECIPE_STRATEGY ?? '';
+    // Branch-update strategy for the update-branch flow (rebase | merge |
+    // project-default). Rendered into the worker template so the worker records
+    // the selected strategy in its outcome artifact and, for project-default,
+    // resolves rebase-vs-merge against project force-push policy at runtime.
+    // Guard against a malformed persisted value so the template never renders junk.
+    vars.BRANCH_UPDATE_STRATEGY = isBranchUpdateStrategy(run.branchUpdateStrategy)
+      ? run.branchUpdateStrategy
+      : 'project-default';
     const integration = ticket.prIntegration;
     vars.PR_MERGEABLE = integration?.mergeable ?? 'UNKNOWN';
     vars.PR_MERGE_STATE = integration?.mergeStateStatus ?? 'UNKNOWN';

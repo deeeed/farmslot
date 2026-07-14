@@ -50,7 +50,7 @@ export async function executePrepareStep(
   } = context;
   const current = await normalizeEvalReplayForTaskWrite(runId, ensureRunSlotBinding(runId));
   if (!current.slotId) throw new Error('No slot assigned');
-  // pr-complete and merge-main flows leave the merge to the worker so it
+  // pr-complete and update-branch flows leave the merge to the worker so it
   // can resolve conflicts in-session. review-pr checks out the PR branch as
   // pushed; integration with main is informational (TASK.md) unless the
   // operator explicitly passes mergeMain on prepare.

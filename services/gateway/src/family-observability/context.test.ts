@@ -175,7 +175,7 @@ test('materializeInheritedContext falls back parent -> root -> sibling and seeds
   });
   const sibling = makeRun({
     id: 'sibling-run',
-    flowType: 'merge-main',
+    flowType: 'update-branch',
     familyId: root.familyId,
     parentRunId: parent.id,
     familyRootTicketOrPr: root.ticketOrPr,
@@ -267,7 +267,7 @@ test('materializeInheritedContext prefers current-run artifacts before sibling f
   });
   const newerSibling = makeRun({
     id: 'newer-sibling',
-    flowType: 'merge-main',
+    flowType: 'update-branch',
     familyId: root.familyId,
     parentRunId: root.id,
     familyRootTicketOrPr: root.ticketOrPr,
@@ -361,7 +361,7 @@ test('materializeInheritedContext falls back to newest sibling when parent and r
   });
   const newerSibling = makeRun({
     id: 'newer-sibling',
-    flowType: 'merge-main',
+    flowType: 'update-branch',
     familyId: root.familyId,
     parentRunId: root.id,
     familyRootTicketOrPr: root.ticketOrPr,

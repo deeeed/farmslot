@@ -22,7 +22,7 @@ projects/<project>/templates/worker/
   dev-interactive.md
   review-pr.md
   pr-complete.md
-  merge-main.md
+  update-branch.md
 ```
 
 The default flow-to-template mapping is:
@@ -34,7 +34,7 @@ The default flow-to-template mapping is:
 | `dev` interactive | `dev-interactive.md` | Human-steered development session; completion is operator-owned. |
 | `review-pr`       | `review-pr.md`       | Independently review an existing PR.                             |
 | `pr-complete`     | `pr-complete.md`     | Continue a PR after follow-up findings, comments, CI, or review. |
-| `merge-main`      | `merge-main.md`      | Resolve main-branch merge fallout.                               |
+| `update-branch`   | `update-branch.md`   | Resolve main-branch merge fallout.                               |
 
 ### Secondary templates (not flow-dispatch defaults)
 

@@ -177,7 +177,7 @@ const LAYOUTS: Record<FlowType, Record<string, StepPos>> = {
     'ci-pass': { col: 4, lane: 'post' },
     done: { col: 5, lane: 'post' },
   },
-  'merge-main': {
+  'update-branch': {
     'write-task': { col: 0, lane: 'orch' },
     dispatch: { col: 0, lane: 'worker' },
     monitor: { col: 1, lane: 'worker', width: MONITOR_W },
