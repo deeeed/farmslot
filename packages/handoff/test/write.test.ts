@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -466,4 +467,45 @@ test('a package whose file is tampered off its manifest hash is refused (snapsho
     /sha256 mismatch|snapshot failed validation/,
   );
   assert.equal(existsSync(path.join(destination, 'packages')), false);
+});
+
+test('a post-assemble tampered text file (token + updated manifest hash, status pass) is refused', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+
+  // Tamper report.md with a token, then update the manifest hash to match and
+  // leave scrubbing.status "pass" - schema + hash validation would pass, so
+  // the write-side floor rescan is the only thing that catches the secret.
+  const tampered = `# Report\n\nleaked ghp_${'a'.repeat(36)} in the log\n`;
+  const reportPath = path.join(result.packageDir, 'report.md');
+  writeFileSync(reportPath, tampered);
+  const manifestPath = path.join(result.packageDir, 'manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    files: Record<string, { sha256: string; bytes: number; role: string }>;
+  };
+  manifest.files['report.md'].sha256 = createHash('sha256').update(tampered).digest('hex');
+  manifest.files['report.md'].bytes = Buffer.byteLength(tampered);
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  const destination = initDestinationRepo();
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    /report\.md carries \d+ secret/,
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false);
+  assert.equal(git(destination, ['status', '--porcelain']), '');
+});
+
+test('a clean package still writes after the write-side floor rescan', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+  const destination = initDestinationRepo();
+  const write = writeLearningPackage({
+    packageDir: result.packageDir,
+    destination,
+    consent: CONSENT,
+  });
+  assert.equal(write.status, 'written');
 });

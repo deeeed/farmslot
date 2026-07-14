@@ -20,6 +20,10 @@ import path from 'node:path';
 
 import { scanForFloorSecrets } from '../scrub/floor.js';
 import { normalizeTicket } from '../spec/task-key.js';
+
+/** Text file types the write-side floor rescan covers (spec section 5.1 layer 1
+ * allowlist, mirroring the assemble gate's eligibility). */
+const ELIGIBLE_SCAN_EXTENSIONS = new Set(['.md', '.json', '.jsonl', '.txt', '.diff', '.patch']);
 import type { GradeSemantic, HumanGrade, IndexRow, Manifest } from '../spec/types.js';
 import { SCHEMA_VERSION } from '../spec/version.js';
 import { isValidDateTime } from '../validate/json-schema.js';
@@ -435,18 +439,27 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
           'Next: re-run writeLearningPackage - do not mutate the package dir during a write.',
       );
     }
-    // Write-side floor re-assertion on the manifest metadata (title/description/
-    // extensions etc.): the assembler scans this at assemble, but a hand-built
-    // or swapped manifest could carry a secret in a metadata field the snapshot
-    // validator (schema + hashes) does not rescan. One cheap scan closes it.
-    const manifestHits = scanForFloorSecrets(snapshotManifestBytes);
-    if (manifestHits.length > 0) {
-      throw new Error(
-        `writeLearningPackage: the manifest metadata carries ${manifestHits.length} ` +
-          `secret(s) (kinds: ${[...new Set(manifestHits.map((h) => h.kind))].join(', ')}) - ` +
-          'refusing to share unscrubbed metadata. Next: re-assemble with ' +
-          'assembleLearningPackage (which scrubs metadata) and never hand-edit the manifest.',
-      );
+    // Write-side floor re-assertion: the snapshot validator only checks schema
+    // and hashes, so a package tampered post-assemble (a secret added to a text
+    // file, its manifest hash updated to match, scrubbing.status left "pass")
+    // would validate. Re-run the crypto-secret floor over EVERY eligible text
+    // file in the snapshot - through the same unescape pipeline as assemble -
+    // so write is a full re-assertion of the scrub gate, not a trust of the
+    // manifest's claim. Packages are small text bundles; scanning all of them
+    // is cheap and the simplest sound option.
+    for (const rel of ['manifest.json', ...Object.keys(manifest.files)]) {
+      if (!ELIGIBLE_SCAN_EXTENSIONS.has(path.extname(rel).toLowerCase())) continue;
+      const content = readFileSync(path.join(snapshotDir, rel), 'utf8');
+      const hits = scanForFloorSecrets(content);
+      if (hits.length > 0) {
+        throw new Error(
+          `writeLearningPackage: ${rel} carries ${hits.length} secret(s) ` +
+            `(kinds: ${[...new Set(hits.map((h) => h.kind))].join(', ')}) that the scrub gate ` +
+            'would have blocked - refusing to share unscrubbed content. Next: re-assemble ' +
+            'with assembleLearningPackage (which scrubs and blocks); never hand-edit a ' +
+            'staged package.',
+        );
+      }
     }
 
     // Remove now-empty ancestor dirs the failed write created, up to the repo root.

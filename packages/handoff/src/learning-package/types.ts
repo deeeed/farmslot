@@ -66,8 +66,6 @@ export interface HarnessOutputDir {
 export interface ArtifactPaths {
   /** Absolute path; MUST contain report.md + learnings.md. */
   artifactsDir: string;
-  /** Absolute path to evidence-manifest.json, when present (spec section 3.5). */
-  evidenceManifest?: string;
   /** Raw runner output dirs, folded in post-scrub. */
   harnessOutputDirs?: HarnessOutputDir[];
   /**

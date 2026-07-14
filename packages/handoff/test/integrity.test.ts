@@ -659,7 +659,7 @@ test('a manifest metadata token (hand-swapped, hash-consistent) is refused at wr
   const destination = initDestinationRepo();
   assert.throws(
     () => writeLearningPackage({ packageDir: first.packageDir, destination, consent: CONSENT }),
-    /manifest metadata carries \d+ secret/,
+    /manifest\.json carries \d+ secret/,
   );
   assert.equal(existsSync(path.join(destination, 'packages')), false);
 });
