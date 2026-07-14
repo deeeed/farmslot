@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat: instant-feedback rule — every human-mode CLI command and TUI action acknowledges within ~200ms via a spinner, first stream line, or immediate pending notice, so no long operation (prepare, release, dispatch, backlog dispatch, bundle import, TUI connect) sits silent until it completes. Spinners/notices go to stderr only and are suppressed in machine mode (`--json` or non-TTY stdout), keeping stdout a single pure envelope even when stdout is piped while stderr stays a TTY.
 - refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the `run` command flow-type map.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
