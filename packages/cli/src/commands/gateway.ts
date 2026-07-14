@@ -16,6 +16,7 @@ import {
   saveProfiles,
 } from '../gateway-profiles.js';
 import { OutputContext } from '../output.js';
+import { withProgress } from '../progress.js';
 
 interface GatewayHealthResult {
   status?: string;
@@ -117,9 +118,17 @@ export function registerGatewayCommand(program: Command): void {
       const timeoutMs = Number(opts.timeout);
       const healthUrl = gatewayHealthUrl(url);
       try {
-        const health = await readHealth(healthUrl, timeoutMs);
+        const health = await withProgress(
+          `Probing ${url}`,
+          () => readHealth(healthUrl, timeoutMs),
+          !output.json,
+        );
         try {
-          const nodes = await client.call<NodesListResult>('nodes.list');
+          const nodes = await withProgress(
+            'Loading nodes',
+            () => client.call<NodesListResult>('nodes.list'),
+            !output.json,
+          );
           const result: GatewayStatusResult = { url, healthUrl, reachable: true, health, nodes };
           if (output.json) output.writeJson(result);
           else output.write(`${formatGatewayStatus(result)}\n`);

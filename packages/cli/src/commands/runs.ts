@@ -14,6 +14,7 @@ import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { OutputContext } from '../output.js';
+import { withProgress } from '../progress.js';
 
 import { resolveRunsExportProfile, resolveRunsImportMode } from './runs-cli-options.js';
 
@@ -128,18 +129,23 @@ export function registerRunsCommand(program: Command): void {
         const farmslotRoot = resolveRootFlag(opts.root);
         const mode = resolveRunsImportMode(opts);
         const useGateway = Boolean(cmd.optsWithGlobals().gateway || cmd.optsWithGlobals().url);
-        const result = useGateway
-          ? await client.call<ReturnType<typeof importBundle>>('run.bundle.import', {
-              bundlePath: path.resolve(bundlePath),
-              mode,
-              force: opts.force || undefined,
-            })
-          : importBundle({
-              farmslotRoot,
-              bundlePath: path.resolve(bundlePath),
-              mode,
-              force: opts.force,
-            });
+        const result = await withProgress(
+          `Importing ${path.basename(bundlePath)}`,
+          async () =>
+            useGateway
+              ? await client.call<ReturnType<typeof importBundle>>('run.bundle.import', {
+                  bundlePath: path.resolve(bundlePath),
+                  mode,
+                  force: opts.force || undefined,
+                })
+              : importBundle({
+                  farmslotRoot,
+                  bundlePath: path.resolve(bundlePath),
+                  mode,
+                  force: opts.force,
+                }),
+          !emit.machine,
+        );
         if (emit.machine) emit.ok(result);
         else {
           output.write(
@@ -184,11 +190,13 @@ export function registerRunsCommand(program: Command): void {
             .filter(Boolean),
         );
         const limit = Math.max(1, Number(opts.limit ?? 200) || 200);
-        const listed = await client.call<{ runs: Array<{ id: string; status: string }> }>(
-          'run.list',
-          {
-            limit: 1000,
-          },
+        const listed = await withProgress(
+          'Scanning runs',
+          () =>
+            client.call<{ runs: Array<{ id: string; status: string }> }>('run.list', {
+              limit: 1000,
+            }),
+          !emit.machine,
         );
         const targets = listed.runs
           .filter((run) => statuses.has(run.status))
@@ -202,11 +210,18 @@ export function registerRunsCommand(program: Command): void {
           }
           return;
         }
-        let deleted = 0;
-        for (const runId of targets) {
-          await client.call('run.delete', { runId });
-          deleted++;
-        }
+        const deleted = await withProgress(
+          `Deleting ${targets.length} run(s)`,
+          async () => {
+            let count = 0;
+            for (const runId of targets) {
+              await client.call('run.delete', { runId });
+              count++;
+            }
+            return count;
+          },
+          !emit.machine,
+        );
         if (emit.machine) emit.ok({ deleted, runIds: targets });
         else output.write(`${green('Deleted')} ${bold(String(deleted))} run(s)\n`);
       } catch (err) {

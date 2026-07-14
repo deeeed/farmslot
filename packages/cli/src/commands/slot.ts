@@ -13,7 +13,7 @@ import type {
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { formatSlotCheck } from '../formatters/slot.js';
-import { withProgress } from '../progress.js';
+import { withProgress, withStreamProgress } from '../progress.js';
 import { resolveCurrentSlot, resolveSlotId } from '../slot-context.js';
 
 import { resolveSlotPrepareGatewayTimeoutMs } from './slot-prepare-timeout.js';
@@ -71,9 +71,15 @@ export function pickStreamOutput(event: EventFrame): string | null {
   return null;
 }
 
-function handleStreamEvents(event: EventFrame): void {
-  const data = pickStreamOutput(event);
-  if (data !== null) process.stderr.write(data);
+/**
+ * Adapts a `script.output` stream to an `onData` sink so `withStreamProgress`
+ * can clear its spinner on the first byte and then flow output through.
+ */
+function streamTo(onData: (data: string) => void): (event: EventFrame) => void {
+  return (event: EventFrame): void => {
+    const data = pickStreamOutput(event);
+    if (data !== null) onData(data);
+  };
 }
 
 function actionParams(id: string, opts: Record<string, unknown>): Record<string, unknown> {
@@ -177,10 +183,8 @@ export function registerSlotCommand(program: Command): void {
           const result = await client.call<ScriptActionResult>('slot.prepare', params);
           emit.ok(result);
         } else {
-          await client.callWithEvents<ScriptActionResult>(
-            'slot.prepare',
-            params,
-            handleStreamEvents,
+          await withStreamProgress(`Preparing ${slotId}`, (onData) =>
+            client.callWithEvents<ScriptActionResult>('slot.prepare', params, streamTo(onData)),
           );
           output.write(`Prepare complete for ${slotId}\n`);
         }
@@ -216,10 +220,8 @@ export function registerSlotCommand(program: Command): void {
           const result = await client.call<ScriptActionResult>('slot.release', params);
           emit.ok(result);
         } else {
-          await client.callWithEvents<ScriptActionResult>(
-            'slot.release',
-            params,
-            handleStreamEvents,
+          await withStreamProgress(`Releasing ${slotId}`, (onData) =>
+            client.callWithEvents<ScriptActionResult>('slot.release', params, streamTo(onData)),
           );
           output.write(`Release complete for ${slotId}\n`);
         }
@@ -255,10 +257,8 @@ export function registerSlotCommand(program: Command): void {
           }
           emit.ok(result);
         } else {
-          const result = await client.callWithEvents<SlotRefreshResult>(
-            'slot.refresh',
-            params,
-            handleStreamEvents,
+          const result = await withStreamProgress(`Refreshing ${slotId}`, (onData) =>
+            client.callWithEvents<SlotRefreshResult>('slot.refresh', params, streamTo(onData)),
           );
           if (!result.refreshed) {
             output.error(refreshFailureMessage(slotId, result));
@@ -282,10 +282,12 @@ export function registerSlotCommand(program: Command): void {
         const result = await client.call<SlotFixtureRefreshResult>('slot.fixtureRefresh', params);
         emit.ok(result);
       } else {
-        await client.callWithEvents<SlotFixtureRefreshResult>(
-          'slot.fixtureRefresh',
-          params,
-          handleStreamEvents,
+        await withStreamProgress(`Syncing fixtures for ${slotId}`, (onData) =>
+          client.callWithEvents<SlotFixtureRefreshResult>(
+            'slot.fixtureRefresh',
+            params,
+            streamTo(onData),
+          ),
         );
         output.write(`Fixtures refreshed for ${slotId}\n`);
       }
@@ -321,10 +323,12 @@ export function registerSlotCommand(program: Command): void {
       const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
-        const result = await client.call<{ opened: boolean }>('slot.openEditor', {
-          slotId,
-          editor: opts.editor,
-        });
+        const result = await withProgress(
+          `Opening ${slotId} in ${opts.editor}`,
+          () =>
+            client.call<{ opened: boolean }>('slot.openEditor', { slotId, editor: opts.editor }),
+          !emit.machine,
+        );
         if (emit.machine) emit.ok(result);
         else output.write(`Opened ${slotId} in ${opts.editor}\n`);
       } catch (err) {
@@ -345,9 +349,14 @@ export function registerSlotCommand(program: Command): void {
       const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
-        const result = await client.call<SlotActionListResult>(
-          'slot.action.list',
-          actionParams(slotId, { placement: opts.placement }),
+        const result = await withProgress(
+          `Listing actions for ${slotId}`,
+          () =>
+            client.call<SlotActionListResult>(
+              'slot.action.list',
+              actionParams(slotId, { placement: opts.placement }),
+            ),
+          !emit.machine,
         );
         if (emit.machine) {
           emit.ok(result);
@@ -374,10 +383,11 @@ export function registerSlotCommand(program: Command): void {
       const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
-        const result = await client.call<SlotActionRunResult>('slot.action.run', {
-          slotId,
-          actionId,
-        });
+        const result = await withProgress(
+          `Running ${actionId} on ${slotId}`,
+          () => client.call<SlotActionRunResult>('slot.action.run', { slotId, actionId }),
+          !emit.machine,
+        );
         if (emit.machine) {
           if (!result.ok) {
             emit.fail(
@@ -418,10 +428,8 @@ export function registerSlotCommand(program: Command): void {
           const result = await client.call<ScriptActionResult>('slot.recycle', { slotId });
           emit.ok(result);
         } else {
-          await client.callWithEvents<ScriptActionResult>(
-            'slot.recycle',
-            { slotId },
-            handleStreamEvents,
+          await withStreamProgress(`Recycling ${slotId}`, (onData) =>
+            client.callWithEvents<ScriptActionResult>('slot.recycle', { slotId }, streamTo(onData)),
           );
           output.write(`Recycle complete for ${slotId}\n`);
         }

@@ -16,6 +16,7 @@ import type {
 import { bold, cyan, dim, green, yellow } from '../colors.js';
 import { type CommandContext, resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
+import { withProgress } from '../progress.js';
 import { TableRenderer } from '../table.js';
 
 /** Accepts a sourceRef (MANUAL-000015), an item id, or an id prefix. */
@@ -109,10 +110,15 @@ export function registerBacklogCommand(program: Command): void {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
-        const result = await ctx.client.call<BacklogListResult>('backlog.list', {
-          project: opts.project,
-          status: opts.status,
-        });
+        const result = await withProgress(
+          'Loading backlog',
+          () =>
+            ctx.client.call<BacklogListResult>('backlog.list', {
+              project: opts.project,
+              status: opts.status,
+            }),
+          !emit.machine,
+        );
         if (emit.machine) emit.ok(result);
         else ctx.output.write(`${renderItems(result.items)}\n`);
       } catch (err) {
@@ -128,10 +134,17 @@ export function registerBacklogCommand(program: Command): void {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
-        const item = await resolveItem(ctx, ref);
-        const spec = opts.spec
-          ? await ctx.client.call<BacklogSpecGetResult>('backlog.spec.get', { itemId: item.id })
-          : undefined;
+        const { item, spec } = await withProgress(
+          `Loading ${ref}`,
+          async () => {
+            const item = await resolveItem(ctx, ref);
+            const spec = opts.spec
+              ? await ctx.client.call<BacklogSpecGetResult>('backlog.spec.get', { itemId: item.id })
+              : undefined;
+            return { item, spec };
+          },
+          !emit.machine,
+        );
         if (emit.machine) {
           emit.ok({ item, ...(spec ? { spec } : {}) });
         } else {
@@ -170,15 +183,20 @@ export function registerBacklogCommand(program: Command): void {
         const ctx = resolveContext(cmd);
         const emit = createEmitter(ctx.output, cmd);
         try {
-          const result = await ctx.client.call<BacklogCreateResult>('backlog.create', {
-            project: opts.project,
-            title: opts.title,
-            sourceKind: 'manual',
-            flowType: opts.flowType,
-            ...(opts.spec ? { specPath: opts.spec } : {}),
-            ...(opts.notes ? { notes: opts.notes } : {}),
-            ...(opts.priority ? { priority: Number(opts.priority) } : {}),
-          });
+          const result = await withProgress(
+            `Creating ${opts.title}`,
+            () =>
+              ctx.client.call<BacklogCreateResult>('backlog.create', {
+                project: opts.project,
+                title: opts.title,
+                sourceKind: 'manual',
+                flowType: opts.flowType,
+                ...(opts.spec ? { specPath: opts.spec } : {}),
+                ...(opts.notes ? { notes: opts.notes } : {}),
+                ...(opts.priority ? { priority: Number(opts.priority) } : {}),
+              }),
+            !emit.machine,
+          );
           if (emit.machine) emit.ok(result);
           else
             ctx.output.write(
@@ -205,13 +223,20 @@ export function registerBacklogCommand(program: Command): void {
         const ctx = resolveContext(cmd);
         const emit = createEmitter(ctx.output, cmd);
         try {
-          const item = await resolveItem(ctx, ref);
-          const result = await ctx.client.call<BacklogUpdateResult>('backlog.update', {
-            itemId: item.id,
-            ...(opts.title ? { title: opts.title } : {}),
-            ...(opts.notes ? { notes: opts.notes } : {}),
-            ...(opts.priority ? { priority: Number(opts.priority) } : {}),
-          });
+          const { item, result } = await withProgress(
+            `Updating ${ref}`,
+            async () => {
+              const item = await resolveItem(ctx, ref);
+              const result = await ctx.client.call<BacklogUpdateResult>('backlog.update', {
+                itemId: item.id,
+                ...(opts.title ? { title: opts.title } : {}),
+                ...(opts.notes ? { notes: opts.notes } : {}),
+                ...(opts.priority ? { priority: Number(opts.priority) } : {}),
+              });
+              return { item, result };
+            },
+            !emit.machine,
+          );
           if (emit.machine) emit.ok(result);
           else ctx.output.write(`${green('Updated')} ${cyan(item.sourceRef ?? item.id)}\n`);
         } catch (err) {
@@ -227,10 +252,17 @@ export function registerBacklogCommand(program: Command): void {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
-        const item = await resolveItem(ctx, ref);
-        const result = await ctx.client.call<{ item: BacklogItem }>('backlog.markReady', {
-          itemId: item.id,
-        });
+        const { item, result } = await withProgress(
+          `Marking ${ref} ready`,
+          async () => {
+            const item = await resolveItem(ctx, ref);
+            const result = await ctx.client.call<{ item: BacklogItem }>('backlog.markReady', {
+              itemId: item.id,
+            });
+            return { item, result };
+          },
+          !emit.machine,
+        );
         if (emit.machine) emit.ok(result);
         else ctx.output.write(`${green('Ready')} ${cyan(item.sourceRef ?? item.id)}\n`);
       } catch (err) {
@@ -245,10 +277,17 @@ export function registerBacklogCommand(program: Command): void {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
-        const item = await resolveItem(ctx, ref);
-        const result = await ctx.client.call<BacklogEnqueueResult>('backlog.enqueue', {
-          itemId: item.id,
-        });
+        const { item, result } = await withProgress(
+          `Enqueuing ${ref}`,
+          async () => {
+            const item = await resolveItem(ctx, ref);
+            const result = await ctx.client.call<BacklogEnqueueResult>('backlog.enqueue', {
+              itemId: item.id,
+            });
+            return { item, result };
+          },
+          !emit.machine,
+        );
         if (emit.machine) emit.ok(result);
         else
           ctx.output.write(
@@ -266,7 +305,11 @@ export function registerBacklogCommand(program: Command): void {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
-        const item = await resolveItem(ctx, ref);
+        const item = await withProgress(
+          `Dispatching ${ref}`,
+          () => resolveItem(ctx, ref),
+          !emit.machine,
+        );
         const { enqueue, tick } = await dispatchBacklogItem(ctx, item, (promoted) => {
           if (!emit.machine)
             ctx.output.write(`Promoted ${promoted.sourceRef ?? promoted.id} to ready\n`);
@@ -290,12 +333,22 @@ export function registerBacklogCommand(program: Command): void {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
-        const item = await resolveItem(ctx, ref);
-        const result = await ctx.client.call<BacklogCloseShippedResult>('backlog.closeShipped', {
-          itemId: item.id,
-          ...(opts.pr ? { prRef: opts.pr } : {}),
-          ...(opts.note ? { note: opts.note } : {}),
-        });
+        const { item, result } = await withProgress(
+          `Closing ${ref}`,
+          async () => {
+            const item = await resolveItem(ctx, ref);
+            const result = await ctx.client.call<BacklogCloseShippedResult>(
+              'backlog.closeShipped',
+              {
+                itemId: item.id,
+                ...(opts.pr ? { prRef: opts.pr } : {}),
+                ...(opts.note ? { note: opts.note } : {}),
+              },
+            );
+            return { item, result };
+          },
+          !emit.machine,
+        );
         if (emit.machine) emit.ok(result);
         else
           ctx.output.write(

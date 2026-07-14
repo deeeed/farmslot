@@ -29,6 +29,9 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
   const [runs, setRuns] = useState<Run[]>([]);
   const [cursor, setCursor] = useState(0);
   const [notice, setNotice] = useState<string>('');
+  // False until the first fleet/backlog/runs snapshot lands, so the shell can
+  // show a `connecting to <url>…` line instead of an empty body on startup.
+  const [snapshotLoaded, setSnapshotLoaded] = useState(false);
   const [prepare, setPrepare] = useState<{
     slotId: string;
     running: boolean;
@@ -61,6 +64,7 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
       if (generation !== refreshGeneration.current) return;
       setItems(backlogResult.items);
       setRuns(runsResult.runs);
+      setSnapshotLoaded(true);
     } catch (err) {
       setNotice(`refresh failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -206,6 +210,7 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
       if (input === 'c' && row.canCloseShipped) {
         void (async () => {
           try {
+            setNotice(`closing ${row.ref}…`);
             await connection.call('backlog.closeShipped', {
               itemId: row.itemId,
               note: 'closed from farmslot tui',
@@ -223,10 +228,14 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
       const row = runsVm[cursor];
       if (row) {
         const request = ++runDetailRequest.current;
+        setNotice(`loading run ${row.shortId}…`);
         void (async () => {
           try {
             const result = await connection.call<{ run: Run }>('run.get', { runId: row.id });
-            if (request === runDetailRequest.current) setRunDetail(result.run);
+            if (request === runDetailRequest.current) {
+              setRunDetail(result.run);
+              setNotice('');
+            }
           } catch (err) {
             if (request !== runDetailRequest.current) return; // stale request
             setNotice(`run.get failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -249,6 +258,7 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
       if (actionId) {
         void (async () => {
           try {
+            setNotice(`resolving ${row.shortId} with ${actionId}…`);
             await connection.call('run.resolveDecision', {
               runId: row.id,
               decisionId: decision.id,
@@ -281,6 +291,12 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
         ))}
         <Text dimColor>r:refresh q:quit</Text>
       </Box>
+
+      {!snapshotLoaded && (
+        <Box marginTop={1}>
+          <Text color="cyan">connecting to {gatewayUrl}…</Text>
+        </Box>
+      )}
 
       {surface === 'fleet' && fleetVm && (
         <Box flexDirection="column" marginTop={1}>

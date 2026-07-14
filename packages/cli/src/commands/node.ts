@@ -75,7 +75,11 @@ export function registerNodeCommand(program: Command): void {
     .action(async (_: any, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       try {
-        const result = await client.call<NodesListResult>('nodes.list');
+        const result = await withProgress(
+          'Loading nodes',
+          () => client.call<NodesListResult>('nodes.list'),
+          !output.json,
+        );
         if (output.json) {
           output.writeJson(result);
         } else {
