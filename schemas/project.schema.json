@@ -927,7 +927,7 @@
     },
     "scoring": {
       "type": "object",
-      "description": "Bug difficulty scoring configuration. The generic scripts/score-bug.sh delegates to the project-specific script defined here.",
+      "description": "Bug difficulty scoring configuration. The generic `farmslot bug score` verb delegates to the project-specific script defined here.",
       "properties": {
         "script": {
           "type": "string",

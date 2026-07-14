@@ -209,14 +209,28 @@ those repos repoint.
   `scripts/completions.sh` and `scripts/lib/farm-status-display.py`; the scripts are
   deleted and guarded by `yarn quality:retired-scripts`. Verbs validated live against
   the dev gateway (monitor report + show/soft-refresh/reopen/auto-refresh guard paths).
-- **bug pipeline → `farmslot bug`** (`triage-bug.sh`, `score-bug.sh`,
-  `grade-bug.sh`, `validate-bug.sh`, `batch-triage.sh`, `download-*-images.sh`):
-  **deferred.** These are side-effect edges whose port can only be _proven_ against
-  live infra (`gh`/Jira/`claude`). The protocol cores (`parseBugInput`, `validateBugScore`,
-  `deriveScoreKey`, `computePRRecommendation`) already exist and are exposed via
-  `farmslot internal`; the retirement itself needs a caller audit + live-infra
-  validation and is tracked as its own review-gated PR rather than shipped
-  unverified here.
+- **bug pipeline → `farmslot bug` — DONE** (MANUAL-000034, slice 3).
+  `triage-bug.sh`, `score-bug.sh`, `grade-bug.sh`, `validate-bug.sh`,
+  `batch-triage.sh`, and `download-{github,jira}-images.sh` are ported to
+  `farmslot bug triage|score|grade|validate|batch` (image download folded into
+  `bug triage`/`bug batch --download-images`). The commands are gateway-free
+  (like `internal`): `gh`/`curl`/`claude`/the project scorer are spawned edges in
+  the CLI, wired around the protocol cores. The existing `parseBugInput`,
+  `validateBugScore`, `deriveScoreKey`, `extractImageUrls`, and `flattenAdf` are
+  reused; the grade/validity/batch decision logic (LLM grade validation,
+  deterministic final-score merge, validity defaults, and the GitHub batch
+  post-filter) was ported to `contracts/bug-score.ts` (`normalizeLlmGrade`,
+  `computeFinalScore`, `normalizeBugValidation`, `parseLlmJson`,
+  `filterBatchIssues`) with node:test coverage, and the batch display table to
+  `packages/cli/src/bug/display.ts`. Caller audit found no live in-repo callers
+  (only `scripts/README.md` + the `scoring`/`project` schema descriptions, all
+  repointed to the CLI; docs/ADR/changelog mentions are historical). The seven
+  scripts + `lib/batch-triage-display.py` are deleted and guarded by
+  `yarn quality:retired-scripts`. Validated live: `bug triage` against a real
+  GitHub issue (fetch → parse → score-key → write score file), plus the
+  score/grade skip paths and error envelopes; the `claude`-dependent grade/validity
+  happy-paths have no configured project scorer in-repo and are covered by the
+  bug-score unit tests.
 
 Kept (no CLI parity): `setup-slot.sh` — the onboarding bootstrap invoked by
 `farmslot project add` and every pack setup flow.
@@ -234,3 +248,15 @@ Kept (no CLI parity): `setup-slot.sh` — the onboarding bootstrap invoked by
 | find-slot.sh            | `farmslot fleet find-slot`            | none                                        | none                                       | **RETIRE**                                           |
 | dispatch.sh             | `farmslot run create`                 | none                                        | LEARNINGS docs only                        | **RETIRE** (repoint farm-status-display.py:367 hint) |
 | setup-slot.sh           | none (no `slot setup` verb)           | onboarding add.ts:725 (every `project add`) | pack/project `setup/*.sh` dispatch targets | **KEEP**                                             |
+
+Bug pipeline (MANUAL-000034, slice 3 — all retired):
+
+| script                    | CLI replacement                         | live in-repo callers | external callers | verdict    |
+| ------------------------- | --------------------------------------- | -------------------- | ---------------- | ---------- |
+| triage-bug.sh             | `farmslot bug triage`                   | none                 | none             | **RETIRE** |
+| score-bug.sh              | `farmslot bug score`                    | none                 | none             | **RETIRE** |
+| grade-bug.sh              | `farmslot bug grade`                    | none                 | none             | **RETIRE** |
+| validate-bug.sh           | `farmslot bug validate`                 | none                 | none             | **RETIRE** |
+| batch-triage.sh           | `farmslot bug batch`                    | none                 | none             | **RETIRE** |
+| download-github-images.sh | `farmslot bug triage --download-images` | none                 | none             | **RETIRE** |
+| download-jira-images.sh   | `farmslot bug triage --download-images` | none                 | none             | **RETIRE** |

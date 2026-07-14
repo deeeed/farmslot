@@ -23,6 +23,17 @@ const RETIRED = [
   'soft-refresh-slot.sh',
   'reopen-slot-browser.sh',
   'auto-refresh-slot.sh',
+  // Bug pipeline ported to `farmslot bug triage|score|grade|validate|batch`
+  // (MANUAL-000034, scripts-shrink slice 3). Image download folded into
+  // `bug triage --download-images` and `bug batch --download-images`; the
+  // batch display helper is ported to packages/cli/src/bug/display.ts.
+  'triage-bug.sh',
+  'score-bug.sh',
+  'grade-bug.sh',
+  'validate-bug.sh',
+  'batch-triage.sh',
+  'download-github-images.sh',
+  'download-jira-images.sh',
 ];
 
 // Paths whose mentions are historical narration, not live callers.

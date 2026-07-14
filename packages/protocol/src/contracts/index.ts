@@ -2,6 +2,7 @@ export * from './agents.js';
 export * from './analytics.js';
 export * from './backlog.js';
 export * from './bug-input.js';
+export * from './bug-score.js';
 export * from './chat.js';
 export * from './common.js';
 export * from './config.js';
