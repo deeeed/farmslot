@@ -14,6 +14,7 @@ Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip 
 - **review-pr, pr-complete, update-branch:** `PR_NUMBER, PR_TITLE, PR_BRANCH, GH_REPO, PR_URL, PR_BODY, REVIEW_TIER, PR_MERGEABLE, PR_MERGE_STATE, PR_INTEGRATION_NOTE` (PR_INTEGRATION_NOTE is informational merge state; never blocks prepare.)
 - **review-pr:** `RECIPE_STRATEGY` (From dispatch extraVars when set.)
 - **pr-complete:** `COMMENT_SUMMARY, HAS_RECIPE, RECIPE_SOURCE`
+- **update-branch:** `BRANCH_UPDATE_STRATEGY` (rebase | merge | project-default; project-default resolves against force-push policy at runtime.)
 - **project.json vars:** `any key` (Both double-brace key forms; expanded once, no nested re-expansion)
 
 ## Hooks, fixtures, recipe_run (double-brace var)

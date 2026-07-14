@@ -982,10 +982,20 @@ export async function runResolveDecision(
             params.actionId === 'dispatch-pr-complete') &&
           afterResolve.slotId
         ) {
-          const ciRepo = (await loadProjectVars(afterResolve.project).catch(() => null))
-            ?.projectJson?.ci?.repo as string | undefined;
+          // Resolve ci.repo for the chained PR-bound flow. Do NOT swallow a
+          // project-config failure: if ciRepo is missing, buildCIWatchChainedRunParams
+          // falls back to the parent's MANUAL-*/PROJ-* ref, and createRun below skips
+          // runCreate's validateTicketRef — the follow-up would then wedge downstream.
+          // Let the load error surface via the outer .catch so the run stays blocked.
+          const ciRepo = (await loadProjectVars(afterResolve.project))?.projectJson?.ci?.repo as
+            | string
+            | undefined;
           const chainSpec = buildCIWatchChainedRunParams(afterResolve, params.actionId, ciRepo);
           if (chainSpec) {
+            // createRun bypasses runCreate's entry validation, so guard the chained
+            // ref here: a PR-bound flow still carrying an inherited MANUAL-*/PROJ-*
+            // ref (unresolved ciRepo) fails hard now instead of at write-task.
+            validateTicketRef(chainSpec.createParams.ticketOrPr, chainSpec.flowType);
             console.log(
               `[run] run ${params.runId.slice(0, 8)} — chaining ${chainSpec.flowType} after resolved CI decision`,
             );

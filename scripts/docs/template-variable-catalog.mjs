@@ -30,6 +30,11 @@ export const WORKER_TASK = {
       vars: 'COMMENT_SUMMARY, HAS_RECIPE, RECIPE_SOURCE',
     },
     {
+      scope: 'update-branch',
+      vars: 'BRANCH_UPDATE_STRATEGY',
+      note: 'rebase | merge | project-default; project-default resolves against force-push policy at runtime.',
+    },
+    {
       scope: 'project.json vars',
       vars: 'any key',
       note: 'Both double-brace key forms; expanded once, no nested re-expansion',

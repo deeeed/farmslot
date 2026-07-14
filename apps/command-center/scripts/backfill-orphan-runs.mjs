@@ -77,6 +77,21 @@ const FLOW_STEPS = {
   ],
 };
 
+// Mirrors normalizeFlowType in packages/protocol/src/contracts/runs.ts. Legacy
+// session metrics can carry pre-rename flow ids ('merge-main', 'feature'); map
+// them to current ids so the FLOW_STEPS lookup finds the right pipeline instead
+// of falling back to fix-bug. Hand-update when protocol adds a rename.
+function normalizeFlowType(value) {
+  switch (value) {
+    case 'merge-main':
+      return 'update-branch';
+    case 'feature':
+      return 'dev';
+    default:
+      return value;
+  }
+}
+
 async function fileExists(p) {
   try {
     await stat(p);
@@ -158,7 +173,8 @@ async function buildRunFromTask(entry) {
   const createdAt = parseTaskDirCreatedAt(entry.item) ?? sm.capturedAt ?? new Date().toISOString();
   const completedAt = sm.capturedAt ?? createdAt;
   const flowType =
-    sm.flowType || (entry.group === 'fix' ? 'fix-bug' : entry.group === 'feat' ? 'dev' : 'fix-bug');
+    normalizeFlowType(sm.flowType) ||
+    (entry.group === 'fix' ? 'fix-bug' : entry.group === 'feat' ? 'dev' : 'fix-bug');
 
   const prNumberRaw = (header.PR_NUMBER || '').trim();
   const prNumber = prNumberRaw ? Number(prNumberRaw) : undefined;

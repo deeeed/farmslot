@@ -378,6 +378,17 @@ export async function loadAllRuns(): Promise<void> {
           }
         }
       }
+      // Normalize a persisted worker-template filename that still points at the
+      // pre-rename template. The 'merge-main.md' template was renamed to
+      // 'update-branch.md' in this rename; a legacy run resuming with the old
+      // basename would otherwise wedge at write-task against a deleted file.
+      if (run.taskTemplate?.fileName?.startsWith('merge-main')) {
+        run.taskTemplate.fileName = run.taskTemplate.fileName.replace(
+          /^merge-main/,
+          'update-branch',
+        );
+        changed = true;
+      }
       if (run.project === 'farmslot') {
         run.project = 'farmslot-farm';
         changed = true;
