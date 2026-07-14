@@ -368,13 +368,14 @@ export function registerSlotCommand(program: Command): void {
     method: string,
     label: (slotId: string) => string,
     doneMessage: (slotId: string) => string,
+    extraParams: (opts: Record<string, unknown>) => Record<string, unknown> = () => ({}),
   ) => {
-    return async (id: string | undefined, _opts: unknown, cmd: Command) => {
+    return async (id: string | undefined, opts: Record<string, unknown>, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
         const slotId = resolveSlotId(id);
-        const params = { slotId };
+        const params = { slotId, ...extraParams(opts) };
         if (emit.machine) {
           const result = await client.call<SlotCommandResult>(method, params);
           if (result.exitCode !== 0) {
@@ -431,11 +432,21 @@ export function registerSlotCommand(program: Command): void {
     .command('reopen')
     .description("Reopen a slot's prepared browser for continued work")
     .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
+    .option('--repo <path>', 'Override the slot repo path')
+    .option('--runtime-dir <dir>', 'Override the runtime dir holding reopen-browser.sh')
+    .option('--cdp-port <port>', 'Override the CDP port passed to the browser')
+    .option('--watcher-port <port>', 'Override the watcher port passed to the browser')
     .action(
       streamedSlotVerb(
         'slot.reopen',
         (slotId) => `Reopening browser for ${slotId}`,
         (slotId) => `Browser reopened for ${slotId}`,
+        (opts) => ({
+          ...(opts.repo ? { repo: opts.repo } : {}),
+          ...(opts.runtimeDir ? { runtimeDir: opts.runtimeDir } : {}),
+          ...(opts.cdpPort ? { cdpPort: opts.cdpPort } : {}),
+          ...(opts.watcherPort ? { watcherPort: opts.watcherPort } : {}),
+        }),
       ),
     );
 

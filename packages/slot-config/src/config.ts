@@ -593,8 +593,13 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   try {
     const content = await readFile(projectConfig, 'utf-8');
     projectJson = JSON.parse(content);
-  } catch {
-    throw new Error(`Project config not found: ${projectConfig}`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(`Project config not found: ${projectConfig}`);
+    }
+    // A malformed or unreadable config is a real error, not an absent one —
+    // surface it rather than masking it as "not found" (no-swallowed-exceptions).
+    throw new Error(`Failed to read project config ${projectConfig}: ${(err as Error).message}`);
   }
 
   validateAutoRecoveryConfig(projectJson, projectConfig);

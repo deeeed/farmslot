@@ -355,6 +355,11 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `slot.cleanup`        | rpc-only      |                 |     |      |
 | `slot.prepareStatus`  | rpc-only      |                 |     |      |
 | `slot.fixtureRefresh` | typed-command | `farmslot slot` |     |      |
+| `slot.monitor`        | typed-command | `farmslot slot` |     |      |
+| `slot.show`           | typed-command | `farmslot slot` |     |      |
+| `slot.softRefresh`    | typed-command | `farmslot slot` |     |      |
+| `slot.reopen`         | typed-command | `farmslot slot` |     |      |
+| `slot.autoRefresh`    | typed-command | `farmslot slot` |     |      |
 | `slot.openEditor`     | typed-command | `farmslot slot` |     |      |
 | `slot.action.list`    | typed-command | `farmslot slot` |     |      |
 | `slot.action.run`     | typed-command | `farmslot slot` |     |      |

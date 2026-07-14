@@ -12,6 +12,7 @@
 // (`execOnSlot` local/remote, `execLocal` orchestrator-local).
 
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 
 import type {
   SlotAutoRefreshParams,
@@ -23,11 +24,13 @@ import type {
   SlotShowParams,
   SlotSoftRefreshParams,
 } from '@farmslot/protocol';
+import { runSessionUsage } from '@farmslot/slot-config';
 
 import {
   execLocal,
   execOnSlot,
   farmslotRoot,
+  GatewayMethodError,
   loadProjectVars,
   loadSlotVars,
   resolveProjectTaskDirName,
@@ -35,6 +38,7 @@ import {
   type SlotVars,
 } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
+import { runnerProcessPatternSource } from '../../runners/registry.js';
 
 import type { EventEmitter } from './shared.js';
 
@@ -70,8 +74,13 @@ function makeStream(emit: EventEmitter, requestId: string, startTime: number) {
 
 /** Compose the read-only worker-progress command (TASK status + branch + tmux
  * agent state + last 30 pane lines). Token usage is appended separately from the
- * orchestrator-local session-usage.sh. */
-export function buildMonitorCommand(vars: SlotVars, taskDirName: string): string {
+ * TS session-usage port. `processPattern` is the runner-registry pgrep source so
+ * agent-liveness detection follows the runner abstraction (no inline runner ids). */
+export function buildMonitorCommand(
+  vars: SlotVars,
+  taskDirName: string,
+  processPattern: string,
+): string {
   const repo = shellQuote(vars.remoteRepo);
   const taskRoot = shellQuote(`${vars.remoteRepo}/${taskDirName}`);
   const session = shellQuote(vars.session);
@@ -96,10 +105,10 @@ export function buildMonitorCommand(vars: SlotVars, taskDirName: string): string
     `if tmux has-session -t ${session} 2>/dev/null; then`,
     `  PANE_PID=$(tmux list-panes -t ${session} -F '#{pane_pid}' 2>/dev/null | head -1 || true)`,
     '  if [ -n "$PANE_PID" ]; then',
-    `    if pgrep -P "$PANE_PID" -f 'claude|codex|opencode' >/dev/null 2>&1; then`,
+    `    if pgrep -P "$PANE_PID" -f '${processPattern}' >/dev/null 2>&1; then`,
     '      echo "  Agent is running"',
     '    else',
-    '      echo "  Agent idle (no claude/codex/opencode process)"',
+    '      echo "  Agent idle (no runner process)"',
     '    fi',
     '  fi',
     '  echo ""',
@@ -117,24 +126,42 @@ export async function slotMonitor(params: SlotMonitorParams): Promise<SlotMonito
   try {
     const pv = await loadProjectVars(vars.projectName);
     taskDirName = resolveProjectTaskDirName(pv.projectJson);
-  } catch {
-    // No project config → fall back to the protocol default task dir.
+  } catch (err) {
+    // A genuinely-absent project config is expected for idle/unassigned slots →
+    // fall back to the protocol default task dir. A malformed or unreadable
+    // config is a real error and must surface (no-swallowed-exceptions rule).
+    if (!(err instanceof Error) || !err.message.startsWith('Project config not found')) {
+      throw err;
+    }
   }
 
-  const main = await execOnSlot(vars, buildMonitorCommand(vars, taskDirName), { timeout: 20_000 });
-
-  // Token usage runs on the orchestrator against local session logs, mirroring
-  // monitor-slot.sh's `session-usage.sh <slot> report || … total` fallback.
-  const usageScript = `${farmslotRoot}/scripts/session-usage.sh`;
-  const usage = await execLocal(
-    `bash ${shellQuote(usageScript)} ${shellQuote(params.slotId)} report 2>/dev/null || ` +
-      `bash ${shellQuote(usageScript)} ${shellQuote(params.slotId)} total 2>/dev/null || true`,
-    { cwd: farmslotRoot, timeout: 20_000 },
+  const main = await execOnSlot(
+    vars,
+    buildMonitorCommand(vars, taskDirName, runnerProcessPatternSource()),
+    { timeout: 20_000 },
   );
-  const usageText = usage.stdout.trim() || 'No usage data available';
 
-  const report = `${main.stdout.trimEnd()}\n\nToken usage\n${usageText}\n`;
+  const report = `${main.stdout.trimEnd()}\n\nToken usage\n${await readMonitorUsage(vars)}\n`;
   return { report };
+}
+
+/** Token usage via the TS session-usage port (not the retired session-usage.sh).
+ * Mirrors monitor-slot.sh's `report || total` fallback: the diff-since-snapshot
+ * `report` when a snapshot exists, else the running `total`. Usage being
+ * unavailable (idle slot, no transcript) is expected and reported inline. */
+async function readMonitorUsage(vars: SlotVars): Promise<string> {
+  for (const action of ['report', 'total'] as const) {
+    try {
+      const output = (
+        await runSessionUsage({ repo: vars.remoteRepo, slotId: vars.slotId, action })
+      ).trim();
+      if (output) return output;
+    } catch {
+      // `report` throws when no snapshot exists yet — fall through to `total`;
+      // `total` throws when the slot has no discoverable transcript at all.
+    }
+  }
+  return 'No usage data available';
 }
 
 // ─── show ───
@@ -146,7 +173,9 @@ export function buildShowScript(avd: string, adbSerial: string, machine: string)
   const avdQ = shellQuote(avd);
   const serialQ = shellQuote(adbSerial);
   return [
-    'set -uo pipefail',
+    // -e is load-bearing: a failed adb/Xvfb/emulator-launch must abort rather than
+    // fall through to the "Emulator visible" echoes and exit 0 on a dead emulator.
+    'set -euo pipefail',
     `echo "=== show-slot: ${avd} (${adbSerial}) ==="`,
     `EMULATOR_PID=$(ps aux | grep "emulator.*-avd ${avd}" | grep -v grep | awk '{print $2}' || true)`,
     'if [ -n "$EMULATOR_PID" ]; then',
@@ -209,11 +238,10 @@ export async function slotShow(
   const avd = vars.resourceVars.avd;
   const adbSerial = vars.resourceVars.adb_serial;
   if (!avd || !adbSerial) {
-    throw Object.assign(
-      new Error(
-        `slot show requires an emulator slot (avd + adb_serial resources); ${params.slotId} has none`,
-      ),
-      { code: 'SLOT_SHOW_UNSUPPORTED' },
+    throw new GatewayMethodError(
+      'SLOT_SHOW_UNSUPPORTED',
+      `slot show requires an emulator slot (avd + adb_serial resources); ${params.slotId} has none`,
+      { userAction: `farmslot slot check ${params.slotId}` },
     );
   }
   const requestId = params.requestId ?? `show-${randomUUID()}`;
@@ -248,21 +276,43 @@ export function buildSoftRefreshCommand(
   return `cd ${shellQuote(recipesDir)} && node soft-refresh.js --cdp-port ${shellQuote(cdpPort)} --slot-id ${shellQuote(slotId)}`;
 }
 
+/** Clean no-op result for a disabled slot — the retired helper scripts exited 0
+ * after `check_slot_enabled`, never mutating CDP/browser/tmux state. */
+function disabledSlotNoop(
+  verb: string,
+  slotId: string,
+  requestId: string | undefined,
+): SlotCommandResult {
+  return {
+    stdout: `Slot ${slotId} is disabled — ${verb} skipped\n`,
+    stderr: '',
+    exitCode: 0,
+    requestId: requestId ?? `${verb}-${randomUUID()}`,
+  };
+}
+
 export async function slotSoftRefresh(
   params: SlotSoftRefreshParams,
   emit: EventEmitter,
 ): Promise<SlotCommandResult> {
   const vars = await loadSlotVars(params.slotId);
+  if (!vars.slotEnabled) return disabledSlotNoop('soft-refresh', params.slotId, params.requestId);
   const cdpPort = vars.resourceVars.cdp_port;
   if (!cdpPort) {
-    throw new Error(`slot soft-refresh requires a cdp_port resource; ${params.slotId} has none`);
+    throw new GatewayMethodError(
+      'SLOT_SOFT_REFRESH_UNSUPPORTED',
+      `slot soft-refresh requires a cdp_port resource; ${params.slotId} has none`,
+      { userAction: `farmslot slot check ${params.slotId}` },
+    );
   }
   const harnessRoot = process.env.RECIPE_HARNESS_ROOT || DEFAULT_HARNESS_ROOT;
   validateHarnessRoot(harnessRoot);
   const recipesDir = `${vars.remoteRepo}/${harnessRoot}/extension/runner/recipes`;
   if (!(await slotFileExists(vars, `${recipesDir}/soft-refresh.js`))) {
-    throw new Error(
-      `soft-refresh.js not found at ${recipesDir}/soft-refresh.js — run \`farmslot slot fixtures ${params.slotId}\``,
+    throw new GatewayMethodError(
+      'SLOT_FIXTURES_MISSING',
+      `soft-refresh.js not found at ${recipesDir}/soft-refresh.js`,
+      { userAction: `farmslot slot fixtures ${params.slotId}` },
     );
   }
   const requestId = params.requestId ?? `soft-refresh-${randomUUID()}`;
@@ -306,13 +356,21 @@ export async function slotReopen(
   emit: EventEmitter,
 ): Promise<SlotCommandResult> {
   const vars = await loadSlotVars(params.slotId);
+  if (!vars.slotEnabled) return disabledSlotNoop('reopen', params.slotId, params.requestId);
   // reopen-slot-browser.sh failed hard on a missing project config; keep that
   // contract — let loadProjectVars throw rather than silently defaulting.
-  const { runtimeDir } = await loadProjectVars(vars.projectName);
-  const reopenScript = `${vars.remoteRepo}/${runtimeDir}/reopen-browser.sh`;
+  const projectVars = await loadProjectVars(vars.projectName);
+  // Overrides mirror the retired reopen-slot-browser.sh flags (--repo,
+  // --runtime-dir, --cdp-port, --watcher-port), each taking priority over the
+  // slot/project-derived default.
+  const repo = params.repo ?? vars.remoteRepo;
+  const runtimeDir = params.runtimeDir ?? projectVars.runtimeDir;
+  const reopenScript = `${repo}/${runtimeDir}/reopen-browser.sh`;
   if (!(await slotFileExists(vars, reopenScript))) {
-    throw new Error(
-      `reopen script not found at ${reopenScript} — run \`farmslot slot fixtures ${params.slotId}\``,
+    throw new GatewayMethodError(
+      'SLOT_FIXTURES_MISSING',
+      `reopen script not found at ${reopenScript}`,
+      { userAction: `farmslot slot fixtures ${params.slotId}` },
     );
   }
   const requestId = params.requestId ?? `reopen-${randomUUID()}`;
@@ -321,10 +379,10 @@ export async function slotReopen(
   const command = buildReopenCommand({
     reopenScript,
     slotId: params.slotId,
-    repo: vars.remoteRepo,
+    repo,
     runtimeDir,
-    cdpPort: vars.resourceVars.cdp_port,
-    watcherPort: vars.resourceVars.watcher_port ?? vars.resourceVars.port,
+    cdpPort: params.cdpPort ?? vars.resourceVars.cdp_port,
+    watcherPort: params.watcherPort ?? vars.resourceVars.watcher_port ?? vars.resourceVars.port,
   });
   const result = await execOnSlot(vars, command, { onOutput: stream.onOutput, timeout: 120_000 });
   stream.complete(result.exitCode);
@@ -362,16 +420,25 @@ export async function slotAutoRefresh(
 ): Promise<SlotAutoRefreshResult> {
   const vars = await loadSlotVars(params.slotId);
   const action: 'start' | 'stop' = params.action ?? 'start';
+  if (!vars.slotEnabled) {
+    // Disabled slots never ran the monitor; mirror check_slot_enabled's clean exit.
+    return { action, session: autoRefreshSessionName(params.slotId) };
+  }
   const session = autoRefreshSessionName(params.slotId);
   const pv = await loadProjectVars(vars.projectName);
   const scriptPath = `${farmslotRoot}/projects/${pv.projectName}/setup/auto-refresh.sh`;
 
-  if (action === 'start' && !(await slotFileExists(vars, scriptPath))) {
-    throw new Error(`auto refresh script not found for project ${pv.projectName}: ${scriptPath}`);
+  // The monitor tmux session and this probe both run on the orchestrator via
+  // execLocal (the original script never wrapped tmux in run_on so it can reach
+  // the slot's CDP), so the script must be checked on the local filesystem — a
+  // remote node-RPC probe would always miss the orchestrator-local project dir.
+  if (action === 'start' && !existsSync(scriptPath)) {
+    throw new GatewayMethodError(
+      'SLOT_AUTO_REFRESH_NO_SCRIPT',
+      `auto refresh script not found for project ${pv.projectName}: ${scriptPath}`,
+    );
   }
 
-  // The monitor tmux session runs on the orchestrator (matching the original
-  // script, which never wrapped tmux in run_on) so it can reach the slot's CDP.
   const command = buildAutoRefreshCommand({
     action,
     session,

@@ -40,14 +40,15 @@ function makeVars(overrides: Partial<SlotVars> = {}): SlotVars {
   } as SlotVars;
 }
 
-test('buildMonitorCommand embeds slot identity, task dir, repo, and session', () => {
-  const cmd = buildMonitorCommand(makeVars(), '.task');
+test('buildMonitorCommand embeds slot identity, task dir, repo, session, and runner pattern', () => {
+  const cmd = buildMonitorCommand(makeVars(), '.task', 'claude|codex|scripted-runner');
   assert.match(cmd, /=== Monitor: macwork-ff-1 on macwork \(cli\) ===/);
   assert.match(cmd, /find '\/repo\/\.task' -name TASK\.md/);
   assert.match(cmd, /git -C '\/repo' rev-parse --abbrev-ref HEAD/);
   assert.match(cmd, /tmux has-session -t 'ff-1'/);
   assert.match(cmd, /tmux capture-pane -p -J -t 'ff-1' -S -30/);
-  assert.match(cmd, /pgrep -P "\$PANE_PID" -f 'claude\|codex\|opencode'/);
+  // Runner-liveness pattern comes from the runner registry, not inline runner ids.
+  assert.match(cmd, /pgrep -P "\$PANE_PID" -f 'claude\|codex\|scripted-runner'/);
 });
 
 test('validateHarnessRoot accepts the default and rejects escape attempts', () => {

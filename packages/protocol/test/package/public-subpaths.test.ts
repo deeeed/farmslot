@@ -282,6 +282,11 @@ for (const [name, actual, expected] of [
       actionList: Methods.SLOT_ACTION_LIST,
       actionRun: Methods.SLOT_ACTION_RUN,
       prepareStatus: Methods.SLOT_PREPARE_STATUS,
+      monitor: Methods.SLOT_MONITOR,
+      show: Methods.SLOT_SHOW,
+      softRefresh: Methods.SLOT_SOFT_REFRESH,
+      reopen: Methods.SLOT_REOPEN,
+      autoRefresh: Methods.SLOT_AUTO_REFRESH,
     },
   ],
 ] as const) {

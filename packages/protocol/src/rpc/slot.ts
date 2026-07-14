@@ -242,6 +242,12 @@ export interface SlotSoftRefreshParams {
 export interface SlotReopenParams {
   slotId: string;
   requestId?: string;
+  /** Overrides mirroring the retired reopen helper's flags; each takes
+   * priority over the slot/project-derived default. */
+  repo?: string;
+  runtimeDir?: string;
+  cdpPort?: string;
+  watcherPort?: string;
 }
 
 /** Result of a streamed slot side-effect verb (show/soft-refresh/reopen). */
