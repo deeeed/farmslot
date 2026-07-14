@@ -26,12 +26,30 @@ export function expandTemplate(
   return expandTemplateInternal(template, slotVars, projectVars, true, extraVars);
 }
 
+/**
+ * Fixture-path variant of expandTemplate: an unresolved `{{domain}}` is left
+ * literal instead of collapsing to empty. Overlay fixture paths like
+ * `domains/{{domain}}/domain.md` must skip quietly (with the original path in
+ * the log) when no domain is selected, rather than resolving to a bogus
+ * `domains//domain.md` that silently misses. Used only for fixture src/dst/
+ * include path resolution; fixture *content* still renders via expandTemplate.
+ */
+export function expandFixturePath(
+  template: string,
+  slotVars: SlotVars,
+  projectVars?: ProjectVars,
+  extraVars?: Record<string, string>,
+): string {
+  return expandTemplateInternal(template, slotVars, projectVars, true, extraVars, true);
+}
+
 function expandTemplateInternal(
   template: string,
   slotVars: SlotVars,
   projectVars: ProjectVars | undefined,
   includeProjectTemplateVars: boolean,
   extraVars?: Record<string, string>,
+  leaveUnresolvedDomain = false,
 ): string {
   let result = template;
   // Runtime extras (e.g. --domain overlays) take precedence over project vars
@@ -125,12 +143,16 @@ function expandTemplateInternal(
   // Per-call variables supplied by the caller (e.g. the prepare-requirement
   // check threading the run's target ref). Applied last so callers can inject
   // runtime values that are neither slot resources nor static project vars.
-  // {{domain}} always renders: extras (applied first, above) win, then the
+  // {{domain}} normally renders: extras (applied first, above) win, then the
   // project-vars pass may have consumed it, then the pool-level default, then
   // empty — matching the bash sed's unconditional ${DOMAIN:-} substitution.
-  const domainValue = slotVars.domain ?? '';
-  result = result.replaceAll('{{domain}}', domainValue);
-  result = result.replaceAll('{{DOMAIN}}', domainValue);
+  // Fixture-path expansion opts out of the empty fallback (leaveUnresolvedDomain)
+  // so an unselected overlay path stays literal and skips quietly.
+  if (!leaveUnresolvedDomain || slotVars.domain) {
+    const domainValue = slotVars.domain ?? '';
+    result = result.replaceAll('{{domain}}', domainValue);
+    result = result.replaceAll('{{DOMAIN}}', domainValue);
+  }
 
   return result;
 }

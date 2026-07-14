@@ -153,13 +153,19 @@ function with a colocated unit test.**
 
 ## Follow-up port order (highest value first)
 
-0. **Port the fixture-compose core** (variant/include selection + the render
-   loop in `sync-fixtures.sh`) into `@farmslot/slot-config` behind one
-   `farmslot internal` batch verb. Besides killing the last compose python,
-   this removes the per-template CLI invocations the Phase 2 rewire introduced
-   (~0.3s node startup each; ~40 calls on the largest packs ≈ 13s per sync).
-   Fold in the fix for `scripts/tests/sync-fixtures-includes.test.sh`, which
-   fails on `main` today (variant include not composed; not CI-enforced).
+0. **(DONE 2026-07-14)** **Port the fixture-compose core** (variant/include
+   selection + the render loop in `sync-fixtures.sh`) into `@farmslot/slot-config`
+   behind one `farmslot internal` batch verb. Landed as
+   `computeFixturePlan` (`packages/slot-config/src/fixtures.ts`) +
+   `expandFixturePath` (`hooks.ts`), exposed via `farmslot internal fixture-plan`.
+   Killed the compose/render python heredocs in `sync-fixtures.sh`: the template
+   loop is now a single CLI pass (measured: the includes test's 3-template set
+   dropped from ~12 `expand-template`/`render-fixture-template` node starts to 1;
+   the largest packs' ~40 → 1). Fixed `scripts/tests/sync-fixtures-includes.test.sh`,
+   which failed on `main` (an unresolved `{{domain}}` collapsed to `domains//…`
+   instead of staying literal so the optional overlay skips quietly); locked by
+   `packages/slot-config/src/fixtures.test.ts`. Directory fixtures (`fixtures.directories`)
+   remain in bash (single rsync per dir; not a per-file CLI cost) — a follow-up.
 1. **Kill the slot-common.sh ↔ hooks.ts/config.ts drift.** Expose the already-ported
    `expand*`/`resolve*` as `farmslot internal …` verbs; delete the python heredocs in
    `lib/slot-common.sh`, `sync-fixtures.sh`, `session-usage.sh` that re-derive
@@ -188,6 +194,28 @@ Deprecated shims kept (project packs still print/document them):
 `check-slot.sh` → `farmslot slot check`, `prepare-slot.sh` →
 `farmslot slot prepare`. Retire once the pack READMEs/setup hints are
 repointed in their own repos.
+
+**Shim retirement re-audit (2026-07-14):** still blocked. The `metamask-farm`
+pack repo continues to reference both shims — `check-slot.sh` in
+`metamask-extension-farm`/`metamask-mobile-farm` READMEs, and `prepare-slot.sh`
+in extension/mobile setup `Next:` echoes plus `metamask-core-farm` docs. The
+pack is a separate repo (must not be edited from farmslot); the shims stay until
+those repos repoint.
+
+### scripts/ shrink follow-ups (MANUAL-000027, 2026-07-14)
+
+- **Fixture-compose batch verb — DONE** (follow-up #0 above).
+- **Slot helpers → CLI verbs** (`monitor-slot.sh`, `show-slot.sh`,
+  `soft-refresh-slot.sh`, `reopen-slot-browser.sh`, `auto-refresh-slot.sh`) and
+  **bug pipeline → `farmslot bug`** (`triage-bug.sh`, `score-bug.sh`,
+  `grade-bug.sh`, `validate-bug.sh`, `batch-triage.sh`, `download-*-images.sh`):
+  **deferred.** These are side-effect edges whose port can only be _proven_ against
+  live infra (tmux sessions, emulators/CDP for the slot helpers; `gh`/Jira/`claude`
+  for the bug family). The protocol cores (`parseBugInput`, `validateBugScore`,
+  `deriveScoreKey`, `computePRRecommendation`) already exist and are exposed via
+  `farmslot internal`; the retirement itself needs a caller audit + live-infra
+  validation and is tracked as its own review-gated PR rather than shipped
+  unverified here.
 
 Kept (no CLI parity): `setup-slot.sh` — the onboarding bootstrap invoked by
 `farmslot project add` and every pack setup flow.

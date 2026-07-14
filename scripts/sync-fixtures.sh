@@ -159,134 +159,25 @@ if [ -n "${SLOT_ID}" ]; then
     fi
   }
 
-  # TODO(slot-config): compose selection still bash — port with the fixture-compose core
-  # Apply all fixture templates (includes former plain files + compose entries)
-  TEMPLATE_COUNT=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('fixtures',{}).get('templates',[])))")
-  if [ "$TEMPLATE_COUNT" -gt 0 ]; then
-  for i in $(seq 0 $((TEMPLATE_COUNT - 1))); do
-    TPL_SRC=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['templates'][$i].get('src',''))")
-    TPL_DST=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['templates'][$i]['dst'])")
-    TPL_DST=$(expand_slot_template "$TPL_DST")
-    # src paths may carry {{placeholders}} (e.g. an overlay dir selected per
-    # dispatch); expand them the same way as dst so overlay sources resolve.
-    [ -n "$TPL_SRC" ] && TPL_SRC=$(expand_slot_template "$TPL_SRC")
-    TPL_OPTIONAL=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print('1' if json.load(sys.stdin)['fixtures']['templates'][$i].get('optional') else '')")
-
-    # Check for compose config
-    COMPOSE_VAR=$(echo "$PROJECT_JSON" | python3 -c "
-import json,sys
-f=json.load(sys.stdin)['fixtures']['templates'][$i]
-print(f.get('compose',{}).get('var',''))
-" 2>/dev/null || true)
-
-    if [ -n "$COMPOSE_VAR" ]; then
-      # === Compose entry (variant-based) ===
-      FLOW_TYPE_VAL="${!COMPOSE_VAR:-}"
-      [ "$FLOW_TYPE_VAL" = "default" ] && FLOW_TYPE_VAL=""
-      if [ -z "$FLOW_TYPE_VAL" ]; then
-        AVAILABLE_VARIANTS=$(echo "$PROJECT_JSON" | python3 -c "
-import json,sys
-f=json.load(sys.stdin)['fixtures']['templates'][$i]
-keys=list(f.get('compose',{}).get('variants',{}).keys())
-print(' '.join(['default' if k=='' else k for k in keys]))
-" 2>/dev/null || true)
-        echo "  [SKIP] ${TPL_DST} — ${COMPOSE_VAR} not set (variants: ${AVAILABLE_VARIANTS})"
-        continue
-      fi
-
-      VARIANT_FILE=$(echo "$PROJECT_JSON" | python3 -c "
-import json,sys
-f=json.load(sys.stdin)['fixtures']['templates'][$i]
-variants=f.get('compose',{}).get('variants',{})
-v=variants.get('${FLOW_TYPE_VAL}', '')
-if isinstance(v, dict):
-    print(v.get('file',''))
-else:
-    print(v)
-" 2>/dev/null || true)
-      [ -n "$VARIANT_FILE" ] && VARIANT_FILE=$(expand_slot_template "$VARIANT_FILE")
-
-      COMPOSED=$(mktemp)
-      if [ -n "$VARIANT_FILE" ] && [ -f "${PROJECT_FIXTURES_DIR}/${VARIANT_FILE}" ]; then
-        cat "${PROJECT_FIXTURES_DIR}/${VARIANT_FILE}" > "$COMPOSED"
-      elif [ -n "$VARIANT_FILE" ]; then
-        echo "  [SKIP] No variant for FLOW_TYPE='${FLOW_TYPE_VAL}'"
-        rm -f "$COMPOSED"
-        continue
-      else
-        > "$COMPOSED"
-      fi
-
-      INCLUDE_COUNT=$(echo "$PROJECT_JSON" | python3 -c "
-import json,sys
-f=json.load(sys.stdin)['fixtures']['templates'][$i]
-compose=f.get('compose',{})
-variants=compose.get('variants',{})
-v=variants.get('${FLOW_TYPE_VAL}', '')
-if isinstance(v, dict):
-    print(len(v.get('includes',[])))
-else:
-    print(len(compose.get('includes',[])))
-" 2>/dev/null || echo 0)
-      if [ "$INCLUDE_COUNT" -gt 0 ]; then
-      for inc_i in $(seq 0 $((INCLUDE_COUNT - 1))); do
-        # Include entries are either a plain string path (required) or an
-        # object {file, optional} — optional includes skip quietly when the
-        # expanded path is absent (overlay content only some setups provide).
-        INC_ENTRY=$(echo "$PROJECT_JSON" | python3 -c "
-import json,sys
-f=json.load(sys.stdin)['fixtures']['templates'][$i]
-compose=f.get('compose',{})
-variants=compose.get('variants',{})
-v=variants.get('${FLOW_TYPE_VAL}', '')
-entry=(v['includes'][$inc_i] if isinstance(v, dict) else compose['includes'][$inc_i])
-if isinstance(entry, dict):
-    print((entry.get('file','') or '') + '\t' + ('1' if entry.get('optional') else ''))
-else:
-    print(str(entry) + '\t')
-")
-        INC_FILE="${INC_ENTRY%%$'\t'*}"
-        INC_OPTIONAL="${INC_ENTRY#*$'\t'}"
-        [ -n "$INC_FILE" ] && INC_FILE=$(expand_slot_template "$INC_FILE")
-        if [ -n "$INC_FILE" ] && [ -f "${PROJECT_FIXTURES_DIR}/${INC_FILE}" ]; then
-          printf '\n' >> "$COMPOSED"
-          cat "${PROJECT_FIXTURES_DIR}/${INC_FILE}" >> "$COMPOSED"
-        elif [ -n "$INC_OPTIONAL" ]; then
-          echo "  [SKIP] optional include ${INC_FILE:-<empty>} not present"
-        else
-          echo "  [WARN] include ${INC_FILE} not found"
-        fi
-      done
-      fi
-
-      # Run the same substitution path as regular templates so compose files
-      # cannot drift and leave uppercase vars (for example {{CDP_PORT}})
-      # unresolved.
-      RENDERED_COMPOSED=$(render_fixture_template "$COMPOSED")
-      copy_to_slot "$RENDERED_COMPOSED" "${REMOTE_REPO}/${TPL_DST}"
-      rm -f "$COMPOSED" "$RENDERED_COMPOSED"
-      mark_forced_patch_if_tracked "$TPL_DST"
-      echo "  [OK] ${TPL_DST} (composed: ${VARIANT_FILE:-includes})"
-
-    elif [ -n "$TPL_SRC" ]; then
-      # === Template or plain file entry ===
-      LOCAL_TPL="${PROJECT_FIXTURES_DIR}/${TPL_SRC}"
-      if [ -f "$LOCAL_TPL" ]; then
-        RENDERED=$(render_fixture_template "$LOCAL_TPL")
-        copy_to_slot "$RENDERED" "${REMOTE_REPO}/${TPL_DST}"
-        rm -f "$RENDERED"
-        mark_forced_patch_if_tracked "$TPL_DST"
-        echo "  [OK] ${TPL_DST}"
-      elif [ -n "$TPL_OPTIONAL" ]; then
-        echo "  [SKIP] ${TPL_DST} — optional src ${TPL_SRC} not present"
-      else
-        echo "  [SKIP] ${TPL_SRC} not found"
-      fi
-    else
-      echo "  [SKIP] ${TPL_DST} — no src or compose"
-    fi
-  done
-  fi
+  # Render every template/compose fixture in a single pass. The variant/include
+  # selection + render loop lives in @farmslot/slot-config (computeFixturePlan),
+  # shared with the gateway — one node start instead of one per template/include
+  # (~0.3s each, ~40 on the largest packs). The plan renders each destination
+  # into a stage file and lists "<dst>\t<staged-file>" in the manifest; the
+  # remote copy + skip-worktree marking below stay shell edges.
+  FIXTURE_STAGE=$(mktemp -d)
+  FIXTURE_MANIFEST=$(mktemp)
+  "$FARMSLOT_CLI" internal fixture-plan "$SLOT_ID" \
+    ${FLOW_TYPE:+--flow-type "$FLOW_TYPE"} \
+    ${APP:+--app "$APP"} \
+    ${DOMAIN:+--domain "$DOMAIN"} \
+    --stage "$FIXTURE_STAGE" --manifest "$FIXTURE_MANIFEST"
+  while IFS=$'\t' read -r TPL_DST STAGED_FILE; do
+    [ -z "$TPL_DST" ] && continue
+    copy_to_slot "$STAGED_FILE" "${REMOTE_REPO}/${TPL_DST}"
+    mark_forced_patch_if_tracked "$TPL_DST"
+  done < "$FIXTURE_MANIFEST"
+  rm -rf "$FIXTURE_STAGE" "$FIXTURE_MANIFEST"
 
   # Apply directories (rsync)
   DIR_COUNT=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('fixtures',{}).get('directories',[])))")
