@@ -27,7 +27,12 @@ import type {
   ScrubReport,
   SourceDocument,
 } from '../spec/types.js';
-import { REQUIRED_FILES, SCHEMA_VERSION, SCRUB_FLOOR_VERSION } from '../spec/version.js';
+import {
+  REQUIRED_FILES,
+  RUN_SLUG_PATTERN,
+  SCHEMA_VERSION,
+  SCRUB_FLOOR_VERSION,
+} from '../spec/version.js';
 import { validateAgainstSchema } from '../validate/json-schema.js';
 
 import { assertContained, assertSafePathSegment } from './safe-path.js';
@@ -302,23 +307,57 @@ function writeQuarantine(
       scanForFloorSecrets(stableJson(safeBase), input.scrub?.extraDenyPatterns).length > 0 ||
       scanForFloorSecrets(fallbackJoined, input.scrub?.extraDenyPatterns).length > 0
     ) {
+      // Placeholders are SCHEMA-VALID so the quarantine manifest stays a
+      // conformant audit record: packageId keeps the run-slug shape, identity
+      // fields and taskKey keep the safe-segment/taskKey shapes, timestamps and
+      // closed enums are preserved. `redacted` matches every identity pattern.
+      const redactedSlug = `00000000T000000Z-redacted-redacted-${createHash('sha256')
+        .update(base.packageId)
+        .digest('hex')
+        .slice(0, 8)}`;
       safeBase = {
         schemaVersion: safeBase.schemaVersion,
-        packageId: `redacted-${createHash('sha256').update(base.packageId).digest('hex').slice(0, 8)}`,
-        taskKey: '[REDACTED:residual-secret]',
-        surface: '[REDACTED]',
-        project: '[REDACTED]',
-        domain: '[REDACTED]',
-        engineer: '[REDACTED]',
+        packageId: redactedSlug,
+        taskKey: 'redacted',
+        surface: 'redacted',
+        project: 'redacted',
+        domain: 'redacted',
+        engineer: 'redacted',
         run: {
           startedAt: safeBase.run.startedAt,
-          flow: '[REDACTED]',
+          flow: 'redacted',
           outcome: safeBase.run.outcome,
         },
-        task: { title: '[REDACTED:residual-secret]', sourceKind: safeBase.task.sourceKind },
+        task: { title: 'redacted', sourceKind: safeBase.task.sourceKind },
       };
     }
   }
+
+  // Final schema-valid coercion: any patterned identity field that redaction
+  // turned into a non-conforming marker (e.g. `engineer` held a token and
+  // became `[REDACTED:...]`) is replaced with a conforming placeholder, so the
+  // quarantine manifest always validates against the manifest schema.
+  const safeSeg = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+  const taskKeyForm = /^(?:[a-z0-9]+(?:-[a-z0-9]+)*|task-[a-f0-9]{16})$/;
+  safeBase = {
+    ...safeBase,
+    packageId: RUN_SLUG_PATTERN.test(safeBase.packageId)
+      ? safeBase.packageId
+      : `00000000T000000Z-redacted-redacted-${createHash('sha256')
+          .update(base.packageId)
+          .digest('hex')
+          .slice(0, 8)}`,
+    taskKey: taskKeyForm.test(safeBase.taskKey) ? safeBase.taskKey : 'redacted',
+    surface: safeSeg.test(safeBase.surface) ? safeBase.surface : 'redacted',
+    project: safeSeg.test(safeBase.project) ? safeBase.project : 'redacted',
+    domain: safeBase.domain === '' || safeSeg.test(safeBase.domain) ? safeBase.domain : 'redacted',
+    engineer: safeSeg.test(safeBase.engineer) ? safeBase.engineer : 'redacted',
+    run: {
+      ...safeBase.run,
+      flow: safeSeg.test(safeBase.run.flow) ? safeBase.run.flow : 'redacted',
+    },
+  };
+
   const manifest: Manifest = {
     ...safeBase,
     files: {},

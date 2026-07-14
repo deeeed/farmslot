@@ -18,6 +18,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 
+import { scanForFloorSecrets } from '../scrub/floor.js';
 import { normalizeTicket } from '../spec/task-key.js';
 import type { GradeSemantic, HumanGrade, IndexRow, Manifest } from '../spec/types.js';
 import { SCHEMA_VERSION } from '../spec/version.js';
@@ -274,7 +275,8 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
     );
   }
 
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest;
+  const sourceManifestBytes = readFileSync(manifestPath, 'utf8');
+  const manifest = JSON.parse(sourceManifestBytes) as Manifest;
 
   // Pre-write assertion (spec section 5.2): blocked content never reaches a shared
   // destination, even if a caller hand-built the directory.
@@ -418,6 +420,34 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
       );
     }
     const snapshotDir = stagingDir;
+
+    // Single-read discipline: the manifest that governs publication is the
+    // SNAPSHOT manifest (the bytes actually committed). If it drifted from the
+    // manifest this call validated up front, the source was mutated after our
+    // early read - refuse rather than commit a manifest inconsistent with the
+    // derived index rows / package path (the caller re-runs write after any
+    // change). Simplest honest semantics: any drift is a hard refusal.
+    const snapshotManifestBytes = readFileSync(path.join(snapshotDir, 'manifest.json'), 'utf8');
+    if (snapshotManifestBytes !== sourceManifestBytes) {
+      throw new Error(
+        `writeLearningPackage: the package manifest changed between validation and publish ` +
+          `(source ${options.packageDir} was mutated mid-write). Nothing was committed. ` +
+          'Next: re-run writeLearningPackage - do not mutate the package dir during a write.',
+      );
+    }
+    // Write-side floor re-assertion on the manifest metadata (title/description/
+    // extensions etc.): the assembler scans this at assemble, but a hand-built
+    // or swapped manifest could carry a secret in a metadata field the snapshot
+    // validator (schema + hashes) does not rescan. One cheap scan closes it.
+    const manifestHits = scanForFloorSecrets(snapshotManifestBytes);
+    if (manifestHits.length > 0) {
+      throw new Error(
+        `writeLearningPackage: the manifest metadata carries ${manifestHits.length} ` +
+          `secret(s) (kinds: ${[...new Set(manifestHits.map((h) => h.kind))].join(', ')}) - ` +
+          'refusing to share unscrubbed metadata. Next: re-assemble with ' +
+          'assembleLearningPackage (which scrubs metadata) and never hand-edit the manifest.',
+      );
+    }
 
     // Remove now-empty ancestor dirs the failed write created, up to the repo root.
     const removeEmptyParents = (from: string): void => {

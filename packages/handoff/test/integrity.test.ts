@@ -637,3 +637,59 @@ test('a planted .npmrc credential line yields quarantine-only output with no raw
   }
   assert.equal(JSON.stringify(result.scrubReport).includes(token), false);
 });
+
+test('a manifest metadata token (hand-swapped, hash-consistent) is refused at write', () => {
+  const { ctx, input } = scenario();
+  const first = assembleLearningPackage(input, ctx);
+  assert.equal(first.status, 'ok');
+  if (first.status !== 'ok') return;
+
+  // manifest.json is not in its own file inventory, so a manifest whose file
+  // hashes still match but whose title carries a token passes schema+hash
+  // validation - the write-side floor re-assertion on the manifest metadata
+  // must refuse it. (The byte-drift guard additionally covers the concurrent
+  // mid-write-mutation case, which is not in-process constructible against a
+  // synchronous API, same as the lock/TOCTOU guards.)
+  const manifestPath = path.join(first.packageDir, 'manifest.json');
+  const tokenManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    task: { title: string };
+  };
+  tokenManifest.task.title = `restore ghp_${'a'.repeat(36)}`;
+  writeFileSync(manifestPath, `${JSON.stringify(tokenManifest, null, 2)}\n`);
+  const destination = initDestinationRepo();
+  assert.throws(
+    () => writeLearningPackage({ packageDir: first.packageDir, destination, consent: CONSENT }),
+    /manifest metadata carries \d+ secret/,
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false);
+});
+
+test('the fully-degraded quarantine manifest still validates against the manifest schema', async () => {
+  const { loadSchema } = await import('../src/spec/schemas.js');
+  const { validateAgainstSchema } = await import('../src/validate/json-schema.js');
+  // Compose a mnemonic across schema-valid identity fields so the wholesale
+  // fallback fires; block via a learnings SRP.
+  const { ctx, input } = scenario(
+    '# Learnings\n\nlegal winner thank year wave sausage worth useful legal winner thank year\n',
+  );
+  input.runRecord.task.ticket = 'ACCESS-ACCIDENT';
+  input.surface = 'abandon-ability-able';
+  input.runRecord.project = 'about-above-absent';
+  input.runRecord.domain = 'absorb-abstract';
+  input.runRecord.engineer = 'absurd-abuse';
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'blocked');
+  if (result.status !== 'blocked') return;
+  const manifest = JSON.parse(
+    readFileSync(path.join(result.quarantineDir, 'manifest.json'), 'utf8'),
+  );
+  const errors = validateAgainstSchema(manifest, loadSchema('manifest'));
+  assert.deepEqual(
+    errors,
+    [],
+    `quarantine manifest is not schema-valid: ${JSON.stringify(errors)}`,
+  );
+  // And no wordlist survivors, per the existing invariant.
+  const raw = JSON.stringify(manifest);
+  assert.equal((raw.match(/abandon|absorb|accident|legal|winner/g) ?? []).length, 0);
+});
