@@ -58,6 +58,11 @@ fi
 
 export GATEWAY_PORT="${GATEWAY_PORT:-7777}"
 export VITE_PORT="${VITE_PORT:-5174}"
+# The dev stack co-launches the local node agent (yarn dev runs it via
+# concurrently); point it at this stack's gateway so the machine is not
+# NODE DEGRADED (no device feed / file-watch / metrics). MACHINE_NAME
+# defaults to the hostname inside the node service.
+export GATEWAY_URL="${GATEWAY_URL:-ws://127.0.0.1:$GATEWAY_PORT}"
 if [ -z "${GATEWAY_HOST:-}" ]; then
   if [ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ] || [ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]; then
     export GATEWAY_HOST=0.0.0.0

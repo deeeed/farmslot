@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"yarn workspace @farmslot/gateway dev\" \"yarn --cwd ui dev\"",
+    "dev": "concurrently \"yarn workspace @farmslot/gateway dev\" \"yarn --cwd ui dev\" \"yarn workspace @farmslot/node dev\"",
     "farmdev": "bash ../../scripts/dev.sh",
     "dev:gateway": "yarn workspace @farmslot/gateway dev",
     "dev:ui": "yarn --cwd ui dev",
