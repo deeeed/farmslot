@@ -333,7 +333,7 @@ export async function slotReopen(
 
 // ─── auto-refresh ───
 
-/** tmux session name for a slot's auto-refresh monitor (matches auto-refresh-slot.sh). */
+// tmux session name for a slot's auto-refresh monitor (matches auto-refresh-slot.sh).
 export function autoRefreshSessionName(slotId: string): string {
   return `autorefresh-${slotId.replace(/[^a-zA-Z0-9]/g, '-')}`;
 }
