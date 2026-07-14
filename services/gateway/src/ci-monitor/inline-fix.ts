@@ -199,6 +199,9 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     console.warn(
       `[ci-monitor] run ${runId.slice(0, 8)} — relaunch left no live ${runner} session in ${workerTarget}; treating relaunch as failed`,
     );
+    // The context was optimistically marked working above — correct it so a
+    // failed launch doesn't leave a stale working status behind.
+    await markAgentContextStatus(runId, workerRole, 'failed');
     return false;
   }
 

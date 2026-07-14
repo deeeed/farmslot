@@ -278,9 +278,13 @@ export async function executeMonitorStep(
   let monitorResult: MonitorResult | undefined;
   try {
     monitorResult = await monitorRun(runId, current.slotId, controller.signal);
-  } finally {
+  } catch (err) {
     activeMonitors.delete(runId);
+    throw err;
   }
+  // The controller stays registered through push verification below so run
+  // cancellation can still interrupt the bounded post-completion wait; it is
+  // removed on every exit path of this step.
   // Worker is done — clear agent status
   await updateSlotStatus(current.slotId, { agent: 'idle' });
   const after = getRun(runId)!;
@@ -306,34 +310,44 @@ export async function executeMonitorStep(
     workerSignal,
     cliCommand,
   };
-  if (workerSignal?.status === 'blocked' || workerSignal?.status === 'failed') {
-    // The step itself completed — the worker self-signaled a terminal disposition. Throw
-    // a typed error so the exception-driven catch handles status mutation + slot reset
-    // in one place; the catch marks this step `done` (not failed) using stepOutputs.
-    throw monitorTerminalError({
-      status: workerSignal.status,
-      outcome: workerSignal.status === 'blocked' ? 'partial' : 'failure',
-      reason: workerSignal.reason ?? after.error ?? `worker signaled ${workerSignal.status}`,
-      stepInputs: inputs,
-      stepOutputs,
-    });
-  }
-  if (workerSignal?.status === 'complete') {
-    // Worker-owned-push flows must have the branch published before the run
-    // advances — otherwise ci-watch evaluates a stale remote SHA and loops.
-    const pushVerification = await verifyWorkerPushedBranch(runId, current.slotId);
-    (stepOutputs as Record<string, unknown>).pushVerification = pushVerification;
-    if (!pushVerification.verified) {
+  try {
+    if (workerSignal?.status === 'blocked' || workerSignal?.status === 'failed') {
+      // The step itself completed — the worker self-signaled a terminal disposition. Throw
+      // a typed error so the exception-driven catch handles status mutation + slot reset
+      // in one place; the catch marks this step `done` (not failed) using stepOutputs.
       throw monitorTerminalError({
-        status: 'blocked',
-        outcome: 'partial',
-        reason: pushVerification.reason ?? 'worker signaled complete with unpublished work',
+        status: workerSignal.status,
+        outcome: workerSignal.status === 'blocked' ? 'partial' : 'failure',
+        reason: workerSignal.reason ?? after.error ?? `worker signaled ${workerSignal.status}`,
         stepInputs: inputs,
         stepOutputs,
       });
     }
+    if (workerSignal?.status === 'complete') {
+      // Worker-owned-push flows must have the branch published before the run
+      // advances — otherwise ci-watch evaluates a stale remote SHA and loops.
+      const pushVerification = await verifyWorkerPushedBranch(
+        runId,
+        current.slotId,
+        controller.signal,
+      );
+      (stepOutputs as Record<string, unknown>).pushVerification = pushVerification;
+      // An aborted verification means the run was cancelled mid-wait — the
+      // cancel path owns the run status; do not overwrite it with blocked.
+      if (!pushVerification.verified && !pushVerification.aborted) {
+        throw monitorTerminalError({
+          status: 'blocked',
+          outcome: 'partial',
+          reason: pushVerification.reason ?? 'worker signaled complete with unpublished work',
+          stepInputs: inputs,
+          stepOutputs,
+        });
+      }
+    }
+    return { inputs, outputs: stepOutputs };
+  } finally {
+    activeMonitors.delete(runId);
   }
-  return { inputs, outputs: stepOutputs };
 }
 
 export async function executeSelfReviewStep(

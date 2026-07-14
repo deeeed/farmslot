@@ -25,6 +25,8 @@ export interface PushVerificationResult {
   dirtyFiles?: number;
   unpushedCommits?: number;
   nudged?: boolean;
+  /** True when the run was cancelled mid-verification — callers must not block the run. */
+  aborted?: boolean;
 }
 
 interface WorktreePublishState {
@@ -36,21 +38,55 @@ async function inspectWorktree(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   branch: string,
 ): Promise<WorktreePublishState> {
-  // Two counts in one round-trip. rev-list compares against the last-known
-  // remote-tracking ref: a successful worker push updates it, so no fetch is
-  // needed to detect "worker never ran git push".
-  const cmd = `git status --porcelain | wc -l && git rev-list --count ${shellQuote(`origin/${branch}`)}..HEAD`;
-  const result = await execOnSlot(vars, cmd, { timeout: 30_000 });
-  if (result.exitCode !== 0) {
+  // Separate execs so a failure is attributable — a `git status` failure piped
+  // into `wc` would otherwise exit 0 and falsely report a clean tree.
+  const status = await execOnSlot(vars, 'git status --porcelain | head -200', {
+    timeout: 30_000,
+  });
+  if (status.exitCode !== 0) {
     throw new Error(
-      `push-verification git inspection failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+      `push-verification git status failed (exit ${status.exitCode}): ${status.stderr || status.stdout}`,
     );
   }
-  const [dirtyLine, unpushedLine] = result.stdout.trim().split('\n');
-  return {
-    dirtyFiles: parseInt(dirtyLine?.trim() ?? '0', 10) || 0,
-    unpushedCommits: parseInt(unpushedLine?.trim() ?? '0', 10) || 0,
-  };
+  const dirtyFiles = status.stdout.split('\n').filter((line) => line.trim()).length;
+
+  // The remote-tracking ref may be absent (skipPrepare, local-only branch): a
+  // ref the worker never pushed IS unpushed work, not a probe error. Compare
+  // against the explicit local branch ref, not HEAD — a worker that parks the
+  // worktree on another ref must not hide unpushed commits on the PR branch.
+  const remoteRef = `origin/${branch}`;
+  const hasRemoteRef =
+    (
+      await execOnSlot(vars, `git rev-parse --verify --quiet ${shellQuote(remoteRef)}`, {
+        timeout: 30_000,
+      })
+    ).exitCode === 0;
+  if (!hasRemoteRef) {
+    const localCommits = await execOnSlot(
+      vars,
+      `git rev-list --count ${shellQuote(`refs/heads/${branch}`)}`,
+      { timeout: 30_000 },
+    );
+    if (localCommits.exitCode !== 0) {
+      throw new Error(
+        `push-verification rev-list failed for local ${branch} (exit ${localCommits.exitCode}): ${localCommits.stderr || localCommits.stdout}`,
+      );
+    }
+    // No remote ref at all → the whole branch is unpublished.
+    return { dirtyFiles, unpushedCommits: parseInt(localCommits.stdout.trim(), 10) || 1 };
+  }
+
+  const revList = await execOnSlot(
+    vars,
+    `git rev-list --count ${shellQuote(remoteRef)}..${shellQuote(`refs/heads/${branch}`)}`,
+    { timeout: 30_000 },
+  );
+  if (revList.exitCode !== 0) {
+    throw new Error(
+      `push-verification rev-list failed (exit ${revList.exitCode}): ${revList.stderr || revList.stdout}`,
+    );
+  }
+  return { dirtyFiles, unpushedCommits: parseInt(revList.stdout.trim(), 10) || 0 };
 }
 
 function describe(state: WorktreePublishState): string {
@@ -70,6 +106,7 @@ function describe(state: WorktreePublishState): string {
 export async function verifyWorkerPushedBranch(
   runId: string,
   slotId: string,
+  signal?: AbortSignal,
 ): Promise<PushVerificationResult> {
   const run = getRun(runId);
   const branch = run?.branch;
@@ -116,6 +153,9 @@ export async function verifyWorkerPushedBranch(
 
   const deadline = Date.now() + PUSH_NUDGE_WAIT_MS;
   while (Date.now() < deadline) {
+    if (signal?.aborted) {
+      return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
+    }
     await new Promise((resolve) => setTimeout(resolve, PUSH_RECHECK_INTERVAL_MS));
     state = await inspectWorktree(vars, branch);
     if (state.dirtyFiles === 0 && state.unpushedCommits === 0) {

@@ -995,6 +995,14 @@ async function sendFeedbackToWorker(
     console.log(
       `[self-review] run ${runId.slice(0, 8)} — fix task ${sent ? 'sent' : 'NOT delivered (deferred twice)'}: ${fixTaskFile}`,
     );
+    if (!sent) {
+      // Waiting on a fix the worker never received would burn the whole
+      // FEEDBACK_TIMEOUT; fail loudly instead. The catch below restores the
+      // worker checklist target and clears the active task file.
+      throw new Error(
+        `self-review fix task delivery deferred twice — worker is not accepting prompts (${fixTaskFile})`,
+      );
+    }
     return fixSignalBaseline;
   } catch (err) {
     await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
