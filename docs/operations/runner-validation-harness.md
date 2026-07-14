@@ -160,7 +160,7 @@ scripts/runner-validation/
   run.test.mjs      # static/unit tests
 ```
 
-Tmux driver delegates to [.agents/skills/tmux-model-driver](../../.agents/skills/tmux-model-driver/SKILL.md) scripts — no duplicated blocker or launch-script logic in harness `lib/`. Harness-specific launch adapters live in `runners/`; when empirical findings change, update the skill first, then runner adapters. Long launch lines go through skill `send-shell-script.sh` (writes `.tmux-driver-launch.sh` in the temp repo) to avoid `send-keys` line-wrap bugs.
+Tmux driver delegates to [.agents/skills/tmux-model-driver](../../.agents/skills/tmux-model-driver/SKILL.md) scripts — no duplicated blocker or launch-script logic in harness `lib/`. Harness-specific launch adapters live in `runners/`; when empirical findings change, update the skill first, then runner adapters. Long launch lines go through skill `send-shell-script.sh`, which stages a private self-cleaning script outside the checkout to avoid `send-keys` line-wrap bugs without dirtying the repo.
 
 ## Related docs
 
