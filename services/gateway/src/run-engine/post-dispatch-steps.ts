@@ -283,34 +283,36 @@ export async function executeMonitorStep(
     throw err;
   }
   // The controller stays registered through push verification below so run
-  // cancellation can still interrupt the bounded post-completion wait; it is
-  // removed on every exit path of this step.
-  // Worker is done — clear agent status
-  await updateSlotStatus(current.slotId, { agent: 'idle' });
-  const after = getRun(runId)!;
-  const workerSignal = monitorResult?.workerSignal ?? null;
-  if (workerSignal?.disposition || workerSignal?.evidence || workerSignal?.checklistTiming) {
-    updateRun(runId, {
-      metrics: {
-        ...after.metrics,
-        ...(workerSignal.disposition ? { disposition: workerSignal.disposition } : {}),
-        ...(workerSignal.evidence ? { terminalEvidence: workerSignal.evidence } : {}),
-        // Persist per-step timing so it survives task-dir pruning and feeds the gate summary.
-        ...(workerSignal.checklistTiming ? { checklistTiming: workerSignal.checklistTiming } : {}),
-      },
-    });
-  }
-  const cliCommand = `farmslot slot check ${current.slotId}`;
-  const stepOutputs = {
-    nudgeCount: after.metrics.nudgeCount,
-    pollCount: monitorResult?.pollCount ?? 0,
-    exitReason: monitorResult?.exitReason ?? 'error',
-    violations: monitorResult?.violations ?? [],
-    snapshots: monitorResult?.snapshots ?? [],
-    workerSignal,
-    cliCommand,
-  };
+  // cancellation can still interrupt the bounded post-completion wait; the
+  // try/finally covers every remaining exit path of this step.
   try {
+    // Worker is done — clear agent status
+    await updateSlotStatus(current.slotId, { agent: 'idle' });
+    const after = getRun(runId)!;
+    const workerSignal = monitorResult?.workerSignal ?? null;
+    if (workerSignal?.disposition || workerSignal?.evidence || workerSignal?.checklistTiming) {
+      updateRun(runId, {
+        metrics: {
+          ...after.metrics,
+          ...(workerSignal.disposition ? { disposition: workerSignal.disposition } : {}),
+          ...(workerSignal.evidence ? { terminalEvidence: workerSignal.evidence } : {}),
+          // Persist per-step timing so it survives task-dir pruning and feeds the gate summary.
+          ...(workerSignal.checklistTiming
+            ? { checklistTiming: workerSignal.checklistTiming }
+            : {}),
+        },
+      });
+    }
+    const cliCommand = `farmslot slot check ${current.slotId}`;
+    const stepOutputs = {
+      nudgeCount: after.metrics.nudgeCount,
+      pollCount: monitorResult?.pollCount ?? 0,
+      exitReason: monitorResult?.exitReason ?? 'error',
+      violations: monitorResult?.violations ?? [],
+      snapshots: monitorResult?.snapshots ?? [],
+      workerSignal,
+      cliCommand,
+    };
     if (workerSignal?.status === 'blocked' || workerSignal?.status === 'failed') {
       // The step itself completed — the worker self-signaled a terminal disposition. Throw
       // a typed error so the exception-driven catch handles status mutation + slot reset

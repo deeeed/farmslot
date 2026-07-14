@@ -227,6 +227,12 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
       return true;
     }
   }
+  console.warn(
+    `[ci-monitor] run ${runId.slice(0, 8)} — relaunched ${runner} session never became ready in ${workerTarget}; treating relaunch as failed`,
+  );
+  // Same correction as the prompt-in-launch branch: don't leave the
+  // optimistically-working primary context behind on a failed relaunch.
+  await markAgentContextStatus(runId, workerRole, 'failed');
   return false;
 }
 

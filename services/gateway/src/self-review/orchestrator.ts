@@ -997,8 +997,11 @@ async function sendFeedbackToWorker(
     );
     if (!sent) {
       // Waiting on a fix the worker never received would burn the whole
-      // FEEDBACK_TIMEOUT; fail loudly instead. The catch below restores the
-      // worker checklist target and clears the active task file.
+      // FEEDBACK_TIMEOUT; fail loudly instead. Clear the fix context created
+      // above (it was optimistically marked working and watched); the catch
+      // below restores the worker checklist target and active task file.
+      await markAgentContextStatus(runId, 'self-review-fix', 'failed');
+      await unwatchContext(vars.slotId, 'self-review-fix');
       throw new Error(
         `self-review fix task delivery deferred twice — worker is not accepting prompts (${fixTaskFile})`,
       );

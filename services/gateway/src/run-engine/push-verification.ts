@@ -38,9 +38,9 @@ async function inspectWorktree(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   branch: string,
 ): Promise<WorktreePublishState> {
-  // Separate execs so a failure is attributable — a `git status` failure piped
-  // into `wc` would otherwise exit 0 and falsely report a clean tree.
-  const status = await execOnSlot(vars, 'git status --porcelain | head -200', {
+  // No pipes anywhere in these probes: a failing `git status` piped into
+  // head/wc would exit 0 and falsely report a clean tree. Count client-side.
+  const status = await execOnSlot(vars, 'git status --porcelain', {
     timeout: 30_000,
   });
   if (status.exitCode !== 0) {
@@ -55,12 +55,20 @@ async function inspectWorktree(
   // against the explicit local branch ref, not HEAD — a worker that parks the
   // worktree on another ref must not hide unpushed commits on the PR branch.
   const remoteRef = `origin/${branch}`;
-  const hasRemoteRef =
-    (
-      await execOnSlot(vars, `git rev-parse --verify --quiet ${shellQuote(remoteRef)}`, {
-        timeout: 30_000,
-      })
-    ).exitCode === 0;
+  const refProbe = await execOnSlot(
+    vars,
+    `git rev-parse --verify --quiet ${shellQuote(remoteRef)}`,
+    { timeout: 30_000 },
+  );
+  // `--verify --quiet` exits 1 for a missing ref; anything else nonzero is a
+  // genuine probe failure (timeout, not a repo) and must not silently take
+  // the unpublished path.
+  if (refProbe.exitCode !== 0 && refProbe.exitCode !== 1) {
+    throw new Error(
+      `push-verification rev-parse failed (exit ${refProbe.exitCode}): ${refProbe.stderr || refProbe.stdout}`,
+    );
+  }
+  const hasRemoteRef = refProbe.exitCode === 0;
   if (!hasRemoteRef) {
     const localCommits = await execOnSlot(
       vars,
@@ -157,7 +165,19 @@ export async function verifyWorkerPushedBranch(
       return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
     }
     await new Promise((resolve) => setTimeout(resolve, PUSH_RECHECK_INTERVAL_MS));
-    state = await inspectWorktree(vars, branch);
+    // Re-check after the sleep too, and never let a probe error racing a
+    // cancellation escape as a step failure that overwrites the cancel status.
+    if (signal?.aborted) {
+      return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
+    }
+    try {
+      state = await inspectWorktree(vars, branch);
+    } catch (err) {
+      if (signal?.aborted) {
+        return { verified: false, aborted: true, reason: 'verification aborted (run cancelled)' };
+      }
+      throw err;
+    }
     if (state.dirtyFiles === 0 && state.unpushedCommits === 0) {
       console.log(
         `[push-verification] run ${runId.slice(0, 8)} — branch ${branch} published after nudge`,
