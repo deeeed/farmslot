@@ -14,10 +14,8 @@ FARMSLOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)"
 # ── Available commands ───────────────────────────────────────────────
 _farm_commands=(
   check-slot
-  monitor-slot
   preflight-slot
   setup-slot
-  show-slot
   sync-fixtures
   session-usage
   status
@@ -104,8 +102,8 @@ _farm_task_files() {
 # ── Commands grouped by completion type ──────────────────────────────
 _farm_cmd_takes_slot() {
   case "$1" in
-    check-slot|monitor-slot|preflight-slot|prepare-slot|\
-    setup-slot|show-slot|session-usage)
+    check-slot|preflight-slot|prepare-slot|\
+    setup-slot|session-usage)
       return 0 ;;
     *) return 1 ;;
   esac

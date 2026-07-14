@@ -69,6 +69,26 @@
       "surface": "typed-command",
       "command": "farmslot slot"
     },
+    "slot.monitor": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
+    "slot.show": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
+    "slot.softRefresh": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
+    "slot.reopen": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
+    "slot.autoRefresh": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
     "fleet.refreshSlots": {
       "surface": "rpc-only"
     },

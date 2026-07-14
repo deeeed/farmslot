@@ -90,7 +90,7 @@ if [ -n "${SLOT_ID}" ]; then
   fi
 
   # Helper: copy file to slot (preserves exec bit on *.sh so repo-local
-  # wrappers like reopen-slot-browser.sh stay runnable without `bash` prefix).
+  # wrappers like reopen-browser.sh stay runnable without `bash` prefix).
   copy_to_slot() {
     local src="$1" dst="$2"
     if [ "$is_local_slot" = true ]; then

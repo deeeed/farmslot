@@ -5,8 +5,11 @@ import type {
   ScriptActionResult,
   SlotActionListResult,
   SlotActionRunResult,
+  SlotAutoRefreshResult,
   SlotCheckResult,
+  SlotCommandResult,
   SlotFixtureRefreshResult,
+  SlotMonitorResult,
   SlotRefreshResult,
 } from '@farmslot/protocol';
 
@@ -331,6 +334,140 @@ export function registerSlotCommand(program: Command): void {
         );
         if (emit.machine) emit.ok(result);
         else output.write(`Opened ${slotId} in ${opts.editor}\n`);
+      } catch (err) {
+        emit.fail(err);
+        return;
+      }
+    });
+
+  slot
+    .command('monitor')
+    .description('Report worker progress: TASK status, branch, agent/tmux state, token usage')
+    .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
+    .action(async (id: string | undefined, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const slotId = resolveSlotId(id);
+        const result = await withProgress(
+          `Monitoring ${slotId}`,
+          () => client.call<SlotMonitorResult>('slot.monitor', { slotId }),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else output.write(result.report);
+      } catch (err) {
+        emit.fail(err);
+        return;
+      }
+    });
+
+  // Streamed side-effect verbs (show / soft-refresh / reopen) share one shape:
+  // stream script.output, then fail non-zero exit codes.
+  const streamedSlotVerb = (
+    method: string,
+    label: (slotId: string) => string,
+    doneMessage: (slotId: string) => string,
+    extraParams: (opts: Record<string, unknown>) => Record<string, unknown> = () => ({}),
+  ) => {
+    return async (id: string | undefined, opts: Record<string, unknown>, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const slotId = resolveSlotId(id);
+        const params = { slotId, ...extraParams(opts) };
+        if (emit.machine) {
+          const result = await client.call<SlotCommandResult>(method, params);
+          if (result.exitCode !== 0) {
+            emit.fail(
+              Object.assign(new Error(`${method} failed for ${slotId} (exit ${result.exitCode})`), {
+                code: 'SLOT_VERB_FAILED',
+                details: result,
+              }),
+            );
+            return;
+          }
+          emit.ok(result);
+        } else {
+          const result = await withStreamProgress(label(slotId), (onData) =>
+            client.callWithEvents<SlotCommandResult>(method, params, streamTo(onData)),
+          );
+          if (result.exitCode !== 0) {
+            output.error(`${doneMessage(slotId)} failed (exit ${result.exitCode})`);
+            process.exit(1);
+          }
+          output.write(`${doneMessage(slotId)}\n`);
+        }
+      } catch (err) {
+        emit.fail(err);
+      }
+    };
+  };
+
+  slot
+    .command('show')
+    .description('Toggle a slot emulator from headless to visible for human review')
+    .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
+    .action(
+      streamedSlotVerb(
+        'slot.show',
+        (slotId) => `Showing ${slotId}`,
+        (slotId) => `Emulator visible for ${slotId}`,
+      ),
+    );
+
+  slot
+    .command('soft-refresh')
+    .description('Reload the slot extension page via CDP without a full browser relaunch')
+    .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
+    .action(
+      streamedSlotVerb(
+        'slot.softRefresh',
+        (slotId) => `Soft-refreshing ${slotId}`,
+        (slotId) => `Soft-refresh complete for ${slotId}`,
+      ),
+    );
+
+  slot
+    .command('reopen')
+    .description("Reopen a slot's prepared browser for continued work")
+    .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
+    .option('--repo <path>', 'Override the slot repo path')
+    .option('--runtime-dir <dir>', 'Override the runtime dir holding reopen-browser.sh')
+    .option('--cdp-port <port>', 'Override the CDP port passed to the browser')
+    .option('--watcher-port <port>', 'Override the watcher port passed to the browser')
+    .action(
+      streamedSlotVerb(
+        'slot.reopen',
+        (slotId) => `Reopening browser for ${slotId}`,
+        (slotId) => `Browser reopened for ${slotId}`,
+        (opts) => ({
+          ...(opts.repo ? { repo: opts.repo } : {}),
+          ...(opts.runtimeDir ? { runtimeDir: opts.runtimeDir } : {}),
+          ...(opts.cdpPort ? { cdpPort: opts.cdpPort } : {}),
+          ...(opts.watcherPort ? { watcherPort: opts.watcherPort } : {}),
+        }),
+      ),
+    );
+
+  slot
+    .command('auto-refresh')
+    .description('Start (or stop with --stop) the auto-refresh tmux monitor for a slot')
+    .argument('[id]', 'Slot ID; defaults to the slot for the current working directory')
+    .option('--stop', 'Stop the auto-refresh monitor instead of starting it')
+    .action(async (id: string | undefined, opts: { stop?: boolean }, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const slotId = resolveSlotId(id);
+        const action = opts.stop ? 'stop' : 'start';
+        const result = await withProgress(
+          `${opts.stop ? 'Stopping' : 'Starting'} auto-refresh for ${slotId}`,
+          () => client.call<SlotAutoRefreshResult>('slot.autoRefresh', { slotId, action }),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else output.write(`auto-refresh ${result.action}: ${result.session}\n`);
       } catch (err) {
         emit.fail(err);
         return;

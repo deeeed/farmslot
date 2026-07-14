@@ -369,7 +369,7 @@ if hints_dispatch:
 if hints_monitor:
     print(f"\n{yellow('Monitor (working):')}  {dim(str(len(hints_monitor)) + ' slot(s)')}")
     for sid in hints_monitor:
-        print(f"  {script_dir}/monitor-slot.sh {sid}")
+        print(f"  farmslot slot monitor {sid}")
         print(f"  farmslot slot release {sid} --keep-warm  {dim('# reset + re-prepare for next task')}")
         print(f"  farmslot slot release {sid}  {dim('# full teardown (stop Metro + device)')}")
 

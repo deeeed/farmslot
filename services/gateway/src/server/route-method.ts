@@ -127,14 +127,19 @@ import {
   type SearchQueryParams,
   type SlotActionListParams,
   type SlotActionRunParams,
+  type SlotAutoRefreshParams,
   type SlotCheckParams,
   type SlotCleanupParams,
   type SlotFixtureRefreshParams,
+  type SlotMonitorParams,
   type SlotPrepareParams,
   type SlotPrepareStatusParams,
   type SlotRecycleParams,
   type SlotRefreshParams,
   type SlotReleaseParams,
+  type SlotReopenParams,
+  type SlotShowParams,
+  type SlotSoftRefreshParams,
   type StreamSubscribeParams,
   type StreamUnsubscribeParams,
   type TaskProgressParams,
@@ -332,14 +337,19 @@ import {
 } from '../methods/roadmap.js';
 import { searchQuery } from '../methods/search.js';
 import {
+  slotAutoRefresh,
   slotCheck,
   slotFixtureRefresh,
+  slotMonitor,
   slotOpenEditor,
   slotPrepare,
   slotPrepareStatus,
   slotRecycle,
   slotRefresh,
   slotRelease,
+  slotReopen,
+  slotShow,
+  slotSoftRefresh,
 } from '../methods/slot.js';
 import { slotActionList, slotActionRun } from '../methods/slot-actions.js';
 import { streamSubscribe, streamUnsubscribe } from '../methods/stream-feed.js';
@@ -484,6 +494,16 @@ export async function routeMethod(
       return slotRefresh(p as SlotRefreshParams, emit);
     case Methods.SLOT_FIXTURE_REFRESH:
       return slotFixtureRefresh(p as SlotFixtureRefreshParams, emit);
+    case Methods.SLOT_MONITOR:
+      return slotMonitor(p as SlotMonitorParams);
+    case Methods.SLOT_SHOW:
+      return slotShow(p as SlotShowParams, emit);
+    case Methods.SLOT_SOFT_REFRESH:
+      return slotSoftRefresh(p as SlotSoftRefreshParams, emit);
+    case Methods.SLOT_REOPEN:
+      return slotReopen(p as SlotReopenParams, emit);
+    case Methods.SLOT_AUTO_REFRESH:
+      return slotAutoRefresh(p as SlotAutoRefreshParams);
     case Methods.SLOT_CLEANUP:
       return slotCleanup(p as SlotCleanupParams);
     case Methods.SLOT_PREPARE_STATUS:
