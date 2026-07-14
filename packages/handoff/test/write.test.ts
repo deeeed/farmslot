@@ -497,6 +497,38 @@ test('a post-assemble tampered text file (token + updated manifest hash, status 
   assert.equal(git(destination, ['status', '--porcelain']), '');
 });
 
+test('a tampered JSON file whose secret only surfaces after JSON-unescape is refused', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+
+  // Tamper source.json with an SRP whose words are separated by literal \n
+  // escape sequences inside the JSON string value: the on-disk bytes never
+  // carry the whitespace-joined phrase, so only the unescape pipeline in the
+  // write-side floor rescan can catch it. Manifest hash updated, status pass.
+  const sourcePath = path.join(result.packageDir, 'source.json');
+  const source = JSON.parse(readFileSync(sourcePath, 'utf8')) as Record<string, unknown>;
+  source.description = `restoring wallet:\n${'abandon\nability\nable\nabout\nabove\nabsent\nabsorb\nabstract\nabsurd\nabuse\naccess\naccident'}\ndone`;
+  const tampered = `${JSON.stringify(source, null, 2)}\n`;
+  assert.ok(tampered.includes('\\n'), 'fixture must carry escaped separators, not raw newlines');
+  writeFileSync(sourcePath, tampered);
+  const manifestPath = path.join(result.packageDir, 'manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    files: Record<string, { sha256: string; bytes: number; role: string }>;
+  };
+  manifest.files['source.json'].sha256 = createHash('sha256').update(tampered).digest('hex');
+  manifest.files['source.json'].bytes = Buffer.byteLength(tampered);
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  const destination = initDestinationRepo();
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    /source\.json carries \d+ secret/,
+  );
+  assert.equal(existsSync(path.join(destination, 'packages')), false);
+  assert.equal(git(destination, ['status', '--porcelain']), '');
+});
+
 test('a clean package still writes after the write-side floor rescan', () => {
   const { result } = assembled();
   assert.equal(result.status, 'ok');
