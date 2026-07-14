@@ -53,6 +53,7 @@ import {
   requiresPublicationApproval,
   shouldPrepareLocalFirstPackage,
 } from './publication-policy.js';
+import { verifyWorkerPushedBranch } from './push-verification.js';
 import { type MonitorResult, monitorRun } from './run-monitor.js';
 
 interface StepIO {
@@ -316,6 +317,21 @@ export async function executeMonitorStep(
       stepInputs: inputs,
       stepOutputs,
     });
+  }
+  if (workerSignal?.status === 'complete') {
+    // Worker-owned-push flows must have the branch published before the run
+    // advances — otherwise ci-watch evaluates a stale remote SHA and loops.
+    const pushVerification = await verifyWorkerPushedBranch(runId, current.slotId);
+    (stepOutputs as Record<string, unknown>).pushVerification = pushVerification;
+    if (!pushVerification.verified) {
+      throw monitorTerminalError({
+        status: 'blocked',
+        outcome: 'partial',
+        reason: pushVerification.reason ?? 'worker signaled complete with unpublished work',
+        stepInputs: inputs,
+        stepOutputs,
+      });
+    }
   }
   return { inputs, outputs: stepOutputs };
 }

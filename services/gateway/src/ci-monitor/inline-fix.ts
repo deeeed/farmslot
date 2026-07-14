@@ -188,7 +188,18 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   });
 
   if (!runnerNeedsPostLaunchPrompt(runner)) {
-    return true;
+    // Never trust the respawn blindly: a failed launch command leaves a bare
+    // shell in the pane, and every subsequent nudge lands in zsh instead of a
+    // runner. Verify the runner is actually alive before reporting success.
+    const verifyDeadline = Date.now() + RUNNER_LAUNCH_READY_TIMEOUT_MS;
+    while (Date.now() < verifyDeadline) {
+      if (await isWorkerSessionAlive(slotId, runner, runId)) return true;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    console.warn(
+      `[ci-monitor] run ${runId.slice(0, 8)} — relaunch left no live ${runner} session in ${workerTarget}; treating relaunch as failed`,
+    );
+    return false;
   }
 
   const readyTimeout = RUNNER_LAUNCH_READY_TIMEOUT_MS;
@@ -481,16 +492,42 @@ async function attemptInlineCIFix(
       taskDir: writeResult.taskDir,
     });
     try {
-      const sent = await sendRunnerInstructionSafely(
+      let sent = await sendRunnerInstructionSafely(
         vars,
         workerTarget,
         runner,
         nudgeCmd,
         'ci-monitor',
       );
+      if (!sent) {
+        // A deferred send never retries on its own; waiting for the fix signal
+        // would just burn the whole attempt timeout. Retry once forcing the
+        // busy-composer poll (the same escalation the branch-affinity nudge
+        // uses), then fail the attempt loudly.
+        console.warn(
+          `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge deferred to ${workerTarget}; retrying with busy-poll`,
+        );
+        sent = await sendRunnerInstructionSafely(
+          vars,
+          workerTarget,
+          runner,
+          nudgeCmd,
+          'ci-monitor',
+          undefined,
+          {
+            forceBusyPoll: true,
+          },
+        );
+      }
       console.log(
-        `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'deferred'} to ${workerTarget}`,
+        `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'NOT delivered (deferred twice)'} to ${workerTarget}`,
       );
+      if (!sent) {
+        await markAgentContextStatus(runId, 'ci-fix', 'failed');
+        await unwatchContext(slotId, 'ci-fix');
+        clearInlineFixState(runId, { phase: 'polling' });
+        return { attempted: true, success: false, attempts };
+      }
     } catch (err) {
       console.warn(
         `[ci-monitor] run ${runId.slice(0, 8)} — failed to send nudge: ${(err as Error).message}`,
