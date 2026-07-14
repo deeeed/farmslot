@@ -19,7 +19,7 @@ Primary helpers:
 - [scripts/pane-state.sh](scripts/pane-state.sh) — detect pane mode and return structured JSON
 - [scripts/send-and-verify.sh](scripts/send-and-verify.sh) — send one payload and verify it actually landed
 - [scripts/resolve-launch-blockers.sh](scripts/resolve-launch-blockers.sh) — auto-resolve Grok project-directory and Cursor workspace-trust prompts
-- [scripts/send-shell-script.sh](scripts/send-shell-script.sh) — run long launch lines via a repo script (avoids `send-keys` wrap)
+- [scripts/send-shell-script.sh](scripts/send-shell-script.sh) — run long launch lines via a private, checkout-external script (avoids `send-keys` wrap and checkout pollution)
 - [scripts/launch-file-task.sh](scripts/launch-file-task.sh) — launch a fresh file-first model run from verified shell state
 - [scripts/watch-file-task.sh](scripts/watch-file-task.sh) — classify file-backed progress vs false progress
 - [scripts/write-trace.py](scripts/write-trace.py) — append structured trace events for later replay or gateway ingestion
@@ -268,8 +268,8 @@ Long runner launch lines **wrap and break** when sent with `tmux send-keys -l` i
 When the launch command is longer than ~120 characters or includes multiple env prefixes:
 
 1. verify shell state
-2. write a script in the target repo via [scripts/send-shell-script.sh](scripts/send-shell-script.sh)
-3. execute `bash .tmux-driver-launch.sh` through the shell adapter
+2. stage a mode-`600` script outside the target checkout via [scripts/send-shell-script.sh](scripts/send-shell-script.sh)
+3. execute its short, digest-bearing path through the shell adapter; it removes itself after the launched process exits
 
 The runner-validation harness uses the same pattern as `.runner-validate-launch.sh`. Prefer the skill helper so orchestrators do not reimplement it.
 
