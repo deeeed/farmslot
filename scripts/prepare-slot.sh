@@ -1,5 +1,7 @@
 #!/bin/bash
-# DEPRECATED shim: use `farmslot slot prepare` — kept only while project packs still reference it.
+# Shim: use `farmslot slot prepare`. Kept as of 2026-07-15 because pack setup scripts,
+# worker templates, and the core-farm docs still print this path; delete once those
+# packs repoint to the CLI (team-repo PRs).
 # prepare-slot.sh <slot-id> [--branch <name>] [--merge-main] [--flow-type <type>] [--app <path>] [--var key=value ...]
 # Delegates to farmslot CLI.
 #

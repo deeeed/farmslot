@@ -1,5 +1,7 @@
 #!/bin/bash
-# DEPRECATED shim: use `farmslot slot check` — kept only while project packs still reference it.
+# Shim: use `farmslot slot check`. Kept as of 2026-07-15 because the metamask-mobile
+# and metamask-extension pack READMEs still print this path; delete once those packs
+# repoint to the CLI (team-repo PRs).
 # check-slot.sh <slot-id>
 # Delegates to farmslot CLI.
 #

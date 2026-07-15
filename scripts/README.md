@@ -2,13 +2,36 @@
 
 Root-level scripts are the public Farmslot command surface. Keep them framework-level and project-agnostic; project behavior belongs in `projects/<name>/project.json` hooks and project-local scripts.
 
-## Public Entrypoints
+Most of the decision logic that used to live here has moved to the CLI/gateway (see `docs/reference/bash-decision-core-inventory.md`, Retirement section). What remains is the intentional residue: genuinely-shell edges (ssh/tmux/launchd/interactive terminals), machine/slot bootstrap paths, display formatters, and live-session test harnesses — plus small amounts of formatting/validation glue inside them. **Current count: 22** (down from 35 at the start of the shrink; slices: fixture-plan PR #325, slot verbs PR #327, bug family PR #328, closeout PR #329 which retired one more caller-less posting script).
 
-- Slot lifecycle: `setup-slot.sh`, `preflight-slot.sh`, `teardown-slot.sh`, refresh helpers. Prepare/check/release moved to the CLI: `farmslot slot prepare|check|release` (`prepare-slot.sh`/`check-slot.sh` remain as deprecated shims).
-- Fleet commands: `farm-status.sh`, `deploy-node.sh`. Slot picking is `farmslot fleet find-slot`. Slot helpers moved to the CLI: `farmslot slot monitor|show|soft-refresh|reopen|auto-refresh`.
-- Dispatch and PR workflows: `post-fix.sh`, `post-review.sh`, `pr-monitor.sh`. Dispatch and PR status are CLI-first: `farmslot run create`, `farmslot pr status|list`.
-- Fixtures and config: `sync-fixtures.sh`, `validate-config.sh`, media download helpers. `sync-fixtures.sh` is now a thin edge driver: the template/compose variant/include selection + render loop lives in `@farmslot/slot-config` (`computeFixturePlan`), invoked once per sync via `farmslot internal fixture-plan`; the script only owns the remote copy (ssh/scp), skip-worktree marking, and directory rsync.
-- Triage and scoring: CLI-first via `farmslot bug triage|score|grade|validate|batch` (the bug-pipeline scripts were ported to the CLI and retired in MANUAL-000034; image download is folded into `bug triage`/`bug batch --download-images`).
+## Keep-list (every survivor justified)
+
+| Script                             | Why it stays a script                                                                                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `setup-slot.sh`                    | One-time machine/slot bootstrap: delegates to the project's `setup/<platform>.sh` (install deps, create emulators, clone repo, build app) — imperative shell, no policy. |
+| `teardown-slot.sh`                 | Gateway-free teardown contract — must work when the gateway is down or being removed.                                                                                    |
+| `dev.sh`                           | Dev-stack launcher (env loading, port guard, concurrently exec) — the thing that starts the CLI's own runtime.                                                           |
+| `completions.sh`                   | Shell-native: sourced into bash/zsh for the `farm` wrapper + tab completion.                                                                                             |
+| `farm-status.sh`                   | Display wrapper teammates alias; delegates to the CLI for data.                                                                                                          |
+| `preflight-slot.sh`                | Gateway-free readiness checker run from the orchestrator against the slot host (locally or over ssh): fixtures synced, emulator/simulator up, dev server + health live.  |
+| `deploy-node.sh`                   | Deploys the node agent to any fleet machine (local or remote launchd/systemd) — cannot depend on the target's farmslot install.                                          |
+| `record-window.sh`                 | Window-capture edge: FIFO plumbing between external `capture-helper` and `ffmpeg`, with signal-trap flush handling — process orchestration, no decisions.                |
+| `gh-upload-asset.sh`               | Evidence upload edge: clones/pushes the artifacts repo over git SSH (no `gh`); used by publication flows.                                                                |
+| `post-review.sh`                   | `gh` review-posting edge invoked by the gateway review gate (`review-gate.ts`).                                                                                          |
+| `pr-monitor.sh`                    | One-shot PR status formatter: fetches data + gateway-computed recommendations via the CLI, then maps them to display states locally.                                     |
+| `session-usage.sh`                 | Wrapper over the `@farmslot/slot-config` session-usage core for shell callers (posting scripts, gateway lifecycle code, harnesses).                                      |
+| `e2e-tmux-runner-validate.sh`      | Test harness: live tmux E2E proof for ADR-032/runner drivers, run manually on a representative machine (not CI).                                                         |
+| `run-runner-observability-gate.sh` | Test harness: runner-observability empirical gate — live tmux E2E plus install probes, writing evidence JSON.                                                            |
+| `write-runtime-context.sh`         | Writes slot runtime context files; invoked both by prepare-phase hooks and by `project add` onboarding before setup/preflight.                                           |
+| `run-project-hook.sh`              | The hook execution edge itself — expands and runs `project.json` hooks.                                                                                                  |
+| `audit-remote-path.sh`             | ssh path auditor for remote machines (no farmslot install assumed remotely).                                                                                             |
+| `backup-runs.sh`                   | Cron-safe run-state backup; must not depend on a live gateway.                                                                                                           |
+| `validate-config.sh`               | Pool/project JSON-schema validation usable pre-install and in CI.                                                                                                        |
+| `sync-fixtures.sh`                 | Thin edge driver since PR #325: one `farmslot internal fixture-plan` call + the remote copy (ssh/scp), skip-worktree marking, and directory rsync.                       |
+| `check-slot.sh`                    | Shim → `farmslot slot check`. Kept 2026-07-15: metamask-mobile/extension pack READMEs still print it; delete after those packs repoint (team-repo PRs).                  |
+| `prepare-slot.sh`                  | Shim → `farmslot slot prepare`. Kept 2026-07-15: pack setup scripts/templates and core-farm docs still print it; same repoint condition as `check-slot.sh`.              |
+
+Retired surfaces are CLI-first: slot helpers (`farmslot slot monitor|show|soft-refresh|reopen|auto-refresh`), bug pipeline (`farmslot bug triage|score|grade|validate|batch`, image download folded into `triage`/`batch`), dispatch/PR status (`farmslot run create`, `farmslot pr status|list`), slot picking (`farmslot fleet find-slot`).
 
 ## Internal Areas
 
@@ -16,4 +39,4 @@ Root-level scripts are the public Farmslot command surface. Keep them framework-
 - `quality/` contains repository/package quality gates used by package scripts and CI.
 - `scoring/` contains generic scoring utilities.
 
-Do not add compatibility wrappers for unpublished internal paths. If a script path changes, update checked-in package scripts, CI, tests, and docs that invoke it.
+Do not add compatibility wrappers for unpublished internal paths. If a script path changes, update checked-in package scripts, CI, tests, and docs that invoke it. Retired names are enforced deleted by `scripts/quality/check-retired-scripts.mjs`.
