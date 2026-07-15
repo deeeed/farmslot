@@ -267,6 +267,8 @@ export interface CiCheckSummary {
   passed: number;
   failed: number;
   pending: number;
+  /** Optional: absent in persisted run outputs written before skipped tracking. */
+  skipped?: number;
 }
 
 export interface CiCheckUpdatedPayload {

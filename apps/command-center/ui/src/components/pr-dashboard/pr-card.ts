@@ -438,7 +438,9 @@ export class PRCard extends LitElement {
                             ? colors.statusOk
                             : c.status === 'fail'
                               ? colors.statusFail
-                              : colors.statusWarn}"
+                              : c.status === 'skipped'
+                                ? colors.statusUnknown
+                                : colors.statusWarn}"
                         ></span>
                         <span>${c.name}</span>
                       </li>

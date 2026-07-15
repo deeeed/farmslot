@@ -617,18 +617,12 @@ export class SlotCard extends LitElement {
   }
 
   private renderPrHealth(ph: NonNullable<SlotStatus['prHealth']>) {
-    const ciClass =
-      ph.ciFailed > 0
-        ? 'ci-fail'
-        : ph.ciPassed === ph.ciTotal && ph.ciTotal > 0
-          ? 'ci-pass'
-          : 'ci-pending';
+    // Green mirrors gateway allPassed: nothing failed or pending, >=1 pass
+    // (skipped checks count toward ciTotal but must not hold the badge pending).
+    const ciGreen = ph.ciFailed === 0 && ph.ciPending === 0 && ph.ciPassed > 0;
+    const ciClass = ph.ciFailed > 0 ? 'ci-fail' : ciGreen ? 'ci-pass' : 'ci-pending';
     const ciLabel =
-      ph.ciFailed > 0
-        ? `${ph.ciFailed} failed`
-        : ph.ciPassed === ph.ciTotal && ph.ciTotal > 0
-          ? 'CI pass'
-          : `${ph.ciPending} pending`;
+      ph.ciFailed > 0 ? `${ph.ciFailed} failed` : ciGreen ? 'CI pass' : `${ph.ciPending} pending`;
     return html`
       <div class="pr-health">
         ${ph.conflict ? html`<span class="pr-health-badge conflict">CONFLICT</span>` : ''}

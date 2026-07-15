@@ -430,7 +430,10 @@ function renderCITimeoutDecisionDescription(
           </div>
           <pre style="white-space:pre-wrap; margin:0">${description}</pre>
         </div>
-        ${liveSummary?.total && liveSummary.passed === liveSummary.total
+        ${liveSummary?.total &&
+        liveSummary.passed > 0 &&
+        !liveSummary.failed &&
+        !liveSummary.pending
           ? html`
               <div style="color:${colors.textMuted}; font-size:${fonts.sizeXs}">
                 The timeout decision was created from the older monitor snapshot above; the current

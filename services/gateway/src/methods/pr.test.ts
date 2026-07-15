@@ -67,7 +67,13 @@ function makePR(overrides: Partial<PRStatus> = {}): PRStatus {
     slot: overrides.slot ?? null,
     session: overrides.session ?? null,
     checks: overrides.checks ?? [],
-    checkSummary: overrides.checkSummary ?? { passed: 1, failed: 0, pending: 0, total: 1 },
+    checkSummary: overrides.checkSummary ?? {
+      passed: 1,
+      failed: 0,
+      pending: 0,
+      skipped: 0,
+      total: 1,
+    },
     allPassed: overrides.allPassed ?? true,
     anyFailed: overrides.anyFailed ?? false,
     failedNames: overrides.failedNames ?? [],
@@ -427,6 +433,62 @@ test('matchCheckGroups aggregates sharded checks deterministically', () => {
       watchName: 'CI status gate',
     },
   ]);
+});
+
+test('matchCheckGroups normalizes raw statuses when no groups are configured', () => {
+  const matched = matchCheckGroups(
+    [
+      { name: 'Repo guards', status: 'pass', startedAt: '', completedAt: '', index: 0 },
+      { name: 'CLI quality', status: 'skipping', startedAt: '', completedAt: '', index: 1 },
+      { name: 'Docs quality', status: 'skipped', startedAt: '', completedAt: '', index: 2 },
+      { name: 'Gateway quality', status: 'in_progress', startedAt: '', completedAt: '', index: 3 },
+    ],
+    [],
+  );
+
+  assert.deepEqual(
+    matched.map((m) => m.status),
+    ['pass', 'skipped', 'skipped', 'pending'],
+  );
+});
+
+test('matchCheckGroups treats skipped shards as neutral in aggregates', () => {
+  const mk = (name: string, status: string, index: number) => ({
+    name,
+    status,
+    startedAt: '',
+    completedAt: '',
+    index,
+  });
+  const group = (aggregate: 'all' | 'any' | 'latest'): ProjectCICheckGroup[] => [
+    { name: 'Suite', match: 'Suite', matchMode: 'includes', aggregate },
+  ];
+
+  // all: skipped shards do not hold the group pending or block a pass
+  assert.equal(
+    matchCheckGroups([mk('Suite (1)', 'pass', 0), mk('Suite (2)', 'skipping', 1)], group('all'))[0]
+      .status,
+    'pass',
+  );
+  // all: a group whose every shard skipped reports skipped, not pending
+  assert.equal(
+    matchCheckGroups(
+      [mk('Suite (1)', 'skipping', 0), mk('Suite (2)', 'skipped', 1)],
+      group('all'),
+    )[0].status,
+    'skipped',
+  );
+  // any: a failing shard still fails when the rest skipped
+  assert.equal(
+    matchCheckGroups([mk('Suite (1)', 'fail', 0), mk('Suite (2)', 'skipping', 1)], group('any'))[0]
+      .status,
+    'fail',
+  );
+  // latest: a skipped latest shard reports skipped
+  assert.equal(
+    matchCheckGroups([mk('Suite (1)', 'skipping', 0)], group('latest'))[0].status,
+    'skipped',
+  );
 });
 
 test('matchCheckGroups uses latest aggregate for legacy contains-style groups', () => {

@@ -102,7 +102,7 @@ export function renderStepInspectorCiWatchBanner(
     waitingTag = 'ci';
   } else if (
     recommendation === 'READY_TO_MERGE' ||
-    (summary && (summary.total ?? 0) > 0 && summary.passed === summary.total && botCount === 0)
+    (summary && (summary.passed ?? 0) > 0 && failed === 0 && pending === 0 && botCount === 0)
   ) {
     waitingLabel = 'PR to merge or close';
     waitingTag = 'merge';

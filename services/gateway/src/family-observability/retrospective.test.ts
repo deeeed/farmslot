@@ -38,7 +38,7 @@ test('snapshot backfills retrospective payload for unresolved legacy decisions',
           status: 'done',
           outputs: {
             result: 'passed',
-            checkSummary: { passed: 3, failed: 0, pending: 0, total: 3 },
+            checkSummary: { passed: 3, failed: 0, pending: 0, skipped: 0, total: 3 },
           },
         },
       ],

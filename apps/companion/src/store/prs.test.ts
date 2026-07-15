@@ -14,7 +14,7 @@ function pr(overrides: Partial<PRStatus>): PRStatus {
     project: 'mobile',
     slot: 'runner-mobile-1',
     recommendation: 'WORKING',
-    checkSummary: { total: 0, passed: 0, failed: 0, pending: 0 },
+    checkSummary: { skipped: 0, total: 0, passed: 0, failed: 0, pending: 0 },
     failedNames: [],
     pendingNames: [],
     anyFailed: false,

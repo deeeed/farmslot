@@ -1,6 +1,6 @@
 export interface CICheck {
   name: string;
-  status: 'pass' | 'fail' | 'pending';
+  status: 'pass' | 'fail' | 'pending' | 'skipped';
   watchName: string;
 }
 
@@ -45,6 +45,7 @@ export interface PRStatus {
     passed: number;
     failed: number;
     pending: number;
+    skipped: number;
     total: number;
   };
   allCheckSummary?: {
