@@ -54,6 +54,23 @@ function detectAuthRequired(pane: string): boolean {
   return false;
 }
 
+function detectUsageLimit(pane: string): boolean {
+  for (const line of pane.split('\n')) {
+    const normalized = line.trim().toLowerCase();
+    if (!normalized) continue;
+    if (
+      /\b(usage|rate|weekly|session|5-hour|five-hour) limits?\b.*\b(reached|hit|exceeded)\b/.test(
+        normalized,
+      ) ||
+      /\byou'?ve (reached|hit|exceeded) your\b.*\blimits?\b/.test(normalized) ||
+      /\blimits? (resets?|will reset) (at|in|on)\b/.test(normalized)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function detectLaunchBlocker(
   pane: string,
   runnerId?: string | null,
@@ -82,6 +99,7 @@ function detectLaunchBlocker(
     if (mcpInit) return { kind: mcpInit, autoAction: null };
     if (/starting session/i.test(liveStatus)) return { kind: 'cold-start', autoAction: null };
   }
+  if (runner && detectUsageLimit(pane)) return { kind: 'usage-limit', autoAction: null };
   if (runner && detectAuthRequired(pane)) return { kind: 'auth-required', autoAction: null };
   return { kind: null, autoAction: null };
 }

@@ -42,6 +42,7 @@ import {
   sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
+import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun } from '../runs/store.js';
 import {
@@ -350,6 +351,12 @@ export interface SelfReviewRetryDeps {
     artifactScope?: string | null,
   ) => Promise<{ snapshot: ReviewFixDeltaSnapshot; artifactPaths: string[] }>;
   captureHeadSha: (vars: Awaited<ReturnType<typeof loadSlotVars>>) => Promise<string | null>;
+  /** Optional: worker context-window usage (%) read before each fix delivery. */
+  getWorkerContextPct?: (
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    runner: string,
+    runId: string,
+  ) => Promise<number | null>;
   restoreWorkerChecklistTargetFromSlot: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
     taskDir: string,
@@ -372,6 +379,7 @@ const PRODUCTION_DEPS: SelfReviewRetryDeps = {
   runReviewAgent,
   captureFixDelta: captureFixDeltaSnapshot,
   captureHeadSha: captureCurrentHeadSha,
+  getWorkerContextPct: readWorkerContextPct,
   restoreWorkerChecklistTargetFromSlot,
   getRun,
 };
@@ -434,6 +442,39 @@ export async function runSelfReviewRetryLoop({
       if (!workerAlive) {
         console.warn(
           `[self-review] run ${runId.slice(0, 8)} — failed to re-launch worker, skipping feedback`,
+        );
+        return {
+          verdict: 'issues',
+          issues: result.issues,
+          validationDepth,
+          usage: result.usage,
+          reviewSnapshot: result.reviewSnapshot,
+          attempts,
+          retryCount,
+          maxRetries,
+          feedbackSent,
+          durationMs: Date.now() - start,
+        };
+      }
+    }
+
+    // A context-saturated session silently swallows delivered prompts
+    // (MANUAL-000029): relaunch a fresh worker before spending a fix pass on it.
+    const ctxPct = (await deps.getWorkerContextPct?.(vars, workerRunner, runId)) ?? null;
+    if (ctxPct != null && ctxPct >= SELF_REVIEW_FIX_RELAUNCH_CTX_PCT) {
+      console.log(
+        `[self-review] run ${runId.slice(0, 8)} — worker context at ${ctxPct}% (≥${SELF_REVIEW_FIX_RELAUNCH_CTX_PCT}%), relaunching fresh worker before fix delivery`,
+      );
+      const run = deps.getRun(runId);
+      const relaunched = await deps.relaunchWorkerForFix(
+        vars,
+        workerRunner,
+        run?.metrics.model ?? model,
+        runId,
+      );
+      if (!relaunched) {
+        console.warn(
+          `[self-review] run ${runId.slice(0, 8)} — failed to re-launch high-context worker, skipping feedback`,
         );
         return {
           verdict: 'issues',
@@ -967,6 +1008,9 @@ async function sendFeedbackToWorker(
       taskFile: fixTaskFile,
       taskDir,
     });
+    // Baseline for the post-send responsiveness probe below — captured before
+    // any keystrokes are injected so an accepted prompt shows as a pane delta.
+    const paneBaseline = await captureWorkerPaneTail(vars, workerTarget);
     let sent = await sendRunnerInstructionSafely(
       vars,
       workerTarget,
@@ -1006,6 +1050,21 @@ async function sendFeedbackToWorker(
         `self-review fix task delivery deferred twice — worker is not accepting prompts (${fixTaskFile})`,
       );
     }
+    // sent=true only proves keystrokes were injected and Enter pressed. A
+    // context-saturated REPL swallows delivered prompts with a frozen pane
+    // (MANUAL-000029) — verify the worker visibly reacted before waiting out
+    // the fix timeout against a wedged session.
+    const reacted = await workerPaneShowsActivity(vars, workerTarget, paneBaseline);
+    if (!reacted) {
+      console.warn(
+        `[self-review] run ${runId.slice(0, 8)} — fix task delivered but worker pane showed no activity within ${SELF_REVIEW_DELIVERY_PROBE_TIMEOUT_MS / 1000}s; treating as delivery failure`,
+      );
+      await markAgentContextStatus(runId, 'self-review-fix', 'failed');
+      await unwatchContext(vars.slotId, 'self-review-fix');
+      throw new Error(
+        `self-review fix task delivered but the worker pane never changed — runner is unresponsive (${fixTaskFile})`,
+      );
+    }
     return fixSignalBaseline;
   } catch (err) {
     await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
@@ -1015,6 +1074,65 @@ async function sendFeedbackToWorker(
 }
 
 // ─── Helpers ───
+
+const SELF_REVIEW_DELIVERY_PROBE_TIMEOUT_MS = 60_000;
+const SELF_REVIEW_DELIVERY_PROBE_POLL_MS = 5_000;
+// Observed wedges hit at ~90%+ context usage (260–292k tokens); relaunch below that.
+const SELF_REVIEW_FIX_RELAUNCH_CTX_PCT = 90;
+
+async function readWorkerContextPct(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  runId: string,
+): Promise<number | null> {
+  const provider = getRunnerStatusProvider(runner);
+  if (!provider) return null;
+  try {
+    const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
+    return await provider.getContextPct(vars, resolved.target);
+  } catch (err) {
+    // The ctx reading is an optional pre-check: null means "unknown" and the
+    // post-send responsiveness probe still guards the wedged-REPL case, so a
+    // failed probe must not abort the fix loop.
+    console.warn(
+      `[self-review] run ${runId.slice(0, 8)} — context-pct probe failed: ${(err as Error).message}`,
+    );
+    return null;
+  }
+}
+
+async function captureWorkerPaneTail(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+): Promise<string> {
+  return (
+    await execOnSlot(
+      vars,
+      tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -40`),
+    )
+  ).stdout;
+}
+
+/**
+ * Post-delivery responsiveness probe: an accepted prompt always changes the
+ * pane (composer echo, spinner, output), while the wedged-REPL failure mode
+ * leaves it frozen. A busy pane that changes for unrelated reasons yields a
+ * false "responsive" — that degrades to the pre-probe behavior (waiting out
+ * the fix timeout), never to a false failure.
+ */
+async function workerPaneShowsActivity(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  baseline: string,
+): Promise<boolean> {
+  const deadline = Date.now() + SELF_REVIEW_DELIVERY_PROBE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, SELF_REVIEW_DELIVERY_PROBE_POLL_MS));
+    const pane = await captureWorkerPaneTail(vars, target);
+    if (pane.trim() && pane !== baseline) return true;
+  }
+  return false;
+}
 
 async function relaunchWorkerForFix(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -1066,8 +1184,24 @@ async function relaunchWorkerForFix(
   });
 
   if (!runnerNeedsPostLaunchPrompt(runner)) {
-    debugSelfReviewLog(`[self-review] worker re-launched (${runner})`);
-    return true;
+    // Never trust the respawn blindly (ported from ci-monitor, PR #326): a
+    // failed launch command leaves a bare shell in the pane, and every later
+    // fix prompt lands in zsh instead of a runner.
+    const verifyDeadline = Date.now() + RUNNER_LAUNCH_READY_TIMEOUT_MS;
+    while (Date.now() < verifyDeadline) {
+      if (await isWorkerAlive(vars, runner, runId)) {
+        debugSelfReviewLog(`[self-review] worker re-launched (${runner})`);
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    console.warn(
+      `[self-review] run ${runId.slice(0, 8)} — relaunch left no live ${runner} session in ${workerTarget}; treating relaunch as failed`,
+    );
+    // The context was optimistically marked working above — correct it so a
+    // failed launch doesn't leave a stale working status behind.
+    await markAgentContextStatus(runId, workerRole, 'failed');
+    return false;
   }
 
   const readyTimeout = RUNNER_LAUNCH_READY_TIMEOUT_MS;
@@ -1099,6 +1233,9 @@ async function relaunchWorkerForFix(
     }
   }
   console.warn(`[self-review] worker re-launch timed out after ${readyTimeout}ms`);
+  // Same correction as the no-prompt branch: don't leave the optimistically
+  // "working" primary context behind on a failed relaunch.
+  await markAgentContextStatus(runId, workerRole, 'failed');
   return false;
 }
 

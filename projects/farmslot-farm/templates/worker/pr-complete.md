@@ -31,6 +31,13 @@ STATUS: pending
   cd apps/command-center && yarn typecheck
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
-- [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/comments-report.md` with: files changed, issue addressed, validation results.
-- [ ] **9. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- No reviewer-driven learnings — no actionable comment fixes on this run.`
-- [ ] **10. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, report, checklist, artifact contract)
+- [ ] **8. Commit and push — REQUIRED before marking complete:**
+  ```bash
+  git status --porcelain   # must be empty after committing
+  git add -A && git commit -m "fix: address PR follow-up" && git push origin {{PR_BRANCH}}
+  git rev-list origin/{{PR_BRANCH}}..HEAD | wc -l   # must print 0
+  ```
+  The gateway verifies the branch is pushed before accepting your completion signal; an unpushed `mark complete` blocks the run.
+- [ ] **9. Write report** — create `{{TASK_DIR}}/artifacts/comments-report.md` with: files changed, issue addressed, validation results.
+- [ ] **10. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- No reviewer-driven learnings — no actionable comment fixes on this run.`
+- [ ] **11. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, report, checklist, artifact contract)
