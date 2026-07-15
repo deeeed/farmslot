@@ -260,3 +260,13 @@ Bug pipeline (MANUAL-000034, slice 3 — all retired):
 | batch-triage.sh           | `farmslot bug batch`                    | none                 | none             | **RETIRE** |
 | download-github-images.sh | `farmslot bug triage --download-images` | none                 | none             | **RETIRE** |
 | download-jira-images.sh   | `farmslot bug triage --download-images` | none                 | none             | **RETIRE** |
+
+### Closeout (2026-07-15)
+
+The shrink is complete: `scripts/*.sh` count **35 → 23**, every survivor justified in
+[`scripts/README.md`](../../scripts/README.md) (keep-list table). Slices: fixture-plan
+verb (PR #325), slot helper verbs (PR #327), bug command family (PR #328). The two
+deprecation shims (`check-slot.sh`, `prepare-slot.sh`) carry dated notes and are
+deletable once the metamask pack READMEs/docs repoint to the CLI (team-repo PRs).
+Retired names are enforced deleted by `scripts/quality/check-retired-scripts.mjs`
+(19 entries).
