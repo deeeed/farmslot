@@ -694,6 +694,16 @@ test('multi-PR item returns to ready on run done instead of auto-closing', async
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'ready'); // next slice dispatchable, not closed
   assert.equal(item?.lastObservedRunStatus, 'done');
+  assert.equal(item?.runId, undefined); // run link cleared so enqueue accepts the next slice
+
+  // Never auto-dispatchable — that would loop the same spec every slice...
+  await assert.rejects(
+    () => backlog.enqueueBacklogItem({ itemId: created.item.id, auto: true }),
+    /multi-PR items require explicit enqueue/,
+  );
+  // ...but genuinely enqueueable for the next slice by explicit operator action.
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(enqueued.item.status, 'queued');
 
   // Failure/needs-attention paths keep their normal behavior on multi-PR items.
   backlog.markBacklogRunObserved({
@@ -703,6 +713,53 @@ test('multi-PR item returns to ready on run done instead of auto-closing', async
   } as never);
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'failed');
+});
+
+test('multiPr survives persistence and reload', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Persisted multiPr',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    multiPr: true,
+  });
+  await backlog.flushBacklogForTests();
+  await backlog.loadBacklog();
+  const reloaded = backlog
+    .listBacklogItems({ includeArchived: true })
+    .items.find((item) => item.id === created.item.id);
+  assert.equal(reloaded?.multiPr, true);
+});
+
+test('multiPr cannot be combined with launchPlan', async () => {
+  const { backlog } = await freshStores();
+  await assert.rejects(
+    () =>
+      backlog.createBacklogItem({
+        project: 'farmslot-farm',
+        title: 'Bad combo',
+        sourceKind: 'manual',
+        flowType: 'dev',
+        status: 'candidate',
+        multiPr: true,
+        launchPlan: {
+          id: 'lp_bad',
+          version: 1,
+          candidates: [
+            {
+              id: 'baseline',
+              role: 'baseline',
+              runner: 'claude',
+              model: 'opus',
+              slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+            },
+          ],
+        },
+      }),
+    /multiPr cannot be combined with launchPlan/,
+  );
 });
 
 test('close-shipped finalizes a multi-PR item after its last slice', async () => {
