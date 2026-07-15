@@ -518,13 +518,15 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
     const files = await listScoreFiles(scoresDir);
     for (const file of files) {
       const scoreFile = path.join(scoresDir, file);
-      if (!opts.rescore) {
-        const existing = await readScoreFile(scoreFile);
-        if (existing?.validation) continue;
-      }
-      // One issue's validity failure must not abort the rest — the retired
-      // batch-triage.sh validated every issue and reported failures at the end.
+      // One issue's failure — including an unreadable/corrupt score file — must
+      // not abort the rest. The read+parse is inside the try so those files are
+      // captured as per-item failures, matching batch-triage.sh which validated
+      // every issue and reported failures at the end.
       try {
+        if (!opts.rescore) {
+          const existing = await readScoreFile(scoreFile);
+          if (existing?.validation) continue;
+        }
         await runValidate(scoreFile, ctx, opts.now);
       } catch (err) {
         const e = err as { code?: string; userAction?: string };
