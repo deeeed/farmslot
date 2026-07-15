@@ -2,7 +2,7 @@
 
 Root-level scripts are the public Farmslot command surface. Keep them framework-level and project-agnostic; project behavior belongs in `projects/<name>/project.json` hooks and project-local scripts.
 
-Most of the decision logic that used to live here has moved to the CLI/gateway (see `docs/reference/bash-decision-core-inventory.md`, Retirement section). What remains is the intentional residue: genuinely-shell edges (ssh/tmux/launchd/interactive terminals), machine/slot bootstrap paths, display formatters, and live-session test harnesses — plus small amounts of formatting/validation glue inside them. **Current count: 23** (down from 35 at the start of the shrink; slices: fixture-plan PR #325, slot verbs PR #327, bug family PR #328).
+Most of the decision logic that used to live here has moved to the CLI/gateway (see `docs/reference/bash-decision-core-inventory.md`, Retirement section). What remains is the intentional residue: genuinely-shell edges (ssh/tmux/launchd/interactive terminals), machine/slot bootstrap paths, display formatters, and live-session test harnesses — plus small amounts of formatting/validation glue inside them. **Current count: 22** (down from 35 at the start of the shrink; slices: fixture-plan PR #325, slot verbs PR #327, bug family PR #328, closeout PR #329 which retired one more caller-less posting script).
 
 ## Keep-list (every survivor justified)
 
@@ -17,7 +17,7 @@ Most of the decision logic that used to live here has moved to the CLI/gateway (
 | `deploy-node.sh`                   | Deploys the node agent to any fleet machine (local or remote launchd/systemd) — cannot depend on the target's farmslot install.                                          |
 | `record-window.sh`                 | Window-capture edge: FIFO plumbing between external `capture-helper` and `ffmpeg`, with signal-trap flush handling — process orchestration, no decisions.                |
 | `gh-upload-asset.sh`               | Evidence upload edge: clones/pushes the artifacts repo over git SSH (no `gh`); used by publication flows.                                                                |
-| `post-fix.sh` / `post-review.sh`   | `gh` comment/review posting edges: `post-review.sh` is invoked by the gateway review gate; `post-fix.sh` is an operator command surfaced by the eval cockpit.            |
+| `post-review.sh`                   | `gh` review-posting edge invoked by the gateway review gate (`review-gate.ts`).                                                                                          |
 | `pr-monitor.sh`                    | One-shot PR status formatter: fetches data + gateway-computed recommendations via the CLI, then maps them to display states locally.                                     |
 | `session-usage.sh`                 | Wrapper over the `@farmslot/slot-config` session-usage core for shell callers (posting scripts, gateway lifecycle code, harnesses).                                      |
 | `e2e-tmux-runner-validate.sh`      | Test harness: live tmux E2E proof for ADR-032/runner drivers, run manually on a representative machine (not CI).                                                         |

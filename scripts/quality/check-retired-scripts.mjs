@@ -36,6 +36,10 @@ const RETIRED = [
   'download-jira-images.sh',
   // Batch display helper, ported to packages/cli/src/bug/display.ts.
   'lib/batch-triage-display.py',
+  // Dead code found during the scripts-shrink closeout (PR #329): no tracked
+  // caller in farmslot, project packs, or the team repo. PR fix-report
+  // comments are posted by the gateway run-completion path instead.
+  'post-fix.sh',
 ];
 
 // Paths whose mentions are historical narration, not live callers.
