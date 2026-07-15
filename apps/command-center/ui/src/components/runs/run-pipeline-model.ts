@@ -640,9 +640,10 @@ function activeReviewFromHumanGateDetail(
 
 function ciSyntheticStatus(run: Run, ciStep: RunStep): RunStep['status'] {
   const summary = recordValue(ciStep.outputs?.checkSummary);
+  // Gateway-green rule: skipped checks count toward total but must not block done.
   if (
     summary?.total &&
-    numberValue(summary.passed) === numberValue(summary.total) &&
+    (numberValue(summary.passed) ?? 0) > 0 &&
     numberValue(summary.failed) === 0 &&
     numberValue(summary.pending) === 0
   )
