@@ -54,10 +54,12 @@ export function isLiveTimeoutPrStatusAllGreen(
   prStatus: Pick<PRStatus, 'checkSummary'> | null,
 ): boolean {
   const summary = prStatus?.checkSummary;
+  // Skipped checks count toward total but must not block recovery: green means
+  // nothing failed, nothing still running, and at least one check passed.
   return Boolean(
     summary &&
     summary.total > 0 &&
-    summary.passed === summary.total &&
+    summary.passed > 0 &&
     summary.failed === 0 &&
     summary.pending === 0,
   );
@@ -317,6 +319,7 @@ interface PersistedCiSummary {
   passed?: number;
   failed?: number;
   pending?: number;
+  skipped?: number;
   total?: number;
 }
 
@@ -393,6 +396,7 @@ function readCiSummary(value: unknown): PersistedCiSummary | undefined {
     passed: optionalNumber(record.passed),
     failed: optionalNumber(record.failed),
     pending: optionalNumber(record.pending),
+    skipped: optionalNumber(record.skipped),
     total: optionalNumber(record.total),
   };
 }
@@ -457,11 +461,13 @@ export function persistedCiStatusFromRun(run: Run): CiCheckUpdatedPayload | null
   const total = storedSummary?.total ?? (match ? Number(match[2]) : 0);
   const failed = storedSummary?.failed ?? (match ? Number(match[3]) : 0);
   const pending = storedSummary?.pending ?? (match ? Number(match[4]) : 0);
+  // The regexed status line has no skipped figure; only stored summaries carry it.
+  const skipped = storedSummary?.skipped;
 
   return {
     runId: run.id,
     prNumber: run.prNumber ?? 0,
-    checkSummary: { passed, failed, pending, total },
+    checkSummary: { passed, failed, pending, total, ...(skipped !== undefined ? { skipped } : {}) },
     recommendation: latest?.detail ?? (out.result ? `Result: ${out.result}` : ''),
     passedNames: out.passedNames,
     failedNames: out.failedNames,

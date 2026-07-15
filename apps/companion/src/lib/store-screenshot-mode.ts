@@ -519,7 +519,13 @@ function pr(input: {
     slot: input.slot,
     session: 'fs-companion',
     checks: [],
-    checkSummary: { passed: input.passed, failed: input.failed, pending: input.pending, total },
+    checkSummary: {
+      passed: input.passed,
+      failed: input.failed,
+      pending: input.pending,
+      skipped: 0,
+      total,
+    },
     allCheckSummary: {
       passed: input.passed,
       failed: input.failed,

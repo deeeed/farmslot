@@ -112,7 +112,13 @@ test('readCiWatchOutputs normalizes persisted ci-watch step output bags', () => 
 
   const normalized = readCiWatchOutputs(outputs);
 
-  assert.deepEqual(normalized?.checkSummary, { passed: 1, failed: 2, pending: 3, total: 6 });
+  assert.deepEqual(normalized?.checkSummary, {
+    passed: 1,
+    failed: 2,
+    pending: 3,
+    skipped: 0,
+    total: 6,
+  });
   assert.deepEqual(normalized?.failedNames, ['lint']);
   assert.equal(normalized?.phase, 'fixing');
   assert.equal(normalized?.fixInProgress, true);

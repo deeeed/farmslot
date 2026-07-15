@@ -328,14 +328,8 @@ export class RunDetail extends RunDetailState {
     if (!decision) return;
     if (this._autoResolvedTimeoutDecisionIds.has(decision.id)) return;
     const summary = pr.checkSummary;
-    if (
-      !(
-        summary.total > 0 &&
-        summary.passed === summary.total &&
-        summary.failed === 0 &&
-        summary.pending === 0
-      )
-    )
+    // Skipped checks count toward total but must not block auto-resolve.
+    if (!(summary.total > 0 && summary.passed > 0 && summary.failed === 0 && summary.pending === 0))
       return;
 
     this._autoResolvedTimeoutDecisionIds.add(decision.id);
