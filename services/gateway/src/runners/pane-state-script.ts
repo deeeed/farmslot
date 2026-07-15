@@ -55,15 +55,24 @@ function detectAuthRequired(pane: string): boolean {
 }
 
 function detectUsageLimit(pane: string): boolean {
-  for (const line of pane.split('\n')) {
-    const normalized = line.trim().toLowerCase();
-    if (!normalized) continue;
+  // Banner-shaped matches only: the phrases must be adjacent ("weekly limit
+  // reached", not "weekly limit was reached in tests") or carry a time-like
+  // reset ("resets at 3:00 PM", not "resets in cleanup"), and the banner must
+  // sit in the last lines near the composer — scrollback prose about rate
+  // limits in code under discussion must not abort a live launch.
+  const tail = pane
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-20);
+  for (const rawLine of tail) {
+    const normalized = rawLine.toLowerCase();
     if (
-      /\b(usage|rate|weekly|session|5-hour|five-hour) limits?\b.*\b(reached|hit|exceeded)\b/.test(
+      /\b(usage|rate|weekly|session|5-hour|five-hour) limits? (reached|hit|exceeded)\b/.test(
         normalized,
       ) ||
-      /\byou'?ve (reached|hit|exceeded) your\b.*\blimits?\b/.test(normalized) ||
-      /\blimits? (resets?|will reset) (at|in|on)\b/.test(normalized)
+      /\byou'?ve (reached|hit|exceeded) your\b[^.]*\blimits?\b/.test(normalized) ||
+      /\blimits? (resets?|will reset) (at|in) \d/.test(normalized)
     ) {
       return true;
     }

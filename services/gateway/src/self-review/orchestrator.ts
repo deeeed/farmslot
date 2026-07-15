@@ -1008,9 +1008,6 @@ async function sendFeedbackToWorker(
       taskFile: fixTaskFile,
       taskDir,
     });
-    // Baseline for the post-send responsiveness probe below — captured before
-    // any keystrokes are injected so an accepted prompt shows as a pane delta.
-    const paneBaseline = await captureWorkerPaneTail(vars, workerTarget);
     let sent = await sendRunnerInstructionSafely(
       vars,
       workerTarget,
@@ -1052,8 +1049,11 @@ async function sendFeedbackToWorker(
     }
     // sent=true only proves keystrokes were injected and Enter pressed. A
     // context-saturated REPL swallows delivered prompts with a frozen pane
-    // (MANUAL-000029) — verify the worker visibly reacted before waiting out
-    // the fix timeout against a wedged session.
+    // (MANUAL-000029) — require FURTHER pane activity after the send. The
+    // baseline is captured post-send, so pane changes racing the send's own
+    // busy-poll window cannot masquerade as a reaction; an accepted fix task
+    // keeps painting (spinner, streamed output, checklist marks) for minutes.
+    const paneBaseline = await captureWorkerPaneTail(vars, workerTarget);
     const reacted = await workerPaneShowsActivity(vars, workerTarget, paneBaseline);
     if (!reacted) {
       console.warn(
@@ -1114,11 +1114,12 @@ async function captureWorkerPaneTail(
 }
 
 /**
- * Post-delivery responsiveness probe: an accepted prompt always changes the
- * pane (composer echo, spinner, output), while the wedged-REPL failure mode
- * leaves it frozen. A busy pane that changes for unrelated reasons yields a
- * false "responsive" — that degrades to the pre-probe behavior (waiting out
- * the fix timeout), never to a false failure.
+ * Post-delivery responsiveness probe: an accepted fix task keeps changing the
+ * pane (spinner, streamed output, tool calls), while the wedged-REPL failure
+ * mode leaves it frozen. Compared against a post-send baseline. A busy pane
+ * that changes for unrelated reasons yields a false "responsive" — that
+ * degrades to the pre-probe behavior (waiting out the fix timeout), never to
+ * a false failure.
  */
 async function workerPaneShowsActivity(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,

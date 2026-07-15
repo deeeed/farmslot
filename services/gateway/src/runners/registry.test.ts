@@ -318,9 +318,18 @@ describe('cursor runner', () => {
     const pane = [
       'Applied rate limiting to the API client with a token bucket.',
       'The session limit config option defaults to 50.',
+      'The weekly limit was reached in tests before the fix landed.',
+      'The limit resets in cleanup between test cases.',
       '› ',
     ].join('\n');
     assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
+  });
+
+  it('ignores usage-limit banners that scrolled out of the pane tail', () => {
+    const lines = ["You've reached your usage limit."];
+    for (let i = 0; i < 25; i++) lines.push(`transcript line ${i}`);
+    lines.push('› ');
+    assert.equal(detectRunnerLaunchBlocker(lines.join('\n'), 'codex'), null);
   });
 
   it('does not classify optional MCP login warnings as runner auth blockers', async () => {
