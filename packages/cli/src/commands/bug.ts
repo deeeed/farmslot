@@ -7,7 +7,7 @@
 // Ports scripts/{triage-bug,score-bug,grade-bug,validate-bug,batch-triage,
 // download-github-images,download-jira-images}.sh.
 
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -105,7 +105,11 @@ export function registerBugCommand(program: Command): void {
           }
           const project = resolveProjectName(opts.project, opts.input);
           const ctx = await loadProjectContext(project);
-          const stdinJson = opts.stdin ? await readStdin() : undefined;
+          // Show pending feedback before blocking on a (possibly slow, interactive)
+          // stdin read — otherwise the CLI sits silent past the ~200ms rule.
+          const stdinJson = opts.stdin
+            ? await withProgress('Reading bug input from stdin', readStdin, !emit.machine)
+            : undefined;
           const result = await withProgress(
             'Triaging bug',
             () =>
@@ -157,6 +161,8 @@ export function registerBugCommand(program: Command): void {
     .option('--project <name>', 'Project name (projects/<name>)')
     .action(async (opts: { input?: string; stdin?: boolean; project?: string }, cmd: Command) => {
       const { output, emit } = machineOutput(cmd);
+      // Staging dir for --stdin input; removed in finally so it is not leaked.
+      let stagingDir: string | undefined;
       try {
         if (opts.input && opts.stdin) {
           throw Object.assign(new Error('--input and --stdin are mutually exclusive'), {
@@ -172,7 +178,19 @@ export function registerBugCommand(program: Command): void {
         }
         const project = resolveProjectName(opts.project, opts.input);
         const ctx = await loadProjectContext(project);
-        const inputAbs = await resolveInputFile(opts.input, opts.stdin);
+        // Show pending feedback before blocking on a slow interactive stdin read.
+        const inputAbs = opts.stdin
+          ? await withProgress(
+              'Reading bug input from stdin',
+              async () => {
+                stagingDir = await mkdtemp(path.join(tmpdir(), 'farmslot-bug-'));
+                const file = path.join(stagingDir, 'bug-input.json');
+                await writeFile(file, await readStdin());
+                return file;
+              },
+              !emit.machine,
+            )
+          : path.resolve(opts.input!);
         const heuristic = await withProgress(
           'Scoring bug',
           () => runScore(inputAbs, ctx),
@@ -187,6 +205,8 @@ export function registerBugCommand(program: Command): void {
         }
       } catch (err) {
         emit.fail(err);
+      } finally {
+        if (stagingDir) await rm(stagingDir, { recursive: true, force: true });
       }
     });
 
@@ -318,6 +338,20 @@ export function registerBugCommand(program: Command): void {
           for (const failure of result.failures) {
             process.stderr.write(`  FAIL: ${failure.ref}: ${failure.error}\n`);
           }
+          // Total failure: issues were found but nothing scored or skipped-with-
+          // existing. Exit non-zero with structured remediation so automation does
+          // not read an empty batch as success.
+          if (result.total > 0 && result.scored === 0 && result.skipped === 0) {
+            throw Object.assign(
+              new Error(`batch produced no scores: all ${result.total} issue(s) failed`),
+              {
+                code: 'BATCH_ALL_FAILED',
+                userAction:
+                  'Inspect the per-issue FAIL lines above (auth/network/scorer errors), fix the root cause, then re-run.',
+                details: result.failures,
+              },
+            );
+          }
           if (emit.machine) {
             emit.ok(result);
           } else {
@@ -335,24 +369,6 @@ export function registerBugCommand(program: Command): void {
         }
       },
     );
-}
-
-/** Return an absolute path to the input bug-input.json, buffering stdin to a temp file. */
-async function resolveInputFile(
-  input: string | undefined,
-  stdin: boolean | undefined,
-): Promise<string> {
-  if (input) return path.resolve(input);
-  if (stdin) {
-    const dir = await mkdtemp(path.join(tmpdir(), 'farmslot-bug-'));
-    const file = path.join(dir, 'bug-input.json');
-    await writeFile(file, await readStdin());
-    return file;
-  }
-  throw Object.assign(new Error('no input file'), {
-    code: 'USAGE_ERROR',
-    userAction: 'Pass --input <file> or --stdin.',
-  });
 }
 
 function collect(value: string, previous: string[]): string[] {

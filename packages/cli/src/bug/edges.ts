@@ -5,7 +5,7 @@
 // masquerading as "no data".
 
 import { execFile } from 'node:child_process';
-import { stat, unlink } from 'node:fs/promises';
+import { mkdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -81,6 +81,9 @@ export async function curlDownload(
   filename: string,
   opts: { basicAuth?: string; headers?: Record<string, string> } = {},
 ): Promise<string | null> {
+  // The retired download-*.sh scripts created the target dir; mirror that so a
+  // fresh --download-images path does not make curl fail on a missing dir.
+  await mkdir(dir, { recursive: true });
   const dest = path.join(dir, filename);
   const args = ['-L', '-sS', '--fail-with-body', '-o', dest];
   if (opts.basicAuth) args.push('-u', opts.basicAuth);
@@ -92,11 +95,11 @@ export async function curlDownload(
   } catch (err) {
     throw edgeError('curl', 'CURL_FAILED', err);
   }
-  const size = await stat(dest)
-    .then((s) => s.size)
-    .catch(() => 0);
+  // curl wrote `dest` on success, so stat/unlink must succeed — a real
+  // permission/filesystem error surfaces here rather than reading as "no image".
+  const { size } = await stat(dest);
   if (size > 0) return filename;
-  await unlink(dest).catch(() => undefined);
+  await unlink(dest);
   return null;
 }
 

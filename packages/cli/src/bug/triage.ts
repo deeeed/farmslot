@@ -3,7 +3,7 @@
 // protocol cores, runs the project scorer, and writes scores/<key>.json —
 // preserving any existing llm/final/validation sections on re-triage.
 
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -12,6 +12,8 @@ import {
   type BugScore,
   deriveScoreKey,
   parseBugInput,
+  scoreKeyForGithub,
+  scoreKeyForJira,
   validateBugScore,
 } from '@farmslot/protocol';
 import { getProjectField, loadProjectVars, type ProjectVars } from '@farmslot/slot-config';
@@ -66,8 +68,8 @@ export function parseGithubRef(ref: string): { repo: string; number: string } {
 
 /** Derive the score-file key from a raw ref without fetching (skip-existing fast path). */
 function keyFromRef(input: TriageInput): string | null {
-  if (input.github) return `gh-${parseGithubRef(input.github).number}`;
-  if (input.jira) return input.jira.toLowerCase();
+  if (input.github) return scoreKeyForGithub(parseGithubRef(input.github).number);
+  if (input.jira) return scoreKeyForJira(input.jira);
   return null;
 }
 
@@ -239,11 +241,18 @@ export async function runTriage(input: TriageInput, ctx: ProjectContext): Promis
   const scoreKey = deriveScoreKey(bugInput);
   const scoreFile = path.join(scoresDir, `${scoreKey}.json`);
 
-  // The scorer reads {{INPUT_FILE}}; stage the bug-input to a temp file.
+  // The scorer reads {{INPUT_FILE}}; stage the bug-input to a temp file, then
+  // remove the staging dir so a large batch does not leave one per issue (the
+  // retired scripts used a cleanup trap for the same reason).
   const stageDir = await mkdtemp(path.join(tmpdir(), 'farmslot-bug-'));
-  const stagedInput = path.join(stageDir, 'bug-input.json');
-  await writeFile(stagedInput, JSON.stringify(bugInput, null, 2));
-  const heuristic = await runScore(stagedInput, ctx);
+  let heuristic: BugScore | null;
+  try {
+    const stagedInput = path.join(stageDir, 'bug-input.json');
+    await writeFile(stagedInput, JSON.stringify(bugInput, null, 2));
+    heuristic = await runScore(stagedInput, ctx);
+  } finally {
+    await rm(stageDir, { recursive: true, force: true });
+  }
 
   const existing = (await readScoreFile(scoreFile)) ?? {};
   const score: ScoreFile = {

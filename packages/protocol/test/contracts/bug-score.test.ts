@@ -157,6 +157,22 @@ test('computeFinalScore rounds the merged probability to two decimals', () => {
   assert.equal(final.one_shot_probability, 0.33);
 });
 
+test('computeFinalScore rounds exact ties to even (Python round parity)', () => {
+  // mean = 0.125, an exact half-cent: ties-to-even rounds down to 0.12 (matching
+  // the retired Python grader's round(x, 2)), not half-up to 0.13.
+  const tieDown = computeFinalScore(
+    grade({ one_shot_probability: 0.1 }),
+    heur({ one_shot_probability: 0.15 }),
+  );
+  assert.equal(tieDown.one_shot_probability, 0.12);
+  // mean = 0.135 → nearest even cent is 0.14.
+  const tieUp = computeFinalScore(
+    grade({ one_shot_probability: 0.13 }),
+    heur({ one_shot_probability: 0.14 }),
+  );
+  assert.equal(tieUp.one_shot_probability, 0.14);
+});
+
 // ── normalizeBugValidation ────────────────────────────────────────────────────
 
 test('normalizeBugValidation keeps present fields', () => {

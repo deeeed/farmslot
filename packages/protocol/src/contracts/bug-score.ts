@@ -242,6 +242,17 @@ function toStringArray(raw: unknown): string[] {
   return raw.filter((v): v is string => typeof v === 'string');
 }
 
+// Round half to even (banker's rounding) at 2 decimals to match the retired
+// Python grader's round(x, 2). Math.round rounds half up and diverged on exact
+// ties (mean 0.125 → 0.13 vs Python's 0.12), desyncing new score files from the
+// ones already on disk. Only an exact *.5 hundredth is a tie; every other value
+// rounds to nearest identically under Math.round and Python.
 function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+  const scaled = n * 100;
+  const remainder = scaled - Math.floor(scaled);
+  if (remainder === 0.5) {
+    const floor = Math.floor(scaled);
+    return (floor % 2 === 0 ? floor : floor + 1) / 100;
+  }
+  return Math.round(scaled) / 100;
 }

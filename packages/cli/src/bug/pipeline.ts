@@ -14,6 +14,8 @@ import {
   normalizeBugValidation,
   normalizeLlmGrade,
   parseLlmJson,
+  scoreKeyForGithub,
+  scoreKeyForJira,
 } from '@farmslot/protocol';
 import { getProjectField } from '@farmslot/slot-config';
 
@@ -275,7 +277,7 @@ export interface BatchResult {
   skipped: number;
   failed: number;
   /** Per-issue failures — surfaced to the operator, never silently dropped. */
-  failures: Array<{ ref: string; error: string }>;
+  failures: Array<{ ref: string; error: string; code?: string; userAction?: string }>;
   report: string;
   keys: string[];
 }
@@ -363,7 +365,7 @@ async function fetchGithubIssues(
   }>;
   const normalized = raw.map((i) => ({
     ref: `${repo}#${i.number}`,
-    key: `gh-${i.number}`,
+    key: scoreKeyForGithub(String(i.number)),
     updatedAt: i.updatedAt,
     assigned: Array.isArray(i.assignees) && i.assignees.length > 0,
   }));
@@ -419,7 +421,7 @@ async function fetchJiraIssues(
   }
   return (raw.issues ?? []).map((i) => ({
     ref: i.key,
-    key: i.key.toLowerCase(),
+    key: scoreKeyForJira(i.key),
     updatedAt: i.fields?.updated,
     assigned: i.fields?.assignee != null,
   }));
@@ -489,17 +491,26 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
         );
         return { status: result.skipped ? ('skip' as const) : ('ok' as const), ref: issue.ref };
       } catch (err) {
+        const e = err as { code?: string; userAction?: string };
         return {
           status: 'fail' as const,
           ref: issue.ref,
           error: err instanceof Error ? err.message : String(err),
+          code: typeof e.code === 'string' ? e.code : undefined,
+          userAction: typeof e.userAction === 'string' ? e.userAction : undefined,
         };
       }
     });
     for (const r of results) {
       if (r.status === 'ok') scored++;
       else if (r.status === 'skip') skipped++;
-      else failures.push({ ref: r.ref, error: r.error ?? 'unknown error' });
+      else
+        failures.push({
+          ref: r.ref,
+          error: r.error ?? 'unknown error',
+          code: r.code,
+          userAction: r.userAction,
+        });
     }
   }
 
@@ -511,7 +522,19 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
         const existing = await readScoreFile(scoreFile);
         if (existing?.validation) continue;
       }
-      await runValidate(scoreFile, ctx, opts.now);
+      // One issue's validity failure must not abort the rest — the retired
+      // batch-triage.sh validated every issue and reported failures at the end.
+      try {
+        await runValidate(scoreFile, ctx, opts.now);
+      } catch (err) {
+        const e = err as { code?: string; userAction?: string };
+        failures.push({
+          ref: file.replace(/\.json$/, ''),
+          error: err instanceof Error ? err.message : String(err),
+          code: typeof e.code === 'string' ? e.code : undefined,
+          userAction: typeof e.userAction === 'string' ? e.userAction : undefined,
+        });
+      }
     }
   }
 

@@ -34,6 +34,8 @@ const RETIRED = [
   'batch-triage.sh',
   'download-github-images.sh',
   'download-jira-images.sh',
+  // Batch display helper, ported to packages/cli/src/bug/display.ts.
+  'lib/batch-triage-display.py',
 ];
 
 // Paths whose mentions are historical narration, not live callers.
