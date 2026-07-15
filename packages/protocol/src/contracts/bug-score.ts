@@ -250,7 +250,7 @@ function toStringArray(raw: unknown): string[] {
 // NOTE: this does NOT bit-match Python round(x, 2) on *binary* near-ties. Python
 // rounds the true IEEE-754 double, while we round n*100 — a value like
 // (0.01 + 0.02) / 2 is 0.015000000000000001 in JS, so n*100 lands just above
-// 15 and we round to 0.02, whereas Python's round(0.015, 2) yields 0.01. We do
+// 1.5 and we round to 0.02, whereas Python's round(0.015, 2) yields 0.01. We do
 // not chase bit-parity (it would need arbitrary-precision decimal handling for a
 // cosmetic 0.01 on a probability); scores may therefore differ by 0.01 from the
 // retired Python grader on such near-ties. See the CHANGELOG entry for this port.

@@ -282,6 +282,17 @@ export interface BatchResult {
   keys: string[];
 }
 
+/** Build a per-item failure record, carrying the error's structured code/userAction when present. */
+function toFailure(ref: string, err: unknown): BatchResult['failures'][number] {
+  const e = err as { code?: unknown; userAction?: unknown };
+  return {
+    ref,
+    error: err instanceof Error ? err.message : String(err),
+    code: typeof e.code === 'string' ? e.code : undefined,
+    userAction: typeof e.userAction === 'string' ? e.userAction : undefined,
+  };
+}
+
 interface NormalizedIssue {
   ref: string; // triage ref (owner/repo#N or JIRA-KEY)
   key: string; // score-file key (gh-N or jira-key lowercased)
@@ -491,26 +502,14 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
         );
         return { status: result.skipped ? ('skip' as const) : ('ok' as const), ref: issue.ref };
       } catch (err) {
-        const e = err as { code?: string; userAction?: string };
-        return {
-          status: 'fail' as const,
-          ref: issue.ref,
-          error: err instanceof Error ? err.message : String(err),
-          code: typeof e.code === 'string' ? e.code : undefined,
-          userAction: typeof e.userAction === 'string' ? e.userAction : undefined,
-        };
+        return { status: 'fail' as const, ...toFailure(issue.ref, err) };
       }
     });
     for (const r of results) {
-      if (r.status === 'ok') scored++;
+      if (r.status === 'fail')
+        failures.push({ ref: r.ref, error: r.error, code: r.code, userAction: r.userAction });
       else if (r.status === 'skip') skipped++;
-      else
-        failures.push({
-          ref: r.ref,
-          error: r.error ?? 'unknown error',
-          code: r.code,
-          userAction: r.userAction,
-        });
+      else scored++;
     }
   }
 
@@ -529,20 +528,22 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
         }
         await runValidate(scoreFile, ctx, opts.now);
       } catch (err) {
-        const e = err as { code?: string; userAction?: string };
-        failures.push({
-          ref: file.replace(/\.json$/, ''),
-          error: err instanceof Error ? err.message : String(err),
-          code: typeof e.code === 'string' ? e.code : undefined,
-          userAction: typeof e.userAction === 'string' ? e.userAction : undefined,
-        });
+        failures.push(toFailure(file.replace(/\.json$/, ''), err));
       }
     }
   }
 
+  // A corrupt score file re-read at the display stage must also be reported
+  // per-item, not abort runBatch and discard the failures gathered above.
+  const failedRefs = new Set(failures.map((f) => f.ref));
   const rows = await collectBatchRows(
     scoresDir,
     issues.map((i) => i.key),
+    (key, err) => {
+      if (failedRefs.has(key)) return;
+      failures.push(toFailure(key, err));
+      failedRefs.add(key);
+    },
   );
   const report = renderBatchReport(rows, { repo, displayLabels });
 

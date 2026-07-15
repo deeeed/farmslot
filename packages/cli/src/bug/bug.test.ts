@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { renderBatchReport } from './display.js';
+import { collectBatchRows, renderBatchReport } from './display.js';
 import { isoTimestamp, readScoreFile, writeScoreFile } from './score-file.js';
 import { githubImageFilename, parseGithubRef } from './triage.js';
 
@@ -83,6 +83,36 @@ test('readScoreFile throws loudly on a corrupt file', async () => {
     const { writeFile } = await import('node:fs/promises');
     await writeFile(file, '{ not json');
     await assert.rejects(() => readScoreFile(file), /corrupt score file/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ── collectBatchRows ──────────────────────────────────────────────────────────
+
+test('collectBatchRows tolerates a corrupt score file per-item (batch display stage)', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'bug-score-'));
+  try {
+    const { writeFile } = await import('node:fs/promises');
+    // One good score file, one corrupt — the corrupt one must not abort the run.
+    await writeScoreFile(path.join(dir, 'gh-1.json'), {
+      issue_ref: 'org/repo#1',
+      bug_input: {
+        title: 'Good one',
+      } as never,
+      heuristic: { difficulty: 'low', one_shot_probability: 0.9, category: 'ui' } as never,
+    });
+    await writeFile(path.join(dir, 'gh-2.json'), '{ not json');
+
+    const errors: Array<{ key: string; code: unknown }> = [];
+    const rows = await collectBatchRows(dir, ['gh-1', 'gh-2'], (key, err) => {
+      errors.push({ key, code: (err as { code?: unknown }).code });
+    });
+
+    // The good row is still returned; the corrupt file is reported, not thrown.
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.num, '1');
+    assert.deepEqual(errors, [{ key: 'gh-2', code: 'CORRUPT_SCORE_FILE' }]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

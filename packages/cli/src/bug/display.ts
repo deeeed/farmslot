@@ -16,11 +16,26 @@ export interface BatchRow {
   validReason: string;
 }
 
-/** Read score files for the given keys and build display rows sorted by probability. */
-export async function collectBatchRows(scoresDir: string, keys: string[]): Promise<BatchRow[]> {
+/**
+ * Read score files for the given keys and build display rows sorted by
+ * probability. An unreadable/corrupt score file is skipped and reported via
+ * `onError` (never thrown) so one bad file cannot abort the whole batch at the
+ * display stage and discard the accumulated per-item failures.
+ */
+export async function collectBatchRows(
+  scoresDir: string,
+  keys: string[],
+  onError?: (key: string, err: unknown) => void,
+): Promise<BatchRow[]> {
   const rows: BatchRow[] = [];
   for (const key of [...new Set(keys)].sort()) {
-    const score = await readScoreFile(`${scoresDir}/${key}.json`);
+    let score;
+    try {
+      score = await readScoreFile(`${scoresDir}/${key}.json`);
+    } catch (err) {
+      onError?.(key, err);
+      continue;
+    }
     if (!score) continue;
     const h = score.heuristic;
     const v = score.validation;
