@@ -1961,8 +1961,12 @@ export function markBacklogRunObserved(run: Run): void {
     // A completed run can re-emit RUN_UPDATED after the item moved on to its
     // next slice (multi-PR flow): once the item carries a newer queue link or
     // an active run link, observations from any OTHER run are historical
-    // echoes and must not clear that link or reset the item.
-    if (item.runId !== run.id) {
+    // echoes and must not clear that link or reset the item. Launch-plan
+    // candidate observations bypass the guard: comparison candidates always
+    // run concurrently with the baseline that owns item.runId, and they route
+    // to per-candidate projections (multiPr + launchPlan is a rejected combo).
+    const isLaunchPlanCandidateObservation = Boolean(item.launchPlan && run.launchCandidateId);
+    if (!isLaunchPlanCandidateObservation && item.runId !== run.id) {
       if (item.queuedQueueItemId) return;
       if (item.runId) {
         const linked = getAllRuns().find((candidate) => candidate.id === item.runId);

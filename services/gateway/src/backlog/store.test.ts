@@ -785,6 +785,68 @@ test('late completion echo from a previous slice cannot clobber the next slice',
   assert.equal(item?.runId, undefined);
 });
 
+test('comparison-candidate observations bypass the historical-echo guard', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Concurrent candidates',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_guard',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+        {
+          id: 'sonnet',
+          role: 'comparison',
+          runner: 'claude',
+          model: 'sonnet',
+          variant: 'claude-sonnet',
+          slotPolicy: { kind: 'pool', allowedSlots: ['macwork-ff-2'] },
+        },
+      ],
+    },
+  });
+  const baselineRun = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    launchPlanId: 'lp_guard',
+    launchCandidateId: 'baseline',
+  });
+  runStore.updateRun(baselineRun.id, { status: 'monitoring' });
+  backlog.markBacklogRunObserved({ ...baselineRun, status: 'monitoring' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.runId, baselineRun.id);
+
+  // Comparison finishes while the baseline (which owns item.runId) still runs:
+  // its projection must update instead of being rejected as a stale echo.
+  backlog.markBacklogRunObserved({
+    id: 'cmp-run',
+    status: 'done',
+    backlogItemId: created.item.id,
+    launchPlanId: 'lp_guard',
+    launchCandidateId: 'sonnet',
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  const projection = item?.launchPlanState?.candidates.find(
+    (candidate) => candidate.candidateId === 'sonnet',
+  );
+  assert.equal(projection?.status, 'succeeded');
+  assert.equal(projection?.runId, 'cmp-run');
+  assert.equal(item?.runId, baselineRun.id); // baseline link untouched
+});
+
 test('multiPr survives persistence and reload', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
