@@ -671,6 +671,287 @@ test('run observation heals needs-attention when linked run completes', async ()
   assert.equal(item?.lastObservedRunStatus, 'done');
 });
 
+test('multi-PR item returns to ready on run done instead of auto-closing', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Multi-slice shrink',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    multiPr: true,
+  });
+  created.item.status = 'running';
+  created.item.runId = 'slice-1-run';
+
+  backlog.markBacklogRunObserved({
+    id: 'slice-1-run',
+    status: 'done',
+    backlogItemId: created.item.id,
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.status, 'ready'); // next slice dispatchable, not closed
+  assert.equal(item?.lastObservedRunStatus, 'done');
+  assert.equal(item?.runId, undefined); // run link cleared so enqueue accepts the next slice
+
+  // Never auto-dispatchable — that would loop the same spec every slice...
+  await assert.rejects(
+    () => backlog.enqueueBacklogItem({ itemId: created.item.id, auto: true }),
+    /multi-PR items require explicit enqueue/,
+  );
+  // ...but genuinely enqueueable for the next slice by explicit operator action.
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(enqueued.item.status, 'queued');
+
+  // Failure/needs-attention paths keep their normal behavior on multi-PR items
+  // once the next slice's run is actually linked (queue -> run handoff).
+  const queuedItem = backlog.listBacklogItems({ includeArchived: true }).items[0]!;
+  delete queuedItem.queuedQueueItemId;
+  queuedItem.status = 'running';
+  queuedItem.runId = 'slice-2-run';
+  backlog.markBacklogRunObserved({
+    id: 'slice-2-run',
+    status: 'failed',
+    backlogItemId: created.item.id,
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'failed');
+});
+
+test('late completion echo from a previous slice cannot clobber the next slice', async () => {
+  const { backlog, queue, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Slice echo guard',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    multiPr: true,
+  });
+  const sliceOne = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+  });
+  runStore.updateRun(sliceOne.id, { status: 'done' });
+  created.item.status = 'running';
+  created.item.runId = sliceOne.id;
+  backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'ready');
+
+  // Slice 2 queued: a late RUN_UPDATED echo from slice 1 must not clear the queue link.
+  const queueItem = queue.addItem({
+    backlogItemId: created.item.id,
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    allowedSlots: ['no-such-slot'],
+    priority: 10,
+  });
+  created.item.status = 'queued';
+  created.item.queuedQueueItemId = queueItem.id;
+  backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  let item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.status, 'queued');
+  assert.equal(item?.queuedQueueItemId, queueItem.id);
+
+  // Slice 2 running: the echo must not reset the item or steal the run link.
+  const sliceTwo = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+  });
+  runStore.updateRun(sliceTwo.id, { status: 'monitoring' });
+  delete created.item.queuedQueueItemId;
+  created.item.status = 'running';
+  created.item.runId = sliceTwo.id;
+  backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.status, 'running');
+  assert.equal(item?.runId, sliceTwo.id);
+
+  // Slice 2 finishing still applies normally.
+  backlog.markBacklogRunObserved({ ...sliceTwo, status: 'done' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.status, 'ready');
+  assert.equal(item?.runId, undefined);
+});
+
+test('a late prior-slice done echo does not resurrect a failed multi-PR slice', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Failed slice echo guard',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    multiPr: true,
+  });
+  // Slice 1 completed (its run is terminal, item moved on).
+  const sliceOne = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+  });
+  runStore.updateRun(sliceOne.id, { status: 'done' });
+  // Slice 2 is linked and has FAILED (item.runId points at a terminal run).
+  const sliceTwo = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+  });
+  runStore.updateRun(sliceTwo.id, { status: 'failed' });
+  created.item.status = 'failed';
+  created.item.runId = sliceTwo.id;
+
+  // A late slice-1 done echo must NOT reset the failed item to ready or clear
+  // slice 2's link, even though slice 2's run is terminal.
+  backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.status, 'failed');
+  assert.equal(item?.runId, sliceTwo.id);
+});
+
+test('multiPr cannot be combined with work-graph linkage', async () => {
+  const { backlog } = await freshStores();
+  // Attaching a graph node to a multi-PR item is rejected.
+  const multi = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Graph combo attach',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'candidate',
+    multiPr: true,
+  });
+  await assert.rejects(
+    () =>
+      backlog.attachBacklogItemToWorkNode({
+        itemId: multi.item.id,
+        graphId: 'wg_1',
+        nodeId: 'node_1',
+      }),
+    /cannot attach a multi-PR backlog item to a work-graph node/,
+  );
+
+  // Marking an already graph-linked item multiPr is rejected too.
+  const graphLinked = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Graph combo update',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'candidate',
+  });
+  await backlog.attachBacklogItemToWorkNode({
+    itemId: graphLinked.item.id,
+    graphId: 'wg_2',
+    nodeId: 'node_2',
+  });
+  await assert.rejects(
+    () => backlog.updateBacklogItem({ itemId: graphLinked.item.id, multiPr: true }),
+    /multiPr cannot be combined with work-graph linkage/,
+  );
+});
+
+test('multiPr survives persistence and reload', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Persisted multiPr',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    multiPr: true,
+  });
+  await backlog.flushBacklogForTests();
+  await backlog.loadBacklog();
+  const reloaded = backlog
+    .listBacklogItems({ includeArchived: true })
+    .items.find((item) => item.id === created.item.id);
+  assert.equal(reloaded?.multiPr, true);
+});
+
+test('multiPr cannot be combined with launchPlan', async () => {
+  const { backlog } = await freshStores();
+  await assert.rejects(
+    () =>
+      backlog.createBacklogItem({
+        project: 'farmslot-farm',
+        title: 'Bad combo',
+        sourceKind: 'manual',
+        flowType: 'dev',
+        status: 'candidate',
+        multiPr: true,
+        launchPlan: {
+          id: 'lp_bad',
+          version: 1,
+          candidates: [
+            {
+              id: 'baseline',
+              role: 'baseline',
+              runner: 'claude',
+              model: 'opus',
+              slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+            },
+          ],
+        },
+      }),
+    /multiPr cannot be combined with launchPlan/,
+  );
+});
+
+test('close-shipped finalizes a multi-PR item after its last slice', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Multi-slice closeout',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    multiPr: true,
+  });
+  created.item.status = 'running';
+  created.item.runId = 'final-slice-run';
+  backlog.markBacklogRunObserved({
+    id: 'final-slice-run',
+    status: 'done',
+    backlogItemId: created.item.id,
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const closed = await backlog.closeShippedBacklogItem({
+    itemId: created.item.id,
+    prRef: 'deeeed/farmslot#999',
+  });
+  assert.equal(closed.item.status, 'done');
+  assert.equal(closed.item.shipped?.prRef, 'deeeed/farmslot#999');
+});
+
+test('backlog.update toggles the multi-PR marker', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Toggle multiPr',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'candidate',
+  });
+  const marked = await backlog.updateBacklogItem({ itemId: created.item.id, multiPr: true });
+  assert.equal(marked.item.multiPr, true);
+  const cleared = await backlog.updateBacklogItem({ itemId: created.item.id, multiPr: false });
+  assert.equal(cleared.item.multiPr, undefined);
+});
+
 test('run observation does not overwrite terminal backlog status', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({

@@ -204,6 +204,12 @@ export interface BacklogItem {
   priority: number;
   allowedSlots?: string[];
   autoDispatch?: boolean;
+  /**
+   * Acceptance criteria span multiple PRs: a linked run finishing returns the
+   * item to `ready` (next slice dispatchable) instead of auto-closing it.
+   * Final closure is the explicit `backlog.closeShipped` call.
+   */
+  multiPr?: boolean;
   runner?: string;
   model?: string;
   scripted?: ScriptedRunnerConfig;
@@ -247,6 +253,7 @@ export interface BacklogCreateInput {
   priority?: number;
   allowedSlots?: string[];
   autoDispatch?: boolean;
+  multiPr?: boolean;
   runner?: string;
   model?: string;
   scripted?: ScriptedRunnerConfig;
@@ -275,6 +282,7 @@ export interface BacklogUpdateInput {
   priority?: number;
   allowedSlots?: string[] | null;
   autoDispatch?: boolean;
+  multiPr?: boolean | null;
   runner?: string | null;
   model?: string | null;
   scripted?: ScriptedRunnerConfig | null;

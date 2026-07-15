@@ -111,6 +111,7 @@ const BACKLOG_UPDATE_KEYS = new Set([
   'priority',
   'allowedSlots',
   'autoDispatch',
+  'multiPr',
   'runner',
   'model',
   'scripted',
@@ -365,6 +366,17 @@ function normalizePendingReviewPlan(value: unknown): ReviewLoopRequest[] | undef
 }
 
 function assertExecutionHintsCompatible(item: BacklogItem): void {
+  if (item.multiPr && item.launchPlan) {
+    // Launch-plan roll-up has its own completion semantics (all candidates
+    // succeeded => done) that the multi-PR ready-after-run rule would fight.
+    throw new Error('multiPr cannot be combined with launchPlan');
+  }
+  if (item.multiPr && item.workGraphId) {
+    // Graph-linked items may only be enqueued by the graph scheduler, and the
+    // node terminalizes on run completion — a multi-PR item's ready-after-slice
+    // next slice would be unschedulable (manual enqueue is graph-blocked).
+    throw new Error('multiPr cannot be combined with work-graph linkage');
+  }
   if (item.runner && item.model && !runnerSupportsModel(item.runner, item.model)) {
     throw new Error(`model ${item.model} is not compatible with runner ${item.runner}`);
   }
@@ -538,6 +550,7 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
       ? { allowedSlots: normalizeStringArray(raw.allowedSlots) }
       : {}),
     ...(typeof raw.autoDispatch === 'boolean' ? { autoDispatch: raw.autoDispatch } : {}),
+    ...(raw.multiPr === true ? { multiPr: true } : {}),
     ...(runner ? { runner } : {}),
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
@@ -719,8 +732,19 @@ function applyRunObservation(item: BacklogItem, run: Run): boolean {
   if (['done', 'failed', 'cancelled', 'blocked'].includes(run.status)) {
     delete item.queuedQueueItemId;
   }
-  if (run.status === 'done') item.status = 'done';
-  else if (run.status === 'failed') item.status = 'failed';
+  if (run.status === 'done') {
+    // Multi-PR items span several slices: one merged run must not auto-close
+    // the whole item (MANUAL-000035). Return it to ready and clear the run
+    // link — enqueue rejects run-linked items, so keeping runId would leave a
+    // "ready" item that cannot dispatch. Provenance stays in
+    // lastObservedRunStatus; final closure is the explicit close-shipped call.
+    if (item.multiPr) {
+      item.status = 'ready';
+      delete item.runId;
+    } else {
+      item.status = 'done';
+    }
+  } else if (run.status === 'failed') item.status = 'failed';
   else if (run.status === 'cancelled' || run.status === 'blocked') item.status = 'needs-attention';
   else item.status = 'running';
   const changed =
@@ -1048,6 +1072,7 @@ export async function createBacklogItem(
       priority: params.priority ?? 10,
       ...(allowedSlots ? { allowedSlots } : {}),
       ...(typeof params.autoDispatch === 'boolean' ? { autoDispatch: params.autoDispatch } : {}),
+      ...(params.multiPr === true ? { multiPr: true } : {}),
       ...(runner ? { runner } : {}),
       ...(model ? { model } : {}),
       ...(params.scripted ? { scripted: params.scripted } : {}),
@@ -1148,6 +1173,9 @@ export async function attachBacklogItemToWorkNode(params: {
         `Backlog item ${params.itemId} is already linked to work graph ${item.workGraphId}`,
       );
     }
+    if (item.multiPr) {
+      throw new Error('cannot attach a multi-PR backlog item to a work-graph node');
+    }
     item.workGraphId = params.graphId;
     item.workNodeId = params.nodeId;
     item.updatedAt = new Date().toISOString();
@@ -1236,6 +1264,10 @@ export async function updateBacklogItem(params: BacklogUpdateParams): Promise<Ba
         else item.allowedSlots = normalizeAllowedSlots(params.allowedSlots);
       }
       if (params.autoDispatch !== undefined) item.autoDispatch = params.autoDispatch;
+      if (params.multiPr !== undefined) {
+        if (params.multiPr === null || params.multiPr === false) delete item.multiPr;
+        else item.multiPr = true;
+      }
       if (params.runner !== undefined) {
         const runner = params.runner === null ? undefined : normalizeRunnerHint(params.runner);
         if (runner) item.runner = runner;
@@ -1625,6 +1657,10 @@ async function buildBacklogQueueParams(
 }
 
 async function assertAutoDispatchEligible(item: BacklogItem): Promise<void> {
+  // A multi-PR item returns to ready after every merged slice; auto-dispatch
+  // would re-run the same spec in a loop until close-shipped. Each slice is
+  // an explicit operator enqueue.
+  if (item.multiPr) throw new Error('multi-PR items require explicit enqueue per slice');
   if (!item.autoDispatch) throw new Error('item autoDispatch is disabled');
   const projectConfig = await loadProjectConfig(item.project);
   if (!projectConfig?.backlog?.autoDispatch?.enabled) {
@@ -1931,6 +1967,24 @@ export function markBacklogRunObserved(run: Run): void {
         ? items.find((candidate) => candidate.id === run.backlogItemId)
         : undefined);
     if (!item) return;
+    // Historical-echo guard — scoped to multi-PR items only. They are the sole
+    // items that return to `ready` and get re-dispatched per slice, so a late
+    // RUN_UPDATED from a finished slice could otherwise clear the next slice's
+    // queue/run link or reset the item (including resurrecting a failed slice).
+    // A multi-PR item advances ONLY through its own currently-linked run
+    // (item.runId === run.id); while it holds any queue or run link, an
+    // observation from a different run is a stale echo and is dropped
+    // regardless of that run's status. Every other item goes terminal and is
+    // already protected by shouldApplyLinkedRunObservation. Launch-plan items
+    // are never multi-PR (assertExecutionHintsCompatible), so their candidate
+    // observation path is intentionally untouched here.
+    if (
+      item.multiPr &&
+      item.runId !== run.id &&
+      (item.queuedQueueItemId != null || item.runId != null)
+    ) {
+      return;
+    }
     if (!shouldApplyLinkedRunObservation(item, run)) return;
     if (applyRunObservation(item, run)) {
       schedulePersist('run-observed');
