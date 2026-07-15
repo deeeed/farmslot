@@ -494,6 +494,9 @@ async function waitForReviewCompletion(
 ): Promise<boolean> {
   const start = Date.now();
   const pollInterval = 10_000; // 10s
+  // Re-enforce the minimum window size before polling: completion matching
+  // reads the last pane lines, which a reflowed 5-row window truncates.
+  await ensureTmuxWindowMinimumSize(vars, `${session}:${reviewWindow}`);
 
   while (Date.now() - start < timeoutMs) {
     await new Promise((r) => setTimeout(r, pollInterval));

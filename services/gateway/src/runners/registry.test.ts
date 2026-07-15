@@ -294,6 +294,46 @@ describe('cursor runner', () => {
     });
   });
 
+  it('classifies codex usage-limit banners as launch blockers', () => {
+    const pane = [
+      '╭──────────────────────────────────────╮',
+      "│ You've reached your usage limit.      │",
+      '│ Your limit resets at 3:00 PM.         │',
+      '╰──────────────────────────────────────╯',
+    ].join('\n');
+    assert.deepEqual(detectRunnerLaunchBlocker(pane, 'codex'), {
+      kind: 'usage-limit',
+      summary:
+        'codex hit a usage/rate limit — the composer will not accept prompts until the limit resets.',
+      autoAction: null,
+    });
+  });
+
+  it('classifies weekly-limit-reached banners as usage-limit blockers', () => {
+    const pane = 'Weekly limit reached. Upgrade or wait for the limit to reset.';
+    assert.equal(detectRunnerLaunchBlocker(pane, 'claude')?.kind, 'usage-limit');
+  });
+
+  it('does not classify ordinary limit prose as a usage-limit blocker', () => {
+    const pane = [
+      'Applied rate limiting to the API client with a token bucket.',
+      'The session limit config option defaults to 50.',
+      'The weekly limit was reached in tests before the fix landed.',
+      'The limit resets in cleanup between test cases.',
+      "You've reached your desired coverage limit in tests.",
+      'Added handling for weekly limit reached errors in the retry path.',
+      '› ',
+    ].join('\n');
+    assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
+  });
+
+  it('ignores usage-limit banners that scrolled out of the pane tail', () => {
+    const lines = ["You've reached your usage limit."];
+    for (let i = 0; i < 25; i++) lines.push(`transcript line ${i}`);
+    lines.push('› ');
+    assert.equal(detectRunnerLaunchBlocker(lines.join('\n'), 'codex'), null);
+  });
+
   it('does not classify optional MCP login warnings as runner auth blockers', async () => {
     const pane = [
       'MCP startup failed: handshaking with MCP server failed',

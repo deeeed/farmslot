@@ -312,11 +312,13 @@ interface ScriptedDepsOptions {
   workerAlive?: boolean;
   relaunchOk?: boolean;
   fixSignals?: Array<WorkerSignal | undefined>; // undefined = timeout
+  contextPct?: number | null; // omitted = dep not wired (legacy behavior)
 }
 
 interface CallLog {
   sendFeedback: number;
   reviewAgent: number;
+  relaunches: number;
   markStatus: string[];
   feedbackBaselines: string[]; // baseline returned to the loop on each sendFeedbackToWorker call
   waitBaselines: string[]; // baseline forwarded into waitForWorkerSignal on each iteration
@@ -327,6 +329,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
   const calls: CallLog = {
     sendFeedback: 0,
     reviewAgent: 0,
+    relaunches: 0,
     markStatus: [],
     feedbackBaselines: [],
     waitBaselines: [],
@@ -336,7 +339,13 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
   let signalIdx = 0;
   const deps: SelfReviewRetryDeps = {
     isWorkerAlive: async () => opts.workerAlive ?? true,
-    relaunchWorkerForFix: async () => opts.relaunchOk ?? true,
+    relaunchWorkerForFix: async () => {
+      calls.relaunches += 1;
+      return opts.relaunchOk ?? true;
+    },
+    ...(opts.contextPct !== undefined
+      ? { getWorkerContextPct: async () => opts.contextPct ?? null }
+      : {}),
     sendFeedbackToWorker: async () => {
       calls.sendFeedback += 1;
       // Distinct baseline string per pass — production sendFeedbackToWorker re-reads the
@@ -503,6 +512,61 @@ test('runSelfReviewRetryLoop: stops as soon as a re-review verdict is pass', asy
   assert.equal(result.attempts?.length, 2);
   assert.equal(result.attempts?.[1]?.fixDelta?.fixBaseSha, 'base-head');
   assert.equal(result.attempts?.[1]?.fixDelta?.diffPath, 'artifacts/review-loop-2/fix-delta.diff');
+});
+
+test('runSelfReviewRetryLoop: relaunches a high-context worker before sending the fix task', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['issues', 'pass'],
+    contextPct: 93,
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 2,
+    reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1),
+    retryCount: 0,
+    deps,
+  });
+  assert.equal(result.verdict, 'pass');
+  assert.equal(calls.relaunches, 1); // worker alive but saturated → fresh session first
+  assert.equal(calls.sendFeedback, 1);
+});
+
+test('runSelfReviewRetryLoop: low-context and unknown-context workers are not relaunched', async () => {
+  for (const contextPct of [40, null]) {
+    const { deps, calls } = buildDeps({
+      reviewVerdicts: ['issues', 'pass'],
+      contextPct,
+      fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+    });
+    const result = await runSelfReviewRetryLoop({
+      ...baseArgs,
+      maxRetries: 2,
+      reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1),
+      retryCount: 0,
+      deps,
+    });
+    assert.equal(result.verdict, 'pass');
+    assert.equal(calls.relaunches, 0);
+  }
+});
+
+test('runSelfReviewRetryLoop: failed high-context relaunch skips feedback instead of sending into a wedged session', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['issues'],
+    contextPct: 95,
+    relaunchOk: false,
+  });
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 2,
+    reviewResult: await deps.runReviewAgent(fakeVars, 'claude', 'sonnet', 't', 's', 'r', 1),
+    retryCount: 0,
+    deps,
+  });
+  assert.equal(result.verdict, 'issues');
+  assert.equal(calls.relaunches, 1);
+  assert.equal(calls.sendFeedback, 0);
 });
 
 test('runSelfReviewRetryLoop: continues after a fix-signal timeout when budget remains', async () => {

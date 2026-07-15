@@ -50,6 +50,19 @@ export interface RunnerStatusProvider {
 
 const claudeStatusProvider: RunnerStatusProvider = {
   async getContextPct(vars, target) {
+    // Pane parse first for target attribution: the statusline snapshot is a
+    // slot-wide last-writer-wins record with no pane id, so on a slot running
+    // worker + reviewer sessions it can report the OTHER session's ctx%. The
+    // pane capture is scoped to `target` by construction; the statusline stays
+    // as the fallback for alt-screen/scrolled panes where the marker is hidden.
+    const pane = (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -40`),
+      )
+    ).stdout;
+    const panePct = parseClaudeCtxPctFromPane(pane);
+    if (panePct != null) return panePct;
     try {
       const reading = await claudeHookObservability.getContextPct(vars, target);
       if (reading) return reading.value;
@@ -58,13 +71,7 @@ const claudeStatusProvider: RunnerStatusProvider = {
         `[runner-observability] statusline ctxPct read failed for ${vars.slotId}: ${(error as Error).message}`,
       );
     }
-    const pane = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -40`),
-      )
-    ).stdout;
-    return parseClaudeCtxPctFromPane(pane);
+    return null;
   },
 };
 

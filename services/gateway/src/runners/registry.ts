@@ -18,6 +18,7 @@ import {
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
+  ensureTmuxWindowMinimumSize,
   firstWindowTarget,
   resolveTmuxPaneId,
   resolveTmuxSession,
@@ -586,7 +587,13 @@ function runnerPaneShowsGrokProjectDirectoryPrompt(
 }
 
 export interface RunnerLaunchBlocker {
-  kind: 'workspace-trust' | 'project-directory' | 'auth-required' | 'mcp-init' | 'cold-start';
+  kind:
+    | 'workspace-trust'
+    | 'project-directory'
+    | 'auth-required'
+    | 'mcp-init'
+    | 'cold-start'
+    | 'usage-limit';
   summary: string;
   autoAction: 'cursor-trust-workspace' | 'grok-select-current-project' | null;
   /** Wait for the blocker to clear instead of failing prompt delivery. */
@@ -635,6 +642,12 @@ export function detectRunnerLaunchBlocker(
         summary: 'Runner session is still warming up before the composer accepts input.',
         autoAction: null,
         defer: true,
+      };
+    case 'usage-limit':
+      return {
+        kind: 'usage-limit',
+        summary: `${runner} hit a usage/rate limit — the composer will not accept prompts until the limit resets.`,
+        autoAction: null,
       };
     case 'auth-required':
       return {
@@ -1583,14 +1596,23 @@ export async function sendRunnerPostLaunchPrompt(
   const handoffAckSinceMs = opts.handoffAckSinceMs ?? Date.now();
   const requirePromptDigest = opts.requirePromptDigest === true;
 
+  // Tiny windows (e.g. a 5-row pane after a detached-client reflow) truncate the
+  // banner lines readiness matching depends on — re-enforce the minimum size
+  // right before polling, not only at window creation.
+  await ensureTmuxWindowMinimumSize(vars, target);
+
   const readyStart = Date.now();
+  let readyDeadline = readyStart + readyTimeoutMs;
+  let deadlineExtended = false;
+  let lastCapturedPane = '';
+  let lastPaneActivityAt = readyStart;
   let lastPane = '';
   let stableCount = 0;
   let ready = false;
   let workspaceTrustAnswered = false;
   let grokProjectSelected = false;
   const snapshottedBlockers = new Set<string>();
-  while (Date.now() - readyStart < readyTimeoutMs) {
+  while (Date.now() < readyDeadline) {
     await new Promise((r) => setTimeout(r, pollIntervalMs));
     const pane = (
       await execOnSlot(
@@ -1598,6 +1620,24 @@ export async function sendRunnerPostLaunchPrompt(
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
       )
     ).stdout;
+    if (pane !== lastCapturedPane) {
+      lastCapturedPane = pane;
+      lastPaneActivityAt = Date.now();
+    }
+    // A cold-starting runner can still be painting its boot output when the
+    // deadline expires. Extend once by half the budget while activity is
+    // recent instead of failing a launch that is visibly still progressing.
+    if (
+      !deadlineExtended &&
+      readyDeadline - Date.now() <= pollIntervalMs &&
+      Date.now() - lastPaneActivityAt <= 3 * pollIntervalMs
+    ) {
+      deadlineExtended = true;
+      readyDeadline += Math.round(readyTimeoutMs / 2);
+      console.log(
+        `[${logPrefix}] runner in ${target} still starting at the readiness deadline — extending once by ${Math.round(readyTimeoutMs / 2000)}s`,
+      );
+    }
     const blocker = detectRunnerLaunchBlocker(pane, runner);
     if (blocker && opts.blockerSnapshotPath && !snapshottedBlockers.has(blocker.kind)) {
       await writeRunnerLaunchBlockerSnapshot(
