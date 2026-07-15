@@ -636,6 +636,12 @@ function rollUpLaunchPlanStatus(item: BacklogItem): void {
 
 function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   if (!item.launchPlan || !run.launchCandidateId) return false;
+  // Only observe runs that belong to THIS plan and name a real candidate — a
+  // foreign/stale candidate tag must not inject or overwrite a projection.
+  if (run.launchPlanId !== item.launchPlan.id) return false;
+  if (!item.launchPlan.candidates.some((candidate) => candidate.id === run.launchCandidateId)) {
+    return false;
+  }
   const previous = JSON.stringify({
     status: item.status,
     state: item.launchPlanState,
@@ -644,15 +650,31 @@ function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   ensureLaunchPlanState(item);
   const projection = projectionForCandidate(item, run.launchCandidateId);
   if (!projection) return false;
+  // Reject a historical echo: if a DIFFERENT run already owns this projection
+  // and that run is still active, the incoming observation is stale.
+  if (projection.runId && projection.runId !== run.id) {
+    const owner = getAllRuns().find((candidate) => candidate.id === projection.runId);
+    if (owner && !isTerminalRunStatus(owner.status)) return false;
+  }
   projection.runId = run.id;
   projection.slotId = run.slotId ?? undefined;
   delete projection.queueItemId;
   projection.status = statusFromRun(run);
   if (run.launchCandidateId === launchCandidateByRole(item, 'baseline')?.id) {
-    item.runId = run.id;
-    item.lastObservedRunStatus = run.status;
-    item.launchPlanState!.baselineRunId = run.id;
-    delete item.queuedQueueItemId;
+    // Same ownership guard for the item-level baseline link: a reused baseline
+    // candidate id from a stale run must not steal it from a live baseline.
+    const baselineLinkHeldByActiveRun =
+      item.runId != null &&
+      item.runId !== run.id &&
+      getAllRuns().some(
+        (candidate) => candidate.id === item.runId && !isTerminalRunStatus(candidate.status),
+      );
+    if (!baselineLinkHeldByActiveRun) {
+      item.runId = run.id;
+      item.lastObservedRunStatus = run.status;
+      item.launchPlanState!.baselineRunId = run.id;
+      delete item.queuedQueueItemId;
+    }
   }
   rollUpLaunchPlanStatus(item);
   const changed =
@@ -1965,7 +1987,12 @@ export function markBacklogRunObserved(run: Run): void {
     // candidate observations bypass the guard: comparison candidates always
     // run concurrently with the baseline that owns item.runId, and they route
     // to per-candidate projections (multiPr + launchPlan is a rejected combo).
-    const isLaunchPlanCandidateObservation = Boolean(item.launchPlan && run.launchCandidateId);
+    const isLaunchPlanCandidateObservation = Boolean(
+      item.launchPlan &&
+      run.launchCandidateId &&
+      run.launchPlanId === item.launchPlan.id &&
+      item.launchPlan.candidates.some((candidate) => candidate.id === run.launchCandidateId),
+    );
     if (!isLaunchPlanCandidateObservation && item.runId !== run.id) {
       if (item.queuedQueueItemId) return;
       if (item.runId) {
