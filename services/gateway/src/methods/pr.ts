@@ -317,9 +317,10 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   const allChecks = parseChecksOutput(raw.checksStdout);
   const allCheckRollup = summarizeAllChecks(allChecks);
   const watched = matchCheckGroups(allChecks, checkGroups);
-  const passed = watched.filter((w) => w.status === 'pass' || w.status === 'success');
-  const failed = watched.filter((w) => w.status === 'fail' || w.status === 'failure');
-  const pending = watched.filter((w) => !['pass', 'success', 'fail', 'failure'].includes(w.status));
+  const passed = watched.filter((w) => w.status === 'pass');
+  const failed = watched.filter((w) => w.status === 'fail');
+  const skipped = watched.filter((w) => w.status === 'skipped');
+  const pending = watched.filter((w) => w.status === 'pending' || w.status === 'not_found');
 
   // Parse PR state
   const prStateParts = raw.prStateStdout.trim().split('\t');
@@ -362,8 +363,9 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
   );
   const actionable = botComments.filter((bc) => !bc.workerResponded && bc.action !== 'alert_only');
 
-  // Recommendation
-  const allPassed = passed.length === watched.length && watched.length > 0;
+  // Recommendation. Path-skipped jobs must not block: allPassed asserts when
+  // nothing failed or is still running and at least one watched check passed.
+  const allPassed = failed.length === 0 && pending.length === 0 && passed.length > 0;
   const anyFailed = failed.length > 0;
   const merged = prState === 'MERGED';
   const mergeConflict = mergeable === 'CONFLICTING';
@@ -403,18 +405,14 @@ async function fetchPRData(opts: FetchPRDataOptions): Promise<PRStatus> {
     session: null,
     checks: watched.map((w) => ({
       name: w.name,
-      status:
-        w.status === 'pass' || w.status === 'success'
-          ? ('pass' as const)
-          : w.status === 'fail' || w.status === 'failure'
-            ? ('fail' as const)
-            : ('pending' as const),
+      status: w.status === 'not_found' ? ('pending' as const) : w.status,
       watchName: w.watchName,
     })),
     checkSummary: {
       passed: passed.length,
       failed: failed.length,
       pending: pending.length,
+      skipped: skipped.length,
       total: watched.length,
     },
     allCheckSummary: allCheckRollup.summary,
@@ -483,7 +481,7 @@ interface ParsedCheck {
 
 interface MatchedCheckGroup {
   name: string;
-  status: string;
+  status: 'pass' | 'fail' | 'pending' | 'skipped' | 'not_found';
   watchName: string;
 }
 
@@ -504,20 +502,6 @@ function parseChecksOutput(output: string): ParsedCheck[] {
     }
   }
   return checks;
-}
-
-function normalizeCheckStatus(status: string): 'pass' | 'fail' | 'pending' {
-  switch (status) {
-    case 'pass':
-    case 'success':
-      return 'pass';
-    case 'fail':
-    case 'failure':
-    case 'cancel':
-      return 'fail';
-    default:
-      return 'pending';
-  }
 }
 
 function normalizeFullCheckStatus(status: string): 'pass' | 'fail' | 'pending' | 'skipped' {
@@ -599,7 +583,7 @@ export function matchCheckGroups(
   if (checkGroups.length === 0) {
     return allChecks.map((check) => ({
       name: check.name,
-      status: check.status,
+      status: normalizeFullCheckStatus(check.status),
       watchName: check.name,
     }));
   }
@@ -620,28 +604,34 @@ export function matchCheckGroups(
       watched.push({
         name: latest.name,
         watchName: group.name,
-        status: normalizeCheckStatus(latest.status),
+        status: normalizeFullCheckStatus(latest.status),
       });
       continue;
     }
 
-    const normalized = matches.map((match) => normalizeCheckStatus(match.status));
+    // Skipped shards are neutral in aggregates: they never satisfy a group on
+    // their own, but must not hold a group pending (path-filtered jobs skip).
+    const normalized = matches.map((match) => normalizeFullCheckStatus(match.status));
     const displayName = matches.length === 1 ? matches[0].name : group.name;
     if (group.aggregate === 'any') {
       const status = normalized.includes('pass')
         ? 'pass'
         : normalized.includes('pending')
           ? 'pending'
-          : 'fail';
+          : normalized.includes('fail')
+            ? 'fail'
+            : 'skipped';
       watched.push({ name: displayName, watchName: group.name, status });
       continue;
     }
 
     const status = normalized.includes('fail')
       ? 'fail'
-      : normalized.every((value) => value === 'pass')
-        ? 'pass'
-        : 'pending';
+      : normalized.includes('pending')
+        ? 'pending'
+        : normalized.includes('pass')
+          ? 'pass'
+          : 'skipped';
     watched.push({ name: displayName, watchName: group.name, status });
   }
   return watched;

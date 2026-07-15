@@ -33,7 +33,7 @@ function prStatus(overrides: Partial<PRStatus> = {}): PRStatus {
     slot: null,
     session: null,
     checks: [],
-    checkSummary: { passed: 0, failed: 0, pending: 0, total: 0 },
+    checkSummary: { passed: 0, failed: 0, pending: 0, skipped: 0, total: 0 },
     allPassed: true,
     anyFailed: false,
     failedNames: [],

@@ -90,7 +90,7 @@ function recipeRun(id: string): RecipeRunArtifactGroup {
 
 test('readCiWatchOutputs normalizes persisted ci-watch step output bags', () => {
   const outputs: RunStep['outputs'] = {
-    checkSummary: { passed: 1, failed: 2, pending: 3, total: 6 },
+    checkSummary: { passed: 1, failed: 2, pending: 3, skipped: 0, total: 6 },
     checkTimeline: [
       {
         timestamp: '2026-05-14T00:00:00.000Z',
@@ -330,13 +330,13 @@ test('run detail CI timeout helpers derive pending decisions and all-green state
   assert.equal(shouldShowRunCiStatus(makeRun()), false);
   assert.equal(
     isLiveTimeoutPrStatusAllGreen({
-      checkSummary: { passed: 2, failed: 0, pending: 0, total: 2 },
+      checkSummary: { passed: 2, failed: 0, pending: 0, skipped: 0, total: 2 },
     }),
     true,
   );
   assert.equal(
     isLiveTimeoutPrStatusAllGreen({
-      checkSummary: { passed: 1, failed: 0, pending: 1, total: 2 },
+      checkSummary: { passed: 1, failed: 0, pending: 1, skipped: 0, total: 2 },
     }),
     false,
   );

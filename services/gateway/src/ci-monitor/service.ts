@@ -3,7 +3,13 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { type CIWatchPhase, Events, type PRStatus, type RunDecision } from '@farmslot/protocol';
+import {
+  type CiCheckSummary,
+  type CIWatchPhase,
+  Events,
+  type PRStatus,
+  type RunDecision,
+} from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
 
@@ -259,7 +265,7 @@ export async function monitorCI(
   };
 
   const persistRunningState = (
-    checkSummary: { passed: number; failed: number; pending: number; total: number },
+    checkSummary: CiCheckSummary,
     recommendation: string,
     passedNames: string[],
     failedNames: string[],

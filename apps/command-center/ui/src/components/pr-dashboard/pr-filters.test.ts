@@ -17,7 +17,7 @@ function pr(overrides: Partial<PRStatus>): PRStatus {
     slot: 'runner-local-mobile-1',
     workerActive: false,
     checks: [],
-    checkSummary: { total: 0, passed: 0, failed: 0, pending: 0 },
+    checkSummary: { skipped: 0, total: 0, passed: 0, failed: 0, pending: 0 },
     allCheckSummary: { total: 0, passed: 0, failed: 0, pending: 0 },
     failedNames: [],
     allFailedNames: [],
