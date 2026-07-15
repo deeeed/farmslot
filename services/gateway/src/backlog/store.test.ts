@@ -671,6 +671,82 @@ test('run observation heals needs-attention when linked run completes', async ()
   assert.equal(item?.lastObservedRunStatus, 'done');
 });
 
+test('multi-PR item returns to ready on run done instead of auto-closing', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Multi-slice shrink',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    multiPr: true,
+  });
+  created.item.status = 'running';
+  created.item.runId = 'slice-1-run';
+
+  backlog.markBacklogRunObserved({
+    id: 'slice-1-run',
+    status: 'done',
+    backlogItemId: created.item.id,
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.status, 'ready'); // next slice dispatchable, not closed
+  assert.equal(item?.lastObservedRunStatus, 'done');
+
+  // Failure/needs-attention paths keep their normal behavior on multi-PR items.
+  backlog.markBacklogRunObserved({
+    id: 'slice-2-run',
+    status: 'failed',
+    backlogItemId: created.item.id,
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'failed');
+});
+
+test('close-shipped finalizes a multi-PR item after its last slice', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Multi-slice closeout',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    multiPr: true,
+  });
+  created.item.status = 'running';
+  created.item.runId = 'final-slice-run';
+  backlog.markBacklogRunObserved({
+    id: 'final-slice-run',
+    status: 'done',
+    backlogItemId: created.item.id,
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const closed = await backlog.closeShippedBacklogItem({
+    itemId: created.item.id,
+    prRef: 'deeeed/farmslot#999',
+  });
+  assert.equal(closed.item.status, 'done');
+  assert.equal(closed.item.shipped?.prRef, 'deeeed/farmslot#999');
+});
+
+test('backlog.update toggles the multi-PR marker', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Toggle multiPr',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'candidate',
+  });
+  const marked = await backlog.updateBacklogItem({ itemId: created.item.id, multiPr: true });
+  assert.equal(marked.item.multiPr, true);
+  const cleared = await backlog.updateBacklogItem({ itemId: created.item.id, multiPr: false });
+  assert.equal(cleared.item.multiPr, undefined);
+});
+
 test('run observation does not overwrite terminal backlog status', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({

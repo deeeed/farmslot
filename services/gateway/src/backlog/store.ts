@@ -111,6 +111,7 @@ const BACKLOG_UPDATE_KEYS = new Set([
   'priority',
   'allowedSlots',
   'autoDispatch',
+  'multiPr',
   'runner',
   'model',
   'scripted',
@@ -719,8 +720,12 @@ function applyRunObservation(item: BacklogItem, run: Run): boolean {
   if (['done', 'failed', 'cancelled', 'blocked'].includes(run.status)) {
     delete item.queuedQueueItemId;
   }
-  if (run.status === 'done') item.status = 'done';
-  else if (run.status === 'failed') item.status = 'failed';
+  if (run.status === 'done') {
+    // Multi-PR items span several slices: one merged run must not auto-close
+    // the whole item (MANUAL-000035). Return it to ready so the next slice is
+    // dispatchable; final closure is the explicit close-shipped call.
+    item.status = item.multiPr ? 'ready' : 'done';
+  } else if (run.status === 'failed') item.status = 'failed';
   else if (run.status === 'cancelled' || run.status === 'blocked') item.status = 'needs-attention';
   else item.status = 'running';
   const changed =
@@ -1048,6 +1053,7 @@ export async function createBacklogItem(
       priority: params.priority ?? 10,
       ...(allowedSlots ? { allowedSlots } : {}),
       ...(typeof params.autoDispatch === 'boolean' ? { autoDispatch: params.autoDispatch } : {}),
+      ...(params.multiPr === true ? { multiPr: true } : {}),
       ...(runner ? { runner } : {}),
       ...(model ? { model } : {}),
       ...(params.scripted ? { scripted: params.scripted } : {}),
@@ -1236,6 +1242,10 @@ export async function updateBacklogItem(params: BacklogUpdateParams): Promise<Ba
         else item.allowedSlots = normalizeAllowedSlots(params.allowedSlots);
       }
       if (params.autoDispatch !== undefined) item.autoDispatch = params.autoDispatch;
+      if (params.multiPr !== undefined) {
+        if (params.multiPr === null || params.multiPr === false) delete item.multiPr;
+        else item.multiPr = true;
+      }
       if (params.runner !== undefined) {
         const runner = params.runner === null ? undefined : normalizeRunnerHint(params.runner);
         if (runner) item.runner = runner;

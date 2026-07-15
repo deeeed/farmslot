@@ -168,6 +168,10 @@ export function registerBacklogCommand(program: Command): void {
     .option('--notes <notes>', 'Notes')
     .option('--priority <n>', 'Priority (lower dispatches first)')
     .option('--flow-type <flow>', 'Flow type', 'dev')
+    .option(
+      '--multi-pr',
+      'Acceptance criteria span multiple PRs: finished runs return the item to ready instead of auto-closing it',
+    )
     .action(
       async (
         opts: {
@@ -177,6 +181,7 @@ export function registerBacklogCommand(program: Command): void {
           notes?: string;
           priority?: string;
           flowType: string;
+          multiPr?: boolean;
         },
         cmd: Command,
       ) => {
@@ -194,6 +199,7 @@ export function registerBacklogCommand(program: Command): void {
                 ...(opts.spec ? { specPath: opts.spec } : {}),
                 ...(opts.notes ? { notes: opts.notes } : {}),
                 ...(opts.priority ? { priority: Number(opts.priority) } : {}),
+                ...(opts.multiPr ? { multiPr: true } : {}),
               }),
             !emit.machine,
           );
@@ -210,14 +216,19 @@ export function registerBacklogCommand(program: Command): void {
 
   backlog
     .command('update <ref>')
-    .description('Update title/notes/priority of a backlog item')
+    .description('Update title/notes/priority/multi-pr of a backlog item')
     .option('--title <title>', 'New title')
     .option('--notes <notes>', 'New notes')
     .option('--priority <n>', 'New priority')
+    .option(
+      '--multi-pr',
+      'Mark acceptance criteria as spanning multiple PRs (no auto-close on run done)',
+    )
+    .option('--no-multi-pr', 'Clear the multi-PR marker (runs auto-close the item again)')
     .action(
       async (
         ref: string,
-        opts: { title?: string; notes?: string; priority?: string },
+        opts: { title?: string; notes?: string; priority?: string; multiPr?: boolean },
         cmd: Command,
       ) => {
         const ctx = resolveContext(cmd);
@@ -232,6 +243,7 @@ export function registerBacklogCommand(program: Command): void {
                 ...(opts.title ? { title: opts.title } : {}),
                 ...(opts.notes ? { notes: opts.notes } : {}),
                 ...(opts.priority ? { priority: Number(opts.priority) } : {}),
+                ...(opts.multiPr !== undefined ? { multiPr: opts.multiPr } : {}),
               });
               return { item, result };
             },
