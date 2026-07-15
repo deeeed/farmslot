@@ -320,6 +320,8 @@ describe('cursor runner', () => {
       'The session limit config option defaults to 50.',
       'The weekly limit was reached in tests before the fix landed.',
       'The limit resets in cleanup between test cases.',
+      "You've reached your desired coverage limit in tests.",
+      'Added handling for weekly limit reached errors in the retry path.',
       '› ',
     ].join('\n');
     assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);

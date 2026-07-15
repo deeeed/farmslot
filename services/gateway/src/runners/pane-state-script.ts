@@ -54,12 +54,19 @@ function detectAuthRequired(pane: string): boolean {
   return false;
 }
 
+// Quota-banner shapes only, anchored to the line start (optionally behind
+// box-drawing borders): mid-sentence prose about limits in code under
+// discussion ("added handling for weekly limit reached errors", "you've
+// reached your desired coverage limit in tests") must never classify.
+const USAGE_LIMIT_BANNER_PATTERNS = [
+  /^[│┃║\s]*(usage|rate|weekly|session|5-hour|five-hour) limits? (reached|hit|exceeded)\b/,
+  /^[│┃║\s]*you'?ve (reached|hit|exceeded) your (usage|rate|weekly|session|5-hour|five-hour) limits?\b/,
+  /^[│┃║\s]*(?:your )?limits? (resets?|will reset) (at|in) \d/,
+];
+
 function detectUsageLimit(pane: string): boolean {
-  // Banner-shaped matches only: the phrases must be adjacent ("weekly limit
-  // reached", not "weekly limit was reached in tests") or carry a time-like
-  // reset ("resets at 3:00 PM", not "resets in cleanup"), and the banner must
-  // sit in the last lines near the composer — scrollback prose about rate
-  // limits in code under discussion must not abort a live launch.
+  // Banner must sit in the last lines near the composer — a banner that
+  // scrolled away is not blocking the current launch.
   const tail = pane
     .split('\n')
     .map((line) => line.trim())
@@ -67,15 +74,7 @@ function detectUsageLimit(pane: string): boolean {
     .slice(-20);
   for (const rawLine of tail) {
     const normalized = rawLine.toLowerCase();
-    if (
-      /\b(usage|rate|weekly|session|5-hour|five-hour) limits? (reached|hit|exceeded)\b/.test(
-        normalized,
-      ) ||
-      /\byou'?ve (reached|hit|exceeded) your\b[^.]*\blimits?\b/.test(normalized) ||
-      /\blimits? (resets?|will reset) (at|in) \d/.test(normalized)
-    ) {
-      return true;
-    }
+    if (USAGE_LIMIT_BANNER_PATTERNS.some((pattern) => pattern.test(normalized))) return true;
   }
   return false;
 }

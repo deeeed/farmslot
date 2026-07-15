@@ -1051,10 +1051,20 @@ async function sendFeedbackToWorker(
     // context-saturated REPL swallows delivered prompts with a frozen pane
     // (MANUAL-000029) — require FURTHER pane activity after the send. The
     // baseline is captured post-send, so pane changes racing the send's own
-    // busy-poll window cannot masquerade as a reaction; an accepted fix task
-    // keeps painting (spinner, streamed output, checklist marks) for minutes.
+    // busy-poll window cannot masquerade as a reaction. A worker that already
+    // finished the fix before the baseline (fast completion, fully rendered)
+    // shows no further pane delta — the probe also polls the fix signal file,
+    // so a fresh terminal signal counts as a reaction, never a false failure.
     const paneBaseline = await captureWorkerPaneTail(vars, workerTarget);
-    const reacted = await workerPaneShowsActivity(vars, workerTarget, paneBaseline);
+    const reacted = await workerShowsDeliveryReaction(
+      vars,
+      workerTarget,
+      paneBaseline,
+      async () => {
+        const raw = await readOptionalSlotFile(vars, fixSignalPath);
+        return raw != null && raw !== fixSignalBaseline;
+      },
+    );
     if (!reacted) {
       console.warn(
         `[self-review] run ${runId.slice(0, 8)} — fix task delivered but worker pane showed no activity within ${SELF_REVIEW_DELIVERY_PROBE_TIMEOUT_MS / 1000}s; treating as delivery failure`,
@@ -1116,23 +1126,26 @@ async function captureWorkerPaneTail(
 /**
  * Post-delivery responsiveness probe: an accepted fix task keeps changing the
  * pane (spinner, streamed output, tool calls), while the wedged-REPL failure
- * mode leaves it frozen. Compared against a post-send baseline. A busy pane
- * that changes for unrelated reasons yields a false "responsive" — that
- * degrades to the pre-probe behavior (waiting out the fix timeout), never to
- * a false failure.
+ * mode leaves it frozen. Compared against a post-send baseline, raced against
+ * fix-signal freshness so a worker that completed before the baseline is
+ * never marked failed. A busy pane that changes for unrelated reasons yields
+ * a false "responsive" — that degrades to the pre-probe behavior (waiting out
+ * the fix timeout), never to a false failure.
  */
-async function workerPaneShowsActivity(
+async function workerShowsDeliveryReaction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   baseline: string,
+  signalChanged: () => Promise<boolean>,
 ): Promise<boolean> {
   const deadline = Date.now() + SELF_REVIEW_DELIVERY_PROBE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, SELF_REVIEW_DELIVERY_PROBE_POLL_MS));
+    if (await signalChanged()) return true;
     const pane = await captureWorkerPaneTail(vars, target);
     if (pane.trim() && pane !== baseline) return true;
   }
-  return false;
+  return signalChanged();
 }
 
 async function relaunchWorkerForFix(
