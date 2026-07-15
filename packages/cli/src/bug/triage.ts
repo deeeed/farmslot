@@ -137,7 +137,7 @@ export async function runScore(
   return parsed;
 }
 
-/** GitHub attachment filename derivation ported from download-github-images.sh. */
+// GitHub attachment filename derivation ported from download-github-images.sh.
 export function githubImageFilename(url: string, issueNumber: string, counter: number): string {
   let name: string;
   try {
