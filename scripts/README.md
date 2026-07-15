@@ -6,30 +6,30 @@ The decision logic that used to live here has moved to the CLI/gateway (see `doc
 
 ## Keep-list (every survivor justified)
 
-| Script                             | Why it stays a script                                                                                                                                                      |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setup-slot.sh`                    | Onboarding bootstrap — must run on a bare machine before any Node/Yarn install exists.                                                                                     |
-| `teardown-slot.sh`                 | Gateway-free teardown contract — must work when the gateway is down or being removed.                                                                                      |
-| `dev.sh`                           | Dev-stack launcher (env loading, port guard, concurrently exec) — the thing that starts the CLI's own runtime.                                                             |
-| `completions.sh`                   | Shell-native: sourced into bash/zsh for the `farm` wrapper + tab completion.                                                                                               |
-| `farm-status.sh`                   | Display wrapper teammates alias; delegates to the CLI for data.                                                                                                            |
-| `preflight-slot.sh`                | Gateway-free readiness checker run from the orchestrator over ssh: fixtures synced, emulator/simulator up, dev server + health endpoint live.                              |
-| `deploy-node.sh`                   | Deploys the node agent TO a remote machine — cannot depend on the target's farmslot install.                                                                               |
-| `record-window.sh`                 | Window-capture edge: FIFO plumbing between external `capture-helper` and `ffmpeg`, with signal-trap flush handling — process orchestration, no decisions.                  |
-| `gh-upload-asset.sh`               | Evidence upload edge: clones/pushes the artifacts repo over git SSH (no `gh`); used by publication flows.                                                                  |
-| `post-fix.sh` / `post-review.sh`   | `gh` comment/review posting edges used by worker templates.                                                                                                                |
-| `pr-monitor.sh`                    | Interactive terminal formatter (watch-mode PR board); data comes from the CLI.                                                                                             |
-| `session-usage.sh`                 | Wrapper over the `@farmslot/slot-config` core for shell callers (worker templates).                                                                                        |
-| `e2e-tmux-runner-validate.sh`      | Test harness: live tmux E2E proof for ADR-032/runner drivers, run manually on a representative machine (not CI).                                                           |
-| `run-runner-observability-gate.sh` | Test harness: runner-observability empirical gate — live tmux E2E plus install probes, writing evidence JSON.                                                              |
-| `write-runtime-context.sh`         | Writes slot runtime context files from hooks — runs inside prepare's shell environment.                                                                                    |
-| `run-project-hook.sh`              | The hook execution edge itself — expands and runs `project.json` hooks.                                                                                                    |
-| `audit-remote-path.sh`             | ssh path auditor for remote machines (no farmslot install assumed remotely).                                                                                               |
-| `backup-runs.sh`                   | Cron-safe run-state backup; must not depend on a live gateway.                                                                                                             |
-| `validate-config.sh`               | Pool/project JSON-schema validation usable pre-install and in CI.                                                                                                          |
-| `sync-fixtures.sh`                 | Thin edge driver since PR #325: one `farmslot internal fixture-plan` call + the remote copy (ssh/scp), skip-worktree marking, and directory rsync.                         |
-| `check-slot.sh`                    | Shim → `farmslot slot check`. Kept 2026-07-15: metamask-mobile/extension pack READMEs and core-farm docs still print it; delete after those packs repoint (team-repo PRs). |
-| `prepare-slot.sh`                  | Shim → `farmslot slot prepare`. Same 2026-07-15 pack-repoint condition as `check-slot.sh`.                                                                                 |
+| Script                             | Why it stays a script                                                                                                                                                   |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setup-slot.sh`                    | Onboarding bootstrap — must run on a bare machine before any Node/Yarn install exists.                                                                                  |
+| `teardown-slot.sh`                 | Gateway-free teardown contract — must work when the gateway is down or being removed.                                                                                   |
+| `dev.sh`                           | Dev-stack launcher (env loading, port guard, concurrently exec) — the thing that starts the CLI's own runtime.                                                          |
+| `completions.sh`                   | Shell-native: sourced into bash/zsh for the `farm` wrapper + tab completion.                                                                                            |
+| `farm-status.sh`                   | Display wrapper teammates alias; delegates to the CLI for data.                                                                                                         |
+| `preflight-slot.sh`                | Gateway-free readiness checker run from the orchestrator against the slot host (locally or over ssh): fixtures synced, emulator/simulator up, dev server + health live. |
+| `deploy-node.sh`                   | Deploys the node agent to any fleet machine (local or remote launchd/systemd) — cannot depend on the target's farmslot install.                                         |
+| `record-window.sh`                 | Window-capture edge: FIFO plumbing between external `capture-helper` and `ffmpeg`, with signal-trap flush handling — process orchestration, no decisions.               |
+| `gh-upload-asset.sh`               | Evidence upload edge: clones/pushes the artifacts repo over git SSH (no `gh`); used by publication flows.                                                               |
+| `post-fix.sh` / `post-review.sh`   | `gh` comment/review posting edges used by worker templates.                                                                                                             |
+| `pr-monitor.sh`                    | One-shot PR status formatter (human table or JSON); data and recommendation logic come from the CLI/gateway.                                                            |
+| `session-usage.sh`                 | Wrapper over the `@farmslot/slot-config` core for shell callers (worker templates).                                                                                     |
+| `e2e-tmux-runner-validate.sh`      | Test harness: live tmux E2E proof for ADR-032/runner drivers, run manually on a representative machine (not CI).                                                        |
+| `run-runner-observability-gate.sh` | Test harness: runner-observability empirical gate — live tmux E2E plus install probes, writing evidence JSON.                                                           |
+| `write-runtime-context.sh`         | Writes slot runtime context files; invoked both by prepare-phase hooks and by `project add` onboarding before setup/preflight.                                          |
+| `run-project-hook.sh`              | The hook execution edge itself — expands and runs `project.json` hooks.                                                                                                 |
+| `audit-remote-path.sh`             | ssh path auditor for remote machines (no farmslot install assumed remotely).                                                                                            |
+| `backup-runs.sh`                   | Cron-safe run-state backup; must not depend on a live gateway.                                                                                                          |
+| `validate-config.sh`               | Pool/project JSON-schema validation usable pre-install and in CI.                                                                                                       |
+| `sync-fixtures.sh`                 | Thin edge driver since PR #325: one `farmslot internal fixture-plan` call + the remote copy (ssh/scp), skip-worktree marking, and directory rsync.                      |
+| `check-slot.sh`                    | Shim → `farmslot slot check`. Kept 2026-07-15: metamask-mobile/extension pack READMEs still print it; delete after those packs repoint (team-repo PRs).                 |
+| `prepare-slot.sh`                  | Shim → `farmslot slot prepare`. Kept 2026-07-15: pack setup scripts/templates and core-farm docs still print it; same repoint condition as `check-slot.sh`.             |
 
 Retired surfaces are CLI-first: slot helpers (`farmslot slot monitor|show|soft-refresh|reopen|auto-refresh`), bug pipeline (`farmslot bug triage|score|grade|validate|batch`, image download folded into `triage`/`batch`), dispatch/PR status (`farmslot run create`, `farmslot pr status|list`), slot picking (`farmslot fleet find-slot`).
 

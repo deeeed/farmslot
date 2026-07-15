@@ -1,6 +1,6 @@
 #!/bin/bash
-# Shim: use `farmslot slot prepare`. Kept as of 2026-07-15 because the metamask-mobile/
-# extension pack READMEs and core-farm docs still print this path; delete once those
+# Shim: use `farmslot slot prepare`. Kept as of 2026-07-15 because pack setup scripts,
+# worker templates, and the core-farm docs still print this path; delete once those
 # packs repoint to the CLI (team-repo PRs).
 # prepare-slot.sh <slot-id> [--branch <name>] [--merge-main] [--flow-type <type>] [--app <path>] [--var key=value ...]
 # Delegates to farmslot CLI.
