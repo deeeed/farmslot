@@ -282,6 +282,17 @@ export interface BatchResult {
   keys: string[];
 }
 
+/**
+ * Canonical score-key form of a failure identifier, so dedup compares like with
+ * like: the triage stage records a human ref (`owner/repo#N` or `JIRA-KEY`) while
+ * the display stage reports the score-file key (`gh-N` / lowercased jira). Both
+ * collapse to the same key here.
+ */
+function canonicalFailureKey(ref: string): string {
+  const gh = ref.match(/#(\d+)$/) ?? ref.match(/\/issues\/(\d+)/);
+  return gh ? scoreKeyForGithub(gh[1]) : scoreKeyForJira(ref);
+}
+
 /** Build a per-item failure record, carrying the error's structured code/userAction when present. */
 function toFailure(ref: string, err: unknown): BatchResult['failures'][number] {
   const e = err as { code?: unknown; userAction?: unknown };
@@ -534,15 +545,18 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
   }
 
   // A corrupt score file re-read at the display stage must also be reported
-  // per-item, not abort runBatch and discard the failures gathered above.
-  const failedRefs = new Set(failures.map((f) => f.ref));
+  // per-item, not abort runBatch and discard the failures gathered above. Dedup
+  // on the canonical score key so a triage-stage ref (owner/repo#N) and this
+  // stage's key (gh-N) for the same issue are not counted twice.
+  const failedRefs = new Set(failures.map((f) => canonicalFailureKey(f.ref)));
   const rows = await collectBatchRows(
     scoresDir,
     issues.map((i) => i.key),
     (key, err) => {
-      if (failedRefs.has(key)) return;
+      const canonical = canonicalFailureKey(key);
+      if (failedRefs.has(canonical)) return;
       failures.push(toFailure(key, err));
-      failedRefs.add(key);
+      failedRefs.add(canonical);
     },
   );
   const report = renderBatchReport(rows, { repo, displayLabels });
