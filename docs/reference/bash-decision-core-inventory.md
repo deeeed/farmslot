@@ -267,6 +267,8 @@ The shrink is complete: `scripts/*.sh` count **35 → 23**, every survivor justi
 [`scripts/README.md`](../../scripts/README.md) (keep-list table). Slices: fixture-plan
 verb (PR #325), slot helper verbs (PR #327), bug command family (PR #328). The two
 deprecation shims (`check-slot.sh`, `prepare-slot.sh`) carry dated notes and are
-deletable once the metamask pack READMEs/docs repoint to the CLI (team-repo PRs).
+deletable once the referencing packs repoint to the CLI: the metamask pack
+READMEs/docs plus the pack setup scripts and worker templates (audiolab,
+echobridge, metamask) that still print `prepare-slot.sh` (pack-repo PRs).
 Retired names are enforced deleted by `scripts/quality/check-retired-scripts.mjs`
 (19 entries).
