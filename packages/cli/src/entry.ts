@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { registerAnalyticsCommand } from './commands/analytics.js';
 import { registerAuthCommands } from './commands/auth.js';
 import { registerBacklogCommand } from './commands/backlog.js';
+import { registerBugCommand } from './commands/bug.js';
 import { registerCertsCommand } from './commands/certs.js';
 import { registerCompletionCommand } from './commands/completion.js';
 import { registerConfigCommand } from './commands/config.js';
@@ -79,6 +80,7 @@ registerUninstallCommand(program);
 registerAuthCommands(program);
 registerAnalyticsCommand(program);
 registerCertsCommand(program);
+registerBugCommand(program);
 
 // parseAsync: async command actions (update) must reject through commander,
 // not become unhandled rejections. exitOverride (set above) lets usage errors

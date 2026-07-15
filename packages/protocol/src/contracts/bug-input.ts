@@ -103,12 +103,26 @@ export function deriveScoreKey(bug: BugInput): string {
     const num = bug.github_issue.includes('#')
       ? bug.github_issue.split('#').pop()!
       : bug.github_issue;
-    return `gh-${num}`;
+    return scoreKeyForGithub(num);
   }
   if (bug.jira_key) {
-    return bug.jira_key.toLowerCase();
+    return scoreKeyForJira(bug.jira_key);
   }
   throw new Error('BugInput has neither github_issue nor jira_key — cannot derive score key');
+}
+
+/**
+ * Score-file key for a GitHub issue number ("gh-{number}"). Single source of
+ * truth for the batch/skip-existing fast paths that derive a key from a raw ref
+ * before fetching the full BugInput — keep them in sync with deriveScoreKey.
+ */
+export function scoreKeyForGithub(issueNumber: string): string {
+  return `gh-${issueNumber}`;
+}
+
+/** Score-file key for a Jira issue key (lowercased). See scoreKeyForGithub. */
+export function scoreKeyForJira(key: string): string {
+  return key.toLowerCase();
 }
 
 /**

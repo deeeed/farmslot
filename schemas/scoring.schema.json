@@ -29,7 +29,7 @@
     },
     "heuristic_scoring": {
       "type": "object",
-      "description": "Output from the deterministic heuristic scorer (score-bug.sh).",
+      "description": "Output from the deterministic heuristic scorer (the project scorer run by `farmslot bug score`).",
       "required": [
         "difficulty",
         "difficulty_score",

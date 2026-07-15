@@ -8,6 +8,8 @@ import {
   extractImageUrls,
   flattenAdf,
   parseBugInput,
+  scoreKeyForGithub,
+  scoreKeyForJira,
   validateBugScore,
 } from '../../src/contracts/bug-input.js';
 
@@ -311,6 +313,16 @@ test('deriveScoreKey throws when both keys are empty', () => {
     image_urls: [],
   };
   assert.throws(() => deriveScoreKey(bare), /cannot derive score key/);
+});
+
+test('scoreKey helpers match deriveScoreKey (single source of truth)', () => {
+  assert.equal(scoreKeyForGithub('29655'), 'gh-29655');
+  assert.equal(scoreKeyForJira('MM-29655'), 'mm-29655');
+  assert.equal(
+    deriveScoreKey(parseBugInput('github', githubIssueRaw())),
+    scoreKeyForGithub('29655'),
+  );
+  assert.equal(deriveScoreKey(parseBugInput('jira', jiraIssueRaw())), scoreKeyForJira('MM-29655'));
 });
 
 // ── validateBugScore ──────────────────────────────────────────────────────────
