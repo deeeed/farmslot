@@ -640,6 +640,14 @@ function rollUpLaunchPlanStatus(item: BacklogItem): void {
   }
 }
 
+// True when `owner` was created no earlier than `incoming` — i.e. `incoming` is a
+// stale echo from a run the owner has superseded (or an identical-age foreign run).
+// A strictly newer `incoming` is a legitimate takeover. createdAt is a required,
+// monotonic ISO timestamp, so lexical compare is chronological.
+function launchRunSupersedes(owner: Run, incoming: Run): boolean {
+  return (owner.createdAt ?? '') >= (incoming.createdAt ?? '');
+}
+
 function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   if (!item.launchPlan || !run.launchCandidateId) return false;
   // The observation must belong to THIS plan and name a real candidate — a
@@ -657,20 +665,31 @@ function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   ensureLaunchPlanState(item);
   const projection = projectionForCandidate(item, run.launchCandidateId);
   if (!projection) return false;
-  // A candidate is owned by the run markBacklogRunStarted linked to it; only that
-  // run may advance the projection. Any other run — a late echo from a finished or
-  // superseded run reusing the same candidate id — is stale and dropped
-  // unconditionally (a terminal owner is NOT exempt).
-  if (projection.runId && projection.runId !== run.id) return false;
+  // Ownership by recency. A candidate is owned by the run markBacklogRunStarted
+  // linked to it (projection.runId). Drop an observation from a DIFFERENT run only
+  // when it is a stale echo — the current owner still exists and was created no
+  // earlier than the incoming run. A strictly newer run legitimately takes the
+  // candidate over (re-enqueue / replay, whose first update can arrive before
+  // markBacklogRunStarted transfers ownership), and a missing owner (deleted or
+  // cleaned up) is not defended so takeover still proceeds. Identity alone cannot
+  // tell an echo from a takeover — hence the timestamp compare.
+  if (projection.runId && projection.runId !== run.id) {
+    const owner = getAllRuns().find((candidate) => candidate.id === projection.runId);
+    if (owner && launchRunSupersedes(owner, run)) return false;
+  }
   projection.runId = run.id;
   projection.slotId = run.slotId ?? undefined;
   delete projection.queueItemId;
   projection.status = statusFromRun(run);
   if (run.launchCandidateId === launchCandidateByRole(item, 'baseline')?.id) {
-    // The baseline candidate also owns the item's top-level run link. Take it only
-    // when it is unclaimed or already ours, so a foreign baseline echo cannot steal
-    // item.runId from a live baseline.
-    if (item.runId == null || item.runId === run.id) {
+    // The baseline candidate also owns the item's top-level run link. Take it
+    // unless a strictly newer run already holds it, so an older baseline echo
+    // cannot steal item.runId from a live baseline while a genuine re-enqueue can.
+    const holder =
+      item.runId != null && item.runId !== run.id
+        ? getAllRuns().find((candidate) => candidate.id === item.runId)
+        : undefined;
+    if (!holder || !launchRunSupersedes(holder, run)) {
       item.runId = run.id;
       item.lastObservedRunStatus = run.status;
       item.launchPlanState!.baselineRunId = run.id;
