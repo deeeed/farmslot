@@ -642,6 +642,13 @@ function rollUpLaunchPlanStatus(item: BacklogItem): void {
 
 function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   if (!item.launchPlan || !run.launchCandidateId) return false;
+  // The observation must belong to THIS plan and name a real candidate — a
+  // foreign-plan or unknown-candidate event must not reach projectionForCandidate
+  // (which would lazily inject a bogus projection for it).
+  if (run.launchPlanId !== item.launchPlan.id) return false;
+  if (!item.launchPlan.candidates.some((candidate) => candidate.id === run.launchCandidateId)) {
+    return false;
+  }
   const previous = JSON.stringify({
     status: item.status,
     state: item.launchPlanState,
@@ -650,15 +657,25 @@ function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   ensureLaunchPlanState(item);
   const projection = projectionForCandidate(item, run.launchCandidateId);
   if (!projection) return false;
+  // A candidate is owned by the run markBacklogRunStarted linked to it; only that
+  // run may advance the projection. Any other run — a late echo from a finished or
+  // superseded run reusing the same candidate id — is stale and dropped
+  // unconditionally (a terminal owner is NOT exempt).
+  if (projection.runId && projection.runId !== run.id) return false;
   projection.runId = run.id;
   projection.slotId = run.slotId ?? undefined;
   delete projection.queueItemId;
   projection.status = statusFromRun(run);
   if (run.launchCandidateId === launchCandidateByRole(item, 'baseline')?.id) {
-    item.runId = run.id;
-    item.lastObservedRunStatus = run.status;
-    item.launchPlanState!.baselineRunId = run.id;
-    delete item.queuedQueueItemId;
+    // The baseline candidate also owns the item's top-level run link. Take it only
+    // when it is unclaimed or already ours, so a foreign baseline echo cannot steal
+    // item.runId from a live baseline.
+    if (item.runId == null || item.runId === run.id) {
+      item.runId = run.id;
+      item.lastObservedRunStatus = run.status;
+      item.launchPlanState!.baselineRunId = run.id;
+      delete item.queuedQueueItemId;
+    }
   }
   rollUpLaunchPlanStatus(item);
   const changed =

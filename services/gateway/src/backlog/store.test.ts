@@ -863,6 +863,173 @@ test('multiPr cannot be combined with work-graph linkage', async () => {
   );
 });
 
+test('launch-plan observation from a foreign plan is ignored', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Foreign plan echo',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_real',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+      ],
+    },
+  });
+  const baselineRun = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    launchPlanId: 'lp_real',
+    launchCandidateId: 'baseline',
+  });
+  runStore.updateRun(baselineRun.id, { status: 'monitoring' });
+  backlog.markBacklogRunObserved({ ...baselineRun, status: 'monitoring' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.runId, baselineRun.id);
+
+  // Observation tagged with a DIFFERENT plan id (and a candidate id not in this
+  // plan) must neither inject a projection nor steal the baseline link.
+  backlog.markBacklogRunObserved({
+    id: 'foreign-run',
+    status: 'done',
+    backlogItemId: created.item.id,
+    launchPlanId: 'lp_other',
+    launchCandidateId: 'baseline',
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.runId, baselineRun.id);
+  assert.equal(item?.launchPlanState?.candidates.length ?? 0, 1);
+});
+
+test('a stale candidate echo cannot overwrite the projection owned by a newer run', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Stale candidate echo',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_stale',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+        {
+          id: 'sonnet',
+          role: 'comparison',
+          runner: 'claude',
+          model: 'sonnet',
+          variant: 'claude-sonnet',
+          slotPolicy: { kind: 'pool', allowedSlots: ['macwork-ff-2'] },
+        },
+      ],
+    },
+  });
+  // The current sonnet run owns the projection and has already finished (terminal
+  // owner — the strict guard must still reject an older run's echo).
+  const newerCmp = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    launchPlanId: 'lp_stale',
+    launchCandidateId: 'sonnet',
+  });
+  runStore.updateRun(newerCmp.id, { status: 'done' });
+  backlog.markBacklogRunObserved({ ...newerCmp, status: 'done' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const sonnetProjection = () =>
+    backlog
+      .listBacklogItems({ includeArchived: true })
+      .items[0]?.launchPlanState?.candidates.find((c) => c.candidateId === 'sonnet');
+  assert.equal(sonnetProjection()?.runId, newerCmp.id);
+  assert.equal(sonnetProjection()?.status, 'succeeded');
+
+  // A superseded earlier sonnet run re-emits a failed echo — it must not overwrite
+  // the projection now owned by newerCmp.
+  backlog.markBacklogRunObserved({
+    id: 'stale-sonnet-run',
+    status: 'failed',
+    backlogItemId: created.item.id,
+    launchPlanId: 'lp_stale',
+    launchCandidateId: 'sonnet',
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(sonnetProjection()?.runId, newerCmp.id);
+  assert.equal(sonnetProjection()?.status, 'succeeded');
+});
+
+test('a foreign baseline echo cannot steal the item run link from a live baseline', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Baseline steal guard',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_base',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+      ],
+    },
+  });
+  const liveBaseline = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    launchPlanId: 'lp_base',
+    launchCandidateId: 'baseline',
+  });
+  runStore.updateRun(liveBaseline.id, { status: 'monitoring' });
+  backlog.markBacklogRunObserved({ ...liveBaseline, status: 'monitoring' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(
+    backlog.listBacklogItems({ includeArchived: true }).items[0]?.runId,
+    liveBaseline.id,
+  );
+
+  // A different run reusing the baseline candidate id (same plan) must not reassign
+  // item.runId while the live baseline owns it.
+  backlog.markBacklogRunObserved({
+    id: 'foreign-baseline-run',
+    status: 'done',
+    backlogItemId: created.item.id,
+    launchPlanId: 'lp_base',
+    launchCandidateId: 'baseline',
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.runId, liveBaseline.id);
+  assert.equal(item?.launchPlanState?.baselineRunId, liveBaseline.id);
+});
+
 test('multiPr survives persistence and reload', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
