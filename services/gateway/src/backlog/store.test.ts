@@ -785,6 +785,84 @@ test('late completion echo from a previous slice cannot clobber the next slice',
   assert.equal(item?.runId, undefined);
 });
 
+test('a late prior-slice done echo does not resurrect a failed multi-PR slice', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Failed slice echo guard',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    multiPr: true,
+  });
+  // Slice 1 completed (its run is terminal, item moved on).
+  const sliceOne = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+  });
+  runStore.updateRun(sliceOne.id, { status: 'done' });
+  // Slice 2 is linked and has FAILED (item.runId points at a terminal run).
+  const sliceTwo = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+  });
+  runStore.updateRun(sliceTwo.id, { status: 'failed' });
+  created.item.status = 'failed';
+  created.item.runId = sliceTwo.id;
+
+  // A late slice-1 done echo must NOT reset the failed item to ready or clear
+  // slice 2's link, even though slice 2's run is terminal.
+  backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.status, 'failed');
+  assert.equal(item?.runId, sliceTwo.id);
+});
+
+test('multiPr cannot be combined with work-graph linkage', async () => {
+  const { backlog } = await freshStores();
+  // Attaching a graph node to a multi-PR item is rejected.
+  const multi = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Graph combo attach',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'candidate',
+    multiPr: true,
+  });
+  await assert.rejects(
+    () =>
+      backlog.attachBacklogItemToWorkNode({
+        itemId: multi.item.id,
+        graphId: 'wg_1',
+        nodeId: 'node_1',
+      }),
+    /cannot attach a multi-PR backlog item to a work-graph node/,
+  );
+
+  // Marking an already graph-linked item multiPr is rejected too.
+  const graphLinked = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Graph combo update',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'candidate',
+  });
+  await backlog.attachBacklogItemToWorkNode({
+    itemId: graphLinked.item.id,
+    graphId: 'wg_2',
+    nodeId: 'node_2',
+  });
+  await assert.rejects(
+    () => backlog.updateBacklogItem({ itemId: graphLinked.item.id, multiPr: true }),
+    /multiPr cannot be combined with work-graph linkage/,
+  );
+});
+
 test('multiPr survives persistence and reload', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
