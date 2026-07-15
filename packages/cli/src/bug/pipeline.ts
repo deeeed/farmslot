@@ -493,6 +493,18 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
   let scored = 0;
   let skipped = 0;
   const failures: BatchResult['failures'] = [];
+  // Record a per-item failure once per issue, deduped at append time on the
+  // canonical score key. The same corrupt score file can surface in more than one
+  // stage — the triage skip-check, the validation re-read, and the display
+  // re-read all read scores/<key>.json — and each stage identifies it differently
+  // (triage by owner/repo#N, the later stages by gh-N); this keeps failed=1.
+  const seenFailures = new Set<string>();
+  const addFailure = (ref: string, err: unknown): void => {
+    const canonical = canonicalFailureKey(ref);
+    if (seenFailures.has(canonical)) return;
+    seenFailures.add(canonical);
+    failures.push(toFailure(ref, err));
+  };
 
   if (total > 0) {
     const results = await mapPool(issues, opts.parallel, async (issue) => {
@@ -513,12 +525,11 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
         );
         return { status: result.skipped ? ('skip' as const) : ('ok' as const), ref: issue.ref };
       } catch (err) {
-        return { status: 'fail' as const, ...toFailure(issue.ref, err) };
+        return { status: 'fail' as const, ref: issue.ref, err };
       }
     });
     for (const r of results) {
-      if (r.status === 'fail')
-        failures.push({ ref: r.ref, error: r.error, code: r.code, userAction: r.userAction });
+      if (r.status === 'fail') addFailure(r.ref, r.err);
       else if (r.status === 'skip') skipped++;
       else scored++;
     }
@@ -539,25 +550,17 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
         }
         await runValidate(scoreFile, ctx, opts.now);
       } catch (err) {
-        failures.push(toFailure(file.replace(/\.json$/, ''), err));
+        addFailure(file.replace(/\.json$/, ''), err);
       }
     }
   }
 
   // A corrupt score file re-read at the display stage must also be reported
-  // per-item, not abort runBatch and discard the failures gathered above. Dedup
-  // on the canonical score key so a triage-stage ref (owner/repo#N) and this
-  // stage's key (gh-N) for the same issue are not counted twice.
-  const failedRefs = new Set(failures.map((f) => canonicalFailureKey(f.ref)));
+  // per-item, not abort runBatch and discard the failures gathered above.
   const rows = await collectBatchRows(
     scoresDir,
     issues.map((i) => i.key),
-    (key, err) => {
-      const canonical = canonicalFailureKey(key);
-      if (failedRefs.has(canonical)) return;
-      failures.push(toFailure(key, err));
-      failedRefs.add(canonical);
-    },
+    (key, err) => addFailure(key, err),
   );
   const report = renderBatchReport(rows, { repo, displayLabels });
 
