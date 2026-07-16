@@ -516,6 +516,11 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
                   ...(normalizeOptionalString(candidate.runId)
                     ? { runId: normalizeOptionalString(candidate.runId) }
                     : {}),
+                  ...(typeof candidate.attempt === 'number' &&
+                  Number.isFinite(candidate.attempt) &&
+                  candidate.attempt >= 0
+                    ? { attempt: candidate.attempt }
+                    : {}),
                   ...(normalizeOptionalString(candidate.slotId)
                     ? { slotId: normalizeOptionalString(candidate.slotId) }
                     : {}),
@@ -642,6 +647,13 @@ function rollUpLaunchPlanStatus(item: BacklogItem): void {
 
 function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   if (!item.launchPlan || !run.launchCandidateId) return false;
+  // The observation must belong to THIS plan and name a real candidate — a
+  // foreign-plan or unknown-candidate event must not reach projectionForCandidate
+  // (which would lazily inject a bogus projection for it).
+  if (run.launchPlanId !== item.launchPlan.id) return false;
+  if (!item.launchPlan.candidates.some((candidate) => candidate.id === run.launchCandidateId)) {
+    return false;
+  }
   const previous = JSON.stringify({
     status: item.status,
     state: item.launchPlanState,
@@ -650,11 +662,27 @@ function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   ensureLaunchPlanState(item);
   const projection = projectionForCandidate(item, run.launchCandidateId);
   if (!projection) return false;
+  // Ownership by monotonic per-candidate attempt. A candidate is owned by the run
+  // markBacklogRunStarted linked to it (projection.runId / projection.attempt). Each
+  // (re)enqueue stamps the candidate's run with a strictly higher launchAttempt than
+  // the projection, so a re-enqueued run's first update — which can arrive before
+  // markBacklogRunStarted transfers ownership — is recognized as a takeover, while a
+  // late echo from a superseded run (a lower attempt) is dropped. Attempts are
+  // clock-independent and persisted on the projection, so same-instant re-enqueues,
+  // clock rollback, and restart are all handled. Legacy runs/projections without an
+  // attempt default to 0 and behave leniently.
+  if ((run.launchAttempt ?? 0) < (projection.attempt ?? 0)) {
+    return false;
+  }
   projection.runId = run.id;
+  projection.attempt = Math.max(projection.attempt ?? 0, run.launchAttempt ?? 0);
   projection.slotId = run.slotId ?? undefined;
   delete projection.queueItemId;
   projection.status = statusFromRun(run);
   if (run.launchCandidateId === launchCandidateByRole(item, 'baseline')?.id) {
+    // Reaching here means this run's attempt passed the ownership guard above for
+    // the baseline candidate, so it is authoritative and also owns the item's
+    // top-level run link. An older baseline echo was already dropped by the guard.
     item.runId = run.id;
     item.lastObservedRunStatus = run.status;
     item.launchPlanState!.baselineRunId = run.id;
@@ -1540,6 +1568,7 @@ async function materializeMissingComparisonCandidates(
         baselineRun,
       ),
     );
+    reserveCandidateAttempt(item, comparisonQueueItem);
     if (existingProjection) {
       existingProjection.status = 'queued';
       existingProjection.queueItemId = comparisonQueueItem.id;
@@ -1606,6 +1635,28 @@ function queueFieldsForSlotPolicy(policy: BacklogLaunchSlotPolicy): {
   return policy.allowedSlots ? { allowedSlots: policy.allowedSlots } : {};
 }
 
+// Next monotonic attempt for a launch-plan candidate. Persisted per-candidate on the
+// projection (launchPlanState), so it survives restart and is independent of the wall
+// clock — each (re)enqueue produces a strictly higher value than the current owner.
+// Next attempt for a candidate — PURE: it does not mutate the projection, so a
+// build that never produces a queue row (e.g. addItem rejects an active run)
+// cannot leave the counter ahead of reality. The high-water mark is reserved
+// only after a queue row is actually created, via reserveCandidateAttempt.
+function nextCandidateAttempt(item: BacklogItem, candidateId: string): number {
+  ensureLaunchPlanState(item);
+  return (projectionForCandidate(item, candidateId)?.attempt ?? 0) + 1;
+}
+
+// Reserve the candidate's high-water mark AFTER its queue row exists, so a late
+// echo from the old owner is rejected by attempt before the retry starts. Called
+// post-addItem; addItem dedup can return an existing (lower-attempt) row, so use
+// max to never regress.
+function reserveCandidateAttempt(item: BacklogItem, queueItem: QueueItem): void {
+  if (!queueItem.launchCandidateId || queueItem.launchAttempt == null) return;
+  const projection = projectionForCandidate(item, queueItem.launchCandidateId);
+  if (projection) projection.attempt = Math.max(projection.attempt ?? 0, queueItem.launchAttempt);
+}
+
 async function buildBacklogQueueParams(
   item: BacklogItem,
   options: { workGraphId?: string; workNodeId?: string },
@@ -1623,6 +1674,7 @@ async function buildBacklogQueueParams(
     launchCandidateId: candidate?.id,
     launchGroupId: item.launchPlanState?.launchGroupId,
     launchSlotPolicy: candidate?.slotPolicy.kind,
+    launchAttempt: candidate ? nextCandidateAttempt(item, candidate.id) : undefined,
     label: candidate
       ? `Backlog: ${item.title} — ${candidate.label ?? candidate.id}`
       : `Backlog: ${item.title}`,
@@ -1745,6 +1797,7 @@ export async function enqueueBacklogItem(
         baselineCandidate ?? undefined,
       );
       const queueItem = addItem(queueParams);
+      reserveCandidateAttempt(item, queueItem);
       await persistQueueNow();
       item.status = 'queued';
       item.queuedQueueItemId = queueItem.id;
@@ -1909,6 +1962,11 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
     if (!item) return;
     if (TERMINAL_STATUSES.has(item.status)) return;
     if (item.launchPlan && queueItem.launchCandidateId) {
+      // The queue row must belong to the item's CURRENT plan and name a real
+      // candidate — a row from a since-replaced plan must not inject a bogus
+      // candidate into the new plan state (mirrors applyLaunchPlanRunObservation).
+      if (queueItem.launchPlanId !== item.launchPlan.id) return;
+      if (!item.launchPlan.candidates.some((c) => c.id === queueItem.launchCandidateId)) return;
       ensureLaunchPlanState(item);
       item.launchPlanState!.launchGroupId =
         queueItem.launchGroupId ?? item.launchPlanState!.launchGroupId;
@@ -1916,6 +1974,7 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
       if (projection) {
         projection.status = 'running';
         projection.runId = run.id;
+        projection.attempt = queueItem.launchAttempt ?? run.launchAttempt ?? projection.attempt;
         projection.slotId = run.slotId ?? queueItem.slotId;
         delete projection.queueItemId;
       }
