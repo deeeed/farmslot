@@ -1087,6 +1087,54 @@ test('a foreign baseline echo cannot steal the item run link from a live baselin
   assert.equal(item?.launchPlanState?.baselineRunId, liveBaseline.id);
 });
 
+test('candidate attempt survives persistence and reload', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Attempt persistence',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_persist',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+      ],
+    },
+  });
+  const run = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    launchPlanId: 'lp_persist',
+    launchCandidateId: 'baseline',
+    launchAttempt: 3,
+  } as never);
+  runStore.updateRun(run.id, { status: 'monitoring' } as never);
+  backlog.markBacklogRunObserved({ ...run } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const attemptBefore = () =>
+    backlog
+      .listBacklogItems({ includeArchived: true })
+      .items[0]?.launchPlanState?.candidates.find((c) => c.candidateId === 'baseline')?.attempt;
+  assert.equal(attemptBefore(), 3);
+
+  await backlog.flushBacklogForTests();
+  await backlog.loadBacklog();
+  const reloaded = backlog
+    .listBacklogItems({ includeArchived: true })
+    .items[0]?.launchPlanState?.candidates.find((c) => c.candidateId === 'baseline');
+  assert.equal(reloaded?.attempt, 3); // counter must not regress on restart
+});
+
 test('multiPr survives persistence and reload', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
@@ -1605,10 +1653,11 @@ test('backlog.dequeue clears stale baseline run linkage on launch-plan re-enqueu
     launchCandidateId: enqueued.queueItem.launchCandidateId,
     launchGroupId: enqueued.queueItem.launchGroupId,
     launchSlotPolicy: enqueued.queueItem.launchSlotPolicy,
+    launchAttempt: enqueued.queueItem.launchAttempt,
     runner: enqueued.queueItem.runner,
     model: enqueued.queueItem.model,
     slotId: enqueued.queueItem.slotId,
-  });
+  } as never);
   await backlog.markBacklogRunStarted(enqueued.queueItem, baselineRun);
   runStore.updateRun(baselineRun.id, { status: 'done' });
   backlog.markBacklogRunObserved({ ...baselineRun, status: 'done' } as never);

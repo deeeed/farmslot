@@ -516,6 +516,11 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
                   ...(normalizeOptionalString(candidate.runId)
                     ? { runId: normalizeOptionalString(candidate.runId) }
                     : {}),
+                  ...(typeof candidate.attempt === 'number' &&
+                  Number.isFinite(candidate.attempt) &&
+                  candidate.attempt >= 0
+                    ? { attempt: candidate.attempt }
+                    : {}),
                   ...(normalizeOptionalString(candidate.slotId)
                     ? { slotId: normalizeOptionalString(candidate.slotId) }
                     : {}),
@@ -666,11 +671,7 @@ function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   // clock-independent and persisted on the projection, so same-instant re-enqueues,
   // clock rollback, and restart are all handled. Legacy runs/projections without an
   // attempt default to 0 and behave leniently.
-  if (
-    projection.runId &&
-    projection.runId !== run.id &&
-    (run.launchAttempt ?? 0) < (projection.attempt ?? 0)
-  ) {
+  if ((run.launchAttempt ?? 0) < (projection.attempt ?? 0)) {
     return false;
   }
   projection.runId = run.id;
@@ -1638,7 +1639,14 @@ function queueFieldsForSlotPolicy(policy: BacklogLaunchSlotPolicy): {
 // clock — each (re)enqueue produces a strictly higher value than the current owner.
 function nextCandidateAttempt(item: BacklogItem, candidateId: string): number {
   ensureLaunchPlanState(item);
-  return (projectionForCandidate(item, candidateId)?.attempt ?? 0) + 1;
+  const projection = projectionForCandidate(item, candidateId);
+  const attempt = (projection?.attempt ?? 0) + 1;
+  // Reserve the new high-water mark immediately (persisted with the item) so a
+  // late echo from the OLD owner — which still holds projection.runId until the
+  // retry starts — is rejected by attempt even before markBacklogRunStarted
+  // transfers ownership.
+  if (projection) projection.attempt = attempt;
+  return attempt;
 }
 
 async function buildBacklogQueueParams(
@@ -1945,6 +1953,11 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
     if (!item) return;
     if (TERMINAL_STATUSES.has(item.status)) return;
     if (item.launchPlan && queueItem.launchCandidateId) {
+      // The queue row must belong to the item's CURRENT plan and name a real
+      // candidate — a row from a since-replaced plan must not inject a bogus
+      // candidate into the new plan state (mirrors applyLaunchPlanRunObservation).
+      if (queueItem.launchPlanId !== item.launchPlan.id) return;
+      if (!item.launchPlan.candidates.some((c) => c.id === queueItem.launchCandidateId)) return;
       ensureLaunchPlanState(item);
       item.launchPlanState!.launchGroupId =
         queueItem.launchGroupId ?? item.launchPlanState!.launchGroupId;
