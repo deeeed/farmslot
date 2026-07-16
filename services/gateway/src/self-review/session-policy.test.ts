@@ -69,6 +69,16 @@ test('warm-per-reviewer resumes only from loop 2 on reload-capable runners', () 
   assert.equal(shouldAttemptWarmResume('warm-per-reviewer', 2, false), false); // e.g. cursor
 });
 
+test('a non-reloadable runner under warm policy keeps tab identity but never resumes', () => {
+  // Cursor has no persisted session reload: warm policy still reuses its
+  // reviewer tab/context id (harmless — stable operator-facing identity), but
+  // every pass cold-launches because the resume gate is runner-capability-aware.
+  assert.equal(reviewerAllocationMode('warm-per-reviewer'), 'warm');
+  for (const loopNumber of [1, 2, 3]) {
+    assert.equal(shouldAttemptWarmResume('warm-per-reviewer', loopNumber, false), false);
+  }
+});
+
 test('warm claim rejects reuse when any scope field differs', () => {
   register(1);
   assert.ok(claimWarmReviewerSession(scope), 'exact scope must claim');
@@ -110,6 +120,27 @@ test('review-gate exit / run completion / cancel invalidation makes sessions for
   // Re-registering after invalidation (a NEW review loop on the same run) works.
   register(1);
   assert.ok(claimWarmReviewerSession(scope));
+});
+
+test('runner-scoped invalidation ends one reviewer loop without touching another runner', () => {
+  register(1); // codex
+  registerWarmReviewerSession({
+    ...scope,
+    runner: 'claude',
+    contextId: 'rev-claude',
+    windowName: 'rev-claude',
+    slotId: 'slot-1',
+    runnerSessionId: 'sess-claude',
+    runnerSessionPath: null,
+    lastLoopNumber: 1,
+  });
+  // Codex review loop exits: only the codex session turns forensic.
+  assert.equal(invalidateWarmReviewerSessions('run-a', 'codex'), 1);
+  assert.equal(claimWarmReviewerSession(scope), null);
+  assert.ok(claimWarmReviewerSession({ ...scope, runner: 'claude' }));
+  // Run-wide invalidation (cancel) still ends everything.
+  assert.equal(invalidateWarmReviewerSessions('run-a'), 1);
+  assert.equal(claimWarmReviewerSession({ ...scope, runner: 'claude' }), null);
 });
 
 test('slot release invalidates every warm session on the slot', () => {

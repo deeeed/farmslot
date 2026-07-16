@@ -26,6 +26,7 @@ import {
 } from '../agents/contexts.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { onSlotReset } from '../core/state.js';
 import {
   respawnTmuxWindowWithCommand,
   shellQuote,
@@ -61,6 +62,7 @@ import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
 import {
   DEFAULT_REVIEW_SESSION_POLICY,
   invalidateWarmReviewerSessions,
+  invalidateWarmReviewerSessionsForSlot,
   type ReviewSessionPolicy,
 } from './session-policy.js';
 import {
@@ -162,24 +164,14 @@ export function resolveSelfReviewRunnerModel(
 
 export function initSelfReview(broadcast: BroadcastFn): void {
   initSelfReviewProgress(broadcast);
+  // Slot release must end every warm reviewer session that lived on the slot;
+  // registered as a listener so core/state carries no upward import.
+  onSlotReset((slotId) => {
+    invalidateWarmReviewerSessionsForSlot(slotId);
+  });
 }
 
 export async function executeSelfReview(
-  runId: string,
-  slotId: string,
-  options: SelfReviewOptions = {},
-): Promise<SelfReviewResult> {
-  try {
-    return await executeSelfReviewInner(runId, slotId, options);
-  } finally {
-    // Review-gate exit: warm reviewer sessions never outlive one review loop —
-    // pass, fail, or throw, they become forensic-only and can never be claimed
-    // by a later review or another run (MANUAL-000009 deliverable 4).
-    invalidateWarmReviewerSessions(runId);
-  }
-}
-
-async function executeSelfReviewInner(
   runId: string,
   slotId: string,
   options: SelfReviewOptions = {},
@@ -217,108 +209,116 @@ async function executeSelfReviewInner(
     return { skipped: true, reason: 'no-task-dir', retryCount: 0 };
   }
 
-  const recoveredFixResult = await recoverSelfReviewFixPass({
-    vars,
-    taskDir,
-    slotId,
-    runId,
-    start,
-    reviewRunner,
-    model,
-    workerRunner,
-    maxRetries,
-    reviewTimeoutMs,
-    validationDepth,
-    artifactScope,
-    sessionPolicy,
-  });
-  if (recoveredFixResult)
-    return {
-      ...recoveredFixResult,
-      usage: recoveredFixResult.attempts?.at(-1)?.usage,
-      runner: reviewRunner,
+  try {
+    const recoveredFixResult = await recoverSelfReviewFixPass({
+      vars,
+      taskDir,
+      slotId,
+      runId,
+      start,
+      reviewRunner,
       model,
-      crossRunner: isCrossRunnerReview,
-    };
+      workerRunner,
+      maxRetries,
+      reviewTimeoutMs,
+      validationDepth,
+      artifactScope,
+      sessionPolicy,
+    });
+    if (recoveredFixResult)
+      return {
+        ...recoveredFixResult,
+        usage: recoveredFixResult.attempts?.at(-1)?.usage,
+        runner: reviewRunner,
+        model,
+        crossRunner: isCrossRunnerReview,
+      };
 
-  // First review pass
-  debugSelfReviewLog(
-    `[self-review] run ${runId.slice(0, 8)} — spawning review agent (${reviewRunner}/${model}, timeout ${reviewTimeoutMs / 60_000}min)`,
-  );
-  const result = await runReviewAgent(
-    vars,
-    reviewRunner,
-    model,
-    taskDir,
-    slotId,
-    runId,
-    reviewTimeoutMs,
-    1,
-    validationDepth,
-    artifactScope,
-    sessionPolicy,
-  );
-
-  if (result.incomplete) {
-    console.warn(
-      `[self-review] run ${runId.slice(0, 8)} — INCOMPLETE: agent exited without writing feedback`,
+    // First review pass
+    debugSelfReviewLog(
+      `[self-review] run ${runId.slice(0, 8)} — spawning review agent (${reviewRunner}/${model}, timeout ${reviewTimeoutMs / 60_000}min)`,
     );
-    const attempts = [reviewAttemptFromResult(result, 1)];
-    return {
-      skipped: true,
-      reason: 'no-feedback-file',
+    const result = await runReviewAgent(
+      vars,
+      reviewRunner,
+      model,
+      taskDir,
+      slotId,
+      runId,
+      reviewTimeoutMs,
+      1,
+      validationDepth,
+      artifactScope,
+      sessionPolicy,
+    );
+
+    if (result.incomplete) {
+      console.warn(
+        `[self-review] run ${runId.slice(0, 8)} — INCOMPLETE: agent exited without writing feedback`,
+      );
+      const attempts = [reviewAttemptFromResult(result, 1)];
+      return {
+        skipped: true,
+        reason: 'no-feedback-file',
+        retryCount: 0,
+        validationDepth,
+        usage: result.usage,
+        reviewSnapshot: result.reviewSnapshot,
+        attempts,
+        timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
+        durationMs: Date.now() - start,
+      };
+    }
+
+    if (result.verdict === 'pass') {
+      debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — PASS (${Date.now() - start}ms)`);
+      return {
+        verdict: 'pass',
+        issues: [],
+        validationDepth,
+        usage: result.usage,
+        reviewSnapshot: result.reviewSnapshot,
+        attempts: [reviewAttemptFromResult(result, 1)],
+        timeline: result.timeline,
+        runner: reviewRunner,
+        model,
+        crossRunner: isCrossRunnerReview,
+        retryCount: 0,
+        durationMs: Date.now() - start,
+      };
+    }
+
+    const retryResult = await runSelfReviewRetryLoop({
+      vars,
+      taskDir,
+      slotId,
+      runId,
+      start,
+      workerRunner,
+      reviewRunner,
+      model,
+      maxRetries,
+      reviewTimeoutMs,
+      reviewResult: result,
       retryCount: 0,
       validationDepth,
-      usage: result.usage,
-      reviewSnapshot: result.reviewSnapshot,
-      attempts,
-      timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
-      durationMs: Date.now() - start,
-    };
-  }
-
-  if (result.verdict === 'pass') {
-    debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — PASS (${Date.now() - start}ms)`);
+      artifactScope,
+      sessionPolicy,
+    });
     return {
-      verdict: 'pass',
-      issues: [],
-      validationDepth,
-      usage: result.usage,
-      reviewSnapshot: result.reviewSnapshot,
-      attempts: [reviewAttemptFromResult(result, 1)],
-      timeline: result.timeline,
+      ...retryResult,
+      usage: retryResult.attempts?.at(-1)?.usage,
       runner: reviewRunner,
       model,
       crossRunner: isCrossRunnerReview,
-      retryCount: 0,
-      durationMs: Date.now() - start,
     };
+  } finally {
+    // Review-loop exit: THIS reviewer's warm
+    // session never outlives its loop — pass, fail, or throw it turns
+    // forensic-only. Scoped to the loop's runner so a run hosting reviews by
+    // other runners keeps their sessions until their own loops exit.
+    invalidateWarmReviewerSessions(runId, reviewRunner);
   }
-
-  const retryResult = await runSelfReviewRetryLoop({
-    vars,
-    taskDir,
-    slotId,
-    runId,
-    start,
-    workerRunner,
-    reviewRunner,
-    model,
-    maxRetries,
-    reviewTimeoutMs,
-    reviewResult: result,
-    retryCount: 0,
-    validationDepth,
-    artifactScope,
-    sessionPolicy,
-  });
-  return {
-    ...retryResult,
-    usage: retryResult.attempts?.at(-1)?.usage,
-    runner: reviewRunner,
-    model,
-    crossRunner: isCrossRunnerReview,
-  };
 }
 
 // Dep surface for runSelfReviewRetryLoop. Real production wiring lives in
@@ -854,6 +854,7 @@ async function recoverSelfReviewFixPass({
         retryCount: 1,
         validationDepth,
         artifactScope,
+        sessionPolicy,
         feedbackAlreadySent: true,
       });
     }

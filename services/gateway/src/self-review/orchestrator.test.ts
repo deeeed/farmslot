@@ -323,6 +323,7 @@ interface CallLog {
   feedbackBaselines: string[]; // baseline returned to the loop on each sendFeedbackToWorker call
   waitBaselines: string[]; // baseline forwarded into waitForWorkerSignal on each iteration
   artifactScopes: Array<string | null | undefined>;
+  sessionPolicies: Array<string | undefined>; // 11th runReviewAgent arg per re-review
 }
 
 function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; calls: CallLog } {
@@ -334,6 +335,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     feedbackBaselines: [],
     waitBaselines: [],
     artifactScopes: [],
+    sessionPolicies: [],
   };
   let reviewIdx = 0;
   let signalIdx = 0;
@@ -396,8 +398,10 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
       loopNumber = 1,
       _validationDepth,
       artifactScope,
+      sessionPolicy,
     ) => {
       calls.artifactScopes.push(artifactScope);
+      calls.sessionPolicies.push(sessionPolicy);
       calls.reviewAgent += 1;
       const scripted = opts.reviewVerdicts[reviewIdx] ?? 'issues';
       reviewIdx += 1;
@@ -775,4 +779,37 @@ test('runSelfReviewRetryLoop: records worker-fix timeline segment before re-revi
   assert.equal(result.timeline?.[1]?.kind, 'worker-fix');
   assert.equal(result.timeline?.[2]?.kind, 're-review');
   assert.equal(typeof result.timeline?.[1]?.durationMs, 'number');
+});
+
+test('runSelfReviewRetryLoop threads sessionPolicy into every re-review launch', async () => {
+  // The retry loop is the code that actually relaunches reviewers, so it must
+  // forward the resolved policy to runReviewAgent — and default to
+  // fresh-per-pass when the caller omits it — or warm mode silently never
+  // applies to re-reviews.
+  const warm = buildDeps({
+    reviewVerdicts: ['pass'],
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    sessionPolicy: 'warm-per-reviewer',
+    deps: warm.deps,
+  });
+  assert.deepEqual(warm.calls.sessionPolicies, ['warm-per-reviewer']);
+
+  const dflt = buildDeps({
+    reviewVerdicts: ['pass'],
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps: dflt.deps,
+  });
+  assert.deepEqual(dflt.calls.sessionPolicies, ['fresh-per-pass']);
 });

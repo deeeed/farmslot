@@ -1,19 +1,22 @@
-// Review session policy (MANUAL-000009): `fresh-per-pass` keeps today's
+// Review session policy: `fresh-per-pass` keeps today's
 // kill/relaunch behavior; `warm-per-reviewer` lets the SAME reviewer session be
 // resumed for re-reviews within ONE run's review loop. Warm reuse is scoped
 // strictly to one run — same runId, task dir, artifact scope, runner, and
 // review subject lineage — and a session is never reusable once its run
 // completes, cancels, or releases its slot (it is deleted or kept only as a
 // forensic-only record).
+//
+// The registry is process-local BY DESIGN: a gateway restart drops all claims,
+// so the next pass falls back to a cold fresh launch (safe degradation — no
+// resumable session handles are ever persisted).
 
-export type ReviewSessionPolicy = 'fresh-per-pass' | 'warm-per-reviewer';
+import {
+  DEFAULT_REVIEW_SESSION_POLICY,
+  REVIEW_SESSION_POLICIES,
+  type ReviewSessionPolicy,
+} from '@farmslot/protocol';
 
-export const REVIEW_SESSION_POLICIES: readonly ReviewSessionPolicy[] = [
-  'fresh-per-pass',
-  'warm-per-reviewer',
-];
-
-export const DEFAULT_REVIEW_SESSION_POLICY: ReviewSessionPolicy = 'fresh-per-pass';
+export { DEFAULT_REVIEW_SESSION_POLICY, REVIEW_SESSION_POLICIES, type ReviewSessionPolicy };
 
 export function parseReviewSessionPolicy(raw: unknown): ReviewSessionPolicy | undefined {
   if (raw === undefined || raw === null) return undefined;
@@ -110,12 +113,15 @@ export function claimWarmReviewerSession(scope: WarmReviewerScope): WarmReviewer
 /**
  * Invalidate a run's warm reviewer sessions (review-gate exit, run completion,
  * cancel). Records stay as forensic-only so operators can inspect what session
- * a reviewer used, but they can never be claimed again.
+ * a reviewer used, but they can never be claimed again. Pass `runner` to scope
+ * the invalidation to one reviewer's loop exit (a run can host reviews by
+ * different runners; one loop finishing must not tear down another's session).
  */
-export function invalidateWarmReviewerSessions(runId: string): number {
+export function invalidateWarmReviewerSessions(runId: string, runner?: string): number {
   let count = 0;
   for (const [key, session] of warmSessions) {
     if (session.runId !== runId || session.forensicOnly) continue;
+    if (runner !== undefined && session.runner !== runner) continue;
     warmSessions.set(key, { ...session, forensicOnly: true });
     count += 1;
   }
