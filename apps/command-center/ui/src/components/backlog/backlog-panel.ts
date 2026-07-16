@@ -58,7 +58,11 @@ import {
   renderTagChips,
   tagsFromInput,
 } from '../shared/planning-badges.js';
-import { planningChoiceStyles, renderChoiceButtons } from '../shared/planning-controls.js';
+import {
+  planningChoiceStyles,
+  renderChoiceButtons,
+  renderToggleChips,
+} from '../shared/planning-controls.js';
 import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
 import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
@@ -70,11 +74,13 @@ import {
   canDequeueBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
+  DEFAULT_BACKLOG_STATUS_FILTER,
+  parseBacklogStatusFilter,
+  serializeBacklogStatusFilter,
   showsBacklogCleanupActionsForUi,
   syncedBacklogDraftProject,
 } from './backlog-panel-model.js';
 
-const STATUSES: Array<BacklogStatus | 'all'> = ['all', ...BACKLOG_STATUSES];
 const FLOWS: FlowType[] = ['fix-bug', 'dev', 'review-pr', 'pr-complete', 'update-branch'];
 const SOURCES: BacklogSourceKind[] = [...BACKLOG_SOURCE_KINDS];
 const BACKLOG_PROJECT_PARAM = 'backlogProject';
@@ -171,7 +177,7 @@ export class BacklogPanel extends LitElement {
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _project = 'all';
-  @state() private _status: BacklogStatus | 'all' = 'all';
+  @state() private _statuses: ReadonlySet<BacklogStatus> = DEFAULT_BACKLOG_STATUS_FILTER;
   @state() private _busy = '';
   @state() private _error = '';
   @state() private _message = '';
@@ -1024,10 +1030,7 @@ export class BacklogPanel extends LitElement {
     if (route !== 'backlog') return;
     const project = params.get(BACKLOG_PROJECT_PARAM);
     this._project = project?.trim() || 'all';
-    const status = params.get(BACKLOG_STATUS_PARAM);
-    this._status = STATUSES.includes(status as BacklogStatus | 'all')
-      ? (status as BacklogStatus | 'all')
-      : 'all';
+    this._statuses = parseBacklogStatusFilter(params.get(BACKLOG_STATUS_PARAM));
     this._selectedItemId = params.get(BACKLOG_ITEM_PARAM)?.trim() ?? '';
     this._selectedItemMode =
       this._selectedItemId && params.get(BACKLOG_MODE_PARAM) === 'edit' ? 'edit' : 'view';
@@ -1045,8 +1048,9 @@ export class BacklogPanel extends LitElement {
     if (route !== 'backlog') return;
     if (this._project === 'all') params.delete(BACKLOG_PROJECT_PARAM);
     else params.set(BACKLOG_PROJECT_PARAM, this._project);
-    if (this._status === 'all') params.delete(BACKLOG_STATUS_PARAM);
-    else params.set(BACKLOG_STATUS_PARAM, this._status);
+    const statusParam = serializeBacklogStatusFilter(this._statuses);
+    if (statusParam === null) params.delete(BACKLOG_STATUS_PARAM);
+    else params.set(BACKLOG_STATUS_PARAM, statusParam);
     if (this._selectedItemId) params.set(BACKLOG_ITEM_PARAM, this._selectedItemId);
     else params.delete(BACKLOG_ITEM_PARAM);
     if (this._selectedItemId && this._selectedItemMode === 'edit') {
@@ -1115,8 +1119,11 @@ export class BacklogPanel extends LitElement {
     </label>`;
   }
 
-  private _setStatusFilter(status: BacklogStatus | 'all') {
-    this._status = status;
+  private _toggleStatusFilter(status: BacklogStatus) {
+    const next = new Set(this._statuses);
+    if (next.has(status)) next.delete(status);
+    else next.add(status);
+    this._statuses = next;
     this._writeUrlState();
   }
 
@@ -1180,7 +1187,7 @@ export class BacklogPanel extends LitElement {
         return false;
       }
       if (this._project !== 'all' && item.project !== this._project) return false;
-      return backlogItemMatchesStatusFilter(item.status, this._status);
+      return backlogItemMatchesStatusFilter(item.status, this._statuses);
     });
   }
 
@@ -2568,10 +2575,10 @@ export class BacklogPanel extends LitElement {
         </div>
         <div class="filter-group">
           <span class="field-label">Status</span>
-          ${renderChoiceButtons({
-            options: STATUSES,
-            value: this._status,
-            onSelect: (status) => this._setStatusFilter(status),
+          ${renderToggleChips({
+            options: BACKLOG_STATUSES,
+            selected: [...this._statuses],
+            onToggle: (status) => this._toggleStatusFilter(status),
             testId: 'backlog-status-filter',
           })}
         </div>
