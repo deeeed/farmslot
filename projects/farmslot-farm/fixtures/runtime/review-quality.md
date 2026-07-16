@@ -50,9 +50,6 @@ If the author omitted a recipe for a UI change, flag it — do not invent proof.
 | `tsc -b` / emitting `.js` into source trees | **must_fix** | use `yarn typecheck` |
 | Hardcoded project logic in `scripts/` | suggestion | should be `project.json` hook |
 | Gateway breaks existing bash scripts | **must_fix** | coexistence rule |
-| Slot helper exec hidden in `@farmslot/slot-config` / `farmslot internal` when it needs `execOnSlot` or `execLocal` | **must_fix** | implement as gateway method routed through `route-method.ts` |
-| Script port changes slot-vs-orchestrator locality or swallows missing project config | **must_fix** | match original `run_on`/local split and preserve hard-fail behavior |
-| Slow read-heavy gateway method only validated through 5s `cdp.mjs gateway` client | suggestion | confirm with real `farmslot --url` CLI before calling it hung |
 | Missing `artifacts_repo` / broken publication upload | suggestion | config + SSH host + public repo |
 | capture-helper TCC denied in tmux without CDP fallback note | suggestion | `capture-helper-tmux-check.sh` |
 
