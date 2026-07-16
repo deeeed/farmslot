@@ -104,6 +104,16 @@ export function selfReviewChecklistMarkPrompt(
   );
 }
 
+/**
+ * Shell probe for "can this persisted session still be resumed": claude/codex
+ * sessions are FILES (transcript/rollout) but grok sessions are DIRECTORIES,
+ * so the probe must be `test -e` — `-f` would silently disable every grok
+ * warm resume.
+ */
+export function resumableSessionProbeCommand(runnerSessionPath: string): string {
+  return `test -e ${shellQuote(runnerSessionPath)}`;
+}
+
 export function reviewerChecklistBasename(contextId: string): string {
   return `SELF-REVIEW.${contextId}.md`;
 }
@@ -287,7 +297,7 @@ export async function runReviewAgent(
     // instead of burning the 120s ready-timeout on a dead `resume`.
     if (warmSession) {
       const probe = warmSession.runnerSessionPath
-        ? await execOnSlot(vars, `test -f ${shellQuote(warmSession.runnerSessionPath)}`, {
+        ? await execOnSlot(vars, resumableSessionProbeCommand(warmSession.runnerSessionPath), {
             timeout: 10_000,
           })
         : null;
@@ -350,9 +360,16 @@ export async function runReviewAgent(
         { sinceMs: handoffAckSinceMs },
       );
       if (claimed) {
+        // Use the claimed binding UNCONDITIONALLY on a resume: capture is
+        // diff-based and prefers fresh paths, so concurrent same-runner
+        // activity can produce a non-null FOREIGN binding — which would then
+        // drive the persisted context and cost attribution. The claimed
+        // session IS the reviewer's session (codex/grok continue the same
+        // file; for claude this trades exact per-loop usage attribution for
+        // never attributing a foreign session).
         sessionMeta = {
-          runnerSessionId: sessionMeta.runnerSessionId ?? claimed.runnerSessionId,
-          runnerSessionPath: sessionMeta.runnerSessionPath ?? claimed.runnerSessionPath,
+          runnerSessionId: claimed.runnerSessionId,
+          runnerSessionPath: claimed.runnerSessionPath,
           error: sessionMeta.error,
         };
       }
