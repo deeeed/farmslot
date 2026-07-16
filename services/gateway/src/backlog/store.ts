@@ -743,7 +743,7 @@ function shouldApplyLinkedRunObservation(item: BacklogItem, run: Run): boolean {
     // Launch-plan candidate runs are gated per-candidate by the attempt guard in
     // applyLaunchPlanRunObservation; the item-level terminal status a failed
     // candidate caused must not block another candidate's replay from being
-    // observed (MANUAL-000038). item.runId tracks only the baseline, so the
+    // observed. item.runId tracks only the baseline, so the
     // own-run replay clause below never matches a comparison candidate.
     if (
       item.launchPlan &&
@@ -775,7 +775,7 @@ function applyRunObservation(item: BacklogItem, run: Run): boolean {
   }
   if (run.status === 'done') {
     // Multi-PR items span several slices: one merged run must not auto-close
-    // the whole item (MANUAL-000035). Return it to ready and clear the run
+    // the whole item. Return it to ready and clear the run
     // link — enqueue rejects run-linked items, so keeping runId would leave a
     // "ready" item that cannot dispatch. Provenance stays in
     // lastObservedRunStatus; final closure is the explicit close-shipped call.

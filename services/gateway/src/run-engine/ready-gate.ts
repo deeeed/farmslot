@@ -395,7 +395,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const videoProofWarning = localVideoProofWarning(preparedPackage?.evidenceManifest);
   // Out-of-band merge detection: if this branch already has a MERGED PR the
   // package is shipped — offer close-as-shipped instead of inviting a
-  // pointless review/approve cycle (the MANUAL-000010 stranded-gate incident).
+  // pointless review/approve cycle that leaves the gate stranded.
   let mergedPrNumber: number | null = null;
   let branchZeroAhead = false;
   if (publicationApprovalGate && ciRepo) {

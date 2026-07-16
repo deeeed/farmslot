@@ -1,4 +1,4 @@
-// Autonomous intake bridge (MANUAL-000036): after `bug batch` scores issues,
+// Autonomous intake bridge: after `bug batch` scores issues,
 // create backlog items for the ones likely to be one-shot fixable so the farm
 // feeds itself. Operator-invoked via `--enqueue-threshold`; items land as
 // `candidate` (never auto-dispatch) so marking ready stays an explicit gate.

@@ -132,7 +132,7 @@ export async function loadQueue(): Promise<void> {
           // run already exists, the dequeue -> run handoff completed before
           // shutdown: drop the row, or a re-dispatch would create a second run
           // with the SAME attempt and equal-attempt observations would alternate
-          // candidate ownership (MANUAL-000038). Strict attempt equality keeps a
+          // candidate ownership. Strict attempt equality keeps a
           // genuine retry row (higher attempt than an old terminal run) alive;
           // undefined === undefined covers legacy rows/runs without attempts.
           const matchingRun = getAllRuns().find(

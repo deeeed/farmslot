@@ -19,7 +19,7 @@ import { createEmitter } from '../envelope.js';
 import { withProgress } from '../progress.js';
 import { TableRenderer } from '../table.js';
 
-/** Accepts a sourceRef (MANUAL-000015), an item id, or an id prefix. */
+/** Accepts a full sourceRef, an item id, or an id prefix. */
 export async function resolveItem(ctx: CommandContext, ref: string): Promise<BacklogItem> {
   const { items } = await ctx.client.call<BacklogListResult>('backlog.list', {});
   const exact = items.find((item) => item.sourceRef === ref || item.id === ref);
