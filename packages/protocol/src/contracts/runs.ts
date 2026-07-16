@@ -399,6 +399,8 @@ export interface ReviewSummary {
   /** Projected from {@link IndependentReviewStatus} — outcome-first, no raw artifacts. */
   independentReviews: Array<{
     id: string;
+    source?: 'dispatch' | 'human-gate' | 'self-review';
+    runner?: string | null;
     model?: string | null;
     crossRunner: boolean;
     loopNumber: number;

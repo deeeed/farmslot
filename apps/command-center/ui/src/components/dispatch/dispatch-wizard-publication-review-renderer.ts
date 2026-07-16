@@ -39,7 +39,7 @@ export function renderPublicationReviewConfig(ctx: PublicationReviewConfigRender
           </div>
         </div>
         <span class="publication-review-summary">
-          ${1 + ctx.plan.length} total${hasExternalReview ? ' · external' : ''}
+          ${1 + ctx.plan.length} total${hasExternalReview ? ' · runner diversity' : ''}
         </span>
       </div>
       <div class="publication-review-sequence">
@@ -88,7 +88,7 @@ function renderReviewLoopRow(
         )}
       </div>
       <span class="publication-review-kind"
-        >${loop.runner === ctx.runner ? 'worker runner' : 'external'}</span
+        >${loop.runner === ctx.runner ? 'worker runner' : 'runner diversity'}</span
       >
       <button class="review-remove" @click=${() => ctx.removeLoop(loop.id)}>Remove</button>
     </div>

@@ -440,7 +440,7 @@ export class DispatchConfigEditor extends LitElement {
                 </div>`,
             )}
           </div>`
-        : html`<div class="section-help">No extra publication review loops configured.</div>`}
+        : html`<div class="section-help">No additional publication review loops configured.</div>`}
       <div class="pill-row">
         <button
           class="pill"

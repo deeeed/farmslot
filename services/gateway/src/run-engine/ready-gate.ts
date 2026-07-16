@@ -105,7 +105,7 @@ export async function executePublishGateReviewPlan(
     updateRunStep(runId, S.HUMAN_GATE, {
       detail: requestedRunner
         ? `Running ${source} ${requestedRunner} review (${planStep.order}/${boundedPlan.length})...`
-        : `Running ${source} worker-runner review (${planStep.order}/${boundedPlan.length})...`,
+        : `Running ${source} independent review (${planStep.order}/${boundedPlan.length})...`,
     });
     const validationDepth =
       planStep.validationDepth ??

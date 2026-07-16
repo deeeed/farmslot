@@ -350,7 +350,7 @@ export function readyReviewBlockingDisplayReason(payload: ReadyGatePayload): str
     return `Trusted passing reviews required ${counts.trustedPassingReviews}/${counts.requiredReviews}`;
   }
   if (counts.externalRequired && counts.externalFreshPassingReviews === 0) {
-    return 'External fresh passing review required';
+    return 'Fresh passing runner-diversity review required';
   }
   if (counts.fullLiveFreshPassingReviews === 0 && counts.requiredReviews > 0) {
     return 'Full live fresh review required';
@@ -468,7 +468,7 @@ export interface GateSummaryDisplay {
 export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
   const review = summary.review;
   const reviewRows: GateSummaryReviewRow[] = review.independentReviews.map((r) => ({
-    label: r.crossRunner ? 'Independent review \u00b7 runner diversity' : 'Independent review',
+    label: [reviewSourceLabel(r), reviewPolicyLabel(r)].filter(Boolean).join(' \u00b7 '),
     verdict: r.verdict,
     attempts: r.attempts,
     unresolvedCount: r.unresolvedCount,

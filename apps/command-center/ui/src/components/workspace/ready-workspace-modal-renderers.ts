@@ -135,7 +135,9 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
                   )}
                 </div>
                 <span class="rdy-review-loop-kind"
-                  >${selectedRunner === ctx.currentRunner ? 'worker runner' : 'external'}</span
+                  >${selectedRunner === ctx.currentRunner
+                    ? 'worker runner'
+                    : 'runner diversity'}</span
                 >
                 <button
                   class="rdy-modal-close"

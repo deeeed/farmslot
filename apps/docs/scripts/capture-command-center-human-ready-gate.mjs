@@ -258,7 +258,7 @@ const readyPayload = {
       {
         ac: 'Show the human gate where an operator can accept or continue steering.',
         verdict: 'RELEVANT_HIGH',
-        reasoning: 'The top bar exposes Mark Ready, Extra Review, and package controls.',
+        reasoning: 'The top bar exposes Mark Ready, Independent Review, and package controls.',
         evidenceRef: 'artifacts/screenshots/audiolab-sample-banner-ios-final.png',
       },
       {
@@ -286,7 +286,7 @@ const readyPayload = {
   ],
   acceptanceCriteria: [
     'Ready gate is rendered from Command Center, not a generated mock card.',
-    'Operator can see approve / extra review / continue-steering decision points.',
+    'Operator can see approve / independent review / continue-steering decision points.',
     'Evidence artifacts include screenshots, video, recipe JSON, trace, and diff snapshot.',
     'Public output excludes private project and machine labels.',
   ],
@@ -299,7 +299,7 @@ const readyPayload = {
       affectedArea: 'Docusaurus / Command Center',
       labels: ['docs', 'demo', 'do-not-merge'],
       description:
-        'Create a public-safe Farmslot demo that shows a completed run waiting for the human to accept, request extra review, or continue steering.',
+        'Create a public-safe Farmslot demo that shows a completed run waiting for the human to accept, request an independent review, or continue steering.',
       acceptanceCriteria: [
         'Use real Command Center UI.',
         'Show proof artifacts and recipe trace.',
@@ -328,7 +328,7 @@ const readyPayload = {
     diffStat: { files: 3, additions: 74, deletions: 12 },
     draftTitle: 'docs: add real Command Center human-ready gate demo',
     draftBody:
-      '## Summary\n\nAdds public-safe Docusaurus demo media for the Farmslot human-ready gate.\n\n## Evidence\n\n- ![AudioLab evidence](artifacts/screenshots/audiolab-sample-banner-ios-final.png)\n- ![EchoBridge evidence](artifacts/screenshots/echobridge-live-recording-ios-final.png)\n- Video: artifacts/videos/ready-gate-steering.mp4\n- Recipe: artifacts/recipe.json\n\n## Operator decision\n\nThe gate is ready for human review: approve the package, request extra review, or send feedback to continue steering.',
+      '## Summary\n\nAdds public-safe Docusaurus demo media for the Farmslot human-ready gate.\n\n## Evidence\n\n- ![AudioLab evidence](artifacts/screenshots/audiolab-sample-banner-ios-final.png)\n- ![EchoBridge evidence](artifacts/screenshots/echobridge-live-recording-ios-final.png)\n- Video: artifacts/videos/ready-gate-steering.mp4\n- Recipe: artifacts/recipe.json\n\n## Operator decision\n\nThe gate is ready for human review: approve the package, request an independent review, or send feedback to continue steering.',
     evidenceManifest: artifacts.map(({ path, purpose, sizeBytes, sha256 }) => ({
       path,
       purpose,
@@ -407,7 +407,7 @@ const decision = {
   createdAt: demoNow(-30_000),
   actions: [
     { id: 'approve-publish', label: 'Approve Publish', style: 'primary' },
-    { id: 'request-extra-review', label: 'Extra Review', style: 'secondary' },
+    { id: 'request-extra-review', label: 'Independent Review', style: 'secondary' },
     { id: 'send-feedback', label: 'Send Feedback', style: 'secondary' },
   ],
   context: { runId: 'demo-ready-run-1', slotId: 'demo-ready-slot' },
@@ -920,7 +920,7 @@ async function verifyReadyGate() {
   const required = [
     'Pre-publication cockpit',
     'Approve Publish',
-    'Extra Review',
+    'Independent Review',
     'PR Preview',
     'Evidence',
     'Quality',
