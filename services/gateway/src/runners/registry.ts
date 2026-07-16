@@ -30,6 +30,10 @@ import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-s
 
 import { claudeHookObservability } from './claude-observability.js';
 import { disagreementReason, logRunnerObservabilityAgreement } from './observability-agreement.js';
+import {
+  buildObservabilityDegradedRecovery,
+  logObservabilityDegradedRecovery,
+} from './observability-degraded.js';
 import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
 import {
   instructionNeedle,
@@ -39,6 +43,7 @@ import {
 import {
   computePromptAcceptedSinceMs,
   isObservabilityReadingAuthoritative,
+  paneRetiredFromEnv,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
   RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
   selectIdleFromObservabilityAndPane,
@@ -111,6 +116,13 @@ export interface RunnerDefinition {
   observabilityScope: ObservabilityScope;
   /** Post-send hook heartbeat window for degraded-mode detection (ADR-032). Null skips check. */
   observabilityHeartbeatMs?: number | null;
+  /**
+   * ADR-032 Phase 3A per-runner pane-retirement flip. When true (or the
+   * {@link OBS_PANE_RETIRED_ENV} env flag is set), this event-driven runner's send/idle/pending
+   * decisions consult hook readings only and never the pane predicates. Default off — flag-off
+   * behavior is byte-identical to Phase 2. Only meaningful for `event-driven` runners.
+   */
+  observabilityPaneRetired?: boolean;
 }
 
 interface PaneClassifierResult {
@@ -323,9 +335,29 @@ export function getRunnerObservability(runnerId?: string | null): RunnerObservab
 }
 
 export {
+  OBS_PANE_RETIRED_ENV,
+  paneRetiredFromEnv,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
   RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
 } from './observability-send-decision.js';
+
+/**
+ * ADR-032 Phase 3A: is the pane retired for this runner's decisions?
+ *
+ * True only for event-driven runners that have a hook observability provider AND either the
+ * {@link OBS_PANE_RETIRED_ENV} env flag is set or the runner's `observabilityPaneRetired` is
+ * true. Pane-only runners (grok/cursor) and `none` are never affected, so their predicate
+ * behavior is byte-identical flag-on/off.
+ */
+export function isRunnerPaneRetired(
+  runnerId?: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!runnerId) return false;
+  const def = getRunnerDefinition(runnerId);
+  if (def.observabilityScope !== 'event-driven' || !getRunnerObservability(runnerId)) return false;
+  return paneRetiredFromEnv(env) || def.observabilityPaneRetired === true;
+}
 
 export function resolveSafeSendTimeoutMs(runnerId: string): number {
   const def = getRunnerDefinition(runnerId);
@@ -1287,6 +1319,7 @@ async function recordRunnerObservabilityAgreement(
   runner: string,
   pane: string,
   logPrefix: string,
+  opts: { paneRetired?: boolean } = {},
 ): Promise<void> {
   const def = getRunnerDefinition(runner);
   if (def.observabilityScope !== 'event-driven') return;
@@ -1313,6 +1346,9 @@ async function recordRunnerObservabilityAgreement(
     );
   }
   const reason = disagreementReason({ paneBusy, hookBusy, hookActivity });
+  // Inverted logging: under the flag the pane would have been consulted only when the hook is
+  // non-authoritative (unknown/absent). `paneBusy` is the counterfactual pane-would-have-said.
+  const wouldConsultPane = opts.paneRetired === true && hookBusy == null;
   logRunnerObservabilityAgreement({
     slotId: vars.slotId,
     runner,
@@ -1326,8 +1362,36 @@ async function recordRunnerObservabilityAgreement(
     hookObservedAt,
     agreed: hookBusy == null ? null : paneBusy === hookBusy,
     ...(reason ? { disagreementReason: reason } : {}),
+    ...(opts.paneRetired ? { paneRetired: true } : {}),
+    ...(wouldConsultPane ? { wouldConsultPane: true } : {}),
     timestamp: Date.now(),
   });
+}
+
+/**
+ * ADR-032 Phase 3A degraded-mode record. Under the pane-retirement flag, when a send holds
+ * because the hook signal is unavailable/stale, capture the pane ONCE for the inverted
+ * agreement log (counterfactual: what the pane predicate would have said), then emit the
+ * ADR-031 deterministic-recovery "hold-send" action. The pane read here is shadow logging,
+ * not a decision input.
+ */
+async function recordObservabilityDegraded(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  logPrefix: string,
+): Promise<void> {
+  const pane = await captureTmuxPane(vars, target);
+  await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix, {
+    paneRetired: true,
+  });
+  const recovery = buildObservabilityDegradedRecovery({
+    slotId: vars.slotId,
+    runner,
+    target,
+    now: Date.now(),
+  });
+  logObservabilityDegradedRecovery(recovery, logPrefix);
 }
 
 async function captureTmuxPane(
@@ -1482,6 +1546,72 @@ async function waitForPaneAfterClassifierAction(
   return null;
 }
 
+/**
+ * ADR-032 Phase 3A hook-only send loop. Reached only when {@link isRunnerPaneRetired} is true.
+ * The decision to send/hold uses hook readings ONLY — the pane predicates
+ * (`paneShowsBusyComposer` / `runnerPaneHasPendingInstruction` / `runnerPaneLooksIdle`) are
+ * never consulted for the decision. Degraded readings (hook `unknown`/absent/stale) resolve to
+ * busy: the send holds, and on timeout an ADR-031 deterministic recovery + attention is emitted
+ * instead of falling back to the pane. Post-send delivery verification inside
+ * {@link submitRunnerInstruction} still reads the pane, which is confirmation, not a decision.
+ */
+async function sendRunnerInstructionHookOnly(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  message: string,
+  logPrefix: string,
+  effectiveTimeoutMs: number,
+  loopStartMs: number,
+  promptAcceptedSinceMs: number,
+): Promise<boolean> {
+  const observability = getRunnerObservability(runner);
+  if (!observability) return false;
+  const deadline = loopStartMs + effectiveTimeoutMs;
+  let sawDegraded = false;
+  while (Date.now() < deadline) {
+    // Idempotent re-nudge: a high-confidence digest match means this exact message already
+    // landed — don't duplicate the send.
+    let promptReading: ObservabilityReading<boolean> | null = null;
+    try {
+      promptReading = await observability.promptAccepted(
+        vars,
+        target,
+        runnerPromptDigest(message),
+        promptAcceptedSinceMs,
+      );
+    } catch (error) {
+      console.warn(
+        `[runner-observability] promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
+      );
+    }
+    if (promptReading?.value === true && promptReading.confidence === 'high') return true;
+
+    const activity = await readRunnerActivityFromObservability(vars, target, runner);
+    const idleDecision = selectIdleFromObservabilityAndPane(activity, false, true);
+    if (idleDecision.degraded) {
+      sawDegraded = true;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      continue;
+    }
+    if (!idleDecision.idle) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      continue;
+    }
+    // Hook-authoritative idle → send fresh. No pane predicate consulted for this decision.
+    return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
+  }
+  if (sawDegraded) {
+    // Degraded hold: emit inverted agreement + ADR-031 deterministic recovery + attention.
+    await recordObservabilityDegraded(vars, target, runner, logPrefix);
+  } else {
+    console.warn(
+      `[${logPrefix}] runner ${runner} stayed busy; skipped sending duplicate/queued prompt to ${target}`,
+    );
+  }
+  return false;
+}
+
 export async function sendRunnerInstructionSafely(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -1496,6 +1626,20 @@ export async function sendRunnerInstructionSafely(
   const effectiveTimeoutMs = timeoutMs ?? resolveSafeSendTimeoutMs(runner);
   const loopStartMs = Date.now();
   const promptAcceptedSinceMs = computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
+  // ADR-032 Phase 3A: pane-retired runners resolve the decision from hooks only. Default off
+  // keeps the pane-fallback path below byte-identical to Phase 2.
+  if (isRunnerPaneRetired(runner)) {
+    return sendRunnerInstructionHookOnly(
+      vars,
+      target,
+      runner,
+      message,
+      logPrefix,
+      effectiveTimeoutMs,
+      loopStartMs,
+      promptAcceptedSinceMs,
+    );
+  }
   // Skip the busy-composer poll iff the runner doesn't require it AND the caller didn't opt
   // in. Most call sites send into an idle prompt where the registry default (Claude: false,
   // codex: true) is correct. The branch-affinity nudge flow targets a Claude session that may

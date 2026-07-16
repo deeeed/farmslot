@@ -594,3 +594,29 @@ test('tmuxWorkerStatusFromPane prefers fresh hook/statusline signals and marks s
     },
   );
 });
+
+test('tmuxWorkerStatusFromPane surfaces observability-degraded for stale hooks under the ADR-032 flag', async (t) => {
+  const { tmuxWorkerStatusFromPane } = await import('./tmux-workers.js');
+  const observedAt = 2_000_000_000_000;
+  const stalePane = {
+    session: 's',
+    window: '0',
+    pane: '0',
+    target: '%1',
+    command: 'claude',
+    signals: { hook: { label: 'hook Stop', observedAt: observedAt - 300_000 } },
+  };
+
+  // Flag off → generic stale-signal (byte-identical to Phase 2).
+  assert.equal(tmuxWorkerStatusFromPane(stalePane, observedAt).attentionReason, 'stale-signal');
+
+  // Flag on → hook-liveness lapse surfaces distinctly BEFORE a nudge is attempted.
+  t.after(() => {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  });
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  const degraded = tmuxWorkerStatusFromPane(stalePane, observedAt);
+  assert.equal(degraded.requiresAttention, true);
+  assert.equal(degraded.attentionReason, 'observability-degraded');
+  assert.equal(degraded.state, 'stale');
+});

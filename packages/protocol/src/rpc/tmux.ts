@@ -12,7 +12,13 @@ export type TmuxWorkerStatusSource =
 export type TmuxWorkerStatusConfidence = 'high' | 'medium' | 'low';
 
 export type TmuxWorkerActivityState = 'active' | 'waiting' | 'idle' | 'stale' | 'unknown';
-export type TmuxWorkerAttentionReason = 'waiting' | 'idle' | 'stale-signal';
+export type TmuxWorkerAttentionReason =
+  | 'waiting'
+  | 'idle'
+  | 'stale-signal'
+  // ADR-032 Phase 3A: hook/statusline liveness lapsed for an event-driven runner while the
+  // pane-retirement flag is on — the operator must know before a nudge is attempted.
+  | 'observability-degraded';
 
 export interface TmuxWorkerRef {
   nodeId: string;

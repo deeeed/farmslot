@@ -14,6 +14,15 @@ export interface RunnerObservabilityAgreementEntry {
   hookObservedAt: number | null;
   agreed: boolean | null;
   disagreementReason?: string;
+  /** ADR-032 Phase 3A: the pane-retirement flag was on for this decision. */
+  paneRetired?: boolean;
+  /**
+   * ADR-032 Phase 3A inverted logging: under the flag the hook reading was
+   * `unknown`/absent, so Phase 2 (flag-off) would have consulted the pane here.
+   * `paneBusy` records what the pane predicate WOULD have returned — the soak
+   * window counts these to prove the fallback is dead weight.
+   */
+  wouldConsultPane?: boolean;
   timestamp: number;
 }
 

@@ -19,6 +19,7 @@ import {
   getRunnerDefinition,
   getRunnerObservability,
   grokPaneShowsColdStartSession,
+  isRunnerPaneRetired,
   normalizeRunner,
   resolveSafeSendTimeoutMs,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
@@ -1246,6 +1247,32 @@ describe('buildLaunchCommand', () => {
     it('uses pane timeout for pane-only runners', () => {
       assert.equal(resolveSafeSendTimeoutMs('grok'), RUNNER_PANE_SAFE_SEND_TIMEOUT_MS);
       assert.equal(resolveSafeSendTimeoutMs('cursor'), RUNNER_PANE_SAFE_SEND_TIMEOUT_MS);
+    });
+  });
+
+  describe('ADR-032 phase 3A pane-retirement flag', () => {
+    const ON = { FARMSLOT_OBS_PANE_RETIRED: '1' } as NodeJS.ProcessEnv;
+    const OFF = {} as NodeJS.ProcessEnv;
+
+    it('defaults OFF for every runner (no env, no per-def flip)', () => {
+      for (const runner of ['claude', 'codex', 'grok', 'cursor', 'opencode', 'none']) {
+        assert.equal(isRunnerPaneRetired(runner, OFF), false, `${runner} should default off`);
+      }
+    });
+
+    it('env flag retires the pane for event-driven runners only', () => {
+      assert.equal(isRunnerPaneRetired('claude', ON), true);
+      assert.equal(isRunnerPaneRetired('codex', ON), true);
+      // pane-only + none stay byte-identical (flag never applies).
+      assert.equal(isRunnerPaneRetired('grok', ON), false);
+      assert.equal(isRunnerPaneRetired('cursor', ON), false);
+      assert.equal(isRunnerPaneRetired('opencode', ON), false);
+      assert.equal(isRunnerPaneRetired('none', ON), false);
+    });
+
+    it('null/undefined runner is never retired', () => {
+      assert.equal(isRunnerPaneRetired(null, ON), false);
+      assert.equal(isRunnerPaneRetired(undefined, ON), false);
     });
   });
 

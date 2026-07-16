@@ -21,6 +21,7 @@ import type {
 import { getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
+import { paneRetiredFromEnv } from '../runners/observability-send-decision.js';
 import { listRuns } from '../runs/store.js';
 
 const TMUX_PANES_TIMEOUT_MS = 5_000;
@@ -165,6 +166,13 @@ export function tmuxWorkerStatusFromPane(
 
   if (hook || statusline) {
     const signal = hook ?? statusline;
+    // ADR-032 Phase 3A: a lapsed hook/statusline signal for an event-driven runner is an
+    // observability-liveness failure, not just a stale task signal. Under the pane-retirement
+    // flag the send path can no longer fall back to the pane, so surface it distinctly in slot
+    // health BEFORE a nudge is attempted. Flag-off keeps the generic `stale-signal` (byte-identical).
+    const reason: TmuxWorkerAttentionReason = paneRetiredFromEnv()
+      ? 'observability-degraded'
+      : 'stale-signal';
     return withAttention(
       {
         label: signal?.label ?? 'stale worker signal',
@@ -175,7 +183,7 @@ export function tmuxWorkerStatusFromPane(
           : { observedAt }),
         state: 'stale',
       },
-      'stale-signal',
+      reason,
     );
   }
 

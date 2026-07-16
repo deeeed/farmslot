@@ -15,6 +15,7 @@ import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { bumpRunGeneration, cancelRunEngine, startRun } from '../../run-engine/orchestrator.js';
 import {
+  isRunnerPaneRetired,
   normalizeRunner,
   runnerContinueCommand,
   runnerPaneLooksIdle,
@@ -170,7 +171,10 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
         .filter(Boolean);
       const runner = normalizeRunner(existing.metrics.runner);
       const nudge = runnerContinueCommand(runner);
-      if (nudge && runnerPaneLooksIdle(lines, runner)) {
+      // ADR-032 Phase 3A: when the pane is retired for this runner, skip the pane-idle pre-gate
+      // and let the hook-only safe-send own the idle/busy decision. Flag-off keeps the pane gate
+      // (byte-identical).
+      if (nudge && (isRunnerPaneRetired(runner) || runnerPaneLooksIdle(lines, runner))) {
         const sent = await sendRunnerInstructionSafely(vars, session, runner, nudge, 'run-resume');
         console.log(
           `[run] worker idle at prompt — ${sent ? 'submitted' : 'failed to submit'} resume instruction`,

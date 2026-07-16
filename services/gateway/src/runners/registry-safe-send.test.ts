@@ -429,3 +429,110 @@ test('a persistently buffered composer fails loudly instead of concatenating a r
     `never retype over a stuck buffer — the text would concatenate; order=${callOrder.join(',')}`,
   );
 });
+
+// --- ADR-032 Phase 3A pane-retirement flag ---
+
+test('flag-on claude hook-idle send never captures pane before the send decision', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  // Not a high-confidence digest match → not "already delivered"; the loop should fresh-send.
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: Date.now(),
+  };
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'claude',
+      message,
+      '[test]',
+      10_000,
+      {
+        forceBusyPoll: true,
+      },
+    );
+    assert.equal(sent, true);
+    const sendIdx = callOrder.indexOf('tmux:send');
+    const firstPaneIdx = callOrder.indexOf('pane:capture');
+    assert.ok(sendIdx >= 0, `expected a send; order=${callOrder.join(',')}`);
+    assert.ok(
+      callOrder.includes('obs:getActivity'),
+      `expected hook read; order=${callOrder.join(',')}`,
+    );
+    // Decision consulted hooks only: no pane capture happened before the send-keys.
+    assert.ok(
+      firstPaneIdx === -1 || firstPaneIdx > sendIdx,
+      `pane must not be consulted before the hook-only send; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude degraded (hook unknown) holds the send instead of pane fallback', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'unknown',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  promptAcceptedReading = null;
+  paneText = '❯\nctx:12%\n';
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    // Small timeout so the degraded hold resolves fast.
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+    });
+    assert.equal(sent, false);
+    assert.equal(
+      callOrder.indexOf('tmux:send'),
+      -1,
+      `degraded hold must not send into a blind composer; order=${callOrder.join(',')}`,
+    );
+    assert.ok(callOrder.includes('obs:getActivity'));
+  } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude with high-confidence digest match reports already-delivered without resending', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'claude',
+      message,
+      '[test]',
+      10_000,
+      {
+        forceBusyPoll: true,
+      },
+    );
+    assert.equal(sent, true);
+    assert.equal(
+      callOrder.indexOf('tmux:send'),
+      -1,
+      `already-delivered must not resend; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
