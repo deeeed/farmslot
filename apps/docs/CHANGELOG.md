@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- docs: the human-ready-gate demo capture (fixture label, verification list, prose, recipe assertion) uses the unified _Independent Review_ language (MANUAL-000008); the checked-in demo screenshot refreshes on the next capture-harness run.
+
 - docs: rename the branch-maintenance flow `merge-main` → `update-branch` across the worker-artifacts/finish/quality reference pages, the customize-worker-prompts guide, and generated template-variable docs.
 - Document passive UI observations in Recipe Protocol v1 and refresh the published recipe schema.
 - Regenerate the gateway API reference to drop the removed `slot.prepare.output` event.
