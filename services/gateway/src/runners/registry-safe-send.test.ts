@@ -70,6 +70,10 @@ mock.module('../core/exec.js', {
       }
       if (cmd.includes('send-keys') || cmd.includes('send-text')) {
         callOrder.push('tmux:send');
+        // A literal payload (-l) is the message being TYPED; a bare send is a
+        // key like Enter. The distinction is what separates fresh-send from
+        // submit-existing in assertions.
+        if (cmd.includes(' -l ')) callOrder.push('tmux:send-literal');
         return { exitCode: 0, stdout: '', stderr: '' };
       }
       if (cmd.includes('python3 -')) {
@@ -279,4 +283,49 @@ test('sendRunnerInstructionSafely falls back to pane when hook activity is unkno
   assert.equal(sent, true);
   assert.ok(callOrder.includes('pane:capture'));
   assert.ok(callOrder.includes('obs:getActivity'));
+});
+
+test('sendRunnerInstructionSafely types the message when hook says not-accepted and the composer is empty', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = '❯\nctx:12%\n'; // empty composer — nothing buffered
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+
+  assert.equal(sent, true);
+  assert.ok(callOrder.includes('pane:capture'), 'must check the pane before trusting pending');
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `an authoritative not-accepted reading with an EMPTY composer must TYPE the message — a bare Enter reports success while the instruction was never delivered; order=${callOrder.join(',')}`,
+  );
+});
+
+test('sendRunnerInstructionSafely submits the buffered instruction when the pane shows it', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+
+  assert.equal(sent, true);
+  assert.ok(callOrder.includes('tmux:send'));
+  assert.equal(
+    callOrder.indexOf('tmux:send-literal'),
+    -1,
+    `a genuinely buffered instruction submits with Enter only — retyping would double the text; order=${callOrder.join(',')}`,
+  );
 });

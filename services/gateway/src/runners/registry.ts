@@ -1476,7 +1476,23 @@ export async function sendRunnerInstructionSafely(
       promptAcceptedSinceMs,
     );
     if (pendingObs.kind === 'hook' && pendingObs.pending) {
-      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+      // An authoritative not-accepted reading only means the runner never saw
+      // the digest — it does NOT prove text is buffered in the composer. An
+      // Enter on an empty composer reports success while the instruction was
+      // never typed, so require pane evidence before submit-existing.
+      const pane = await captureTmuxPane(vars, target);
+      if (runnerPaneHasPendingInstruction(pane, message, runner)) {
+        return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+      }
+      return sendRunnerInstructionWhenPaneClear(
+        vars,
+        target,
+        runner,
+        message,
+        pane,
+        promptAcceptedSinceMs,
+        logPrefix,
+      );
     }
     if (pendingObs.kind === 'fallback') {
       const pane = await captureTmuxPane(vars, target);
@@ -1507,9 +1523,13 @@ export async function sendRunnerInstructionSafely(
     };
 
     if (pendingObs.kind === 'hook' && pendingObs.pending) {
-      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
-    }
-    if (pendingObs.kind === 'fallback') {
+      // Same pane-evidence rule as the fast path; with nothing buffered, fall
+      // through to the busy-aware delivery below instead of a blind Enter.
+      const captured = await ensurePane();
+      if (runnerPaneHasPendingInstruction(captured, message, runner)) {
+        return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+      }
+    } else if (pendingObs.kind === 'fallback') {
       const captured = await ensurePane();
       if (
         await runnerHasPendingInstruction(
