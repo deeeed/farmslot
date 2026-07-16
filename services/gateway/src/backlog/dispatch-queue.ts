@@ -127,6 +127,28 @@ export async function loadQueue(): Promise<void> {
             continue;
           }
         }
+        if (normalized.backlogItemId && normalized.launchPlanId && normalized.launchCandidateId) {
+          // A launch-candidate row's run carries the row's launchAttempt. If that
+          // run already exists, the dequeue -> run handoff completed before
+          // shutdown: drop the row, or a re-dispatch would create a second run
+          // with the SAME attempt and equal-attempt observations would alternate
+          // candidate ownership (MANUAL-000038). Strict attempt equality keeps a
+          // genuine retry row (higher attempt than an old terminal run) alive;
+          // undefined === undefined covers legacy rows/runs without attempts.
+          const matchingRun = getAllRuns().find(
+            (run) =>
+              run.backlogItemId === normalized.backlogItemId &&
+              run.launchPlanId === normalized.launchPlanId &&
+              run.launchCandidateId === normalized.launchCandidateId &&
+              run.launchAttempt === normalized.launchAttempt,
+          );
+          if (matchingRun) {
+            console.log(
+              `[dispatch-queue] reconciled dispatching launch-candidate item ${normalized.id.slice(0, 8)} to run ${matchingRun.id.slice(0, 8)}`,
+            );
+            continue;
+          }
+        }
         // Gateway shutdown between dequeue and run creation leaves no durable
         // run to reconcile, so reset the item and let normal queue dispatch try
         // again instead of dropping it on restart.

@@ -740,6 +740,19 @@ function shouldApplyLinkedRunObservation(item: BacklogItem, run: Run): boolean {
   if (!TERMINAL_STATUSES.has(item.status)) return true;
   if (item.status === 'done' || item.status === 'archived') return false;
   if (item.status === 'needs-attention' || item.status === 'failed') {
+    // Launch-plan candidate runs are gated per-candidate by the attempt guard in
+    // applyLaunchPlanRunObservation; the item-level terminal status a failed
+    // candidate caused must not block another candidate's replay from being
+    // observed (MANUAL-000038). item.runId tracks only the baseline, so the
+    // own-run replay clause below never matches a comparison candidate.
+    if (
+      item.launchPlan &&
+      run.launchCandidateId &&
+      run.launchPlanId === item.launchPlan.id &&
+      item.launchPlan.candidates.some((candidate) => candidate.id === run.launchCandidateId)
+    ) {
+      return true;
+    }
     // Apply when the run reaches a terminal state, or when the item's OWN linked
     // run has been re-activated to a non-terminal status — a replay. Without the
     // latter, replaying a failed run leaves the backlog item stuck at failed

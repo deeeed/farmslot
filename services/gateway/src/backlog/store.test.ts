@@ -1135,6 +1135,151 @@ test('candidate attempt survives persistence and reload', async () => {
   assert.equal(reloaded?.attempt, 3); // counter must not regress on restart
 });
 
+test('restart drops a dispatching launch-candidate row whose run already exists', async () => {
+  const { backlog, queue, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Restart reconcile',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_restart',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+      ],
+    },
+  });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  // Simulate gateway shutdown mid-handoff: row is 'dispatching' on disk and the
+  // run it produced is durable with the SAME launchAttempt.
+  const row = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id)!;
+  row.status = 'dispatching';
+  await queue.persistQueueNow();
+  runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    launchPlanId: 'lp_restart',
+    launchCandidateId: 'baseline',
+    launchAttempt: row.launchAttempt,
+  } as never);
+
+  await queue.loadQueue();
+  // Row reconciled to its run — NOT re-queued (a re-dispatch would mint a second
+  // run with the same attempt and alternate candidate ownership).
+  assert.equal(
+    queue.getQueueSnapshot().some((item) => item.id === enqueued.queueItem.id),
+    false,
+  );
+});
+
+test('restart re-queues a dispatching launch-candidate row with no durable run', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Restart requeue',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_requeue',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+      ],
+    },
+  });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  const row = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id)!;
+  row.status = 'dispatching';
+  await queue.persistQueueNow();
+
+  await queue.loadQueue();
+  // Shutdown hit between dequeue and run creation: the attempt was never used by
+  // any run, so re-queuing (attempt intact) is safe and loses no work.
+  const reloaded = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id);
+  assert.equal(reloaded?.status, 'queued');
+  assert.equal(reloaded?.launchAttempt, row.launchAttempt);
+});
+
+test('a comparison-candidate replay is observed while the plan is terminal', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Replay after failure',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_replay',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+        {
+          id: 'sonnet',
+          role: 'comparison',
+          runner: 'claude',
+          model: 'sonnet',
+          variant: 'claude-sonnet',
+          slotPolicy: { kind: 'pool', allowedSlots: ['macwork-ff-2'] },
+        },
+      ],
+    },
+  });
+  const mkRun = (candidate: string, launchAttempt: number, status: string) => {
+    const run = runStore.createRun({
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: created.item.sourceRef,
+      backlogItemId: created.item.id,
+      launchPlanId: 'lp_replay',
+      launchCandidateId: candidate,
+      launchAttempt,
+    } as never);
+    return runStore.updateRun(run.id, { status } as never);
+  };
+  backlog.markBacklogRunObserved({ ...mkRun('baseline', 1, 'monitoring') } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const sonnetRun = mkRun('sonnet', 1, 'failed');
+  backlog.markBacklogRunObserved({ ...sonnetRun } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const item = () => backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item()?.status, 'failed'); // rollUp: any failed candidate fails the plan
+
+  // Replay the failed comparison run (same run id re-activated). Before the
+  // candidate-aware gate this observation was dropped because item.runId tracks
+  // the baseline, leaving the plan terminally failed while the replay ran.
+  runStore.updateRun(sonnetRun.id, { status: 'monitoring' } as never);
+  backlog.markBacklogRunObserved({ ...sonnetRun, status: 'monitoring' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const sonnetProjection = item()?.launchPlanState?.candidates.find(
+    (c) => c.candidateId === 'sonnet',
+  );
+  assert.equal(sonnetProjection?.status, 'running');
+  assert.equal(item()?.status, 'running'); // no failed projections remain
+});
+
 test('multiPr survives persistence and reload', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
