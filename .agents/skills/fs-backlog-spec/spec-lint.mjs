@@ -15,7 +15,7 @@ if (files.length === 0) {
 // An AC bullet must name a machine-checkable proof surface. Backtick refs cover
 // commands/paths/symbols; the verb forms cover "X tests prove/reject/..." prose.
 const CHECK_MARKER =
-  /`[^`]+`|\btests?\b[^.]*\b(prove|show|assert|cover|pass(es)?|fail(s)?|reject(s)?)\b|\b(typecheck|lint|CI\b|CDP|recipe (run|regression)|exit (0|non-zero|code))\b/i;
+  /`[^`]+`|\btests?\b[^.]*\b(proves?|shows?|asserts?|covers?|pass(es)?|fail(s)?|reject(s)?)\b|\b(typecheck|lint|CI\b|CDP|recipe (run|regression)|exit (0|non-zero|code))\b/i;
 
 // Operator-eyeball and wall-clock acceptance can never be verified by a worker
 // or a reviewer inside one run — they fail hard, not as warnings.
