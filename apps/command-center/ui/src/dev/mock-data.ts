@@ -1165,7 +1165,7 @@ export function mockPipelineRuns(): Run[] {
             { id: 'approve-publish', label: 'Approve Publish', style: 'primary' },
             { id: 'hold', label: 'Hold', style: 'secondary' },
             { id: 'send-feedback', label: 'Send Feedback', style: 'secondary' },
-            { id: 'request-extra-review', label: 'Request Extra Review', style: 'secondary' },
+            { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
             {
               id: 'request-external-review',
               label: 'Request Independent Review (runner diversity)',
@@ -1900,7 +1900,7 @@ export function mockPipelineRuns(): Run[] {
           description: 'Operator requested one more independent review before publication.',
           actions: [
             { id: 'approve-publish', label: 'Approve Publish', style: 'primary' },
-            { id: 'request-extra-review', label: 'Request Extra Review', style: 'secondary' },
+            { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
           ],
           createdAt: new Date(now - 4 * 60000).toISOString(),
           resolvedAt: new Date(now - 3 * 60000).toISOString(),
