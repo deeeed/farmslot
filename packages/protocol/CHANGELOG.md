@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- chore: comment-only sweep — code comments describe rationale inline instead of citing ticket numbers (no behavior change).
+
 - feat: `ReviewSummary.independentReviews[]` rows gain optional `source` and `runner` so gate-summary surfaces can render _Independent review (requested)_ and `runner: <id>` policy metadata (additive; older persisted summaries simply omit them); review-loop JSDoc comments use independent-review language.
 
 - feat: launch-plan attempt fields for MANUAL-000037 — `QueueItem.launchAttempt`, `Run.launchAttempt`, `RunCreateParams.launchAttempt`, and `BacklogLaunchCandidateProjection.attempt`: a monotonic per-candidate attempt so backlog run observations can tell a legitimate re-enqueue takeover from a stale echo of a superseded run.
