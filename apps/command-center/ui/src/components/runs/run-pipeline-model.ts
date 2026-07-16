@@ -484,7 +484,7 @@ function publicationReviewPlanNodes(
       nodesByOrder.set(index + 1, {
         id: `${phase}-publication-review-${index + 1}`,
         order: index + 1,
-        label: phase === 'post-gate' ? `extra ${order}` : `review ${order}`,
+        label: phase === 'post-gate' ? `requested ${order}` : `review ${order}`,
         meta: `${runner}${model ? ` · ${model}` : ''}`,
         step,
       });
@@ -534,7 +534,7 @@ function publicationReviewPlanNodes(
       nodesByOrder.set(order, {
         id: `${phase}-publication-review-${order}`,
         order,
-        label: phase === 'post-gate' ? `extra ${order}` : `review ${order}`,
+        label: phase === 'post-gate' ? `requested ${order}` : `review ${order}`,
         meta,
         step: {
           ...syntheticStep(`${phase}-publication-review-${order}`, status, verdict || runner),
@@ -632,7 +632,7 @@ function activeReviewFromHumanGateDetail(
   return {
     id,
     order,
-    label: phase === 'post-gate' ? `extra ${current}` : `review ${current}`,
+    label: phase === 'post-gate' ? `requested ${current}` : `review ${current}`,
     meta: `${runner} · running`,
     step,
   };

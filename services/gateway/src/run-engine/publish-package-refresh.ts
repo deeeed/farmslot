@@ -230,8 +230,12 @@ export async function refreshPublishPackage(params: {
       : []),
     ...(evidenceRefreshAction ? [evidenceRefreshAction] : []),
     { id: 'hold', label: 'Hold', style: 'secondary' },
-    { id: 'request-extra-review', label: 'Request Extra Review', style: 'secondary' },
-    { id: 'request-cross-runner-review', label: 'Request External Review', style: 'secondary' },
+    { id: 'request-extra-review', label: 'Request Independent Review', style: 'secondary' },
+    {
+      id: 'request-cross-runner-review',
+      label: 'Request Independent Review (runner diversity)',
+      style: 'secondary',
+    },
   ];
   const nextPayload: ReadyGatePayload = {
     ...oldPayload,

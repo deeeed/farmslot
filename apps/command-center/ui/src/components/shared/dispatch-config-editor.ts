@@ -440,7 +440,7 @@ export class DispatchConfigEditor extends LitElement {
                 </div>`,
             )}
           </div>`
-        : html`<div class="section-help">No extra publication review loops configured.</div>`}
+        : html`<div class="section-help">No additional publication review loops configured.</div>`}
       <div class="pill-row">
         <button
           class="pill"
@@ -448,7 +448,7 @@ export class DispatchConfigEditor extends LitElement {
           ?disabled=${this.disabled || loops.length >= 5}
           @click=${() => this.addReviewLoop('same')}
         >
-          Add worker review
+          Add independent review
         </button>
         <button
           class="pill"
@@ -456,7 +456,7 @@ export class DispatchConfigEditor extends LitElement {
           ?disabled=${this.disabled || loops.length >= 5}
           @click=${() => this.addReviewLoop('codex')}
         >
-          Add external review
+          Add independent review (runner diversity)
         </button>
       </div>
     </div>`;

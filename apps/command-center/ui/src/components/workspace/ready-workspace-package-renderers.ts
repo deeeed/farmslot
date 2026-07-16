@@ -71,7 +71,8 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
           : nothing}
         ${reviewSummary.externalRequired
           ? html`<span
-              >External ${reviewSummary.externalFreshPassingReviews ? 'present' : 'required'}</span
+              >Runner diversity
+              ${reviewSummary.externalFreshPassingReviews ? 'present' : 'required'}</span
             >`
           : nothing}
         ${ctx.publishEvidence.length

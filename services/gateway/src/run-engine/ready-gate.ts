@@ -105,7 +105,7 @@ export async function executePublishGateReviewPlan(
     updateRunStep(runId, S.HUMAN_GATE, {
       detail: requestedRunner
         ? `Running ${source} ${requestedRunner} review (${planStep.order}/${boundedPlan.length})...`
-        : `Running ${source} worker-runner review (${planStep.order}/${boundedPlan.length})...`,
+        : `Running ${source} independent review (${planStep.order}/${boundedPlan.length})...`,
     });
     const validationDepth =
       planStep.validationDepth ??
@@ -499,12 +499,12 @@ export async function executeReadyGate(runId: string): Promise<string> {
           { id: 'hold', label: 'Hold', style: 'secondary' as const },
           {
             id: 'request-extra-review',
-            label: 'Request Extra Review',
+            label: 'Request Independent Review',
             style: 'secondary' as const,
           },
           {
             id: 'request-cross-runner-review',
-            label: 'Request External Review',
+            label: 'Request Independent Review (runner diversity)',
             style: 'secondary' as const,
           },
         ]

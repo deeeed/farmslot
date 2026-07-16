@@ -390,7 +390,7 @@ export function renderPackageRefreshPipelineNode(
       <text class="node-meta" x="${n.w / 2}" y="27"
             text-anchor="middle" dominant-baseline="central"
             fill="${isFailed ? colors.statusFail : isDone ? colors.statusOk : colors.textSecondary}">
-        ${isDone ? 'updated' : isFailed ? 'failed' : 'after extra review'}
+        ${isDone ? 'updated' : isFailed ? 'failed' : 'after requested review'}
       </text>
     </g>
   `;

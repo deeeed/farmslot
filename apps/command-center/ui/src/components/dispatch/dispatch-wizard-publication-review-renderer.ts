@@ -35,11 +35,11 @@ export function renderPublicationReviewConfig(ctx: PublicationReviewConfigRender
           <div class="section-label">Publication reviews</div>
           <div class="section-help">
             Base ${runnerLabel(ctx.runner)} ${baseLabel} always runs before the ready gate. Add
-            ordered extra review loops now; you can still add more from the ready gate.
+            ordered independent review loops now; you can still add more from the ready gate.
           </div>
         </div>
         <span class="publication-review-summary">
-          ${1 + ctx.plan.length} total${hasExternalReview ? ' · external' : ''}
+          ${1 + ctx.plan.length} total${hasExternalReview ? ' · runner diversity' : ''}
         </span>
       </div>
       <div class="publication-review-sequence">
@@ -56,14 +56,14 @@ export function renderPublicationReviewConfig(ctx: PublicationReviewConfigRender
           ?disabled=${ctx.loops.length >= 5}
           @click=${() => ctx.addWorkerReviewLoop()}
         >
-          + Worker-runner review
+          + Independent review
         </button>
         <button
           class="pill"
           ?disabled=${ctx.loops.length >= 5}
           @click=${() => ctx.addExternalReviewLoop()}
         >
-          + External review
+          + Independent review (runner diversity)
         </button>
       </div>
     </div>
@@ -88,7 +88,7 @@ function renderReviewLoopRow(
         )}
       </div>
       <span class="publication-review-kind"
-        >${loop.runner === ctx.runner ? 'worker runner' : 'external'}</span
+        >${loop.runner === ctx.runner ? 'worker runner' : 'runner diversity'}</span
       >
       <button class="review-remove" @click=${() => ctx.removeLoop(loop.id)}>Remove</button>
     </div>

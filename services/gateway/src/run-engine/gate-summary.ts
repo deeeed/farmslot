@@ -181,6 +181,8 @@ export function buildReviewSummary(run: Run): ReviewSummary {
 
   const independentReviews = independentEntries.map((r) => ({
     id: r.id,
+    ...(r.source ? { source: r.source } : {}),
+    runner: r.runner ?? null,
     model: r.model ?? null,
     crossRunner: r.crossRunner,
     loopNumber: r.loopNumber,

@@ -112,7 +112,7 @@ yarn --cwd apps/docs capture:human-ready-gate \
   --copy-to-docs
 ```
 
-The current capture records the real Command Center ready-workspace surface with public-safe demo data, opens evidence/quality tabs, opens the extra-review modal, verifies forbidden labels are absent from the visible page, and copies only the inspected MP4/poster/screenshot into the docs site.
+The current capture records the real Command Center ready-workspace surface with public-safe demo data, opens evidence/quality tabs, opens the independent-review modal, verifies forbidden labels are absent from the visible page, and copies only the inspected MP4/poster/screenshot into the docs site.
 
 ### Gateway intelligence from Command Center
 
