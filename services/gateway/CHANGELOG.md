@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(gateway): same-run warm review session policy (MANUAL-000009). `self_review.session_policy` (project.json) selects `fresh-per-pass` (default — unchanged kill/relaunch per pass) or `warm-per-reviewer`, which resumes the SAME reviewer runner session (`claude --resume` / `codex resume` / `grok --resume`) for re-reviews within one run's review loop and narrows the re-review prompt to the worker's fixes since the previous findings. Warm reuse is scoped strictly to one run — a claim requires exact `runId` + task dir + artifact scope + runner + subject lineage (run branch) — and sessions become forensic-only (never claimable) on review-gate exit, run cancel, and slot release; a later or unrelated run can never resume another run's reviewer. Per-loop artifacts (`review-loop-N`, fix deltas, usage, reviewed head) are unchanged in both modes. `SelfReviewOptions.reviewSessionPolicy` overrides per call; runners without persisted session reload (cursor) always run fresh.
+
 - chore: comment-only sweep — code comments describe rationale inline instead of citing ticket numbers (no behavior change).
 
 - refactor(gateway): ready-gate and publish-package decision labels read _Request Independent Review_ / _Request Independent Review (runner diversity)_ (action ids `request-extra-review` / `request-cross-runner-review` unchanged for replay compatibility); review artifact verdict suffix and gate messages use independent-review/runner-diversity language (MANUAL-000008).

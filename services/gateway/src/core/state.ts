@@ -10,6 +10,13 @@ import { farmslotRoot } from './config.js';
 
 const statusFile = path.join(farmslotRoot, '.farm-status.json');
 
+/** Called with the slotId whenever resetSlot runs (higher layers register cleanups). */
+const slotResetListeners: Array<(slotId: string) => void> = [];
+
+export function onSlotReset(listener: (slotId: string) => void): void {
+  slotResetListeners.push(listener);
+}
+
 // Serialize read-modify-write so concurrent updates to different slots don't stomp each other.
 let writeChain: Promise<void> = Promise.resolve();
 
@@ -130,6 +137,11 @@ export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // button). The previous teardown-in-resetSlot path was the source of
   // the live-sim kill problem.
   void warm; // kept for API compatibility — caller still distinguishes warm vs cold elsewhere
+
+  // Slot release ends any warm reviewer sessions that lived on this slot — a
+  // later run must never resume a prior run's reviewer context. Listener
+  // registration (see initSelfReview) keeps core/ free of upward imports.
+  for (const listener of slotResetListeners) listener(slotId);
 
   await updateSlotStatus(slotId, {
     lifecycle: 'ready',

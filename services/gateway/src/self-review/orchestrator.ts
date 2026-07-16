@@ -26,6 +26,7 @@ import {
 } from '../agents/contexts.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { onSlotReset } from '../core/state.js';
 import {
   respawnTmuxWindowWithCommand,
   shellQuote,
@@ -58,6 +59,12 @@ import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-s
 import { parseSelfReviewIssueBullets } from './issues.js';
 import { initSelfReviewProgress, startProgressWatcher } from './progress.js';
 import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
+import {
+  DEFAULT_REVIEW_SESSION_POLICY,
+  invalidateWarmReviewerSessions,
+  invalidateWarmReviewerSessionsForSlot,
+  type ReviewSessionPolicy,
+} from './session-policy.js';
 import {
   captureCurrentHeadSha,
   captureFixDeltaSnapshot,
@@ -99,6 +106,8 @@ export interface SelfReviewOptions {
   validationDepth?: ReviewValidationDepth | null;
   artifactScope?: string | null;
   publicationReview?: boolean | null;
+  /** Overrides project self_review.session_policy for this review loop. */
+  reviewSessionPolicy?: ReviewSessionPolicy | null;
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
@@ -155,6 +164,11 @@ export function resolveSelfReviewRunnerModel(
 
 export function initSelfReview(broadcast: BroadcastFn): void {
   initSelfReviewProgress(broadcast);
+  // Slot release must end every warm reviewer session that lived on the slot;
+  // registered as a listener so core/state carries no upward import.
+  onSlotReset((slotId) => {
+    invalidateWarmReviewerSessionsForSlot(slotId);
+  });
 }
 
 export async function executeSelfReview(
@@ -183,6 +197,8 @@ export async function executeSelfReview(
   const maxRetries = Math.max(0, Math.min(5, options.maxRetries ?? config.max_retries ?? 1));
   const validationDepth = options.validationDepth ?? 'full-live';
   const artifactScope = options.artifactScope ?? null;
+  const sessionPolicy =
+    options.reviewSessionPolicy ?? config.session_policy ?? DEFAULT_REVIEW_SESSION_POLICY;
   const reviewTimeoutMs = (config.review_timeout_min ?? DEFAULT_REVIEW_TIMEOUT_MIN) * 60_000;
   const start = Date.now();
 
@@ -193,105 +209,116 @@ export async function executeSelfReview(
     return { skipped: true, reason: 'no-task-dir', retryCount: 0 };
   }
 
-  const recoveredFixResult = await recoverSelfReviewFixPass({
-    vars,
-    taskDir,
-    slotId,
-    runId,
-    start,
-    reviewRunner,
-    model,
-    workerRunner,
-    maxRetries,
-    reviewTimeoutMs,
-    validationDepth,
-    artifactScope,
-  });
-  if (recoveredFixResult)
-    return {
-      ...recoveredFixResult,
-      usage: recoveredFixResult.attempts?.at(-1)?.usage,
-      runner: reviewRunner,
+  try {
+    const recoveredFixResult = await recoverSelfReviewFixPass({
+      vars,
+      taskDir,
+      slotId,
+      runId,
+      start,
+      reviewRunner,
       model,
-      crossRunner: isCrossRunnerReview,
-    };
+      workerRunner,
+      maxRetries,
+      reviewTimeoutMs,
+      validationDepth,
+      artifactScope,
+      sessionPolicy,
+    });
+    if (recoveredFixResult)
+      return {
+        ...recoveredFixResult,
+        usage: recoveredFixResult.attempts?.at(-1)?.usage,
+        runner: reviewRunner,
+        model,
+        crossRunner: isCrossRunnerReview,
+      };
 
-  // First review pass
-  debugSelfReviewLog(
-    `[self-review] run ${runId.slice(0, 8)} — spawning review agent (${reviewRunner}/${model}, timeout ${reviewTimeoutMs / 60_000}min)`,
-  );
-  const result = await runReviewAgent(
-    vars,
-    reviewRunner,
-    model,
-    taskDir,
-    slotId,
-    runId,
-    reviewTimeoutMs,
-    1,
-    validationDepth,
-    artifactScope,
-  );
-
-  if (result.incomplete) {
-    console.warn(
-      `[self-review] run ${runId.slice(0, 8)} — INCOMPLETE: agent exited without writing feedback`,
+    // First review pass
+    debugSelfReviewLog(
+      `[self-review] run ${runId.slice(0, 8)} — spawning review agent (${reviewRunner}/${model}, timeout ${reviewTimeoutMs / 60_000}min)`,
     );
-    const attempts = [reviewAttemptFromResult(result, 1)];
-    return {
-      skipped: true,
-      reason: 'no-feedback-file',
+    const result = await runReviewAgent(
+      vars,
+      reviewRunner,
+      model,
+      taskDir,
+      slotId,
+      runId,
+      reviewTimeoutMs,
+      1,
+      validationDepth,
+      artifactScope,
+      sessionPolicy,
+    );
+
+    if (result.incomplete) {
+      console.warn(
+        `[self-review] run ${runId.slice(0, 8)} — INCOMPLETE: agent exited without writing feedback`,
+      );
+      const attempts = [reviewAttemptFromResult(result, 1)];
+      return {
+        skipped: true,
+        reason: 'no-feedback-file',
+        retryCount: 0,
+        validationDepth,
+        usage: result.usage,
+        reviewSnapshot: result.reviewSnapshot,
+        attempts,
+        timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
+        durationMs: Date.now() - start,
+      };
+    }
+
+    if (result.verdict === 'pass') {
+      debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — PASS (${Date.now() - start}ms)`);
+      return {
+        verdict: 'pass',
+        issues: [],
+        validationDepth,
+        usage: result.usage,
+        reviewSnapshot: result.reviewSnapshot,
+        attempts: [reviewAttemptFromResult(result, 1)],
+        timeline: result.timeline,
+        runner: reviewRunner,
+        model,
+        crossRunner: isCrossRunnerReview,
+        retryCount: 0,
+        durationMs: Date.now() - start,
+      };
+    }
+
+    const retryResult = await runSelfReviewRetryLoop({
+      vars,
+      taskDir,
+      slotId,
+      runId,
+      start,
+      workerRunner,
+      reviewRunner,
+      model,
+      maxRetries,
+      reviewTimeoutMs,
+      reviewResult: result,
       retryCount: 0,
       validationDepth,
-      usage: result.usage,
-      reviewSnapshot: result.reviewSnapshot,
-      attempts,
-      timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
-      durationMs: Date.now() - start,
-    };
-  }
-
-  if (result.verdict === 'pass') {
-    debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — PASS (${Date.now() - start}ms)`);
+      artifactScope,
+      sessionPolicy,
+    });
     return {
-      verdict: 'pass',
-      issues: [],
-      validationDepth,
-      usage: result.usage,
-      reviewSnapshot: result.reviewSnapshot,
-      attempts: [reviewAttemptFromResult(result, 1)],
-      timeline: result.timeline,
+      ...retryResult,
+      usage: retryResult.attempts?.at(-1)?.usage,
       runner: reviewRunner,
       model,
       crossRunner: isCrossRunnerReview,
-      retryCount: 0,
-      durationMs: Date.now() - start,
     };
+  } finally {
+    // Review-loop exit: THIS reviewer's warm
+    // session never outlives its loop — pass, fail, or throw it turns
+    // forensic-only. Scoped to the loop's runner so a run hosting reviews by
+    // other runners keeps their sessions until their own loops exit.
+    invalidateWarmReviewerSessions(runId, reviewRunner);
   }
-
-  const retryResult = await runSelfReviewRetryLoop({
-    vars,
-    taskDir,
-    slotId,
-    runId,
-    start,
-    workerRunner,
-    reviewRunner,
-    model,
-    maxRetries,
-    reviewTimeoutMs,
-    reviewResult: result,
-    retryCount: 0,
-    validationDepth,
-    artifactScope,
-  });
-  return {
-    ...retryResult,
-    usage: retryResult.attempts?.at(-1)?.usage,
-    runner: reviewRunner,
-    model,
-    crossRunner: isCrossRunnerReview,
-  };
 }
 
 // Dep surface for runSelfReviewRetryLoop. Real production wiring lives in
@@ -342,6 +369,7 @@ export interface SelfReviewRetryDeps {
     loopNumber?: number,
     validationDepth?: ReviewValidationDepth,
     artifactScope?: string | null,
+    sessionPolicy?: ReviewSessionPolicy,
   ) => Promise<ReviewAgentResult>;
   captureFixDelta: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -399,6 +427,7 @@ export async function runSelfReviewRetryLoop({
   retryCount,
   validationDepth = 'full-live',
   artifactScope = null,
+  sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
   feedbackAlreadySent = false,
   deps = PRODUCTION_DEPS,
 }: {
@@ -416,6 +445,7 @@ export async function runSelfReviewRetryLoop({
   retryCount: number;
   validationDepth?: ReviewValidationDepth;
   artifactScope?: string | null;
+  sessionPolicy?: ReviewSessionPolicy;
   feedbackAlreadySent?: boolean;
   deps?: SelfReviewRetryDeps;
 }): Promise<SelfReviewResult> {
@@ -635,6 +665,7 @@ export async function runSelfReviewRetryLoop({
         nextLoopNumber,
         validationDepth,
         artifactScope,
+        sessionPolicy,
       );
       attempts.push({
         ...reviewAttemptFromResult(
@@ -731,6 +762,7 @@ async function recoverSelfReviewFixPass({
   reviewTimeoutMs,
   validationDepth,
   artifactScope,
+  sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
   taskDir: string;
@@ -744,6 +776,7 @@ async function recoverSelfReviewFixPass({
   reviewTimeoutMs: number;
   validationDepth: ReviewValidationDepth;
   artifactScope?: string | null;
+  sessionPolicy?: ReviewSessionPolicy;
 }): Promise<SelfReviewResult | null> {
   const run = getRun(runId);
   const fixContext = run?.agentContexts?.find((ctx) => canRecoverSelfReviewFixPass(ctx, taskDir));
@@ -821,6 +854,7 @@ async function recoverSelfReviewFixPass({
         retryCount: 1,
         validationDepth,
         artifactScope,
+        sessionPolicy,
         feedbackAlreadySent: true,
       });
     }
@@ -873,6 +907,7 @@ async function recoverSelfReviewFixPass({
       2,
       validationDepth,
       artifactScope,
+      sessionPolicy,
     );
     const seededReviewResult = {
       ...retryResult,
@@ -894,6 +929,7 @@ async function recoverSelfReviewFixPass({
       retryCount: 1,
       validationDepth,
       artifactScope,
+      sessionPolicy,
       feedbackAlreadySent: true,
     });
   } finally {

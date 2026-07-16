@@ -186,6 +186,20 @@ export interface ReviewDepthPolicy {
   requestedBy: 'dispatch' | 'human-gate' | 'agent-gate';
 }
 
+/**
+ * Reviewer session lifecycle across one run's review loops:
+ * `fresh-per-pass` relaunches a cold reviewer every pass; `warm-per-reviewer`
+ * resumes the same reviewer runner session for re-reviews within the run.
+ */
+export type ReviewSessionPolicy = 'fresh-per-pass' | 'warm-per-reviewer';
+
+export const REVIEW_SESSION_POLICIES: readonly ReviewSessionPolicy[] = [
+  'fresh-per-pass',
+  'warm-per-reviewer',
+];
+
+export const DEFAULT_REVIEW_SESSION_POLICY: ReviewSessionPolicy = 'fresh-per-pass';
+
 export type ReviewValidationDepth = 'static-code' | 'full-live';
 
 export const REVIEW_VALIDATION_DEPTHS: readonly ReviewValidationDepth[] = [

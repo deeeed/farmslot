@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseTerminalSelfReviewSignal } from './review-agent.js';
+import { parseTerminalSelfReviewSignal, resumableSessionProbeCommand } from './review-agent.js';
 
 test('parseTerminalSelfReviewSignal ignores progress mark signals (status running)', () => {
   const raw = JSON.stringify({
@@ -26,4 +26,14 @@ test('parseTerminalSelfReviewSignal accepts terminal mark complete signal', () =
 test('parseTerminalSelfReviewSignal rejects legacy substring-only detection', () => {
   const raw = '{"status":"running","note":"contains \\"status\\" substring elsewhere"}';
   assert.equal(parseTerminalSelfReviewSignal(raw), undefined);
+});
+
+test('resumable-session probe accepts directory-shaped session paths', () => {
+  // grok persists a session DIRECTORY while claude/codex persist files — the
+  // probe must be `test -e`; `test -f` silently disables every grok warm resume.
+  assert.equal(
+    resumableSessionProbeCommand('/home/u/.grok/sessions/repo/abc123'),
+    "test -e '/home/u/.grok/sessions/repo/abc123'",
+  );
+  assert.equal(resumableSessionProbeCommand("/x/it's.jsonl"), "test -e '/x/it'\\''s.jsonl'");
 });

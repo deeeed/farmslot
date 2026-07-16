@@ -14,6 +14,7 @@ import {
   type PreparePhase,
   type PrepareRequirement,
   type ProjectConfig,
+  type ReviewSessionPolicy,
   type SlotActionDefinition,
 } from '@farmslot/protocol';
 
@@ -306,6 +307,10 @@ export interface RawProjectJson {
     model?: string;
     max_retries?: number;
     review_timeout_min?: number;
+    // Reviewer session lifecycle across one run's review loops:
+    // 'fresh-per-pass' (default) relaunches per pass; 'warm-per-reviewer'
+    // resumes the same reviewer session for re-reviews within the run.
+    session_policy?: ReviewSessionPolicy;
   };
   publication_review?: Partial<
     Record<

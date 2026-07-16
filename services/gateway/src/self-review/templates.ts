@@ -15,12 +15,15 @@ import {
 import { isLocal } from '../core/exec.js';
 import { getRun } from '../runs/store.js';
 
+import { parseReviewSessionPolicy, type ReviewSessionPolicy } from './session-policy.js';
+
 interface SelfReviewConfig {
   enabled: boolean;
   runner?: string;
   model?: string;
   max_retries?: number;
   review_timeout_min?: number;
+  session_policy?: ReviewSessionPolicy;
 }
 
 const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
@@ -116,6 +119,7 @@ export async function getSelfReviewConfig(project: string): Promise<SelfReviewCo
         model: raw.model,
         max_retries: raw.max_retries,
         review_timeout_min: raw.review_timeout_min,
+        session_policy: parseReviewSessionPolicy(raw.session_policy),
       };
     }
   } catch (err) {
