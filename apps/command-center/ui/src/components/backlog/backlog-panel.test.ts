@@ -10,19 +10,72 @@ import {
   canDequeueBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
+  DEFAULT_BACKLOG_STATUS_FILTER,
+  parseBacklogStatusFilter,
+  serializeBacklogStatusFilter,
   showsBacklogCleanupActionsForUi,
   syncedBacklogDraftProject,
 } from './backlog-panel-model.js';
 
-test('backlog default (all) filter hides archived items but the archived filter shows them', () => {
-  // Store loads archived items (includeArchived), so the filter must hide them
-  // from the default view while keeping them reachable under status=archived.
-  assert.equal(backlogItemMatchesStatusFilter('archived', 'all'), false);
-  assert.equal(backlogItemMatchesStatusFilter('ready', 'all'), true);
-  assert.equal(backlogItemMatchesStatusFilter('done', 'all'), true);
-  assert.equal(backlogItemMatchesStatusFilter('archived', 'archived'), true);
-  assert.equal(backlogItemMatchesStatusFilter('ready', 'archived'), false);
-  assert.equal(backlogItemMatchesStatusFilter('ready', 'ready'), true);
+test('backlog default filter shows the live set and hides done/archived', () => {
+  // Store loads archived items (includeArchived), so the default view must hide
+  // them while keeping them reachable by toggling their chip on.
+  for (const live of [
+    'candidate',
+    'ready',
+    'queued',
+    'dispatching',
+    'running',
+    'failed',
+    'needs-attention',
+  ] as const) {
+    assert.equal(backlogItemMatchesStatusFilter(live, DEFAULT_BACKLOG_STATUS_FILTER), true);
+  }
+  assert.equal(backlogItemMatchesStatusFilter('done', DEFAULT_BACKLOG_STATUS_FILTER), false);
+  assert.equal(backlogItemMatchesStatusFilter('archived', DEFAULT_BACKLOG_STATUS_FILTER), false);
+  assert.equal(
+    backlogItemMatchesStatusFilter('archived', new Set<BacklogStatus>(['archived'])),
+    true,
+  );
+  assert.equal(
+    backlogItemMatchesStatusFilter('ready', new Set<BacklogStatus>(['archived'])),
+    false,
+  );
+});
+
+test('backlog status filter round-trips through the hash param', () => {
+  // Default selection writes no param (clean URLs), and an absent param parses
+  // back to the default.
+  assert.equal(serializeBacklogStatusFilter(DEFAULT_BACKLOG_STATUS_FILTER), null);
+  assert.deepEqual(
+    [...parseBacklogStatusFilter(null)].sort(),
+    [...DEFAULT_BACKLOG_STATUS_FILTER].sort(),
+  );
+  assert.deepEqual(
+    [...parseBacklogStatusFilter('')].sort(),
+    [...DEFAULT_BACKLOG_STATUS_FILTER].sort(),
+  );
+
+  // Non-default selections serialize in canonical BACKLOG_STATUSES order
+  // regardless of insertion order, and parse back to the same set.
+  const picked = new Set<BacklogStatus>(['done', 'candidate']);
+  const serialized = serializeBacklogStatusFilter(picked);
+  assert.equal(serialized, 'candidate,done');
+  assert.deepEqual([...parseBacklogStatusFilter(serialized)].sort(), ['candidate', 'done']);
+
+  // An empty selection (every chip toggled off) round-trips via the 'none'
+  // sentinel instead of snapping back to the default on reload.
+  assert.equal(serializeBacklogStatusFilter(new Set()), 'none');
+  assert.equal(parseBacklogStatusFilter('none').size, 0);
+
+  // Legacy single-status links parse as a one-element set; unknown tokens are
+  // dropped, and an all-invalid value falls back to the default view.
+  assert.deepEqual([...parseBacklogStatusFilter('done')], ['done']);
+  assert.deepEqual([...parseBacklogStatusFilter('done,bogus')], ['done']);
+  assert.deepEqual(
+    [...parseBacklogStatusFilter('all')].sort(),
+    [...DEFAULT_BACKLOG_STATUS_FILTER].sort(),
+  );
 });
 
 test('backlog panel dequeue action is only enabled for queued dispatch lifecycle statuses', () => {

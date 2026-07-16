@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat: the backlog panel status filter is a multi-select chip set (was single-select), defaulting to the live view — candidate/ready/queued/dispatching/running/failed/needs-attention visible, done/archived opt-in. The selection round-trips through the `backlogStatus` hash param (comma-separated, canonical order; default writes no param; legacy single-status links still parse).
+
 - fix: PR cards render path-skipped CI checks with the `statusUnknown` dot instead of the pending color, and CI-timeout recovery / auto-resolve no longer require `passed === total` — skipped checks count toward the total but do not block a green verdict. Persisted ci-watch summaries carry the `skipped` count through snapshot reload.
 - feat: flow selector, run filters, and flow-graph executor-lane labels render the renamed `update-branch` branch-maintenance flow (was `merge-main` / "Merge Main").
 - fix: filter nested-loop task progress by active checklist basename so self-review panels do not accept stale events during fix or CI-fix phases; clear progress when `activeTaskFile` changes and label fix vs review progress from the protocol checklist registry.
