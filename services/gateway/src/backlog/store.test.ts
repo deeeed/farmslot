@@ -1217,6 +1217,80 @@ test('restart re-queues a dispatching launch-candidate row with no durable run',
   assert.equal(reloaded?.launchAttempt, row.launchAttempt);
 });
 
+test('restart attempt matrix: mismatched attempts re-queue, only exact matches drop', async () => {
+  const { backlog, queue, runStore } = await freshStores();
+  const mkItem = async (planId: string) =>
+    (
+      await backlog.createBacklogItem({
+        project: 'farmslot-farm',
+        title: `Attempt matrix ${planId}`,
+        sourceKind: 'manual',
+        flowType: 'dev',
+        status: 'ready',
+        launchPlan: {
+          id: planId,
+          version: 1,
+          candidates: [
+            {
+              id: 'baseline',
+              role: 'baseline',
+              runner: 'claude',
+              model: 'opus',
+              slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+            },
+          ],
+        },
+      })
+    ).item;
+  const mkRun = (item: { id: string; sourceRef: string }, planId: string, launchAttempt?: number) =>
+    runStore.createRun({
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: item.sourceRef,
+      backlogItemId: item.id,
+      launchPlanId: planId,
+      launchCandidateId: 'baseline',
+      ...(launchAttempt === undefined ? {} : { launchAttempt }),
+    } as never);
+
+  // Case 1: retry row (attempt 2) vs old TERMINAL run (attempt 1) — the retry
+  // must survive restart; dropping it would strand the re-dispatch.
+  const retryItem = await mkItem('lp_retry_mx');
+  const retryEnqueued = await backlog.enqueueBacklogItem({ itemId: retryItem.id });
+  const retryRow = queue.getQueueSnapshot().find((row) => row.id === retryEnqueued.queueItem.id)!;
+  retryRow.status = 'dispatching';
+  retryRow.launchAttempt = 2;
+  const oldRun = mkRun(retryItem, 'lp_retry_mx', 1);
+  runStore.updateRun(oldRun.id, { status: 'failed' } as never);
+
+  // Case 2: legacy row (no attempt) vs attempt-bearing run — undefined !== 1, re-queue.
+  const legacyItem = await mkItem('lp_legacy_mx');
+  const legacyEnqueued = await backlog.enqueueBacklogItem({ itemId: legacyItem.id });
+  const legacyRow = queue.getQueueSnapshot().find((row) => row.id === legacyEnqueued.queueItem.id)!;
+  legacyRow.status = 'dispatching';
+  delete legacyRow.launchAttempt;
+  mkRun(legacyItem, 'lp_legacy_mx', 1);
+
+  // Case 3: legacy row vs legacy run (both undefined) — match, drop.
+  const bothLegacyItem = await mkItem('lp_bothlegacy_mx');
+  const bothLegacyEnqueued = await backlog.enqueueBacklogItem({ itemId: bothLegacyItem.id });
+  const bothLegacyRow = queue
+    .getQueueSnapshot()
+    .find((row) => row.id === bothLegacyEnqueued.queueItem.id)!;
+  bothLegacyRow.status = 'dispatching';
+  delete bothLegacyRow.launchAttempt;
+  mkRun(bothLegacyItem, 'lp_bothlegacy_mx', undefined);
+
+  await queue.persistQueueNow();
+  await queue.loadQueue();
+  const snapshot = queue.getQueueSnapshot();
+  const find = (id: string) => snapshot.find((row) => row.id === id);
+  assert.equal(find(retryRow.id)?.status, 'queued'); // survived, attempt intact
+  assert.equal(find(retryRow.id)?.launchAttempt, 2);
+  assert.equal(find(legacyRow.id)?.status, 'queued'); // undefined !== 1 -> survived
+  assert.equal(find(bothLegacyRow.id), undefined); // undefined === undefined -> dropped
+});
+
 test('a comparison-candidate replay is observed while the plan is terminal', async () => {
   const { backlog, runStore } = await freshStores();
   const created = await backlog.createBacklogItem({
