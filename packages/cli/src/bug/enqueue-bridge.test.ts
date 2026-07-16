@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { type BridgeGatewayClient, enqueueScoredBugs } from './enqueue-bridge.js';
+import {
+  type BridgeGatewayClient,
+  enqueueScoredBugs,
+  parseEnqueueThreshold,
+} from './enqueue-bridge.js';
 
 async function scoresDirWith(files: Record<string, unknown>): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'enqueue-bridge-'));
@@ -83,6 +87,41 @@ test('enqueue bridge creates items above threshold and skips the rest with reaso
   assert.equal(creates[0]?.flowType, 'fix-bug');
   assert.equal(creates[0]?.title, 'Crash on save');
   assert.deepEqual(creates[0]?.tags, ['bug-intake']);
+});
+
+test('a URL-form score ref dedups against the gateway-canonical stored ref on re-run', async (t) => {
+  const dir = await scoresDirWith({
+    'gh-9': {
+      issue_ref: 'https://github.com/Owner/Repo/issues/9',
+      heuristic: { one_shot_probability: 0.9 },
+    },
+  });
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  // The gateway stored the canonical form from a previous run.
+  const { client, creates } = fakeClient({ existing: [{ sourceRef: 'owner/repo#9' }] });
+
+  const result = await enqueueScoredBugs(client, {
+    project: 'farmslot-farm',
+    source: 'github',
+    scoresDir: dir,
+    keys: ['gh-9'],
+    threshold: 0.7,
+  });
+
+  assert.equal(creates.length, 0); // no duplicate filed
+  assert.equal(result.skippedExisting.length, 1);
+  assert.equal(result.skippedExisting[0]?.itemRef, 'owner/repo#9');
+});
+
+test('parseEnqueueThreshold rejects blank and out-of-range values', () => {
+  assert.equal(parseEnqueueThreshold(undefined), undefined);
+  assert.equal(parseEnqueueThreshold('0.7'), 0.7);
+  assert.equal(parseEnqueueThreshold('0'), 0);
+  assert.equal(parseEnqueueThreshold('1'), 1);
+  // Number('') === 0 — a blank value must be a usage error, not "enqueue everything".
+  for (const bad of ['', '   ', 'abc', '-0.1', '1.1', 'Infinity']) {
+    assert.throws(() => parseEnqueueThreshold(bad), /must be a number in \[0,1\]/);
+  }
 });
 
 test('enqueue bridge continues past per-item create failures and missing files', async (t) => {

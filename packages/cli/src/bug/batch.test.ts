@@ -89,6 +89,10 @@ test('runBatch reports a corrupt score file once and keeps going (triage + displ
     assert.equal(result.failures.length, 1);
     assert.equal(result.failures[0]?.code, 'CORRUPT_SCORE_FILE');
     assert.ok(result.report.includes('Scored: 1 issues')); // exactly one row rendered
+    // scoredKeys must exclude the failed issue: with --rescore a failure can
+    // leave a STALE score file that downstream (enqueue bridge) must not act on.
+    assert.deepEqual(result.scoredKeys, ['gh-1']);
+    assert.deepEqual(result.keys.sort(), ['gh-1', 'gh-2']);
   } finally {
     restore();
   }

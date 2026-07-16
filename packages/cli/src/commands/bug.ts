@@ -13,7 +13,11 @@ import path from 'node:path';
 
 import type { Command } from 'commander';
 
-import { type EnqueueBridgeResult, enqueueScoredBugs } from '../bug/enqueue-bridge.js';
+import {
+  type EnqueueBridgeResult,
+  enqueueScoredBugs,
+  parseEnqueueThreshold,
+} from '../bug/enqueue-bridge.js';
 import { type BatchOptions, runBatch, runGrade, runValidate } from '../bug/pipeline.js';
 import { loadProjectContext, runScore, runTriage } from '../bug/triage.js';
 import { resolveContext } from '../context.js';
@@ -322,19 +326,8 @@ export function registerBugCommand(program: Command): void {
               userAction: 'Pass --source github or --source jira.',
             });
           }
-          const enqueueThreshold =
-            opts.enqueueThreshold === undefined ? undefined : Number(opts.enqueueThreshold);
-          if (
-            enqueueThreshold !== undefined &&
-            (!Number.isFinite(enqueueThreshold) || enqueueThreshold < 0 || enqueueThreshold > 1)
-          ) {
-            throw Object.assign(
-              new Error(
-                `--enqueue-threshold must be a number in [0,1], got: ${opts.enqueueThreshold}`,
-              ),
-              { code: 'USAGE_ERROR', userAction: 'Pass e.g. --enqueue-threshold 0.7.' },
-            );
-          }
+          // Blank values must be usage errors, not threshold 0 (Number('') === 0).
+          const enqueueThreshold = parseEnqueueThreshold(opts.enqueueThreshold);
           const batchOpts: BatchOptions = {
             source: opts.source,
             label: opts.label,
@@ -382,7 +375,9 @@ export function registerBugCommand(program: Command): void {
                   project,
                   source: opts.source as 'github' | 'jira',
                   scoresDir: result.scoresDir,
-                  keys: result.keys,
+                  // scoredKeys only: with --rescore a FAILED issue can leave a
+                  // stale score file behind, which must not be bridged.
+                  keys: result.scoredKeys,
                   threshold: enqueueThreshold,
                 }),
               !emit.machine,

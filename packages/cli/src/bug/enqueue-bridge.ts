@@ -8,6 +8,37 @@ import type { BacklogItem } from '@farmslot/protocol';
 
 import { readScoreFile } from './score-file.js';
 
+/**
+ * Canonical dedup key for a source ref. The gateway stores GitHub refs as
+ * `owner/repo#N` while score files can carry the URL form (hand-provided
+ * `--github <url>` inputs) — both must collapse to one key or a re-run
+ * double-files the issue. Jira keys just fold case.
+ */
+export function canonicalSourceRef(ref: string): string {
+  const trimmed = ref.trim();
+  const url = trimmed.match(/github\.com\/([^/\s]+)\/([^/\s]+)\/issues\/(\d+)/i);
+  if (url) return `${url[1]}/${url[2]}#${url[3]}`.toLowerCase();
+  return trimmed.toLowerCase();
+}
+
+/**
+ * Parse the --enqueue-threshold value. Distinct from `Number(raw)` because
+ * `Number('') === 0`: a blank value must be a usage error, not "enqueue
+ * everything".
+ */
+export function parseEnqueueThreshold(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  const value = trimmed === '' ? Number.NaN : Number(trimmed);
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw Object.assign(new Error(`--enqueue-threshold must be a number in [0,1], got: ${raw}`), {
+      code: 'USAGE_ERROR',
+      userAction: 'Pass e.g. --enqueue-threshold 0.7.',
+    });
+  }
+  return value;
+}
+
 /** Minimal gateway surface the bridge needs — injectable for tests. */
 export interface BridgeGatewayClient {
   call<T>(method: string, params: unknown): Promise<T>;
@@ -71,7 +102,7 @@ export async function enqueueScoredBugs(
   const existingBySourceRef = new Map(
     items
       .filter((item) => item.sourceRef)
-      .map((item) => [item.sourceRef.toLowerCase(), item.sourceRef]),
+      .map((item) => [canonicalSourceRef(item.sourceRef), item.sourceRef]),
   );
 
   for (const key of opts.keys) {
@@ -104,7 +135,7 @@ export async function enqueueScoredBugs(
         result.failures.push({ ref: key, error: 'score file has no issue_ref' });
         continue;
       }
-      const existing = existingBySourceRef.get(score.issue_ref.toLowerCase());
+      const existing = existingBySourceRef.get(canonicalSourceRef(score.issue_ref));
       if (existing) {
         result.skippedExisting.push({ ref: score.issue_ref, itemRef: existing });
         continue;
@@ -119,7 +150,10 @@ export async function enqueueScoredBugs(
         notes: `Auto-enqueued by \`bug batch --enqueue-threshold ${opts.threshold}\`: p(one-shot)=${probability}${score.final ? ` (final, model=${score.final.recommended_model ?? 'n/a'})` : ' (heuristic)'}.`,
         tags: ['bug-intake'],
       });
-      existingBySourceRef.set(item.sourceRef.toLowerCase(), item.sourceRef);
+      // Key by BOTH the gateway's canonical stored ref and the raw score ref, so
+      // a same-batch sibling in either form still dedups.
+      existingBySourceRef.set(canonicalSourceRef(item.sourceRef), item.sourceRef);
+      existingBySourceRef.set(canonicalSourceRef(score.issue_ref), item.sourceRef);
       result.created.push({
         ref: score.issue_ref,
         itemRef: item.sourceRef ?? item.id,

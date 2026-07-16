@@ -280,6 +280,10 @@ export interface BatchResult {
   failures: Array<{ ref: string; error: string; code?: string; userAction?: string }>;
   report: string;
   keys: string[];
+  /** Keys whose score file reflects THIS run (newly scored or skipped-with-existing).
+   * Failed issues are excluded — with --rescore a failure can leave a STALE score
+   * file on disk, and downstream consumers (the enqueue bridge) must not act on it. */
+  scoredKeys: string[];
 }
 
 /**
@@ -506,6 +510,7 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
     failures.push(toFailure(ref, err));
   };
 
+  const scoredKeys: string[] = [];
   if (total > 0) {
     const results = await mapPool(issues, opts.parallel, async (issue) => {
       // One malformed issue must not abort the batch, but its failure is
@@ -523,15 +528,24 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
           },
           ctx,
         );
-        return { status: result.skipped ? ('skip' as const) : ('ok' as const), ref: issue.ref };
+        return {
+          status: result.skipped ? ('skip' as const) : ('ok' as const),
+          ref: issue.ref,
+          key: issue.key,
+        };
       } catch (err) {
-        return { status: 'fail' as const, ref: issue.ref, err };
+        return { status: 'fail' as const, ref: issue.ref, key: issue.key, err };
       }
     });
     for (const r of results) {
       if (r.status === 'fail') addFailure(r.ref, r.err);
-      else if (r.status === 'skip') skipped++;
-      else scored++;
+      else if (r.status === 'skip') {
+        skipped++;
+        scoredKeys.push(r.key);
+      } else {
+        scored++;
+        scoredKeys.push(r.key);
+      }
     }
   }
 
@@ -575,6 +589,7 @@ export async function runBatch(project: string, opts: BatchOptions): Promise<Bat
     failures,
     report,
     keys: issues.map((i) => i.key),
+    scoredKeys,
   };
 }
 
