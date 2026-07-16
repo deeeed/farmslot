@@ -1,92 +1,124 @@
 #!/usr/bin/env node
-// Deterministic lint for agent-authored backlog spec files (.backlog/specs/**).
-// Hard rules only — heuristic judgment lives in SKILL.md. Exit 1 on any failure
-// so authoring loops cannot hand-wave a broken acceptance contract.
+// Deterministic lint for backlog spec files (.backlog/specs/**). Rules only —
+// heuristic judgment lives in SKILL.md. Exit 0 clean, exit 1 with one line per
+// violation (`<file>:<line>: <rule>: <excerpt>`), exit 2 on usage error.
 
 import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
-const files = process.argv.slice(2);
-if (files.length === 0) {
-  console.error('usage: spec-lint.mjs <spec.md> [more.md ...]');
-  process.exit(2);
+/**
+ * Parse the `## Acceptance Criteria` section with the SAME rules as the
+ * gateway's extractBacklogAcceptanceCriteria (services/gateway/src/backlog/
+ * store.ts): stop at the next `#`/`##` heading, strip a leading `-`/`*`
+ * marker, keep every remaining nonblank line as its own criterion. Parity
+ * matters because the filed item's parsed AC must equal what was linted.
+ * Returns entries with their 1-based source line for diagnostics.
+ */
+export function parseAcceptanceCriteria(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  const headingIndex = lines.findIndex((line) => /^##\s+Acceptance Criteria\s*$/i.test(line));
+  if (headingIndex < 0) return { headingLine: null, criteria: [] };
+  const criteria = [];
+  for (let i = headingIndex + 1; i < lines.length; i += 1) {
+    if (/^#{1,2}\s+\S/.test(lines[i])) break;
+    const text = lines[i].replace(/^\s*[-*]\s+/, '').trim();
+    if (text) criteria.push({ line: i + 1, text });
+  }
+  return { headingLine: headingIndex + 1, criteria };
 }
 
-// An AC bullet must name a machine-checkable proof surface. Backtick refs cover
-// commands/paths/symbols; the verb forms cover "X tests prove/reject/..." prose.
-const CHECK_MARKER =
-  /`[^`]+`|\btests?\b[^.]*\b(proves?|shows?|asserts?|covers?|pass(es)?|fail(s)?|reject(s)?)\b|\b(typecheck|lint|CI\b|CDP|recipe (run|regression)|exit (0|non-zero|code))\b/i;
+// A criterion must carry a concrete check: an inline-code command/test/grep/
+// file reference, or an explicit artifact:/recipe: reference.
+const CHECK_MARKER = /`[^`]+`|\b(artifact|recipe):/i;
 
-// Operator-eyeball and wall-clock acceptance can never be verified by a worker
-// or a reviewer inside one run — they fail hard, not as warnings.
+// Conditions no worker or reviewer can verify inside one run.
 const FORBIDDEN = [
-  [/\bmanual(ly)?\s+(check|verify|test|inspect|confirm)/i, 'manual verification'],
-  [/\boperator\s+(checks|verifies|confirms|inspects|reviews)\b/i, 'operator-dependent check'],
-  [/\b(visually|eyeball|by hand)\b/i, 'visual/by-hand check'],
-  [/\blooks\s+(right|correct|good|fine)\b/i, 'subjective appearance check'],
-  [/\bwait\s+(for\s+)?(a\s+)?\d+\s*(minute|hour|day|week)/i, 'wall-clock wait'],
-  [/\bafter\s+(the\s+)?soak\b/i, 'soak-period dependence'],
-  [/\bover\s+time\b|\beventually\b/i, 'unbounded time dependence'],
+  [/\bafter merge\b/i, 'after-merge condition'],
+  [/\bpost-merge\b/i, 'post-merge condition'],
+  [/\b\d+-day\b/i, 'multi-day duration'],
+  [/\boperator enables\b/i, 'operator-enable condition'],
+  [/\bmonitor(ing)?\s+(for|over)\b/i, 'open-ended monitoring'],
+  [/\bsoak\b/i, 'soak-period dependence'],
 ];
 
-let failed = false;
-let fileFailed = false;
-const fail = (file, msg) => {
-  failed = true;
-  fileFailed = true;
-  console.error(`FAIL ${file}: ${msg}`);
-};
-
-for (const file of files) {
-  fileFailed = false;
-  const text = readFileSync(file, 'utf-8');
-  const lines = text.split('\n');
-
-  if (!/^#\s+\S/m.test(text)) fail(file, 'missing `# <title>` heading');
-  if (!/^\*\*Project:\*\*\s*\S/m.test(text)) fail(file, 'missing `**Project:** <name>` line');
-  if (!/^##\s+(Problem|Context|Why this exists)\b/m.test(text)) {
-    fail(file, 'missing `## Problem` (or Context) section — state why the item exists');
+export function lintSpecText(markdown) {
+  const violations = [];
+  const { headingLine, criteria } = parseAcceptanceCriteria(markdown);
+  if (headingLine === null) {
+    violations.push({
+      line: 1,
+      rule: 'missing-acceptance-criteria',
+      excerpt: 'no `## Acceptance Criteria` heading',
+    });
+  } else if (criteria.length === 0) {
+    violations.push({
+      line: headingLine,
+      rule: 'empty-acceptance-criteria',
+      excerpt: 'no criteria lines under the heading',
+    });
   }
-  if (!/^##\s+(Deliverables|Scope)\b/m.test(text)) {
-    fail(file, 'missing `## Deliverables` (or Scope) section');
-  }
-
-  const acStart = lines.findIndex((l) => /^##\s+Acceptance Criteria\s*$/i.test(l));
-  if (acStart === -1) {
-    fail(file, 'missing `## Acceptance Criteria` section');
-    continue;
-  }
-  const acEnd = lines.findIndex((l, i) => i > acStart && /^##\s+/.test(l));
-  const acLines = lines.slice(acStart + 1, acEnd === -1 ? undefined : acEnd);
-
-  // Bullets may wrap: continuation lines are indented and belong to the bullet.
-  const bullets = [];
-  for (const line of acLines) {
-    if (/^\s*([-*]|\d+\.)\s+\S/.test(line)) bullets.push(line.trim());
-    else if (/^\s{2,}\S/.test(line) && bullets.length > 0) {
-      bullets[bullets.length - 1] += ` ${line.trim()}`;
-    }
-  }
-  if (bullets.length === 0) {
-    fail(file, 'Acceptance Criteria has no bullet items — criteria must be an enumerable list');
-    continue;
-  }
-  for (const bullet of bullets) {
-    if (!CHECK_MARKER.test(bullet)) {
-      fail(
-        file,
-        `AC bullet lacks a concrete check marker (test/command/path/typecheck/CDP/recipe): "${bullet.slice(0, 100)}"`,
-      );
+  for (const { line, text } of criteria) {
+    if (!CHECK_MARKER.test(text)) {
+      violations.push({ line, rule: 'no-check-marker', excerpt: text.slice(0, 80) });
     }
     for (const [pattern, label] of FORBIDDEN) {
-      if (pattern.test(bullet)) {
-        fail(file, `AC bullet uses forbidden ${label}: "${bullet.slice(0, 100)}"`);
-      }
+      if (pattern.test(text)) violations.push({ line, rule: label, excerpt: text.slice(0, 80) });
     }
   }
-  if (!fileFailed) {
-    console.log(`PASS ${file}: ${bullets.length} acceptance criteria, all checkable`);
+  const lines = markdown.split(/\r?\n/);
+  const ngIndex = lines.findIndex((line) => /^##\s+Non-goals\s*$/i.test(line));
+  if (ngIndex < 0) {
+    violations.push({ line: 1, rule: 'missing-non-goals', excerpt: 'no `## Non-goals` section' });
+  } else {
+    const body = [];
+    for (let i = ngIndex + 1; i < lines.length; i += 1) {
+      if (/^#{1,2}\s+\S/.test(lines[i])) break;
+      if (lines[i].trim()) body.push(lines[i]);
+    }
+    if (body.length === 0) {
+      violations.push({
+        line: ngIndex + 1,
+        rule: 'empty-non-goals',
+        excerpt: '`## Non-goals` has no content',
+      });
+    }
   }
+  return violations;
 }
 
-process.exit(failed ? 1 : 0);
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
+// `node --test <dir>` executes every .mjs in the dir; the CLI must not run
+// (and exit 2 for missing args) inside the test runner.
+if (isMain && !process.env.NODE_TEST_CONTEXT) {
+  const args = process.argv.slice(2);
+  const printAc = args.includes('--print-ac');
+  const files = args.filter((a) => a !== '--print-ac');
+  if (files.length === 0) {
+    console.error('usage: spec-lint.mjs [--print-ac] <spec.md> [more.md ...]');
+    process.exit(2);
+  }
+  let failed = false;
+  for (const file of files) {
+    let text;
+    try {
+      text = readFileSync(file, 'utf-8');
+    } catch (err) {
+      // One unreadable file must not hide violations in the rest of the batch.
+      console.error(`${file}:0: unreadable: ${err.message}`);
+      failed = true;
+      continue;
+    }
+    if (printAc) {
+      for (const { text: t } of parseAcceptanceCriteria(text).criteria) console.log(t);
+      continue;
+    }
+    const violations = lintSpecText(text);
+    for (const v of violations) console.error(`${file}:${v.line}: ${v.rule}: ${v.excerpt}`);
+    if (violations.length > 0) failed = true;
+    else
+      console.log(
+        `PASS ${file}: ${parseAcceptanceCriteria(text).criteria.length} acceptance criteria`,
+      );
+  }
+  process.exit(failed ? 1 : 0);
+}
