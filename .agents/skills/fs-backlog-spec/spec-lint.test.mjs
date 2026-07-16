@@ -134,15 +134,19 @@ test('content-free references are not check markers; real ones are', () => {
       '- Punctuation marker: artifact:.',
       '- Paren marker: recipe:)',
       '- Empty span after marker: artifact: ``',
+      '- Punctuation-only span: run `.` first.',
+      '- Backticked punctuation ref: artifact: `.`',
+      '- Backticked paren ref: recipe: `)`',
       '- Real: `yarn test` passes.',
       '- Real too: evidence (artifact: `a/b.json`).',
       '- Leading-space code is valid: ` yarn test` runs.',
       '- Plain path ref: artifact: artifacts/e.json attached.',
+      '- Double-backtick span is valid: ``yarn test`` runs.',
       '',
     ].join('\n'),
   );
   const markerless = violations.filter((v) => v.rule === 'no-check-marker');
-  assert.equal(markerless.length, 6);
+  assert.equal(markerless.length, 9);
 });
 
 test('symlinked invocation with --preserve-symlinks-main still lints', () => {

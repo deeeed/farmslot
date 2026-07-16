@@ -35,12 +35,13 @@ export function parseAcceptanceCriteria(markdown) {
  * `artifact:`, or one followed only by punctuation prove nothing.
  */
 export function hasCheckMarker(text) {
-  for (const m of text.matchAll(/`([^`]*)`/g)) {
-    if (m[1].trim()) return true;
+  // Markdown code spans may be delimited by runs of equal-length backticks
+  // (``yarn test`` is valid). A span counts only when its content carries a
+  // word or path character — punctuation-only spans like `.` prove nothing.
+  for (const m of text.matchAll(/(`+)([\s\S]*?)\1/g)) {
+    if (/[\w/]/.test(m[2])) return true;
   }
   for (const m of text.matchAll(/\b(?:artifact|recipe):\s*(\S+)/gi)) {
-    // A real reference token contains at least one word or path character
-    // once code-span backticks are stripped.
     if (/[\w/]/.test(m[1].replace(/`/g, ''))) return true;
   }
   return false;
