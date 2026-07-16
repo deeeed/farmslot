@@ -69,6 +69,9 @@ function sameStatusSet(a: ReadonlySet<BacklogStatus>, b: ReadonlySet<BacklogStat
 /** Hash param value for the status filter; null when the selection is the default view. */
 export function serializeBacklogStatusFilter(filter: ReadonlySet<BacklogStatus>): string | null {
   if (sameStatusSet(filter, DEFAULT_BACKLOG_STATUS_FILTER)) return null;
+  // An empty selection needs the `none` sentinel to survive reload — '' would
+  // parse back as the default view.
+  if (filter.size === 0) return 'none';
   // Canonical BACKLOG_STATUSES order keeps URLs stable regardless of click order.
   return BACKLOG_STATUSES.filter((status) => filter.has(status)).join(',');
 }
@@ -78,6 +81,7 @@ export function serializeBacklogStatusFilter(filter: ReadonlySet<BacklogStatus>)
  * single-status links, which parse as a one-element set). */
 export function parseBacklogStatusFilter(raw: string | null): ReadonlySet<BacklogStatus> {
   if (!raw?.trim()) return DEFAULT_BACKLOG_STATUS_FILTER;
+  if (raw.trim() === 'none') return new Set();
   const valid = raw
     .split(',')
     .map((token) => token.trim())

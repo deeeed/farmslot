@@ -63,6 +63,11 @@ test('backlog status filter round-trips through the hash param', () => {
   assert.equal(serialized, 'candidate,done');
   assert.deepEqual([...parseBacklogStatusFilter(serialized)].sort(), ['candidate', 'done']);
 
+  // An empty selection (every chip toggled off) round-trips via the 'none'
+  // sentinel instead of snapping back to the default on reload.
+  assert.equal(serializeBacklogStatusFilter(new Set()), 'none');
+  assert.equal(parseBacklogStatusFilter('none').size, 0);
+
   // Legacy single-status links parse as a one-element set; unknown tokens are
   // dropped, and an all-invalid value falls back to the default view.
   assert.deepEqual([...parseBacklogStatusFilter('done')], ['done']);
