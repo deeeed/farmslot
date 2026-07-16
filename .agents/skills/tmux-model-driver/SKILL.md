@@ -290,17 +290,23 @@ Running a model headlessly (`codex exec`, `claude -p`) from an orchestrator is a
 Rules:
 
 - capture headless output to a **file**, never through a pipe you also take the exit status from
-- echo the model process's **own** exit code (`; echo EXIT=$?`) — `124` means the timeout fired
-- require a **terminal marker** in the output (a `VERDICT:` line, Stop hook, or equivalent
-  end-of-run sentinel) before treating the run as complete; partial output without the marker
-  is a wrapper failure, not a model result
+- capture the model process's **own** exit code (`rc=$?`) and gate on it — `124` means the
+  timeout fired; do not print-and-discard it
+- require a **terminal marker** before treating the run as complete (a `VERDICT:` line, Stop
+  hook, or equivalent end-of-run sentinel) — and check it in a **final-message artifact**
+  (`codex exec --output-last-message <file>`), anchored (`^VERDICT:`), not in the raw log:
+  the log echoes the prompt, which itself contains the marker text
 - budget timeouts to the task — a large-diff review can legitimately need well over 10 minutes;
   a mid-analysis kill produces silent no-verdict output
 
 ```bash
-timeout 1200 codex exec --sandbox read-only '<prompt … end with VERDICT line>' </dev/null \
-  > /tmp/run.log 2>&1; echo "EXIT=$?"
-grep -q 'VERDICT:' /tmp/run.log || echo 'WRAPPER FAILURE: no terminal marker'
+timeout 1200 codex exec --sandbox read-only --output-last-message /tmp/run.last \
+  '<prompt … end with VERDICT line>' </dev/null > /tmp/run.log 2>&1
+rc=$?
+if [ "$rc" -ne 0 ] || ! grep -q '^VERDICT:' /tmp/run.last; then
+  echo "WRAPPER FAILURE: exit=$rc, no terminal marker — do not trust /tmp/run.log"
+  exit 1
+fi
 ```
 
 ## Launch-Blocker Guard
@@ -429,26 +435,26 @@ That is not "Codex broken". It is a wrapper-contract failure and should be track
 
 ## Common Failures
 
-| Failure                                                                | Fix                                                                                                                            |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Sent shell command into interactive Claude                             | detect state first; exit to shell or send Claude-language instruction instead                                                  |
-| Sent instruction but it stayed pending at `❯`                          | use named `Enter` (not `C-m`); re-capture; for cross-review stay in interactive pane — do not fall back to `claude -p` in tmux |
-| Launched `claude -p` in tmux shell pane for review                     | driver bug; use interactive model pane (`send-keys -l` + `Enter`) or run `-p` only from agent terminal                         |
-| `send-and-verify.sh` said submitted but Claude still composing         | verifier false positive; wait for `Cooking…` / tool output, not script JSON alone                                              |
-| Started a new benchmark inside an old Claude session                   | exit to shell and relaunch fresh process; do not rely on prior session state                                                   |
-| Sent `claude ...` while still inside Claude                            | shell-launch guard failed; return to shell first                                                                               |
-| Thought dim scrollback text was pending input                          | ghost-input guard failed; re-capture and verify active prompt line                                                             |
-| Claude showed `ctrl+g to edit in Nvim` after a nudge                   | input was buffered, not submitted; verifier must not mark success                                                              |
-| Assumed Claude and Codex prompts behave the same                       | use runner-specific adapters                                                                                                   |
-| Kept nudging a busy pane                                               | classify `busy` and wait or interrupt intentionally                                                                            |
-| Grok launched but prompt never reached compose                         | project-directory blocker still up; run `resolve-launch-blockers.sh`                                                           |
-| Cursor launched but compose unavailable                                | workspace-trust blocker; send `a` via blocker resolver                                                                         |
-| Long `codex exec` / `cursor-agent` line split mid-command              | launch-script guard failed; use `send-shell-script.sh`                                                                         |
-| Codex hooks never fired in smoke                                       | used marker-only wait; wait for Stop hook or use hook-smoke scenario                                                           |
-| Grok `-p` works but interactive path fails                             | two paths differ; use interaction-smoke protocol for production parity                                                         |
-| `codex exec` hangs forever on "Reading additional input from stdin..." | stdin was a pipe, not a TTY; relaunch with `</dev/null` (headless-exec guard)                                                  |
-| Headless review "completed" with partial output and no verdict         | timeout killed it and the pipe masked exit 124; capture to a file, echo the process exit, require the terminal marker          |
-| Claude pane at `❯` silently ignores delivered prompts (ctx ≳90%)       | context-saturated session; do not keep nudging — kill the process and relaunch fresh (fresh process > `/clear` > reuse)        |
+| Failure                                                                | Fix                                                                                                                              |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Sent shell command into interactive Claude                             | detect state first; exit to shell or send Claude-language instruction instead                                                    |
+| Sent instruction but it stayed pending at `❯`                          | use named `Enter` (not `C-m`); re-capture; for cross-review stay in interactive pane — do not fall back to `claude -p` in tmux   |
+| Launched `claude -p` in tmux shell pane for review                     | driver bug; use interactive model pane (`send-keys -l` + `Enter`) or run `-p` only from agent terminal                           |
+| `send-and-verify.sh` said submitted but Claude still composing         | verifier false positive; wait for `Cooking…` / tool output, not script JSON alone                                                |
+| Started a new benchmark inside an old Claude session                   | exit to shell and relaunch fresh process; do not rely on prior session state                                                     |
+| Sent `claude ...` while still inside Claude                            | shell-launch guard failed; return to shell first                                                                                 |
+| Thought dim scrollback text was pending input                          | ghost-input guard failed; re-capture and verify active prompt line                                                               |
+| Claude showed `ctrl+g to edit in Nvim` after a nudge                   | input was buffered, not submitted; verifier must not mark success                                                                |
+| Assumed Claude and Codex prompts behave the same                       | use runner-specific adapters                                                                                                     |
+| Kept nudging a busy pane                                               | classify `busy` and wait or interrupt intentionally                                                                              |
+| Grok launched but prompt never reached compose                         | project-directory blocker still up; run `resolve-launch-blockers.sh`                                                             |
+| Cursor launched but compose unavailable                                | workspace-trust blocker; send `a` via blocker resolver                                                                           |
+| Long `codex exec` / `cursor-agent` line split mid-command              | launch-script guard failed; use `send-shell-script.sh`                                                                           |
+| Codex hooks never fired in smoke                                       | used marker-only wait; wait for Stop hook or use hook-smoke scenario                                                             |
+| Grok `-p` works but interactive path fails                             | two paths differ; use interaction-smoke protocol for production parity                                                           |
+| `codex exec` hangs forever on "Reading additional input from stdin..." | stdin was a pipe, not a TTY; relaunch with `</dev/null` (headless-exec guard)                                                    |
+| Headless review "completed" with partial output and no verdict         | timeout killed it and the pipe masked exit 124; gate on the process's own exit code + anchored marker in `--output-last-message` |
+| Claude pane at `❯` silently ignores delivered prompts (ctx ≳90%)       | context-saturated session; do not keep nudging — kill the process and relaunch fresh (fresh process > `/clear` > reuse)          |
 
 ## Output
 
