@@ -13,8 +13,14 @@ import path from 'node:path';
 
 import type { Command } from 'commander';
 
+import {
+  type EnqueueBridgeResult,
+  enqueueScoredBugs,
+  parseEnqueueThreshold,
+} from '../bug/enqueue-bridge.js';
 import { type BatchOptions, runBatch, runGrade, runValidate } from '../bug/pipeline.js';
 import { loadProjectContext, runScore, runTriage } from '../bug/triage.js';
+import { resolveContext } from '../context.js';
 import { createEmitter, type EnvelopeEmitter } from '../envelope.js';
 import { OutputContext } from '../output.js';
 import { withProgress } from '../progress.js';
@@ -288,6 +294,10 @@ export function registerBugCommand(program: Command): void {
     .option('--rescore', 'Re-score even when a score file already exists')
     .option('--validate', 'Run the LLM validity check on scored issues')
     .option('--download-images <dir>', 'Also download issue images to this directory')
+    .option(
+      '--enqueue-threshold <p>',
+      'Create backlog items (candidate, flow fix-bug) for scored issues with p(one-shot) >= p (0..1); requires a reachable gateway',
+    )
     .action(
       async (
         project: string,
@@ -304,6 +314,7 @@ export function registerBugCommand(program: Command): void {
           rescore?: boolean;
           validate?: boolean;
           downloadImages?: string;
+          enqueueThreshold?: string;
         },
         cmd: Command,
       ) => {
@@ -315,6 +326,8 @@ export function registerBugCommand(program: Command): void {
               userAction: 'Pass --source github or --source jira.',
             });
           }
+          // Blank values must be usage errors, not threshold 0 (Number('') === 0).
+          const enqueueThreshold = parseEnqueueThreshold(opts.enqueueThreshold);
           const batchOpts: BatchOptions = {
             source: opts.source,
             label: opts.label,
@@ -352,8 +365,29 @@ export function registerBugCommand(program: Command): void {
               },
             );
           }
+          let enqueueBridge: EnqueueBridgeResult | undefined;
+          if (enqueueThreshold !== undefined) {
+            const ctx = resolveContext(cmd);
+            enqueueBridge = await withProgress(
+              `Enqueueing scored bugs >= ${enqueueThreshold}`,
+              () =>
+                enqueueScoredBugs(ctx.client, {
+                  project,
+                  source: opts.source as 'github' | 'jira',
+                  scoresDir: result.scoresDir,
+                  // scoredKeys only: with --rescore a FAILED issue can leave a
+                  // stale score file behind, which must not be bridged.
+                  keys: result.scoredKeys,
+                  threshold: enqueueThreshold,
+                }),
+              !emit.machine,
+            );
+            for (const failure of enqueueBridge.failures) {
+              process.stderr.write(`  ENQUEUE FAIL: ${failure.ref}: ${failure.error}\n`);
+            }
+          }
           if (emit.machine) {
-            emit.ok(result);
+            emit.ok(enqueueBridge ? { ...result, enqueueBridge } : result);
           } else {
             if (result.total === 0) {
               output.write('No issues found matching filters.\n');
@@ -362,6 +396,16 @@ export function registerBugCommand(program: Command): void {
               output.write(
                 `\nScored: ${result.scored}, skipped: ${result.skipped}, failed: ${result.failed} of ${result.total}\n`,
               );
+            }
+            if (enqueueBridge) {
+              output.write(
+                `Enqueue bridge (p>=${enqueueBridge.threshold}): ${enqueueBridge.created.length} created, ${enqueueBridge.skippedExisting.length} already tracked, ${enqueueBridge.skippedBelowThreshold} below threshold, ${enqueueBridge.skippedInvalid.length} invalid${enqueueBridge.failures.length > 0 ? `, ${enqueueBridge.failures.length} FAILED` : ''}\n`,
+              );
+              for (const createdItem of enqueueBridge.created) {
+                output.write(
+                  `  + ${createdItem.itemRef} <- ${createdItem.ref} (p=${createdItem.probability})\n`,
+                );
+              }
             }
           }
         } catch (err) {
