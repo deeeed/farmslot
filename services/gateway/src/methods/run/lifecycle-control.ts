@@ -21,6 +21,7 @@ import {
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
 import { getRun, updateRun } from '../../runs/store.js';
+import { invalidateWarmReviewerSessions } from '../../self-review/session-policy.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -33,6 +34,8 @@ export async function runCancel(params: RunCancelParams, emit: Emit): Promise<Ru
   }
 
   cancelRunEngine(params.runId);
+  // A cancelled run's warm reviewer sessions must never be resumable.
+  invalidateWarmReviewerSessions(params.runId);
 
   const completedAt = new Date().toISOString();
   const run = updateRun(params.runId, {

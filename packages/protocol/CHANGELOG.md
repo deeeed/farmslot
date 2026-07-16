@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: `ReviewSessionPolicy` (`'fresh-per-pass' | 'warm-per-reviewer'`), `REVIEW_SESSION_POLICIES`, and `DEFAULT_REVIEW_SESSION_POLICY` — reviewer session lifecycle across one run's review loops (MANUAL-000009), shared by the gateway and `@farmslot/slot-config`.
+
 - feat: `ReviewSummary.independentReviews[]` rows gain optional `source` and `runner` so gate-summary surfaces can render _Independent review (requested)_ and `runner: <id>` policy metadata (additive; older persisted summaries simply omit them); review-loop JSDoc comments use independent-review language.
 
 - feat: launch-plan attempt fields for MANUAL-000037 — `QueueItem.launchAttempt`, `Run.launchAttempt`, `RunCreateParams.launchAttempt`, and `BacklogLaunchCandidateProjection.attempt`: a monotonic per-candidate attempt so backlog run observations can tell a legitimate re-enqueue takeover from a stale echo of a superseded run.

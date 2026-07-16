@@ -24,7 +24,12 @@ import {
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import {
+  buildLaunchCommand,
+  buildRunnerSessionReloadCommand,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+  runnerSupportsSessionReload,
+} from '../runners/launch-command.js';
 import { probeRunnerHandoffAck } from '../runners/prompt-delivery-evidence.js';
 import {
   runnerLineLooksWaiting,
@@ -51,6 +56,15 @@ import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { readReviewFeedback } from './feedback.js';
 import { startProgressWatcher } from './progress.js';
+import {
+  claimWarmReviewerSession,
+  DEFAULT_REVIEW_SESSION_POLICY,
+  registerWarmReviewerSession,
+  reviewerAllocationMode,
+  type ReviewSessionPolicy,
+  shouldAttemptWarmResume,
+  type WarmReviewerScope,
+} from './session-policy.js';
 import {
   bestEffortCaptureRunnerSessionMetadata,
   bestEffortListRunnerSessionFiles,
@@ -88,6 +102,16 @@ export function selfReviewChecklistMarkPrompt(
     `Skipping ${markWithTarget} leaves the run at 0/N in the UI. ` +
     `Write ${taskDir}/${feedbackRelPath}, then ${markWithTarget} complete.`
   );
+}
+
+/**
+ * Shell probe for "can this persisted session still be resumed": claude/codex
+ * sessions are FILES (transcript/rollout) but grok sessions are DIRECTORIES,
+ * so the probe must be `test -e` — `-f` would silently disable every grok
+ * warm resume.
+ */
+export function resumableSessionProbeCommand(runnerSessionPath: string): string {
+  return `test -e ${shellQuote(runnerSessionPath)}`;
 }
 
 export function reviewerChecklistBasename(contextId: string): string {
@@ -135,6 +159,7 @@ export async function runReviewAgent(
   loopNumber = 1,
   validationDepth: ReviewValidationDepth = 'full-live',
   artifactScope?: string | null,
+  sessionPolicy: ReviewSessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
 ): Promise<ReviewAgentResult> {
   const session = await resolveTmuxSession(vars.slotId, vars);
   const startedAt = new Date().toISOString();
@@ -150,14 +175,33 @@ export async function runReviewAgent(
     error: sessionFilesBefore.error,
   };
   const parentRunForAlloc = getRun(_runId);
+  // Warm reuse is same-run only: scope must match on every field or the claim
+  // returns null and this pass behaves exactly like fresh-per-pass.
+  const warmScope: WarmReviewerScope = {
+    runId: _runId,
+    taskDir,
+    artifactScope: artifactScope ?? null,
+    runner,
+    subjectRef: parentRunForAlloc?.branch ?? null,
+  };
+  let warmSession = shouldAttemptWarmResume(
+    sessionPolicy,
+    loopNumber,
+    runnerSupportsSessionReload(runner),
+  )
+    ? claimWarmReviewerSession(warmScope)
+    : null;
+  // Set once the resumed session actually launched — the cold-fallback path and
+  // fresh passes leave it false so registration binds the freshly captured id.
+  let warmResumed = false;
   const allocated = allocateReviewerContext({
     runId: _runId,
     runner,
     model,
     existing: parentRunForAlloc?.agentContexts ?? [],
-    // Fresh numbered tabs when the same runner already has a tab on this run
-    // (warm reuse is a later session-mode slice; launch still needs a live pane).
-    mode: 'fresh',
+    // warm-per-reviewer keeps one reviewer identity (context id + tab name)
+    // across the run's review loops; fresh-per-pass numbers a new tab per pass.
+    mode: reviewerAllocationMode(sessionPolicy),
   });
   const reviewWindow = allocated.windowName;
   const reviewChecklistTarget = targetForChecklistBasename(reviewerChecklistBasename(allocated.id));
@@ -248,85 +292,164 @@ export async function runReviewAgent(
       reviewChecklistTarget,
       feedbackRelPath,
     );
-    const taskPrompt = runnerNeedsPostLaunchPrompt(runner)
+    // Pre-flight: a claim whose persisted session file is gone (or was never
+    // recorded) cannot resume — downgrade to a fresh cold launch up front
+    // instead of burning the 120s ready-timeout on a dead `resume`.
+    if (warmSession) {
+      const probe = warmSession.runnerSessionPath
+        ? await execOnSlot(vars, resumableSessionProbeCommand(warmSession.runnerSessionPath), {
+            timeout: 10_000,
+          })
+        : null;
+      if (!probe || probe.exitCode !== 0) {
+        console.warn(
+          `[self-review] warm ${runner} session ${warmSession.runnerSessionId} has no resumable session file — falling back to a fresh launch`,
+        );
+        warmSession = null;
+      }
+    }
+    const basePrompt = runnerNeedsPostLaunchPrompt(runner)
       ? `${await resolveWorkerDispatchPrompt(parentRun?.project ?? vars.projectName, {
           taskFile: taskMdPath,
           taskDir,
         })}\n\n${markPrompt}`
       : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review. ${markPrompt}`;
+    // A warm re-review resumes the reviewer that produced the previous loop's
+    // findings, so its prompt narrows the scope to the worker's fixes since then.
+    // The cold-fallback path must NOT use this preamble — a fresh reviewer is not
+    // "the same reviewer session" and needs the full review contract.
+    const warmPrompt = warmSession
+      ? `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, artifactScope)}/review-feedback.md. The worker has applied fixes since. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n${basePrompt}`
+      : basePrompt;
+    let taskPrompt = warmPrompt;
 
     // 4. Launch review agent in the review window. Inherit the run's safety
     // tier (ADR-023) so the review agent runs with the same posture as the worker.
+    // Warm passes resume the prior reviewer's persisted runner session instead of
+    // cold-launching; every other step (window lifecycle, prompt delivery,
+    // artifacts, teardown) is identical to fresh-per-pass.
     const parentSafetyTier = parentRun?.safetyTier;
     const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
-    let launchCmd = buildLaunchCommand(vars, runner, model, taskPrompt, {
-      taskFile: taskMdPath,
-      effort: parentRun?.effort,
-      safetyTier: parentSafetyTier,
-      runtimeDir,
-    });
-    launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
     const reviewTarget = `${session}:${reviewWindow}`;
-    const handoffAckSinceMs = Date.now();
-    debugSelfReviewLog(`[self-review] launching (${runner}) via respawn-window: ${launchCmd}`);
-    await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd);
-    await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
-    sessionMeta = await bestEffortCaptureRunnerSessionMetadata(
-      vars,
-      runner,
-      sessionFilesBefore.paths,
-      sessionFilesBefore.error,
-      { sinceMs: handoffAckSinceMs },
-    );
-    reviewContext =
-      (await upsertAgentContext(_runId, 'self-review', {
-        id: allocated.id,
-        label: allocated.label,
-        status: 'working',
-        runnerSessionId: sessionMeta.runnerSessionId,
-        runnerSessionPath: sessionMeta.runnerSessionPath,
-      })) ?? reviewContext;
-
-    // 5. For interactive runners, send the task with verify-and-retry.
-    // Use the same runner-neutral post-launch protocol as dispatch: wait for a
-    // stable runner prompt, send, then verify that the pane echoes our marker.
-    if (runnerNeedsPostLaunchPrompt(runner)) {
-      try {
-        await sendRunnerPostLaunchPrompt(
-          vars,
-          reviewTarget,
-          runner,
-          taskPrompt,
-          reviewChecklistTarget.checklist,
-          'self-review',
-          {
-            readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
-            maxAttempts: 5,
-            blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
-            signalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
-            launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
-            requirePromptDigest: true,
-            handoffAckSinceMs,
-            softAcceptOnHandoffAck: true,
-          },
-        );
-      } catch (err) {
-        const handoff = await probeRunnerHandoffAck(
-          vars,
-          reviewTarget,
-          taskPrompt,
-          handoffAckSinceMs,
-          {
-            launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
-            preferHooks: true,
-            requirePromptDigest: true,
-          },
-        );
-        if (!handoff.accepted) throw err;
-        console.warn(
-          `[self-review] prompt delivery verifier failed but continuing: ${handoff.reason}`,
-        );
+    const coldLaunchCommand = () =>
+      buildLaunchCommand(vars, runner, model, taskPrompt, {
+        taskFile: taskMdPath,
+        effort: parentRun?.effort,
+        safetyTier: parentSafetyTier,
+        runtimeDir,
+      });
+    // Launch → settle → capture session metadata → bind context → deliver prompt.
+    // `claimed` is the warm session being resumed: capture is diff-based (not
+    // pane-scoped), so a resume that continues the SAME transcript file captures
+    // nothing — seed the claimed id/path so usage extraction and the persisted
+    // context binding still work.
+    const launchReviewer = async (
+      launchCmd: string,
+      prompt: string,
+      claimed: typeof warmSession,
+    ): Promise<void> => {
+      const handoffAckSinceMs = Date.now();
+      debugSelfReviewLog(`[self-review] launching (${runner}) via respawn-window: ${launchCmd}`);
+      await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd);
+      await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
+      sessionMeta = await bestEffortCaptureRunnerSessionMetadata(
+        vars,
+        runner,
+        sessionFilesBefore.paths,
+        sessionFilesBefore.error,
+        { sinceMs: handoffAckSinceMs },
+      );
+      if (claimed) {
+        // Use the claimed binding UNCONDITIONALLY on a resume: capture is
+        // diff-based and prefers fresh paths, so concurrent same-runner
+        // activity can produce a non-null FOREIGN binding — which would then
+        // drive the persisted context and cost attribution. The claimed
+        // session IS the reviewer's session (codex/grok continue the same
+        // file; for claude this trades exact per-loop usage attribution for
+        // never attributing a foreign session).
+        sessionMeta = {
+          runnerSessionId: claimed.runnerSessionId,
+          runnerSessionPath: claimed.runnerSessionPath,
+          error: sessionMeta.error,
+        };
       }
+      reviewContext =
+        (await upsertAgentContext(_runId, 'self-review', {
+          id: allocated.id,
+          label: allocated.label,
+          status: 'working',
+          runnerSessionId: sessionMeta.runnerSessionId,
+          runnerSessionPath: sessionMeta.runnerSessionPath,
+        })) ?? reviewContext;
+
+      // For interactive runners, send the task with verify-and-retry.
+      // Use the same runner-neutral post-launch protocol as dispatch: wait for a
+      // stable runner prompt, send, then verify that the pane echoes our marker.
+      if (runnerNeedsPostLaunchPrompt(runner)) {
+        try {
+          await sendRunnerPostLaunchPrompt(
+            vars,
+            reviewTarget,
+            runner,
+            prompt,
+            reviewChecklistTarget.checklist,
+            'self-review',
+            {
+              readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
+              maxAttempts: 5,
+              blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
+              signalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+              launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+              requirePromptDigest: true,
+              handoffAckSinceMs,
+              softAcceptOnHandoffAck: true,
+            },
+          );
+        } catch (err) {
+          const handoff = await probeRunnerHandoffAck(
+            vars,
+            reviewTarget,
+            prompt,
+            handoffAckSinceMs,
+            {
+              launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+              preferHooks: true,
+              requirePromptDigest: true,
+            },
+          );
+          if (!handoff.accepted) throw err;
+          console.warn(
+            `[self-review] prompt delivery verifier failed but continuing: ${handoff.reason}`,
+          );
+        }
+      }
+    };
+
+    // 4/5. Launch (warm resume when claimed) and deliver the prompt. A warm
+    // resume that fails for any reason past the pre-flight (corrupt session,
+    // runner refuses the id, ready-timeout) is retried ONCE as a cold fresh
+    // launch with the full (non-narrowed) prompt.
+    if (warmSession) {
+      const reloadCmd = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
+        vars,
+        runner,
+        model,
+        warmSession.runnerSessionId,
+        { effort: parentRun?.effort, safetyTier: parentSafetyTier, runtimeDir },
+      )}`;
+      try {
+        await launchReviewer(reloadCmd, taskPrompt, warmSession);
+        warmResumed = true;
+      } catch (err) {
+        console.warn(
+          `[self-review] warm resume of ${runner} session ${warmSession.runnerSessionId} failed (${(err as Error).message}) — retrying with a cold fresh launch`,
+        );
+        warmSession = null;
+        taskPrompt = basePrompt;
+        await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
+      }
+    } else {
+      await launchReviewer(`${WORKER_ENV_PREFIX} && ${coldLaunchCommand()}`, taskPrompt, null);
     }
 
     // 6. Watch the reviewer-specific checklist for progress + wait for completion
@@ -381,6 +504,30 @@ export async function runReviewAgent(
       };
     }
     completedSuccessfully = true;
+    if (sessionPolicy === 'warm-per-reviewer') {
+      // Record this pass's session so the next loop of THIS run can resume it.
+      // On a warm-resumed pass keep the CLAIMED binding: session capture is
+      // diff-based, so concurrent same-runner activity on the slot could
+      // mis-attribute a foreign transcript — and a mis-bound id would be
+      // RESUMED next loop. (For claude this means later loops resume the
+      // original lineage rather than each resume's successor id — trading one
+      // loop of reviewer context for never binding a foreign session.)
+      const reusableSessionId =
+        warmResumed && warmSession ? warmSession.runnerSessionId : sessionMeta.runnerSessionId;
+      const reusableSessionPath =
+        warmResumed && warmSession ? warmSession.runnerSessionPath : sessionMeta.runnerSessionPath;
+      if (reusableSessionId && runnerSupportsSessionReload(runner)) {
+        registerWarmReviewerSession({
+          ...warmScope,
+          contextId: allocated.id,
+          windowName: reviewWindow,
+          slotId: vars.slotId,
+          runnerSessionId: reusableSessionId,
+          runnerSessionPath: reusableSessionPath ?? null,
+          lastLoopNumber: loopNumber,
+        });
+      }
+    }
     const persistedArtifacts: string[] = [];
     const taskProgressRel = `${artifactDir}/self-review.md`;
     const taskProgressCopy = await execOnSlot(

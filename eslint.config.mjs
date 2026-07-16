@@ -27,6 +27,9 @@ export default [
     ignores: [
       '**/.git/**',
       '.worktrees/**',
+      // Agent-tool worktrees checked out inside the repo: their files are
+      // other branches' code and must not feed the lint ratchet.
+      '.claude/**',
       '.agent/**',
       '.artifact-cache/**',
       '**/.yarn/**',
