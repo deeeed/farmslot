@@ -28,10 +28,23 @@ export function parseAcceptanceCriteria(markdown) {
   return { headingLine: headingIndex + 1, criteria };
 }
 
-// A criterion must carry a concrete check: an inline-code command/test/grep/
-// file reference, or an explicit artifact:/recipe: reference. The reference
-// must have real content — empty backticks or a bare `artifact:` prove nothing.
-const CHECK_MARKER = /`[^`\s][^`]*`|\b(artifact|recipe):\s*\S/i;
+/**
+ * A criterion must carry a concrete check: an inline-code command/test/grep/
+ * file reference, or an explicit artifact:/recipe: reference. The reference
+ * must have real content — empty/whitespace-only code spans, a bare
+ * `artifact:`, or one followed only by punctuation prove nothing.
+ */
+export function hasCheckMarker(text) {
+  for (const m of text.matchAll(/`([^`]*)`/g)) {
+    if (m[1].trim()) return true;
+  }
+  for (const m of text.matchAll(/\b(?:artifact|recipe):\s*(\S+)/gi)) {
+    // A real reference token contains at least one word or path character
+    // once code-span backticks are stripped.
+    if (/[\w/]/.test(m[1].replace(/`/g, ''))) return true;
+  }
+  return false;
+}
 
 // Conditions no worker or reviewer can verify inside one run.
 const FORBIDDEN = [
@@ -60,7 +73,7 @@ export function lintSpecText(markdown) {
     });
   }
   for (const { line, text } of criteria) {
-    if (!CHECK_MARKER.test(text)) {
+    if (!hasCheckMarker(text)) {
       violations.push({ line, rule: 'no-check-marker', excerpt: text.slice(0, 80) });
     }
     for (const [pattern, label] of FORBIDDEN) {
@@ -94,7 +107,9 @@ export function lintSpecText(markdown) {
 const isMain = (() => {
   if (!process.argv[1]) return false;
   try {
-    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+    // Canonicalize BOTH sides: --preserve-symlinks-main leaves import.meta.url
+    // at the symlink path while argv resolves, and vice versa.
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
   } catch {
     // argv[1] does not resolve to a real file — not this module.
     return false;

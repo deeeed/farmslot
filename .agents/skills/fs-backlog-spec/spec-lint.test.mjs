@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -116,10 +117,50 @@ test('both ADR-032 specs pass the lint', (t) => {
   }
 });
 
-test('empty or whitespace-only references are not check markers', () => {
+test('content-free references are not check markers; real ones are', () => {
   const violations = lintSpecText(
-    '# t\n\n## Non-goals\n\n- none\n\n## Acceptance Criteria\n\n- Looks done: ``.\n- Ref with space only: ` `.\n- Bare marker: artifact:\n- Real: `yarn test` passes.\n- Real too: evidence (artifact: `a/b.json`).\n',
+    [
+      '# t',
+      '',
+      '## Non-goals',
+      '',
+      '- none',
+      '',
+      '## Acceptance Criteria',
+      '',
+      '- Looks done: ``.',
+      '- Ref with space only: ` `.',
+      '- Bare marker: artifact:',
+      '- Punctuation marker: artifact:.',
+      '- Paren marker: recipe:)',
+      '- Empty span after marker: artifact: ``',
+      '- Real: `yarn test` passes.',
+      '- Real too: evidence (artifact: `a/b.json`).',
+      '- Leading-space code is valid: ` yarn test` runs.',
+      '- Plain path ref: artifact: artifacts/e.json attached.',
+      '',
+    ].join('\n'),
   );
   const markerless = violations.filter((v) => v.rule === 'no-check-marker');
-  assert.equal(markerless.length, 3);
+  assert.equal(markerless.length, 6);
+});
+
+test('symlinked invocation with --preserve-symlinks-main still lints', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'spec-lint-'));
+  const link = path.join(dir, 'lint-link.mjs');
+  symlinkSync(lint, link);
+  try {
+    let status = 0;
+    try {
+      execFileSync(process.execPath, ['--preserve-symlinks-main', link, bad], {
+        encoding: 'utf-8',
+      });
+    } catch (err) {
+      status = err.status;
+    }
+    // A silent exit 0 here means the CLI entry check failed to recognize itself.
+    assert.equal(status, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
