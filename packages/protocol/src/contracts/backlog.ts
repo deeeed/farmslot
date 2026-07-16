@@ -82,6 +82,8 @@ export interface BacklogLaunchCandidateProjection {
   status: BacklogLaunchCandidateStatus;
   queueItemId?: string;
   runId?: string;
+  /** Launch attempt of the run that currently owns this candidate (MANUAL-000037). */
+  attempt?: number;
   slotId?: string;
   waitingReason?: string;
 }

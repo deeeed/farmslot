@@ -913,7 +913,7 @@ test('launch-plan observation from a foreign plan is ignored', async () => {
   assert.equal(item?.launchPlanState?.candidates.length ?? 0, 1);
 });
 
-test('a stale candidate echo cannot overwrite the projection owned by a newer run', async () => {
+test('a stale candidate echo cannot overwrite the projection owned by a newer-attempt run', async () => {
   const { backlog, runStore } = await freshStores();
   const created = await backlog.createBacklogItem({
     project: 'farmslot-farm',
@@ -943,26 +943,24 @@ test('a stale candidate echo cannot overwrite the projection owned by a newer ru
       ],
     },
   });
-  const mkRun = (candidate: string, createdAt: string, status: string) => {
-    const base = runStore.createRun({
+  const mkRun = (candidate: string, launchAttempt: number, status: string) => {
+    const run = runStore.createRun({
       flowType: 'dev',
       project: 'farmslot-farm',
       ticketOrPr: created.item.sourceRef,
       backlogItemId: created.item.id,
       launchPlanId: 'lp_stale',
       launchCandidateId: candidate,
-    });
-    return runStore.updateRun(base.id, { createdAt, status } as never);
+      launchAttempt,
+    } as never);
+    return runStore.updateRun(run.id, { status } as never);
   };
-  // Keep the item non-terminal so shouldApplyLinkedRunObservation lets candidate
-  // events through to the ownership guard: a live baseline run.
-  const baselineRun = mkRun('baseline', '2026-01-15T00:00:00.000Z', 'monitoring');
-  backlog.markBacklogRunObserved({ ...baselineRun } as never);
+  // Live baseline keeps the item non-terminal so candidate events reach the guard.
+  backlog.markBacklogRunObserved({ ...mkRun('baseline', 1, 'monitoring') } as never);
   await new Promise((resolve) => setTimeout(resolve, 25));
 
-  // An older sonnet run, then a newer sonnet run that now owns the projection.
-  const olderSonnet = mkRun('sonnet', '2026-01-01T00:00:00.000Z', 'failed');
-  const newerSonnet = mkRun('sonnet', '2026-06-01T00:00:00.000Z', 'done');
+  // Newer-attempt sonnet run owns the projection (attempt 2).
+  const newerSonnet = mkRun('sonnet', 2, 'done');
   backlog.markBacklogRunObserved({ ...newerSonnet } as never);
   await new Promise((resolve) => setTimeout(resolve, 25));
   const sonnetProjection = () =>
@@ -970,20 +968,20 @@ test('a stale candidate echo cannot overwrite the projection owned by a newer ru
       .listBacklogItems({ includeArchived: true })
       .items[0]?.launchPlanState?.candidates.find((c) => c.candidateId === 'sonnet');
   assert.equal(sonnetProjection()?.runId, newerSonnet.id);
-  assert.equal(sonnetProjection()?.status, 'succeeded');
+  assert.equal(sonnetProjection()?.attempt, 2);
 
-  // The older run re-emits a late failed echo — dropped as stale (owner is newer).
-  backlog.markBacklogRunObserved({ ...olderSonnet } as never);
+  // An older-attempt sonnet run re-emits a late echo — dropped as stale (attempt 1 < 2).
+  backlog.markBacklogRunObserved({ ...mkRun('sonnet', 1, 'failed') } as never);
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(sonnetProjection()?.runId, newerSonnet.id);
   assert.equal(sonnetProjection()?.status, 'succeeded');
 });
 
-test('a newer re-enqueued baseline run takes over from an older running owner', async () => {
+test('a newer-attempt re-enqueued run takes over from an older running owner', async () => {
   const { backlog, runStore } = await freshStores();
   const created = await backlog.createBacklogItem({
     project: 'farmslot-farm',
-    title: 'Baseline re-enqueue takeover',
+    title: 'Candidate re-enqueue takeover',
     sourceKind: 'manual',
     flowType: 'dev',
     status: 'ready',
@@ -1001,19 +999,20 @@ test('a newer re-enqueued baseline run takes over from an older running owner', 
       ],
     },
   });
-  const mkRun = (createdAt: string, status: string) => {
-    const base = runStore.createRun({
+  const mkRun = (launchAttempt: number, status: string) => {
+    const run = runStore.createRun({
       flowType: 'dev',
       project: 'farmslot-farm',
       ticketOrPr: created.item.sourceRef,
       backlogItemId: created.item.id,
       launchPlanId: 'lp_retry',
       launchCandidateId: 'baseline',
-    });
-    return runStore.updateRun(base.id, { createdAt, status } as never);
+      launchAttempt,
+    } as never);
+    return runStore.updateRun(run.id, { status } as never);
   };
-  // An older baseline run is live (item stays non-terminal), owning the item link.
-  const firstBaseline = mkRun('2026-01-01T00:00:00.000Z', 'monitoring');
+  // First baseline run (attempt 1) is live and owns the item link.
+  const firstBaseline = mkRun(1, 'monitoring');
   backlog.markBacklogRunObserved({ ...firstBaseline } as never);
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(
@@ -1021,18 +1020,18 @@ test('a newer re-enqueued baseline run takes over from an older running owner', 
     firstBaseline.id,
   );
 
-  // A re-enqueued NEWER baseline run's first update arrives before its
-  // markBacklogRunStarted ownership transfer — it must take the candidate and the
-  // item link over (the strict identity rule would have stranded it here).
-  const retryBaseline = mkRun('2026-02-01T00:00:00.000Z', 'monitoring');
+  // A re-enqueued higher-attempt baseline run's first update arrives before its
+  // markBacklogRunStarted ownership transfer — it must take over, not be stranded
+  // (the strict identity rule stranded this; wall-clock recency could tie on it).
+  const retryBaseline = mkRun(2, 'monitoring');
   backlog.markBacklogRunObserved({ ...retryBaseline } as never);
   await new Promise((resolve) => setTimeout(resolve, 25));
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.runId, retryBaseline.id);
   assert.equal(item?.launchPlanState?.baselineRunId, retryBaseline.id);
   assert.equal(
-    item?.launchPlanState?.candidates.find((c) => c.candidateId === 'baseline')?.runId,
-    retryBaseline.id,
+    item?.launchPlanState?.candidates.find((c) => c.candidateId === 'baseline')?.attempt,
+    2,
   );
 });
 
@@ -1058,18 +1057,19 @@ test('a foreign baseline echo cannot steal the item run link from a live baselin
       ],
     },
   });
-  const mkRun = (createdAt: string, status: string) => {
-    const base = runStore.createRun({
+  const mkRun = (launchAttempt: number, status: string) => {
+    const run = runStore.createRun({
       flowType: 'dev',
       project: 'farmslot-farm',
       ticketOrPr: created.item.sourceRef,
       backlogItemId: created.item.id,
       launchPlanId: 'lp_base',
       launchCandidateId: 'baseline',
-    });
-    return runStore.updateRun(base.id, { createdAt, status } as never);
+      launchAttempt,
+    } as never);
+    return runStore.updateRun(run.id, { status } as never);
   };
-  const liveBaseline = mkRun('2026-06-01T00:00:00.000Z', 'monitoring');
+  const liveBaseline = mkRun(2, 'monitoring');
   backlog.markBacklogRunObserved({ ...liveBaseline } as never);
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(
@@ -1077,9 +1077,9 @@ test('a foreign baseline echo cannot steal the item run link from a live baselin
     liveBaseline.id,
   );
 
-  // An OLDER run reusing the baseline candidate id must not reassign item.runId
-  // while the newer live baseline owns it.
-  const foreignBaseline = mkRun('2026-01-01T00:00:00.000Z', 'done');
+  // An older-attempt run reusing the baseline candidate id must not reassign
+  // item.runId while the newer live baseline owns it.
+  const foreignBaseline = mkRun(1, 'done');
   backlog.markBacklogRunObserved({ ...foreignBaseline } as never);
   await new Promise((resolve) => setTimeout(resolve, 25));
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];

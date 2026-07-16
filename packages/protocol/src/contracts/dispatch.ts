@@ -39,6 +39,10 @@ export interface QueueItem {
   launchCandidateId?: string;
   launchGroupId?: string;
   launchSlotPolicy?: import('./backlog.js').BacklogLaunchSlotPolicy['kind'];
+  /** Monotonic per-candidate launch attempt (MANUAL-000037): each (re)enqueue of a
+   * launch-plan candidate stamps a strictly higher value so run observations can tell
+   * a legitimate takeover from a stale echo of a superseded run. */
+  launchAttempt?: number;
   label?: string;
   flowType: FlowType;
   project: string;

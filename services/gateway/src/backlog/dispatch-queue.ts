@@ -204,6 +204,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
     launchCandidateId: params.launchCandidateId,
     launchGroupId: params.launchGroupId,
     launchSlotPolicy: params.launchSlotPolicy,
+    launchAttempt: params.launchAttempt,
     label: params.label,
     flowType: params.flowType,
     project: params.project,

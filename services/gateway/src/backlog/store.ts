@@ -640,14 +640,6 @@ function rollUpLaunchPlanStatus(item: BacklogItem): void {
   }
 }
 
-// True when `owner` was created no earlier than `incoming` — i.e. `incoming` is a
-// stale echo from a run the owner has superseded (or an identical-age foreign run).
-// A strictly newer `incoming` is a legitimate takeover. createdAt is a required,
-// monotonic ISO timestamp, so lexical compare is chronological.
-function launchRunSupersedes(owner: Run, incoming: Run): boolean {
-  return (owner.createdAt ?? '') >= (incoming.createdAt ?? '');
-}
-
 function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   if (!item.launchPlan || !run.launchCandidateId) return false;
   // The observation must belong to THIS plan and name a real candidate — a
@@ -665,36 +657,35 @@ function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   ensureLaunchPlanState(item);
   const projection = projectionForCandidate(item, run.launchCandidateId);
   if (!projection) return false;
-  // Ownership by recency. A candidate is owned by the run markBacklogRunStarted
-  // linked to it (projection.runId). Drop an observation from a DIFFERENT run only
-  // when it is a stale echo — the current owner still exists and was created no
-  // earlier than the incoming run. A strictly newer run legitimately takes the
-  // candidate over (re-enqueue / replay, whose first update can arrive before
-  // markBacklogRunStarted transfers ownership), and a missing owner (deleted or
-  // cleaned up) is not defended so takeover still proceeds. Identity alone cannot
-  // tell an echo from a takeover — hence the timestamp compare.
-  if (projection.runId && projection.runId !== run.id) {
-    const owner = getAllRuns().find((candidate) => candidate.id === projection.runId);
-    if (owner && launchRunSupersedes(owner, run)) return false;
+  // Ownership by monotonic per-candidate attempt. A candidate is owned by the run
+  // markBacklogRunStarted linked to it (projection.runId / projection.attempt). Each
+  // (re)enqueue stamps the candidate's run with a strictly higher launchAttempt than
+  // the projection, so a re-enqueued run's first update — which can arrive before
+  // markBacklogRunStarted transfers ownership — is recognized as a takeover, while a
+  // late echo from a superseded run (a lower attempt) is dropped. Attempts are
+  // clock-independent and persisted on the projection, so same-instant re-enqueues,
+  // clock rollback, and restart are all handled. Legacy runs/projections without an
+  // attempt default to 0 and behave leniently.
+  if (
+    projection.runId &&
+    projection.runId !== run.id &&
+    (run.launchAttempt ?? 0) < (projection.attempt ?? 0)
+  ) {
+    return false;
   }
   projection.runId = run.id;
+  projection.attempt = Math.max(projection.attempt ?? 0, run.launchAttempt ?? 0);
   projection.slotId = run.slotId ?? undefined;
   delete projection.queueItemId;
   projection.status = statusFromRun(run);
   if (run.launchCandidateId === launchCandidateByRole(item, 'baseline')?.id) {
-    // The baseline candidate also owns the item's top-level run link. Take it
-    // unless a strictly newer run already holds it, so an older baseline echo
-    // cannot steal item.runId from a live baseline while a genuine re-enqueue can.
-    const holder =
-      item.runId != null && item.runId !== run.id
-        ? getAllRuns().find((candidate) => candidate.id === item.runId)
-        : undefined;
-    if (!holder || !launchRunSupersedes(holder, run)) {
-      item.runId = run.id;
-      item.lastObservedRunStatus = run.status;
-      item.launchPlanState!.baselineRunId = run.id;
-      delete item.queuedQueueItemId;
-    }
+    // Reaching here means this run's attempt passed the ownership guard above for
+    // the baseline candidate, so it is authoritative and also owns the item's
+    // top-level run link. An older baseline echo was already dropped by the guard.
+    item.runId = run.id;
+    item.lastObservedRunStatus = run.status;
+    item.launchPlanState!.baselineRunId = run.id;
+    delete item.queuedQueueItemId;
   }
   rollUpLaunchPlanStatus(item);
   const changed =
@@ -1642,6 +1633,14 @@ function queueFieldsForSlotPolicy(policy: BacklogLaunchSlotPolicy): {
   return policy.allowedSlots ? { allowedSlots: policy.allowedSlots } : {};
 }
 
+// Next monotonic attempt for a launch-plan candidate. Persisted per-candidate on the
+// projection (launchPlanState), so it survives restart and is independent of the wall
+// clock — each (re)enqueue produces a strictly higher value than the current owner.
+function nextCandidateAttempt(item: BacklogItem, candidateId: string): number {
+  ensureLaunchPlanState(item);
+  return (projectionForCandidate(item, candidateId)?.attempt ?? 0) + 1;
+}
+
 async function buildBacklogQueueParams(
   item: BacklogItem,
   options: { workGraphId?: string; workNodeId?: string },
@@ -1659,6 +1658,7 @@ async function buildBacklogQueueParams(
     launchCandidateId: candidate?.id,
     launchGroupId: item.launchPlanState?.launchGroupId,
     launchSlotPolicy: candidate?.slotPolicy.kind,
+    launchAttempt: candidate ? nextCandidateAttempt(item, candidate.id) : undefined,
     label: candidate
       ? `Backlog: ${item.title} — ${candidate.label ?? candidate.id}`
       : `Backlog: ${item.title}`,
@@ -1952,6 +1952,7 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
       if (projection) {
         projection.status = 'running';
         projection.runId = run.id;
+        projection.attempt = queueItem.launchAttempt ?? run.launchAttempt ?? projection.attempt;
         projection.slotId = run.slotId ?? queueItem.slotId;
         delete projection.queueItemId;
       }

@@ -374,6 +374,7 @@ async function main(): Promise<void> {
       launchCandidateId: item.launchCandidateId,
       launchGroupId: item.launchGroupId,
       launchSlotPolicy: item.launchSlotPolicy,
+      launchAttempt: item.launchAttempt,
       devChecklist: item.devChecklist,
       reviewDepth: item.reviewDepth,
       pendingReviewPlan: item.pendingReviewPlan,

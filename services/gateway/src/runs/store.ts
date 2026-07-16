@@ -584,6 +584,7 @@ export function createRun(params: RunCreateParams): Run {
     launchCandidateId: params.launchCandidateId,
     launchGroupId: params.launchGroupId,
     launchSlotPolicy: params.launchSlotPolicy,
+    launchAttempt: params.launchAttempt,
     taskFile: params.taskFile ?? null,
     steps: stepsForFlow(params.flowType),
     decisions: [],

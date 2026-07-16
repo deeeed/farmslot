@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: launch-plan attempt fields for MANUAL-000037 — `QueueItem.launchAttempt`, `Run.launchAttempt`, `RunCreateParams.launchAttempt`, and `BacklogLaunchCandidateProjection.attempt`: a monotonic per-candidate attempt so backlog run observations can tell a legitimate re-enqueue takeover from a stale echo of a superseded run.
+
 - feat: `BacklogItem.multiPr` (+ create/update inputs) — marks items whose acceptance criteria span multiple PRs so a finished run returns them to `ready` instead of auto-closing them; final closure stays the explicit `backlog.closeShipped` call.
 - feat: `CICheck.status` and `PRStatus.checkSummary` gain `skipped` — watched-check surfaces distinguish path-skipped CI jobs from pending ones. `CiCheckSummary.skipped` is optional (absent in run outputs persisted before skipped tracking).
 - feat: `contracts/bug-score.ts` — decision cores for the LLM grade / validity / batch stages of the bug pipeline, ported from `grade-bug.sh`, `validate-bug.sh`, and the `batch-triage.sh` GitHub post-filter: `normalizeLlmGrade` + `computeFinalScore` (LLM grade validation and the deterministic heuristic/LLM final-score merge), `normalizeBugValidation` (validity-check defaults), `parseLlmJson` (fence-stripping JSON parse), and `filterBatchIssues` (since/exclude-assigned filter), plus the `LlmGrade`/`FinalScore`/`BugValidation`/`LlmComplexity`/`FinalScoreSource` types and `LLM_COMPLEXITIES`/`FINAL_SCORE_SOURCES` constants. Companion to `contracts/bug-input.ts`; both back the new `farmslot bug` CLI command family.

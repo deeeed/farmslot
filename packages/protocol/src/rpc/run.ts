@@ -161,6 +161,8 @@ export interface RunCreateParams {
   launchCandidateId?: string;
   launchGroupId?: string;
   launchSlotPolicy?: import('../contracts/index.js').BacklogLaunchSlotPolicy['kind'];
+  /** Monotonic per-candidate launch attempt (MANUAL-000037); backlog.enqueue owns it. */
+  launchAttempt?: number;
   /** Dev-only interactive policy. Defaults to lightweight for interactive dev runs. */
   devInteractiveProfile?: import('../contracts/index.js').DevInteractiveProfile;
   /** Shared normalized tags for planning/execution filtering. */
