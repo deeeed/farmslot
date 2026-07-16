@@ -48,7 +48,8 @@ export interface EnqueueBridgeOptions {
   project: string;
   source: 'github' | 'jira';
   scoresDir: string;
-  /** Score-file keys produced by the batch (BatchResult.keys). */
+  /** Score-file keys whose files reflect THIS run — pass BatchResult.scoredKeys,
+   * never BatchResult.keys: failed issues can leave stale score files behind. */
   keys: string[];
   /** Minimum p(one-shot) — final score preferred, heuristic fallback. */
   threshold: number;
