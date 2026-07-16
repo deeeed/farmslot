@@ -24,7 +24,12 @@ import {
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import {
+  buildLaunchCommand,
+  buildRunnerSessionReloadCommand,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+  runnerSupportsSessionReload,
+} from '../runners/launch-command.js';
 import { probeRunnerHandoffAck } from '../runners/prompt-delivery-evidence.js';
 import {
   runnerLineLooksWaiting,
@@ -51,6 +56,15 @@ import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { readReviewFeedback } from './feedback.js';
 import { startProgressWatcher } from './progress.js';
+import {
+  claimWarmReviewerSession,
+  DEFAULT_REVIEW_SESSION_POLICY,
+  registerWarmReviewerSession,
+  reviewerAllocationMode,
+  type ReviewSessionPolicy,
+  shouldAttemptWarmResume,
+  type WarmReviewerScope,
+} from './session-policy.js';
 import {
   bestEffortCaptureRunnerSessionMetadata,
   bestEffortListRunnerSessionFiles,
@@ -135,6 +149,7 @@ export async function runReviewAgent(
   loopNumber = 1,
   validationDepth: ReviewValidationDepth = 'full-live',
   artifactScope?: string | null,
+  sessionPolicy: ReviewSessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
 ): Promise<ReviewAgentResult> {
   const session = await resolveTmuxSession(vars.slotId, vars);
   const startedAt = new Date().toISOString();
@@ -150,14 +165,30 @@ export async function runReviewAgent(
     error: sessionFilesBefore.error,
   };
   const parentRunForAlloc = getRun(_runId);
+  // Warm reuse is same-run only: scope must match on every field or the claim
+  // returns null and this pass behaves exactly like fresh-per-pass.
+  const warmScope: WarmReviewerScope = {
+    runId: _runId,
+    taskDir,
+    artifactScope: artifactScope ?? null,
+    runner,
+    subjectRef: parentRunForAlloc?.branch ?? null,
+  };
+  const warmSession = shouldAttemptWarmResume(
+    sessionPolicy,
+    loopNumber,
+    runnerSupportsSessionReload(runner),
+  )
+    ? claimWarmReviewerSession(warmScope)
+    : null;
   const allocated = allocateReviewerContext({
     runId: _runId,
     runner,
     model,
     existing: parentRunForAlloc?.agentContexts ?? [],
-    // Fresh numbered tabs when the same runner already has a tab on this run
-    // (warm reuse is a later session-mode slice; launch still needs a live pane).
-    mode: 'fresh',
+    // warm-per-reviewer keeps one reviewer identity (context id + tab name)
+    // across the run's review loops; fresh-per-pass numbers a new tab per pass.
+    mode: reviewerAllocationMode(sessionPolicy),
   });
   const reviewWindow = allocated.windowName;
   const reviewChecklistTarget = targetForChecklistBasename(reviewerChecklistBasename(allocated.id));
@@ -248,23 +279,40 @@ export async function runReviewAgent(
       reviewChecklistTarget,
       feedbackRelPath,
     );
+    // A warm re-review resumes the reviewer that produced the previous loop's
+    // findings, so its prompt narrows the scope to the worker's fixes since then.
+    const warmReReviewPreamble = warmSession
+      ? `You are the same reviewer session that produced the findings in ${taskDir}/${reviewArtifactDir(warmSession.lastLoopNumber, artifactScope)}/review-feedback.md. The worker has applied fixes since. Re-review ONLY the worker's fixes against your previous findings — do not re-review unchanged code — then complete the checklist's output contract (feedback + signal) as written.\n\n`
+      : '';
     const taskPrompt = runnerNeedsPostLaunchPrompt(runner)
-      ? `${await resolveWorkerDispatchPrompt(parentRun?.project ?? vars.projectName, {
-          taskFile: taskMdPath,
-          taskDir,
-        })}\n\n${markPrompt}`
-      : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review. ${markPrompt}`;
+      ? `${warmReReviewPreamble}${await resolveWorkerDispatchPrompt(
+          parentRun?.project ?? vars.projectName,
+          {
+            taskFile: taskMdPath,
+            taskDir,
+          },
+        )}\n\n${markPrompt}`
+      : `${warmReReviewPreamble}Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review. ${markPrompt}`;
 
     // 4. Launch review agent in the review window. Inherit the run's safety
     // tier (ADR-023) so the review agent runs with the same posture as the worker.
+    // Warm passes resume the prior reviewer's persisted runner session instead of
+    // cold-launching; every other step (window lifecycle, prompt delivery,
+    // artifacts, teardown) is identical to fresh-per-pass.
     const parentSafetyTier = parentRun?.safetyTier;
     const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
-    let launchCmd = buildLaunchCommand(vars, runner, model, taskPrompt, {
-      taskFile: taskMdPath,
-      effort: parentRun?.effort,
-      safetyTier: parentSafetyTier,
-      runtimeDir,
-    });
+    let launchCmd = warmSession
+      ? buildRunnerSessionReloadCommand(vars, runner, model, warmSession.runnerSessionId, {
+          effort: parentRun?.effort,
+          safetyTier: parentSafetyTier,
+          runtimeDir,
+        })
+      : buildLaunchCommand(vars, runner, model, taskPrompt, {
+          taskFile: taskMdPath,
+          effort: parentRun?.effort,
+          safetyTier: parentSafetyTier,
+          runtimeDir,
+        });
     launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
     const reviewTarget = `${session}:${reviewWindow}`;
     const handoffAckSinceMs = Date.now();
@@ -381,6 +429,23 @@ export async function runReviewAgent(
       };
     }
     completedSuccessfully = true;
+    if (sessionPolicy === 'warm-per-reviewer') {
+      // Record this pass's session so the next loop of THIS run can resume it.
+      // A resumed runner may mint a new session id; fall back to the claimed one.
+      const reusableSessionId = sessionMeta.runnerSessionId ?? warmSession?.runnerSessionId;
+      if (reusableSessionId && runnerSupportsSessionReload(runner)) {
+        registerWarmReviewerSession({
+          ...warmScope,
+          contextId: allocated.id,
+          windowName: reviewWindow,
+          slotId: vars.slotId,
+          runnerSessionId: reusableSessionId,
+          runnerSessionPath:
+            sessionMeta.runnerSessionPath ?? warmSession?.runnerSessionPath ?? null,
+          lastLoopNumber: loopNumber,
+        });
+      }
+    }
     const persistedArtifacts: string[] = [];
     const taskProgressRel = `${artifactDir}/self-review.md`;
     const taskProgressCopy = await execOnSlot(

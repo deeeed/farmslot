@@ -73,6 +73,12 @@ export function resolveGrokBinary(preferred?: string | null): string {
   return 'grok';
 }
 
+/** Runners whose persisted sessions can be resumed via buildRunnerSessionReloadCommand. */
+export function runnerSupportsSessionReload(runnerId: string): boolean {
+  const runner = normalizeRunner(runnerId);
+  return runner === 'claude' || runner === 'codex' || runner === 'grok';
+}
+
 export function buildRunnerSessionReloadCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runnerId: string,

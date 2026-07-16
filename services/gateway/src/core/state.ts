@@ -6,6 +6,8 @@ import { existsSync } from 'node:fs';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { invalidateWarmReviewerSessionsForSlot } from '../self-review/session-policy.js';
+
 import { farmslotRoot } from './config.js';
 
 const statusFile = path.join(farmslotRoot, '.farm-status.json');
@@ -130,6 +132,10 @@ export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // button). The previous teardown-in-resetSlot path was the source of
   // the live-sim kill problem.
   void warm; // kept for API compatibility — caller still distinguishes warm vs cold elsewhere
+
+  // Slot release ends any warm reviewer sessions that lived on this slot —
+  // a later run on the slot must never resume a prior run's reviewer context.
+  invalidateWarmReviewerSessionsForSlot(slotId);
 
   await updateSlotStatus(slotId, {
     lifecycle: 'ready',

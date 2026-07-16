@@ -59,6 +59,11 @@ import { parseSelfReviewIssueBullets } from './issues.js';
 import { initSelfReviewProgress, startProgressWatcher } from './progress.js';
 import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
 import {
+  DEFAULT_REVIEW_SESSION_POLICY,
+  invalidateWarmReviewerSessions,
+  type ReviewSessionPolicy,
+} from './session-policy.js';
+import {
   captureCurrentHeadSha,
   captureFixDeltaSnapshot,
   debugSelfReviewLog,
@@ -99,6 +104,8 @@ export interface SelfReviewOptions {
   validationDepth?: ReviewValidationDepth | null;
   artifactScope?: string | null;
   publicationReview?: boolean | null;
+  /** Overrides project self_review.session_policy for this review loop. */
+  reviewSessionPolicy?: ReviewSessionPolicy | null;
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
@@ -162,6 +169,21 @@ export async function executeSelfReview(
   slotId: string,
   options: SelfReviewOptions = {},
 ): Promise<SelfReviewResult> {
+  try {
+    return await executeSelfReviewInner(runId, slotId, options);
+  } finally {
+    // Review-gate exit: warm reviewer sessions never outlive one review loop —
+    // pass, fail, or throw, they become forensic-only and can never be claimed
+    // by a later review or another run (MANUAL-000009 deliverable 4).
+    invalidateWarmReviewerSessions(runId);
+  }
+}
+
+async function executeSelfReviewInner(
+  runId: string,
+  slotId: string,
+  options: SelfReviewOptions = {},
+): Promise<SelfReviewResult> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
 
@@ -183,6 +205,8 @@ export async function executeSelfReview(
   const maxRetries = Math.max(0, Math.min(5, options.maxRetries ?? config.max_retries ?? 1));
   const validationDepth = options.validationDepth ?? 'full-live';
   const artifactScope = options.artifactScope ?? null;
+  const sessionPolicy =
+    options.reviewSessionPolicy ?? config.session_policy ?? DEFAULT_REVIEW_SESSION_POLICY;
   const reviewTimeoutMs = (config.review_timeout_min ?? DEFAULT_REVIEW_TIMEOUT_MIN) * 60_000;
   const start = Date.now();
 
@@ -206,6 +230,7 @@ export async function executeSelfReview(
     reviewTimeoutMs,
     validationDepth,
     artifactScope,
+    sessionPolicy,
   });
   if (recoveredFixResult)
     return {
@@ -231,6 +256,7 @@ export async function executeSelfReview(
     1,
     validationDepth,
     artifactScope,
+    sessionPolicy,
   );
 
   if (result.incomplete) {
@@ -284,6 +310,7 @@ export async function executeSelfReview(
     retryCount: 0,
     validationDepth,
     artifactScope,
+    sessionPolicy,
   });
   return {
     ...retryResult,
@@ -342,6 +369,7 @@ export interface SelfReviewRetryDeps {
     loopNumber?: number,
     validationDepth?: ReviewValidationDepth,
     artifactScope?: string | null,
+    sessionPolicy?: ReviewSessionPolicy,
   ) => Promise<ReviewAgentResult>;
   captureFixDelta: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -399,6 +427,7 @@ export async function runSelfReviewRetryLoop({
   retryCount,
   validationDepth = 'full-live',
   artifactScope = null,
+  sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
   feedbackAlreadySent = false,
   deps = PRODUCTION_DEPS,
 }: {
@@ -416,6 +445,7 @@ export async function runSelfReviewRetryLoop({
   retryCount: number;
   validationDepth?: ReviewValidationDepth;
   artifactScope?: string | null;
+  sessionPolicy?: ReviewSessionPolicy;
   feedbackAlreadySent?: boolean;
   deps?: SelfReviewRetryDeps;
 }): Promise<SelfReviewResult> {
@@ -635,6 +665,7 @@ export async function runSelfReviewRetryLoop({
         nextLoopNumber,
         validationDepth,
         artifactScope,
+        sessionPolicy,
       );
       attempts.push({
         ...reviewAttemptFromResult(
@@ -731,6 +762,7 @@ async function recoverSelfReviewFixPass({
   reviewTimeoutMs,
   validationDepth,
   artifactScope,
+  sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
   taskDir: string;
@@ -744,6 +776,7 @@ async function recoverSelfReviewFixPass({
   reviewTimeoutMs: number;
   validationDepth: ReviewValidationDepth;
   artifactScope?: string | null;
+  sessionPolicy?: ReviewSessionPolicy;
 }): Promise<SelfReviewResult | null> {
   const run = getRun(runId);
   const fixContext = run?.agentContexts?.find((ctx) => canRecoverSelfReviewFixPass(ctx, taskDir));
@@ -873,6 +906,7 @@ async function recoverSelfReviewFixPass({
       2,
       validationDepth,
       artifactScope,
+      sessionPolicy,
     );
     const seededReviewResult = {
       ...retryResult,
@@ -894,6 +928,7 @@ async function recoverSelfReviewFixPass({
       retryCount: 1,
       validationDepth,
       artifactScope,
+      sessionPolicy,
       feedbackAlreadySent: true,
     });
   } finally {
