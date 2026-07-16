@@ -3,8 +3,9 @@
 // heuristic judgment lives in SKILL.md. Exit 0 clean, exit 1 with one line per
 // violation (`<file>:<line>: <rule>: <excerpt>`), exit 2 on usage error.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Parse the `## Acceptance Criteria` section with the SAME rules as the
@@ -28,8 +29,9 @@ export function parseAcceptanceCriteria(markdown) {
 }
 
 // A criterion must carry a concrete check: an inline-code command/test/grep/
-// file reference, or an explicit artifact:/recipe: reference.
-const CHECK_MARKER = /`[^`]+`|\b(artifact|recipe):/i;
+// file reference, or an explicit artifact:/recipe: reference. The reference
+// must have real content — empty backticks or a bare `artifact:` prove nothing.
+const CHECK_MARKER = /`[^`\s][^`]*`|\b(artifact|recipe):\s*\S/i;
 
 // Conditions no worker or reviewer can verify inside one run.
 const FORBIDDEN = [
@@ -86,10 +88,19 @@ export function lintSpecText(markdown) {
   return violations;
 }
 
-const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop());
-// `node --test <dir>` executes every .mjs in the dir; the CLI must not run
-// (and exit 2 for missing args) inside the test runner.
-if (isMain && !process.env.NODE_TEST_CONTEXT) {
+// Exact resolved-path equality: importing this module (e.g. from the test
+// file) must never trigger the CLI, and an inherited env var must never
+// silently disable linting.
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+  } catch {
+    // argv[1] does not resolve to a real file — not this module.
+    return false;
+  }
+})();
+if (isMain) {
   const args = process.argv.slice(2);
   const printAc = args.includes('--print-ac');
   const files = args.filter((a) => a !== '--print-ac');

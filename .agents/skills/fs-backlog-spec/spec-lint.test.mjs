@@ -13,11 +13,8 @@ const good = path.join(here, 'fixtures/good-spec.md');
 const bad = path.join(here, 'fixtures/bad-spec.md');
 
 function runCli(args) {
-  // Drop NODE_TEST_CONTEXT: the child IS the CLI here, and inheriting the
-  // test-runner marker would trip the CLI's own dont-run-under---test guard.
-  const env = { ...process.env, NODE_TEST_CONTEXT: undefined };
   try {
-    const stdout = execFileSync(process.execPath, [lint, ...args], { encoding: 'utf-8', env });
+    const stdout = execFileSync(process.execPath, [lint, ...args], { encoding: 'utf-8' });
     return { status: 0, stdout, stderr: '' };
   } catch (err) {
     return { status: err.status, stdout: err.stdout ?? '', stderr: err.stderr ?? '' };
@@ -49,8 +46,9 @@ test('good fixture exits 0; bad fixture exits 1 reporting every seeded violation
   const result = runCli([bad]);
   assert.equal(result.status, 1);
   const lines = result.stderr.trim().split('\n');
-  // 1 empty Non-goals + 7 marker-less bullets + 6 forbidden patterns.
-  assert.equal(lines.length, 14);
+  // 1 empty Non-goals + 9 marker-less bullets (incl. empty backticks and a
+  // bare artifact: marker) + 6 forbidden patterns.
+  assert.equal(lines.length, 16);
   for (const rule of [
     'empty-non-goals',
     'no-check-marker',
@@ -100,18 +98,28 @@ test('an unreadable file fails the batch without hiding later files', () => {
 
 test('both ADR-032 specs pass the lint', (t) => {
   // .backlog/ is gitignored — specs exist on operator machines, not in CI
-  // checkouts. Skip (never false-green) when they are absent.
+  // checkouts. Each file is validated independently so a present-but-invalid
+  // spec is never hidden by a missing peer; skip only when NONE are present.
   const repoRoot = path.resolve(here, '../../..');
   const specs = [
     '.backlog/specs/adr032-phase3-a-shadow-flag.md',
     '.backlog/specs/adr032-phase3-b-pane-regex-deletion.md',
   ].map((spec) => path.join(repoRoot, spec));
-  if (!specs.every((spec) => existsSync(spec))) {
+  const present = specs.filter((spec) => existsSync(spec));
+  if (present.length === 0) {
     t.skip('local .backlog specs not present in this checkout');
     return;
   }
-  for (const spec of specs) {
+  for (const spec of present) {
     const result = runCli([spec]);
     assert.equal(result.status, 0, `${spec} failed: ${result.stderr}`);
   }
+});
+
+test('empty or whitespace-only references are not check markers', () => {
+  const violations = lintSpecText(
+    '# t\n\n## Non-goals\n\n- none\n\n## Acceptance Criteria\n\n- Looks done: ``.\n- Ref with space only: ` `.\n- Bare marker: artifact:\n- Real: `yarn test` passes.\n- Real too: evidence (artifact: `a/b.json`).\n',
+  );
+  const markerless = violations.filter((v) => v.rule === 'no-check-marker');
+  assert.equal(markerless.length, 3);
 });

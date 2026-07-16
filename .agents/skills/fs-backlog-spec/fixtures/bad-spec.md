@@ -21,3 +21,5 @@ Fixture for spec-lint self-tests: seeded violations, one per rule.
 - Ship dark until the operator enables the flag.
 - Keep monitoring for regressions in the weekly report.
 - Let it soak before flipping the default.
+- Empty inline code proves nothing: ``.
+- A bare marker also proves nothing: artifact:
