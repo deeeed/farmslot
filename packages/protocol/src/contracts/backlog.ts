@@ -82,8 +82,8 @@ export interface BacklogLaunchCandidateProjection {
   status: BacklogLaunchCandidateStatus;
   queueItemId?: string;
   runId?: string;
-  /** Launch attempt of the run that currently owns this candidate; higher attempts
-   * supersede observations from earlier runs of the same candidate. */
+  /** Reserved high-water launch attempt for this candidate; observations carrying a
+   * lower attempt are stale echoes of superseded runs and are ignored. */
   attempt?: number;
   slotId?: string;
   waitingReason?: string;
