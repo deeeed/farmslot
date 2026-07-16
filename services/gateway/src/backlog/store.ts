@@ -1568,6 +1568,7 @@ async function materializeMissingComparisonCandidates(
         baselineRun,
       ),
     );
+    reserveCandidateAttempt(item, comparisonQueueItem);
     if (existingProjection) {
       existingProjection.status = 'queued';
       existingProjection.queueItemId = comparisonQueueItem.id;
@@ -1637,16 +1638,23 @@ function queueFieldsForSlotPolicy(policy: BacklogLaunchSlotPolicy): {
 // Next monotonic attempt for a launch-plan candidate. Persisted per-candidate on the
 // projection (launchPlanState), so it survives restart and is independent of the wall
 // clock — each (re)enqueue produces a strictly higher value than the current owner.
+// Next attempt for a candidate — PURE: it does not mutate the projection, so a
+// build that never produces a queue row (e.g. addItem rejects an active run)
+// cannot leave the counter ahead of reality. The high-water mark is reserved
+// only after a queue row is actually created, via reserveCandidateAttempt.
 function nextCandidateAttempt(item: BacklogItem, candidateId: string): number {
   ensureLaunchPlanState(item);
-  const projection = projectionForCandidate(item, candidateId);
-  const attempt = (projection?.attempt ?? 0) + 1;
-  // Reserve the new high-water mark immediately (persisted with the item) so a
-  // late echo from the OLD owner — which still holds projection.runId until the
-  // retry starts — is rejected by attempt even before markBacklogRunStarted
-  // transfers ownership.
-  if (projection) projection.attempt = attempt;
-  return attempt;
+  return (projectionForCandidate(item, candidateId)?.attempt ?? 0) + 1;
+}
+
+// Reserve the candidate's high-water mark AFTER its queue row exists, so a late
+// echo from the old owner is rejected by attempt before the retry starts. Called
+// post-addItem; addItem dedup can return an existing (lower-attempt) row, so use
+// max to never regress.
+function reserveCandidateAttempt(item: BacklogItem, queueItem: QueueItem): void {
+  if (!queueItem.launchCandidateId || queueItem.launchAttempt == null) return;
+  const projection = projectionForCandidate(item, queueItem.launchCandidateId);
+  if (projection) projection.attempt = Math.max(projection.attempt ?? 0, queueItem.launchAttempt);
 }
 
 async function buildBacklogQueueParams(
@@ -1789,6 +1797,7 @@ export async function enqueueBacklogItem(
         baselineCandidate ?? undefined,
       );
       const queueItem = addItem(queueParams);
+      reserveCandidateAttempt(item, queueItem);
       await persistQueueNow();
       item.status = 'queued';
       item.queuedQueueItemId = queueItem.id;
