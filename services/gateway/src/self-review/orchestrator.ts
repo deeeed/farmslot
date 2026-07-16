@@ -488,8 +488,8 @@ export async function runSelfReviewRetryLoop({
       }
     }
 
-    // A context-saturated session silently swallows delivered prompts
-    // (MANUAL-000029): relaunch a fresh worker before spending a fix pass on it.
+    // A context-saturated session silently swallows delivered prompts:
+    // relaunch a fresh worker before spending a fix pass on it.
     const ctxPct = (await deps.getWorkerContextPct?.(vars, workerRunner, runId)) ?? null;
     if (ctxPct != null && ctxPct >= SELF_REVIEW_FIX_RELAUNCH_CTX_PCT) {
       console.log(
@@ -1084,8 +1084,8 @@ async function sendFeedbackToWorker(
       );
     }
     // sent=true only proves keystrokes were injected and Enter pressed. A
-    // context-saturated REPL swallows delivered prompts with a frozen pane
-    // (MANUAL-000029) — require FURTHER pane activity after the send. The
+    // context-saturated REPL swallows delivered prompts with a frozen pane —
+    // require FURTHER pane activity after the send. The
     // baseline is captured post-send, so pane changes racing the send's own
     // busy-poll window cannot masquerade as a reaction. A worker that already
     // finished the fix before the baseline (fast completion, fully rendered)

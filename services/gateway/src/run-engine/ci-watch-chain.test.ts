@@ -110,7 +110,7 @@ test('buildCIWatchChainedRunParams inherits claude parent into update-branch wit
 
 test('buildCIWatchChainedRunParams converts a manual-rooted update-branch chain to a PR ref', () => {
   // Regression: update-branch is PR-bound, so a chain inheriting a manual/Jira
-  // ticket (e.g. MANUAL-000014) would throw `Invalid PR reference` at runCreate.
+  // ticket ref would throw `Invalid PR reference` at runCreate.
   // The CI-conflict path has an authoritative prNumber — convert to owner/repo#N.
   const current = makeRun({
     familyRootTicketOrPr: 'MANUAL-000014',

@@ -3,8 +3,8 @@
 //
 // Flows whose worker OWNS the push (pr-complete, update-branch) repeatedly
 // signaled complete with committed-but-unpushed (or even uncommitted) work;
-// the engine then evaluated a stale remote SHA in ci-watch and looped
-// (MANUAL-000031). Dev-style flows are exempt: their worker commits locally
+// the engine then evaluated a stale remote SHA in ci-watch and looped.
+// Dev-style flows are exempt: their worker commits locally
 // and the publication step performs the push.
 
 import { resolveAgentTarget } from '../agents/contexts.js';

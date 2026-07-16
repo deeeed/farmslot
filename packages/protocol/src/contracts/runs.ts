@@ -1313,7 +1313,8 @@ export interface Run {
   launchCandidateId?: string;
   launchGroupId?: string;
   launchSlotPolicy?: import('./backlog.js').BacklogLaunchSlotPolicy['kind'];
-  /** Monotonic per-candidate launch attempt (MANUAL-000037); inherited from the queue item. */
+  /** Monotonic per-candidate launch attempt, inherited from the queue item; lets run
+   * observations tell a legitimate takeover from a stale echo of a superseded run. */
   launchAttempt?: number;
   completedAt?: string;
   error?: string;
