@@ -297,7 +297,7 @@ const STEP_META: Record<string, StepMeta> = {
           lane: 'post',
           executor: 'reviewer',
           description:
-            'Default one independent review must pass; gate can request extra external reviews before publication.',
+            'Default one independent review must pass; gate can request more independent reviews (optionally with runner diversity) before publication.',
         },
       ],
       edges: [
@@ -306,7 +306,7 @@ const STEP_META: Record<string, StepMeta> = {
         {
           from: 'independent-review',
           to: 'independent-review',
-          label: 'extra external review requested',
+          label: 'independent review requested',
           style: 'loop',
         },
       ],

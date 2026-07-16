@@ -10,6 +10,7 @@ import {
   publishEvidenceDisplayRows,
   readyReviewBlockingDisplayReason,
   reviewAttemptLabel,
+  reviewPolicyLabel,
   reviewSegmentLabel,
   summarizeReviewCounts,
 } from './review-gate-display.js';
@@ -162,10 +163,14 @@ test('publishEvidenceDisplayRows exposes included, excluded and dropped-after-re
   );
 });
 
-test('review labels distinguish source from requirement count', () => {
-  const review = payload({ source: 'human-gate', crossRunner: true }).independentReviews![0];
-  assert.equal(reviewAttemptLabel(review, 1, 2), 'External review attempt 2/2');
-  assert.equal(reviewSegmentLabel(review, 1), 'External review 1');
+test('review labels use Independent review with runner diversity as policy metadata', () => {
+  const requested = payload({ source: 'human-gate', crossRunner: true }).independentReviews![0];
+  assert.equal(reviewAttemptLabel(requested, 1, 2), 'Independent review (requested) attempt 2/2');
+  assert.equal(reviewSegmentLabel(requested, 1), 'Independent review (requested) 1');
+  // Runner diversity is not a review kind — it renders as a policy label.
+  assert.equal(reviewPolicyLabel({ crossRunner: true, runner: 'codex' }), 'runner: codex');
+  assert.equal(reviewPolicyLabel({ crossRunner: true }), 'runner diversity');
+  assert.equal(reviewPolicyLabel({ crossRunner: false, runner: 'codex' }), null);
 });
 
 test('fixDeltaAbsenceReason explains audit-only and unavailable fix ranges', () => {

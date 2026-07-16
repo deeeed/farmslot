@@ -140,7 +140,7 @@ export interface RunCreateParams {
   reviewTier?: string;
   /** Fix-bug local-first publication gate review depth requested at dispatch time. */
   reviewDepth?: import('../contracts/index.js').ReviewDepthPolicy;
-  /** Ordered extra review loops to run before the first ready gate is shown. */
+  /** Ordered independent review loops to run before the first ready gate is shown. */
   pendingReviewPlan?: import('../contracts/index.js').ReviewLoopRequest[];
   /** Runner execution safety tier (ADR-023). Overrides runner/project defaults. */
   safetyTier?: import('../contracts/index.js').SafetyTier;

@@ -69,7 +69,7 @@ export function formatIndependentReviewMarkdown(review: IndependentReviewStatus)
   return [
     `# Independent Review ${review.loopNumber}`,
     '',
-    `**Verdict:** ${review.verdict}${review.crossRunner ? ' (external review)' : ''}`,
+    `**Verdict:** ${review.verdict}${review.crossRunner ? ' (runner diversity)' : ''}`,
     `**Reviewer:** ${review.runner ?? 'unknown'} / ${review.model ?? 'unknown'}`,
     `**Validation depth:** ${review.validationDepth ?? 'legacy/full-live'}`,
     `**Reviewed commit:** ${reviewedHead}`,

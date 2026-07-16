@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- docs: review-loop JSDoc comments use independent-review language (comment-only; no schema change).
+
 - feat: launch-plan attempt fields for MANUAL-000037 — `QueueItem.launchAttempt`, `Run.launchAttempt`, `RunCreateParams.launchAttempt`, and `BacklogLaunchCandidateProjection.attempt`: a monotonic per-candidate attempt so backlog run observations can tell a legitimate re-enqueue takeover from a stale echo of a superseded run.
 
 - feat: `BacklogItem.multiPr` (+ create/update inputs) — marks items whose acceptance criteria span multiple PRs so a finished run returns them to `ready` instead of auto-closing them; final closure stays the explicit `backlog.closeShipped` call.

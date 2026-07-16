@@ -749,7 +749,7 @@ async function recoverSelfReviewFixPass({
   const fixContext = run?.agentContexts?.find((ctx) => canRecoverSelfReviewFixPass(ctx, taskDir));
   // Never recover from SELF-REVIEW-FIX-SIGNAL.json alone. That file is reused by every
   // review loop in the task dir, so a completed prior loop can otherwise masquerade as the
-  // fix pass for a new external review and prevent feedback from reaching the worker.
+  // fix pass for a new independent review and prevent feedback from reaching the worker.
   if (!fixContext) return null;
 
   try {

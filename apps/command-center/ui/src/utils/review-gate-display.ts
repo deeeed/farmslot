@@ -83,11 +83,23 @@ export function effectiveReviewRequirement(policy: ReviewDepthPolicy): number {
 export function reviewSourceLabel(
   review: Pick<IndependentReviewStatus, 'source' | 'crossRunner'>,
 ): string {
+  // Every automated review pass is an Independent review; runner diversity is
+  // gate policy metadata (reviewPolicyLabel), not a separate review kind.
   if (review.source === 'self-review') return 'Self-review';
-  if (review.source === 'human-gate')
-    return review.crossRunner ? 'External review' : 'Extra review';
-  if (review.crossRunner) return 'External review';
+  if (review.source === 'human-gate') return 'Independent review (requested)';
   return 'Independent review';
+}
+
+/**
+ * Policy metadata for a review: runner diversity rendered as `runner: <id>`
+ * when the reviewer runner is known, else the generic policy name. Null when
+ * no diversity requirement applies.
+ */
+export function reviewPolicyLabel(
+  review: Pick<IndependentReviewStatus, 'crossRunner'> & { runner?: string | null },
+): string | null {
+  if (!review.crossRunner) return null;
+  return review.runner ? `runner: ${review.runner}` : 'runner diversity';
 }
 
 export function reviewAttemptLabel(
@@ -456,7 +468,7 @@ export interface GateSummaryDisplay {
 export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
   const review = summary.review;
   const reviewRows: GateSummaryReviewRow[] = review.independentReviews.map((r) => ({
-    label: r.crossRunner ? 'External review' : 'Independent review',
+    label: r.crossRunner ? 'Independent review \u00b7 runner diversity' : 'Independent review',
     verdict: r.verdict,
     attempts: r.attempts,
     unresolvedCount: r.unresolvedCount,

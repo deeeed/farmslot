@@ -1842,7 +1842,7 @@ All checks passed.`;
       'Failed (dev)',
       'Self-review running 7/11 (fix-bug)',
       'Self-review done w/ issues + retry (fix-bug)',
-      'Publish-gate extra review loop (fix-bug)',
+      'Publish-gate independent review loop (fix-bug)',
     ];
     return html`
       <p class="section-label">Run pipeline canvas (${runs.length} scenarios, 3 flow types)</p>
@@ -2440,7 +2440,7 @@ All checks passed.`;
       publicationStatus: 'not_published',
       selfReviewVerdict: 'pass',
       selfReviewSummary:
-        'Loop 1 found two issues: missing integer formatter regression coverage and stale snapshot copy. The worker added focused formatter tests, updated snapshots, then loop 2 passed external review with zero unresolved findings.',
+        'Loop 1 found two issues: missing integer formatter regression coverage and stale snapshot copy. The worker added focused formatter tests, updated snapshots, then loop 2 passed the independent review with zero unresolved findings.',
       workerLearnings: `- Investigation took ~15min, fix was 2 lines. Most time spent finding the right formatter function across 4 files.\n- TASK.md step 5 ("validate with recipe") was unclear — no recipe file existed yet at that point.\n- Got stuck on snapshot test failures — updating snapshots via \`yarn test -u\` unblocked.\n- Knowing that \`formatBalance.ts\` delegates to \`roundToSignificantFigures\` would have saved investigation time.`,
       ciChecks: [
         { name: 'lint', status: 'completed', conclusion: 'success' },

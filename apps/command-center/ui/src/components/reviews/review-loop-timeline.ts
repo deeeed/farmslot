@@ -14,6 +14,7 @@ import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import {
   fixDeltaAbsenceReason,
   reviewAttemptLabel,
+  reviewPolicyLabel,
   reviewSourceLabel,
 } from '../../utils/review-gate-display.js';
 
@@ -291,7 +292,9 @@ export class ReviewLoopTimeline extends LitElement {
         <div class="head">
           <strong>${heading}</strong>
           <span class="pill ${pass ? 'pass' : warn ? 'warn' : ''}"
-            >${verdict}${review.crossRunner ? ' · cross' : ''}</span
+            >${verdict}${reviewPolicyLabel(review)
+              ? ` \u00b7 ${reviewPolicyLabel(review)}`
+              : ''}</span
           >
         </div>
         <div class="meta-row">

@@ -671,7 +671,7 @@ export async function executeHumanGateStep(
         const reviewSlotId = current.slotId;
         if (!reviewSlotId)
           throw blockedRunError(
-            'Publication gate requested extra review but no slot is assigned',
+            'Publication gate requested an independent review but no slot is assigned',
             gateAction,
           );
         reviewRequestLoops += boundedPlan.length;

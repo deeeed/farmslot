@@ -95,7 +95,7 @@ export function renderReadyTopBar(input: {
                     ?disabled=${input.acting || input.recovering}
                     @click=${input.openReviewRequestModal}
                   >
-                    Extra Review
+                    Independent Review
                   </button>
                 `
               : nothing}

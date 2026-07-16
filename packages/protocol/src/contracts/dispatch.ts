@@ -81,7 +81,7 @@ export interface QueueItem {
   startRef?: RunStartRefProvenance | null;
   /** Fix-bug publication review depth requested when the queue item was created. */
   reviewDepth?: ReviewDepthPolicy;
-  /** Ordered extra review loops to run before the first ready gate. */
+  /** Ordered independent review loops to run before the first ready gate. */
   pendingReviewPlan?: ReviewLoopRequest[];
   evalCell?: EvalQueueCell;
   priority: number; // lower = higher priority, default 10

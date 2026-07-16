@@ -137,13 +137,13 @@ export class RunPipelineMini extends LitElement {
         segments.push(...preGateReviews);
       }
       if (step.name === 'human-gate') {
-        const extraReviews = this.reviewSegments('human-gate', 'extra review');
+        const extraReviews = this.reviewSegments('human-gate', 'requested review');
         segments.push(...extraReviews);
         if (extraReviews.length > 0) {
           segments.push({
             name: 'package refresh',
             status: 'pending',
-            title: 'package refresh: rebuild package after extra review',
+            title: 'package refresh: rebuild package after requested review',
           });
         }
       }

@@ -1166,7 +1166,11 @@ export function mockPipelineRuns(): Run[] {
             { id: 'hold', label: 'Hold', style: 'secondary' },
             { id: 'send-feedback', label: 'Send Feedback', style: 'secondary' },
             { id: 'request-extra-review', label: 'Request Extra Review', style: 'secondary' },
-            { id: 'request-external-review', label: 'Request External Review', style: 'secondary' },
+            {
+              id: 'request-external-review',
+              label: 'Request Independent Review (runner diversity)',
+              style: 'secondary',
+            },
           ],
           createdAt: new Date(now - 2 * 60000).toISOString(),
           payload: {
@@ -1190,7 +1194,7 @@ export function mockPipelineRuns(): Run[] {
             ],
             selfReviewVerdict: 'pass',
             selfReviewSummary:
-              'Loop 1 requested missing lock cleanup coverage and a clearer failure-path assertion. The worker fixed both, then loop 2 passed external review with zero unresolved findings.',
+              'Loop 1 requested missing lock cleanup coverage and a clearer failure-path assertion. The worker fixed both, then loop 2 passed the independent review with zero unresolved findings.',
             recipeJson: JSON.stringify({
               entry: 'unlock',
               nodes: {
@@ -1787,7 +1791,7 @@ export function mockPipelineRuns(): Run[] {
       createdAt: new Date(now - 55 * 60000).toISOString(),
       updatedAt: new Date(now - 1 * 60000).toISOString(),
     },
-    // 8. Publish gate requested optional extra review after initial package
+    // 8. Publish gate requested an optional independent review after initial package
     {
       id: 'pipe-gate-extra-review',
       familyId: 'pipe-gate-extra-review',
@@ -1893,7 +1897,7 @@ export function mockPipelineRuns(): Run[] {
           id: 'dec-extra-review',
           type: 'engine_human_gate',
           title: 'Run pipe-gate-extra-review — publish gate',
-          description: 'Operator requested one more external review before publication.',
+          description: 'Operator requested one more independent review before publication.',
           actions: [
             { id: 'approve-publish', label: 'Approve Publish', style: 'primary' },
             { id: 'request-extra-review', label: 'Request Extra Review', style: 'secondary' },

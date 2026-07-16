@@ -79,15 +79,15 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
         class="rdy-review-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Request extra review"
+        aria-label="Request independent review"
       >
         <div class="rdy-review-modal-head">
           <div>
-            <div class="rdy-review-modal-eyebrow">Extra review</div>
+            <div class="rdy-review-modal-eyebrow">Independent review</div>
             <h3>Build review sequence</h3>
             <p>
-              Each row runs after the previous row passes. Choose another runner for an external
-              review.
+              Each row runs after the previous row passes. Choose another runner to require runner
+              diversity.
             </p>
           </div>
           <button class="rdy-modal-close" @click=${ctx.close}>Close</button>
