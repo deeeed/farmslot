@@ -73,7 +73,7 @@ const humanReadyGateDemo = {
   title: 'Human ready gate',
   status: 'Real Command Center screenshot',
   image: '/img/demos/command-center-human-ready-gate.png',
-  alt: 'Command Center ready workspace showing a human approval gate with package evidence, recipe artifacts, quality checks, and approve or extra-review actions',
+  alt: 'Command Center ready workspace showing a human approval gate with package evidence, recipe artifacts, quality checks, and approve or independent-review actions',
   body: 'Ready gates make agent output reviewable before it becomes your code: inspect the package, app behavior, validation results, diff, and quality checks, then approve, request another review, or send feedback to keep steering.',
 };
 
@@ -204,11 +204,11 @@ function CommandCenterOnboarding() {
           <span className={styles.sectionEyebrow}>Hosted cockpit</span>
           <Heading as="h2">Open Command Center, then connect your farm.</Heading>
           <p>
-            The hosted Command Center is published as a static page at{' '}
-            <code>farmslot.io/cc</code>. For today’s plain local gateway, run{' '}
-            <code>farmslot up</code> and use the local Command Center URL it prints; browsers can
-            block HTTPS pages from opening a plain <code>ws://localhost</code> gateway. The hosted
-            page remains available for secure gateways and the upcoming secure local bridge.
+            The hosted Command Center is published as a static page at <code>farmslot.io/cc</code>.
+            For today’s plain local gateway, run <code>farmslot up</code> and use the local Command
+            Center URL it prints; browsers can block HTTPS pages from opening a plain{' '}
+            <code>ws://localhost</code> gateway. The hosted page remains available for secure
+            gateways and the upcoming secure local bridge.
           </p>
           <div className={styles.commandCenterActions}>
             <a className="button button--primary button--lg" href={COMMAND_CENTER_URL}>
