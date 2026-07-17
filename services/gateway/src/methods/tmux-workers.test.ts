@@ -296,55 +296,44 @@ test('tmuxWorkerFromNodePane requires pane-id equality and does not match a sibl
     workerPaneId: '%42',
   };
 
-  const previous = process.env.FARMSLOT_OBS_PANE_RETIRED;
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
-  try {
-    // Sibling pane: same window '3', DIFFERENT pane id → not the worker despite the window match.
-    const siblingPane: NodeTmuxPane = {
-      session: 'mm-1',
-      window: '3',
-      pane: '1',
-      paneId: '%99',
-      target: 'mm-1:3.%99',
-      command: 'claude',
-      signals: stale,
-    };
-    const sibling = tmuxWorkerFromNodePane({
-      nodeId: 'runner-local',
-      pane: siblingPane,
-      observedAt,
-      correlation,
-    });
-    assert.notEqual(sibling.status.attentionReason, 'observability-degraded');
+  // Sibling pane: same window '3', DIFFERENT pane id → not the worker despite the window match.
+  const siblingPane: NodeTmuxPane = {
+    session: 'mm-1',
+    window: '3',
+    pane: '1',
+    paneId: '%99',
+    target: 'mm-1:3.%99',
+    command: 'claude',
+    signals: stale,
+  };
+  const sibling = tmuxWorkerFromNodePane({
+    nodeId: 'runner-local',
+    pane: siblingPane,
+    observedAt,
+    correlation,
+  });
+  assert.notEqual(sibling.status.attentionReason, 'observability-degraded');
 
-    // The worker pane itself (matching pane id) DOES surface the degraded alert.
-    const workerPane: NodeTmuxPane = {
-      session: 'mm-1',
-      window: '3',
-      pane: '0',
-      paneId: '%42',
-      target: 'mm-1:3.%42',
-      command: 'claude',
-      signals: stale,
-    };
-    const worker = tmuxWorkerFromNodePane({
-      nodeId: 'runner-local',
-      pane: workerPane,
-      observedAt,
-      correlation,
-    });
-    assert.equal(worker.status.attentionReason, 'observability-degraded');
-  } finally {
-    if (previous === undefined) delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-    else process.env.FARMSLOT_OBS_PANE_RETIRED = previous;
-  }
+  // The worker pane itself (matching pane id) DOES surface the degraded alert.
+  const workerPane: NodeTmuxPane = {
+    session: 'mm-1',
+    window: '3',
+    pane: '0',
+    paneId: '%42',
+    target: 'mm-1:3.%42',
+    command: 'claude',
+    signals: stale,
+  };
+  const worker = tmuxWorkerFromNodePane({
+    nodeId: 'runner-local',
+    pane: workerPane,
+    observedAt,
+    correlation,
+  });
+  assert.equal(worker.status.attentionReason, 'observability-degraded');
 });
 
-test('tmuxWorkerFromNodePane scopes observability-degraded to the worker pane only', (t) => {
-  t.after(() => {
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-  });
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+test('tmuxWorkerFromNodePane scopes observability-degraded to the worker pane only', () => {
   const observedAt = 2_000_000_000_000;
   const stale = { hook: { label: 'hook Stop', observedAt: observedAt - 300_000 } };
   const correlation = {
@@ -356,7 +345,7 @@ test('tmuxWorkerFromNodePane scopes observability-degraded to the worker pane on
     workerPaneId: '%42',
   };
 
-  // The worker pane (matching target) surfaces the degraded alert under the flag.
+  // The worker pane (matching target) surfaces the degraded alert.
   const workerPane: NodeTmuxPane = {
     session: 'mm-1',
     window: '3',
@@ -854,7 +843,7 @@ test('tmuxWorkerStatusFromPane prefers fresh hook/statusline signals and marks s
   );
 });
 
-test('tmuxWorkerStatusFromPane surfaces observability-degraded for stale hooks under the ADR-032 flag', async (t) => {
+test('tmuxWorkerStatusFromPane surfaces observability-degraded for stale hooks on a retired runner', async () => {
   const { tmuxWorkerStatusFromPane } = await import('./tmux-workers.js');
   const observedAt = 2_000_000_000_000;
   const stalePane = {
@@ -866,18 +855,8 @@ test('tmuxWorkerStatusFromPane surfaces observability-degraded for stale hooks u
     signals: { hook: { label: 'hook Stop', observedAt: observedAt - 300_000 } },
   };
 
-  // Flag off → generic stale-signal (byte-identical to Phase 2), even with a runner.
-  assert.equal(
-    tmuxWorkerStatusFromPane(stalePane, observedAt, undefined, 'claude').attentionReason,
-    'stale-signal',
-  );
-
-  t.after(() => {
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-  });
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
-
-  // Flag on + retired runner → hook-liveness lapse surfaces distinctly BEFORE a nudge is attempted.
+  // ADR-032 Phase 3: Claude is retired (hook-only), so a stale hook surfaces the liveness lapse
+  // distinctly BEFORE a nudge is attempted.
   const degraded = tmuxWorkerStatusFromPane(stalePane, observedAt, undefined, 'claude');
   assert.equal(degraded.requiresAttention, true);
   assert.equal(degraded.attentionReason, 'observability-degraded');
@@ -886,14 +865,15 @@ test('tmuxWorkerStatusFromPane surfaces observability-degraded for stale hooks u
   // Without a runner the surface cannot scope per-runner → falls back to generic stale-signal.
   assert.equal(tmuxWorkerStatusFromPane(stalePane, observedAt).attentionReason, 'stale-signal');
 
-  // Per-runner scoping: a pane-only runner (grok) is never retired, so it is not mislabeled.
+  // A pane-only runner (grok) is never retired, so it is not mislabeled → generic stale-signal.
   assert.equal(
-    tmuxWorkerStatusFromPane(stalePane, observedAt, undefined, 'grok').attentionReason,
+    tmuxWorkerStatusFromPane({ ...stalePane, command: 'grok' }, observedAt, undefined, 'grok')
+      .attentionReason,
     'stale-signal',
   );
 });
 
-test('tmuxWorkerStatusFromPane degraded check is not masked by a fresh task-file signal under the flag', async (t) => {
+test('tmuxWorkerStatusFromPane degraded check is not masked by a fresh task-file signal on a retired runner', async () => {
   const { tmuxWorkerStatusFromPane } = await import('./tmux-workers.js');
   const observedAt = 2_000_000_000_000;
   // Stale hook, but a FRESH task-file signal that would otherwise win the branch order.
@@ -909,21 +889,21 @@ test('tmuxWorkerStatusFromPane degraded check is not masked by a fresh task-file
     },
   };
 
-  t.after(() => {
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-  });
+  // Non-retired runner (grok): the fresh task-file signal wins (pane path unchanged).
+  const grok = tmuxWorkerStatusFromPane(
+    { ...pane, command: 'grok' },
+    observedAt,
+    undefined,
+    'grok',
+  );
+  assert.equal(grok.source, 'task-file');
 
-  // Flag off → the fresh task-file signal wins (byte-identical to Phase 2).
-  const off = tmuxWorkerStatusFromPane(pane, observedAt, undefined, 'claude');
-  assert.equal(off.source, 'task-file');
-
-  // Flag on → observability-degraded surfaces before the fresh task-file can mask it.
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
-  const on = tmuxWorkerStatusFromPane(pane, observedAt, undefined, 'claude');
-  assert.equal(on.attentionReason, 'observability-degraded');
+  // Retired runner (claude): observability-degraded surfaces before the fresh task-file can mask it.
+  const claude = tmuxWorkerStatusFromPane(pane, observedAt, undefined, 'claude');
+  assert.equal(claude.attentionReason, 'observability-degraded');
 });
 
-test('tmuxWorkerStatusFromPane degraded check is not masked by a fresh statusline signal under the flag', async (t) => {
+test('tmuxWorkerStatusFromPane degraded check is not masked by a fresh statusline signal on a retired runner', async () => {
   const { tmuxWorkerStatusFromPane } = await import('./tmux-workers.js');
   const observedAt = 2_000_000_000_000;
   // Stale hook (dead hook pipeline), but a FRESH statusline that would otherwise win the branch
@@ -940,22 +920,22 @@ test('tmuxWorkerStatusFromPane degraded check is not masked by a fresh statuslin
     },
   };
 
-  t.after(() => {
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-  });
+  // Non-retired runner (grok): the fresh statusline wins (pane path unchanged).
+  const grok = tmuxWorkerStatusFromPane(
+    { ...pane, command: 'grok' },
+    observedAt,
+    undefined,
+    'grok',
+  );
+  assert.equal(grok.source, 'statusline');
 
-  // Flag off → the fresh statusline wins (byte-identical to Phase 2).
-  const off = tmuxWorkerStatusFromPane(pane, observedAt, undefined, 'claude');
-  assert.equal(off.source, 'statusline');
-
-  // Flag on → hook-liveness is evaluated first, so observability-degraded surfaces before the fresh
-  // statusline can mask the dead hook pipeline.
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
-  const on = tmuxWorkerStatusFromPane(pane, observedAt, undefined, 'claude');
-  assert.equal(on.attentionReason, 'observability-degraded');
+  // Retired runner (claude): hook-liveness is evaluated first, so observability-degraded surfaces
+  // before the fresh statusline can mask the dead hook pipeline.
+  const claude = tmuxWorkerStatusFromPane(pane, observedAt, undefined, 'claude');
+  assert.equal(claude.attentionReason, 'observability-degraded');
 });
 
-test('tmuxWorkerStatusFromPane surfaces observability-degraded for entirely absent hooks under the flag', async (t) => {
+test('tmuxWorkerStatusFromPane surfaces observability-degraded for entirely absent hooks on a retired runner', async () => {
   const { tmuxWorkerStatusFromPane } = await import('./tmux-workers.js');
   const observedAt = 2_000_000_000_000;
   // No hook/statusline signal at all — only a bare pane.
@@ -968,10 +948,6 @@ test('tmuxWorkerStatusFromPane surfaces observability-degraded for entirely abse
     signals: {},
   };
 
-  t.after(() => {
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-  });
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
   const on = tmuxWorkerStatusFromPane(pane, observedAt, undefined, 'claude');
   assert.equal(on.attentionReason, 'observability-degraded');
   assert.equal(on.state, 'stale');
@@ -1030,32 +1006,25 @@ test('a numeric pane INDEX in the stored context falls back to window matching',
   // inventory reports a %-id the context never stored.
   const observedAt = 2_000_000_000_000;
   const stale = { hook: { label: 'hook Stop', observedAt: observedAt - 300_000 } };
-  const previous = process.env.FARMSLOT_OBS_PANE_RETIRED;
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
-  try {
-    const workerPane: NodeTmuxPane = {
-      session: 'mm-1',
-      window: 'dev',
-      pane: '0',
-      paneId: '%42',
-      target: 'mm-1:dev.%42',
-      command: 'claude',
-      signals: stale,
-    };
-    const worker = tmuxWorkerFromNodePane({
-      nodeId: 'runner-local',
-      pane: workerPane,
-      observedAt,
-      correlation: {
-        ...correlation,
-        slotId: 'runner-mobile-1',
-        runId: 'run-active',
-        runner: 'claude',
-      },
-    });
-    assert.equal(worker.status.attentionReason, 'observability-degraded');
-  } finally {
-    if (previous === undefined) delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-    else process.env.FARMSLOT_OBS_PANE_RETIRED = previous;
-  }
+  const workerPane: NodeTmuxPane = {
+    session: 'mm-1',
+    window: 'dev',
+    pane: '0',
+    paneId: '%42',
+    target: 'mm-1:dev.%42',
+    command: 'claude',
+    signals: stale,
+  };
+  const worker = tmuxWorkerFromNodePane({
+    nodeId: 'runner-local',
+    pane: workerPane,
+    observedAt,
+    correlation: {
+      ...correlation,
+      slotId: 'runner-mobile-1',
+      runId: 'run-active',
+      runner: 'claude',
+    },
+  });
+  assert.equal(worker.status.attentionReason, 'observability-degraded');
 });

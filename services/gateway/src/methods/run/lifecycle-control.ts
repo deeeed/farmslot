@@ -171,11 +171,11 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
         .filter(Boolean);
       const runner = normalizeRunner(existing.metrics.runner);
       const nudge = runnerContinueCommand(runner);
-      // ADR-032 Phase 3A: when the pane is retired for this runner, skip the pane-idle pre-gate
-      // and let the hook-only safe-send own the idle/busy decision. Flag-off keeps the pane gate
-      // (byte-identical).
+      // ADR-032 Phase 3: when the pane is retired for this runner (Claude), skip the pane-idle
+      // pre-gate and let the hook-only safe-send own the idle/busy decision. Pane-fallback runners
+      // (Codex) and pane-only runners keep the pane gate.
       if (nudge && (isRunnerPaneRetired(runner) || runnerPaneLooksIdle(lines, runner))) {
-        // ADR-032 Phase 3A: pass the run context so a hook-only degraded hold persists through
+        // ADR-032 Phase 3: pass the run context so a hook-only degraded hold persists through
         // the ADR-031 intelligence-action audit, not just a console warning.
         const sent = await sendRunnerInstructionSafely(
           vars,

@@ -129,17 +129,13 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
     confidence: 'high',
     observedAt: Date.now(),
   };
-  paneText = '❯\nctx:12%\n';
+  paneText = '›\nContext 88%\n';
 
-  const sent = await sendRunnerInstructionSafely(
-    vars,
-    target,
-    'claude',
-    message,
-    '[test]',
-    10_000,
-    { forceBusyPoll: true },
-  );
+  // Codex owns the pane-fallback decision path (Claude is hook-only per ADR-032 Phase 3): it
+  // consults observability first, then the pane.
+  const sent = await sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 10_000, {
+    forceBusyPoll: true,
+  });
 
   assert.equal(sent, true);
   const obsPromptIdx = callOrder.indexOf('obs:promptAccepted');
@@ -246,9 +242,10 @@ test('sendRunnerInstructionSafely prefers live pane over stale hook acceptance',
     observedAt: Date.now(),
   };
   const needle = message.slice(0, 80);
-  paneText = `❯ ${needle}\nctx:12%\n`;
+  // Codex-format buffered composer (`›` marker + model line). Codex owns the pane-fallback path.
+  paneText = `› ${needle}\ngpt-5-codex\n`;
 
-  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+  const sent = await sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]');
 
   assert.equal(sent, true);
   assert.ok(callOrder.includes('obs:promptAccepted'));
@@ -276,17 +273,12 @@ test('sendRunnerInstructionSafely falls back to pane when hook activity is unkno
     confidence: 'high',
     observedAt: Date.now(),
   };
-  paneText = '❯\nctx:12%\n';
+  paneText = '›\nContext 88%\n';
 
-  const sent = await sendRunnerInstructionSafely(
-    vars,
-    target,
-    'claude',
-    message,
-    '[test]',
-    10_000,
-    { forceBusyPoll: true },
-  );
+  // Codex owns the pane-fallback path: an unknown hook activity falls back to the pane.
+  const sent = await sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 10_000, {
+    forceBusyPoll: true,
+  });
 
   assert.equal(sent, true);
   assert.ok(callOrder.includes('pane:capture'));
@@ -434,9 +426,9 @@ test('a persistently buffered composer fails loudly instead of concatenating a r
   );
 });
 
-// --- ADR-032 Phase 3A pane-retirement flag ---
+// --- ADR-032 Phase 3 claude hook-only send path ---
 
-test('flag-on claude hook-idle with an EMPTY composer proves-empty then types the message', async () => {
+test('claude (hook-only) hook-idle with an EMPTY composer proves-empty then types the message', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
@@ -450,37 +442,32 @@ test('flag-on claude hook-idle with an EMPTY composer proves-empty then types th
     observedAt: Date.now(),
   };
   paneText = '❯\nctx:12%\n'; // empty composer — nothing buffered
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
-  try {
-    const sent = await sendRunnerInstructionSafely(
-      vars,
-      target,
-      'claude',
-      message,
-      '[test]',
-      10_000,
-      {
-        forceBusyPoll: true,
-      },
-    );
-    assert.equal(sent, true);
-    // The idle/pending DECISION was resolved from hooks only.
-    assert.ok(
-      callOrder.includes('obs:getActivity') && callOrder.includes('obs:promptAccepted'),
-      `expected hook reads to drive the decision; order=${callOrder.join(',')}`,
-    );
-    // Composer proven empty → the message is TYPED fresh (a bare Enter would report a false
-    // delivery success for an instruction that was never sent).
-    assert.ok(
-      callOrder.includes('tmux:send-literal'),
-      `an empty composer must get the message typed; order=${callOrder.join(',')}`,
-    );
-  } finally {
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-  }
+  const sent = await sendRunnerInstructionSafely(
+    vars,
+    target,
+    'claude',
+    message,
+    '[test]',
+    10_000,
+    {
+      forceBusyPoll: true,
+    },
+  );
+  assert.equal(sent, true);
+  // The idle/pending DECISION was resolved from hooks only.
+  assert.ok(
+    callOrder.includes('obs:getActivity') && callOrder.includes('obs:promptAccepted'),
+    `expected hook reads to drive the decision; order=${callOrder.join(',')}`,
+  );
+  // Composer proven empty → the message is TYPED fresh (a bare Enter would report a false
+  // delivery success for an instruction that was never sent).
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `an empty composer must get the message typed; order=${callOrder.join(',')}`,
+  );
 });
 
-test('flag-on claude hook-idle with a BUFFERED composer submits it without retyping (no concat)', async () => {
+test('claude (hook-only) hook-idle with a BUFFERED composer submits it without retyping (no concat)', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = true;
@@ -492,35 +479,19 @@ test('flag-on claude hook-idle with a BUFFERED composer submits it without retyp
     observedAt: Date.now(),
   };
   paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`; // the instruction is buffered in the composer
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
-  try {
-    const sent = await sendRunnerInstructionSafely(
-      vars,
-      target,
-      'claude',
-      message,
-      '[test]',
-      5000,
-      {
-        forceBusyPoll: true,
-      },
-    );
-    assert.equal(sent, true);
-    assert.ok(
-      callOrder.includes('tmux:send'),
-      `expected a submit key; order=${callOrder.join(',')}`,
-    );
-    assert.equal(
-      callOrder.indexOf('tmux:send-literal'),
-      -1,
-      `a genuinely buffered instruction submits with Enter only — retyping would double the text; order=${callOrder.join(',')}`,
-    );
-  } finally {
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-  }
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 5000, {
+    forceBusyPoll: true,
+  });
+  assert.equal(sent, true);
+  assert.ok(callOrder.includes('tmux:send'), `expected a submit key; order=${callOrder.join(',')}`);
+  assert.equal(
+    callOrder.indexOf('tmux:send-literal'),
+    -1,
+    `a genuinely buffered instruction submits with Enter only — retyping would double the text; order=${callOrder.join(',')}`,
+  );
 });
 
-test('flag-on claude hook-idle fails loudly on a stuck buffer instead of retyping', async () => {
+test('claude (hook-only) hook-idle fails loudly on a stuck buffer instead of retyping', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false; // submit keys never clear the buffer → stuck
@@ -532,7 +503,6 @@ test('flag-on claude hook-idle fails loudly on a stuck buffer instead of retypin
     observedAt: Date.now(),
   };
   paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
   try {
     const sent = await sendRunnerInstructionSafely(
       vars,
@@ -553,11 +523,10 @@ test('flag-on claude hook-idle fails loudly on a stuck buffer instead of retypin
     );
   } finally {
     paneClearsAfterSubmit = true;
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
   }
 });
 
-test('flag-on claude degraded (hook unknown) holds the send instead of pane fallback', async () => {
+test('claude (hook-only) degraded (hook unknown) holds the send instead of pane fallback', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = {
@@ -568,25 +537,20 @@ test('flag-on claude degraded (hook unknown) holds the send instead of pane fall
   };
   promptAcceptedReading = null;
   paneText = '❯\nctx:12%\n';
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
-  try {
-    // Small timeout so the degraded hold resolves fast.
-    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
-      forceBusyPoll: true,
-    });
-    assert.equal(sent, false);
-    assert.equal(
-      callOrder.indexOf('tmux:send'),
-      -1,
-      `degraded hold must not send into a blind composer; order=${callOrder.join(',')}`,
-    );
-    assert.ok(callOrder.includes('obs:getActivity'));
-  } finally {
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-  }
+  // Small timeout so the degraded hold resolves fast.
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+    forceBusyPoll: true,
+  });
+  assert.equal(sent, false);
+  assert.equal(
+    callOrder.indexOf('tmux:send'),
+    -1,
+    `degraded hold must not send into a blind composer; order=${callOrder.join(',')}`,
+  );
+  assert.ok(callOrder.includes('obs:getActivity'));
 });
 
-test('flag-on claude holds instead of concatenating onto FOREIGN composer draft', async () => {
+test('claude (hook-only) holds instead of concatenating onto FOREIGN composer draft', async () => {
   // Finding #1: the pending selector only knows whether OUR message is buffered. An operator draft
   // (foreign text the hook signal cannot see) sitting in the composer returns not-buffered, and the
   // pre-fix loop would type the message straight into the occupied composer → concatenation. The
@@ -603,7 +567,6 @@ test('flag-on claude holds instead of concatenating onto FOREIGN composer draft'
   };
   // Draft text that is NOT our instruction and NOT an idle/busy marker.
   paneText = '❯ wait, let me double check the deploy first\nctx:12%\n';
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
   try {
     const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
       forceBusyPoll: true,
@@ -616,11 +579,10 @@ test('flag-on claude holds instead of concatenating onto FOREIGN composer draft'
     );
   } finally {
     paneClearsAfterSubmit = true;
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
   }
 });
 
-test('flag-on claude degraded hold with a run context persists an ADR-031 audit record', async (t) => {
+test('claude (hook-only) degraded hold with a run context persists an ADR-031 audit record', async (t) => {
   // Finding #4: a degraded hold must reach the intelligence-action audit (persisted to disk), not
   // just a console warning, whenever the caller supplies a runId.
   const previous = process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
@@ -642,32 +604,27 @@ test('flag-on claude degraded hold with a run context persists an ADR-031 audit 
   };
   promptAcceptedReading = null;
   paneText = '❯\nctx:12%\n';
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
-  try {
-    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
-      forceBusyPoll: true,
-      recovery: { runId: 'run-audit-xyz' },
-    });
-    assert.equal(sent, false);
-    // Compute the audit path directly (do NOT import audit-writer at module scope — that would
-    // transitively load the real gateway modules before mock.module() applies and poison the mocks).
-    const day = new Date().toISOString().slice(0, 10);
-    const auditPath = path.join(auditDir, `${day}.ndjson`);
-    const raw = await readFile(auditPath, 'utf8');
-    const record = raw
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line))
-      .find((entry) => entry.runId === 'run-audit-xyz');
-    assert.ok(record, `expected a persisted degraded-hold audit record in ${auditPath}`);
-    assert.equal(record.verdict?.patternId, 'observability-degraded-hold');
-    assert.equal(record.tier, 'deterministic');
-  } finally {
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-  }
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+    forceBusyPoll: true,
+    recovery: { runId: 'run-audit-xyz' },
+  });
+  assert.equal(sent, false);
+  // Compute the audit path directly (do NOT import audit-writer at module scope — that would
+  // transitively load the real gateway modules before mock.module() applies and poison the mocks).
+  const day = new Date().toISOString().slice(0, 10);
+  const auditPath = path.join(auditDir, `${day}.ndjson`);
+  const raw = await readFile(auditPath, 'utf8');
+  const record = raw
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .find((entry) => entry.runId === 'run-audit-xyz');
+  assert.ok(record, `expected a persisted degraded-hold audit record in ${auditPath}`);
+  assert.equal(record.verdict?.patternId, 'observability-degraded-hold');
+  assert.equal(record.tier, 'deterministic');
 });
 
-test('flag-on claude holds when the composer state is UNKNOWN (no prompt marker), never fresh-sends', async () => {
+test('claude (hook-only) holds when the composer state is UNKNOWN (no prompt marker), never fresh-sends', async () => {
   // Finding #1: a pane with no prompt marker cannot be POSITIVELY confirmed empty. The pre-fix
   // `runnerPaneComposerHasDraft` returned false (= no draft = safe) for a missing marker, so the
   // loop would fresh-type into an unseen buffer. The three-state read must hold instead.
@@ -682,7 +639,6 @@ test('flag-on claude holds when the composer state is UNKNOWN (no prompt marker)
     observedAt: Date.now(),
   };
   paneText = 'scrollback with no prompt line\nstill no marker here\n';
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
   try {
     const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
       forceBusyPoll: true,
@@ -695,11 +651,10 @@ test('flag-on claude holds when the composer state is UNKNOWN (no prompt marker)
     );
   } finally {
     paneClearsAfterSubmit = true;
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
   }
 });
 
-test('flag-on claude foreign-draft hold records a composer-draft audit cause, not a hook lapse', async (t) => {
+test('claude (hook-only) foreign-draft hold records a composer-draft audit cause, not a hook lapse', async (t) => {
   // Finding #5: a healthy-hook foreign-draft hold must record its own audit cause
   // (`composer-draft-hold`), distinct from a hook lapse (`observability-degraded-hold`).
   const previous = process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
@@ -722,7 +677,6 @@ test('flag-on claude foreign-draft hold records a composer-draft audit cause, no
     observedAt: Date.now(),
   };
   paneText = '❯ wait, let me double check the deploy first\nctx:12%\n';
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
   try {
     const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
       forceBusyPoll: true,
@@ -745,11 +699,10 @@ test('flag-on claude foreign-draft hold records a composer-draft audit cause, no
     );
   } finally {
     paneClearsAfterSubmit = true;
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
   }
 });
 
-test('flag-on claude with high-confidence digest match reports already-delivered without resending', async () => {
+test('claude (hook-only) with high-confidence digest match reports already-delivered without resending', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
@@ -759,26 +712,21 @@ test('flag-on claude with high-confidence digest match reports already-delivered
     confidence: 'high',
     observedAt: Date.now(),
   };
-  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
-  try {
-    const sent = await sendRunnerInstructionSafely(
-      vars,
-      target,
-      'claude',
-      message,
-      '[test]',
-      10_000,
-      {
-        forceBusyPoll: true,
-      },
-    );
-    assert.equal(sent, true);
-    assert.equal(
-      callOrder.indexOf('tmux:send'),
-      -1,
-      `already-delivered must not resend; order=${callOrder.join(',')}`,
-    );
-  } finally {
-    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
-  }
+  const sent = await sendRunnerInstructionSafely(
+    vars,
+    target,
+    'claude',
+    message,
+    '[test]',
+    10_000,
+    {
+      forceBusyPoll: true,
+    },
+  );
+  assert.equal(sent, true);
+  assert.equal(
+    callOrder.indexOf('tmux:send'),
+    -1,
+    `already-delivered must not resend; order=${callOrder.join(',')}`,
+  );
 });

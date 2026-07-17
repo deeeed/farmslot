@@ -125,12 +125,12 @@ export function tmuxWorkerStatusFromPane(
 
   const statusline = signals?.statusline;
 
-  // ADR-032 Phase 3A: a retired runner's ONLY authoritative liveness is the hook. Getting past the
+  // ADR-032 Phase 3: a retired runner's ONLY authoritative liveness is the hook. Getting past the
   // fresh-hook return above means the hook is absent or stale — surface observability-degraded here,
   // BEFORE a fresh statusline/task-file/process signal below can mask the dead hook pipeline and
   // skip the degraded audit (stale AND fully-absent hooks both qualify). isRunnerPaneRetired scopes
-  // this to event-driven runners with a hook provider under the flag (per-runner or env), so
-  // pane-only runners and flag-off stay byte-identical.
+  // this to hook-capable runners that don't need the busy-composer poll (Claude), so pane-only
+  // runners and pane-fallback runners (Codex) stay on their pane path.
   if (runner && isRunnerPaneRetired(normalizeRunner(runner))) {
     const signal = hook ?? statusline;
     return withAttention(
