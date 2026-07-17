@@ -5,6 +5,8 @@
 // or silently aborting, we resolve conservatively to busy and emit an ADR-031 deterministic
 // recovery action (a "hold-send" hold) plus an attention reason the slot health surface reads.
 
+import type { IntelligenceAction } from '@farmslot/protocol';
+
 import type { ObservabilityReading, RunnerActivity } from './observability-types.js';
 
 export const OBSERVABILITY_DEGRADED_ATTENTION_REASON = 'observability-degraded' as const;
@@ -68,4 +70,37 @@ export function logObservabilityDegradedRecovery(
       record: 'observability-degraded-recovery',
     })}`,
   );
+}
+
+/**
+ * ADR-031 intelligence-action record for an observability-degraded hold. Emitting the hold
+ * through the deterministic-recovery audit (not just `console.warn`) means the soak review and
+ * the run's intelligence timeline both see it: a deterministic-tier action that held the send
+ * because the hook signal lapsed under the pane-retirement flag. `runId` is required by the
+ * audit contract, so callers without a run context fall back to the console record only.
+ */
+export function buildObservabilityDegradedIntelligenceAction(params: {
+  runId: string;
+  now: number;
+  runner: string;
+  target: string;
+  reason: string;
+}): IntelligenceAction {
+  const iso = new Date(params.now).toISOString();
+  return {
+    id: `obs-degraded-${params.runId}-${params.now}`,
+    timestamp: iso,
+    decidedAt: iso,
+    runId: params.runId,
+    actor: 'auto-nudge',
+    verdict: {
+      patternId: 'observability-degraded-hold',
+      confidence: 'high',
+      rationale: params.reason,
+    },
+    guards: [],
+    outcome: 'applied',
+    tier: 'deterministic',
+    costUsd: 0,
+  };
 }

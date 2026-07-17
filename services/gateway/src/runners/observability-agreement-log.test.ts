@@ -78,4 +78,52 @@ test('appendRunnerObservabilityAgreement persists ADR-032 inverted-log markers',
   assert.equal(parsed.paneBusy, false);
   const agg = aggregateAgreementEntries([entry]);
   assert.equal(agg.hookUnavailable, 1);
+  assert.equal(agg.wouldConsultPane, 1);
+});
+
+test('aggregateAgreementEntries counts wouldConsultPane across mixed entries', () => {
+  const base = {
+    slotId: 'macwork-ff-3',
+    runner: 'claude',
+    target: 'ff-3:dev',
+    logPrefix: '[nudge]',
+    hookSource: null,
+    hookConfidence: null,
+    hookObservedAt: null,
+    timestamp: 1,
+  };
+  const agg = aggregateAgreementEntries([
+    // Degraded hold recorded mid-loop: hook unavailable, would consult pane.
+    {
+      ...base,
+      paneBusy: false,
+      hookBusy: null,
+      hookActivity: null,
+      agreed: null,
+      paneRetired: true,
+      wouldConsultPane: true,
+    },
+    {
+      ...base,
+      paneBusy: true,
+      hookBusy: null,
+      hookActivity: null,
+      agreed: null,
+      paneRetired: true,
+      wouldConsultPane: true,
+    },
+    // Authoritative decision under the flag: hook resolved, no pane consult.
+    {
+      ...base,
+      paneBusy: true,
+      hookBusy: true,
+      hookActivity: 'tool-running' as const,
+      agreed: true,
+      paneRetired: true,
+    },
+  ]);
+  assert.equal(agg.total, 3);
+  assert.equal(agg.wouldConsultPane, 2);
+  assert.equal(agg.hookUnavailable, 2);
+  assert.equal(agg.agreed, 1);
 });

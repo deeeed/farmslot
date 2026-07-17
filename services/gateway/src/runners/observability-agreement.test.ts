@@ -97,3 +97,40 @@ test('absent reading flags wouldConsultPane under paneRetired', () => {
   assert.equal(entry.hookActivity, null);
   assert.equal(entry.hookConfidence, null);
 });
+
+test('flag-off: unknown reading keeps prior boolean hookBusy shape (byte-identical telemetry)', () => {
+  const entry = buildRunnerObservabilityAgreementEntry({
+    ...BASE,
+    paneBusy: false,
+    reading: reading('unknown', 'high'),
+    paneRetired: false,
+  });
+  // Phase 2 mapped ANY reading to a boolean via runnerActivityIsBusy — unknown → not busy.
+  assert.equal(entry.hookBusy, false);
+  assert.equal(entry.agreed, true);
+  assert.equal(entry.wouldConsultPane, undefined);
+  assert.equal(entry.paneRetired, undefined);
+});
+
+test('flag-off: low-confidence reading keeps prior boolean hookBusy shape', () => {
+  const entry = buildRunnerObservabilityAgreementEntry({
+    ...BASE,
+    paneBusy: true,
+    reading: reading('composing', 'low'),
+    paneRetired: false,
+  });
+  assert.equal(entry.hookBusy, true);
+  assert.equal(entry.agreed, true);
+  assert.equal(entry.wouldConsultPane, undefined);
+});
+
+test('flag-off: absent reading keeps hookBusy null (unchanged)', () => {
+  const entry = buildRunnerObservabilityAgreementEntry({
+    ...BASE,
+    paneBusy: true,
+    reading: null,
+    paneRetired: false,
+  });
+  assert.equal(entry.hookBusy, null);
+  assert.equal(entry.wouldConsultPane, undefined);
+});

@@ -48,10 +48,15 @@ export function disagreementReason(params: {
 
 /**
  * Map a hook activity reading + counterfactual pane state into an agreement log entry.
- * Only an authoritative, non-`unknown` reading yields a `hookBusy` decision; `unknown`/absent/
- * low-confidence readings keep `hookBusy` null so `wouldConsultPane` reflects the Phase 2 pane
- * consult the flag replaced (ADR-032 Phase 3A soak metric). Raw activity/source/confidence/
- * observedAt are still recorded for every reading.
+ *
+ * Under the pane-retirement flag (`paneRetired=true`), only an authoritative, non-`unknown`
+ * reading yields a `hookBusy` decision; `unknown`/absent/low-confidence readings keep `hookBusy`
+ * null so `wouldConsultPane` reflects the Phase 2 pane consult the flag replaced (ADR-032 Phase
+ * 3A soak metric).
+ *
+ * Flag-off (`paneRetired=false`) telemetry is byte-identical to Phase 2: ANY reading yields a
+ * boolean `hookBusy` (even `unknown`/low-confidence), so existing agreement logs/aggregates keep
+ * their prior shape. Raw activity/source/confidence/observedAt are recorded for every reading.
  */
 export function buildRunnerObservabilityAgreementEntry(params: {
   slotId: string;
@@ -64,10 +69,17 @@ export function buildRunnerObservabilityAgreementEntry(params: {
   timestamp: number;
 }): RunnerObservabilityAgreementEntry {
   const { reading } = params;
-  const hookAuthoritative =
-    reading != null && isObservabilityReadingAuthoritative(reading) && reading.value !== 'unknown';
   const hookActivity = reading?.value ?? null;
-  const hookBusy = hookAuthoritative ? runnerActivityIsBusy(reading.value) : null;
+  let hookBusy: boolean | null;
+  if (params.paneRetired) {
+    const hookAuthoritative =
+      reading != null &&
+      isObservabilityReadingAuthoritative(reading) &&
+      reading.value !== 'unknown';
+    hookBusy = hookAuthoritative ? runnerActivityIsBusy(reading.value) : null;
+  } else {
+    hookBusy = reading != null ? runnerActivityIsBusy(reading.value) : null;
+  }
   const reason = disagreementReason({ paneBusy: params.paneBusy, hookBusy, hookActivity });
   const wouldConsultPane = params.paneRetired && hookBusy == null;
   return {

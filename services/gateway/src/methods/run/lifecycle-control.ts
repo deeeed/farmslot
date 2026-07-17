@@ -175,7 +175,19 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
       // and let the hook-only safe-send own the idle/busy decision. Flag-off keeps the pane gate
       // (byte-identical).
       if (nudge && (isRunnerPaneRetired(runner) || runnerPaneLooksIdle(lines, runner))) {
-        const sent = await sendRunnerInstructionSafely(vars, session, runner, nudge, 'run-resume');
+        // ADR-032 Phase 3A: pass the run context so a hook-only degraded hold persists through
+        // the ADR-031 intelligence-action audit, not just a console warning.
+        const sent = await sendRunnerInstructionSafely(
+          vars,
+          session,
+          runner,
+          nudge,
+          'run-resume',
+          undefined,
+          {
+            recovery: { runId: existing.id, emit },
+          },
+        );
         console.log(
           `[run] worker idle at prompt — ${sent ? 'submitted' : 'failed to submit'} resume instruction`,
         );

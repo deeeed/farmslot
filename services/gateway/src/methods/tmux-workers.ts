@@ -21,7 +21,7 @@ import type {
 import { getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
-import { paneRetiredFromEnv } from '../runners/observability-send-decision.js';
+import { isRunnerPaneRetired, normalizeRunner } from '../runners/registry.js';
 import { listRuns } from '../runs/store.js';
 
 const TMUX_PANES_TIMEOUT_MS = 5_000;
@@ -104,6 +104,7 @@ export function tmuxWorkerStatusFromPane(
   pane: NodeTmuxPane,
   observedAt: number,
   activityHint?: TmuxWorkerActivityState,
+  runner?: string,
 ): TmuxWorkerSummary['status'] {
   const signals = pane.signals;
   const hook = signals?.hook;
@@ -133,6 +134,27 @@ export function tmuxWorkerStatusFromPane(
         state,
       },
       attentionReasonForRunnerState(state),
+    );
+  }
+
+  // ADR-032 Phase 3A: for a runner whose pane is retired, there is no fresh hook/statusline
+  // liveness above and no pane fallback for the send decision — surface observability-degraded
+  // BEFORE the task-file/process signals below can mask it (stale AND fully-absent hooks both
+  // qualify). isRunnerPaneRetired scopes this to event-driven runners with a hook provider under
+  // the flag (per-runner or env), so pane-only runners and flag-off stay byte-identical.
+  if (runner && isRunnerPaneRetired(normalizeRunner(runner))) {
+    const signal = hook ?? statusline;
+    return withAttention(
+      {
+        label: signal?.label ?? 'observability liveness lapsed',
+        source: hook ? 'hook' : statusline ? 'statusline' : 'tmux',
+        confidence: 'low',
+        ...(signal?.observedAt != null
+          ? { observedAt: signal.observedAt, stale: true }
+          : { observedAt }),
+        state: 'stale',
+      },
+      'observability-degraded',
     );
   }
 
@@ -166,13 +188,6 @@ export function tmuxWorkerStatusFromPane(
 
   if (hook || statusline) {
     const signal = hook ?? statusline;
-    // ADR-032 Phase 3A: a lapsed hook/statusline signal for an event-driven runner is an
-    // observability-liveness failure, not just a stale task signal. Under the pane-retirement
-    // flag the send path can no longer fall back to the pane, so surface it distinctly in slot
-    // health BEFORE a nudge is attempted. Flag-off keeps the generic `stale-signal` (byte-identical).
-    const reason: TmuxWorkerAttentionReason = paneRetiredFromEnv()
-      ? 'observability-degraded'
-      : 'stale-signal';
     return withAttention(
       {
         label: signal?.label ?? 'stale worker signal',
@@ -183,7 +198,7 @@ export function tmuxWorkerStatusFromPane(
           : { observedAt }),
         state: 'stale',
       },
-      reason,
+      'stale-signal',
     );
   }
 
@@ -205,6 +220,8 @@ interface SlotCorrelation {
   runId?: string;
   familyId?: string;
   activityHint?: TmuxWorkerActivityState;
+  /** Runner id of the correlated run — lets the status surface apply per-runner pane-retirement. */
+  runner?: string;
 }
 
 function runActivityHint(run: Run | undefined): TmuxWorkerActivityState | undefined {
@@ -243,11 +260,13 @@ export function buildSessionCorrelation(
       const runId = fleetSlot?.currentRunId ?? activeRun?.id;
       const familyId = fleetSlot?.currentFamilyId ?? activeRun?.familyId;
       const activityHint = slotActivityHint(fleetSlot) ?? runActivityHint(activeRun);
+      const runner = activeRun?.metrics?.runner;
       machineSessions.set(session, {
         slotId: slot.id,
         ...(runId ? { runId } : {}),
         ...(familyId ? { familyId } : {}),
         ...(activityHint ? { activityHint } : {}),
+        ...(runner ? { runner } : {}),
       });
     }
   }
@@ -283,7 +302,12 @@ export function tmuxWorkerFromNodePane(params: {
     ...(correlation?.familyId ? { linkedFamilyId: correlation.familyId } : {}),
     ...(pane.branch ? { branch: pane.branch } : {}),
     ...(pane.lastChangedAt != null ? { lastChangedAt: pane.lastChangedAt } : {}),
-    status: tmuxWorkerStatusFromPane(pane, observedAt, correlation?.activityHint),
+    status: tmuxWorkerStatusFromPane(
+      pane,
+      observedAt,
+      correlation?.activityHint,
+      correlation?.runner,
+    ),
   };
 }
 

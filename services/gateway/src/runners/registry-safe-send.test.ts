@@ -432,17 +432,20 @@ test('a persistently buffered composer fails loudly instead of concatenating a r
 
 // --- ADR-032 Phase 3A pane-retirement flag ---
 
-test('flag-on claude hook-idle send never captures pane before the send decision', async () => {
+test('flag-on claude hook-idle with an EMPTY composer proves-empty then types the message', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
-  // Not a high-confidence digest match → not "already delivered"; the loop should fresh-send.
+  // Not a high-confidence digest match → not "already delivered". The pending selector treats an
+  // authoritative not-accepted reading as possibly-buffered, so the loop MUST prove the composer
+  // is empty (submit-existing → not-buffered) before typing fresh — never a blind concat.
   promptAcceptedReading = {
     value: false,
     source: 'hook',
     confidence: 'medium',
     observedAt: Date.now(),
   };
+  paneText = '❯\nctx:12%\n'; // empty composer — nothing buffered
   process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
   try {
     const sent = await sendRunnerInstructionSafely(
@@ -457,19 +460,95 @@ test('flag-on claude hook-idle send never captures pane before the send decision
       },
     );
     assert.equal(sent, true);
-    const sendIdx = callOrder.indexOf('tmux:send');
-    const firstPaneIdx = callOrder.indexOf('pane:capture');
-    assert.ok(sendIdx >= 0, `expected a send; order=${callOrder.join(',')}`);
+    // The idle/pending DECISION was resolved from hooks only.
     assert.ok(
-      callOrder.includes('obs:getActivity'),
-      `expected hook read; order=${callOrder.join(',')}`,
+      callOrder.includes('obs:getActivity') && callOrder.includes('obs:promptAccepted'),
+      `expected hook reads to drive the decision; order=${callOrder.join(',')}`,
     );
-    // Decision consulted hooks only: no pane capture happened before the send-keys.
+    // Composer proven empty → the message is TYPED fresh (a bare Enter would report a false
+    // delivery success for an instruction that was never sent).
     assert.ok(
-      firstPaneIdx === -1 || firstPaneIdx > sendIdx,
-      `pane must not be consulted before the hook-only send; order=${callOrder.join(',')}`,
+      callOrder.includes('tmux:send-literal'),
+      `an empty composer must get the message typed; order=${callOrder.join(',')}`,
     );
   } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude hook-idle with a BUFFERED composer submits it without retyping (no concat)', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`; // the instruction is buffered in the composer
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'claude',
+      message,
+      '[test]',
+      5000,
+      {
+        forceBusyPoll: true,
+      },
+    );
+    assert.equal(sent, true);
+    assert.ok(
+      callOrder.includes('tmux:send'),
+      `expected a submit key; order=${callOrder.join(',')}`,
+    );
+    assert.equal(
+      callOrder.indexOf('tmux:send-literal'),
+      -1,
+      `a genuinely buffered instruction submits with Enter only — retyping would double the text; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude hook-idle fails loudly on a stuck buffer instead of retyping', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false; // submit keys never clear the buffer → stuck
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'claude',
+      message,
+      '[test]',
+      5000,
+      {
+        forceBusyPoll: true,
+      },
+    );
+    assert.equal(sent, false, 'a stuck buffer is a delivery failure, not a success');
+    assert.equal(
+      callOrder.indexOf('tmux:send-literal'),
+      -1,
+      `never retype over a stuck buffer — the text would concatenate; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    paneClearsAfterSubmit = true;
     delete process.env.FARMSLOT_OBS_PANE_RETIRED;
   }
 });

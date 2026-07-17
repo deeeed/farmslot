@@ -15,6 +15,7 @@ import {
   type WorkerSignal,
 } from '@farmslot/protocol';
 
+import { writeAuditRecord } from '../auto-recovery/audit-writer.js';
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
@@ -34,6 +35,7 @@ import {
   logRunnerObservabilityAgreement,
 } from './observability-agreement.js';
 import {
+  buildObservabilityDegradedIntelligenceAction,
   buildObservabilityDegradedRecovery,
   logObservabilityDegradedRecovery,
 } from './observability-degraded.js';
@@ -1322,7 +1324,6 @@ async function recordRunnerObservabilityAgreement(
   runner: string,
   pane: string,
   logPrefix: string,
-  opts: { paneRetired?: boolean } = {},
 ): Promise<void> {
   const def = getRunnerDefinition(runner);
   if (def.observabilityScope !== 'event-driven') return;
@@ -1345,36 +1346,80 @@ async function recordRunnerObservabilityAgreement(
       logPrefix,
       paneBusy,
       reading,
-      paneRetired: opts.paneRetired === true,
+      // Flag-off telemetry: this path is only reached by the pane-fallback (Phase 2) loop.
+      paneRetired: false,
+      timestamp: Date.now(),
+    }),
+  );
+}
+
+/** Run context that lets a degraded hold reach the ADR-031 intelligence-action audit. */
+export interface RunnerSendRecoveryContext {
+  runId: string;
+  emit: (event: string, payload: unknown) => void;
+}
+
+/**
+ * ADR-032 Phase 3A per-decision degraded record. Under the pane-retirement flag, every time the
+ * hook-only loop resolves a degraded (unknown/absent/stale) decision, capture the pane ONCE for
+ * the inverted agreement log (counterfactual: what the pane predicate would have said) using the
+ * reading already in hand — do NOT re-read activity, or a recovered/later-successful send would
+ * lose the original degraded event. The pane read here is shadow logging, not a decision input.
+ */
+async function recordObservabilityDegradedDecision(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  reading: ObservabilityReading<RunnerActivity> | null,
+  logPrefix: string,
+): Promise<void> {
+  const def = getRunnerDefinition(runner);
+  if (def.observabilityScope !== 'event-driven') return;
+  const pane = await captureTmuxPane(vars, target);
+  logRunnerObservabilityAgreement(
+    buildRunnerObservabilityAgreementEntry({
+      slotId: vars.slotId,
+      runner,
+      target,
+      logPrefix,
+      paneBusy: paneShowsBusyComposer(pane),
+      reading,
+      paneRetired: true,
       timestamp: Date.now(),
     }),
   );
 }
 
 /**
- * ADR-032 Phase 3A degraded-mode record. Under the pane-retirement flag, when a send holds
- * because the hook signal is unavailable/stale, capture the pane ONCE for the inverted
- * agreement log (counterfactual: what the pane predicate would have said), then emit the
- * ADR-031 deterministic-recovery "hold-send" action. The pane read here is shadow logging,
- * not a decision input.
+ * ADR-032 Phase 3A terminal degraded record. When the hook-only send holds through its whole
+ * window, emit the ADR-031 deterministic-recovery "hold-send" action. It is always logged for the
+ * human trace and, when a run context is available, persisted through the intelligence-action
+ * audit so the soak review and the run timeline both see the hold (not just `console.warn`).
  */
-async function recordObservabilityDegraded(
+async function emitObservabilityDegradedRecovery(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
   logPrefix: string,
+  recovery?: RunnerSendRecoveryContext,
 ): Promise<void> {
-  const pane = await captureTmuxPane(vars, target);
-  await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix, {
-    paneRetired: true,
-  });
-  const recovery = buildObservabilityDegradedRecovery({
-    slotId: vars.slotId,
-    runner,
-    target,
-    now: Date.now(),
-  });
-  logObservabilityDegradedRecovery(recovery, logPrefix);
+  const now = Date.now();
+  const action = buildObservabilityDegradedRecovery({ slotId: vars.slotId, runner, target, now });
+  logObservabilityDegradedRecovery(action, logPrefix);
+  if (recovery) {
+    // writeAuditRecord swallows its own IO errors and flips the run's degraded-audit flag, so a
+    // failed write does not throw here and does not block the send loop's completion.
+    await writeAuditRecord(
+      buildObservabilityDegradedIntelligenceAction({
+        runId: recovery.runId,
+        now,
+        runner,
+        target,
+        reason: action.reason,
+      }),
+      { runId: recovery.runId, emit: recovery.emit, now: new Date(now) },
+    );
+  }
 }
 
 async function captureTmuxPane(
@@ -1547,6 +1592,7 @@ async function sendRunnerInstructionHookOnly(
   effectiveTimeoutMs: number,
   loopStartMs: number,
   promptAcceptedSinceMs: number,
+  recovery?: RunnerSendRecoveryContext,
 ): Promise<boolean> {
   const observability = getRunnerObservability(runner);
   if (!observability) return false;
@@ -1574,6 +1620,7 @@ async function sendRunnerInstructionHookOnly(
     const idleDecision = selectIdleFromObservabilityAndPane(activity, false, true);
     if (idleDecision.degraded) {
       sawDegraded = true;
+      await recordObservabilityDegradedDecision(vars, target, runner, activity, logPrefix);
       await new Promise((resolve) => setTimeout(resolve, 1500));
       continue;
     }
@@ -1581,14 +1628,43 @@ async function sendRunnerInstructionHookOnly(
       await new Promise((resolve) => setTimeout(resolve, 1500));
       continue;
     }
-    // Hook-authoritative idle → send fresh. No pane predicate consulted for this decision.
+
+    // Hook-authoritative idle. Before fresh-typing, consult the pending selector: an
+    // authoritative not-accepted reading means the digest may already sit buffered in the
+    // composer, so a fresh type would concatenate. A degraded pending reading has no proof the
+    // composer is empty either — hold rather than risk a blind concat.
+    const pendingDecision = selectPendingFromObservabilityAndPane(promptReading, false, true);
+    if (pendingDecision.degraded) {
+      sawDegraded = true;
+      await recordObservabilityDegradedDecision(vars, target, runner, activity, logPrefix);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      continue;
+    }
+    if (pendingDecision.pending) {
+      // Try to submit the buffered instruction first. submitRunnerInstruction verifies the
+      // composer buffer INTERNALLY (confirmation, not a decision): it returns 'not-buffered'
+      // when the composer is actually empty — proving it is safe to type fresh — and refuses
+      // to retype over a 'stuck' buffer.
+      const submitted = await submitRunnerInstruction(
+        vars,
+        target,
+        runner,
+        message,
+        logPrefix,
+        'submit-existing',
+      );
+      if (submitted === 'ok') return true;
+      if (submitted === 'stuck') return false;
+      // 'not-buffered' → composer proven empty → fall through to a fresh send.
+    }
+    // Composer proven empty (or nothing was pending) → type fresh.
     return (
       (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok'
     );
   }
   if (sawDegraded) {
-    // Degraded hold: emit inverted agreement + ADR-031 deterministic recovery + attention.
-    await recordObservabilityDegraded(vars, target, runner, logPrefix);
+    // Degraded hold through the whole window: emit the ADR-031 deterministic recovery + audit.
+    await emitObservabilityDegradedRecovery(vars, target, runner, logPrefix, recovery);
   } else {
     console.warn(
       `[${logPrefix}] runner ${runner} stayed busy; skipped sending duplicate/queued prompt to ${target}`,
@@ -1604,7 +1680,7 @@ export async function sendRunnerInstructionSafely(
   message: string,
   logPrefix: string,
   timeoutMs?: number,
-  opts: { forceBusyPoll?: boolean } = {},
+  opts: { forceBusyPoll?: boolean; recovery?: RunnerSendRecoveryContext } = {},
 ): Promise<boolean> {
   const runner = normalizeRunner(runnerId);
   const def = getRunnerDefinition(runner);
@@ -1623,6 +1699,7 @@ export async function sendRunnerInstructionSafely(
       effectiveTimeoutMs,
       loopStartMs,
       promptAcceptedSinceMs,
+      opts.recovery,
     );
   }
   // Skip the busy-composer poll iff the runner doesn't require it AND the caller didn't opt
