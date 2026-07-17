@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
@@ -577,6 +581,87 @@ test('flag-on claude degraded (hook unknown) holds the send instead of pane fall
       `degraded hold must not send into a blind composer; order=${callOrder.join(',')}`,
     );
     assert.ok(callOrder.includes('obs:getActivity'));
+  } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude holds instead of concatenating onto FOREIGN composer draft', async () => {
+  // Finding #1: the pending selector only knows whether OUR message is buffered. An operator draft
+  // (foreign text the hook signal cannot see) sitting in the composer returns not-buffered, and the
+  // pre-fix loop would type the message straight into the occupied composer → concatenation. The
+  // composer-empty guard must hold instead.
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false; // foreign draft persists across captures
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  // Draft text that is NOT our instruction and NOT an idle/busy marker.
+  paneText = '❯ wait, let me double check the deploy first\nctx:12%\n';
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+    });
+    assert.equal(sent, false, 'foreign composer draft must hold the send, not concatenate');
+    assert.equal(
+      callOrder.indexOf('tmux:send-literal'),
+      -1,
+      `never type into a composer holding foreign draft text; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    paneClearsAfterSubmit = true;
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude degraded hold with a run context persists an ADR-031 audit record', async (t) => {
+  // Finding #4: a degraded hold must reach the intelligence-action audit (persisted to disk), not
+  // just a console warning, whenever the caller supplies a runId.
+  const previous = process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
+  const auditDir = mkdtempSync(path.join(tmpdir(), 'farmslot-obs-degraded-audit-'));
+  process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR = auditDir;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
+    else process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR = previous;
+    await rm(auditDir, { recursive: true, force: true });
+  });
+
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'unknown',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  promptAcceptedReading = null;
+  paneText = '❯\nctx:12%\n';
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+      recovery: { runId: 'run-audit-xyz' },
+    });
+    assert.equal(sent, false);
+    // Compute the audit path directly (do NOT import audit-writer at module scope — that would
+    // transitively load the real gateway modules before mock.module() applies and poison the mocks).
+    const day = new Date().toISOString().slice(0, 10);
+    const auditPath = path.join(auditDir, `${day}.ndjson`);
+    const raw = await readFile(auditPath, 'utf8');
+    const record = raw
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.runId === 'run-audit-xyz');
+    assert.ok(record, `expected a persisted degraded-hold audit record in ${auditPath}`);
+    assert.equal(record.verdict?.patternId, 'observability-degraded-hold');
+    assert.equal(record.tier, 'deterministic');
   } finally {
     delete process.env.FARMSLOT_OBS_PANE_RETIRED;
   }

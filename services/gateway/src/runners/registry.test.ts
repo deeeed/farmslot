@@ -20,6 +20,7 @@ import {
   getRunnerObservability,
   grokPaneShowsColdStartSession,
   isRunnerPaneRetired,
+  KNOWN_RUNNERS,
   normalizeRunner,
   resolveSafeSendTimeoutMs,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
@@ -1260,14 +1261,29 @@ describe('buildLaunchCommand', () => {
       }
     });
 
-    it('env flag retires the pane for event-driven runners only', () => {
+    it('env flag is scoped to Claude for Phase 3A (Codex stays on Phase 2)', () => {
+      // ADR-032 Phase 3 retires the pane for Claude only; the global env flag must NOT widen the
+      // dark-launch to Codex even though it is also event-driven.
       assert.equal(isRunnerPaneRetired('claude', ON), true);
-      assert.equal(isRunnerPaneRetired('codex', ON), true);
+      assert.equal(isRunnerPaneRetired('codex', ON), false);
       // pane-only + none stay byte-identical (flag never applies).
       assert.equal(isRunnerPaneRetired('grok', ON), false);
       assert.equal(isRunnerPaneRetired('cursor', ON), false);
       assert.equal(isRunnerPaneRetired('opencode', ON), false);
       assert.equal(isRunnerPaneRetired('none', ON), false);
+    });
+
+    it('per-runner observabilityPaneRetired opts a runner in without the env flag', () => {
+      // The per-runner field is the opt-in path for runners the env flag does not cover (Codex).
+      const original = KNOWN_RUNNERS.codex.observabilityPaneRetired;
+      KNOWN_RUNNERS.codex.observabilityPaneRetired = true;
+      try {
+        assert.equal(isRunnerPaneRetired('codex', OFF), true);
+        // grok has no hook observability provider, so the per-runner field can never retire it.
+        assert.equal(isRunnerPaneRetired('grok', OFF), false);
+      } finally {
+        KNOWN_RUNNERS.codex.observabilityPaneRetired = original;
+      }
     });
 
     it('null/undefined runner is never retired', () => {

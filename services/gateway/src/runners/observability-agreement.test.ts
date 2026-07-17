@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildPendingDegradedAgreementEntry,
   buildRunnerObservabilityAgreementEntry,
   disagreementReason,
 } from './observability-agreement.js';
+import { aggregateAgreementEntries } from './observability-agreement-log.js';
 import type { ObservabilityReading, RunnerActivity } from './observability-types.js';
 
 const BASE = {
@@ -133,4 +135,64 @@ test('flag-off: absent reading keeps hookBusy null (unchanged)', () => {
   });
   assert.equal(entry.hookBusy, null);
   assert.equal(entry.wouldConsultPane, undefined);
+});
+
+test('activity-degraded entry tags degradedSignal=activity', () => {
+  const entry = buildRunnerObservabilityAgreementEntry({
+    ...BASE,
+    paneBusy: true,
+    reading: reading('unknown', 'high'),
+    paneRetired: true,
+  });
+  assert.equal(entry.degradedSignal, 'activity');
+  assert.equal(entry.wouldConsultPane, true);
+});
+
+test('pending-degraded entry records the prompt reading, not a healthy activity read', () => {
+  // The scenario finding #2 fixed: activity read healthy-idle, but the PENDING (prompt digest)
+  // read degraded. Logging the prompt reading keeps hookBusy null so the soak metric counts it.
+  const entry = buildPendingDegradedAgreementEntry({
+    ...BASE,
+    paneBusy: true,
+    promptReading: { value: false, source: 'hook', confidence: 'low', observedAt: 10 },
+  });
+  assert.equal(entry.hookBusy, null);
+  assert.equal(entry.hookActivity, null);
+  assert.equal(entry.wouldConsultPane, true);
+  assert.equal(entry.degradedSignal, 'pending');
+  assert.equal(entry.paneRetired, true);
+  assert.equal(entry.hookConfidence, 'low');
+  assert.equal(entry.hookObservedAt, 10);
+  assert.equal(entry.paneBusy, true);
+});
+
+test('pending-degraded entry with an absent prompt reading still flags wouldConsultPane', () => {
+  const entry = buildPendingDegradedAgreementEntry({
+    ...BASE,
+    paneBusy: false,
+    promptReading: null,
+  });
+  assert.equal(entry.hookBusy, null);
+  assert.equal(entry.wouldConsultPane, true);
+  assert.equal(entry.hookConfidence, null);
+  assert.equal(entry.degradedSignal, 'pending');
+});
+
+test('aggregate counts pending-degraded decisions in wouldConsultPane (no undercount)', () => {
+  // Regression for finding #2: a pending-degraded decision logged with the healthy activity read
+  // would resolve hookBusy=false and NOT count here — proving the fix, it counts as wouldConsultPane.
+  const pendingDegraded = buildPendingDegradedAgreementEntry({
+    ...BASE,
+    paneBusy: true,
+    promptReading: { value: false, source: 'hook', confidence: 'low', observedAt: 10 },
+  });
+  const authoritativeIdle = buildRunnerObservabilityAgreementEntry({
+    ...BASE,
+    paneBusy: false,
+    reading: reading('idle', 'high'),
+    paneRetired: true,
+  });
+  const aggregate = aggregateAgreementEntries([pendingDegraded, authoritativeIdle]);
+  assert.equal(aggregate.wouldConsultPane, 1);
+  assert.equal(aggregate.hookUnavailable, 1);
 });

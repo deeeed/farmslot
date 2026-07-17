@@ -25,6 +25,14 @@ export interface RunnerObservabilityAgreementEntry {
    * window counts these to prove the fallback is dead weight.
    */
   wouldConsultPane?: boolean;
+  /**
+   * ADR-032 Phase 3A: which hook signal actually degraded this decision. The send loop reads two
+   * independent signals (`activity` for busy/idle, `pending` for the composer digest). Recording
+   * the one that lapsed keeps the soak metric honest: an authoritative-idle activity paired with a
+   * degraded pending signal must log the PENDING reading (else `hookBusy` resolves non-null off the
+   * healthy activity read and the `wouldConsultPane` count silently under-reports).
+   */
+  degradedSignal?: 'activity' | 'pending';
   timestamp: number;
 }
 
@@ -96,7 +104,45 @@ export function buildRunnerObservabilityAgreementEntry(params: {
     agreed: hookBusy == null ? null : params.paneBusy === hookBusy,
     ...(reason ? { disagreementReason: reason } : {}),
     ...(params.paneRetired ? { paneRetired: true } : {}),
-    ...(wouldConsultPane ? { wouldConsultPane: true } : {}),
+    ...(wouldConsultPane ? { wouldConsultPane: true, degradedSignal: 'activity' as const } : {}),
+    timestamp: params.timestamp,
+  };
+}
+
+/**
+ * ADR-032 Phase 3A: build an agreement entry for a decision that degraded on the PENDING signal
+ * (the composer digest read) while the activity read was healthy-idle. It records the prompt
+ * reading that actually lapsed — `hookBusy`/`hookActivity` stay null and `wouldConsultPane` is
+ * always set, so the soak aggregate counts this decision point instead of masking it behind the
+ * authoritative activity read. `paneBusy` carries the counterfactual pane state for the soak
+ * window. Always under the flag (this path only exists when the pane is retired).
+ */
+export function buildPendingDegradedAgreementEntry(params: {
+  slotId: string;
+  runner: string;
+  target: string;
+  logPrefix: string;
+  paneBusy: boolean;
+  promptReading: ObservabilityReading<boolean> | null;
+  timestamp: number;
+}): RunnerObservabilityAgreementEntry {
+  const { promptReading } = params;
+  return {
+    slotId: params.slotId,
+    runner: params.runner,
+    target: params.target,
+    logPrefix: params.logPrefix,
+    paneBusy: params.paneBusy,
+    hookBusy: null,
+    hookActivity: null,
+    hookSource: promptReading?.source ?? null,
+    hookConfidence: promptReading?.confidence ?? null,
+    hookObservedAt: promptReading?.observedAt ?? null,
+    agreed: null,
+    disagreementReason: 'hook-unavailable',
+    paneRetired: true,
+    wouldConsultPane: true,
+    degradedSignal: 'pending',
     timestamp: params.timestamp,
   };
 }

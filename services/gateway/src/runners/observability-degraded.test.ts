@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  buildObservabilityDegradedIntelligenceAction,
   buildObservabilityDegradedRecovery,
   isObservabilityDegraded,
   OBSERVABILITY_DEGRADED_ATTENTION_REASON,
@@ -45,4 +46,21 @@ test('buildObservabilityDegradedRecovery emits a deterministic hold-send action'
   assert.equal(recovery.attentionReason, 'observability-degraded');
   assert.equal(recovery.timestamp, 42);
   assert.match(recovery.reason, /hold/i);
+});
+
+test('buildObservabilityDegradedIntelligenceAction is a deterministic-tier ADR-031 record', () => {
+  const action = buildObservabilityDegradedIntelligenceAction({
+    runId: 'run-abc',
+    now: 1_000,
+    runner: 'claude',
+    target: 'ff-3:dev',
+    reason: 'hooks lapsed under pane-retired flag',
+  });
+  assert.equal(action.runId, 'run-abc');
+  assert.equal(action.tier, 'deterministic');
+  assert.equal(action.outcome, 'applied');
+  assert.equal(action.actor, 'auto-nudge');
+  assert.equal(action.verdict.patternId, 'observability-degraded-hold');
+  assert.equal(action.costUsd, 0);
+  assert.match(action.id, /^obs-degraded-run-abc-1000$/);
 });

@@ -275,6 +275,11 @@ export function promptTurnStartedFromHooks(
   graceMs = 500,
 ): ObservabilityReading<boolean> | null {
   const scoped = filterHooksByPane(hooks, paneId);
+  // No hook records for this pane is ABSENCE of evidence, not evidence of no turn. Fabricating a
+  // medium-confidence `false` here would read as an authoritative "no prompt" — under the ADR-032
+  // pane-retirement flag that masks a dead/absent hook pipeline as a confident decision instead of
+  // surfacing it as degraded. Return null so callers treat absent hooks as non-authoritative.
+  if (scoped.length === 0) return null;
   let latestToolUseAt: number | null = null;
   let latestPromptSubmitAt: number | null = null;
   for (const record of scoped) {
@@ -324,6 +329,10 @@ export function promptAcceptedFromHooks(
   paneId?: string | null,
 ): ObservabilityReading<boolean> | null {
   const scoped = filterHooksByPane(hooks, paneId);
+  // Absent hooks for this pane are non-authoritative (degraded), not a confident "prompt not
+  // accepted". A fabricated medium-`false` would let the ADR-032 pane-retirement send path treat a
+  // dead hook stream as an authoritative decision; return null so it degrades and holds instead.
+  if (scoped.length === 0) return null;
   let latest: { observedAt: number; digest?: string } | null = null;
   for (const record of scoped) {
     const event = hookEventName(record);

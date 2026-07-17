@@ -337,7 +337,8 @@ export async function nudgeDispatch(
     prompt,
     '[nudge]',
     nudgeTimeoutMs,
-    { forceBusyPoll: true },
+    // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
+    { forceBusyPoll: true, recovery: { runId: params.runId, emit } },
   );
   if (!sent) {
     // Capture the pane tail so the failure is debuggable rather than a context-free timeout.

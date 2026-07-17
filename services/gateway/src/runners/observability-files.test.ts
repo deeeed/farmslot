@@ -119,6 +119,50 @@ test('filterHooksByPane scopes hook records to target pane', () => {
   assert.equal(hooks[0]?.tmuxPane, '%129');
 });
 
+test('promptAcceptedFromHooks returns null for an entirely absent hook stream (degraded, not confident false)', () => {
+  const since = NOW - 10_000;
+  // No hook records at all → non-authoritative. A fabricated medium-`false` here would let the
+  // ADR-032 pane-retirement send path treat a dead hook pipeline as an authoritative decision.
+  assert.equal(promptAcceptedFromHooks([], 'abc123', since, 0, NOW), null);
+});
+
+test('promptAcceptedFromHooks still reports medium false when hooks exist but show no matching prompt', () => {
+  const since = NOW - 10_000;
+  // Hooks present (runner active) but no UserPromptSubmit for our digest → legit negative evidence.
+  const reading = promptAcceptedFromHooks(
+    [{ hook_event_name: 'Stop', observedAt: NOW - 1_000 }],
+    'abc123',
+    since,
+    0,
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: NOW,
+  });
+});
+
+test('promptTurnStartedFromHooks returns null for an absent hook stream', () => {
+  const since = NOW - 10_000;
+  assert.equal(promptTurnStartedFromHooks([], since, undefined, NOW), null);
+});
+
+test('promptAcceptedFromHooks reads absent for a pane that has no scoped hooks', () => {
+  const since = NOW - 10_000;
+  // Hooks exist but all belong to another pane → no evidence for THIS pane → non-authoritative.
+  const reading = promptAcceptedFromHooks(
+    [{ hook_event_name: 'UserPromptSubmit', observedAt: NOW - 1_000, tmuxPane: '%91' }],
+    'abc123',
+    since,
+    0,
+    NOW,
+    '%129',
+  );
+  assert.equal(reading, null);
+});
+
 test('promptTurnStartedFromHooks treats UserPromptSubmit as medium-confidence ack', () => {
   const since = NOW - 10_000;
   const reading = promptTurnStartedFromHooks(

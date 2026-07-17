@@ -55,7 +55,9 @@ test('promptTurnStartedFromHooks ignores other panes when scoped', () => {
     '%129',
     NOW,
   );
-  assert.equal(reading?.value, false);
+  // ADR-032 Phase 3A: no hook evidence for THIS pane is non-authoritative (degraded), not a
+  // fabricated confident `false` that could mask an absent hook pipeline as an authoritative read.
+  assert.equal(reading, null);
 });
 
 test('promptAcceptedFromHooks accepts turn start without digest match', () => {

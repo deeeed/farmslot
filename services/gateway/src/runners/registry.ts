@@ -31,6 +31,7 @@ import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-s
 
 import { claudeHookObservability } from './claude-observability.js';
 import {
+  buildPendingDegradedAgreementEntry,
   buildRunnerObservabilityAgreementEntry,
   logRunnerObservabilityAgreement,
 } from './observability-agreement.js';
@@ -123,11 +124,19 @@ export interface RunnerDefinition {
   observabilityHeartbeatMs?: number | null;
   /**
    * ADR-032 Phase 3A per-runner pane-retirement flip. When true (or the
-   * {@link OBS_PANE_RETIRED_ENV} env flag is set), this event-driven runner's send/idle/pending
-   * decisions consult hook readings only and never the pane predicates. Default off — flag-off
-   * behavior is byte-identical to Phase 2. Only meaningful for `event-driven` runners.
+   * {@link OBS_PANE_RETIRED_ENV} env flag is set AND {@link observabilityPaneRetirementEnvFlag}),
+   * this event-driven runner's send/idle/pending decisions consult hook readings only and never
+   * the pane predicates. Default off — flag-off behavior is byte-identical to Phase 2. Only
+   * meaningful for `event-driven` runners.
    */
   observabilityPaneRetired?: boolean;
+  /**
+   * ADR-032 Phase 3A: does the global {@link OBS_PANE_RETIRED_ENV} env flag retire this runner's
+   * pane? Phase 3 of the ADR scopes the dark-launch to Claude only, so only Claude opts in here.
+   * Other event-driven runners (Codex) stay on Phase 2 under the env flag and can be dark-launched
+   * later via the per-runner {@link observabilityPaneRetired} field without widening the ADR.
+   */
+  observabilityPaneRetirementEnvFlag?: boolean;
 }
 
 interface PaneClassifierResult {
@@ -190,6 +199,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: (model) => model === 'unknown' || CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,
+    // ADR-032 Phase 3: the global pane-retirement env flag is scoped to Claude for Phase 3A.
+    observabilityPaneRetirementEnvFlag: true,
   },
   codex: {
     id: 'codex',
@@ -350,9 +361,11 @@ export {
  * ADR-032 Phase 3A: is the pane retired for this runner's decisions?
  *
  * True only for event-driven runners that have a hook observability provider AND either the
- * {@link OBS_PANE_RETIRED_ENV} env flag is set or the runner's `observabilityPaneRetired` is
- * true. Pane-only runners (grok/cursor) and `none` are never affected, so their predicate
- * behavior is byte-identical flag-on/off.
+ * runner's `observabilityPaneRetired` is true OR the {@link OBS_PANE_RETIRED_ENV} env flag is set
+ * for a runner the flag is scoped to (`observabilityPaneRetirementEnvFlag`). ADR-032 Phase 3A
+ * scopes the env flag to Claude, so the global flag never retires Codex here — it opts in later
+ * via the per-runner field. Pane-only runners (grok/cursor) and `none` are never affected, so
+ * their predicate behavior is byte-identical flag-on/off.
  */
 export function isRunnerPaneRetired(
   runnerId?: string | null,
@@ -361,7 +374,8 @@ export function isRunnerPaneRetired(
   if (!runnerId) return false;
   const def = getRunnerDefinition(runnerId);
   if (def.observabilityScope !== 'event-driven' || !getRunnerObservability(runnerId)) return false;
-  return paneRetiredFromEnv(env) || def.observabilityPaneRetired === true;
+  if (def.observabilityPaneRetired === true) return true;
+  return def.observabilityPaneRetirementEnvFlag === true && paneRetiredFromEnv(env);
 }
 
 export function resolveSafeSendTimeoutMs(runnerId: string): number {
@@ -780,6 +794,35 @@ export function paneShowsBusyComposer(pane: string): boolean {
     // still composing and Enter to be buffered. Matches spinner-prefixed forms across glyphs.
     /[·*•✶]\s*Composing[…\.]/i.test(pane)
   );
+}
+
+/**
+ * ADR-032 Phase 3A: does the live composer hold draft text (foreign or ours)? Only the LAST
+ * prompt-marker line (the live composer) is inspected; transcript-history echoes above it are
+ * ignored. The hook-only send loop uses this as a pre-send safety confirmation — never a send
+ * decision — so a fresh type cannot concatenate onto an operator draft or another buffered
+ * instruction that the hook signal cannot see. A busy/queued composer already counts as occupied
+ * via {@link paneShowsBusyComposer}; a bare prompt (optionally trailed by a `ctx:N%` status) is
+ * empty.
+ */
+export function runnerPaneComposerHasDraft(pane: string, runnerId?: string | null): boolean {
+  if (paneShowsBusyComposer(pane)) return true;
+  const markers = normalizeRunner(runnerId) === 'codex' ? ['›', '❯'] : ['❯', '›'];
+  const lines = pane
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i]!.trimStart();
+    const marker = markers.find((m) => line.startsWith(m));
+    if (!marker) continue;
+    const rest = line.slice(marker.length).trim();
+    // Empty prompt, or only the trailing ctx/status suffix Claude renders — the composer is clear.
+    if (!rest || /^ctx:\d+%/i.test(rest)) return false;
+    return true;
+  }
+  return false;
 }
 
 export function runnerPaneContainsInstruction(pane: string, message: string): boolean {
@@ -1353,40 +1396,62 @@ async function recordRunnerObservabilityAgreement(
   );
 }
 
-/** Run context that lets a degraded hold reach the ADR-031 intelligence-action audit. */
+/**
+ * Run context that lets a degraded hold reach the ADR-031 intelligence-action audit. `emit` is
+ * optional: the audit record is persisted to disk regardless — `emit` only broadcasts the
+ * degraded-audit flag flip to the UI, so background callers without an event channel still get the
+ * persisted audit (the finding's requirement) by passing `runId` alone.
+ */
 export interface RunnerSendRecoveryContext {
   runId: string;
-  emit: (event: string, payload: unknown) => void;
+  emit?: (event: string, payload: unknown) => void;
 }
 
 /**
  * ADR-032 Phase 3A per-decision degraded record. Under the pane-retirement flag, every time the
  * hook-only loop resolves a degraded (unknown/absent/stale) decision, capture the pane ONCE for
  * the inverted agreement log (counterfactual: what the pane predicate would have said) using the
- * reading already in hand — do NOT re-read activity, or a recovered/later-successful send would
+ * reading already in hand — do NOT re-read the signals, or a recovered/later-successful send would
  * lose the original degraded event. The pane read here is shadow logging, not a decision input.
+ *
+ * `degraded` names which signal actually lapsed: an `activity` read (busy/idle) or the `pending`
+ * read (composer digest). The pending case logs the PROMPT reading — logging the healthy activity
+ * read instead would resolve a non-null `hookBusy` and drop the `wouldConsultPane` soak count.
  */
 async function recordObservabilityDegradedDecision(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
-  reading: ObservabilityReading<RunnerActivity> | null,
+  degraded:
+    | { signal: 'activity'; reading: ObservabilityReading<RunnerActivity> | null }
+    | { signal: 'pending'; reading: ObservabilityReading<boolean> | null },
   logPrefix: string,
 ): Promise<void> {
   const def = getRunnerDefinition(runner);
   if (def.observabilityScope !== 'event-driven') return;
   const pane = await captureTmuxPane(vars, target);
+  const paneBusy = paneShowsBusyComposer(pane);
   logRunnerObservabilityAgreement(
-    buildRunnerObservabilityAgreementEntry({
-      slotId: vars.slotId,
-      runner,
-      target,
-      logPrefix,
-      paneBusy: paneShowsBusyComposer(pane),
-      reading,
-      paneRetired: true,
-      timestamp: Date.now(),
-    }),
+    degraded.signal === 'pending'
+      ? buildPendingDegradedAgreementEntry({
+          slotId: vars.slotId,
+          runner,
+          target,
+          logPrefix,
+          paneBusy,
+          promptReading: degraded.reading,
+          timestamp: Date.now(),
+        })
+      : buildRunnerObservabilityAgreementEntry({
+          slotId: vars.slotId,
+          runner,
+          target,
+          logPrefix,
+          paneBusy,
+          reading: degraded.reading,
+          paneRetired: true,
+          timestamp: Date.now(),
+        }),
   );
 }
 
@@ -1417,7 +1482,7 @@ async function emitObservabilityDegradedRecovery(
         target,
         reason: action.reason,
       }),
-      { runId: recovery.runId, emit: recovery.emit, now: new Date(now) },
+      { runId: recovery.runId, emit: recovery.emit ?? (() => undefined), now: new Date(now) },
     );
   }
 }
@@ -1620,7 +1685,13 @@ async function sendRunnerInstructionHookOnly(
     const idleDecision = selectIdleFromObservabilityAndPane(activity, false, true);
     if (idleDecision.degraded) {
       sawDegraded = true;
-      await recordObservabilityDegradedDecision(vars, target, runner, activity, logPrefix);
+      await recordObservabilityDegradedDecision(
+        vars,
+        target,
+        runner,
+        { signal: 'activity', reading: activity },
+        logPrefix,
+      );
       await new Promise((resolve) => setTimeout(resolve, 1500));
       continue;
     }
@@ -1636,7 +1707,15 @@ async function sendRunnerInstructionHookOnly(
     const pendingDecision = selectPendingFromObservabilityAndPane(promptReading, false, true);
     if (pendingDecision.degraded) {
       sawDegraded = true;
-      await recordObservabilityDegradedDecision(vars, target, runner, activity, logPrefix);
+      // Log the PENDING reading that lapsed — not the healthy activity read — or the soak metric
+      // resolves a non-null hookBusy off the activity and drops this decision's wouldConsultPane.
+      await recordObservabilityDegradedDecision(
+        vars,
+        target,
+        runner,
+        { signal: 'pending', reading: promptReading },
+        logPrefix,
+      );
       await new Promise((resolve) => setTimeout(resolve, 1500));
       continue;
     }
@@ -1655,7 +1734,22 @@ async function sendRunnerInstructionHookOnly(
       );
       if (submitted === 'ok') return true;
       if (submitted === 'stuck') return false;
-      // 'not-buffered' → composer proven empty → fall through to a fresh send.
+      // 'not-buffered' → OUR message is not buffered → fall through to the foreign-draft guard.
+    }
+    // Reaching here means our instruction is NOT buffered (submit-existing proved 'not-buffered',
+    // or the hook read authoritative-accepted so nothing of ours is pending). Before typing fresh,
+    // confirm the live composer is EMPTY: foreign draft text — an operator keystroke, another
+    // instruction — that the hook signal cannot see would otherwise concatenate with the typed
+    // message. This pane read is a pre-send safety confirmation, not a send decision; hold and let
+    // the degraded window own it rather than risk a blind concat.
+    const preSendPane = await captureTmuxPane(vars, target);
+    if (runnerPaneComposerHasDraft(preSendPane, runner)) {
+      sawDegraded = true;
+      console.warn(
+        `[${logPrefix}] hook-only send held: live composer holds foreign draft text in ${target}; not typing to avoid concatenation`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      continue;
     }
     // Composer proven empty (or nothing was pending) → type fresh.
     return (

@@ -222,6 +222,34 @@ interface SlotCorrelation {
   activityHint?: TmuxWorkerActivityState;
   /** Runner id of the correlated run — lets the status surface apply per-runner pane-retirement. */
   runner?: string;
+  /**
+   * ADR-032 Phase 3A: the tmux target/window/pane that actually runs the run's worker (its primary
+   * agent context). A session hosts more than the worker — shell tabs, reviewer panes from other
+   * runs — so the pane-retirement degraded alert must be scoped to the worker pane, or every pane
+   * in the session inherits the runner and a stale shell fabricates a false degraded reading.
+   */
+  workerTarget?: string;
+  workerWindow?: string;
+  workerPaneId?: string;
+}
+
+/**
+ * Does this pane belong to the correlated run's worker? Matches on the primary agent context's
+ * target/pane/window (whichever the context recorded). When the worker location is unknown the
+ * caller falls back to session-wide correlation — the pre-Phase-3A behavior — since we cannot do
+ * better than "somewhere in this session".
+ */
+function paneIsWorkerContext(
+  pane: NodeTmuxPane,
+  correlation: SlotCorrelation | undefined,
+): boolean {
+  if (!correlation) return false;
+  const { workerTarget, workerWindow, workerPaneId } = correlation;
+  if (!workerTarget && !workerWindow && !workerPaneId) return true;
+  if (workerTarget && pane.target === workerTarget) return true;
+  if (workerPaneId && pane.paneId && pane.paneId === workerPaneId) return true;
+  if (workerWindow && pane.window === workerWindow) return true;
+  return false;
 }
 
 function runActivityHint(run: Run | undefined): TmuxWorkerActivityState | undefined {
@@ -245,8 +273,10 @@ export function buildSessionCorrelation(
 ): Map<string, Map<string, SlotCorrelation>> {
   const fleetBySlot = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
   const activeRunBySlot = new Map<string, Run>();
+  const activeRunById = new Map<string, Run>();
   for (const run of activeRuns) {
     if (run.slotId && !activeRunBySlot.has(run.slotId)) activeRunBySlot.set(run.slotId, run);
+    activeRunById.set(run.id, run);
   }
   const byMachine = new Map<string, Map<string, SlotCorrelation>>();
   for (const pool of pools) {
@@ -260,13 +290,23 @@ export function buildSessionCorrelation(
       const runId = fleetSlot?.currentRunId ?? activeRun?.id;
       const familyId = fleetSlot?.currentFamilyId ?? activeRun?.familyId;
       const activityHint = slotActivityHint(fleetSlot) ?? runActivityHint(activeRun);
-      const runner = activeRun?.metrics?.runner;
+      // Runner + worker pane MUST come from the same run the runId points at — sourcing runner from
+      // activeRun while runId points at fleetSlot.currentRunId could label panes with the wrong
+      // runner. Prefer the run whose id === runId; fall back to the slot's active run.
+      const correlatedRun = (runId ? activeRunById.get(runId) : undefined) ?? activeRun;
+      const runner = correlatedRun?.metrics?.runner;
+      const workerTargetCtx = correlatedRun?.agentContexts?.find(
+        (ctx) => ctx.role === 'primary',
+      )?.target;
       machineSessions.set(session, {
         slotId: slot.id,
         ...(runId ? { runId } : {}),
         ...(familyId ? { familyId } : {}),
         ...(activityHint ? { activityHint } : {}),
         ...(runner ? { runner } : {}),
+        ...(workerTargetCtx?.target ? { workerTarget: workerTargetCtx.target } : {}),
+        ...(workerTargetCtx?.window ? { workerWindow: workerTargetCtx.window } : {}),
+        ...(workerTargetCtx?.pane ? { workerPaneId: workerTargetCtx.pane } : {}),
       });
     }
   }
@@ -306,7 +346,10 @@ export function tmuxWorkerFromNodePane(params: {
       pane,
       observedAt,
       correlation?.activityHint,
-      correlation?.runner,
+      // ADR-032 Phase 3A: only the worker's own pane inherits the runner for pane-retirement
+      // scoping. Other panes in the session (shell tabs, reviewer panes) stay runner-neutral so a
+      // stale non-worker pane cannot raise a false observability-degraded alert.
+      paneIsWorkerContext(pane, correlation) ? correlation?.runner : undefined,
     ),
   };
 }

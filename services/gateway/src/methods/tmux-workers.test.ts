@@ -175,6 +175,113 @@ test('buildSessionCorrelation captures the active run runner for per-runner pane
   assert.equal(correlation?.runner, 'claude');
 });
 
+test('buildSessionCorrelation records the worker pane from the primary agent context', () => {
+  const pools: PoolConfig[] = [
+    {
+      machine: 'runner-local',
+      project: 'example-mobile',
+      platform: 'ios',
+      os: 'darwin',
+      host: 'localhost',
+      sshUser: 'example',
+      slots: [
+        {
+          id: 'runner-mobile-1',
+          enabled: true,
+          mode: 'dispatch',
+          project: 'example-mobile',
+          repo: '/repo',
+          session: 'mm-1',
+        },
+      ],
+    },
+  ];
+  const staleFleet = {
+    ...fleet(),
+    slots: [{ ...fleet().slots[0], lifecycle: 'ready' as const, currentRunId: null }],
+  };
+
+  const correlation = buildSessionCorrelation(pools, staleFleet, [
+    {
+      id: 'run-active',
+      status: 'self-reviewing',
+      slotId: 'runner-mobile-1',
+      metrics: { runner: 'claude' },
+      agentContexts: [
+        {
+          id: 'ctx-1',
+          role: 'primary',
+          label: 'worker',
+          status: 'working',
+          slotId: 'runner-mobile-1',
+          runId: 'run-active',
+          target: { session: 'mm-1', window: '3', pane: '%42', target: 'mm-1:3.%42' },
+        },
+      ],
+    } as Run,
+  ])
+    .get('runner-local')
+    ?.get('mm-1');
+
+  assert.equal(correlation?.workerTarget, 'mm-1:3.%42');
+  assert.equal(correlation?.workerWindow, '3');
+  assert.equal(correlation?.workerPaneId, '%42');
+});
+
+test('tmuxWorkerFromNodePane scopes observability-degraded to the worker pane only', (t) => {
+  t.after(() => {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  });
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  const observedAt = 2_000_000_000_000;
+  const stale = { hook: { label: 'hook Stop', observedAt: observedAt - 300_000 } };
+  const correlation = {
+    slotId: 'runner-mobile-1',
+    runId: 'run-active',
+    runner: 'claude',
+    workerTarget: 'mm-1:3.%42',
+    workerWindow: '3',
+    workerPaneId: '%42',
+  };
+
+  // The worker pane (matching target) surfaces the degraded alert under the flag.
+  const workerPane: NodeTmuxPane = {
+    session: 'mm-1',
+    window: '3',
+    pane: '0',
+    paneId: '%42',
+    target: 'mm-1:3.%42',
+    command: 'claude',
+    signals: stale,
+  };
+  const worker = tmuxWorkerFromNodePane({
+    nodeId: 'runner-local',
+    pane: workerPane,
+    observedAt,
+    correlation,
+  });
+  assert.equal(worker.status.attentionReason, 'observability-degraded');
+
+  // A shell/reviewer pane in the SAME session is NOT the worker → no false degraded alert.
+  const shellPane: NodeTmuxPane = {
+    session: 'mm-1',
+    window: '1',
+    pane: '0',
+    paneId: '%9',
+    target: 'mm-1:1.%9',
+    command: 'zsh',
+    signals: stale,
+  };
+  const shell = tmuxWorkerFromNodePane({
+    nodeId: 'runner-local',
+    pane: shellPane,
+    observedAt,
+    correlation,
+  });
+  assert.notEqual(shell.status.attentionReason, 'observability-degraded');
+  assert.equal(shell.status.attentionReason, 'stale-signal');
+});
+
 test('tmuxWorkerFromNodePane preserves node tmux identity and optional correlation', () => {
   const pane: NodeTmuxPane = {
     session: 'omx-session',
