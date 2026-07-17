@@ -6,4 +6,5 @@ export const AGENT_RUNTIME_SCRIPT_EXPORTS = {
   checkTaskArtifactContract: '@farmslot/agent-runtime/scripts/check-task-artifact-contract.mjs',
 } as const;
 
+export * from './execution-template/index.js';
 export * from './recipe-quality.js';
