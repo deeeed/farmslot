@@ -1582,7 +1582,9 @@ async function sendRunnerInstructionHookOnly(
       continue;
     }
     // Hook-authoritative idle → send fresh. No pane predicate consulted for this decision.
-    return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
+    return (
+      (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok'
+    );
   }
   if (sawDegraded) {
     // Degraded hold: emit inverted agreement + ADR-031 deterministic recovery + attention.
