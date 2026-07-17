@@ -1,5 +1,7 @@
 import { appendRunnerObservabilityAgreement } from './observability-agreement-log.js';
-import type { RunnerActivity } from './observability-types.js';
+import { runnerActivityIsBusy } from './observability-files.js';
+import { isObservabilityReadingAuthoritative } from './observability-send-decision.js';
+import type { ObservabilityReading, RunnerActivity } from './observability-types.js';
 
 export interface RunnerObservabilityAgreementEntry {
   slotId: string;
@@ -42,6 +44,49 @@ export function disagreementReason(params: {
         : 'hook-busy-pane-idle';
   }
   return 'unknown-mismatch';
+}
+
+/**
+ * Map a hook activity reading + counterfactual pane state into an agreement log entry.
+ * Only an authoritative, non-`unknown` reading yields a `hookBusy` decision; `unknown`/absent/
+ * low-confidence readings keep `hookBusy` null so `wouldConsultPane` reflects the Phase 2 pane
+ * consult the flag replaced (ADR-032 Phase 3A soak metric). Raw activity/source/confidence/
+ * observedAt are still recorded for every reading.
+ */
+export function buildRunnerObservabilityAgreementEntry(params: {
+  slotId: string;
+  runner: string;
+  target: string;
+  logPrefix: string;
+  paneBusy: boolean;
+  reading: ObservabilityReading<RunnerActivity> | null;
+  paneRetired: boolean;
+  timestamp: number;
+}): RunnerObservabilityAgreementEntry {
+  const { reading } = params;
+  const hookAuthoritative =
+    reading != null && isObservabilityReadingAuthoritative(reading) && reading.value !== 'unknown';
+  const hookActivity = reading?.value ?? null;
+  const hookBusy = hookAuthoritative ? runnerActivityIsBusy(reading.value) : null;
+  const reason = disagreementReason({ paneBusy: params.paneBusy, hookBusy, hookActivity });
+  const wouldConsultPane = params.paneRetired && hookBusy == null;
+  return {
+    slotId: params.slotId,
+    runner: params.runner,
+    target: params.target,
+    logPrefix: params.logPrefix,
+    paneBusy: params.paneBusy,
+    hookBusy,
+    hookActivity,
+    hookSource: reading?.source ?? null,
+    hookConfidence: reading?.confidence ?? null,
+    hookObservedAt: reading?.observedAt ?? null,
+    agreed: hookBusy == null ? null : params.paneBusy === hookBusy,
+    ...(reason ? { disagreementReason: reason } : {}),
+    ...(params.paneRetired ? { paneRetired: true } : {}),
+    ...(wouldConsultPane ? { wouldConsultPane: true } : {}),
+    timestamp: params.timestamp,
+  };
 }
 
 export function logRunnerObservabilityAgreement(entry: RunnerObservabilityAgreementEntry): void {

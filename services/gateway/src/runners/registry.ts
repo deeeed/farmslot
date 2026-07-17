@@ -29,7 +29,10 @@ import {
 import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-signals.js';
 
 import { claudeHookObservability } from './claude-observability.js';
-import { disagreementReason, logRunnerObservabilityAgreement } from './observability-agreement.js';
+import {
+  buildRunnerObservabilityAgreementEntry,
+  logRunnerObservabilityAgreement,
+} from './observability-agreement.js';
 import {
   buildObservabilityDegradedRecovery,
   logObservabilityDegradedRecovery,
@@ -1326,46 +1329,26 @@ async function recordRunnerObservabilityAgreement(
   const observability = getRunnerObservability(runner);
   if (!observability) return;
   const paneBusy = paneShowsBusyComposer(pane);
-  let hookActivity = null;
-  let hookBusy: boolean | null = null;
-  let hookSource: string | null = null;
-  let hookConfidence: string | null = null;
-  let hookObservedAt: number | null = null;
+  let reading: ObservabilityReading<RunnerActivity> | null = null;
   try {
-    const reading = await observability.getActivity(vars, target);
-    if (reading) {
-      hookActivity = reading.value;
-      hookBusy = runnerActivityIsBusy(reading.value);
-      hookSource = reading.source;
-      hookConfidence = reading.confidence;
-      hookObservedAt = reading.observedAt;
-    }
+    reading = await observability.getActivity(vars, target);
   } catch (error) {
     console.warn(
       `[runner-observability] activity read failed for ${vars.slotId}: ${(error as Error).message}`,
     );
   }
-  const reason = disagreementReason({ paneBusy, hookBusy, hookActivity });
-  // Inverted logging: under the flag the pane would have been consulted only when the hook is
-  // non-authoritative (unknown/absent). `paneBusy` is the counterfactual pane-would-have-said.
-  const wouldConsultPane = opts.paneRetired === true && hookBusy == null;
-  logRunnerObservabilityAgreement({
-    slotId: vars.slotId,
-    runner,
-    target,
-    logPrefix,
-    paneBusy,
-    hookBusy,
-    hookActivity,
-    hookSource,
-    hookConfidence,
-    hookObservedAt,
-    agreed: hookBusy == null ? null : paneBusy === hookBusy,
-    ...(reason ? { disagreementReason: reason } : {}),
-    ...(opts.paneRetired ? { paneRetired: true } : {}),
-    ...(wouldConsultPane ? { wouldConsultPane: true } : {}),
-    timestamp: Date.now(),
-  });
+  logRunnerObservabilityAgreement(
+    buildRunnerObservabilityAgreementEntry({
+      slotId: vars.slotId,
+      runner,
+      target,
+      logPrefix,
+      paneBusy,
+      reading,
+      paneRetired: opts.paneRetired === true,
+      timestamp: Date.now(),
+    }),
+  );
 }
 
 /**
