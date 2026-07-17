@@ -412,12 +412,11 @@ test('a persistently buffered composer fails loudly instead of concatenating a r
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false; // submit keys never clear the buffer
   activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
-  promptAcceptedReading = {
-    value: false,
-    source: 'hook',
-    confidence: 'high',
-    observedAt: Date.now(),
-  };
+  // Non-authoritative observability routes through the fallback path into
+  // sendRunnerInstructionWhenPaneClear — the branch whose stuck-guard this
+  // test pins (the hook-authoritative fast path returns directly and would
+  // pass even on the pre-fix concatenating behavior).
+  promptAcceptedReading = null;
   paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
 
   const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
