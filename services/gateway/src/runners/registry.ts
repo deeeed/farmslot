@@ -1126,9 +1126,19 @@ async function sendRunnerInstructionWhenPaneClear(
   if (
     await runnerHasPendingInstruction(vars, target, runner, message, pane, promptAcceptedSinceMs)
   ) {
-    return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
-  }
-  if (runnerPaneContainsInstruction(pane, message)) {
+    const submitted = await submitRunnerInstruction(
+      vars,
+      target,
+      runner,
+      message,
+      logPrefix,
+      'submit-existing',
+    );
+    if (submitted === 'ok') return true;
+    // A stuck buffer must NOT be retyped over — the text would concatenate.
+    if (submitted === 'stuck') return false;
+    // Pending evidence was stale — nothing is actually buffered; type it below.
+  } else if (runnerPaneContainsInstruction(pane, message)) {
     if (runnerPaneHasProgressAfterInstruction(pane, message)) {
       console.log(
         `[${logPrefix}] instruction already submitted in ${target} — skip duplicate send`,
@@ -1136,10 +1146,22 @@ async function sendRunnerInstructionWhenPaneClear(
       return true;
     }
     console.log(`[${logPrefix}] instruction already present in ${target}; sending submit key`);
-    return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+    const submitted = await submitRunnerInstruction(
+      vars,
+      target,
+      runner,
+      message,
+      logPrefix,
+      'submit-existing',
+    );
+    if (submitted === 'ok') return true;
+    if (submitted === 'stuck') return false;
+    // The pane text was a transcript echo, not a buffered composer. Retyping a
+    // possibly-already-executed instruction is visible and recoverable; a
+    // false delivery success stalls the caller silently — prefer the retype.
   }
   await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
-  return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
+  return (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok';
 }
 
 async function runnerLooksIdleObsFirst(
@@ -1347,6 +1369,8 @@ async function warnIfObservabilityDegraded(
   );
 }
 
+type SubmitInstructionOutcome = 'ok' | 'not-buffered' | 'stuck';
+
 async function submitRunnerInstruction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -1354,7 +1378,7 @@ async function submitRunnerInstruction(
   message: string,
   logPrefix: string,
   mode: 'send' | 'submit-existing',
-): Promise<boolean> {
+): Promise<SubmitInstructionOutcome> {
   let sentAtMs: number | null = null;
   if (mode === 'send') {
     try {
@@ -1366,6 +1390,16 @@ async function submitRunnerInstruction(
     await execOnSlot(vars, tmuxSendTextCommand(target, message, { enter: true }));
   } else {
     const pane = await captureTmuxPane(vars, target);
+    if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {
+      // Nothing is buffered: pressing a submit key would no-op, and the
+      // absence-of-buffer verification below would then report success for an
+      // instruction that was never delivered. Refuse so callers fall back to a
+      // real send.
+      console.log(
+        `[${logPrefix}] submit-existing requested but no buffered instruction in ${target}`,
+      );
+      return 'not-buffered';
+    }
     const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
     await execOnSlot(
       vars,
@@ -1385,7 +1419,7 @@ async function submitRunnerInstruction(
           );
         });
       }
-      return true;
+      return 'ok';
     }
     if (attempt < 5) {
       const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
@@ -1408,7 +1442,7 @@ async function submitRunnerInstruction(
       );
     });
   }
-  return false;
+  return 'stuck';
 }
 
 type ClassifierActionRecovery =
@@ -1476,7 +1510,32 @@ export async function sendRunnerInstructionSafely(
       promptAcceptedSinceMs,
     );
     if (pendingObs.kind === 'hook' && pendingObs.pending) {
-      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+      // An authoritative not-accepted reading only means the runner never saw
+      // the digest — it does NOT prove text is buffered in the composer. An
+      // Enter on an empty composer reports success while the instruction was
+      // never typed, so require pane evidence before submit-existing.
+      const pane = await captureTmuxPane(vars, target);
+      if (runnerPaneHasPendingInstruction(pane, message, runner)) {
+        return (
+          (await submitRunnerInstruction(
+            vars,
+            target,
+            runner,
+            message,
+            logPrefix,
+            'submit-existing',
+          )) === 'ok'
+        );
+      }
+      return sendRunnerInstructionWhenPaneClear(
+        vars,
+        target,
+        runner,
+        message,
+        pane,
+        promptAcceptedSinceMs,
+        logPrefix,
+      );
     }
     if (pendingObs.kind === 'fallback') {
       const pane = await captureTmuxPane(vars, target);
@@ -1507,9 +1566,22 @@ export async function sendRunnerInstructionSafely(
     };
 
     if (pendingObs.kind === 'hook' && pendingObs.pending) {
-      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
-    }
-    if (pendingObs.kind === 'fallback') {
+      // Same pane-evidence rule as the fast path; with nothing buffered, fall
+      // through to the busy-aware delivery below instead of a blind Enter.
+      const captured = await ensurePane();
+      if (runnerPaneHasPendingInstruction(captured, message, runner)) {
+        return (
+          (await submitRunnerInstruction(
+            vars,
+            target,
+            runner,
+            message,
+            logPrefix,
+            'submit-existing',
+          )) === 'ok'
+        );
+      }
+    } else if (pendingObs.kind === 'fallback') {
       const captured = await ensurePane();
       if (
         await runnerHasPendingInstruction(
@@ -1521,7 +1593,16 @@ export async function sendRunnerInstructionSafely(
           promptAcceptedSinceMs,
         )
       ) {
-        return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+        return (
+          (await submitRunnerInstruction(
+            vars,
+            target,
+            runner,
+            message,
+            logPrefix,
+            'submit-existing',
+          )) === 'ok'
+        );
       }
     }
 

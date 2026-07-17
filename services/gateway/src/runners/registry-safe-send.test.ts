@@ -26,6 +26,7 @@ let promptAcceptedReading: ObservabilityReading<boolean> | null = {
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
 let paneCaptureCount = 0;
+let paneClearsAfterSubmit = true;
 let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
 
 mock.module('./claude-observability.js', {
@@ -60,7 +61,10 @@ mock.module('../core/exec.js', {
       if (cmd.includes('capture-pane')) {
         callOrder.push('pane:capture');
         paneCaptureCount += 1;
-        if (paneCaptureCount > 1) {
+        // Captures 1-2 show the scenario pane (decision + submit pre-check);
+        // later captures model the composer clearing after a submit key —
+        // unless a test pins paneClearsAfterSubmit=false to model a stuck buffer.
+        if (paneCaptureCount > 2 && paneClearsAfterSubmit) {
           return { exitCode: 0, stdout: '❯\nctx:12%\n', stderr: '' };
         }
         return { exitCode: 0, stdout: paneText, stderr: '' };
@@ -70,6 +74,10 @@ mock.module('../core/exec.js', {
       }
       if (cmd.includes('send-keys') || cmd.includes('send-text')) {
         callOrder.push('tmux:send');
+        // A literal payload (-l) is the message being TYPED; a bare send is a
+        // key like Enter. The distinction is what separates fresh-send from
+        // submit-existing in assertions.
+        if (cmd.includes(' -l ')) callOrder.push('tmux:send-literal');
         return { exitCode: 0, stdout: '', stderr: '' };
       }
       if (cmd.includes('python3 -')) {
@@ -279,4 +287,145 @@ test('sendRunnerInstructionSafely falls back to pane when hook activity is unkno
   assert.equal(sent, true);
   assert.ok(callOrder.includes('pane:capture'));
   assert.ok(callOrder.includes('obs:getActivity'));
+});
+
+test('sendRunnerInstructionSafely types the message when hook says not-accepted and the composer is empty', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = '❯\nctx:12%\n'; // empty composer — nothing buffered
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+
+  assert.equal(sent, true);
+  assert.ok(callOrder.includes('pane:capture'), 'must check the pane before trusting pending');
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `an authoritative not-accepted reading with an EMPTY composer must TYPE the message — a bare Enter reports success while the instruction was never delivered; order=${callOrder.join(',')}`,
+  );
+});
+
+test('sendRunnerInstructionSafely submits the buffered instruction when the pane shows it', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+
+  assert.equal(sent, true);
+  assert.ok(callOrder.includes('tmux:send'));
+  assert.equal(
+    callOrder.indexOf('tmux:send-literal'),
+    -1,
+    `a genuinely buffered instruction submits with Enter only — retyping would double the text; order=${callOrder.join(',')}`,
+  );
+});
+
+test('loop path (forceBusyPoll) types the message when nothing is buffered', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = '❯\nctx:12%\n';
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 5000, {
+    forceBusyPoll: true,
+  });
+
+  assert.equal(sent, true);
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `busy-aware loop with an empty composer must TYPE the message; order=${callOrder.join(',')}`,
+  );
+});
+
+test('loop path (forceBusyPoll) submits a genuinely buffered instruction without retyping', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 5000, {
+    forceBusyPoll: true,
+  });
+
+  assert.equal(sent, true);
+  assert.ok(callOrder.includes('tmux:send'));
+  assert.equal(
+    callOrder.indexOf('tmux:send-literal'),
+    -1,
+    `buffered instruction on the loop path submits with Enter only; order=${callOrder.join(',')}`,
+  );
+});
+
+test('a transcript echo with an empty live composer gets the message typed fresh', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  // The instruction sits in transcript history (outside the 12-line pending
+  // tail) above an empty prompt: contains=true, pending=false, buffered=false.
+  const filler = Array.from({ length: 14 }, (_, i) => `transcript line ${i}`).join('\n');
+  paneText = `❯ ${message.slice(0, 80)}\n${filler}\n❯\n`;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+
+  assert.equal(sent, true);
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `transcript echo must not satisfy delivery — type the message; order=${callOrder.join(',')}`,
+  );
+});
+
+test('a persistently buffered composer fails loudly instead of concatenating a retype', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false; // submit keys never clear the buffer
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  // Non-authoritative observability routes through the fallback path into
+  // sendRunnerInstructionWhenPaneClear — the branch whose stuck-guard this
+  // test pins (the hook-authoritative fast path returns directly and would
+  // pass even on the pre-fix concatenating behavior).
+  promptAcceptedReading = null;
+  paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+
+  paneClearsAfterSubmit = true;
+  assert.equal(sent, false, 'a stuck buffer is a delivery failure, not a success');
+  assert.equal(
+    callOrder.indexOf('tmux:send-literal'),
+    -1,
+    `never retype over a stuck buffer — the text would concatenate; order=${callOrder.join(',')}`,
+  );
 });
