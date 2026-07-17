@@ -26,6 +26,7 @@ let promptAcceptedReading: ObservabilityReading<boolean> | null = {
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
 let paneCaptureCount = 0;
+let paneClearsAfterSubmit = true;
 let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
 
 mock.module('./claude-observability.js', {
@@ -61,8 +62,9 @@ mock.module('../core/exec.js', {
         callOrder.push('pane:capture');
         paneCaptureCount += 1;
         // Captures 1-2 show the scenario pane (decision + submit pre-check);
-        // later captures model the composer clearing after a submit key.
-        if (paneCaptureCount > 2) {
+        // later captures model the composer clearing after a submit key —
+        // unless a test pins paneClearsAfterSubmit=false to model a stuck buffer.
+        if (paneCaptureCount > 2 && paneClearsAfterSubmit) {
           return { exitCode: 0, stdout: '❯\nctx:12%\n', stderr: '' };
         }
         return { exitCode: 0, stdout: paneText, stderr: '' };
@@ -377,5 +379,54 @@ test('loop path (forceBusyPoll) submits a genuinely buffered instruction without
     callOrder.indexOf('tmux:send-literal'),
     -1,
     `buffered instruction on the loop path submits with Enter only; order=${callOrder.join(',')}`,
+  );
+});
+
+test('a transcript echo with an empty live composer gets the message typed fresh', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  // The instruction sits in transcript history (outside the 12-line pending
+  // tail) above an empty prompt: contains=true, pending=false, buffered=false.
+  const filler = Array.from({ length: 14 }, (_, i) => `transcript line ${i}`).join('\n');
+  paneText = `❯ ${message.slice(0, 80)}\n${filler}\n❯\n`;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+
+  assert.equal(sent, true);
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `transcript echo must not satisfy delivery — type the message; order=${callOrder.join(',')}`,
+  );
+});
+
+test('a persistently buffered composer fails loudly instead of concatenating a retype', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false; // submit keys never clear the buffer
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+
+  paneClearsAfterSubmit = true;
+  assert.equal(sent, false, 'a stuck buffer is a delivery failure, not a success');
+  assert.equal(
+    callOrder.indexOf('tmux:send-literal'),
+    -1,
+    `never retype over a stuck buffer — the text would concatenate; order=${callOrder.join(',')}`,
   );
 });
