@@ -142,11 +142,14 @@ test('content-free references are not check markers; real ones are', () => {
       '- Leading-space code is valid: ` yarn test` runs.',
       '- Plain path ref: artifact: artifacts/e.json attached.',
       '- Double-backtick span is valid: ``yarn test`` runs.',
+      '- Unbalanced closing run: `yarn test`` broke.',
+      '- Unbalanced opening run: ```yarn test`` broke.',
+      '- Fused delimiters: `foo```bar`` broke.',
       '',
     ].join('\n'),
   );
   const markerless = violations.filter((v) => v.rule === 'no-check-marker');
-  assert.equal(markerless.length, 9);
+  assert.equal(markerless.length, 12);
 });
 
 test('symlinked invocation with --preserve-symlinks-main still lints', () => {

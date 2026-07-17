@@ -34,12 +34,37 @@ export function parseAcceptanceCriteria(markdown) {
  * must have real content — empty/whitespace-only code spans, a bare
  * `artifact:`, or one followed only by punctuation prove nothing.
  */
+/**
+ * CommonMark-style code-span scan: an opening run of N backticks closes at the
+ * NEXT run of exactly N backticks; unpaired or unequal runs form no span, so
+ * malformed text such as an unbalanced closing run never counts as a reference.
+ */
+function* codeSpanContents(text) {
+  const runs = [...text.matchAll(/`+/g)];
+  let i = 0;
+  while (i < runs.length) {
+    const open = runs[i];
+    let close = -1;
+    for (let j = i + 1; j < runs.length; j += 1) {
+      if (runs[j][0].length === open[0].length) {
+        close = j;
+        break;
+      }
+    }
+    if (close === -1) {
+      i += 1;
+      continue;
+    }
+    yield text.slice(open.index + open[0].length, runs[close].index);
+    i = close + 1;
+  }
+}
+
 export function hasCheckMarker(text) {
-  // Markdown code spans may be delimited by runs of equal-length backticks
-  // (``yarn test`` is valid). A span counts only when its content carries a
-  // word or path character — punctuation-only spans like `.` prove nothing.
-  for (const m of text.matchAll(/(`+)([\s\S]*?)\1/g)) {
-    if (/[\w/]/.test(m[2])) return true;
+  // A code span counts only when its content carries a word or path character —
+  // punctuation-only spans like `.` prove nothing.
+  for (const content of codeSpanContents(text)) {
+    if (/[\w/]/.test(content)) return true;
   }
   for (const m of text.matchAll(/\b(?:artifact|recipe):\s*(\S+)/gi)) {
     if (/[\w/]/.test(m[1].replace(/`/g, ''))) return true;
