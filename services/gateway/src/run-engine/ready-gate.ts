@@ -171,7 +171,7 @@ export async function executePublishGateReviewPlan(
   }
   return reviewIds;
 }
-async function persistIndependentReviewArtifactsForRun(
+export async function persistIndependentReviewArtifactsForRun(
   run: Run,
   reviews: IndependentReviewStatus[],
 ): Promise<IndependentReviewStatus[]> {
