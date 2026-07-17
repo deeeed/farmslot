@@ -250,11 +250,14 @@ function paneIsWorkerContext(
   const { workerTarget, workerWindow, workerPaneId } = correlation;
   if (!workerTarget && !workerWindow && !workerPaneId) return true;
   if (workerTarget && pane.target === workerTarget) return true;
-  // A recorded pane id is the most specific worker locator. Split panes share a window, so a
-  // window-level match would mislabel a sibling pane — when a pane id is known, require exact
-  // pane-id equality and do NOT fall back to the window. Window matching is reserved for panes
-  // whose context recorded no pane id.
-  if (workerPaneId) return Boolean(pane.paneId && pane.paneId === workerPaneId);
+  // A recorded tmux pane ID (%N) is the most specific worker locator. Split panes share a
+  // window, so a window-level match would mislabel a sibling pane — when a true pane id is
+  // known, require exact pane-id equality and do NOT fall back to the window. Agent contexts
+  // often persist a numeric pane INDEX ("0") instead, which is not comparable to inventory
+  // %-ids and is not stable across pane churn — treat it as absent and use the window match.
+  if (workerPaneId && workerPaneId.startsWith('%')) {
+    return Boolean(pane.paneId && pane.paneId === workerPaneId);
+  }
   if (workerWindow && pane.window === workerWindow) return true;
   return false;
 }
@@ -320,7 +323,9 @@ export function buildSessionCorrelation(
         ...(runner ? { runner } : {}),
         ...(workerTargetCtx?.target ? { workerTarget: workerTargetCtx.target } : {}),
         ...(workerTargetCtx?.window ? { workerWindow: workerTargetCtx.window } : {}),
-        ...(workerTargetCtx?.pane ? { workerPaneId: workerTargetCtx.pane } : {}),
+        // Only a true tmux pane ID (%N) can be compared against node inventory pane ids;
+        // numeric indexes fall back to window matching in paneIsWorkerContext.
+        ...(workerTargetCtx?.pane?.startsWith('%') ? { workerPaneId: workerTargetCtx.pane } : {}),
       });
     }
   }

@@ -976,3 +976,86 @@ test('tmuxWorkerStatusFromPane surfaces observability-degraded for entirely abse
   assert.equal(on.attentionReason, 'observability-degraded');
   assert.equal(on.state, 'stale');
 });
+
+test('a numeric pane INDEX in the stored context falls back to window matching', () => {
+  // Production agent contexts persist the pane INDEX ("0"), not a tmux %-id.
+  // An index is incomparable to inventory paneIds and unstable across pane
+  // churn: it must NOT become workerPaneId (which would make every real
+  // worker pane fail the equality check and fall to session-wide smear).
+  const pools: PoolConfig[] = [
+    {
+      machine: 'runner-local',
+      host: 'localhost',
+      slots: [{ slot: 'runner-mobile-1', project: 'metamask-mobile-farm', session: 'mm-1' }],
+    } as unknown as PoolConfig,
+  ];
+  const fleetStatus = {
+    generatedAt: new Date().toISOString(),
+    slots: [
+      {
+        id: 'runner-mobile-1',
+        lifecycle: 'busy' as const,
+        currentRunId: 'run-active',
+      },
+    ],
+  } as unknown as FleetStatus;
+
+  const correlation = buildSessionCorrelation(pools, fleetStatus, [
+    {
+      id: 'run-active',
+      status: 'monitoring',
+      slotId: 'runner-mobile-1',
+      flowType: 'dev',
+      metrics: { runner: 'claude' },
+      agentContexts: [
+        {
+          id: 'ctx-1',
+          role: 'dev',
+          label: 'worker',
+          status: 'working',
+          slotId: 'runner-mobile-1',
+          runId: 'run-active',
+          target: { session: 'mm-1', window: 'dev', pane: '0', target: 'mm-1:dev' },
+        },
+      ],
+    } as unknown as Run,
+  ])
+    .get('runner-local')
+    ?.get('mm-1');
+
+  assert.equal(correlation?.workerWindow, 'dev');
+  assert.equal(correlation?.workerPaneId, undefined);
+
+  // Window match must attribute the real worker pane even though the node
+  // inventory reports a %-id the context never stored.
+  const observedAt = 2_000_000_000_000;
+  const stale = { hook: { label: 'hook Stop', observedAt: observedAt - 300_000 } };
+  const previous = process.env.FARMSLOT_OBS_PANE_RETIRED;
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const workerPane: NodeTmuxPane = {
+      session: 'mm-1',
+      window: 'dev',
+      pane: '0',
+      paneId: '%42',
+      target: 'mm-1:dev.%42',
+      command: 'claude',
+      signals: stale,
+    };
+    const worker = tmuxWorkerFromNodePane({
+      nodeId: 'runner-local',
+      pane: workerPane,
+      observedAt,
+      correlation: {
+        ...correlation,
+        slotId: 'runner-mobile-1',
+        runId: 'run-active',
+        runner: 'claude',
+      },
+    });
+    assert.equal(worker.status.attentionReason, 'observability-degraded');
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+    else process.env.FARMSLOT_OBS_PANE_RETIRED = previous;
+  }
+});
