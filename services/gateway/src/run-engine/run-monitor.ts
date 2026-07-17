@@ -1071,6 +1071,10 @@ async function sendNudge(
       run.metrics.runner ?? 'claude',
       nudgeMsg,
       'run-monitor',
+      undefined,
+      // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit (not just a
+      // console warning); broadcastFn flips the degraded-audit flag in the UI on write failure.
+      { recovery: { runId, emit: broadcastFn } },
     );
     if (!sent) return;
 

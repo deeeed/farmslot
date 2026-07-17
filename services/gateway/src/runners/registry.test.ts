@@ -19,6 +19,8 @@ import {
   getRunnerDefinition,
   getRunnerObservability,
   grokPaneShowsColdStartSession,
+  isRunnerPaneRetired,
+  KNOWN_RUNNERS,
   normalizeRunner,
   resolveSafeSendTimeoutMs,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
@@ -28,6 +30,7 @@ import {
   runnerDefaultModel,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
+  runnerPaneComposerDraftState,
   runnerPaneHasBufferedInstruction,
   runnerPaneHasPendingInstruction,
   runnerPaneHasProgressAfterInstruction,
@@ -1249,6 +1252,47 @@ describe('buildLaunchCommand', () => {
     });
   });
 
+  describe('ADR-032 phase 3A pane-retirement flag', () => {
+    const ON = { FARMSLOT_OBS_PANE_RETIRED: '1' } as NodeJS.ProcessEnv;
+    const OFF = {} as NodeJS.ProcessEnv;
+
+    it('defaults OFF for every runner (no env, no per-def flip)', () => {
+      for (const runner of ['claude', 'codex', 'grok', 'cursor', 'opencode', 'none']) {
+        assert.equal(isRunnerPaneRetired(runner, OFF), false, `${runner} should default off`);
+      }
+    });
+
+    it('env flag is scoped to Claude for Phase 3A (Codex stays on Phase 2)', () => {
+      // ADR-032 Phase 3 retires the pane for Claude only; the global env flag must NOT widen the
+      // dark-launch to Codex even though it is also event-driven.
+      assert.equal(isRunnerPaneRetired('claude', ON), true);
+      assert.equal(isRunnerPaneRetired('codex', ON), false);
+      // pane-only + none stay byte-identical (flag never applies).
+      assert.equal(isRunnerPaneRetired('grok', ON), false);
+      assert.equal(isRunnerPaneRetired('cursor', ON), false);
+      assert.equal(isRunnerPaneRetired('opencode', ON), false);
+      assert.equal(isRunnerPaneRetired('none', ON), false);
+    });
+
+    it('per-runner observabilityPaneRetired opts a runner in without the env flag', () => {
+      // The per-runner field is the opt-in path for runners the env flag does not cover (Codex).
+      const original = KNOWN_RUNNERS.codex.observabilityPaneRetired;
+      KNOWN_RUNNERS.codex.observabilityPaneRetired = true;
+      try {
+        assert.equal(isRunnerPaneRetired('codex', OFF), true);
+        // grok has no hook observability provider, so the per-runner field can never retire it.
+        assert.equal(isRunnerPaneRetired('grok', OFF), false);
+      } finally {
+        KNOWN_RUNNERS.codex.observabilityPaneRetired = original;
+      }
+    });
+
+    it('null/undefined runner is never retired', () => {
+      assert.equal(isRunnerPaneRetired(null, ON), false);
+      assert.equal(isRunnerPaneRetired(undefined, ON), false);
+    });
+  });
+
   describe('opencode runner', () => {
     it('requires a runner-aware dispatch_cmd', () => {
       const vars = makeVars({ dispatchCmd: '', machine: 'runner-a' });
@@ -1492,5 +1536,32 @@ describe('buildRunnerSessionReloadCommand', () => {
       () => buildRunnerSessionReloadCommand(vars, 'cursor', 'auto', 'session-123'),
       /does not support persisted session reload/,
     );
+  });
+});
+
+describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer read)', () => {
+  it('reports empty for a bare prompt, with or without a trailing ctx status', () => {
+    assert.equal(runnerPaneComposerDraftState('❯\n', 'claude'), 'empty');
+    assert.equal(runnerPaneComposerDraftState('❯ ctx:12%\n', 'claude'), 'empty');
+    assert.equal(runnerPaneComposerDraftState('❯ hello ctx:45%\n', 'claude'), 'draft');
+  });
+
+  it('does NOT misread a draft that begins with a ctx token as empty', () => {
+    // Regression (finding #1): the old `^ctx:\\d+%` prefix test treated real draft text starting
+    // with `ctx:N%` as an empty composer → a fresh type would concatenate onto it.
+    assert.equal(runnerPaneComposerDraftState('❯ ctx:50% is my note\n', 'claude'), 'draft');
+  });
+
+  it('reports unknown when no prompt marker is present (fail-closed, never proven empty)', () => {
+    // A missing marker is ABSENCE of evidence, not proof of an empty composer — callers must hold.
+    assert.equal(
+      runnerPaneComposerDraftState('some scrollback with no prompt line\n', 'claude'),
+      'unknown',
+    );
+    assert.equal(runnerPaneComposerDraftState('', 'claude'), 'unknown');
+  });
+
+  it('reports draft for a busy/queued composer', () => {
+    assert.equal(runnerPaneComposerDraftState('· Composing…\n❯\n', 'claude'), 'draft');
   });
 });

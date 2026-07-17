@@ -1,26 +1,28 @@
 // methods/tmux-workers.ts — registered-node tmux worker inventory
 
-import type {
-  FleetStatus,
-  NodeTmuxPane,
-  NodeTmuxPanesResult,
-  PoolConfig,
-  Run,
-  RunStatus,
-  TmuxWorkerActivityState,
-  TmuxWorkerAttentionReason,
-  TmuxWorkerFilterConfig,
-  TmuxWorkerFilterRule,
-  TmuxWorkerListParams,
-  TmuxWorkerListResult,
-  TmuxWorkerNodeResult,
-  TmuxWorkerNodeSummary,
-  TmuxWorkerSummary,
+import {
+  type FleetStatus,
+  type NodeTmuxPane,
+  type NodeTmuxPanesResult,
+  type PoolConfig,
+  primaryRoleForFlow,
+  type Run,
+  type RunStatus,
+  type TmuxWorkerActivityState,
+  type TmuxWorkerAttentionReason,
+  type TmuxWorkerFilterConfig,
+  type TmuxWorkerFilterRule,
+  type TmuxWorkerListParams,
+  type TmuxWorkerListResult,
+  type TmuxWorkerNodeResult,
+  type TmuxWorkerNodeSummary,
+  type TmuxWorkerSummary,
 } from '@farmslot/protocol';
 
 import { getAllNodes, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadFleetStatus, loadPoolConfigs } from '../fleet/state.js';
+import { isRunnerPaneRetired, normalizeRunner } from '../runners/registry.js';
 import { listRuns } from '../runs/store.js';
 
 const TMUX_PANES_TIMEOUT_MS = 5_000;
@@ -103,6 +105,7 @@ export function tmuxWorkerStatusFromPane(
   pane: NodeTmuxPane,
   observedAt: number,
   activityHint?: TmuxWorkerActivityState,
+  runner?: string,
 ): TmuxWorkerSummary['status'] {
   const signals = pane.signals;
   const hook = signals?.hook;
@@ -121,6 +124,29 @@ export function tmuxWorkerStatusFromPane(
   }
 
   const statusline = signals?.statusline;
+
+  // ADR-032 Phase 3A: a retired runner's ONLY authoritative liveness is the hook. Getting past the
+  // fresh-hook return above means the hook is absent or stale — surface observability-degraded here,
+  // BEFORE a fresh statusline/task-file/process signal below can mask the dead hook pipeline and
+  // skip the degraded audit (stale AND fully-absent hooks both qualify). isRunnerPaneRetired scopes
+  // this to event-driven runners with a hook provider under the flag (per-runner or env), so
+  // pane-only runners and flag-off stay byte-identical.
+  if (runner && isRunnerPaneRetired(normalizeRunner(runner))) {
+    const signal = hook ?? statusline;
+    return withAttention(
+      {
+        label: signal?.label ?? 'observability liveness lapsed',
+        source: hook ? 'hook' : statusline ? 'statusline' : 'tmux',
+        confidence: 'low',
+        ...(signal?.observedAt != null
+          ? { observedAt: signal.observedAt, stale: true }
+          : { observedAt }),
+        state: 'stale',
+      },
+      'observability-degraded',
+    );
+  }
+
   if (statusline && isFresh(statusline.observedAt, observedAt)) {
     const state = tmuxPaneActivityState(pane, observedAt, activityHint);
     return withAttention(
@@ -197,6 +223,43 @@ interface SlotCorrelation {
   runId?: string;
   familyId?: string;
   activityHint?: TmuxWorkerActivityState;
+  /** Runner id of the correlated run — lets the status surface apply per-runner pane-retirement. */
+  runner?: string;
+  /**
+   * ADR-032 Phase 3A: the tmux target/window/pane that actually runs the run's worker (its primary
+   * agent context). A session hosts more than the worker — shell tabs, reviewer panes from other
+   * runs — so the pane-retirement degraded alert must be scoped to the worker pane, or every pane
+   * in the session inherits the runner and a stale shell fabricates a false degraded reading.
+   */
+  workerTarget?: string;
+  workerWindow?: string;
+  workerPaneId?: string;
+}
+
+/**
+ * Does this pane belong to the correlated run's worker? Matches on the primary agent context's
+ * target/pane/window (whichever the context recorded). When the worker location is unknown the
+ * caller falls back to session-wide correlation — the pre-Phase-3A behavior — since we cannot do
+ * better than "somewhere in this session".
+ */
+function paneIsWorkerContext(
+  pane: NodeTmuxPane,
+  correlation: SlotCorrelation | undefined,
+): boolean {
+  if (!correlation) return false;
+  const { workerTarget, workerWindow, workerPaneId } = correlation;
+  if (!workerTarget && !workerWindow && !workerPaneId) return true;
+  if (workerTarget && pane.target === workerTarget) return true;
+  // A recorded tmux pane ID (%N) is the most specific worker locator. Split panes share a
+  // window, so a window-level match would mislabel a sibling pane — when a true pane id is
+  // known, require exact pane-id equality and do NOT fall back to the window. Agent contexts
+  // often persist a numeric pane INDEX ("0") instead, which is not comparable to inventory
+  // %-ids and is not stable across pane churn — treat it as absent and use the window match.
+  if (workerPaneId && workerPaneId.startsWith('%')) {
+    return Boolean(pane.paneId && pane.paneId === workerPaneId);
+  }
+  if (workerWindow && pane.window === workerWindow) return true;
+  return false;
 }
 
 function runActivityHint(run: Run | undefined): TmuxWorkerActivityState | undefined {
@@ -220,8 +283,10 @@ export function buildSessionCorrelation(
 ): Map<string, Map<string, SlotCorrelation>> {
   const fleetBySlot = new Map(fleet.slots.map((slot) => [slot.slot, slot]));
   const activeRunBySlot = new Map<string, Run>();
+  const activeRunById = new Map<string, Run>();
   for (const run of activeRuns) {
     if (run.slotId && !activeRunBySlot.has(run.slotId)) activeRunBySlot.set(run.slotId, run);
+    activeRunById.set(run.id, run);
   }
   const byMachine = new Map<string, Map<string, SlotCorrelation>>();
   for (const pool of pools) {
@@ -235,11 +300,32 @@ export function buildSessionCorrelation(
       const runId = fleetSlot?.currentRunId ?? activeRun?.id;
       const familyId = fleetSlot?.currentFamilyId ?? activeRun?.familyId;
       const activityHint = slotActivityHint(fleetSlot) ?? runActivityHint(activeRun);
+      // Runner + worker pane MUST come from the same run the runId points at — sourcing runner from
+      // activeRun while runId points at fleetSlot.currentRunId could label panes with the wrong
+      // runner. Prefer the run whose id === runId; fall back to the slot's active run.
+      const correlatedRun = (runId ? activeRunById.get(runId) : undefined) ?? activeRun;
+      const runner = correlatedRun?.metrics?.runner;
+      // The worker context's role is the flow's PRIMARY role (`dev`, `fix-bug`, `review`, …), not
+      // the literal string `'primary'` — matching `'primary'` never hits a real context and every
+      // pane falls back to session-wide attribution. Resolve the flow's primary role (mirroring
+      // selectAgentContext), keeping the literal `'primary'` alias only as a fallback.
+      const primaryFlowRole = correlatedRun
+        ? primaryRoleForFlow(correlatedRun.flowType)
+        : undefined;
+      const workerTargetCtx = correlatedRun?.agentContexts?.find(
+        (ctx) => ctx.role === primaryFlowRole || ctx.role === 'primary',
+      )?.target;
       machineSessions.set(session, {
         slotId: slot.id,
         ...(runId ? { runId } : {}),
         ...(familyId ? { familyId } : {}),
         ...(activityHint ? { activityHint } : {}),
+        ...(runner ? { runner } : {}),
+        ...(workerTargetCtx?.target ? { workerTarget: workerTargetCtx.target } : {}),
+        ...(workerTargetCtx?.window ? { workerWindow: workerTargetCtx.window } : {}),
+        // Only a true tmux pane ID (%N) can be compared against node inventory pane ids;
+        // numeric indexes fall back to window matching in paneIsWorkerContext.
+        ...(workerTargetCtx?.pane?.startsWith('%') ? { workerPaneId: workerTargetCtx.pane } : {}),
       });
     }
   }
@@ -275,7 +361,15 @@ export function tmuxWorkerFromNodePane(params: {
     ...(correlation?.familyId ? { linkedFamilyId: correlation.familyId } : {}),
     ...(pane.branch ? { branch: pane.branch } : {}),
     ...(pane.lastChangedAt != null ? { lastChangedAt: pane.lastChangedAt } : {}),
-    status: tmuxWorkerStatusFromPane(pane, observedAt, correlation?.activityHint),
+    status: tmuxWorkerStatusFromPane(
+      pane,
+      observedAt,
+      correlation?.activityHint,
+      // ADR-032 Phase 3A: only the worker's own pane inherits the runner for pane-retirement
+      // scoping. Other panes in the session (shell tabs, reviewer panes) stay runner-neutral so a
+      // stale non-worker pane cannot raise a false observability-degraded alert.
+      paneIsWorkerContext(pane, correlation) ? correlation?.runner : undefined,
+    ),
   };
 }
 

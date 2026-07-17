@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
@@ -428,4 +432,353 @@ test('a persistently buffered composer fails loudly instead of concatenating a r
     -1,
     `never retype over a stuck buffer — the text would concatenate; order=${callOrder.join(',')}`,
   );
+});
+
+// --- ADR-032 Phase 3A pane-retirement flag ---
+
+test('flag-on claude hook-idle with an EMPTY composer proves-empty then types the message', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  // Not a high-confidence digest match → not "already delivered". The pending selector treats an
+  // authoritative not-accepted reading as possibly-buffered, so the loop MUST prove the composer
+  // is empty (submit-existing → not-buffered) before typing fresh — never a blind concat.
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: Date.now(),
+  };
+  paneText = '❯\nctx:12%\n'; // empty composer — nothing buffered
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'claude',
+      message,
+      '[test]',
+      10_000,
+      {
+        forceBusyPoll: true,
+      },
+    );
+    assert.equal(sent, true);
+    // The idle/pending DECISION was resolved from hooks only.
+    assert.ok(
+      callOrder.includes('obs:getActivity') && callOrder.includes('obs:promptAccepted'),
+      `expected hook reads to drive the decision; order=${callOrder.join(',')}`,
+    );
+    // Composer proven empty → the message is TYPED fresh (a bare Enter would report a false
+    // delivery success for an instruction that was never sent).
+    assert.ok(
+      callOrder.includes('tmux:send-literal'),
+      `an empty composer must get the message typed; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude hook-idle with a BUFFERED composer submits it without retyping (no concat)', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`; // the instruction is buffered in the composer
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'claude',
+      message,
+      '[test]',
+      5000,
+      {
+        forceBusyPoll: true,
+      },
+    );
+    assert.equal(sent, true);
+    assert.ok(
+      callOrder.includes('tmux:send'),
+      `expected a submit key; order=${callOrder.join(',')}`,
+    );
+    assert.equal(
+      callOrder.indexOf('tmux:send-literal'),
+      -1,
+      `a genuinely buffered instruction submits with Enter only — retyping would double the text; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude hook-idle fails loudly on a stuck buffer instead of retyping', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false; // submit keys never clear the buffer → stuck
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'claude',
+      message,
+      '[test]',
+      5000,
+      {
+        forceBusyPoll: true,
+      },
+    );
+    assert.equal(sent, false, 'a stuck buffer is a delivery failure, not a success');
+    assert.equal(
+      callOrder.indexOf('tmux:send-literal'),
+      -1,
+      `never retype over a stuck buffer — the text would concatenate; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    paneClearsAfterSubmit = true;
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude degraded (hook unknown) holds the send instead of pane fallback', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'unknown',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  promptAcceptedReading = null;
+  paneText = '❯\nctx:12%\n';
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    // Small timeout so the degraded hold resolves fast.
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+    });
+    assert.equal(sent, false);
+    assert.equal(
+      callOrder.indexOf('tmux:send'),
+      -1,
+      `degraded hold must not send into a blind composer; order=${callOrder.join(',')}`,
+    );
+    assert.ok(callOrder.includes('obs:getActivity'));
+  } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude holds instead of concatenating onto FOREIGN composer draft', async () => {
+  // Finding #1: the pending selector only knows whether OUR message is buffered. An operator draft
+  // (foreign text the hook signal cannot see) sitting in the composer returns not-buffered, and the
+  // pre-fix loop would type the message straight into the occupied composer → concatenation. The
+  // composer-empty guard must hold instead.
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false; // foreign draft persists across captures
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  // Draft text that is NOT our instruction and NOT an idle/busy marker.
+  paneText = '❯ wait, let me double check the deploy first\nctx:12%\n';
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+    });
+    assert.equal(sent, false, 'foreign composer draft must hold the send, not concatenate');
+    assert.equal(
+      callOrder.indexOf('tmux:send-literal'),
+      -1,
+      `never type into a composer holding foreign draft text; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    paneClearsAfterSubmit = true;
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude degraded hold with a run context persists an ADR-031 audit record', async (t) => {
+  // Finding #4: a degraded hold must reach the intelligence-action audit (persisted to disk), not
+  // just a console warning, whenever the caller supplies a runId.
+  const previous = process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
+  const auditDir = mkdtempSync(path.join(tmpdir(), 'farmslot-obs-degraded-audit-'));
+  process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR = auditDir;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
+    else process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR = previous;
+    await rm(auditDir, { recursive: true, force: true });
+  });
+
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'unknown',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  promptAcceptedReading = null;
+  paneText = '❯\nctx:12%\n';
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+      recovery: { runId: 'run-audit-xyz' },
+    });
+    assert.equal(sent, false);
+    // Compute the audit path directly (do NOT import audit-writer at module scope — that would
+    // transitively load the real gateway modules before mock.module() applies and poison the mocks).
+    const day = new Date().toISOString().slice(0, 10);
+    const auditPath = path.join(auditDir, `${day}.ndjson`);
+    const raw = await readFile(auditPath, 'utf8');
+    const record = raw
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.runId === 'run-audit-xyz');
+    assert.ok(record, `expected a persisted degraded-hold audit record in ${auditPath}`);
+    assert.equal(record.verdict?.patternId, 'observability-degraded-hold');
+    assert.equal(record.tier, 'deterministic');
+  } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude holds when the composer state is UNKNOWN (no prompt marker), never fresh-sends', async () => {
+  // Finding #1: a pane with no prompt marker cannot be POSITIVELY confirmed empty. The pre-fix
+  // `runnerPaneComposerHasDraft` returned false (= no draft = safe) for a missing marker, so the
+  // loop would fresh-type into an unseen buffer. The three-state read must hold instead.
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false; // marker-less pane persists across captures
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = 'scrollback with no prompt line\nstill no marker here\n';
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+    });
+    assert.equal(sent, false, 'an unknown composer state must hold, not fresh-send');
+    assert.equal(
+      callOrder.indexOf('tmux:send-literal'),
+      -1,
+      `never type into a composer whose state is unknown; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    paneClearsAfterSubmit = true;
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude foreign-draft hold records a composer-draft audit cause, not a hook lapse', async (t) => {
+  // Finding #5: a healthy-hook foreign-draft hold must record its own audit cause
+  // (`composer-draft-hold`), distinct from a hook lapse (`observability-degraded-hold`).
+  const previous = process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
+  const auditDir = mkdtempSync(path.join(tmpdir(), 'farmslot-composer-draft-audit-'));
+  process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR = auditDir;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
+    else process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR = previous;
+    await rm(auditDir, { recursive: true, force: true });
+  });
+
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false; // foreign draft persists across captures
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = '❯ wait, let me double check the deploy first\nctx:12%\n';
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+      recovery: { runId: 'run-composer-draft' },
+    });
+    assert.equal(sent, false);
+    const day = new Date().toISOString().slice(0, 10);
+    const auditPath = path.join(auditDir, `${day}.ndjson`);
+    const raw = await readFile(auditPath, 'utf8');
+    const record = raw
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.runId === 'run-composer-draft');
+    assert.ok(record, `expected a persisted composer-draft-hold audit record in ${auditPath}`);
+    assert.equal(
+      record.verdict?.patternId,
+      'composer-draft-hold',
+      'a healthy-hook composer hold must not be recorded as a hook lapse',
+    );
+  } finally {
+    paneClearsAfterSubmit = true;
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude with high-confidence digest match reports already-delivered without resending', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'claude',
+      message,
+      '[test]',
+      10_000,
+      {
+        forceBusyPoll: true,
+      },
+    );
+    assert.equal(sent, true);
+    assert.equal(
+      callOrder.indexOf('tmux:send'),
+      -1,
+      `already-delivered must not resend; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
 });

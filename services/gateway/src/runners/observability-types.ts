@@ -57,5 +57,9 @@ export interface RunnerObservability {
     target: string,
     promptDigest: string,
     sinceMs: number,
+    // ADR-032 Phase 3A: when true (pane-retired send path), absent hooks resolve to null
+    // (non-authoritative → degrade/hold) instead of main's medium-`false`. Default false keeps
+    // Phase-2 flag-off behavior byte-identical.
+    paneRetired?: boolean,
   ): Promise<ObservabilityReading<boolean> | null>;
 }

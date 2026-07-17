@@ -1050,6 +1050,9 @@ async function sendFeedbackToWorker(
       normalizeRunner(run?.metrics.runner),
       cmd,
       'self-review',
+      undefined,
+      // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
+      { recovery: { runId } },
     );
     if (!sent) {
       // A deferred send never retries on its own — the fix wait would burn its
@@ -1065,7 +1068,8 @@ async function sendFeedbackToWorker(
         cmd,
         'self-review',
         undefined,
-        { forceBusyPoll: true },
+        // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
+        { forceBusyPoll: true, recovery: { runId } },
       );
     }
     // Always-on: delivery state is the first question when a fix loop stalls.

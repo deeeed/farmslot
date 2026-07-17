@@ -12,6 +12,12 @@ export interface ObservabilityAgreementAggregate {
   agreed: number;
   disagreed: number;
   hookUnavailable: number;
+  /**
+   * ADR-032 Phase 3A soak metric: how many recorded decisions would have consulted the pane
+   * under Phase 2 (hook `unknown`/absent/low while the pane-retirement flag was on). Counted
+   * independently of `hookBusy`, so degraded holds recorded mid-loop still register.
+   */
+  wouldConsultPane: number;
   disagreementReasons: Record<string, number>;
 }
 
@@ -51,9 +57,9 @@ export async function appendRunnerObservabilityAgreement(
   await appendFile(dayFile(entry.timestamp), `${JSON.stringify(payload)}\n`, 'utf-8');
 }
 
-export async function readAgreementEntriesSince(sinceMs: number): Promise<
-  Array<RunnerObservabilityAgreementEntry & { kind: string }>
-> {
+export async function readAgreementEntriesSince(
+  sinceMs: number,
+): Promise<Array<RunnerObservabilityAgreementEntry & { kind: string }>> {
   const dir = agreementLogDir();
   let files: string[] = [];
   try {
@@ -95,7 +101,9 @@ export function aggregateAgreementEntries(
   let agreed = 0;
   let disagreed = 0;
   let hookUnavailable = 0;
+  let wouldConsultPane = 0;
   for (const entry of entries) {
+    if (entry.wouldConsultPane === true) wouldConsultPane += 1;
     if (entry.hookBusy == null) {
       hookUnavailable += 1;
       continue;
@@ -112,6 +120,7 @@ export function aggregateAgreementEntries(
     agreed,
     disagreed,
     hookUnavailable,
+    wouldConsultPane,
     disagreementReasons,
   };
 }

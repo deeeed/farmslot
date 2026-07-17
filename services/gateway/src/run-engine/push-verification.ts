@@ -146,7 +146,8 @@ export async function verifyWorkerPushedBranch(
       instruction,
       'push-verification',
       undefined,
-      { forceBusyPoll: true },
+      // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
+      { forceBusyPoll: true, recovery: { runId } },
     );
     console.log(
       `[push-verification] run ${runId.slice(0, 8)} — publish nudge ${nudged ? 'delivered' : 'NOT delivered (send deferred/failed)'}`,

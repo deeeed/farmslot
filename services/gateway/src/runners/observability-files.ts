@@ -273,8 +273,16 @@ export function promptTurnStartedFromHooks(
   paneId?: string | null,
   now = Date.now(),
   graceMs = 500,
+  paneRetired = false,
 ): ObservabilityReading<boolean> | null {
   const scoped = filterHooksByPane(hooks, paneId);
+  // Under the ADR-032 pane-retirement flag ONLY, no hook records for this pane is ABSENCE of
+  // evidence, not evidence of no turn: fabricating a medium-confidence `false` would read as an
+  // authoritative "no prompt" and mask a dead/absent hook pipeline as a confident decision instead
+  // of surfacing it as degraded — so return null. FLAG-OFF (default) preserves main's behavior and
+  // falls through to the medium-`false` after the grace window; the null semantics must not leak to
+  // the Phase-2 pane-fallback callers.
+  if (scoped.length === 0 && paneRetired) return null;
   let latestToolUseAt: number | null = null;
   let latestPromptSubmitAt: number | null = null;
   for (const record of scoped) {
@@ -322,8 +330,14 @@ export function promptAcceptedFromHooks(
   graceMs = 500,
   now = Date.now(),
   paneId?: string | null,
+  paneRetired = false,
 ): ObservabilityReading<boolean> | null {
   const scoped = filterHooksByPane(hooks, paneId);
+  // Under the ADR-032 pane-retirement flag ONLY, absent hooks for this pane are non-authoritative
+  // (degraded), not a confident "prompt not accepted": a fabricated medium-`false` would let the
+  // retirement send path treat a dead hook stream as an authoritative decision, so return null and
+  // let it degrade/hold. FLAG-OFF (default) keeps main's medium-`false` semantics for Phase-2.
+  if (scoped.length === 0 && paneRetired) return null;
   let latest: { observedAt: number; digest?: string } | null = null;
   for (const record of scoped) {
     const event = hookEventName(record);
@@ -335,7 +349,14 @@ export function promptAcceptedFromHooks(
     }
   }
   if (!latest) {
-    const turnStarted = promptTurnStartedFromHooks(scoped, sinceMs, paneId, now, graceMs);
+    const turnStarted = promptTurnStartedFromHooks(
+      scoped,
+      sinceMs,
+      paneId,
+      now,
+      graceMs,
+      paneRetired,
+    );
     if (turnStarted?.value === true) return turnStarted;
     if (now - sinceMs < graceMs) return null;
     return {
@@ -356,7 +377,14 @@ export function promptAcceptedFromHooks(
       observedAt: latest.observedAt,
     };
   }
-  const turnStarted = promptTurnStartedFromHooks(scoped, sinceMs, paneId, now, graceMs);
+  const turnStarted = promptTurnStartedFromHooks(
+    scoped,
+    sinceMs,
+    paneId,
+    now,
+    graceMs,
+    paneRetired,
+  );
   if (turnStarted?.value === true) {
     return {
       value: true,

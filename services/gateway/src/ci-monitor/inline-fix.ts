@@ -507,6 +507,9 @@ async function attemptInlineCIFix(
         runner,
         nudgeCmd,
         'ci-monitor',
+        undefined,
+        // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
+        { recovery: { runId } },
       );
       if (!sent) {
         // A deferred send never retries on its own; waiting for the fix signal
@@ -523,8 +526,10 @@ async function attemptInlineCIFix(
           nudgeCmd,
           'ci-monitor',
           undefined,
+          // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
           {
             forceBusyPoll: true,
+            recovery: { runId },
           },
         );
       }
