@@ -85,6 +85,12 @@ export function buildObservabilityDegradedIntelligenceAction(params: {
   runner: string;
   target: string;
   reason: string;
+  /**
+   * Distinguishes the hold cause in the audit trail: `observability-degraded-hold` for a hook
+   * lapse (default), `composer-draft-hold` for a healthy-hook composer draft hold. The soak review
+   * counts these separately (Finding #5).
+   */
+  patternId?: 'observability-degraded-hold' | 'composer-draft-hold';
 }): IntelligenceAction {
   const iso = new Date(params.now).toISOString();
   return {
@@ -94,7 +100,7 @@ export function buildObservabilityDegradedIntelligenceAction(params: {
     runId: params.runId,
     actor: 'auto-nudge',
     verdict: {
-      patternId: 'observability-degraded-hold',
+      patternId: params.patternId ?? 'observability-degraded-hold',
       confidence: 'high',
       rationale: params.reason,
     },

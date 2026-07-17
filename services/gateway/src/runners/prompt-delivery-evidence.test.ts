@@ -42,22 +42,25 @@ test('promptTurnStartedFromHooks accepts PreToolUse on scoped pane', () => {
 
 test('promptTurnStartedFromHooks ignores other panes when scoped', () => {
   const since = NOW - 10_000;
-  const reading = promptTurnStartedFromHooks(
-    [
-      {
-        hook_event_name: 'PreToolUse',
-        observedAt: NOW - 1_000,
-        tmuxPane: '%91',
-        tool_name: 'Bash',
-      },
-    ],
-    since,
-    '%129',
-    NOW,
-  );
-  // ADR-032 Phase 3A: no hook evidence for THIS pane is non-authoritative (degraded), not a
-  // fabricated confident `false` that could mask an absent hook pipeline as an authoritative read.
-  assert.equal(reading, null);
+  const foreignPaneHooks = [
+    {
+      hook_event_name: 'PreToolUse',
+      observedAt: NOW - 1_000,
+      tmuxPane: '%91',
+      tool_name: 'Bash',
+    },
+  ];
+  // Flag-off (default) MUST preserve main's medium-`false` — the ADR-032 null-on-absent semantics
+  // must not leak into the Phase-2 pane-fallback callers (round-3 finding #4 flag-off parity).
+  assert.deepEqual(promptTurnStartedFromHooks(foreignPaneHooks, since, '%129', NOW), {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: NOW,
+  });
+  // Pane-retired: no hook evidence for THIS pane is non-authoritative (degraded), not a fabricated
+  // confident `false` that could mask an absent hook pipeline as an authoritative read.
+  assert.equal(promptTurnStartedFromHooks(foreignPaneHooks, since, '%129', NOW, 500, true), null);
 });
 
 test('promptAcceptedFromHooks accepts turn start without digest match', () => {

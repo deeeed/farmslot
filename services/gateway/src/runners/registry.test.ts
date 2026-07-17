@@ -30,6 +30,7 @@ import {
   runnerDefaultModel,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
+  runnerPaneComposerDraftState,
   runnerPaneHasBufferedInstruction,
   runnerPaneHasPendingInstruction,
   runnerPaneHasProgressAfterInstruction,
@@ -1535,5 +1536,32 @@ describe('buildRunnerSessionReloadCommand', () => {
       () => buildRunnerSessionReloadCommand(vars, 'cursor', 'auto', 'session-123'),
       /does not support persisted session reload/,
     );
+  });
+});
+
+describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer read)', () => {
+  it('reports empty for a bare prompt, with or without a trailing ctx status', () => {
+    assert.equal(runnerPaneComposerDraftState('❯\n', 'claude'), 'empty');
+    assert.equal(runnerPaneComposerDraftState('❯ ctx:12%\n', 'claude'), 'empty');
+    assert.equal(runnerPaneComposerDraftState('❯ hello ctx:45%\n', 'claude'), 'draft');
+  });
+
+  it('does NOT misread a draft that begins with a ctx token as empty', () => {
+    // Regression (finding #1): the old `^ctx:\\d+%` prefix test treated real draft text starting
+    // with `ctx:N%` as an empty composer → a fresh type would concatenate onto it.
+    assert.equal(runnerPaneComposerDraftState('❯ ctx:50% is my note\n', 'claude'), 'draft');
+  });
+
+  it('reports unknown when no prompt marker is present (fail-closed, never proven empty)', () => {
+    // A missing marker is ABSENCE of evidence, not proof of an empty composer — callers must hold.
+    assert.equal(
+      runnerPaneComposerDraftState('some scrollback with no prompt line\n', 'claude'),
+      'unknown',
+    );
+    assert.equal(runnerPaneComposerDraftState('', 'claude'), 'unknown');
+  });
+
+  it('reports draft for a busy/queued composer', () => {
+    assert.equal(runnerPaneComposerDraftState('· Composing…\n❯\n', 'claude'), 'draft');
   });
 });

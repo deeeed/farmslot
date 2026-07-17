@@ -40,9 +40,17 @@ export const claudeHookObservability: RunnerObservability = {
     return lastTurnCompletedFromHooks(hooks);
   },
 
-  async promptAccepted(vars, target, promptDigest, sinceMs) {
+  async promptAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {
     const { hooks } = await loadObservabilitySnapshot(vars);
     const paneId = await resolveTmuxPaneId(vars, target);
-    return promptAcceptedFromHooks(hooks, promptDigest, sinceMs, 500, Date.now(), paneId);
+    return promptAcceptedFromHooks(
+      hooks,
+      promptDigest,
+      sinceMs,
+      500,
+      Date.now(),
+      paneId,
+      paneRetired,
+    );
   },
 };

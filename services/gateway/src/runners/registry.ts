@@ -797,16 +797,25 @@ export function paneShowsBusyComposer(pane: string): boolean {
 }
 
 /**
- * ADR-032 Phase 3A: does the live composer hold draft text (foreign or ours)? Only the LAST
- * prompt-marker line (the live composer) is inspected; transcript-history echoes above it are
- * ignored. The hook-only send loop uses this as a pre-send safety confirmation — never a send
- * decision — so a fresh type cannot concatenate onto an operator draft or another buffered
- * instruction that the hook signal cannot see. A busy/queued composer already counts as occupied
- * via {@link paneShowsBusyComposer}; a bare prompt (optionally trailed by a `ctx:N%` status) is
- * empty.
+ * ADR-032 Phase 3A: three-state read of the live composer. Only the LAST prompt-marker line (the
+ * live composer) is inspected; transcript-history echoes above it are ignored. The hook-only send
+ * loop uses this as a pre-send safety confirmation — never a send decision.
+ *
+ * - `'draft'`   — the composer holds text (busy/queued marker via {@link paneShowsBusyComposer}, or
+ *                 a non-empty prompt line): a fresh type would concatenate onto it.
+ * - `'empty'`   — a bare prompt (optionally trailed by a `ctx:N%` status Claude renders): safe to
+ *                 type fresh.
+ * - `'unknown'` — no prompt marker found at all: the composer state cannot be POSITIVELY
+ *                 determined, so callers MUST hold rather than fresh-type into an unseen buffer
+ *                 (fail-closed — a missing marker is not proof of an empty composer).
  */
-export function runnerPaneComposerHasDraft(pane: string, runnerId?: string | null): boolean {
-  if (paneShowsBusyComposer(pane)) return true;
+export type ComposerDraftState = 'draft' | 'empty' | 'unknown';
+
+export function runnerPaneComposerDraftState(
+  pane: string,
+  runnerId?: string | null,
+): ComposerDraftState {
+  if (paneShowsBusyComposer(pane)) return 'draft';
   const markers = normalizeRunner(runnerId) === 'codex' ? ['›', '❯'] : ['❯', '›'];
   const lines = pane
     .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
@@ -818,11 +827,13 @@ export function runnerPaneComposerHasDraft(pane: string, runnerId?: string | nul
     const marker = markers.find((m) => line.startsWith(m));
     if (!marker) continue;
     const rest = line.slice(marker.length).trim();
-    // Empty prompt, or only the trailing ctx/status suffix Claude renders — the composer is clear.
-    if (!rest || /^ctx:\d+%/i.test(rest)) return false;
-    return true;
+    // Strip only a TRAILING/standalone `ctx:N%` status (the suffix Claude renders on the composer
+    // line). A bare prompt — nothing left after the strip — is empty. A draft that merely BEGINS
+    // `ctx:N%` (e.g. an operator note) keeps its text and reads as a draft, not empty.
+    const withoutStatus = rest.replace(/\s*ctx:\d+%\s*$/i, '').trim();
+    return withoutStatus ? 'draft' : 'empty';
   }
-  return false;
+  return 'unknown';
 }
 
 export function runnerPaneContainsInstruction(pane: string, message: string): boolean {
@@ -1467,9 +1478,25 @@ async function emitObservabilityDegradedRecovery(
   runner: string,
   logPrefix: string,
   recovery?: RunnerSendRecoveryContext,
+  cause: 'hook-lapse' | 'composer-draft' = 'hook-lapse',
 ): Promise<void> {
   const now = Date.now();
-  const action = buildObservabilityDegradedRecovery({ slotId: vars.slotId, runner, target, now });
+  // A composer-draft hold is a HEALTHY-hook hold (foreign/unverifiable composer text), not a hook
+  // lapse — give it its own reason + audit patternId so the soak review does not miscount it as a
+  // hook degradation (Finding #5).
+  const composerDraft = cause === 'composer-draft';
+  const action = buildObservabilityDegradedRecovery({
+    slotId: vars.slotId,
+    runner,
+    target,
+    now,
+    ...(composerDraft
+      ? {
+          reason:
+            'composer-draft-detected: live composer holds foreign/unverifiable draft text under pane-retired flag; holding send to avoid concatenation',
+        }
+      : {}),
+  });
   logObservabilityDegradedRecovery(action, logPrefix);
   if (recovery) {
     // writeAuditRecord swallows its own IO errors and flips the run's degraded-audit flag, so a
@@ -1481,6 +1508,7 @@ async function emitObservabilityDegradedRecovery(
         runner,
         target,
         reason: action.reason,
+        patternId: composerDraft ? 'composer-draft-hold' : 'observability-degraded-hold',
       }),
       { runId: recovery.runId, emit: recovery.emit ?? (() => undefined), now: new Date(now) },
     );
@@ -1662,7 +1690,11 @@ async function sendRunnerInstructionHookOnly(
   const observability = getRunnerObservability(runner);
   if (!observability) return false;
   const deadline = loopStartMs + effectiveTimeoutMs;
-  let sawDegraded = false;
+  // Track WHY the window held, kept distinct so the terminal audit record names the real cause: a
+  // hook lapse (degraded hook signal) versus a composer hold (foreign/unverifiable draft the hook
+  // signal cannot see). A composer hold with a healthy hook must NOT be recorded as a hook lapse.
+  let sawHookDegraded = false;
+  let sawComposerHold = false;
   while (Date.now() < deadline) {
     // Idempotent re-nudge: a high-confidence digest match means this exact message already
     // landed — don't duplicate the send.
@@ -1673,6 +1705,9 @@ async function sendRunnerInstructionHookOnly(
         target,
         runnerPromptDigest(message),
         promptAcceptedSinceMs,
+        // Pane-retired path: absent hooks must resolve non-authoritative (degrade/hold), not a
+        // fabricated medium-`false` that would fresh-send into a blind composer.
+        true,
       );
     } catch (error) {
       console.warn(
@@ -1684,7 +1719,7 @@ async function sendRunnerInstructionHookOnly(
     const activity = await readRunnerActivityFromObservability(vars, target, runner);
     const idleDecision = selectIdleFromObservabilityAndPane(activity, false, true);
     if (idleDecision.degraded) {
-      sawDegraded = true;
+      sawHookDegraded = true;
       await recordObservabilityDegradedDecision(
         vars,
         target,
@@ -1706,7 +1741,7 @@ async function sendRunnerInstructionHookOnly(
     // composer is empty either — hold rather than risk a blind concat.
     const pendingDecision = selectPendingFromObservabilityAndPane(promptReading, false, true);
     if (pendingDecision.degraded) {
-      sawDegraded = true;
+      sawHookDegraded = true;
       // Log the PENDING reading that lapsed — not the healthy activity read — or the soak metric
       // resolves a non-null hookBusy off the activity and drops this decision's wouldConsultPane.
       await recordObservabilityDegradedDecision(
@@ -1743,10 +1778,15 @@ async function sendRunnerInstructionHookOnly(
     // message. This pane read is a pre-send safety confirmation, not a send decision; hold and let
     // the degraded window own it rather than risk a blind concat.
     const preSendPane = await captureTmuxPane(vars, target);
-    if (runnerPaneComposerHasDraft(preSendPane, runner)) {
-      sawDegraded = true;
+    const composerState = runnerPaneComposerDraftState(preSendPane, runner);
+    if (composerState !== 'empty') {
+      // 'draft' → foreign text a fresh type would concatenate onto. 'unknown' → no prompt marker,
+      // so the composer state cannot be POSITIVELY confirmed empty — fail-closed and hold rather
+      // than fresh-type into an unseen buffer. This is a healthy-hook composer hold, NOT a hook
+      // lapse, so it records its own audit cause (Finding #5).
+      sawComposerHold = true;
       console.warn(
-        `[${logPrefix}] hook-only send held: live composer holds foreign draft text in ${target}; not typing to avoid concatenation`,
+        `[${logPrefix}] hook-only send held: live composer state '${composerState}' in ${target}; not typing to avoid concatenation`,
       );
       await new Promise((resolve) => setTimeout(resolve, 1500));
       continue;
@@ -1756,9 +1796,27 @@ async function sendRunnerInstructionHookOnly(
       (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok'
     );
   }
-  if (sawDegraded) {
-    // Degraded hold through the whole window: emit the ADR-031 deterministic recovery + audit.
-    await emitObservabilityDegradedRecovery(vars, target, runner, logPrefix, recovery);
+  if (sawHookDegraded) {
+    // Hook lapse held the window: emit the ADR-031 deterministic recovery + audit as a hook lapse.
+    await emitObservabilityDegradedRecovery(
+      vars,
+      target,
+      runner,
+      logPrefix,
+      recovery,
+      'hook-lapse',
+    );
+  } else if (sawComposerHold) {
+    // Healthy hook, but a foreign/unverifiable composer draft held the send the whole window.
+    // Record it as a composer-draft hold — distinct evidence from a hook lapse (Finding #5).
+    await emitObservabilityDegradedRecovery(
+      vars,
+      target,
+      runner,
+      logPrefix,
+      recovery,
+      'composer-draft',
+    );
   } else {
     console.warn(
       `[${logPrefix}] runner ${runner} stayed busy; skipped sending duplicate/queued prompt to ${target}`,

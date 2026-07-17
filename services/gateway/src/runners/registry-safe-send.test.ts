@@ -667,6 +667,88 @@ test('flag-on claude degraded hold with a run context persists an ADR-031 audit 
   }
 });
 
+test('flag-on claude holds when the composer state is UNKNOWN (no prompt marker), never fresh-sends', async () => {
+  // Finding #1: a pane with no prompt marker cannot be POSITIVELY confirmed empty. The pre-fix
+  // `runnerPaneComposerHasDraft` returned false (= no draft = safe) for a missing marker, so the
+  // loop would fresh-type into an unseen buffer. The three-state read must hold instead.
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false; // marker-less pane persists across captures
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = 'scrollback with no prompt line\nstill no marker here\n';
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+    });
+    assert.equal(sent, false, 'an unknown composer state must hold, not fresh-send');
+    assert.equal(
+      callOrder.indexOf('tmux:send-literal'),
+      -1,
+      `never type into a composer whose state is unknown; order=${callOrder.join(',')}`,
+    );
+  } finally {
+    paneClearsAfterSubmit = true;
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
+test('flag-on claude foreign-draft hold records a composer-draft audit cause, not a hook lapse', async (t) => {
+  // Finding #5: a healthy-hook foreign-draft hold must record its own audit cause
+  // (`composer-draft-hold`), distinct from a hook lapse (`observability-degraded-hold`).
+  const previous = process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
+  const auditDir = mkdtempSync(path.join(tmpdir(), 'farmslot-composer-draft-audit-'));
+  process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR = auditDir;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
+    else process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR = previous;
+    await rm(auditDir, { recursive: true, force: true });
+  });
+
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false; // foreign draft persists across captures
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = '❯ wait, let me double check the deploy first\nctx:12%\n';
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+      recovery: { runId: 'run-composer-draft' },
+    });
+    assert.equal(sent, false);
+    const day = new Date().toISOString().slice(0, 10);
+    const auditPath = path.join(auditDir, `${day}.ndjson`);
+    const raw = await readFile(auditPath, 'utf8');
+    const record = raw
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((entry) => entry.runId === 'run-composer-draft');
+    assert.ok(record, `expected a persisted composer-draft-hold audit record in ${auditPath}`);
+    assert.equal(
+      record.verdict?.patternId,
+      'composer-draft-hold',
+      'a healthy-hook composer hold must not be recorded as a hook lapse',
+    );
+  } finally {
+    paneClearsAfterSubmit = true;
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  }
+});
+
 test('flag-on claude with high-confidence digest match reports already-delivered without resending', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;

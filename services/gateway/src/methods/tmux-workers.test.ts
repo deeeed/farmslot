@@ -228,6 +228,118 @@ test('buildSessionCorrelation records the worker pane from the primary agent con
   assert.equal(correlation?.workerPaneId, '%42');
 });
 
+test('buildSessionCorrelation resolves the worker via the FLOW primary role, not the literal "primary"', () => {
+  // Finding #3: real contexts carry the flow's primary role (`dev`/`fix-bug`/`review`), never the
+  // literal string `'primary'`. Matching `'primary'` misses them → session-wide attribution.
+  const pools: PoolConfig[] = [
+    {
+      machine: 'runner-local',
+      project: 'example-mobile',
+      platform: 'ios',
+      os: 'darwin',
+      host: 'localhost',
+      sshUser: 'example',
+      slots: [
+        {
+          id: 'runner-mobile-1',
+          enabled: true,
+          mode: 'dispatch',
+          project: 'example-mobile',
+          repo: '/repo',
+          session: 'mm-1',
+        },
+      ],
+    },
+  ];
+  const staleFleet = {
+    ...fleet(),
+    slots: [{ ...fleet().slots[0], lifecycle: 'ready' as const, currentRunId: null }],
+  };
+
+  const correlation = buildSessionCorrelation(pools, staleFleet, [
+    {
+      id: 'run-active',
+      status: 'monitoring',
+      slotId: 'runner-mobile-1',
+      flowType: 'fix-bug',
+      metrics: { runner: 'claude' },
+      agentContexts: [
+        {
+          id: 'ctx-fix-bug',
+          role: 'fix-bug',
+          label: 'worker',
+          status: 'working',
+          slotId: 'runner-mobile-1',
+          runId: 'run-active',
+          target: { session: 'mm-1', window: '3', pane: '%42', target: 'mm-1:3.%42' },
+        },
+      ],
+    } as Run,
+  ])
+    .get('runner-local')
+    ?.get('mm-1');
+
+  assert.equal(correlation?.workerTarget, 'mm-1:3.%42');
+  assert.equal(correlation?.workerPaneId, '%42');
+});
+
+test('tmuxWorkerFromNodePane requires pane-id equality and does not match a sibling split pane by window', () => {
+  // Finding #3: split panes share a window. When a pane id is recorded, a window-only match must
+  // NOT attribute the worker to a sibling pane — require exact pane-id equality.
+  const observedAt = 2_000_000_000_000;
+  const stale = { hook: { label: 'hook Stop', observedAt: observedAt - 300_000 } };
+  const correlation = {
+    slotId: 'runner-mobile-1',
+    runId: 'run-active',
+    runner: 'claude',
+    workerWindow: '3',
+    workerPaneId: '%42',
+  };
+
+  const previous = process.env.FARMSLOT_OBS_PANE_RETIRED;
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  try {
+    // Sibling pane: same window '3', DIFFERENT pane id → not the worker despite the window match.
+    const siblingPane: NodeTmuxPane = {
+      session: 'mm-1',
+      window: '3',
+      pane: '1',
+      paneId: '%99',
+      target: 'mm-1:3.%99',
+      command: 'claude',
+      signals: stale,
+    };
+    const sibling = tmuxWorkerFromNodePane({
+      nodeId: 'runner-local',
+      pane: siblingPane,
+      observedAt,
+      correlation,
+    });
+    assert.notEqual(sibling.status.attentionReason, 'observability-degraded');
+
+    // The worker pane itself (matching pane id) DOES surface the degraded alert.
+    const workerPane: NodeTmuxPane = {
+      session: 'mm-1',
+      window: '3',
+      pane: '0',
+      paneId: '%42',
+      target: 'mm-1:3.%42',
+      command: 'claude',
+      signals: stale,
+    };
+    const worker = tmuxWorkerFromNodePane({
+      nodeId: 'runner-local',
+      pane: workerPane,
+      observedAt,
+      correlation,
+    });
+    assert.equal(worker.status.attentionReason, 'observability-degraded');
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+    else process.env.FARMSLOT_OBS_PANE_RETIRED = previous;
+  }
+});
+
 test('tmuxWorkerFromNodePane scopes observability-degraded to the worker pane only', (t) => {
   t.after(() => {
     delete process.env.FARMSLOT_OBS_PANE_RETIRED;
@@ -806,6 +918,38 @@ test('tmuxWorkerStatusFromPane degraded check is not masked by a fresh task-file
   assert.equal(off.source, 'task-file');
 
   // Flag on → observability-degraded surfaces before the fresh task-file can mask it.
+  process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
+  const on = tmuxWorkerStatusFromPane(pane, observedAt, undefined, 'claude');
+  assert.equal(on.attentionReason, 'observability-degraded');
+});
+
+test('tmuxWorkerStatusFromPane degraded check is not masked by a fresh statusline signal under the flag', async (t) => {
+  const { tmuxWorkerStatusFromPane } = await import('./tmux-workers.js');
+  const observedAt = 2_000_000_000_000;
+  // Stale hook (dead hook pipeline), but a FRESH statusline that would otherwise win the branch
+  // order and hide the absence (finding #2).
+  const pane = {
+    session: 's',
+    window: '0',
+    pane: '0',
+    target: '%1',
+    command: 'claude',
+    signals: {
+      hook: { label: 'hook Stop', observedAt: observedAt - 300_000 },
+      statusline: { label: 'busy · sonnet', observedAt: observedAt - 1_000 },
+    },
+  };
+
+  t.after(() => {
+    delete process.env.FARMSLOT_OBS_PANE_RETIRED;
+  });
+
+  // Flag off → the fresh statusline wins (byte-identical to Phase 2).
+  const off = tmuxWorkerStatusFromPane(pane, observedAt, undefined, 'claude');
+  assert.equal(off.source, 'statusline');
+
+  // Flag on → hook-liveness is evaluated first, so observability-degraded surfaces before the fresh
+  // statusline can mask the dead hook pipeline.
   process.env.FARMSLOT_OBS_PANE_RETIRED = '1';
   const on = tmuxWorkerStatusFromPane(pane, observedAt, undefined, 'claude');
   assert.equal(on.attentionReason, 'observability-degraded');
