@@ -1126,9 +1126,17 @@ async function sendRunnerInstructionWhenPaneClear(
   if (
     await runnerHasPendingInstruction(vars, target, runner, message, pane, promptAcceptedSinceMs)
   ) {
-    return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
-  }
-  if (runnerPaneContainsInstruction(pane, message)) {
+    const submitted = await submitRunnerInstruction(
+      vars,
+      target,
+      runner,
+      message,
+      logPrefix,
+      'submit-existing',
+    );
+    if (submitted) return true;
+    // Pending evidence was stale — nothing is actually buffered; type it below.
+  } else if (runnerPaneContainsInstruction(pane, message)) {
     if (runnerPaneHasProgressAfterInstruction(pane, message)) {
       console.log(
         `[${logPrefix}] instruction already submitted in ${target} — skip duplicate send`,
@@ -1136,7 +1144,18 @@ async function sendRunnerInstructionWhenPaneClear(
       return true;
     }
     console.log(`[${logPrefix}] instruction already present in ${target}; sending submit key`);
-    return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+    const submitted = await submitRunnerInstruction(
+      vars,
+      target,
+      runner,
+      message,
+      logPrefix,
+      'submit-existing',
+    );
+    if (submitted) return true;
+    // The pane text was a transcript echo, not a buffered composer. Retyping a
+    // possibly-already-executed instruction is visible and recoverable; a
+    // false delivery success stalls the caller silently — prefer the retype.
   }
   await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
   return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
@@ -1366,6 +1385,16 @@ async function submitRunnerInstruction(
     await execOnSlot(vars, tmuxSendTextCommand(target, message, { enter: true }));
   } else {
     const pane = await captureTmuxPane(vars, target);
+    if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {
+      // Nothing is buffered: pressing a submit key would no-op, and the
+      // absence-of-buffer verification below would then report success for an
+      // instruction that was never delivered. Refuse so callers fall back to a
+      // real send.
+      console.log(
+        `[${logPrefix}] submit-existing requested but no buffered instruction in ${target}`,
+      );
+      return false;
+    }
     const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
     await execOnSlot(
       vars,

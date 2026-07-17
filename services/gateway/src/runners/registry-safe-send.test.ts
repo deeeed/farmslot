@@ -60,7 +60,9 @@ mock.module('../core/exec.js', {
       if (cmd.includes('capture-pane')) {
         callOrder.push('pane:capture');
         paneCaptureCount += 1;
-        if (paneCaptureCount > 1) {
+        // Captures 1-2 show the scenario pane (decision + submit pre-check);
+        // later captures model the composer clearing after a submit key.
+        if (paneCaptureCount > 2) {
           return { exitCode: 0, stdout: '❯\nctx:12%\n', stderr: '' };
         }
         return { exitCode: 0, stdout: paneText, stderr: '' };
@@ -327,5 +329,53 @@ test('sendRunnerInstructionSafely submits the buffered instruction when the pane
     callOrder.indexOf('tmux:send-literal'),
     -1,
     `a genuinely buffered instruction submits with Enter only — retyping would double the text; order=${callOrder.join(',')}`,
+  );
+});
+
+test('loop path (forceBusyPoll) types the message when nothing is buffered', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = '❯\nctx:12%\n';
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 5000, {
+    forceBusyPoll: true,
+  });
+
+  assert.equal(sent, true);
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `busy-aware loop with an empty composer must TYPE the message; order=${callOrder.join(',')}`,
+  );
+});
+
+test('loop path (forceBusyPoll) submits a genuinely buffered instruction without retyping', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = `❯ ${message.slice(0, 80)}\nctx:12%\n`;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 5000, {
+    forceBusyPoll: true,
+  });
+
+  assert.equal(sent, true);
+  assert.ok(callOrder.includes('tmux:send'));
+  assert.equal(
+    callOrder.indexOf('tmux:send-literal'),
+    -1,
+    `buffered instruction on the loop path submits with Enter only; order=${callOrder.join(',')}`,
   );
 });
