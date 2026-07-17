@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: `TmuxWorkerAttentionReason` gains `'observability-degraded'` — surfaced when hook/statusline liveness lapses for an event-driven runner while the ADR-032 Phase 3A pane-retirement flag is on, so the operator is alerted before a nudge is attempted (additive; older readers ignore the new reason).
+
 - feat: `ReviewSessionPolicy` (`'fresh-per-pass' | 'warm-per-reviewer'`), `REVIEW_SESSION_POLICIES`, and `DEFAULT_REVIEW_SESSION_POLICY` — reviewer session lifecycle across one run's review loops (MANUAL-000009), shared by the gateway and `@farmslot/slot-config`.
 
 - chore: comment-only sweep — code comments describe rationale inline instead of citing ticket numbers (no behavior change).
