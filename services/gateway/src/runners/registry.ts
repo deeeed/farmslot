@@ -2293,7 +2293,6 @@ export async function sendRunnerPostLaunchPrompt(
           }`,
         );
       }
-      extendDeadlineAfterBlockerResolve('classifier trust_prompt action');
       const recovered = await waitForPaneAfterClassifierAction(
         vars,
         target,
