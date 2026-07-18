@@ -90,10 +90,6 @@
       "count": 1
     },
     {
-      "key": "services/gateway/src/fleet/state.ts:as-any:as any",
-      "count": 3
-    },
-    {
       "key": "services/gateway/src/fleet/state.ts:type-any:: any",
       "count": 6
     },
@@ -151,7 +147,7 @@
     },
     {
       "key": "services/gateway/src/runs/store.ts:as-any:as any",
-      "count": 4
+      "count": 2
     },
     {
       "key": "services/gateway/src/tasks/writer.ts:as-any:as any",

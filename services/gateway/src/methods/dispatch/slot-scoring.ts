@@ -4,6 +4,7 @@ import {
   isDispatchScoreStale,
   isSlotRefreshStaleBranch,
   type RunStatus,
+  SLOT_LIFECYCLE,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
   type SlotStatus,
   type SlotTrackingProjectConfig,
@@ -391,6 +392,27 @@ export function failedRunSlotCleanup(
     return ownerLive ? 'clear-reservation' : 'reset';
   }
   return 'none';
+}
+
+/**
+ * Eligibility gate for an operator-picked slot id (decision-card 'pick'):
+ * selectionData is unconstrained, so the id must resolve to a live pool
+ * member of the run's project that dispatch may target — never a
+ * missingFromPool ghost, a disabled slot, another project's slot, or a
+ * manual/disabled lifecycle. Busy/reserved refusal stays with the claim CAS.
+ */
+export function pickedSlotIneligibility(
+  slot: Pick<SlotStatus, 'enabled' | 'lifecycle' | 'missingFromPool' | 'project'> | undefined,
+  project: string,
+): string | null {
+  if (!slot) return 'not in the fleet';
+  if (slot.missingFromPool) return 'missing from the pool';
+  if (slot.project !== project) return `belongs to project '${slot.project}'`;
+  if (!slot.enabled) return 'disabled in the pool';
+  if (slot.lifecycle === SLOT_LIFECYCLE.disabled || slot.lifecycle === SLOT_LIFECYCLE.manual) {
+    return `lifecycle is '${slot.lifecycle}'`;
+  }
+  return null;
 }
 
 /**

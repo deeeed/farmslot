@@ -6,20 +6,21 @@ import path from 'node:path';
 
 import { watch } from 'chokidar';
 
-import type {
-  ActiveResourcePointer,
-  FleetStatus,
-  FleetSummary,
-  PoolConfig,
-  ProjectConfig,
-  ResourceRollup,
-  SafetyTier,
-  SlotActionDefinition,
-  SlotHealth,
-  SlotLifecycle,
-  SlotPhase,
-  SlotStatus,
-  TmuxWorkerFilterConfig,
+import {
+  type ActiveResourcePointer,
+  type FleetStatus,
+  type FleetSummary,
+  type PoolConfig,
+  type ProjectConfig,
+  type ResourceRollup,
+  type SafetyTier,
+  SLOT_LIFECYCLE,
+  type SlotActionDefinition,
+  type SlotHealth,
+  type SlotLifecycle,
+  type SlotPhase,
+  type SlotStatus,
+  type TmuxWorkerFilterConfig,
 } from '@farmslot/protocol';
 
 import {
@@ -319,28 +320,37 @@ export function clearBranchOverlay(slotId: string): void {
 
 // ─── Raw JSON shape from .farm-status.json ───
 
+// Status-file rows are NOT guaranteed complete: a claim-created row
+// (claimSlotStatusIf on a slot with no prior row) carries only ownership
+// fields until the next fleet refresh hydrates it, and legacy rows predate
+// newer fields. Optionality here reflects that honestly so transformSlot's
+// defaults are compiler-enforced instead of hidden behind casts.
 interface RawSlot {
   slot: string;
-  machine: string;
-  platform: string;
-  project: string;
-  ssh: string;
-  dev: string;
-  devserver: string;
-  device: string;
-  cdp: string;
-  fixtures: string;
-  branch: string;
+  machine?: string;
+  platform?: string;
+  project?: string;
+  ssh?: string;
+  dev?: string;
+  devserver?: string;
+  device?: string;
+  cdp?: string;
+  fixtures?: string;
+  branch?: string;
   session?: string;
   repo?: string;
   linked_worktree?: boolean;
-  agent: string;
-  enabled: boolean;
-  mode: string;
-  dispatchable: boolean;
-  lifecycle: string;
-  task_id: string | null;
-  task_file: string | null;
+  agent?: string;
+  enabled?: boolean;
+  mode?: string;
+  dispatchable?: boolean;
+  lifecycle?: string;
+  phase?: string | null;
+  warm?: boolean;
+  /** Legacy pre-devserver field name still present in old status files. */
+  metro?: string;
+  task_id?: string | null;
+  task_file?: string | null;
   current_run_id?: string | null;
   current_flow_type?: string | null;
   current_ticket_or_pr?: string | null;
@@ -349,10 +359,10 @@ interface RawSlot {
   current_lane?: string | null;
   current_variant?: string | null;
   agent_contexts?: SlotStatus['agentContexts'];
-  dispatched_at: string | null;
-  completed_at: string | null;
-  runner: string | null;
-  model: string | null;
+  dispatched_at?: string | null;
+  completed_at?: string | null;
+  runner?: string | null;
+  model?: string | null;
   resources?: Record<string, Record<string, string | number | boolean>>;
 }
 
@@ -365,8 +375,8 @@ interface RawStatus {
 
 // Map old lifecycle values from .farm-status.json to new 5-state model + phase
 function mapLifecycleAndPhase(
-  rawLifecycle: string,
-  rawMode: string,
+  rawLifecycle: string | undefined,
+  rawMode: string | undefined,
 ): { lifecycle: SlotLifecycle; phase: SlotPhase; warm: boolean } {
   switch (rawLifecycle) {
     case 'ready':
@@ -397,25 +407,31 @@ function mapLifecycleAndPhase(
   }
 }
 
+/** Health value for probes a row does not carry yet (claim-created or legacy rows). */
+const HEALTH_UNKNOWN = '-';
+
 function transformSlot(raw: RawSlot): SlotStatus {
+  // A claim-created row (claimSlotStatusIf on a slot with no status row yet)
+  // carries only ownership fields until the next fleet refresh hydrates it —
+  // RawSlot's optionality reflects that, so every default here is
+  // compiler-enforced and UI consumers (sorters calling localeCompare,
+  // health chips) never see undefined.
   const health: SlotHealth = {
-    ssh: raw.ssh,
-    device: raw.dev,
-    devserver: raw.devserver ?? (raw as any).metro ?? '-',
-    cdp: raw.cdp,
-    fixtures: raw.fixtures,
+    ssh: raw.ssh ?? HEALTH_UNKNOWN,
+    device: raw.dev ?? HEALTH_UNKNOWN,
+    devserver: raw.devserver ?? raw.metro ?? HEALTH_UNKNOWN,
+    cdp: raw.cdp ?? HEALTH_UNKNOWN,
+    fixtures: raw.fixtures ?? HEALTH_UNKNOWN,
   };
   // Read new fields if present, otherwise map from old values
-  const rawPhase = (raw as any).phase as string | null | undefined;
-  const rawWarm = (raw as any).warm as boolean | undefined;
   let lifecycle: SlotLifecycle;
   let phase: SlotPhase;
   let warm: boolean;
-  if (rawPhase !== undefined) {
+  if (raw.phase !== undefined) {
     // New format — read directly
-    lifecycle = raw.lifecycle as SlotLifecycle;
-    phase = (rawPhase ?? null) as SlotPhase;
-    warm = rawWarm ?? false;
+    lifecycle = (raw.lifecycle ?? SLOT_LIFECYCLE.ready) as SlotLifecycle;
+    phase = (raw.phase ?? null) as SlotPhase;
+    warm = raw.warm ?? false;
   } else {
     // Old format — map
     const mapped = mapLifecycleAndPhase(raw.lifecycle, raw.mode);
@@ -425,22 +441,22 @@ function transformSlot(raw: RawSlot): SlotStatus {
   }
   return {
     slot: raw.slot,
-    machine: raw.machine,
-    platform: raw.platform as string,
-    project: raw.project,
+    machine: raw.machine ?? '',
+    platform: raw.platform ?? '',
+    project: raw.project ?? '',
     health,
-    branch: raw.branch,
+    branch: raw.branch ?? '',
     session: raw.session,
     repo: raw.repo,
     linkedWorktree: raw.linked_worktree ?? false,
-    agent: raw.agent as SlotStatus['agent'],
-    enabled: raw.enabled,
-    dispatchable: raw.dispatchable,
+    agent: (raw.agent as SlotStatus['agent']) ?? 'idle',
+    enabled: raw.enabled ?? true,
+    dispatchable: raw.dispatchable ?? false,
     lifecycle,
     phase,
     warm,
-    taskId: raw.task_id,
-    taskFile: raw.task_file,
+    taskId: raw.task_id ?? null,
+    taskFile: raw.task_file ?? null,
     currentRunId: raw.current_run_id ?? null,
     currentFlowType: raw.current_flow_type ?? null,
     currentTicketOrPr: raw.current_ticket_or_pr ?? null,
@@ -448,11 +464,11 @@ function transformSlot(raw: RawSlot): SlotStatus {
     currentFamilyId: raw.current_family_id ?? null,
     currentLane: (raw.current_lane as SlotStatus['currentLane']) ?? null,
     currentVariant: raw.current_variant ?? null,
-    dispatchedAt: raw.dispatched_at,
-    completedAt: raw.completed_at,
+    dispatchedAt: raw.dispatched_at ?? null,
+    completedAt: raw.completed_at ?? null,
     agentContexts: raw.agent_contexts ?? undefined,
-    runner: raw.runner,
-    model: raw.model,
+    runner: raw.runner ?? null,
+    model: raw.model ?? null,
     resources: raw.resources,
     deviceName: raw.device ?? null,
     taskPhase: null,

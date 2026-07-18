@@ -50,6 +50,27 @@ test('claimSlotStatusIf applies fields and bumps the ownership epoch atomically'
   assert.equal(after.phase, 'dispatching');
 });
 
+test('a claim on a slot with no status row creates the row it claims', async (t) => {
+  // A freshly added pool entry has no status row until the first fleet
+  // refresh — the claim must not conflate "no state" with a refusal.
+  await withStatusFixture(t, { slot: 'some-other-slot', lifecycle: 'ready', slot_epoch: 2 });
+
+  const claim = await claimSlotStatusIf('epoch-test-fresh', () => true, {
+    lifecycle: 'busy',
+    phase: 'preparing',
+    current_run_id: 'run-a',
+  });
+
+  assert.equal(claim.claimed, true);
+  assert.equal(claim.epoch, 1);
+  const after = await readSlotFixture('epoch-test-fresh');
+  assert.equal(after.lifecycle, 'busy');
+  assert.equal(after.current_run_id, 'run-a');
+  assert.equal(after.slot_epoch, 1);
+  const untouched = await readSlotFixture('some-other-slot');
+  assert.equal(untouched.slot_epoch, 2, 'existing rows unaffected');
+});
+
 test('a predicate-refused claim neither writes nor bumps the epoch', async (t) => {
   const slotId = await withStatusFixture(t, {
     slot: 'epoch-test-2',
