@@ -252,9 +252,8 @@ export async function watchSlot(
     if (existingWatch && !shouldRebindWatch(existingWatch, nextWatchIdentity)) {
       continue;
     }
-    if (existingWatch) {
-      await unwatchKey(key);
-    } else {
+    let staleWatch: SlotWatch | undefined = existingWatch;
+    if (!existingWatch) {
       const pendingWatch = pendingWatchKeys.get(key);
       if (pendingWatch) {
         await pendingWatch;
@@ -262,11 +261,19 @@ export async function watchSlot(
         if (pendingResult && !shouldRebindWatch(pendingResult, nextWatchIdentity)) {
           continue;
         }
-        if (pendingResult) await unwatchKey(key);
+        staleWatch = pendingResult;
       }
     }
 
     const startWatch: Promise<void> = (async () => {
+      // Stale-watch teardown INSIDE the pending window: unwatchSlot drains
+      // pendingWatchKeys before deciding what remains, so covering the whole
+      // rebind (teardown + registration) closes the gap where a concurrent
+      // unwatch observed the old watch gone but the successor not yet
+      // registered — and wrongly cleared the slot progress overlay.
+      if (staleWatch) {
+        await unwatchKey(key, staleWatch);
+      }
       const sw: SlotWatch = {
         slotId,
         taskFilePath: contextTaskPath,

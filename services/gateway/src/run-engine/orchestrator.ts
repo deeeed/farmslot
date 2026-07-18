@@ -196,11 +196,18 @@ async function cleanupSlotAfterRunFailure(
       // operator, instead of a dispatchable row hiding a live worker.
       try {
         const runner = (await readSlotField(slotId, 'runner')) as string | null;
-        if (runner) {
-          const { killWorkerOnSlot } = await import('../methods/dispatch/nudge.js');
-          const { normalizeRunner } = await import('../runners/registry.js');
-          await killWorkerOnSlot(slotId, normalizeRunner(runner));
+        if (!runner) {
+          // No recorded runner identity: a worker (if any) cannot be
+          // verifiably killed. Publishing ready would hand the next PREPARE
+          // a possibly-live worker — keep the fence up for the operator.
+          console.warn(
+            `[run-engine] no runner recorded for ${slotId}; leaving the releasing fence up after ${reason}`,
+          );
+          return;
         }
+        const { killWorkerOnSlot } = await import('../methods/dispatch/nudge.js');
+        const { normalizeRunner } = await import('../runners/registry.js');
+        await killWorkerOnSlot(slotId, normalizeRunner(runner));
       } catch (err) {
         console.warn(
           `[run-engine] worker kill failed for ${slotId} after ${reason}; leaving the releasing fence up: ${(err as Error).message.slice(0, 200)}`,
