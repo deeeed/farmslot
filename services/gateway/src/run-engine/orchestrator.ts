@@ -157,13 +157,14 @@ async function cleanupSlotAfterRunFailure(
   reason: string,
   destructiveCleanup?: () => Promise<void>,
 ): Promise<void> {
-  const { resetSlotIf, slotOwnershipReleaseFields, transitionSlotStatus } =
+  const { readSlotField, resetSlotIf, slotOwnershipReleaseFields, transitionSlotStatus } =
     await import('../core/index.js');
   // Object holder rather than a `let`: assignments inside the decide closure
   // are invisible to control-flow narrowing on a plain local.
-  const planRef: { value: ReturnType<typeof failedRunSlotCleanup> | 'already-releasing' } = {
-    value: 'none',
-  };
+  const planRef: {
+    value: ReturnType<typeof failedRunSlotCleanup> | 'already-releasing';
+    escalated: boolean;
+  } = { value: 'none', escalated: false };
   const transition = await transitionSlotStatus(slotId, (slot) => {
     if (slot.phase === SLOT_PHASE_RELEASING) {
       planRef.value = 'already-releasing';
@@ -171,6 +172,9 @@ async function cleanupSlotAfterRunFailure(
     }
     const plan = failedRunSlotCleanup(slot, runId, getRun);
     planRef.value = plan;
+    // Escalated: this run merely held the reservation and the recorded owner
+    // is dead — the reset also owns physical worker teardown (below).
+    planRef.escalated = plan === 'reset' && slot.current_run_id !== runId;
     switch (plan) {
       case 'reset':
         return { fields: { lifecycle: 'busy', phase: SLOT_PHASE_RELEASING } };
@@ -183,6 +187,27 @@ async function cleanupSlotAfterRunFailure(
     }
   });
   if (planRef.value === 'reset' && transition.applied) {
+    if (planRef.escalated) {
+      // The dead owner's worker may still be writing in the worktree (fresh
+      // reuse escalates here precisely when its kill threw mid-teardown), so
+      // it must be dead before the slot is published ready — otherwise the
+      // next PREPARE races a live worker in the same checkout. A failed kill
+      // leaves the releasing fence up: non-dispatchable and visible to the
+      // operator, instead of a dispatchable row hiding a live worker.
+      try {
+        const runner = (await readSlotField(slotId, 'runner')) as string | null;
+        if (runner) {
+          const { killWorkerOnSlot } = await import('../methods/dispatch/nudge.js');
+          const { normalizeRunner } = await import('../runners/registry.js');
+          await killWorkerOnSlot(slotId, normalizeRunner(runner));
+        }
+      } catch (err) {
+        console.warn(
+          `[run-engine] worker kill failed for ${slotId} after ${reason}; leaving the releasing fence up: ${(err as Error).message.slice(0, 200)}`,
+        );
+        return;
+      }
+    }
     if (destructiveCleanup) {
       try {
         await destructiveCleanup();

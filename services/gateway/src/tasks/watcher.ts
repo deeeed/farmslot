@@ -381,16 +381,22 @@ export async function unwatchSlot(
       }
     }
   }
-  const slotKeys = [...activeWatches.keys()].filter((key) => slotIdFromWatchKey(key) === slotId);
   // Owner-scoped removal (see unwatchContext): a caller undoing only its own
-  // wiring must never strip watches a successor run registered since.
-  const keys = opts?.expectedRunId
-    ? slotKeys.filter((key) => activeWatches.get(key)?.runId === opts.expectedRunId)
-    : slotKeys;
-  for (const key of keys) {
-    await unwatchKey(key);
+  // wiring must never strip watches a successor run registered since. The
+  // entry is captured here and identity-checked inside unwatchKey so a
+  // replacement landing mid-close is never torn down.
+  const targets = [...activeWatches.entries()].filter(
+    ([key, sw]) =>
+      slotIdFromWatchKey(key) === slotId &&
+      (!opts?.expectedRunId || sw.runId === opts.expectedRunId),
+  );
+  for (const [key, sw] of targets) {
+    await unwatchKey(key, sw);
   }
-  if (keys.length === slotKeys.length) {
+  // Overlay decision from a POST-teardown recheck — a pre-teardown snapshot
+  // would miss watches registered while the closes above were awaited.
+  const anyRemaining = [...activeWatches.keys()].some((key) => slotIdFromWatchKey(key) === slotId);
+  if (!anyRemaining) {
     clearTaskProgressOverlay(slotId);
   }
   console.log(`[task-watcher] stopped watching ${slotId}`);
@@ -406,21 +412,29 @@ export async function unwatchContext(
     const sw = activeWatches.get(key);
     // Context IDs are role-based and reused across runs: a successor may have
     // re-registered this key already, and removing its watch would strip the
-    // new owner's observability. Owner-scoped removal only.
+    // new owner's observability. Owner-scoped removal only — the matched
+    // entry is passed through so unwatchKey's identity guard also covers a
+    // replacement landing between this check and the teardown.
     if (sw && sw.runId !== opts.expectedRunId) {
       console.log(
         `[task-watcher] skip unwatch ${slotId}:${contextId} — watch now belongs to run ${sw.runId ?? 'unknown'}`,
       );
       return;
     }
+    await unwatchKey(key, sw ?? undefined);
+  } else {
+    await unwatchKey(key);
   }
-  await unwatchKey(key);
   console.log(`[task-watcher] stopped watching ${slotId}:${contextId}`);
 }
 
-async function unwatchKey(key: string): Promise<void> {
+async function unwatchKey(key: string, expected?: SlotWatch): Promise<void> {
   const sw = activeWatches.get(key);
   if (!sw) return;
+  // Identity guard: a successor may have replaced this key's entry between
+  // the caller's ownership check and this get — closing the CURRENT entry
+  // would tear down the successor's live watch.
+  if (expected && sw !== expected) return;
 
   if (sw.watcher) {
     await sw.watcher.close();
@@ -450,11 +464,15 @@ async function unwatchKey(key: string): Promise<void> {
     }
   }
 
-  const timer = debounceTimers.get(key);
-  if (timer) clearTimeout(timer);
-  debounceTimers.delete(key);
-
-  activeWatches.delete(key);
+  // Same identity guard after the awaited closes: only remove what THIS call
+  // actually tore down — a successor re-registered mid-close owns the current
+  // entry and timer.
+  if (activeWatches.get(key) === sw) {
+    const timer = debounceTimers.get(key);
+    if (timer) clearTimeout(timer);
+    debounceTimers.delete(key);
+    activeWatches.delete(key);
+  }
 }
 
 // ─── Handle remote agent fs.changed events ───
