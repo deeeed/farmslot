@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- chore: type-escape baseline pruned — `fleet/state.ts` no longer contains `as any` casts (RawSlot honest optionality).
+
 - refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the orphan-run backfill flow map.
 - fix: `yarn dev` co-launches the local `@farmslot/node` agent alongside gateway + UI, and `scripts/dev.sh` derives `GATEWAY_URL` from `GATEWAY_PORT` (with a fail-hard guard when the port is already bound), so dev machines no longer sit NODE DEGRADED.
 - chore: recipe operational gate runs the hook-expansion tests from their new `@farmslot/slot-config` home.
