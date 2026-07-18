@@ -152,14 +152,17 @@ function emit(
   for (const h of handlers) h(slotId, progress, role, contextId, runId);
 }
 
-function emitSignal(
+export function emitWorkerSignal(
   slotId: string,
   runId: string | null,
   signal: WorkerSignal,
   role?: AgentRole,
   contextId?: string,
 ): void {
-  for (const h of signalHandlers) h(slotId, runId, signal, role, contextId);
+  // Iterate a snapshot: a handler may unsubscribe during dispatch (handoff
+  // watchers disarm inline), and splicing the live array would skip the next
+  // registered handler for this event.
+  for (const h of [...signalHandlers]) h(slotId, runId, signal, role, contextId);
 }
 
 export function shouldRebindWatch(
@@ -583,7 +586,7 @@ async function handleSignalChange(key: string, content?: string): Promise<void> 
     console.log(
       `[task-watcher] signal from ${key}: role=${bound.role ?? '-'} status=${signal.status} outcome=${signal.outcome ?? '-'} step=${signal.step ?? '-'}`,
     );
-    emitSignal(sw.slotId, sw.runId, bound.signal, bound.role, bound.contextId);
+    emitWorkerSignal(sw.slotId, sw.runId, bound.signal, bound.role, bound.contextId);
     await computeAndEmit(key);
   } catch (err) {
     console.log(`[task-watcher] error reading signal file for ${key}: ${(err as Error).message}`);

@@ -86,6 +86,7 @@ import { copyWorkerArtifacts, readReviewArtifacts } from './review-artifacts.js'
 import { executeReviewGate, setReviewGateBroadcast } from './review-gate.js';
 import { reviewPlanFromSelection } from './review-plan.js';
 import { refreshRunLinks } from './run-links.js';
+import { rearmInteractiveHandoffAutoRecovery } from './run-monitor.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
 import { executeGradeStep, executeWriteTaskStep } from './task-steps.js';
 import { copyTaskFilesToSlot } from './task-sync.js';
@@ -674,6 +675,15 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     reconcileRunAgentRuntime: async (run) => {
       await reconcileRunAgentRuntime(run);
     },
+    rearmHandoffAutoRecovery: (run) =>
+      rearmInteractiveHandoffAutoRecovery(run, async (runId, decisionId, actionId) => {
+        // methods/run.ts imports this module, so a static import here would
+        // be circular; resolve through the public path lazily instead.
+        const { runResolveDecision } = await import('../methods/run.js');
+        await runResolveDecision({ runId, decisionId, actionId }, (event, payload) =>
+          broadcastFn(event, payload),
+        );
+      }),
   };
 }
 

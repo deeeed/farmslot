@@ -7,6 +7,7 @@ import {
   isNoCodeTerminalDisposition,
   isTerminalWorkerSignal,
   normalizeWorkerSignal,
+  parseStrictIsoMs,
   signalFreshAfterAll,
   signalFreshSince,
   terminalWorkerSignalFromRaw,
@@ -44,6 +45,20 @@ test('normalizeWorkerSignal rejects unknown terminal statuses', () => {
 
   assert.equal(result.ok, false);
   assert.match(result.ok ? '' : result.reason, /unknown status/);
+});
+
+test('parseStrictIsoMs accepts ISO-8601 shapes and rejects what bare Date.parse tolerates', () => {
+  assert.equal(typeof parseStrictIsoMs('2026-05-05T01:08:16Z'), 'number');
+  assert.equal(typeof parseStrictIsoMs('2026-05-05T01:08:16.123Z'), 'number');
+  assert.equal(typeof parseStrictIsoMs('2026-05-05T03:08:16+02:00'), 'number');
+  assert.equal(typeof parseStrictIsoMs('2026-05-05T01:08'), 'number');
+  assert.equal(parseStrictIsoMs(undefined), null);
+  assert.equal(parseStrictIsoMs(''), null);
+  assert.equal(parseStrictIsoMs('not-a-date'), null);
+  // Date.parse accepts these; the strict shape must not.
+  assert.equal(parseStrictIsoMs('2026-04-25junk'), null);
+  assert.equal(parseStrictIsoMs('2026-05-05'), null);
+  assert.equal(parseStrictIsoMs(' 2026-05-05T01:08:16Z'), null);
 });
 
 test('signal freshness compares against durable context floors', () => {

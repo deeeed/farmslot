@@ -925,6 +925,17 @@ export async function runProbeWorkerSignal(
   return probeWorkerSignalForRun(params.runId, run.slotId, ctx);
 }
 
+/**
+ * Guards the write in runResolveDecision after its awaits: whoever resolved
+ * the decision during that window wins (notably an operator abort racing the
+ * re-armed handoff auto-recovery). Reads the store fresh rather than trusting
+ * the caller's reference. Exported for tests.
+ */
+export function assertDecisionStillUnresolved(runId: string, decisionId: string): void {
+  const fresh = getRun(runId)?.decisions.find((d) => d.id === decisionId);
+  if (!fresh || fresh.resolvedAt) throw new Error(`Decision already resolved`);
+}
+
 export async function runResolveDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
@@ -947,6 +958,10 @@ export async function runResolveDecision(
     }
   }
   await assertReadyPublishResolveIsFresh(existing, decision, params);
+  // The probes above await; a concurrent resolver (operator abort vs re-armed
+  // auto-recovery) may have resolved this decision during that window. Re-read
+  // from the store so the first resolution wins instead of being overwritten.
+  assertDecisionStillUnresolved(params.runId, params.decisionId);
 
   // Store selectionData on decision so engine steps can use it
   if (params.selectionData) {

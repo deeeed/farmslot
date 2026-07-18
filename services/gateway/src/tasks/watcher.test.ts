@@ -3,11 +3,37 @@ import test from 'node:test';
 
 import {
   bindWorkerSignalToWatch,
+  emitWorkerSignal,
+  onWorkerSignal,
   resolveContextFilePath,
   shouldRebindWatch,
   slotIdFromWatchKey,
   watchKey,
 } from './watcher.js';
+
+test('emitWorkerSignal delivers to every handler even when one unsubscribes mid-dispatch', () => {
+  const delivered: string[] = [];
+  // First handler disarms itself during dispatch — exactly what a handoff
+  // auto-recovery watcher does on a dead decision. The second handler must
+  // still receive this event.
+  const unsubA = onWorkerSignal(() => {
+    delivered.push('a');
+    unsubA();
+  });
+  const unsubB = onWorkerSignal(() => {
+    delivered.push('b');
+  });
+  try {
+    emitWorkerSignal('slot-1', null, { status: 'complete', timestamp: '2026-05-05T01:00:00Z' });
+    assert.deepEqual(delivered, ['a', 'b']);
+    // A is unsubscribed; only B hears the second event.
+    emitWorkerSignal('slot-1', null, { status: 'complete', timestamp: '2026-05-05T01:00:01Z' });
+    assert.deepEqual(delivered, ['a', 'b', 'b']);
+  } finally {
+    unsubA();
+    unsubB();
+  }
+});
 
 test('resolveContextFilePath resolves relative paths inside the repo', () => {
   assert.equal(
