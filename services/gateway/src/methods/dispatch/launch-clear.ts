@@ -1,5 +1,5 @@
-// launch-clear.ts — launch-prelude clears and launch-line send with
-// lost-session self-healing, ownership-fenced.
+// launch-clear.ts — the non-role-window launch sequence (prelude clears +
+// launch line) with lost-session self-healing, ownership-fenced.
 
 import { shellQuote } from '../../core/tmux.js';
 
@@ -27,8 +27,8 @@ export interface LaunchPreludeOptions {
   exec: (tmuxCommand: string) => Promise<LaunchSendExecResult>;
   /**
    * Fences recreation: throws when this dispatch no longer owns the slot
-   * (run cancelled/failed/completed, or the slot reassigned) so an
-   * INTENTIONAL teardown is never undone by resurrecting the session.
+   * (run terminal or moved, slot releasing/recycled) so an INTENTIONAL
+   * teardown is never undone by resurrecting the session.
    */
   assertOwnership: () => Promise<void>;
   /** Recreates the session/worker window and returns the fresh target. */
@@ -36,8 +36,47 @@ export interface LaunchPreludeOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/**
+ * Pure recreation fence. Returns the reason recreation must NOT happen, or
+ * null when this dispatch still owns the slot. Release/recycle mark the slot
+ * `busy/releasing` (then `ready`) BEFORE killing tmux, so by the time a fence
+ * runs after observing a dead session, an intentional teardown is always
+ * visible either as the `releasing` phase (mid-teardown) or as a lifecycle
+ * that is no longer `busy` (teardown finished / claim gone).
+ */
+export function recreationOwnershipViolation(opts: {
+  run: { id: string; status: string; slotId: string | null } | null;
+  hasRunContext: boolean;
+  slotId: string;
+  slotLifecycle: string | null;
+  slotPhase: string | null;
+}): string | null {
+  if (!opts.hasRunContext) return 'dispatch has no run context to fence recreation on';
+  if (!opts.run) return 'run disappeared mid-dispatch';
+  if (['cancelled', 'failed', 'done'].includes(opts.run.status)) {
+    return `run is ${opts.run.status}; the session teardown was intentional`;
+  }
+  if (opts.run.slotId && opts.run.slotId !== opts.slotId) {
+    return `run moved to slot ${opts.run.slotId}`;
+  }
+  if (opts.slotPhase === 'releasing') {
+    return 'slot is releasing; the session teardown is intentional';
+  }
+  if (opts.slotLifecycle !== 'busy') {
+    return `slot lifecycle is ${opts.slotLifecycle ?? 'unknown'}; the claim on ${opts.slotId} is gone`;
+  }
+  return null;
+}
+
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+class SessionLostError extends Error {
+  constructor(session: string, what: string) {
+    super(`tmux session ${session} disappeared mid-launch (${what})`);
+    this.name = 'SessionLostError';
+  }
+}
 
 function sendFailureMessage(
   what: string,
@@ -51,86 +90,64 @@ function sendFailureMessage(
 }
 
 /**
- * A parent run's slot release can race its chained follow-up dispatch and
- * kill the tmux session anywhere between the prelude clears and the launch
- * send. When a send fails AND the session is what vanished, recovery is only
- * legitimate if this dispatch still owns the slot — a cancel/recycle marks
- * the run terminal before killing tmux, and recreating the session then
- * would resurrect a worker on a deliberately torn-down slot. The fence
- * (assertOwnership) throws in that case; otherwise the session is recreated,
- * the fresh shell is given `recreateSettleMs` to finish startup (an immediate
- * C-c into a starting shell can kill the pane), and the send retried once.
- */
-async function sendWithSessionRecovery(opts: {
-  what: string;
-  command: (target: string) => string;
-  target: string;
-  prelude: LaunchPreludeOptions;
-}): Promise<string> {
-  const { prelude } = opts;
-  const sleep = prelude.sleep ?? defaultSleep;
-  const first = await prelude.exec(opts.command(opts.target));
-  if (first.exitCode === 0) return opts.target;
-  const sessionAlive =
-    (await prelude.exec(`has-session -t ${shellQuote(prelude.session)} 2>/dev/null`)).exitCode ===
-    0;
-  if (sessionAlive) {
-    throw new Error(sendFailureMessage(opts.what, prelude.runner, opts.target, first));
-  }
-  await prelude.assertOwnership();
-  console.log(
-    `[dispatch] tmux session ${prelude.session} disappeared mid-launch (${opts.what}); recreating it before retrying`,
-  );
-  const freshTarget = await prelude.reensureTarget();
-  await sleep(prelude.waits.recreateSettleMs);
-  const retry = await prelude.exec(opts.command(freshTarget));
-  if (retry.exitCode !== 0) {
-    throw new Error(
-      `${sendFailureMessage(opts.what, prelude.runner, freshTarget, retry)} (after session recreation)`,
-    );
-  }
-  return freshTarget;
-}
-
-/**
  * Runs the full non-role-window launch sequence — pre-clear, DA wait,
- * post-clear, settle, literal launch line + Enter — with every send covered
- * by the same fenced lost-session recovery, and returns the target the
- * launch ultimately landed on so callers never keep using a stale one.
+ * post-clear, settle, literal launch line, Enter. A parent run's slot release
+ * can race a chained follow-up dispatch and kill the session at any point in
+ * that sequence; when a send fails because the SESSION vanished (not a plain
+ * send error), recovery re-runs assertOwnership, recreates the session, lets
+ * the fresh shell settle, and RESTARTS THE WHOLE SEQUENCE from the pre-clear —
+ * a fresh shell emits its own DA responses, so resuming mid-sequence would
+ * reintroduce the prompt-poisoning bug the prelude exists to prevent. One
+ * recreation total: a second session loss fails the dispatch honestly.
+ * Returns the target the launch landed on so callers never keep a stale one.
  */
 export async function runLaunchPreludeAndSend(
   prelude: LaunchPreludeOptions,
 ): Promise<{ target: string }> {
   const sleep = prelude.sleep ?? defaultSleep;
-  const clearCommand = (target: string): string => `send-keys -t ${shellQuote(target)} C-c C-u`;
+  const sendOrLost = async (what: string, target: string, command: string): Promise<void> => {
+    const result = await prelude.exec(command);
+    if (result.exitCode === 0) return;
+    const sessionAlive =
+      (await prelude.exec(`has-session -t ${shellQuote(prelude.session)} 2>/dev/null`)).exitCode ===
+      0;
+    if (sessionAlive) throw new Error(sendFailureMessage(what, prelude.runner, target, result));
+    throw new SessionLostError(prelude.session, what);
+  };
+  const sequence = async (target: string): Promise<void> => {
+    const clear = `send-keys -t ${shellQuote(target)} C-c C-u`;
+    await sendOrLost('clear launch input (pre-clear) for', target, clear);
+    await sleep(prelude.waits.daWaitMs);
+    await sendOrLost('clear launch input (post-clear) for', target, clear);
+    await sleep(prelude.waits.settleMs);
+    await sendOrLost(
+      'type launch line for',
+      target,
+      `send-keys -t ${shellQuote(target)} -l ${shellQuote(prelude.launchCommand)}`,
+    );
+    await sendOrLost('submit launch line for', target, `send-keys -t ${shellQuote(target)} Enter`);
+  };
+
   let target = prelude.target;
-  target = await sendWithSessionRecovery({
-    what: 'clear launch input (pre-clear) for',
-    command: clearCommand,
-    target,
-    prelude,
-  });
-  await sleep(prelude.waits.daWaitMs);
-  target = await sendWithSessionRecovery({
-    what: 'clear launch input (post-clear) for',
-    command: clearCommand,
-    target,
-    prelude,
-  });
-  await sleep(prelude.waits.settleMs);
-  target = await sendWithSessionRecovery({
-    what: 'type launch line for',
-    command: (t) => `send-keys -t ${shellQuote(t)} -l ${shellQuote(prelude.launchCommand)}`,
-    target,
-    prelude,
-  });
-  // Enter is deliberately NOT recovery-wrapped: recreating the session here
-  // would submit an empty prompt in a fresh shell, not the launch line that
-  // just vanished with the old pane. A dead session at this point fails the
-  // dispatch honestly.
-  const submit = await prelude.exec(`send-keys -t ${shellQuote(target)} Enter`);
-  if (submit.exitCode !== 0) {
-    throw new Error(sendFailureMessage('submit launch line for', prelude.runner, target, submit));
+  try {
+    await sequence(target);
+    return { target };
+  } catch (err) {
+    if (!(err instanceof SessionLostError)) throw err;
+    await prelude.assertOwnership();
+    console.log(`[dispatch] ${err.message}; recreating it and restarting the launch sequence`);
+    target = await prelude.reensureTarget();
+    await sleep(prelude.waits.recreateSettleMs);
+    // Second loss is NOT recovered — it propagates as an honest dispatch
+    // failure rather than looping against a slot something keeps tearing down.
+    try {
+      await sequence(target);
+    } catch (retryErr) {
+      if (retryErr instanceof SessionLostError) {
+        throw new Error(`${retryErr.message} again after recreation; failing the dispatch`);
+      }
+      throw retryErr;
+    }
+    return { target };
   }
-  return { target };
 }

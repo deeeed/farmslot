@@ -72,7 +72,7 @@ import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
 
-import { runLaunchPreludeAndSend } from './launch-clear.js';
+import { recreationOwnershipViolation, runLaunchPreludeAndSend } from './launch-clear.js';
 import { buildDispatchRoleShellCommand, parseCapturedAgentPaneTarget } from './role-target.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
 import { buildSlotClaimStatus, evaluateSlotIdentityPolicy } from './slot-scoring.js';
@@ -1111,21 +1111,22 @@ export async function dispatchExecute(
         },
         exec: (tmuxCommand: string) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
         assertOwnership: async () => {
+          // Fresh reads: release marks the slot busy/releasing BEFORE killing
+          // tmux, so a teardown-caused session death is visible here.
           const latest = currentRun ? getRun(currentRun.id) : null;
-          if (currentRun && !latest) {
-            throw new Error(
-              `Run ${currentRun.id.slice(0, 8)} disappeared mid-dispatch; not recreating session ${session}`,
-            );
-          }
-          if (latest && ['cancelled', 'failed', 'done'].includes(latest.status)) {
-            throw new Error(
-              `Run ${latest.id.slice(0, 8)} is ${latest.status}; session ${session} teardown was intentional — not recreating`,
-            );
-          }
-          if (latest?.slotId && latest.slotId !== vars.slotId) {
-            throw new Error(
-              `Run ${latest.id.slice(0, 8)} moved to slot ${latest.slotId}; not recreating session ${session} on ${vars.slotId}`,
-            );
+          const [slotLifecycle, slotPhase] = await Promise.all([
+            readSlotField(params.slotId, 'lifecycle'),
+            readSlotField(params.slotId, 'phase'),
+          ]);
+          const violation = recreationOwnershipViolation({
+            run: latest ? { id: latest.id, status: latest.status, slotId: latest.slotId } : null,
+            hasRunContext: Boolean(currentRun),
+            slotId: params.slotId,
+            slotLifecycle: typeof slotLifecycle === 'string' ? slotLifecycle : null,
+            slotPhase: typeof slotPhase === 'string' ? slotPhase : null,
+          });
+          if (violation) {
+            throw new Error(`Not recreating session ${session}: ${violation}`);
           }
         },
         reensureTarget: () => ensureWorkerRoleTarget(vars, session, runner, workerRole),
