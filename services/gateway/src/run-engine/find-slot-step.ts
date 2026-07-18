@@ -12,7 +12,12 @@ import {
 } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
-import { getProjectField, loadProjectVars, markSlotBusy, updateSlotStatus } from '../core/index.js';
+import {
+  claimSlotStatusIf,
+  getProjectField,
+  loadProjectVars,
+  updateSlotStatus,
+} from '../core/index.js';
 import { loadFleetStatus, loadProjectConfigs } from '../fleet/state.js';
 import {
   collectBranchAffinityNudgeCandidates,
@@ -27,6 +32,10 @@ import {
   isCdpLive,
   isFreeSlot,
   projectConfigsFromProjects,
+  SLOT_CLAIM_REFUSED_CODE,
+  slotClaimBlockedByHandoff,
+  slotClaimBlockedByLiveOwner,
+  slotClaimBlockedByRelease,
   slotScore,
 } from '../methods/dispatch/slot-scoring.js';
 import {
@@ -80,6 +89,64 @@ export interface FindSlotStepContext {
     preview: { runner: string; model: string },
   ) => { runner: string; model: string };
   setRunFlags: (runId: string, flags: RunEngineFlags) => void;
+}
+
+/**
+ * Selection-time slot claim. All claim-type writes must refuse a slot whose
+ * phase is 'releasing' (an in-flight teardown owns it and will kill/reset
+ * whatever lands there) and bump the ownership epoch so any teardown racing
+ * this claim aborts its remaining writes instead of clobbering the claim.
+ */
+
+async function claimSelectedSlot(
+  slotId: string,
+  runId: string,
+  phase: 'preparing' | 'working',
+  agent?: 'working',
+  opts?: { takeoverLiveOwner?: boolean },
+): Promise<void> {
+  const claim = await claimSlotStatusIf(
+    slotId,
+    (slot) => {
+      if (slotClaimBlockedByRelease(slot) !== null) return false;
+      // A foreign handoff reservation blocks every claim — including a second
+      // takeover, which would otherwise deliver a second prompt into the same
+      // worker and split-brain it.
+      if (slotClaimBlockedByHandoff(slot, runId) !== null) return false;
+      // Exclusive by default: two selections racing over one free snapshot
+      // must not both succeed. The takeover mode is the exception — it
+      // deliberately claims over a live worker, either for an
+      // operator-approved nudge (prior run terminalized by nudgeDispatch
+      // after delivery) or as the fresh-reuse fence taken before the prior
+      // worker is destroyed.
+      if (opts?.takeoverLiveOwner) return true;
+      return slotClaimBlockedByLiveOwner(slot, runId, getRun) === null;
+    },
+    // Ownership binds in the SAME claim write — EXCEPT for the nudge
+    // takeover, which must leave current_run_id with the prior run:
+    // nudgeDispatch's handoff re-reads the owner to terminalize it only
+    // after delivery succeeds, and rebinding here would make it terminalize
+    // the wrong (new) run while the prior worker keeps running.
+    {
+      lifecycle: 'busy',
+      phase,
+      // Takeover reserves the handoff instead of rebinding ownership. An
+      // ordinary claim consumes the claimant's own reservation (fresh reuse
+      // fences with one before teardown); a foreign one was refused above.
+      ...(opts?.takeoverLiveOwner
+        ? { handoff_run_id: runId }
+        : { current_run_id: runId, handoff_run_id: null }),
+      ...(agent ? { agent } : {}),
+    },
+  );
+  if (!claim.claimed) {
+    throw Object.assign(
+      new Error(
+        `Slot ${slotId} is mid-release or claimed by another live run; selection cannot claim it — pick a slot again`,
+      ),
+      { code: SLOT_CLAIM_REFUSED_CODE },
+    );
+  }
 }
 
 export async function executeFindSlotStep(
@@ -149,6 +216,9 @@ export async function executeFindSlotStep(
         `Branch-affinity nudge no longer valid: ${eligibilityFail}. Pick a slot again.`,
       );
     }
+    // Reserve the handoff exactly like the decision-card path: without this,
+    // two wizard nudges racing the same worker would both deliver.
+    await claimSelectedSlot(run.slotId, runId, 'working', 'working', { takeoverLiveOwner: true });
     return {
       inputs,
       outputs: {
@@ -185,8 +255,15 @@ export async function executeFindSlotStep(
     if (eligibilityFail) {
       throw new Error(`Fresh-reuse no longer valid: ${eligibilityFail}. Pick a slot again.`);
     }
+    // Atomic fence BEFORE destroying the prior worker: reserve the handoff in
+    // the same CAS that refuses foreign reservations. A read-then-teardown
+    // check would let a nudge reserve in the gap and have its in-flight
+    // delivery killed here. The ordinary claim below consumes the fence.
+    await claimSelectedSlot(run.slotId, runId, 'preparing', undefined, {
+      takeoverLiveOwner: true,
+    });
     await prepareSlotForFreshReuse(run.slotId, runId);
-    await markSlotBusy(run.slotId, 'preparing');
+    await claimSelectedSlot(run.slotId, runId, 'preparing');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
     return {
       inputs,
@@ -243,7 +320,7 @@ export async function executeFindSlotStep(
         `[run-engine] ${run.flowType} affinity: reusing slot ${affinitySlot.slot} (branch=${affinitySlot.branch})`,
       );
       updateRun(runId, { slotId: affinitySlot.slot });
-      await markSlotBusy(affinitySlot.slot, 'preparing');
+      await claimSelectedSlot(affinitySlot.slot, runId, 'preparing');
       broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
       return {
         inputs,
@@ -370,7 +447,9 @@ export async function executeFindSlotStep(
           // decision-card nudge fail its own eligibility recheck. The wizard-shortcut path
           // doesn't markSlotBusy at all (slot already has agent=working from the prior run);
           // this branch needs the same preservation.
-          await markSlotBusy(top.slot.slot, 'working', 'working');
+          await claimSelectedSlot(top.slot.slot, runId, 'working', 'working', {
+            takeoverLiveOwner: true,
+          });
           broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
           return {
             inputs,
@@ -390,9 +469,17 @@ export async function executeFindSlotStep(
           // dependency install would race against a still-writing worker in the same
           // worktree and corrupt slot state. prepareSlotForFreshReuse handles
           // terminalize-prior-run + kill-worker-on-slot in the right order.
-          await prepareSlotForFreshReuse(top.slot.slot, runId);
+          // Atomic fence BEFORE destroying the prior worker — same rationale
+          // as the freshReuse wizard-shortcut above.
+          await claimSelectedSlot(top.slot.slot, runId, 'preparing', undefined, {
+            takeoverLiveOwner: true,
+          });
+          // Bind the slot BEFORE the destructive teardown: if preparation
+          // throws, failure cleanup locates the slot via run.slotId and can
+          // clear the reservation the fence just wrote.
           updateRun(runId, { slotId: top.slot.slot });
-          await markSlotBusy(top.slot.slot, 'preparing');
+          await prepareSlotForFreshReuse(top.slot.slot, runId);
+          await claimSelectedSlot(top.slot.slot, runId, 'preparing');
           broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
           return {
             inputs,
@@ -418,7 +505,7 @@ export async function executeFindSlotStep(
             (resolvedDecision?.selectionData?.slotId as string | undefined) ?? null;
           if (pickedSlotId) {
             updateRun(runId, { slotId: pickedSlotId });
-            await markSlotBusy(pickedSlotId, 'preparing');
+            await claimSelectedSlot(pickedSlotId, runId, 'preparing');
             broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
             return {
               inputs,
@@ -511,7 +598,7 @@ export async function executeFindSlotStep(
     }
 
     updateRun(runId, { slotId: pickedSlotId });
-    await markSlotBusy(pickedSlotId, 'preparing');
+    await claimSelectedSlot(pickedSlotId, runId, 'preparing');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
     return {
       inputs,
@@ -529,7 +616,7 @@ export async function executeFindSlotStep(
   const slotId = result.preview.slotId;
   updateRun(runId, { slotId });
   // Mark slot as claimed by this run
-  await markSlotBusy(slotId, 'preparing');
+  await claimSelectedSlot(slotId, runId, 'preparing');
   // Stamp the slot's persistent runner/model fields now so the UI's slot
   // card surfaces the upcoming worker as soon as the bind happens.
   // Without this, the slot retains the previous run's runner/model until

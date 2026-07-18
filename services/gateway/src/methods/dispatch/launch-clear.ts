@@ -1,6 +1,8 @@
 // launch-clear.ts — the non-role-window launch sequence (prelude clears +
 // launch line) with lost-session self-healing, ownership-fenced.
 
+import { type RunStatus, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
+
 import { shellQuote } from '../../core/tmux.js';
 
 export interface LaunchSendExecResult {
@@ -53,7 +55,7 @@ export function recreationOwnershipViolation(opts: {
 }): string | null {
   if (!opts.hasRunContext) return 'dispatch has no run context to fence recreation on';
   if (!opts.run) return 'run disappeared mid-dispatch';
-  if (['cancelled', 'failed', 'done'].includes(opts.run.status)) {
+  if (TERMINAL_RUN_STATUSES.includes(opts.run.status as RunStatus)) {
     return `run is ${opts.run.status}; the session teardown was intentional`;
   }
   if (opts.run.slotId !== opts.slotId) {

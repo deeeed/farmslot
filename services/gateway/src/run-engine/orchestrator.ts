@@ -22,8 +22,9 @@ import {
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
-import { resetSlot } from '../core/state.js';
+import { resetSlot, SLOT_PHASE_RELEASING } from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
+import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
 import { clearStalePrepareProcess } from '../methods/slot.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import {
@@ -132,6 +133,121 @@ class MonitorTerminalError extends Error {
   }
 }
 const S = PipelineSteps;
+
+/**
+ * A terminal run may reset only a slot it OWNS — and even then a pending
+ * foreign handoff reservation survives (the incoming nudge's delivery is
+ * mid-flight; see failedRunSlotCleanup). A run that merely held a
+ * reservation clears just that reservation — the prior owner's worker is
+ * still running and must not be marked ready — and a run named nowhere on
+ * the slot touches nothing.
+ *
+ * Classification and the matching write happen in ONE serialized transition:
+ * a per-plan CAS cascade let a rival write shift the plan between attempts
+ * and strand the slot. The full-reset branch first fences the slot as
+ * `releasing` (every claim path refuses it), runs the caller's destructive
+ * process/agent teardown behind that fence — never on an unfenced slot a
+ * rival could claim or reserve mid-kill — then applies the final reset
+ * guarded on the fence epoch, mirroring slotRelease. A slot already
+ * mid-release is left to the release that owns the teardown.
+ */
+async function cleanupSlotAfterRunFailure(
+  slotId: string,
+  runId: string,
+  reason: string,
+  destructiveCleanup?: () => Promise<void>,
+): Promise<void> {
+  const { readSlotField, resetSlotIf, slotOwnershipReleaseFields, transitionSlotStatus } =
+    await import('../core/index.js');
+  // Object holder rather than a `let`: assignments inside the decide closure
+  // are invisible to control-flow narrowing on a plain local.
+  const planRef: {
+    value: ReturnType<typeof failedRunSlotCleanup> | 'already-releasing';
+    escalated: boolean;
+  } = { value: 'none', escalated: false };
+  const transition = await transitionSlotStatus(slotId, (slot) => {
+    if (slot.phase === SLOT_PHASE_RELEASING) {
+      planRef.value = 'already-releasing';
+      return null;
+    }
+    const plan = failedRunSlotCleanup(slot, runId, getRun);
+    planRef.value = plan;
+    // Escalated: this run merely held the reservation and the recorded owner
+    // is dead — the reset also owns physical worker teardown (below).
+    planRef.escalated = plan === 'reset' && slot.current_run_id !== runId;
+    switch (plan) {
+      case 'reset':
+        return { fields: { lifecycle: 'busy', phase: SLOT_PHASE_RELEASING } };
+      case 'release-keep-handoff':
+        return { fields: slotOwnershipReleaseFields(), endsOwnership: true };
+      case 'clear-reservation':
+        return { fields: { handoff_run_id: null } };
+      default:
+        return null;
+    }
+  });
+  if (planRef.value === 'reset' && transition.applied) {
+    if (planRef.escalated) {
+      // The dead owner's worker may still be writing in the worktree (fresh
+      // reuse escalates here precisely when its kill threw mid-teardown), so
+      // it must be dead before the slot is published ready — otherwise the
+      // next PREPARE races a live worker in the same checkout. A failed kill
+      // leaves the releasing fence up: non-dispatchable and visible to the
+      // operator, instead of a dispatchable row hiding a live worker.
+      try {
+        const runner = (await readSlotField(slotId, 'runner')) as string | null;
+        if (!runner) {
+          // No recorded runner identity: a worker (if any) cannot be
+          // verifiably killed. Publishing ready would hand the next PREPARE
+          // a possibly-live worker — keep the fence up for the operator.
+          console.warn(
+            `[run-engine] no runner recorded for ${slotId}; leaving the releasing fence up after ${reason}`,
+          );
+          return;
+        }
+        const { killWorkerOnSlot } = await import('../methods/dispatch/nudge.js');
+        const { normalizeRunner } = await import('../runners/registry.js');
+        await killWorkerOnSlot(slotId, normalizeRunner(runner));
+      } catch (err) {
+        console.warn(
+          `[run-engine] worker kill failed for ${slotId} after ${reason}; leaving the releasing fence up: ${(err as Error).message.slice(0, 200)}`,
+        );
+        return;
+      }
+    }
+    if (destructiveCleanup) {
+      try {
+        await destructiveCleanup();
+      } catch (err) {
+        // The fence must not strand the slot in `releasing`: surface the
+        // teardown error but continue to the final reset.
+        console.warn(
+          `[run-engine] destructive cleanup for ${slotId} after ${reason}: ${(err as Error).message.slice(0, 200)}`,
+        );
+      }
+    }
+    await resetSlotIf(
+      slotId,
+      (slot) => (Number(slot.slot_epoch) || 0) === (transition.epoch ?? -1),
+    );
+    console.log(`[run-engine] slot ${slotId} reset to ready/idle after ${reason}`);
+    return;
+  }
+  if (planRef.value === 'release-keep-handoff' && transition.applied) {
+    console.log(
+      `[run-engine] slot ${slotId} ownership released after ${reason}; pending handoff reservation preserved`,
+    );
+    return;
+  }
+  if (planRef.value === 'clear-reservation' && transition.applied) {
+    console.log(`[run-engine] cleared handoff reservation on ${slotId} after ${reason}`);
+    return;
+  }
+  console.log(
+    `[run-engine] slot ${slotId} cleanup after ${reason}: ${planRef.value === 'already-releasing' ? 'in-flight release owns the teardown' : 'not owned by terminal run'}; left untouched`,
+  );
+}
+
 const STEP_TO_STATUS: Record<string, RunStatus> = {
   [S.GRADE]: 'grading',
   [S.WRITE_TASK]: 'writing-task',
@@ -273,24 +389,21 @@ async function finalizeNonThrownTerminalRun(
   }
   await cleanupEvalHarnessForTerminalRun(run, runId, `non-thrown ${run.status}`);
   if (run.slotId) {
-    // Kill stale worker/browser/webpack processes before reset. Mirrors the failed-step
-    // PREPARE branch — when MONITOR observes a blocked worker, the prepare-spawned browser
-    // and webpack are still alive and would otherwise survive into the next dispatch.
-    // cleanupSlotProcesses is idempotent (kill 2>/dev/null + rm -f) so calling it on flows
-    // where prepare did not run is a no-op.
+    const slotId = run.slotId;
     try {
-      await cleanupSlotProcesses(run.slotId);
-    } catch (err) {
-      console.warn(
-        `[run-engine] cleanup processes after non-thrown ${run.status} for ${run.slotId}: ${(err as Error).message.slice(0, 200)}`,
-      );
-    }
-    try {
-      const currentRun = getRun(runId);
-      if (currentRun) {
-        await teardownGateHeldAgentsIfNeeded(currentRun);
-      }
-      await resetSlot(run.slotId);
+      // Destructive teardown (stale worker/browser/webpack kill + gate-held
+      // agents) runs INSIDE the cleanup helper, behind its releasing fence and
+      // only when this run still owns the slot exclusively — an incoming
+      // nudge's reserved worker must never be killed by the dying owner.
+      // cleanupSlotProcesses is idempotent (kill 2>/dev/null + rm -f) so
+      // calling it on flows where prepare did not run is a no-op.
+      await cleanupSlotAfterRunFailure(slotId, runId, `non-thrown ${run.status}`, async () => {
+        await cleanupSlotProcesses(slotId);
+        const currentRun = getRun(runId);
+        if (currentRun) {
+          await teardownGateHeldAgentsIfNeeded(currentRun);
+        }
+      });
     } catch (err) {
       // Surface but do not mask the run's terminal state.
       console.warn(
@@ -447,8 +560,9 @@ export async function startRun(runId: string): Promise<void> {
         if (blockedRun.slotId) {
           await cleanupEvalHarnessForTerminalRun(blockedRun, runId, 'blocked run');
           try {
-            await teardownGateHeldAgentsIfNeeded(blockedRun);
-            await resetSlot(blockedRun.slotId);
+            await cleanupSlotAfterRunFailure(blockedRun.slotId, runId, 'blocked run', () =>
+              teardownGateHeldAgentsIfNeeded(blockedRun),
+            );
           } catch (resetErr) {
             console.warn(
               `[run-engine] final slot reset failed for blocked run ${blockedRun.slotId}: ${(resetErr as Error).message.slice(0, 200)}`,
@@ -498,14 +612,13 @@ export async function startRun(runId: string): Promise<void> {
             `monitor-terminal ${err.status}`,
           );
           try {
-            await cleanupSlotProcesses(monitorRun.slotId);
-          } catch (cleanupErr) {
-            console.warn(
-              `[run-engine] cleanup processes after monitor-terminal ${err.status} for ${monitorRun.slotId}: ${(cleanupErr as Error).message.slice(0, 200)}`,
+            const monitorSlotId = monitorRun.slotId;
+            await cleanupSlotAfterRunFailure(
+              monitorSlotId,
+              runId,
+              `monitor-terminal ${err.status}`,
+              () => cleanupSlotProcesses(monitorSlotId),
             );
-          }
-          try {
-            await resetSlot(monitorRun.slotId);
           } catch (resetErr) {
             console.warn(
               `[run-engine] slot reset after monitor-terminal ${err.status} for ${monitorRun.slotId}: ${(resetErr as Error).message.slice(0, 200)}`,
@@ -556,8 +669,18 @@ export async function startRun(runId: string): Promise<void> {
 
       await cleanupEvalHarnessForTerminalRun(failedRun, runId, `${stepName} failure`);
 
-      // Handle slot on pre-worker failure (prepare/dispatch/write-task)
+      // Handle slot on pre-worker failure (prepare/dispatch/write-task).
+      // A refused claim is the one exception: this run never owned the slot
+      // (an in-flight release or rival claim does), so resetting it here
+      // would clear the actual owner's lifecycle fence mid-teardown.
+      const claimRefused = isSlotClaimRefusedError(err);
+      if (claimRefused && failedRun.slotId) {
+        console.log(
+          `[run-engine] slot ${failedRun.slotId} left untouched after refused claim (${stepName})`,
+        );
+      }
       if (
+        !claimRefused &&
         failedRun.slotId &&
         (stepName === S.PREPARE ||
           stepName === S.DISPATCH ||
@@ -565,16 +688,14 @@ export async function startRun(runId: string): Promise<void> {
           stepName === S.FIND_SLOT)
       ) {
         try {
-          // Kill stale processes left by failed prepare (browser, webpack, launcher)
-          if (stepName === S.PREPARE) {
-            await cleanupSlotProcesses(failedRun.slotId);
-          }
-          // Reset slot to dispatchable: lifecycle=ready + agent=idle.
-          // Previous approach left agent='working' to "reserve for retry" but in practice
-          // users create new runs and the slot rots in a stale working state forever.
-          await resetSlot(failedRun.slotId);
-          console.log(
-            `[run-engine] slot ${failedRun.slotId} reset to ready/idle after ${stepName} failure`,
+          const failedSlotId = failedRun.slotId;
+          // Stale processes left by failed prepare (browser, webpack, launcher)
+          // are killed behind the cleanup fence, owner-only.
+          await cleanupSlotAfterRunFailure(
+            failedSlotId,
+            runId,
+            `${stepName} failure`,
+            stepName === S.PREPARE ? () => cleanupSlotProcesses(failedSlotId) : undefined,
           );
         } catch (err) {
           // The run has already failed; reset/cleanup errors are surfaced in
@@ -599,10 +720,13 @@ export async function startRun(runId: string): Promise<void> {
       // Safety net: always reset slot fully when a run terminates.
       // Individual steps may already handle this, but if they don't (or throw
       // before reaching their cleanup), this prevents stale busy/held state.
-      if (failedRun.slotId) {
+      // EXCEPT after a refused claim: this run never owned the slot, and the
+      // reset would reopen it mid-teardown for the release that does.
+      if (failedRun.slotId && !claimRefused) {
         try {
-          await teardownGateHeldAgentsIfNeeded(failedRun);
-          await resetSlot(failedRun.slotId);
+          await cleanupSlotAfterRunFailure(failedRun.slotId, runId, 'terminal safety net', () =>
+            teardownGateHeldAgentsIfNeeded(failedRun),
+          );
         } catch (err) {
           // The run failure has already been recorded; surface reset failure
           // without replacing the root-cause error shown to the operator.

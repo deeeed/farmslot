@@ -65,10 +65,18 @@ export {
   slotWriteFiles,
 } from './slot-io.js';
 export {
+  claimSlotStatusIf,
   markSlotBusy,
   markSlotHeld,
+  markSlotStatusIf,
   readSlotField,
+  readSlotRow,
   resetSlot,
+  resetSlotIf,
+  rewriteStatusFile,
+  SLOT_PHASE_RELEASING,
+  slotOwnershipReleaseFields,
+  transitionSlotStatus,
   updateSlotStatus,
   updateSlotStatusIf,
 } from './state.js';

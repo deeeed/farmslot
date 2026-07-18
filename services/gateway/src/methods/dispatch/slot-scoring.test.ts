@@ -6,9 +6,12 @@ import type { SlotStatus } from '@farmslot/protocol';
 import {
   branchContainsJiraKey,
   evaluateSlotIdentityPolicy,
+  failedRunSlotCleanup,
   findBestSlot,
   isCdpLive,
   isFreeSlot,
+  slotClaimBlockedByHandoff,
+  slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
   slotScore,
   validateSlot,
@@ -204,4 +207,59 @@ test('slotClaimBlockedByRelease refuses only slots mid-release', () => {
   assert.equal(slotClaimBlockedByRelease({ phase: 'dispatching' }), null);
   assert.equal(slotClaimBlockedByRelease({ phase: 'working' }), null);
   assert.equal(slotClaimBlockedByRelease({}), null);
+});
+
+test('slotClaimBlockedByLiveOwner blocks only live non-terminal owners', () => {
+  const lookup = (id: string) =>
+    ({ live: { status: 'monitoring' }, dead: undefined, finished: { status: 'done' } })[
+      id as 'live'
+    ];
+  assert.equal(slotClaimBlockedByLiveOwner({}, 'me', lookup), null);
+  assert.equal(slotClaimBlockedByLiveOwner({ current_run_id: 'me' }, 'me', lookup), null);
+  assert.equal(slotClaimBlockedByLiveOwner({ current_run_id: 'dead' }, 'me', lookup), null);
+  assert.equal(slotClaimBlockedByLiveOwner({ current_run_id: 'finished' }, 'me', lookup), null);
+  assert.match(
+    slotClaimBlockedByLiveOwner({ current_run_id: 'live' }, 'me', lookup) ?? '',
+    /claimed by live run live/,
+  );
+});
+
+test('slotClaimBlockedByHandoff blocks foreign reservations only', () => {
+  assert.equal(slotClaimBlockedByHandoff({}, 'me'), null);
+  assert.equal(slotClaimBlockedByHandoff({ handoff_run_id: 'me' }, 'me'), null);
+  assert.match(
+    slotClaimBlockedByHandoff({ handoff_run_id: 'other' }, 'me') ?? '',
+    /reserved for handoff to run other/,
+  );
+});
+
+test('failedRunSlotCleanup resets only owned slots and clears only own reservations', () => {
+  const liveOwner = (id: string) => (id === 'prior' ? { status: 'monitoring' } : undefined);
+  const deadOwner = (id: string) => (id === 'prior' ? { status: 'cancelled' } : undefined);
+  assert.equal(failedRunSlotCleanup({ current_run_id: 'me' }, 'me', liveOwner), 'reset');
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'me', handoff_run_id: 'me' }, 'me', liveOwner),
+    'reset',
+  );
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'me', handoff_run_id: 'incoming' }, 'me', liveOwner),
+    'release-keep-handoff',
+  );
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'prior', handoff_run_id: 'me' }, 'me', liveOwner),
+    'clear-reservation',
+  );
+  // The reservation holder is the sanctioned successor: a dead, unknown, or
+  // absent owner means nobody else will tear the slot down.
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'prior', handoff_run_id: 'me' }, 'me', deadOwner),
+    'reset',
+  );
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'vanished', handoff_run_id: 'me' }, 'me', liveOwner),
+    'reset',
+  );
+  assert.equal(failedRunSlotCleanup({ handoff_run_id: 'me' }, 'me', liveOwner), 'reset');
+  assert.equal(failedRunSlotCleanup({ current_run_id: 'prior' }, 'me', liveOwner), 'none');
+  assert.equal(failedRunSlotCleanup({}, 'me', liveOwner), 'none');
 });

@@ -81,7 +81,13 @@ export async function executeCIWatchStep(
     try {
       const noopEmit = () => {};
       await slotRelease(
-        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        {
+          slotId: current.slotId,
+          keepWork: true,
+          keepWarm: true,
+          detachRuns: false,
+          expectedRunId: current.id,
+        },
         noopEmit,
       );
     } catch (err) {
@@ -113,7 +119,13 @@ export async function executeCIWatchStep(
     try {
       const noopEmit = () => {};
       await slotRelease(
-        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        {
+          slotId: current.slotId,
+          keepWork: true,
+          keepWarm: true,
+          detachRuns: false,
+          expectedRunId: current.id,
+        },
         noopEmit,
       );
     } catch (err) {
@@ -145,7 +157,13 @@ export async function executeCIWatchStep(
     try {
       const noopEmit = () => {};
       await slotRelease(
-        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        {
+          slotId: current.slotId,
+          keepWork: true,
+          keepWarm: true,
+          detachRuns: false,
+          expectedRunId: current.id,
+        },
         noopEmit,
       );
     } catch (err) {
@@ -183,7 +201,13 @@ export async function executeCIWatchStep(
     try {
       const noopEmit = () => {};
       await slotRelease(
-        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        {
+          slotId: current.slotId,
+          keepWork: true,
+          keepWarm: true,
+          detachRuns: false,
+          expectedRunId: current.id,
+        },
         noopEmit,
       );
     } catch (err) {
@@ -229,7 +253,13 @@ export async function executeCIWatchStep(
     try {
       const noopEmit = () => {};
       await slotRelease(
-        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        {
+          slotId: current.slotId,
+          keepWork: true,
+          keepWarm: true,
+          detachRuns: false,
+          expectedRunId: current.id,
+        },
         noopEmit,
       );
     } catch (err) {
@@ -373,7 +403,13 @@ export async function executeCIWatchStep(
     try {
       const noopEmit = () => {};
       await slotRelease(
-        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        {
+          slotId: current.slotId,
+          keepWork: true,
+          keepWarm: true,
+          detachRuns: false,
+          expectedRunId: current.id,
+        },
         noopEmit,
       );
     } catch (err) {

@@ -5,7 +5,7 @@ import { PipelineSteps } from '@farmslot/protocol';
 
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
-import { releaseOwnershipIntact, slotRelease } from './release.js';
+import { slotRelease } from './release.js';
 
 // These tests resolve the committed demo pool's slots (demo-work-1), which the
 // loaders hide unless explicitly opted in.
@@ -123,14 +123,129 @@ test('slotRelease rejects post-approval gate-held runs until FINALIZE completes'
   );
 });
 
-test('releaseOwnershipIntact only allows teardown while the entry owner still holds the slot', () => {
-  // Unchanged owner (or an unclaimed slot released as unclaimed) may proceed.
-  assert.equal(releaseOwnershipIntact({ current_run_id: 'run-a' }, 'run-a'), true);
-  assert.equal(releaseOwnershipIntact({}, null), true);
-  // A rival claim landing after release entry owns the slot now: killing its
-  // session and resetting its claim would leave a zombie worker.
-  assert.equal(releaseOwnershipIntact({ current_run_id: 'run-b' }, 'run-a'), false);
-  assert.equal(releaseOwnershipIntact({ current_run_id: 'run-b' }, null), false);
-  // Owner vanished (already released elsewhere): nothing to protect.
-  assert.equal(releaseOwnershipIntact({}, 'run-a'), false);
+test('slotRelease with expectedRunId leaves a slot held by a different run untouched', async (t) => {
+  const slotId = 'demo-work-1';
+  const rival = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-owner-binding`,
+    slotId,
+  });
+  t.after(() => cleanupRun(rival.id));
+  // Self-contained slot row: CI status files have no demo rows, and the
+  // status helpers no-op on missing slots.
+  const { readFile, rm, writeFile } = await import('node:fs/promises');
+  const { statusFile } = await import('../../core/state.js');
+  const { readSlotField } = await import('../../core/index.js');
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const data = priorStatus ? JSON.parse(priorStatus) : { slots: [] };
+  const others = (data.slots ?? []).filter((row: { slot: string }) => row.slot !== slotId);
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      {
+        ...data,
+        slots: [
+          ...others,
+          { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: rival.id },
+        ],
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  t.after(async () => {
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+  });
+
+  const result = await slotRelease({ slotId, expectedRunId: 'some-other-run' }, noopEmit);
+
+  assert.deepEqual(result, { released: false });
+  assert.equal(await readSlotField(slotId, 'current_run_id'), rival.id, 'claim untouched');
+});
+
+test('slotRelease bound to the owner still refuses a slot already mid-release', async (t) => {
+  const slotId = 'demo-work-1';
+  const owner = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-releasing-fence`,
+    slotId,
+  });
+  t.after(() => cleanupRun(owner.id));
+  const { readFile, rm, writeFile } = await import('node:fs/promises');
+  const { statusFile } = await import('../../core/state.js');
+  const { readSlotField } = await import('../../core/index.js');
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const data = priorStatus ? JSON.parse(priorStatus) : { slots: [] };
+  const others = (data.slots ?? []).filter((row: { slot: string }) => row.slot !== slotId);
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      {
+        ...data,
+        slots: [
+          ...others,
+          // An in-flight teardown owns this slot; a bound release joining at
+          // the same epoch would run a second destructive pass.
+          { slot: slotId, lifecycle: 'busy', phase: 'releasing', current_run_id: owner.id },
+        ],
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  t.after(async () => {
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+  });
+
+  const result = await slotRelease({ slotId, expectedRunId: owner.id }, noopEmit);
+
+  assert.deepEqual(result, { released: false });
+  assert.equal(await readSlotField(slotId, 'phase'), 'releasing', 'fence untouched');
+});
+
+test('concurrent slotRelease calls for one slot coalesce onto a single in-flight teardown', async (t) => {
+  const slotId = 'demo-work-1';
+  // Reuse the gate-held rejection path: both callers must observe the SAME
+  // teardown attempt (one underlying promise), not two parallel teardowns.
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-coalesce`,
+    slotId,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    steps: [
+      { name: PipelineSteps.COMPLETE, status: 'done', outputs: { slotDisposition: 'gate-held' } },
+    ],
+    decisions: [
+      {
+        id: 'decision-coalesce',
+        type: 'engine_human_gate',
+        title: 'Gate',
+        description: 'Review package',
+        actions: [],
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  });
+
+  const first = slotRelease({ slotId }, noopEmit);
+  const second = slotRelease({ slotId }, noopEmit);
+  const results = await Promise.allSettled([first, second]);
+  assert.equal(results[0].status, 'rejected');
+  assert.equal(results[1].status, 'rejected');
+  // Coalesced: both callers surfaced the SAME underlying failure.
+  assert.equal(
+    (results[0] as PromiseRejectedResult).reason,
+    (results[1] as PromiseRejectedResult).reason,
+  );
 });

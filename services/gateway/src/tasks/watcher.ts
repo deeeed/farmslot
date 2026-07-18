@@ -249,24 +249,43 @@ export async function watchSlot(
       taskFilePath: contextTaskPath,
       signalFilePath: contextSignalPath,
     };
-    if (existingWatch && !shouldRebindWatch(existingWatch, nextWatchIdentity)) {
+    // Fast path: identical live watch with no rebind in flight — nothing to
+    // do. With one in flight the live entry may be about to change, so the
+    // authoritative check happens inside the chained promise below.
+    if (
+      existingWatch &&
+      !pendingWatchKeys.has(key) &&
+      !shouldRebindWatch(existingWatch, nextWatchIdentity)
+    ) {
       continue;
     }
-    if (existingWatch) {
-      await unwatchKey(key);
-    } else {
-      const pendingWatch = pendingWatchKeys.get(key);
-      if (pendingWatch) {
-        await pendingWatch;
-        const pendingResult = activeWatches.get(key);
-        if (pendingResult && !shouldRebindWatch(pendingResult, nextWatchIdentity)) {
-          continue;
-        }
-        if (pendingResult) await unwatchKey(key);
-      }
-    }
 
+    const priorRebind = pendingWatchKeys.get(key);
     const startWatch: Promise<void> = (async () => {
+      // Per-key serialization: every rebind chains behind the in-flight one
+      // and re-reads the live entry only after it settles. Concurrent rebinds
+      // previously captured the same stale watch, overwrote each other's
+      // pending entry, and leaked the loser's watchers with no registry entry
+      // for unwatchSlot to find. Registering the chained promise in
+      // pendingWatchKeys (below) also keeps unwatchSlot's pending drain
+      // covering the WHOLE chain — including this rebind's stale-watch
+      // teardown — so the overlay clear cannot land in the
+      // teardown-vs-registration gap.
+      if (priorRebind) {
+        try {
+          await priorRebind;
+        } catch {
+          // The prior rebind's failure is reported at its own await site;
+          // this rebind only needs it settled before reading the map.
+        }
+      }
+      const staleWatch = activeWatches.get(key);
+      if (staleWatch && !shouldRebindWatch(staleWatch, nextWatchIdentity)) return;
+      if (staleWatch) {
+        // Raw teardown: this code IS the chained operation for this key —
+        // the chain-aware unwatchKey would await its own promise.
+        await closeWatchEntry(key, { expected: staleWatch });
+      }
       const sw: SlotWatch = {
         slotId,
         taskFilePath: contextTaskPath,
@@ -365,7 +384,10 @@ export async function watchContext(slotId: string, context: AgentContext): Promi
 
 // ─── Stop watching a slot ───
 
-export async function unwatchSlot(slotId: string): Promise<void> {
+export async function unwatchSlot(
+  slotId: string,
+  opts?: { expectedRunId?: string },
+): Promise<void> {
   // Drain pending watches first so they don't complete after unwatch
   for (const [key, pending] of pendingWatchKeys) {
     if (slotIdFromWatchKey(key) === slotId) {
@@ -378,22 +400,121 @@ export async function unwatchSlot(slotId: string): Promise<void> {
       }
     }
   }
-  const keys = [...activeWatches.keys()].filter((key) => slotIdFromWatchKey(key) === slotId);
-  for (const key of keys) {
-    await unwatchKey(key);
+  // Owner-scoped removal (see unwatchContext): a caller undoing only its own
+  // wiring must never strip watches a foreign run registered since. The owner
+  // scope is re-checked inside the chained teardown against the live entry —
+  // a SAME-run replacement landing mid-close is still torn down (all of that
+  // run's wiring goes); only a foreign run's replacement survives.
+  const targets = [...activeWatches.entries()].filter(
+    ([key, sw]) =>
+      slotIdFromWatchKey(key) === slotId &&
+      (!opts?.expectedRunId || sw.runId === opts.expectedRunId),
+  );
+  for (const [key, sw] of targets) {
+    await unwatchKey(key, { expected: sw, expectedRunId: opts?.expectedRunId });
   }
-  clearTaskProgressOverlay(slotId);
+  // Overlay decision from a POST-teardown recheck — a pre-teardown snapshot
+  // would miss watches registered while the closes above were awaited.
+  const anyRemaining = [...activeWatches.keys()].some((key) => slotIdFromWatchKey(key) === slotId);
+  if (!anyRemaining) {
+    clearTaskProgressOverlay(slotId);
+  }
   console.log(`[task-watcher] stopped watching ${slotId}`);
 }
 
-export async function unwatchContext(slotId: string, contextId: string): Promise<void> {
-  await unwatchKey(watchKey(slotId, contextId));
+export async function unwatchContext(
+  slotId: string,
+  contextId: string,
+  opts?: { expectedRunId?: string },
+): Promise<void> {
+  const key = watchKey(slotId, contextId);
+  if (opts?.expectedRunId) {
+    const sw = activeWatches.get(key);
+    // Context IDs are role-based and reused across runs: a foreign successor
+    // may have re-registered this key already, and removing its watch would
+    // strip the new owner's observability. The owner scope is authoritative
+    // and re-checked inside the chained teardown: a SAME-run replacement
+    // landing after this check is still torn down; a foreign run's survives.
+    if (sw && sw.runId !== opts.expectedRunId) {
+      console.log(
+        `[task-watcher] skip unwatch ${slotId}:${contextId} — watch now belongs to run ${sw.runId ?? 'unknown'}`,
+      );
+      return;
+    }
+    // The owner scope travels INTO the chained teardown: when the entry is
+    // temporarily absent mid-rebind, a pre-chain snapshot alone would chain
+    // behind the rebind and close the successor it registers.
+    await unwatchKey(key, { expected: sw ?? undefined, expectedRunId: opts.expectedRunId });
+  } else {
+    await unwatchKey(key);
+  }
   console.log(`[task-watcher] stopped watching ${slotId}:${contextId}`);
 }
 
-async function unwatchKey(key: string): Promise<void> {
+/**
+ * Chain-aware teardown for external callers: registers itself in
+ * pendingWatchKeys behind whatever operation is in flight, so a concurrent
+ * watchSlot can neither fast-path past a mid-close teardown (it would observe
+ * the still-active entry, skip registering, and end up with no watch once the
+ * delete lands) nor interleave its rebind with one. Code already running
+ * INSIDE a chained operation must call closeWatchEntry directly — chaining
+ * from within the chain would await itself.
+ */
+async function unwatchKey(key: string, opts?: UnwatchGuardOpts): Promise<void> {
+  const prior = pendingWatchKeys.get(key);
+  const teardown: Promise<void> = (async () => {
+    if (prior) {
+      try {
+        await prior;
+      } catch {
+        // The prior operation's failure is reported at its own await site;
+        // this teardown only needs it settled before touching the entry.
+      }
+    }
+    await closeWatchEntry(key, opts);
+  })();
+  pendingWatchKeys.set(key, teardown);
+  try {
+    await teardown;
+  } finally {
+    if (pendingWatchKeys.get(key) === teardown) pendingWatchKeys.delete(key);
+  }
+}
+
+interface UnwatchGuardOpts {
+  /**
+   * Exact entry the caller intends to tear down (identity guard). Consulted
+   * ONLY when no owner scope is given — see closeWatchEntry.
+   */
+  expected?: SlotWatch;
+  /**
+   * Owner scope, authoritative when present and re-checked HERE against the
+   * LIVE entry after any chained prior operation settled: the caller is
+   * undoing ALL wiring for that run, so a same-run replacement installed
+   * mid-chain must still be torn down; only a foreign run's entry survives.
+   */
+  expectedRunId?: string;
+}
+
+async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<void> {
   const sw = activeWatches.get(key);
   if (!sw) return;
+  if (opts?.expectedRunId) {
+    // Owner scope decides alone — letting the exact-entry guard veto here
+    // would skip a same-run replacement installed mid-chain and leave the
+    // losing run's wiring alive.
+    if (sw.runId !== opts.expectedRunId) {
+      console.log(
+        `[task-watcher] skip unwatch ${key} — watch now belongs to run ${sw.runId ?? 'unknown'}`,
+      );
+      return;
+    }
+  } else if (opts?.expected && sw !== opts.expected) {
+    // Identity guard for in-chain rebind cleanup: a successor may have
+    // replaced this key's entry — closing the CURRENT entry would tear down
+    // the successor's live watch.
+    return;
+  }
 
   if (sw.watcher) {
     await sw.watcher.close();
@@ -423,11 +544,15 @@ async function unwatchKey(key: string): Promise<void> {
     }
   }
 
-  const timer = debounceTimers.get(key);
-  if (timer) clearTimeout(timer);
-  debounceTimers.delete(key);
-
-  activeWatches.delete(key);
+  // Same identity guard after the awaited closes: only remove what THIS call
+  // actually tore down — a successor re-registered mid-close owns the current
+  // entry and timer.
+  if (activeWatches.get(key) === sw) {
+    const timer = debounceTimers.get(key);
+    if (timer) clearTimeout(timer);
+    debounceTimers.delete(key);
+    activeWatches.delete(key);
+  }
 }
 
 // ─── Handle remote agent fs.changed events ───

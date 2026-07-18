@@ -11,17 +11,18 @@ import {
 
 import { upsertAgentContext } from '../../agents/contexts.js';
 import {
+  claimSlotStatusIf,
   execLocal,
   execOnSlot,
   farmslotRoot,
   isLocal,
   loadProjectVars,
   loadSlotVars,
-  markSlotBusy,
   type RawProjectJson,
   readSlotField,
+  readSlotRow,
   resolveProjectTaskDirName,
-  updateSlotStatus,
+  SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
 import {
   firstWindowTarget,
@@ -38,10 +39,11 @@ import {
 } from '../../runners/registry.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
-import { unwatchContext, watchContext, watchSlot } from '../../tasks/watcher.js';
+import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
 import { ensureWorkerRoleTarget, waitForRunnerProcessExit } from './execute.js';
 import { verifyBranchAffinityNudgeStillEligible } from './preview.js';
+import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
 
@@ -161,7 +163,7 @@ export async function killWorkerOnSlot(slotId: string, runner: string): Promise<
 /**
  * Combined teardown for fresh-reuse: terminalize prior Run + hard-kill worker on slot.
  * Engine call sites (decision-card 'fresh' branch, FIND_SLOT freshReuse wizard-shortcut)
- * must call this BEFORE markSlotBusy('preparing') / before PREPARE runs, so that PREPARE
+ * must call this BEFORE the ordinary 'preparing' claim / before PREPARE runs, so that PREPARE
  * doesn't race the prior worker mutating the same git worktree.
  */
 export async function prepareSlotForFreshReuse(slotId: string, newRunId: string): Promise<void> {
@@ -390,17 +392,36 @@ export async function nudgeDispatch(
   // half-cleared slot state — a later same-family dispatch would see
   // current_run_id=<new-id> + family=null and trip evaluateSlotIdentityPolicy
   // as "different identity, block".
-  await updateSlotStatus(params.slotId, {
-    current_run_id: params.runId,
-    current_ticket_or_pr: params.ticketOrPr,
-    current_flow_type: flowType,
-    current_family_id: requestingRun.familyId ?? null,
-    current_lane: requestingRun.lane ?? null,
-    current_variant: requestingRun.variant ?? null,
-    task_id: taskFolderId,
-    task_file: `${workerTaskDir}/TASK.md`,
-    dispatched_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-  });
+  const nudgeClaim = await claimSlotStatusIf(
+    params.slotId,
+    // The final handoff claim must be the reservation holder — both nudge
+    // entry paths (decision-card and wizard) reserve at FIND_SLOT, so an
+    // absent reservation means it was cleared by a failure path or rival.
+    (slot) => slotClaimBlockedByRelease(slot) === null && slot.handoff_run_id === params.runId,
+    {
+      // Working state is part of the SAME claim write: a separate follow-up
+      // markSlotBusy would overwrite a release marker that landed in between
+      // without bumping the epoch, letting that release kill the new owner.
+      lifecycle: 'busy',
+      phase: 'working',
+      agent: 'working',
+      handoff_run_id: null,
+      current_run_id: params.runId,
+      current_ticket_or_pr: params.ticketOrPr,
+      current_flow_type: flowType,
+      current_family_id: requestingRun.familyId ?? null,
+      current_lane: requestingRun.lane ?? null,
+      current_variant: requestingRun.variant ?? null,
+      task_id: taskFolderId,
+      task_file: `${workerTaskDir}/TASK.md`,
+      dispatched_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    },
+  );
+  if (!nudgeClaim.claimed) {
+    throw Object.assign(new Error(`Slot ${params.slotId} is mid-release; nudge cannot claim it`), {
+      code: SLOT_CLAIM_REFUSED_CODE,
+    });
+  }
 
   // STEP D: register the new run's agent context under the actual targeted role + bump nudge
   // count. We register under `workerRole` (the existing worker's role) rather than the new
@@ -416,7 +437,6 @@ export async function nudgeDispatch(
     target: primaryTarget,
     nudgeCount: priorNudgeCount + 1,
   });
-  await markSlotBusy(params.slotId, 'working', 'working');
   step(
     'nudge',
     `Worker nudged on ${workerTarget} (role=${workerRole}, nudgeCount=${priorNudgeCount + 1})`,
@@ -430,6 +450,31 @@ export async function nudgeDispatch(
     await watchContext(params.slotId, workingContext);
   } else {
     await watchSlot(params.slotId);
+  }
+
+  // A release that lands after the final claim has already torn the slot down
+  // (or is mid-teardown behind its releasing marker) and removed its watchers
+  // — a watcher wired after that would leak against a slot the registry says
+  // is free, and dispatch.done would report a successful nudge onto a dead
+  // worker. Re-verify from ONE row snapshot (owner may be retained while the
+  // releasing marker is up, so checking current_run_id alone misses an
+  // in-flight teardown) and undo only THIS run's wiring on loss — context
+  // keys are role-based and reused, so an unscoped unwatch could strip a
+  // successor's watch.
+  const rowAfterWatch = await readSlotRow(params.slotId);
+  const stillOwned =
+    rowAfterWatch != null &&
+    rowAfterWatch.current_run_id === params.runId &&
+    rowAfterWatch.phase !== SLOT_PHASE_RELEASING;
+  if (!stillOwned) {
+    if (workingContext) {
+      await unwatchContext(params.slotId, workingContext.id, { expectedRunId: params.runId });
+    } else {
+      await unwatchSlot(params.slotId, { expectedRunId: params.runId });
+    }
+    throw new Error(
+      `Slot ${params.slotId} was released while the nudge was completing; run ${params.runId} no longer owns it`,
+    );
   }
 
   emit('dispatch.done', { slotId: params.slotId, taskId: taskFolderId, runner });

@@ -9,6 +9,7 @@ import { markGhostSlots } from '../fleet/state.js';
 import { isFreeSlot } from './dispatch/slot-scoring.js';
 import { makeRun } from './run/test-fixtures.js';
 import {
+  buildRefreshSlotRow,
   fleetStaleThresholdMs,
   fleetStatus,
   type FleetStatusDeps,
@@ -18,6 +19,8 @@ import {
 
 function makeRefreshRow(overrides: Record<string, unknown> = {}) {
   return {
+    slot_epoch: 0,
+    handoff_run_id: null,
     slot: 'macwork-mm-4',
     machine: 'macwork',
     platform: 'ios',
@@ -466,4 +469,64 @@ test('resolveSlot failures teach the escape with a structured userAction', async
       return true;
     },
   );
+});
+
+test('reconcileRefreshSlotRowWithActiveRun preserves a releasing fence over the active run phase', () => {
+  const row = makeRefreshRow({
+    lifecycle: 'busy',
+    phase: 'releasing',
+    current_run_id: 'teardown-owner',
+  });
+  const reconciled = reconcileRefreshSlotRowWithActiveRun(row, {
+    id: 'active-run',
+    status: 'monitoring',
+    flowType: 'fix-bug',
+  } as never);
+  assert.equal(reconciled.phase, 'releasing', 'fence preserved');
+  assert.equal(reconciled.current_run_id, 'teardown-owner', 'owner untouched');
+  assert.equal(reconciled.dispatchable, false);
+});
+
+test('reconcileRefreshSlotRowWithActiveRun does not resurrect a cleanly released row', () => {
+  const row = makeRefreshRow({ lifecycle: 'ready', phase: null, current_run_id: null });
+  const reconciled = reconcileRefreshSlotRowWithActiveRun(row, {
+    id: 'ci-watcher',
+    status: 'ci-watching',
+    flowType: 'fix-bug',
+    steps: [],
+    decisions: [],
+    metrics: {},
+  } as never);
+  assert.equal(reconciled.current_run_id, null, 'released slot stays free');
+  assert.equal(reconciled.lifecycle, 'ready');
+});
+
+test('buildRefreshSlotRow carries the handoff reservation and epoch through a refresh', () => {
+  const probe = {
+    slot: 'macwork-mm-4',
+    machine: 'macwork',
+    platform: 'ios',
+    project: 'metamask-mobile-farm',
+    ssh: 'LOCAL',
+    dev: 'sim:OK',
+    devserver: 'OK',
+    device: 'mm-4',
+    cdp: 'OFF',
+    fixtures: '7/10',
+    branch: 'feat-branch',
+    agent: 'working',
+    enabled: true,
+    mode: 'dispatch',
+    dispatchable: false,
+  };
+  const row = buildRefreshSlotRow(probe, {
+    lifecycle: 'busy',
+    phase: 'working',
+    current_run_id: 'prior-owner',
+    slot_epoch: 4,
+    handoff_run_id: 'incoming-run',
+  });
+  assert.equal(row.handoff_run_id, 'incoming-run', 'reservation survives refresh');
+  assert.equal(row.slot_epoch, 4, 'epoch survives refresh');
+  assert.equal(row.current_run_id, 'prior-owner', 'ownership survives refresh');
 });

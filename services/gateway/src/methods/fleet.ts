@@ -1,8 +1,8 @@
 // methods/fleet.ts — fleet.status, fleet.refresh (native TS)
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
@@ -19,7 +19,6 @@ import {
   execOnSlot,
   expandHook,
   expandPlatformField,
-  farmslotRoot,
   getProjectField,
   isIgnoredPoolFile,
   isLocal,
@@ -31,6 +30,8 @@ import {
   type RawProjectJson,
   readSlotField,
   renderFixtureTemplate,
+  rewriteStatusFile,
+  SLOT_PHASE_RELEASING,
   type SlotVars,
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
@@ -41,7 +42,6 @@ import { listRuns } from '../runs/store.js';
 
 import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
 
-const statusFile = path.join(farmslotRoot, '.farm-status.json');
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
@@ -140,6 +140,8 @@ interface PreviousSlotStatus {
   completed_at?: string | null;
   runner?: string | null;
   model?: string | null;
+  slot_epoch?: unknown;
+  handoff_run_id?: unknown;
 }
 
 type RefreshSlotRow = ReturnType<typeof buildRefreshSlotRow>;
@@ -217,7 +219,24 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
   activeRun: Run | null,
 ): T {
   if (!activeRun) return row;
+  // A releasing fence belongs to an in-flight teardown: overwriting it with
+  // the active run's phase would reopen the slot mid-destruction. Preserve
+  // the fence; the teardown's own CAS finalize decides what comes next.
+  if (row.phase === SLOT_PHASE_RELEASING) {
+    return { ...row, dispatchable: false };
+  }
   const activeState = activeSlotPhaseForRun(activeRun);
+  // A ci-watching run has intentionally RELEASED its slot (all ci-watch and
+  // finalize paths free it while the run keeps watching CI), so a cleanly
+  // released row (ready, unowned) must not be resurrected to held/ci-watch —
+  // that would undo the release the moment a refresh ran. Working and
+  // gate-held runs keep the recovery behavior: a probe that lost ownership
+  // is restored from the run store. Trade-off: a refresh after a LOST status
+  // file cannot restore a ci-watch hold; the pr-complete chain re-selects a
+  // slot instead.
+  if (row.lifecycle === 'ready' && !row.current_run_id && activeState.phase === 'ci-watch') {
+    return row;
+  }
   return {
     ...row,
     lifecycle: activeState.lifecycle,
@@ -275,38 +294,34 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
   // 4. Check each slot (local in parallel, respecting machine grouping)
   const results = await checkAllSlots(slotEntries, sshStatus);
 
-  // 5. Load previous status to preserve lifecycle fields
-  const prevSlots: Record<string, PreviousSlotStatus> = {};
-  if (existsSync(statusFile)) {
-    try {
-      const prev = JSON.parse(await readFile(statusFile, 'utf-8'));
-      for (const s of prev.slots ?? []) {
-        prevSlots[s.slot] = s;
-      }
-    } catch {
-      /* ignore corrupt file */
-    }
-  }
-
-  // 6. Build final JSON and write
+  // 5+6. Merge with the CURRENT status and write — all inside the shared
+  // write chain. The slow slot probes above run outside it, but the previous
+  // lifecycle/ownership fields are read at write time: a snapshot taken
+  // before entering the chain would drop any claim (owner + epoch) that
+  // landed while the probes ran.
   const checkedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-  const activeRuns = listRuns({ active: true }).runs;
-  const slots = results.map((r) =>
-    reconcileRefreshSlotRowWithActiveRun(
-      buildRefreshSlotRow(r, prevSlots[r.slot] ?? {}),
-      newestActiveRunForSlot(activeRuns, r.slot),
-    ),
-  );
-
-  const tmpFile = `${statusFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmpFile, JSON.stringify({ checked_at: checkedAt, slots }, null, 2) + '\n');
-  await rename(tmpFile, statusFile);
+  await rewriteStatusFile((current) => {
+    // Sampled INSIDE the chain: a run finishing (or a slot releasing) while
+    // the slow probes ran must be seen by the reconcile below.
+    const activeRuns = listRuns({ active: true }).runs;
+    const prevSlots: Record<string, PreviousSlotStatus> = {};
+    for (const row of current?.slots ?? []) {
+      prevSlots[String(row.slot)] = row as PreviousSlotStatus;
+    }
+    const slots = results.map((r) =>
+      reconcileRefreshSlotRowWithActiveRun(
+        buildRefreshSlotRow(r, prevSlots[r.slot] ?? {}),
+        newestActiveRunForSlot(activeRuns, r.slot),
+      ),
+    );
+    return { checked_at: checkedAt, slots };
+  });
 
   const fleet = await loadFleetStatus(true);
   return { fleet };
 }
 
-function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
+export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
   // Map pool mode + old lifecycle values to new 5-state model.
   let lifecycle: string;
   let phase: string | null = (prev.phase as string | null) ?? null;
@@ -385,6 +400,10 @@ function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
     lifecycle,
     phase,
     warm,
+    // Ownership epoch is a lifecycle-protocol token: dropping it on refresh
+    // would let a stale teardown's epoch guard pass again.
+    slot_epoch: Number(prev.slot_epoch) || 0,
+    handoff_run_id: prev.handoff_run_id ?? null,
     task_id: prev.task_id ?? null,
     task_file: prev.task_file ?? null,
     current_run_id: prev.current_run_id ?? null,

@@ -107,6 +107,113 @@ export async function updateSlotStatusIf(
   return applied;
 }
 
+/**
+ * Claim-type slot write: atomically applies `fields` when `predicate` passes
+ * and bumps the slot ownership epoch in the same serialized write. The epoch
+ * is the coordination token between claimers and teardowns — a teardown
+ * captures it at entry and guards its later writes on it, so a successful
+ * rival claim aborts the remainder of an in-flight teardown instead of being
+ * clobbered by it. Returns the new epoch on success.
+ */
+export async function claimSlotStatusIf(
+  slotId: string,
+  predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+  fields: Record<string, unknown>,
+): Promise<{ claimed: boolean; epoch: number | null }> {
+  let claimed = false;
+  let epoch: number | null = null;
+  const next = writeChain.then(async () => {
+    if (!existsSync(statusFile)) return;
+    const content = await readFile(statusFile, 'utf-8');
+    const data = JSON.parse(content);
+    const slots: Array<Record<string, unknown>> = data.slots ?? [];
+    const slot = slots.find((s) => s.slot === slotId);
+    if (!slot) return;
+    if (!predicate(slot)) return;
+    const nextEpoch = (Number(slot.slot_epoch) || 0) + 1;
+    for (const [key, value] of Object.entries(fields)) {
+      slot[key] = value;
+    }
+    slot.slot_epoch = nextEpoch;
+    await atomicWriteStatus(data);
+    triggerSlotUpdateHook();
+    claimed = true;
+    epoch = nextEpoch;
+  });
+  writeChain = next.catch(() => {});
+  await next;
+  return { claimed, epoch };
+}
+
+/**
+ * Teardown-entry CAS: atomically validates `predicate`, applies `fields`, and
+ * returns the slot's CURRENT ownership epoch (no bump — only claims bump).
+ * Release uses this so owner validation, the releasing marker, and epoch
+ * capture happen in ONE serialized write: an owner sampled before unrelated
+ * awaits can never be silently replaced by a rival claim's.
+ */
+export async function markSlotStatusIf(
+  slotId: string,
+  predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+  fields: Record<string, unknown>,
+): Promise<{ applied: boolean; epoch: number | null }> {
+  let applied = false;
+  let epoch: number | null = null;
+  const next = writeChain.then(async () => {
+    if (!existsSync(statusFile)) return;
+    const content = await readFile(statusFile, 'utf-8');
+    const data = JSON.parse(content);
+    const slots: Array<Record<string, unknown>> = data.slots ?? [];
+    const slot = slots.find((s) => s.slot === slotId);
+    if (!slot) return;
+    if (!predicate(slot)) return;
+    for (const [key, value] of Object.entries(fields)) {
+      slot[key] = value;
+    }
+    await atomicWriteStatus(data);
+    triggerSlotUpdateHook();
+    applied = true;
+    epoch = Number(slot.slot_epoch) || 0;
+  });
+  writeChain = next.catch(() => {});
+  await next;
+  return { applied, epoch };
+}
+
+/**
+ * Full status-file rewrite routed through the same write chain as every other
+ * slot write, with the builder receiving the CURRENT file content inside the
+ * chain — a snapshot taken before entering the chain would silently drop any
+ * claim (owner + epoch bump) that landed in between.
+ */
+export async function rewriteStatusFile(
+  builder: (current: { slots?: Array<Record<string, unknown>> } | null) => unknown,
+): Promise<void> {
+  const next = writeChain.then(async () => {
+    let current: { slots?: Array<Record<string, unknown>> } | null = null;
+    if (existsSync(statusFile)) {
+      try {
+        const parsed = JSON.parse(await readFile(statusFile, 'utf-8'));
+        // Malformed-but-parseable shapes (slots as an object, null rows) must
+        // not crash the rebuild that would repair them — normalize to a clean
+        // row array or regenerate from live checks via null.
+        const slots = Array.isArray(parsed?.slots)
+          ? parsed.slots.filter((row: unknown) => row && typeof row === 'object')
+          : null;
+        current = slots ? { ...parsed, slots } : null;
+      } catch {
+        // A corrupt status file must not block the rebuild that repairs it —
+        // the builder receives null and regenerates from live checks.
+        current = null;
+      }
+    }
+    await atomicWriteStatus(builder(current));
+    triggerSlotUpdateHook();
+  });
+  writeChain = next.catch(() => {});
+  await next;
+}
+
 // ─── readSlotField ───
 // Read a single field from a slot in .farm-status.json.
 
@@ -126,7 +233,120 @@ export async function readSlotField(slotId: string, field: string): Promise<unkn
 // See docs/adr/022-slot-lifecycle-simplification.md for valid states.
 
 type BusyPhase = 'preparing' | 'dispatching' | 'working' | 'releasing' | 'review-gate';
+
+/**
+ * Coordination token shared by the slot lifecycle protocol: release marks
+ * this phase BEFORE any teardown side effect, and every claim-type writer
+ * refuses a slot carrying it. Centralized so the writers cannot drift.
+ */
+export const SLOT_PHASE_RELEASING: BusyPhase = 'releasing';
 type HeldPhase = 'ci-watch' | 'pr-watch';
+
+function slotResetFields(warm: boolean): Record<string, unknown> {
+  return {
+    lifecycle: 'ready',
+    phase: null,
+    agent: 'idle',
+    warm,
+    current_run_id: null,
+    current_flow_type: null,
+    current_ticket_or_pr: null,
+    current_mode: null,
+    current_family_id: null,
+    current_lane: null,
+    current_variant: null,
+    agent_contexts: null,
+    handoff_run_id: null,
+  };
+}
+
+/**
+ * CAS'd variant of resetSlot for teardowns: applies the ready/idle reset only
+ * while `predicate` still holds (release guards on its entry epoch), so a
+ * rival claim landing mid-teardown is never clobbered by the final reset.
+ * Listeners fire only when the reset was actually applied.
+ */
+export async function resetSlotIf(
+  slotId: string,
+  predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+  warm = false,
+): Promise<boolean> {
+  const applied = await updateSlotStatusIf(slotId, predicate, slotResetFields(warm));
+  if (applied) {
+    for (const listener of slotResetListeners) listener(slotId);
+  }
+  return applied;
+}
+
+/**
+ * Ownership-release fields for a terminal run whose slot carries a pending
+ * foreign handoff reservation: the full ready/idle reset EXCEPT
+ * `handoff_run_id`, which stays so the reserved run's final claim still
+ * succeeds after its delivery landed.
+ */
+export function slotOwnershipReleaseFields(): Record<string, unknown> {
+  const fields = { ...slotResetFields(false) };
+  delete fields.handoff_run_id;
+  return fields;
+}
+
+/**
+ * Single-snapshot row read: both fields of a multi-field check come from ONE
+ * file read, so a writer landing between two readSlotField calls cannot show
+ * a torn view (e.g. stale owner + fresh phase).
+ */
+export async function readSlotRow(
+  slotId: string,
+): Promise<Readonly<Record<string, unknown>> | null> {
+  if (!existsSync(statusFile)) return null;
+  const content = await readFile(statusFile, 'utf-8');
+  const data = JSON.parse(content);
+  const slots: Array<Record<string, unknown>> = data.slots ?? [];
+  return slots.find((s) => s.slot === slotId) ?? null;
+}
+
+/**
+ * Compute-and-apply slot transition in ONE serialized write: `decide` runs
+ * INSIDE the write chain against the current row, so classification and the
+ * matching write cannot be split by a rival write landing between them (the
+ * flaw in running one CAS attempt per possible plan). Mark-type: never bumps
+ * the epoch. Fires reset listeners when the applied transition declares it
+ * ends ownership (a dying owner's reviewer sessions must still end).
+ */
+export async function transitionSlotStatus(
+  slotId: string,
+  decide: (
+    slot: Readonly<Record<string, unknown>>,
+  ) => { fields: Record<string, unknown>; endsOwnership?: boolean } | null,
+): Promise<{ applied: boolean; epoch: number | null }> {
+  let applied = false;
+  let epoch: number | null = null;
+  let endedOwnership = false;
+  const next = writeChain.then(async () => {
+    if (!existsSync(statusFile)) return;
+    const content = await readFile(statusFile, 'utf-8');
+    const data = JSON.parse(content);
+    const slots: Array<Record<string, unknown>> = data.slots ?? [];
+    const slot = slots.find((s) => s.slot === slotId);
+    if (!slot) return;
+    const decision = decide(slot);
+    if (!decision) return;
+    for (const [key, value] of Object.entries(decision.fields)) {
+      slot[key] = value;
+    }
+    await atomicWriteStatus(data);
+    triggerSlotUpdateHook();
+    applied = true;
+    epoch = Number(slot.slot_epoch) || 0;
+    endedOwnership = decision.endsOwnership === true;
+  });
+  writeChain = next.catch(() => {});
+  await next;
+  if (applied && endedOwnership) {
+    for (const listener of slotResetListeners) listener(slotId);
+  }
+  return { applied, epoch };
+}
 
 export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // Lifecycle reset DOES NOT shut down resources. Release flips the slot
@@ -143,20 +363,7 @@ export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // registration (see initSelfReview) keeps core/ free of upward imports.
   for (const listener of slotResetListeners) listener(slotId);
 
-  await updateSlotStatus(slotId, {
-    lifecycle: 'ready',
-    phase: null,
-    agent: 'idle',
-    warm,
-    current_run_id: null,
-    current_flow_type: null,
-    current_ticket_or_pr: null,
-    current_mode: null,
-    current_family_id: null,
-    current_lane: null,
-    current_variant: null,
-    agent_contexts: null,
-  });
+  await updateSlotStatus(slotId, slotResetFields(warm));
 }
 
 export async function markSlotBusy(

@@ -3,12 +3,16 @@ import {
   isCdpLiveValue,
   isDispatchScoreStale,
   isSlotRefreshStaleBranch,
+  type RunStatus,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
   type SlotStatus,
   type SlotTrackingProjectConfig,
+  TERMINAL_RUN_STATUSES,
 } from '@farmslot/protocol';
 
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
+
+import { SLOT_PHASE_RELEASING } from '../../core/index.js';
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 
@@ -333,5 +337,88 @@ export function buildSlotClaimStatus(params: {
  * claim may proceed.
  */
 export function slotClaimBlockedByRelease(slot: Readonly<Record<string, unknown>>): string | null {
-  return slot.phase === 'releasing' ? 'slot is mid-release' : null;
+  return slot.phase === SLOT_PHASE_RELEASING ? 'slot is mid-release' : null;
+}
+
+/**
+ * Claim exclusivity: an existing owner blocks the claim unless it is the
+ * claiming run itself, or a run that no longer exists / has gone terminal.
+ * Shared by find-slot selection and the ci-watch replay reclaim so the rule
+ * cannot drift between writers.
+ */
+export function slotClaimBlockedByLiveOwner(
+  slot: Readonly<Record<string, unknown>>,
+  runId: string,
+  ownerRunLookup: (id: string) => { status: string } | undefined,
+): string | null {
+  const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
+  if (!owner || owner === runId) return null;
+  const ownerRun = ownerRunLookup(owner);
+  if (!ownerRun || TERMINAL_RUN_STATUSES.includes(ownerRun.status as RunStatus)) return null;
+  return `slot is claimed by live run ${owner}`;
+}
+
+/**
+ * What a terminal (failed/blocked) run may do to its slot: full reset only
+ * when it owns the slot AND no other run holds a handoff reservation; an
+ * owner with a pending foreign reservation releases ownership but keeps the
+ * reservation (the incoming nudge's delivery is mid-flight — clearing it
+ * would strand that run after its prompt already landed); a run that merely
+ * held a reservation clears just that reservation (the prior owner's worker
+ * is still running and must not be marked ready); a run named nowhere on the
+ * slot touches nothing.
+ */
+export function failedRunSlotCleanup(
+  slot: Readonly<Record<string, unknown>>,
+  runId: string,
+  ownerRunLookup: (id: string) => { status: string } | undefined,
+): 'reset' | 'release-keep-handoff' | 'clear-reservation' | 'none' {
+  const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
+  const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
+  if (owner === runId) {
+    return reserved && reserved !== runId ? 'release-keep-handoff' : 'reset';
+  }
+  if (reserved === runId) {
+    // The reservation holder is the sanctioned successor: when the recorded
+    // owner is missing or terminal (fresh reuse terminalizes it before the
+    // teardown that then failed), nobody else will ever tear this slot down —
+    // a bare reservation clear would strand it busy under a dead owner, or
+    // leak the preserved worker on an unowned row. Only a LIVE owner keeps
+    // the slot, in which case just the reservation is cleared.
+    const ownerRun = owner ? ownerRunLookup(owner) : undefined;
+    const ownerLive =
+      ownerRun != null && !TERMINAL_RUN_STATUSES.includes(ownerRun.status as RunStatus);
+    return ownerLive ? 'clear-reservation' : 'reset';
+  }
+  return 'none';
+}
+
+/**
+ * Handoff reservation: an operator-approved nudge takeover reserves the slot
+ * for exactly one incoming run across the delivery window (ownership stays
+ * with the prior run until nudgeDispatch's post-delivery handoff). Any other
+ * claim — including a second takeover — must refuse a foreign reservation,
+ * or two nudges could deliver to the same worker and split-brain it.
+ */
+export function slotClaimBlockedByHandoff(
+  slot: Readonly<Record<string, unknown>>,
+  runId: string,
+): string | null {
+  const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
+  if (!reserved || reserved === runId) return null;
+  return `slot is reserved for handoff to run ${reserved}`;
+}
+
+/**
+ * Error code carried by refused slot claims — the thrower never owned the
+ * slot, so failure handling must not reset it.
+ */
+export const SLOT_CLAIM_REFUSED_CODE = 'SLOT_CLAIM_REFUSED';
+
+export function isSlotClaimRefusedError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === SLOT_CLAIM_REFUSED_CODE
+  );
 }

@@ -141,6 +141,14 @@ export interface SlotPrepareResult {
 
 export interface SlotReleaseParams {
   slotId: string;
+  /**
+   * Owner binding: when set, the release proceeds only while this run still
+   * holds the slot's claim. Prevents a teardown initiated for one run from
+   * destroying a rival run's fresh claim (previously the owner was sampled
+   * after several awaits, so a claim landing first became the "expected"
+   * owner and was torn down).
+   */
+  expectedRunId?: string;
   keepWarm?: boolean;
   keepWork?: boolean;
   skipArtifacts?: boolean;

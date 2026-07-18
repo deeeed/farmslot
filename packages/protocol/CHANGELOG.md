@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: `SlotReleaseParams.expectedRunId` — optional owner binding for slot release: when set, the teardown proceeds only while that run still holds the slot's claim, so a release initiated for one run can never destroy a rival run's fresh claim (additive; absent means the pre-existing unbound behavior).
+
 - feat: `AgentContext.attemptStartedAt` — launch time of the current attempt/pass, so restart recovery can tell a current-attempt signal from a prior loop's (startedAt survives warm reuse; updatedAt is rewritten by startup reconciliation).
 
 - feat: `TmuxWorkerAttentionReason` gains `'observability-degraded'` — surfaced when hook/statusline liveness lapses for an event-driven runner while the ADR-032 Phase 3A pane-retirement flag is on, so the operator is alerted before a nudge is attempted (additive; older readers ignore the new reason).

@@ -491,7 +491,7 @@ async function releaseInteractiveDevSlot(run: Run): Promise<string> {
   if (!run.slotId) return 'none';
   const { slotRelease } = await import('./slot.js');
   const noopEmit = () => {};
-  await slotRelease({ slotId: run.slotId, keepWork: true }, noopEmit);
+  await slotRelease({ slotId: run.slotId, keepWork: true, expectedRunId: run.id }, noopEmit);
   return 'released-keep-work';
 }
 
@@ -831,15 +831,36 @@ export async function runRehydratePrNumber(
   // clears family_id/lane/variant alongside current_run_id, so replaying
   // without them would break same-family reuse checks in dispatch.ts:480-483.
   if (slotStatus.currentRunId !== params.runId) {
-    const { updateSlotStatus } = await import('../core/index.js');
-    await updateSlotStatus(run.slotId, {
-      current_run_id: params.runId,
-      current_flow_type: run.flowType || null,
-      current_ticket_or_pr: run.ticketOrPr,
-      current_family_id: run.familyId ?? null,
-      current_lane: run.lane ?? null,
-      current_variant: run.variant ?? null,
-    });
+    const { claimSlotStatusIf } = await import('../core/index.js');
+    const {
+      SLOT_CLAIM_REFUSED_CODE,
+      slotClaimBlockedByHandoff,
+      slotClaimBlockedByRelease,
+      slotClaimBlockedByLiveOwner,
+    } = await import('./dispatch/slot-scoring.js');
+    const reclaim = await claimSlotStatusIf(
+      run.slotId,
+      // Exclusivity decided INSIDE the CAS — the fleet snapshot consulted
+      // above can be stale by the time this write runs.
+      (slot) =>
+        slotClaimBlockedByRelease(slot) === null &&
+        slotClaimBlockedByHandoff(slot, params.runId) === null &&
+        slotClaimBlockedByLiveOwner(slot, params.runId, getRun) === null,
+      {
+        current_run_id: params.runId,
+        current_flow_type: run.flowType || null,
+        current_ticket_or_pr: run.ticketOrPr,
+        current_family_id: run.familyId ?? null,
+        current_lane: run.lane ?? null,
+        current_variant: run.variant ?? null,
+      },
+    );
+    if (!reclaim.claimed) {
+      throw Object.assign(
+        new Error(`Slot ${run.slotId} is mid-release; ci-watch replay cannot reclaim it`),
+        { code: SLOT_CLAIM_REFUSED_CODE },
+      );
+    }
   }
   try {
     await runReplayStep({ runId: params.runId, stepName: 'ci-watch' }, emit);
