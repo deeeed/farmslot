@@ -73,6 +73,7 @@ import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
 
+import { clearLaunchInputWithSessionRecovery } from './launch-clear.js';
 import { buildDispatchRoleShellCommand, parseCapturedAgentPaneTarget } from './role-target.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
 import { buildSlotClaimStatus, evaluateSlotIdentityPolicy } from './slot-scoring.js';
@@ -1074,15 +1075,17 @@ export async function dispatchExecute(
       await new Promise((resolve) => setTimeout(resolve, ROLE_WINDOW_STARTUP_SETTLE_MS));
     };
     const sendPreludeClear = async (stage: string) => {
-      const result = await execOnSlot(
-        vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(workerTarget)} C-c C-u`),
-      );
-      if (result.exitCode !== 0) {
-        throw new Error(
-          `Failed to clear ${runner} launch input (${stage}) in ${workerTarget}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
-        );
-      }
+      // Self-healing: a parent run's slot release can race a chained
+      // follow-up dispatch and kill the session between prelude sends; a
+      // recreated target must also be used by the launch send below.
+      workerTarget = await clearLaunchInputWithSessionRecovery({
+        stage,
+        runner,
+        target: workerTarget,
+        session,
+        exec: (tmuxCommand) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
+        reensureTarget: () => ensureWorkerRoleTarget(vars, session, runner, workerRole),
+      });
     };
 
     if (usesRoleWindow) {
