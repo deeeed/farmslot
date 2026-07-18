@@ -210,6 +210,7 @@ export async function runReviewAgent(
     id: allocated.id,
     label: allocated.label,
     status: 'launching',
+    attemptStartedAt: startedAt,
     taskFile: taskDirRelPath(taskDir, reviewChecklistTarget.checklist),
     signalFile: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
     runner,

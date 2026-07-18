@@ -44,6 +44,13 @@ export interface AgentContext {
   /** Runner context-window usage percentage (0-100). See {@link AgentContextSummary.ctxPct}. */
   ctxPct?: number | null;
   startedAt?: string;
+  /**
+   * Launch time of the CURRENT attempt/pass. startedAt survives context reuse
+   * (warm reviewer loops keep loop 1's value) and updatedAt is rewritten by
+   * startup reconciliation — neither can anchor "did this signal come from the
+   * current attempt", which restart recovery needs.
+   */
+  attemptStartedAt?: string;
   updatedAt?: string;
   completedAt?: string;
   lastSignalAt?: string;

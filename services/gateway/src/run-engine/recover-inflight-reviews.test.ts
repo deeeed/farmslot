@@ -167,13 +167,13 @@ test('a failed or blocked reviewer never stamps a verdict, even with parseable P
   }
 });
 
-test('freshness anchors on the latest context mutation, defeating warm-context reuse', () => {
+test('freshness anchors on the current attempt launch, defeating warm-context reuse', () => {
   const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
-  // Warm-reused context: startedAt is loop 1's launch, updatedAt is loop 2's
-  // relaunch. A loop-1 signal written between them must be rejected.
+  // Warm-reused context: startedAt is loop 1's launch, attemptStartedAt is
+  // loop 2's. A loop-1 signal written between them must be rejected.
   const ctx = reviewerContext({
     startedAt: '2026-07-16T10:00:00.000Z',
-    updatedAt: '2026-07-16T11:00:00.000Z',
+    attemptStartedAt: '2026-07-16T11:00:00.000Z',
   });
   const staleLoop1Signal = terminalSignal({ timestamp: '2026-07-16T10:40:00.000Z' });
   assert.equal(
@@ -193,6 +193,30 @@ test('freshness anchors on the latest context mutation, defeating warm-context r
       run,
       ctx,
       signal: freshSignal,
+      feedback: { verdict: 'pass' as const, issues: [] },
+      reviewedPackage: undefined,
+    }),
+    null,
+  );
+});
+
+test('startup reconciliation rewriting updatedAt does not reject the genuine pre-restart signal', () => {
+  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  // Restart ordering: the reviewer signaled complete BEFORE the crash; startup
+  // reconciliation then rewrote updatedAt to the restart time BEFORE recovery
+  // ran. The signal predates updatedAt but postdates the attempt launch — it
+  // must still be ingested.
+  const ctx = reviewerContext({
+    startedAt: '2026-07-16T10:00:00.000Z',
+    attemptStartedAt: '2026-07-16T10:00:00.000Z',
+    updatedAt: '2026-07-16T12:00:00.000Z',
+  });
+  const preRestartSignal = terminalSignal({ timestamp: '2026-07-16T10:40:00.000Z' });
+  assert.notEqual(
+    buildRecoveredReview({
+      run,
+      ctx,
+      signal: preRestartSignal,
       feedback: { verdict: 'pass' as const, issues: [] },
       reviewedPackage: undefined,
     }),
