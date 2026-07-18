@@ -776,13 +776,18 @@ test('flows describe teaches recovery when the ref is unavailable', async () => 
     }
     const document = JSON.parse(lines.join('\n')) as {
       status: string;
+      exitCode: number;
       error: { code: string; userAction: string };
       availableFlows: string[];
     };
     assert.equal(process.exitCode, 1);
     assert.equal(document.status, 'error');
+    assert.equal(document.exitCode, 1);
     assert.equal(document.error.code, 'FLOW_NOT_FOUND');
-    assert.match(document.error.userAction, /project-recipe flows list --json/u);
+    assert.equal(
+      document.error.userAction,
+      `Run project-recipe flows list --library personal=${libraryRoot} --json to inspect 1 available flow(s).`,
+    );
     assert.deepEqual(document.availableFlows, ['lib.available']);
   } finally {
     process.exitCode = previousExitCode;

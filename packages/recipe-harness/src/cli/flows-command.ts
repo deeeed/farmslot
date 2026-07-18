@@ -102,7 +102,7 @@ export function registerFlowsCommand(program: Command): void {
           options.json,
           'FLOW_NOT_FOUND',
           `Flow ${ref} is not available from the configured recipe libraries.`,
-          `Run ${cliName} flows list${options.json ? ' --json' : ''} to inspect ${availableFlows.length} available flow(s).`,
+          `Run ${flowListCommand(resolution, cliName, options.json)} to inspect ${availableFlows.length} available flow(s).`,
           availableFlows,
         );
         return;
@@ -253,6 +253,7 @@ function describeFailure(
           schemaVersion: 1,
           command: 'flows describe',
           status: 'error',
+          exitCode: 1,
           error: { code, message, userAction },
           ...(availableFlows ? { availableFlows } : {}),
         },
@@ -400,6 +401,21 @@ function flowDescribeCommand(
     'flows',
     'describe',
     ref,
+    ...resolution.sources.flatMap((source) => ['--library', `${source.name}=${source.root}`]),
+    ...(json ? ['--json'] : []),
+  ];
+  return args.map(shellQuoteArg).join(' ');
+}
+
+function flowListCommand(
+  resolution: RecipeLibraryResolution,
+  cliName: string,
+  json = false,
+): string {
+  const args = [
+    cliName,
+    'flows',
+    'list',
     ...resolution.sources.flatMap((source) => ['--library', `${source.name}=${source.root}`]),
     ...(json ? ['--json'] : []),
   ];
