@@ -639,6 +639,7 @@ test('flows list prints library flows with source and precedence details', async
     const document = JSON.parse(lines.join('\n')) as {
       sources: Array<{ name: string }>;
       flows: Array<{ ref: string; source: string; description?: string }>;
+      nextCommand?: string;
     };
     assert.deepEqual(
       document.sources.map((source) => source.name),
@@ -647,6 +648,176 @@ test('flows list prints library flows with source and precedence details', async
     assert.equal(document.flows[0]?.ref, 'lib.write-text');
     assert.equal(document.flows[0]?.source, 'personal');
     assert.ok(document.flows[0]?.description?.includes('from-library.txt'));
+    assert.equal(
+      document.nextCommand,
+      `farmslot-recipe flows describe lib.write-text --library personal=${libraryRoot} --json`,
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('flows describe returns the resolved definition, provenance, parameters, and authored call node', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const personalRoot = path.join(tempRoot, 'personal');
+    const teamRoot = path.join(tempRoot, 'team');
+    const flow = {
+      description: 'Write a requested marker.',
+      paramsSchema: {
+        type: 'object',
+        required: ['marker'],
+        properties: {
+          marker: { type: 'string' },
+          suffix: { type: 'string', default: '.txt' },
+        },
+      },
+      workflow: {
+        entry: 'done',
+        nodes: { done: { action: 'end', status: 'pass' } },
+      },
+      examples: [
+        {
+          description: 'Write the demo marker',
+          node: {
+            action: 'call',
+            ref: 'lib.marker',
+            params: { marker: 'demo' },
+            intent: 'Write the demo marker',
+          },
+        },
+      ],
+    };
+    await createLibrary(personalRoot, { flows: { 'lib.marker': flow } });
+    await createLibrary(teamRoot, { flows: { 'lib.marker': flow } });
+
+    const originalLog = console.log;
+    const lines: string[] = [];
+    console.log = (...values: unknown[]) => {
+      lines.push(values.map((value) => String(value)).join(' '));
+    };
+    try {
+      await runRecipeHarnessCli([
+        'flows',
+        'describe',
+        'lib.marker',
+        '--library',
+        `personal=${personalRoot}`,
+        '--library',
+        `team=${teamRoot}`,
+        '--json',
+      ]);
+    } finally {
+      console.log = originalLog;
+    }
+
+    const document = JSON.parse(lines.join('\n')) as {
+      schemaVersion: number;
+      command: string;
+      status: string;
+      flow: {
+        ref: string;
+        source: string;
+        sourceRoot: string;
+        sourcePrecedence: number;
+        file: string;
+        path: string;
+        parameters: { required: string[]; defaults: Record<string, unknown> };
+        shadows: Array<{ name: string; root: string; precedence: number }>;
+        definition: Record<string, unknown>;
+        callNode: Record<string, unknown>;
+        callNodeSource: string;
+      };
+      nextCommand: string;
+    };
+    assert.equal(document.schemaVersion, 1);
+    assert.equal(document.command, 'flows describe');
+    assert.equal(document.status, 'pass');
+    assert.equal(document.flow.ref, 'lib.marker');
+    assert.equal(document.flow.source, 'personal');
+    assert.equal(document.flow.sourceRoot, personalRoot);
+    assert.equal(document.flow.sourcePrecedence, 1);
+    assert.equal(document.flow.path, path.join(personalRoot, document.flow.file));
+    assert.deepEqual(document.flow.parameters.required, ['marker']);
+    assert.deepEqual(document.flow.parameters.defaults, { suffix: '.txt' });
+    assert.deepEqual(document.flow.shadows, [{ name: 'team', root: teamRoot, precedence: 2 }]);
+    assert.deepEqual(document.flow.definition, flow);
+    assert.deepEqual(document.flow.callNode, flow.examples[0]?.node);
+    assert.equal(document.flow.callNodeSource, 'authored-example');
+    assert.equal(
+      document.nextCommand,
+      `farmslot-recipe flows describe lib.marker --library personal=${personalRoot} --library team=${teamRoot} --json`,
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('flows describe teaches recovery when the ref is unavailable', async () => {
+  const previousExitCode = process.exitCode;
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'personal');
+    await createLibrary(libraryRoot, {
+      flows: { 'lib.available': writeTextFlow('available.txt', 'available') },
+    });
+    const originalLog = console.log;
+    const lines: string[] = [];
+    console.log = (...values: unknown[]) => {
+      lines.push(values.map((value) => String(value)).join(' '));
+    };
+    try {
+      await runRecipeHarnessCli(
+        ['flows', 'describe', 'lib.missing', '--library', `personal=${libraryRoot}`, '--json'],
+        { commandName: 'project-recipe' },
+      );
+    } finally {
+      console.log = originalLog;
+    }
+    const document = JSON.parse(lines.join('\n')) as {
+      status: string;
+      error: { code: string; userAction: string };
+      availableFlows: string[];
+    };
+    assert.equal(process.exitCode, 1);
+    assert.equal(document.status, 'error');
+    assert.equal(document.error.code, 'FLOW_NOT_FOUND');
+    assert.match(document.error.userAction, /project-recipe flows list --json/u);
+    assert.deepEqual(document.availableFlows, ['lib.available']);
+  } finally {
+    process.exitCode = previousExitCode;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('flows describe labels a generated call node as a template', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'personal');
+    await createLibrary(libraryRoot, {
+      flows: { 'lib.available': writeTextFlow('available.txt', 'available') },
+    });
+    const originalLog = console.log;
+    const lines: string[] = [];
+    console.log = (...values: unknown[]) => {
+      lines.push(values.map((value) => String(value)).join(' '));
+    };
+    try {
+      await runRecipeHarnessCli([
+        'flows',
+        'describe',
+        'lib.available',
+        '--library',
+        `personal=${libraryRoot}`,
+        '--json',
+      ]);
+    } finally {
+      console.log = originalLog;
+    }
+    const document = JSON.parse(lines.join('\n')) as {
+      flow: { callNodeSource: string };
+    };
+    assert.equal(document.flow.callNodeSource, 'generated-template');
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

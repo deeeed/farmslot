@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Added `flows describe <ref>` with resolved provenance, parameter schema/defaults, the complete flow definition, and an authored call node or clearly labeled template in human and stable JSON output.
 
 ## 0.6.0 - 2026-07-13
 
