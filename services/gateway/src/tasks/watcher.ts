@@ -401,9 +401,10 @@ export async function unwatchSlot(
     }
   }
   // Owner-scoped removal (see unwatchContext): a caller undoing only its own
-  // wiring must never strip watches a successor run registered since. The
-  // entry is captured here and identity-checked inside unwatchKey so a
-  // replacement landing mid-close is never torn down.
+  // wiring must never strip watches a foreign run registered since. The owner
+  // scope is re-checked inside the chained teardown against the live entry —
+  // a SAME-run replacement landing mid-close is still torn down (all of that
+  // run's wiring goes); only a foreign run's replacement survives.
   const targets = [...activeWatches.entries()].filter(
     ([key, sw]) =>
       slotIdFromWatchKey(key) === slotId &&
@@ -429,11 +430,11 @@ export async function unwatchContext(
   const key = watchKey(slotId, contextId);
   if (opts?.expectedRunId) {
     const sw = activeWatches.get(key);
-    // Context IDs are role-based and reused across runs: a successor may have
-    // re-registered this key already, and removing its watch would strip the
-    // new owner's observability. Owner-scoped removal only — the matched
-    // entry is passed through so unwatchKey's identity guard also covers a
-    // replacement landing between this check and the teardown.
+    // Context IDs are role-based and reused across runs: a foreign successor
+    // may have re-registered this key already, and removing its watch would
+    // strip the new owner's observability. The owner scope is authoritative
+    // and re-checked inside the chained teardown: a SAME-run replacement
+    // landing after this check is still torn down; a foreign run's survives.
     if (sw && sw.runId !== opts.expectedRunId) {
       console.log(
         `[task-watcher] skip unwatch ${slotId}:${contextId} — watch now belongs to run ${sw.runId ?? 'unknown'}`,
