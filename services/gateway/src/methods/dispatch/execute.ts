@@ -28,13 +28,13 @@ import {
   resetSlot,
   resolveProjectTaskDirName,
   updateSlotStatus,
+  updateSlotStatusIf,
 } from '../../core/index.js';
 import {
   firstWindowTarget,
   resolveTmuxPaneId,
   resolveTmuxSession,
   shellQuote,
-  tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
 import {
@@ -73,9 +73,14 @@ import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
 
+import { recreationOwnershipViolation, runLaunchPreludeAndSend } from './launch-clear.js';
 import { buildDispatchRoleShellCommand, parseCapturedAgentPaneTarget } from './role-target.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
-import { buildSlotClaimStatus, evaluateSlotIdentityPolicy } from './slot-scoring.js';
+import {
+  buildSlotClaimStatus,
+  evaluateSlotIdentityPolicy,
+  slotClaimBlockedByRelease,
+} from './slot-scoring.js';
 import { flowTypeToKey } from './task-flow-key.js';
 
 export {
@@ -851,10 +856,14 @@ export async function dispatchExecute(
     }
   }
 
-  // 1. Claim slot
+  // 1. Claim slot — CAS'd against a mid-flight release. Release marks the
+  // slot busy/releasing before killing tmux and resets state unconditionally
+  // at its end, so a claim accepted during that window would be killed and
+  // then clobbered, leaving a zombie worker.
   step('claim', 'Claiming slot...');
-  await updateSlotStatus(
+  const claimed = await updateSlotStatusIf(
     params.slotId,
+    (slot) => slotClaimBlockedByRelease(slot) === null,
     buildSlotClaimStatus({
       runId: params.runId ?? null,
       taskId,
@@ -869,6 +878,11 @@ export async function dispatchExecute(
       fallbackVariant: params.variant ?? null,
     }),
   );
+  if (!claimed) {
+    throw new Error(
+      `Slot ${params.slotId} is mid-release; claim refused — re-run slot selection for a fresh worker`,
+    );
+  }
   step('claim', 'Slot claimed, lifecycle=busy(dispatching)');
 
   // 2. Prepare slot
@@ -1073,18 +1087,6 @@ export async function dispatchExecute(
       if (!usesRoleWindow) return;
       await new Promise((resolve) => setTimeout(resolve, ROLE_WINDOW_STARTUP_SETTLE_MS));
     };
-    const sendPreludeClear = async (stage: string) => {
-      const result = await execOnSlot(
-        vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(workerTarget)} C-c C-u`),
-      );
-      if (result.exitCode !== 0) {
-        throw new Error(
-          `Failed to clear ${runner} launch input (${stage}) in ${workerTarget}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
-        );
-      }
-    };
-
     if (usesRoleWindow) {
       workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
       await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch);
@@ -1105,21 +1107,45 @@ export async function dispatchExecute(
       // already absorbed, the wait lets in-flight responses arrive, and the
       // post-clear sweeps the late arrivals before any user-visible keystrokes.
       // C-c covers heredoc/quote parsing on garbage; C-u clears the prompt line.
-      await sendPreludeClear('pre-clear');
-      await new Promise((resolve) => setTimeout(resolve, LAUNCH_PRELUDE_DA_WAIT_MS));
-      await sendPreludeClear('post-clear');
-      // Tiny settle so the second C-u takes effect before the literal-text
-      // send-keys below appends the launch line to (now-empty) prompt input.
-      await new Promise((resolve) => setTimeout(resolve, LAUNCH_PRELUDE_SETTLE_MS));
-      const launchResult = await execOnSlot(
-        vars,
-        tmuxSendTextCommand(workerTarget, agentLaunch, { enter: true }),
-      );
-      if (launchResult.exitCode !== 0) {
-        throw new Error(
-          `Failed to launch ${runner} in ${workerTarget}: ${launchResult.stderr || launchResult.stdout || `exit ${launchResult.exitCode}`}`,
-        );
-      }
+      // Every send is covered by fenced lost-session recovery: a parent run's
+      // slot release can race this chained dispatch and kill the session
+      // mid-sequence, but recreation is only legitimate while this dispatch
+      // still owns the slot — a cancel/recycle marks the run terminal BEFORE
+      // killing tmux, and resurrecting the session then would revive a worker
+      // on a deliberately torn-down slot.
+      const launched = await runLaunchPreludeAndSend({
+        runner,
+        target: workerTarget,
+        session,
+        launchCommand: agentLaunch,
+        waits: {
+          daWaitMs: LAUNCH_PRELUDE_DA_WAIT_MS,
+          settleMs: LAUNCH_PRELUDE_SETTLE_MS,
+          recreateSettleMs: ROLE_WINDOW_STARTUP_SETTLE_MS,
+        },
+        exec: (tmuxCommand: string) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
+        assertOwnership: async () => {
+          // Fresh reads: release marks the slot busy/releasing BEFORE killing
+          // tmux, so a teardown-caused session death is visible here.
+          const latest = currentRun ? getRun(currentRun.id) : null;
+          const [slotLifecycle, slotPhase] = await Promise.all([
+            readSlotField(params.slotId, 'lifecycle'),
+            readSlotField(params.slotId, 'phase'),
+          ]);
+          const violation = recreationOwnershipViolation({
+            run: latest ? { id: latest.id, status: latest.status, slotId: latest.slotId } : null,
+            hasRunContext: Boolean(currentRun),
+            slotId: params.slotId,
+            slotLifecycle: typeof slotLifecycle === 'string' ? slotLifecycle : null,
+            slotPhase: typeof slotPhase === 'string' ? slotPhase : null,
+          });
+          if (violation) {
+            throw new Error(`Not recreating session ${session}: ${violation}`);
+          }
+        },
+        reensureTarget: () => ensureWorkerRoleTarget(vars, session, runner, workerRole),
+      });
+      workerTarget = launched.target;
     }
     // tmux send-keys returning exit 0 only proves the keystrokes were typed,
     // NOT that the receiving shell parsed them as the launch command. If shell

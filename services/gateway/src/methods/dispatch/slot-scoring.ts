@@ -324,3 +324,14 @@ export function buildSlotClaimStatus(params: {
     model: params.model,
   };
 }
+
+/**
+ * Claim-side half of the release/claim CAS pair: a slot whose phase is
+ * 'releasing' is mid-teardown — release CAS-marked it before killing tmux and
+ * its finalize resets state unconditionally, so a claim accepted now would be
+ * killed and then clobbered. Returns the refusal reason or null when the
+ * claim may proceed.
+ */
+export function slotClaimBlockedByRelease(slot: Readonly<Record<string, unknown>>): string | null {
+  return slot.phase === 'releasing' ? 'slot is mid-release' : null;
+}

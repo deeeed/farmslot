@@ -31,6 +31,7 @@ import {
   resolveProjectTaskDirName,
   type SlotVars,
   updateSlotStatus,
+  updateSlotStatusIf,
 } from '../../core/index.js';
 import { slotCopyDir, SlotCopyDirEntryError } from '../../core/slot-io.js';
 import {
@@ -57,6 +58,20 @@ import {
   resolveSlotTrackingBranchFromProject,
   slotIdleResetStepDetail,
 } from './slot-tracking.js';
+
+/**
+ * Release-entry ownership check: the teardown may only proceed while the slot
+ * still belongs to the owner observed when the release began (or is
+ * unclaimed). A rival claim landing in between owns the slot now — killing
+ * its session and resetting its claim would leave a zombie worker. Exported
+ * for tests.
+ */
+export function releaseOwnershipIntact(
+  slot: Readonly<Record<string, unknown>>,
+  entryOwner: string | null,
+): boolean {
+  return ((slot.current_run_id as string | null | undefined) ?? null) === entryOwner;
+}
 
 export async function slotRelease(
   params: SlotReleaseParams,
@@ -116,8 +131,27 @@ export async function slotRelease(
   const { unwatchSlot } = await import('../../tasks/watcher.js');
   await unwatchSlot(params.slotId);
 
-  // Mark lifecycle
-  await markSlotBusy(params.slotId, 'releasing');
+  // Mark lifecycle — via CAS on the owner observed at entry. A rival dispatch
+  // that claimed this slot in the meantime owns it now: proceeding would kill
+  // its session and then clobber its claim in the unconditional finalize
+  // below, leaving a zombie worker on a slot the registry says is free.
+  // Claims symmetrically refuse slots whose phase is 'releasing', so once
+  // this marker lands no claim can interleave with the teardown.
+  const entryOwner =
+    ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? null;
+  const marked = await updateSlotStatusIf(
+    params.slotId,
+    (slot) => releaseOwnershipIntact(slot, entryOwner),
+    { lifecycle: 'busy', phase: 'releasing' },
+  );
+  if (!marked) {
+    step(
+      'claim',
+      `Slot ${params.slotId} was claimed by another run mid-release; leaving it to its new owner`,
+    );
+    complete(0);
+    return { released: false };
+  }
 
   // 1. Kill running agent. Local-first publication gate-hold skips slotRelease at
   // COMPLETE entirely (see holdSlotForPublicationGate) and tears down via

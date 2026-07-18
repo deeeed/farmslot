@@ -9,6 +9,7 @@ import {
   findBestSlot,
   isCdpLive,
   isFreeSlot,
+  slotClaimBlockedByRelease,
   slotScore,
   validateSlot,
 } from './slot-scoring.js';
@@ -196,4 +197,11 @@ test('branchContainsJiraKey matches whole ticket slugs only', () => {
   assert.equal(branchContainsJiraKey('fix/proj-123-crash', 'PROJ-123'), true);
   assert.equal(branchContainsJiraKey('fix/proj-1234-crash', 'PROJ-123'), false);
   assert.equal(branchContainsJiraKey('main', 'PROJ-123'), false);
+});
+
+test('slotClaimBlockedByRelease refuses only slots mid-release', () => {
+  assert.equal(slotClaimBlockedByRelease({ phase: 'releasing' }), 'slot is mid-release');
+  assert.equal(slotClaimBlockedByRelease({ phase: 'dispatching' }), null);
+  assert.equal(slotClaimBlockedByRelease({ phase: 'working' }), null);
+  assert.equal(slotClaimBlockedByRelease({}), null);
 });
