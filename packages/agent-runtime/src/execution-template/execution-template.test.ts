@@ -384,3 +384,28 @@ test('directory lint flags files that canonicalize to the same catalog id', () =
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('duplicate detection follows explicit frontmatter ids like the resolver', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'et-dup2-'));
+  try {
+    // Same explicit id in differently-named files: a real collision.
+    writeFileSync(join(dir, 'dev.md'), '---\nid: shared\n---\n\n# A\n\n- [ ] s\n');
+    writeFileSync(join(dir, 'fix-bug.md'), '---\nid: shared\n---\n\n# B\n\n- [ ] s\n');
+    const collision = lintExecutionTemplates(dir);
+    assert.ok(collision.issues.some((i) => /duplicate catalog id 'shared'/.test(i.message)));
+    rmSync(join(dir, 'dev.md'));
+    rmSync(join(dir, 'fix-bug.md'));
+    // Path-colliding names with DIFFERENT explicit ids: not a collision.
+    writeFileSync(join(dir, 'dev-interactive.md'), '---\nid: one\n---\n\n# A\n');
+    writeFileSync(join(dir, 'dev.interactive.md'), '---\nid: two\n---\n\n# B\n');
+    const distinct = lintExecutionTemplates(dir);
+    assert.ok(!distinct.issues.some((i) => /duplicate catalog id/.test(i.message)));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a bare CR does not terminate a frontmatter fence', () => {
+  const parsed = parseMarkdownDocument('---\nrunMode: autonomous\n---\rnot-a-fence\n\n# T\n');
+  assert.equal(parsed.frontmatter, null);
+});

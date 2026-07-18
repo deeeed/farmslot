@@ -154,7 +154,19 @@ export function registerExecutionTemplateCommand(program: Command): void {
       try {
         const result = lintExecutionTemplates(target);
         if (emit.machine) {
-          emit.ok(result);
+          if (result.ok) {
+            emit.ok(result);
+          } else {
+            // The envelope's exitCode must mirror the process exit — a failed
+            // lint is an error envelope carrying the findings as details.
+            emit.fail(
+              Object.assign(new Error(`lint failed: ${result.issues.length} issue(s)`), {
+                code: 'TEMPLATE_LINT_FAILED',
+                userAction: 'Fix the reported template issues and re-run execution-template lint.',
+                details: result,
+              }),
+            );
+          }
         } else if (result.ok) {
           output.write(`${green('pass')} ${result.filesChecked} template(s)\n`);
         } else {
@@ -162,10 +174,8 @@ export function registerExecutionTemplateCommand(program: Command): void {
             const color = issue.severity === 'error' ? red : yellow;
             output.write(`${color(issue.severity)} ${issue.path}: ${issue.message}\n`);
           }
+          process.exitCode = 1;
         }
-        // Lint findings are DATA (the envelope reports them), but a failed lint
-        // still exits non-zero for scripted callers.
-        if (!result.ok) process.exitCode = 1;
       } catch (err) {
         emit.fail(err);
       }

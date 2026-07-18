@@ -191,13 +191,19 @@ export function lintExecutionTemplates(target: string): LintExecutionTemplatesRe
   const root = path.resolve(target);
   const byId = new Map<string, string[]>();
   for (const file of files) {
+    // Mirror the resolver's id derivation exactly: an explicit frontmatter id
+    // wins over the path-derived catalog id — otherwise this check misses
+    // identical explicit ids and falsely flags path collisions whose explicit
+    // ids differ.
+    const { frontmatter: fm } = parseMarkdownDocument(readFileSync(file, 'utf8'));
+    const explicitId = typeof fm?.id === 'string' ? fm.id.trim() : '';
     const parent = path.basename(path.dirname(file)).toLowerCase();
     const layout = (FARMSLOT_FLOW_PREFIXES as readonly string[]).includes(parent)
       ? ('flow-tree' as const)
       : ('worker-flat' as const);
     const rel =
       layout === 'flow-tree' ? path.join(parent, path.basename(file)) : path.basename(file);
-    const id = catalogRelativeId(rel, layout);
+    const id = explicitId || catalogRelativeId(rel, layout);
     byId.set(id, [...(byId.get(id) ?? []), file]);
   }
   for (const [id, paths] of byId) {

@@ -51,7 +51,9 @@ export function parseMarkdownDocument(text: string): ParsedMarkdownDocument {
       const candidate = normalized.indexOf('\n---', from);
       if (candidate === -1) break;
       const after = normalized.slice(candidate + 4, candidate + 6);
-      if (after === '' || after.startsWith('\n') || after.startsWith('\r')) {
+      // Only EOF, LF, or CRLF terminate the fence — a bare CR is not a line
+      // boundary anywhere else in this parser.
+      if (after === '' || after.startsWith('\n') || after === '\r\n' || after.startsWith('\r\n')) {
         end = candidate;
         break;
       }
