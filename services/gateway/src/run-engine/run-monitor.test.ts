@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { Run, RunDecision, WorkerSignal } from '@farmslot/protocol';
+
+import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+
 import {
+  applyHandoffAutoResolution,
   bindSignalToMonitorContext,
+  handoffDecisionStillPending,
+  isFreshTerminalHandoffSignal,
   isWorkerSignalFreshForRun,
   type MonitorNudgeRunView,
+  rearmInteractiveHandoffAutoRecovery,
+  resolveMonitorConfig,
   runHasOpenHumanGate,
   shouldHoldForInteractivePrComplete,
   shouldHoldForMissingTerminalSignal,
@@ -219,5 +228,265 @@ test('shouldHoldForInteractivePrComplete only gates interactive PR-complete hand
   assert.equal(
     shouldHoldForInteractivePrComplete({ flowType: 'dev', mode: 'interactive' } as any),
     false,
+  );
+});
+
+// ─── Per-flow monitor config (deliverable 1) ───
+
+test('resolveMonitorConfig applies the per-flow total_timeout_min override', () => {
+  const cfg = resolveMonitorConfig(
+    { total_timeout_min: 90, flows: { 'pr-complete': { total_timeout_min: 180 } } },
+    'proj',
+    'pr-complete',
+  );
+  assert.equal(cfg.totalTimeoutMs, 180 * 60_000);
+});
+
+test('resolveMonitorConfig applies the per-flow stuck_timeout_min override', () => {
+  const cfg = resolveMonitorConfig(
+    { stuck_timeout_min: 20, flows: { 'fix-bug': { stuck_timeout_min: 45 } } },
+    'proj',
+    'fix-bug',
+  );
+  assert.equal(cfg.stuckTimeoutMs, 45 * 60_000);
+});
+
+test('resolveMonitorConfig falls back to the project total for flows without an override', () => {
+  const cfg = resolveMonitorConfig(
+    { total_timeout_min: 120, flows: { 'pr-complete': { total_timeout_min: 180 } } },
+    'proj',
+    'dev',
+  );
+  assert.equal(cfg.totalTimeoutMs, 120 * 60_000);
+});
+
+test('resolveMonitorConfig falls back to the default when neither flow nor project value is set', () => {
+  const cfg = resolveMonitorConfig(
+    { flows: { 'pr-complete': { total_timeout_min: 180 } } },
+    'proj',
+    'dev',
+  );
+  assert.equal(cfg.totalTimeoutMs, 90 * 60_000);
+  assert.equal(cfg.stuckTimeoutMs, 20 * 60_000);
+});
+
+test('resolveMonitorConfig ignores an invalid per-flow override and uses the project value', () => {
+  const cfg = resolveMonitorConfig(
+    { total_timeout_min: 120, flows: { 'pr-complete': { total_timeout_min: -5 } } },
+    'proj',
+    'pr-complete',
+  );
+  assert.equal(cfg.totalTimeoutMs, 120 * 60_000);
+});
+
+// ─── Terminal-signal auto-recovery (deliverable 2) ───
+
+const handoffRun = {
+  steps: [
+    { name: 'monitor' as const, status: 'running' as const, startedAt: '2026-04-25T08:00:00Z' },
+  ],
+};
+
+test('isFreshTerminalHandoffSignal accepts a fresh terminal signal', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'complete',
+      outcome: 'success',
+      timestamp: '2026-04-25T08:30:00Z',
+    }),
+    true,
+  );
+});
+
+test('isFreshTerminalHandoffSignal rejects a stale terminal signal predating the worker context', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'complete',
+      outcome: 'success',
+      timestamp: '2026-04-25T07:00:00Z',
+    }),
+    false,
+  );
+});
+
+test('isFreshTerminalHandoffSignal rejects a terminal signal with no timestamp', () => {
+  // The type requires timestamp, but a hand-written SIGNAL.json can omit it —
+  // model that file shape directly.
+  const timestampless = { status: 'complete', outcome: 'success' } as WorkerSignal;
+  assert.equal(isFreshTerminalHandoffSignal(handoffRun, timestampless), false);
+});
+
+test('isFreshTerminalHandoffSignal rejects a terminal signal with an unparseable timestamp', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'complete',
+      outcome: 'success',
+      timestamp: 'not-a-date',
+    }),
+    false,
+  );
+});
+
+test('isFreshTerminalHandoffSignal rejects a timestamp with trailing junk that Date.parse tolerates', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'complete',
+      outcome: 'success',
+      timestamp: '2026-04-25junk',
+    }),
+    false,
+  );
+});
+
+test('isFreshTerminalHandoffSignal accepts a fresh strictly-shaped timestamp with a UTC offset', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'complete',
+      outcome: 'success',
+      timestamp: '2026-04-25T10:30:00+02:00',
+    }),
+    true,
+  );
+});
+
+test('isFreshTerminalHandoffSignal rejects a non-terminal running signal', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'running',
+      timestamp: '2026-04-25T08:30:00Z',
+    }),
+    false,
+  );
+});
+
+test('applyHandoffAutoResolution stamps the decision and resumes for a fresh terminal signal', () => {
+  const decision: Pick<RunDecision, 'context'> = { context: { signalFile: 'SIGNAL.json' } };
+  const resumed = applyHandoffAutoResolution(
+    handoffRun,
+    decision,
+    { status: 'complete', outcome: 'success', timestamp: '2026-04-25T08:30:00Z' },
+    null,
+    '2026-04-25T08:30:01Z',
+  );
+  assert.equal(resumed, true);
+  assert.equal(decision.context?.autoResolved, true);
+  assert.equal(decision.context?.autoResolvedBy, 'terminal-signal');
+  assert.equal(decision.context?.autoResolvedStatus, 'complete');
+  assert.equal(decision.context?.autoResolvedAt, '2026-04-25T08:30:01Z');
+  // Existing context is preserved, not clobbered.
+  assert.equal(decision.context?.signalFile, 'SIGNAL.json');
+});
+
+test('applyHandoffAutoResolution leaves the decision untouched for a stale terminal signal', () => {
+  const decision: Pick<RunDecision, 'context'> = { context: { signalFile: 'SIGNAL.json' } };
+  const resumed = applyHandoffAutoResolution(
+    handoffRun,
+    decision,
+    { status: 'complete', outcome: 'success', timestamp: '2026-04-25T07:00:00Z' },
+    null,
+    '2026-04-25T08:30:01Z',
+  );
+  assert.equal(resumed, false);
+  assert.equal(decision.context?.autoResolved, undefined);
+});
+
+test('applyHandoffAutoResolution never fires for a non-terminal running signal', () => {
+  const decision: Pick<RunDecision, 'context'> = { context: {} };
+  const resumed = applyHandoffAutoResolution(
+    handoffRun,
+    decision,
+    { status: 'running', timestamp: '2026-04-25T08:30:00Z' },
+    null,
+    '2026-04-25T08:30:01Z',
+  );
+  assert.equal(resumed, false);
+  assert.equal(decision.context?.autoResolved, undefined);
+});
+
+// ─── restart re-arm ───
+
+function handoffBlockedRun(overrides: Partial<Run> = {}): Run {
+  return {
+    id: 'a0466ede-9c65-4a55-8f2e-3b1f8f6f0001',
+    slotId: 'macwork-ff-2',
+    decisions: [
+      {
+        id: 'decision-handoff',
+        type: 'monitor_interactive_handoff',
+        title: 'Interactive handoff',
+        description: 'Waiting for SIGNAL.json',
+        actions: [{ id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' }],
+        createdAt: '2026-04-25T08:10:00Z',
+      },
+    ],
+    ...overrides,
+  } as Run;
+}
+
+test('rearmInteractiveHandoffAutoRecovery arms a watcher for an unresolved handoff and returns a disarm', () => {
+  const disarm = rearmInteractiveHandoffAutoRecovery(handoffBlockedRun(), async () => {});
+  assert.equal(typeof disarm, 'function');
+  disarm?.();
+});
+
+test('rearmInteractiveHandoffAutoRecovery declines without a slot', () => {
+  assert.equal(
+    rearmInteractiveHandoffAutoRecovery(handoffBlockedRun({ slotId: null }), async () => {}),
+    undefined,
+  );
+});
+
+test('rearmInteractiveHandoffAutoRecovery declines when the handoff is already resolved', () => {
+  const run = handoffBlockedRun();
+  run.decisions[0].resolvedAt = '2026-04-25T08:20:00Z';
+  assert.equal(
+    rearmInteractiveHandoffAutoRecovery(run, async () => {}),
+    undefined,
+  );
+});
+
+test('handoffDecisionStillPending tracks manual resolution so a signal-less watcher can disarm', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `WATCHER-LIVENESS-${Date.now().toString(16).toUpperCase()}`,
+    mode: 'autonomous',
+    initialContext: 'Exercise watcher liveness predicate',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  const decision: RunDecision = {
+    id: 'handoff-live',
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description: 'Waiting for SIGNAL.json',
+    actions: [
+      { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' as const },
+    ],
+    createdAt: '2026-04-25T08:10:00Z',
+  };
+  updateRun(run.id, { decisions: [decision] });
+  assert.equal(handoffDecisionStillPending(run.id, decision.id), true);
+
+  // Operator resolves manually while no terminal signal ever arrives: the
+  // predicate must flip so the armed watcher's next tick disarms it.
+  updateRun(run.id, {
+    decisions: [{ ...decision, resolvedAt: '2026-04-25T08:20:00Z', resolvedAction: 'abort' }],
+  });
+  assert.equal(handoffDecisionStillPending(run.id, decision.id), false);
+  assert.equal(handoffDecisionStillPending(run.id, 'missing-decision'), false);
+  assert.equal(handoffDecisionStillPending('missing-run', decision.id), false);
+});
+
+test('rearmInteractiveHandoffAutoRecovery declines when only non-handoff decisions are pending', () => {
+  const run = handoffBlockedRun();
+  run.decisions[0].type = 'engine_human_gate';
+  assert.equal(
+    rearmInteractiveHandoffAutoRecovery(run, async () => {}),
+    undefined,
   );
 });

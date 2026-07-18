@@ -13,6 +13,17 @@ export function parseFiniteIsoMs(value: string | null | undefined): number | nul
   return Number.isFinite(ms) ? ms : null;
 }
 
+// Anchored ISO-8601 shape. Date.parse alone is too permissive for unattended
+// decisions: it tolerates trailing junk (e.g. "2026-04-25junk" parses), which
+// would let a mangled SIGNAL.json timestamp pass an ordering check.
+const STRICT_ISO_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?$/;
+
+export function parseStrictIsoMs(value: string | null | undefined): number | null {
+  if (!value || !STRICT_ISO_RE.test(value)) return null;
+  return parseFiniteIsoMs(value);
+}
+
 export function isTerminalWorkerSignal(signal: WorkerSignal): boolean {
   return (
     signal.status === 'complete' ||

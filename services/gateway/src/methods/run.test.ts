@@ -17,6 +17,7 @@ import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import { makeRun } from './run/test-fixtures.js';
 import {
+  assertDecisionStillUnresolved,
   assertDuplicateRunAllowed,
   resolveCreateSafetyTier,
   runCreate,
@@ -65,6 +66,48 @@ function makeReadyGatePackage(overrides: Partial<ReadyGatePrPackage> = {}): Read
 function sha256Text(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
+
+test('assertDecisionStillUnresolved lets a first resolver through and blocks a raced second one', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `RESOLVE-RACE-${Date.now().toString(16).toUpperCase()}`,
+    mode: 'autonomous',
+    initialContext: 'Exercise concurrent decision resolution guard',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  const decision: RunDecision = {
+    id: 'handoff-1',
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description: 'Waiting for SIGNAL.json',
+    actions: [
+      { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' as const },
+      { id: 'abort', label: 'Abort Run', style: 'danger' as const },
+    ],
+    createdAt: '2026-04-15T00:00:00.000Z',
+  };
+  updateRun(run.id, { decisions: [decision] });
+
+  // Unresolved: the guard passes.
+  assertDecisionStillUnresolved(run.id, decision.id);
+
+  // An operator abort lands while another resolver is mid-await: the second
+  // writer must be rejected instead of overwriting the abort.
+  decision.resolvedAt = '2026-04-15T00:01:00.000Z';
+  decision.resolvedAction = 'abort';
+  updateRun(run.id, { decisions: [decision] });
+  assert.throws(
+    () => assertDecisionStillUnresolved(run.id, decision.id),
+    /Decision already resolved/,
+  );
+  assert.throws(() => assertDecisionStillUnresolved(run.id, 'missing-id'), /already resolved/);
+});
 
 test('runResolveDecision keeps publish gate pending when approved package selection is stale', async (t) => {
   const run = createRun({

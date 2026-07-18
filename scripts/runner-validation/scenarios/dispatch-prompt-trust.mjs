@@ -46,7 +46,7 @@ console.log(JSON.stringify({
 }
 
 /**
- * Fixture regression for MANUAL-000042:
+ * Fixture regression for the grok directory-trust launch blocker:
  * - Grok project-directory / directory-trust pane is detectable
  * - Classifier trust_prompt + send_yes maps to Enter (keystroke delivery contract)
  * - Ready-deadline bump after blocker resolve is half the ready budget

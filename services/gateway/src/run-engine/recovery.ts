@@ -111,6 +111,7 @@ export interface RunRecoveryCollaborators {
   resetSlot: (slotId: string) => Promise<void>;
   quarantineLeakedRun: (run: Run) => Promise<void>;
   reconcileRunAgentRuntime?: (run: Run) => Promise<void>;
+  rearmHandoffAutoRecovery: (run: Run) => (() => void) | undefined;
 }
 
 const STEP_TO_STATUS: Record<string, Run['status']> = {
@@ -272,6 +273,17 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
             decision: d,
             slotId: run.slotId,
           });
+        }
+        // The auto-recovery watcher for a pending interactive handoff lived
+        // inside the previous process's engine promise; without re-arming it,
+        // a terminal signal written after the restart would sit unnoticed
+        // until an operator round-trip.
+        if (unresolved.some((d) => d.type === 'monitor_interactive_handoff')) {
+          if (deps.rearmHandoffAutoRecovery(run)) {
+            console.log(
+              `[run-engine] run ${run.id.slice(0, 8)} — re-armed interactive-handoff auto-recovery`,
+            );
+          }
         }
         if (run.slotId && run.prNumber) {
           const hasConflict = unresolved.some((d) => d.type === 'ci_merge_conflict');

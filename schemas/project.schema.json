@@ -828,6 +828,29 @@
           "type": "integer",
           "default": 5,
           "minimum": 0
+        },
+        "flows": {
+          "type": "object",
+          "description": "Per-flow timeout overrides keyed by FlowType (dev, fix-bug, review-pr, pr-complete, update-branch). Falls back to the top-level monitoring value, then the built-in default. Only total_timeout_min and stuck_timeout_min are overridable; poll_interval_min, idle_timeout_min, and max_nudges stay project-wide.",
+          "propertyNames": {
+            "enum": ["fix-bug", "review-pr", "dev", "pr-complete", "update-branch"]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "total_timeout_min": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Overrides monitoring.total_timeout_min for this flow. Long fix flows (pr-complete, self-review fix passes) commonly need 150+ minutes of legitimate worker time."
+              },
+              "stuck_timeout_min": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Overrides monitoring.stuck_timeout_min for this flow."
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

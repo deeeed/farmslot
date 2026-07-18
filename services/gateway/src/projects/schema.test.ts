@@ -9,6 +9,7 @@ type JsonSchema = {
   properties?: Record<string, JsonSchema>;
   additionalProperties?: boolean;
   type?: string | string[];
+  propertyNames?: { enum?: string[] };
 };
 
 async function readProjectSchema(): Promise<JsonSchema> {
@@ -41,6 +42,18 @@ function validateHooksAgainstSchema(schema: JsonSchema, hooks: Record<string, un
   }
   return errors;
 }
+
+test('project schema restricts monitoring.flows keys to the known flow types', async () => {
+  const schema = await readProjectSchema();
+  const flows = schema.properties?.monitoring?.properties?.flows;
+  assert.ok(flows, 'schemas/project.schema.json should define monitoring.flows');
+  // A typo'd flow name would otherwise validate and then silently never match
+  // at runtime — the enum makes it a schema error instead.
+  assert.deepEqual(
+    [...(flows.propertyNames?.enum ?? [])].sort(),
+    ['dev', 'fix-bug', 'pr-complete', 'review-pr', 'update-branch'],
+  );
+});
 
 test('project schema declares Recipe v1 hooks as string commands', async () => {
   const schema = await readProjectSchema();
