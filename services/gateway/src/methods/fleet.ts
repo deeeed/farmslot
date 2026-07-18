@@ -19,7 +19,6 @@ import {
   execOnSlot,
   expandHook,
   expandPlatformField,
-  farmslotRoot,
   getProjectField,
   isIgnoredPoolFile,
   isLocal,
@@ -31,7 +30,7 @@ import {
   type RawProjectJson,
   readSlotField,
   renderFixtureTemplate,
-  replaceStatusFile,
+  rewriteStatusFile,
   type SlotVars,
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
@@ -42,7 +41,6 @@ import { listRuns } from '../runs/store.js';
 
 import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
 
-const statusFile = path.join(farmslotRoot, '.farm-status.json');
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
 
@@ -277,32 +275,26 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
   // 4. Check each slot (local in parallel, respecting machine grouping)
   const results = await checkAllSlots(slotEntries, sshStatus);
 
-  // 5. Load previous status to preserve lifecycle fields
-  const prevSlots: Record<string, PreviousSlotStatus> = {};
-  if (existsSync(statusFile)) {
-    try {
-      const prev = JSON.parse(await readFile(statusFile, 'utf-8'));
-      for (const s of prev.slots ?? []) {
-        prevSlots[s.slot] = s;
-      }
-    } catch {
-      /* ignore corrupt file */
-    }
-  }
-
-  // 6. Build final JSON and write
+  // 5+6. Merge with the CURRENT status and write — all inside the shared
+  // write chain. The slow slot probes above run outside it, but the previous
+  // lifecycle/ownership fields are read at write time: a snapshot taken
+  // before entering the chain would drop any claim (owner + epoch) that
+  // landed while the probes ran.
   const checkedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const activeRuns = listRuns({ active: true }).runs;
-  const slots = results.map((r) =>
-    reconcileRefreshSlotRowWithActiveRun(
-      buildRefreshSlotRow(r, prevSlots[r.slot] ?? {}),
-      newestActiveRunForSlot(activeRuns, r.slot),
-    ),
-  );
-
-  // Through the shared write chain: rebuilding the file outside it raced (and
-  // could lose against) concurrent lifecycle CAS writes.
-  await replaceStatusFile({ checked_at: checkedAt, slots });
+  await rewriteStatusFile((current) => {
+    const prevSlots: Record<string, PreviousSlotStatus> = {};
+    for (const row of current?.slots ?? []) {
+      prevSlots[String(row.slot)] = row as PreviousSlotStatus;
+    }
+    const slots = results.map((r) =>
+      reconcileRefreshSlotRowWithActiveRun(
+        buildRefreshSlotRow(r, prevSlots[r.slot] ?? {}),
+        newestActiveRunForSlot(activeRuns, r.slot),
+      ),
+    );
+    return { checked_at: checkedAt, slots };
+  });
 
   const fleet = await loadFleetStatus(true);
   return { fleet };

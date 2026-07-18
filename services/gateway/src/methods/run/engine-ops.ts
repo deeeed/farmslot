@@ -18,12 +18,13 @@ import {
 } from '@farmslot/protocol';
 
 import { pokeCIPoll } from '../../ci-monitor/service.js';
-import { updateSlotStatus } from '../../core/index.js';
+import { claimSlotStatusIf, updateSlotStatus } from '../../core/index.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
 import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
 import { refreshReviewGate } from '../../run-engine/review-gate.js';
 import { getRun, updateRun } from '../../runs/store.js';
+import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from '../dispatch/slot-scoring.js';
 
 import { runReplayStep } from './replay-step.js';
 
@@ -161,7 +162,17 @@ export async function runActivateOnSlot(
       priorRunId ? priorRunId.slice(0, 8) : '-'
     } -> ${run.id.slice(0, 8)} (operator-approved)`,
   );
-  await updateSlotStatus(targetSlot, { current_run_id: run.id });
+  const rebind = await claimSlotStatusIf(
+    targetSlot,
+    (slot) => slotClaimBlockedByRelease(slot) === null,
+    { current_run_id: run.id },
+  );
+  if (!rebind.claimed) {
+    throw Object.assign(
+      new Error(`Slot ${targetSlot} is mid-release; activate-on-slot cannot claim it`),
+      { code: SLOT_CLAIM_REFUSED_CODE },
+    );
+  }
   updateRun(params.runId, { slotId: targetSlot });
 
   // Re-drive PREPARE→DISPATCH for the existing run with the cheapest warm profile.

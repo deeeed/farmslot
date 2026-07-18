@@ -88,16 +88,18 @@ export async function slotRelease(
   emit: EventEmitter,
 ): Promise<{ released: boolean }> {
   const key = releaseCoalesceKey(params);
-  const inflight = inflightReleases.get(params.slotId);
-  if (inflight && inflight.key === key) {
-    console.log(
-      `[release] coalescing duplicate release for ${params.slotId} onto in-flight teardown`,
-    );
-    return inflight.promise;
-  }
-  if (inflight) {
-    // Different request: serialize behind the in-flight teardown (its outcome
-    // is irrelevant here — the guards below decide what this one may do).
+  // Re-check the map after every wait: several differing waiters can be woken
+  // by the same settled teardown, and only the first to register may run —
+  // the rest must queue behind IT, not start parallel teardowns.
+  for (;;) {
+    const inflight = inflightReleases.get(params.slotId);
+    if (!inflight) break;
+    if (inflight.key === key) {
+      console.log(
+        `[release] coalescing duplicate release for ${params.slotId} onto in-flight teardown`,
+      );
+      return inflight.promise;
+    }
     console.log(`[release] queueing differing release for ${params.slotId} behind in-flight one`);
     await inflight.promise.catch(() => undefined);
   }
@@ -176,16 +178,6 @@ async function slotReleaseImpl(
     out(`[${name}] ${detail}`);
   };
 
-  // Stop TASK.md watching
-  const { unwatchSlot } = await import('../../tasks/watcher.js');
-  await unwatchSlot(params.slotId);
-
-  // Mark lifecycle — via CAS on the owner observed at entry. A rival dispatch
-  // that claimed this slot in the meantime owns it now: proceeding would kill
-  // its session and then clobber its claim in the unconditional finalize
-  // below, leaving a zombie worker on a slot the registry says is free.
-  // Claims symmetrically refuse slots whose phase is 'releasing', so once
-  // this marker lands no claim can interleave with the teardown.
   // ONE serialized CAS does owner validation, the releasing marker, and the
   // epoch capture together: an owner sampled before the preflight awaits can
   // never be silently replaced by a rival claim's — the predicate re-reads
@@ -211,6 +203,12 @@ async function slotReleaseImpl(
     return { released: false };
   }
   const entryEpoch = mark.epoch ?? 0;
+
+  // Stop TASK.md watching — only after the CAS proves this teardown owns the
+  // slot; removing watchers first would strip a rival claim's watchers even
+  // when the release is then correctly refused.
+  const { unwatchSlot } = await import('../../tasks/watcher.js');
+  await unwatchSlot(params.slotId);
   const guardedTeardownWrite = async (fields: Record<string, unknown>): Promise<boolean> => {
     const ok = await updateSlotStatusIf(
       params.slotId,

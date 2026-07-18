@@ -103,14 +103,25 @@ async function claimSelectedSlot(
 ): Promise<void> {
   const claim = await claimSlotStatusIf(
     slotId,
-    (slot) => slotClaimBlockedByRelease(slot) === null,
-    // Ownership binds in the SAME claim write: two stale selections must not
-    // both succeed, and a teardown must be able to see who owns the slot.
+    (slot) => {
+      if (slotClaimBlockedByRelease(slot) !== null) return false;
+      // Exclusive: two selections racing over the same free snapshot must not
+      // both succeed. An existing owner blocks the claim unless it is this
+      // run, or a run that no longer exists / has gone terminal.
+      const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
+      if (!owner || owner === runId) return true;
+      const ownerRun = getRun(owner);
+      return !ownerRun || ['cancelled', 'failed', 'done'].includes(ownerRun.status);
+    },
+    // Ownership binds in the SAME claim write: a teardown must be able to see
+    // who owns the slot.
     { lifecycle: 'busy', phase, current_run_id: runId, ...(agent ? { agent } : {}) },
   );
   if (!claim.claimed) {
     throw Object.assign(
-      new Error(`Slot ${slotId} is mid-release; selection cannot claim it — pick a slot again`),
+      new Error(
+        `Slot ${slotId} is mid-release or claimed by another live run; selection cannot claim it — pick a slot again`,
+      ),
       { code: SLOT_CLAIM_REFUSED_CODE },
     );
   }

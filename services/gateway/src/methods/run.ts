@@ -831,15 +831,27 @@ export async function runRehydratePrNumber(
   // clears family_id/lane/variant alongside current_run_id, so replaying
   // without them would break same-family reuse checks in dispatch.ts:480-483.
   if (slotStatus.currentRunId !== params.runId) {
-    const { updateSlotStatus } = await import('../core/index.js');
-    await updateSlotStatus(run.slotId, {
-      current_run_id: params.runId,
-      current_flow_type: run.flowType || null,
-      current_ticket_or_pr: run.ticketOrPr,
-      current_family_id: run.familyId ?? null,
-      current_lane: run.lane ?? null,
-      current_variant: run.variant ?? null,
-    });
+    const { claimSlotStatusIf } = await import('../core/index.js');
+    const { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } =
+      await import('./dispatch/slot-scoring.js');
+    const reclaim = await claimSlotStatusIf(
+      run.slotId,
+      (slot) => slotClaimBlockedByRelease(slot) === null,
+      {
+        current_run_id: params.runId,
+        current_flow_type: run.flowType || null,
+        current_ticket_or_pr: run.ticketOrPr,
+        current_family_id: run.familyId ?? null,
+        current_lane: run.lane ?? null,
+        current_variant: run.variant ?? null,
+      },
+    );
+    if (!reclaim.claimed) {
+      throw Object.assign(
+        new Error(`Slot ${run.slotId} is mid-release; ci-watch replay cannot reclaim it`),
+        { code: SLOT_CLAIM_REFUSED_CODE },
+      );
+    }
   }
   try {
     await runReplayStep({ runId: params.runId, stepName: 'ci-watch' }, emit);

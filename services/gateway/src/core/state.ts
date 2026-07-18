@@ -181,13 +181,26 @@ export async function markSlotStatusIf(
 }
 
 /**
- * Full status-file replacement routed through the same write chain as every
- * other slot write — fleet refresh previously rebuilt the file outside the
- * chain, racing (and losing) against concurrent lifecycle CAS writes.
+ * Full status-file rewrite routed through the same write chain as every other
+ * slot write, with the builder receiving the CURRENT file content inside the
+ * chain — a snapshot taken before entering the chain would silently drop any
+ * claim (owner + epoch bump) that landed in between.
  */
-export async function replaceStatusFile(data: unknown): Promise<void> {
+export async function rewriteStatusFile(
+  builder: (current: { slots?: Array<Record<string, unknown>> } | null) => unknown,
+): Promise<void> {
   const next = writeChain.then(async () => {
-    await atomicWriteStatus(data);
+    let current: { slots?: Array<Record<string, unknown>> } | null = null;
+    if (existsSync(statusFile)) {
+      try {
+        current = JSON.parse(await readFile(statusFile, 'utf-8'));
+      } catch {
+        // A corrupt status file must not block the rebuild that repairs it —
+        // the builder receives null and regenerates from live checks.
+        current = null;
+      }
+    }
+    await atomicWriteStatus(builder(current));
     triggerSlotUpdateHook();
   });
   writeChain = next.catch(() => {});
