@@ -57,9 +57,10 @@ export function isRecoverableReviewerContext(ctx: Pick<AgentContext, 'role' | 's
  * that never parsed into a verdict). Pure so the recovery decision is unit
  * testable without slot I/O.
  *
- * `signalFreshSince(signal, ctx.startedAt)` rejects a stale signal file left by
- * an earlier reviewer that reused the same task dir — the same guard fix-pass
- * recovery uses so a prior loop cannot masquerade as this reviewer's result.
+ * `signalFreshSince(signal, ctx.updatedAt ?? ctx.startedAt)` rejects a stale
+ * signal file left by an earlier loop — anchored on the context's latest
+ * mutation so warm-reused reviewer contexts (which keep their original
+ * startedAt) cannot ingest a prior loop's result.
  *
  * When `reviewedPackage` is supplied the review is stamped against it (HEAD +
  * subject hashes), matching how a live review certifies its package. The caller
@@ -77,7 +78,17 @@ export function buildRecoveredReview(params: {
   reviewedPackage: ReadyGatePrPackage | undefined;
 }): IndependentReviewStatus | null {
   const { run, ctx, signal, feedback, reviewedPackage } = params;
-  if (!signal || !signalFreshSince(signal, ctx.startedAt)) return null;
+  // Freshness anchors on the context's LATEST mutation, not its first launch:
+  // a warm-reused reviewer context keeps its original startedAt across loops,
+  // so a prior loop's signal would look fresh against it — but every relaunch
+  // upserts the context (updatedAt) after that stale signal was written.
+  const freshnessAnchor = ctx.updatedAt ?? ctx.startedAt;
+  if (!signal || !signalFreshSince(signal, freshnessAnchor)) return null;
+  // Only a cleanly completed reviewer may stamp a verdict. A failed/blocked
+  // terminal signal can coexist with parseable feedback (e.g. a PASS draft
+  // written before the reviewer died) — stamping it would certify a review
+  // that never finished; skipping leaves the gate to request a fresh one.
+  if (signal.status !== 'complete' && signal.status !== 'done') return null;
   if (feedback.incomplete) return null;
 
   const priorReviews = run.engineState?.publishGate?.independentReviews ?? [];
@@ -202,7 +213,7 @@ async function ingestRecoveredReviewer(
   stampablePackage: ReadyGatePrPackage | undefined,
 ): Promise<string | null> {
   const signal = await readReviewerTerminalSignal(vars, ctx);
-  if (!signal || !signalFreshSince(signal, ctx.startedAt)) return null; // reviewer still running
+  if (!signal || !signalFreshSince(signal, ctx.updatedAt ?? ctx.startedAt)) return null; // reviewer still running
   // The reviewer's task dir is encoded in its stored task file path; feedback
   // is scoped to the reviewer's context id alongside it.
   const taskDir = ctx.taskFile ? path.posix.dirname(ctx.taskFile) : null;

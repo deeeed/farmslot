@@ -150,3 +150,52 @@ test('buildRecoveredReview stamps a PASS review against the matching package and
   assert.equal(review.reviewedHeadSha, 'deadbeef');
   assert.equal(review.reviewedReviewSubjectHash, 'subject-xyz');
 });
+
+test('a failed or blocked reviewer never stamps a verdict, even with parseable PASS feedback', () => {
+  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  const ctx = reviewerContext();
+  const feedback = { verdict: 'pass' as const, issues: [] };
+  for (const status of ['failed', 'blocked'] as const) {
+    const review = buildRecoveredReview({
+      run,
+      ctx,
+      signal: terminalSignal({ status }),
+      feedback,
+      reviewedPackage: undefined,
+    });
+    assert.equal(review, null, `${status} signal must not certify a review`);
+  }
+});
+
+test('freshness anchors on the latest context mutation, defeating warm-context reuse', () => {
+  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  // Warm-reused context: startedAt is loop 1's launch, updatedAt is loop 2's
+  // relaunch. A loop-1 signal written between them must be rejected.
+  const ctx = reviewerContext({
+    startedAt: '2026-07-16T10:00:00.000Z',
+    updatedAt: '2026-07-16T11:00:00.000Z',
+  });
+  const staleLoop1Signal = terminalSignal({ timestamp: '2026-07-16T10:40:00.000Z' });
+  assert.equal(
+    buildRecoveredReview({
+      run,
+      ctx,
+      signal: staleLoop1Signal,
+      feedback: { verdict: 'pass' as const, issues: [] },
+      reviewedPackage: undefined,
+    }),
+    null,
+  );
+  // A signal after the relaunch is genuinely this pass's result.
+  const freshSignal = terminalSignal({ timestamp: '2026-07-16T11:30:00.000Z' });
+  assert.notEqual(
+    buildRecoveredReview({
+      run,
+      ctx,
+      signal: freshSignal,
+      feedback: { verdict: 'pass' as const, issues: [] },
+      reviewedPackage: undefined,
+    }),
+    null,
+  );
+});
