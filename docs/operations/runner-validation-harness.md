@@ -57,6 +57,7 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 | `interaction-smoke`         | Post-launch TUI flow (blockers + compose)                 | skip         | skip              | **interactive** launch |
 | `dispatch-prompt-smoke`     | Gateway `sendRunnerPostLaunchPrompt` (dispatch parity)    | skip         | skip              | **interactive** launch |
 | `dispatch-prompt-mcp-race`  | MCP init race: fixture repro + live force-fail + fix pass | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-trust`     | Directory-trust / project-directory + classifier send_yes | skip         | skip              | **fixture**            |
 | `prompt-accepted`           | Sentinel digest ↔ UserPromptSubmit                        | live         | skip              | skip                   |
 | `turn-boundary`             | Stop after UserPromptSubmit                               | live         | skip              | skip                   |
 | `busy-composer`             | Busy pane regex fixtures                                  | fixtures     | skip              | skip                   |

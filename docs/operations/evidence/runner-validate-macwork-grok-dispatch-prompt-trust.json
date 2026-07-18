@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-18T09:20:04.117Z",
+  "host": "macwork",
+  "scenario": "dispatch-prompt-trust",
+  "runner": "grok",
+  "fixture": "/Users/deeeed/dev/farmslot-wt/farmslot-2/scripts/runner-validation/fixtures/grok-project-directory-trust.txt",
+  "blockerKind": "project-directory",
+  "autoAction": "grok-select-current-project",
+  "classifierTrustKey": "Enter",
+  "truncatedClassifierTrustKey": "Enter",
+  "deadlineBumpMs": 60000,
+  "pass": true,
+  "error": null
+}

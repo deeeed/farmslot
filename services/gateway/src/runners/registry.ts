@@ -635,6 +635,79 @@ export function runnerLaunchBlockerAutoActionKey(
   return null;
 }
 
+/**
+ * Map a high-confidence pane-classifier trust suggestion to a safe tmux key.
+ * Prefer the deterministic launch-blocker auto-action when the pane still
+ * matches; otherwise fall back to the runner's known trust confirmation key.
+ * Returns null when the classifier result is not an actionable trust prompt.
+ *
+ * TRIGGER ONLY: the returned key is advisory. The classifier's judged pane can
+ * be seconds stale by the time its verdict arrives, so delivery authorization
+ * comes from confirmTrustPromptWithFreshEvidence, which re-captures the pane
+ * and requires the deterministic detector to confirm.
+ */
+export function keyForClassifierTrustAction(
+  classifier: { state: string; confidence: number; suggestedAction?: string },
+  runnerId: string | null | undefined,
+  pane: string,
+): 'a' | 'Enter' | null {
+  if (classifier.confidence < 0.8) return null;
+  if (classifier.state !== 'trust_prompt') return null;
+  if (classifier.suggestedAction !== 'send_yes' && classifier.suggestedAction !== 'send_enter') {
+    return null;
+  }
+  const runner = normalizeRunner(runnerId);
+  const blocker = detectRunnerLaunchBlocker(pane, runner);
+  const fromBlocker = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null);
+  if (fromBlocker) return fromBlocker;
+  if (runner === 'cursor') return 'a';
+  if (runner === 'grok') return 'Enter';
+  return null;
+}
+
+/**
+ * Authorize and deliver a trust-prompt confirmation from FRESH evidence only.
+ * Captures the pane untruncated (a `tail -80` window is what hid the prompt
+ * from the deterministic detector in the first place) and sends the keystroke
+ * the detector derives from that capture — never a key inferred from an older
+ * pane or from classifier confidence alone, which could confirm the wrong UI
+ * after a pane transition. `exec` runs a tmux subcommand on the slot; injected
+ * so tests can pin target, key, and the no-evidence-no-send rule.
+ */
+export async function confirmTrustPromptWithFreshEvidence(opts: {
+  runnerId: string | null | undefined;
+  target: string;
+  logPrefix: string;
+  exec: (
+    tmuxCommand: string,
+  ) => Promise<{ exitCode: number; stdout: string; stderr?: string | undefined }>;
+}): Promise<{ outcome: 'sent'; key: 'a' | 'Enter' } | { outcome: 'no-fresh-evidence' }> {
+  const fresh = await opts.exec(`capture-pane -p -t ${shellQuote(opts.target)} 2>/dev/null`);
+  const runner = normalizeRunner(opts.runnerId);
+  const blocker = detectRunnerLaunchBlocker(fresh.stdout, runner);
+  const key = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null);
+  if (!key) {
+    console.log(
+      `[${opts.logPrefix}] classifier reported a trust prompt in ${opts.target} but the fresh capture shows no actionable trust blocker; not sending`,
+    );
+    return { outcome: 'no-fresh-evidence' };
+  }
+  const sent = await opts.exec(
+    `send-keys -t ${shellQuote(opts.target)} ${shellQuote(key)} 2>/dev/null`,
+  );
+  if (sent.exitCode !== 0) {
+    throw new Error(
+      `Failed to apply trust confirmation ${key} in ${opts.target}: ${
+        sent.stderr || sent.stdout || `exit ${sent.exitCode}`
+      }`,
+    );
+  }
+  console.log(
+    `[${opts.logPrefix}] confirmed ${blocker?.kind ?? 'trust'} prompt in ${opts.target} with ${key} from fresh pane evidence`,
+  );
+  return { outcome: 'sent', key };
+}
+
 export function detectRunnerLaunchBlocker(
   pane: string,
   runnerId?: string | null,
@@ -2020,13 +2093,24 @@ export async function sendRunnerPostLaunchPrompt(
   const readyStart = Date.now();
   let readyDeadline = readyStart + readyTimeoutMs;
   let deadlineExtended = false;
+  let blockerResolveDeadlineExtended = false;
+  const extendDeadlineAfterBlockerResolve = (reason: string): void => {
+    if (blockerResolveDeadlineExtended) return;
+    blockerResolveDeadlineExtended = true;
+    const bumpMs = Math.round(readyTimeoutMs / 2);
+    readyDeadline = Math.max(readyDeadline, Date.now()) + bumpMs;
+    console.log(
+      `[${logPrefix}] extended readiness deadline by ${Math.round(bumpMs / 1000)}s after ${reason} in ${target}`,
+    );
+  };
   let lastCapturedPane = '';
   let lastPaneActivityAt = readyStart;
   let lastPane = '';
   let stableCount = 0;
   let ready = false;
-  let workspaceTrustAnswered = false;
-  let grokProjectSelected = false;
+  let workspaceTrustAttempts = 0;
+  let grokProjectAttempts = 0;
+  const maxBlockerAutoAttempts = 2;
   const snapshottedBlockers = new Set<string>();
   while (Date.now() < readyDeadline) {
     await new Promise((r) => setTimeout(r, pollIntervalMs));
@@ -2076,7 +2160,7 @@ export async function sendRunnerPostLaunchPrompt(
     if (
       blocker?.autoAction === 'cursor-trust-workspace' &&
       autoActionKey &&
-      !workspaceTrustAnswered
+      workspaceTrustAttempts < maxBlockerAutoAttempts
     ) {
       const trustResult = await execOnSlot(
         vars,
@@ -2091,10 +2175,11 @@ export async function sendRunnerPostLaunchPrompt(
           }`,
         );
       }
+      workspaceTrustAttempts += 1;
       console.log(
         `[${logPrefix}] accepted Cursor workspace trust prompt for ${target} (${vars.remoteRepo})`,
       );
-      workspaceTrustAnswered = true;
+      extendDeadlineAfterBlockerResolve('auto-resolving workspace-trust');
       stableCount = 0;
       lastPane = '';
       continue;
@@ -2102,7 +2187,7 @@ export async function sendRunnerPostLaunchPrompt(
     if (
       blocker?.autoAction === 'grok-select-current-project' &&
       autoActionKey &&
-      !grokProjectSelected
+      grokProjectAttempts < maxBlockerAutoAttempts
     ) {
       const selectResult = await execOnSlot(
         vars,
@@ -2117,10 +2202,11 @@ export async function sendRunnerPostLaunchPrompt(
           }`,
         );
       }
+      grokProjectAttempts += 1;
       console.log(
         `[${logPrefix}] selected current Grok project directory for ${target} (${vars.remoteRepo})`,
       );
-      grokProjectSelected = true;
+      extendDeadlineAfterBlockerResolve('auto-resolving project-directory');
       stableCount = 0;
       lastPane = '';
       continue;
@@ -2231,6 +2317,66 @@ export async function sendRunnerPostLaunchPrompt(
           pane: timeoutPaneForFailure,
           expected: 'post-launch prompt ready for task delivery after classifier action',
         });
+      }
+    }
+    // Trust/directory prompts can be classified confidently (send_yes) even when
+    // the deterministic detector missed a truncated capture. The classifier only
+    // TRIGGERS a recheck here — its judged pane may be seconds stale, so the
+    // keystroke is authorized (and chosen) by the deterministic detector on a
+    // fresh untruncated capture, or not sent at all.
+    const trustSuggested =
+      !ready && classifierForFailure
+        ? keyForClassifierTrustAction(classifierForFailure, runner, timeoutPaneForFailure)
+        : null;
+    if (!ready && trustSuggested && classifierForFailure) {
+      console.log(
+        `[${logPrefix}] pane classifier reported trust_prompt in ${target}: ${classifierForFailure.reason}`,
+      );
+      const confirmed = await confirmTrustPromptWithFreshEvidence({
+        runnerId: runner,
+        target,
+        logPrefix,
+        exec: (tmuxCommand) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
+      });
+      if (confirmed.outcome !== 'sent') {
+        // No fresh deterministic evidence — fall through to the normal
+        // ready-timeout failure below with the classifier detail attached.
+      } else {
+        const recovered = await waitForPaneAfterClassifierAction(
+          vars,
+          target,
+          runner,
+          message,
+          marker,
+          {
+            timeoutMs: Math.min(30_000, Math.max(readyTimeoutMs, 5_000)),
+            pollIntervalMs,
+            stabilityPolls,
+          },
+        );
+        if (recovered?.kind === 'task-accepted') {
+          console.log(
+            `[${logPrefix}] pane classifier cleared trust prompt and task was already accepted in ${target}`,
+          );
+          return;
+        }
+        if (recovered?.kind === 'ready') {
+          ready = true;
+          lastPane = recovered.pane;
+        } else {
+          timeoutPaneForFailure = (
+            await execOnSlot(
+              vars,
+              tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
+            )
+          ).stdout;
+          classifierForFailure = await classifyRunnerPaneStateBestEffortLazy({
+            runner,
+            target,
+            pane: timeoutPaneForFailure,
+            expected: 'post-launch prompt ready for task delivery after trust action',
+          });
+        }
       }
     }
   }

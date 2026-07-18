@@ -15,11 +15,13 @@ async function dispatchPrompt(taskFile: string): Promise<string> {
 }
 import {
   assertSupportedRunnerSpelling,
+  confirmTrustPromptWithFreshEvidence,
   detectRunnerLaunchBlocker,
   getRunnerDefinition,
   getRunnerObservability,
   grokPaneShowsColdStartSession,
   isRunnerPaneRetired,
+  keyForClassifierTrustAction,
   normalizeRunner,
   resolveSafeSendTimeoutMs,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
@@ -285,6 +287,132 @@ describe('cursor runner', () => {
       autoAction: 'grok-select-current-project',
     });
     assert.equal(detectRunnerLaunchBlocker(pane, 'cursor'), null);
+  });
+
+  it('maps classifier trust_prompt/send_yes to the Grok project-directory confirmation key', () => {
+    const pane = `
+  Run Grok Build in a project directory?
+  1 (○) farmslot-grok-probe (current)
+  Enter:submit
+`;
+    assert.equal(
+      keyForClassifierTrustAction(
+        { state: 'trust_prompt', confidence: 0.99, suggestedAction: 'send_yes' },
+        'grok',
+        pane,
+      ),
+      'Enter',
+    );
+    assert.equal(
+      keyForClassifierTrustAction(
+        { state: 'trust_prompt', confidence: 0.99, suggestedAction: 'send_yes' },
+        'cursor',
+        `
+  ▶ [a] Trust this workspace
+    [q] Quit
+  Use arrow keys to navigate
+`,
+      ),
+      'a',
+    );
+    // Truncated pane: detector may miss markers, but classifier send_yes still
+    // maps to Grok's confirmation key so ready-timeout recovery can fire.
+    assert.equal(
+      keyForClassifierTrustAction(
+        { state: 'trust_prompt', confidence: 0.99, suggestedAction: 'send_yes' },
+        'grok',
+        'Run Grok Build in a project directory?\n1 (○) probe',
+      ),
+      'Enter',
+    );
+    assert.equal(
+      keyForClassifierTrustAction(
+        { state: 'ready', confidence: 0.99, suggestedAction: 'send_yes' },
+        'grok',
+        pane,
+      ),
+      null,
+    );
+  });
+
+  it('confirmTrustPromptWithFreshEvidence sends the detector key for the captured target', async () => {
+    const grokPane = `
+  ┃  Run Grok Build in a project directory?
+  ┃  1 (○) farmslot-grok-probe (current)
+  ┃  ↑/↓ navigate · y copy                                    Enter:submit
+`;
+    const commands: string[] = [];
+    const result = await confirmTrustPromptWithFreshEvidence({
+      runnerId: 'grok',
+      target: 'ff-2:agent.0',
+      logPrefix: 'test',
+      exec: async (tmuxCommand) => {
+        commands.push(tmuxCommand);
+        return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? grokPane : '' };
+      },
+    });
+    assert.deepEqual(result, { outcome: 'sent', key: 'Enter' });
+    assert.equal(commands.length, 2);
+    assert.match(commands[0], /^capture-pane -p -t 'ff-2:agent\.0'/);
+    assert.match(commands[1], /^send-keys -t 'ff-2:agent\.0' 'Enter'/);
+  });
+
+  it('confirmTrustPromptWithFreshEvidence maps a cursor workspace-trust capture to the a key', async () => {
+    const cursorPane = `
+  ▶ [a] Trust this workspace
+    [q] Quit
+  Use arrow keys to navigate
+`;
+    const commands: string[] = [];
+    const result = await confirmTrustPromptWithFreshEvidence({
+      runnerId: 'cursor',
+      target: 'ff-1:agent.0',
+      logPrefix: 'test',
+      exec: async (tmuxCommand) => {
+        commands.push(tmuxCommand);
+        return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? cursorPane : '' };
+      },
+    });
+    assert.deepEqual(result, { outcome: 'sent', key: 'a' });
+    assert.match(commands[1], /^send-keys -t 'ff-1:agent\.0' 'a'/);
+  });
+
+  it('confirmTrustPromptWithFreshEvidence never sends without fresh deterministic evidence', async () => {
+    const commands: string[] = [];
+    const result = await confirmTrustPromptWithFreshEvidence({
+      runnerId: 'grok',
+      target: 'ff-2:agent.0',
+      logPrefix: 'test',
+      exec: async (tmuxCommand) => {
+        commands.push(tmuxCommand);
+        // Fresh capture shows a ready pane — the trust prompt is gone.
+        return { exitCode: 0, stdout: 'grok> awaiting your instructions' };
+      },
+    });
+    assert.deepEqual(result, { outcome: 'no-fresh-evidence' });
+    assert.equal(commands.length, 1);
+    assert.match(commands[0], /^capture-pane/);
+  });
+
+  it('confirmTrustPromptWithFreshEvidence surfaces a failed send instead of swallowing it', async () => {
+    const grokPane = `
+  ┃  Run Grok Build in a project directory?
+  ┃  1 (○) farmslot-grok-probe (current)
+  ┃  ↑/↓ navigate · y copy                                    Enter:submit
+`;
+    await assert.rejects(
+      () =>
+        confirmTrustPromptWithFreshEvidence({
+          runnerId: 'grok',
+          target: 'ff-2:agent.0',
+          logPrefix: 'test',
+          exec: async (tmuxCommand) =>
+            tmuxCommand.startsWith('capture-pane')
+              ? { exitCode: 0, stdout: grokPane }
+              : { exitCode: 1, stdout: '', stderr: 'no such pane' },
+        }),
+      /Failed to apply trust confirmation Enter in ff-2:agent\.0: no such pane/,
+    );
   });
 
   it('classifies auth blockers without assigning an unsafe auto action', () => {
