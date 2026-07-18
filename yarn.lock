@@ -4347,6 +4347,7 @@ __metadata:
     "@types/node": "npm:^22.0.0"
     eslint: "npm:^10.3.0"
     prettier: "npm:^3.8.3"
+    tsx: "npm:^4.19.0"
     typescript: "npm:^5.6.0"
   bin:
     farmslot-agent: ./bin/farmslot-agent.mjs
