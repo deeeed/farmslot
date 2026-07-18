@@ -169,7 +169,7 @@ async function cleanupSlotAfterRunFailure(
       planRef.value = 'already-releasing';
       return null;
     }
-    const plan = failedRunSlotCleanup(slot, runId);
+    const plan = failedRunSlotCleanup(slot, runId, getRun);
     planRef.value = plan;
     switch (plan) {
       case 'reset':

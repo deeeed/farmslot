@@ -371,12 +371,25 @@ export function slotClaimBlockedByLiveOwner(
 export function failedRunSlotCleanup(
   slot: Readonly<Record<string, unknown>>,
   runId: string,
+  ownerRunLookup: (id: string) => { status: string } | undefined,
 ): 'reset' | 'release-keep-handoff' | 'clear-reservation' | 'none' {
-  if (slot.current_run_id === runId) {
-    const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
+  const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
+  const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
+  if (owner === runId) {
     return reserved && reserved !== runId ? 'release-keep-handoff' : 'reset';
   }
-  if (slot.handoff_run_id === runId) return 'clear-reservation';
+  if (reserved === runId) {
+    // The reservation holder is the sanctioned successor: when the recorded
+    // owner is missing or terminal (fresh reuse terminalizes it before the
+    // teardown that then failed), nobody else will ever tear this slot down —
+    // a bare reservation clear would strand it busy under a dead owner, or
+    // leak the preserved worker on an unowned row. Only a LIVE owner keeps
+    // the slot, in which case just the reservation is cleared.
+    const ownerRun = owner ? ownerRunLookup(owner) : undefined;
+    const ownerLive =
+      ownerRun != null && !TERMINAL_RUN_STATUSES.includes(ownerRun.status as RunStatus);
+    return ownerLive ? 'clear-reservation' : 'reset';
+  }
   return 'none';
 }
 

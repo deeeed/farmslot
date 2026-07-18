@@ -37,7 +37,7 @@ import {
 } from '../../runners/registry.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
-import { unwatchContext, watchContext, watchSlot } from '../../tasks/watcher.js';
+import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
 import { ensureWorkerRoleTarget, waitForRunnerProcessExit } from './execute.js';
 import { verifyBranchAffinityNudgeStillEligible } from './preview.js';
@@ -448,6 +448,23 @@ export async function nudgeDispatch(
     await watchContext(params.slotId, workingContext);
   } else {
     await watchSlot(params.slotId);
+  }
+
+  // An operator release that lands after the final claim has already torn the
+  // slot down and removed its watchers — a watcher wired after that would leak
+  // against a slot the registry says is free, and dispatch.done would report a
+  // successful nudge onto a dead worker. Re-verify ownership after wiring and
+  // undo it on loss.
+  const ownerAfterWatch = await readSlotField(params.slotId, 'current_run_id');
+  if (ownerAfterWatch !== params.runId) {
+    if (workingContext) {
+      await unwatchContext(params.slotId, workingContext.id);
+    } else {
+      await unwatchSlot(params.slotId);
+    }
+    throw new Error(
+      `Slot ${params.slotId} was released while the nudge was completing; run ${params.runId} no longer owns it`,
+    );
   }
 
   emit('dispatch.done', { slotId: params.slotId, taskId: taskFolderId, runner });

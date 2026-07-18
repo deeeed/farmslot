@@ -116,8 +116,14 @@ async function slotReleaseImpl(
   params: SlotReleaseParams,
   emit: EventEmitter,
 ): Promise<{ released: boolean }> {
-  // Cheap early owner check (authoritative validation happens atomically at
-  // the releasing-marker CAS below, after the non-destructive preflight).
+  // Cheap early checks (authoritative validation happens atomically at the
+  // releasing-marker CAS below, after the non-destructive preflight). A slot
+  // already mid-release belongs to that teardown — a bound release joining at
+  // the same epoch would run a second destructive pass.
+  if ((await readSlotField(params.slotId, 'phase')) === SLOT_PHASE_RELEASING) {
+    console.log(`[release] slot ${params.slotId} is already mid-release; leaving it untouched`);
+    return { released: false };
+  }
   if (params.expectedRunId) {
     const boundOwner =
       ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? null;
@@ -189,11 +195,15 @@ async function slotReleaseImpl(
       // A pending handoff reservation means an incoming run's delivery is in
       // flight on this worker — no teardown (bound or not) may start under it.
       if (typeof slot.handoff_run_id === 'string' && slot.handoff_run_id) return false;
+      // A slot already mid-release belongs to that teardown — a bound release
+      // joining at the same epoch would run a second destructive pass and keep
+      // going after the first publishes `ready`, clobbering whatever claims
+      // the slot next. Applies to bound AND unbound entries.
+      if (slot.phase === SLOT_PHASE_RELEASING) return false;
       const owner = ((slot.current_run_id as string | null | undefined) ?? null) as string | null;
       if (params.expectedRunId) return owner === params.expectedRunId;
-      // Unbound (operator) release: releases whoever currently holds the slot,
-      // but never one that is already mid-release from another teardown.
-      return slot.phase !== SLOT_PHASE_RELEASING;
+      // Unbound (operator) release: releases whoever currently holds the slot.
+      return true;
     },
     { lifecycle: 'busy', phase: SLOT_PHASE_RELEASING },
   );

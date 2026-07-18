@@ -166,6 +166,49 @@ test('slotRelease with expectedRunId leaves a slot held by a different run untou
   assert.equal(await readSlotField(slotId, 'current_run_id'), rival.id, 'claim untouched');
 });
 
+test('slotRelease bound to the owner still refuses a slot already mid-release', async (t) => {
+  const slotId = 'demo-work-1';
+  const owner = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-releasing-fence`,
+    slotId,
+  });
+  t.after(() => cleanupRun(owner.id));
+  const { readFile, rm, writeFile } = await import('node:fs/promises');
+  const { statusFile } = await import('../../core/state.js');
+  const { readSlotField } = await import('../../core/index.js');
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const data = priorStatus ? JSON.parse(priorStatus) : { slots: [] };
+  const others = (data.slots ?? []).filter((row: { slot: string }) => row.slot !== slotId);
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      {
+        ...data,
+        slots: [
+          ...others,
+          // An in-flight teardown owns this slot; a bound release joining at
+          // the same epoch would run a second destructive pass.
+          { slot: slotId, lifecycle: 'busy', phase: 'releasing', current_run_id: owner.id },
+        ],
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  t.after(async () => {
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+  });
+
+  const result = await slotRelease({ slotId, expectedRunId: owner.id }, noopEmit);
+
+  assert.deepEqual(result, { released: false });
+  assert.equal(await readSlotField(slotId, 'phase'), 'releasing', 'fence untouched');
+});
+
 test('concurrent slotRelease calls for one slot coalesce onto a single in-flight teardown', async (t) => {
   const slotId = 'demo-work-1';
   // Reuse the gate-held rejection path: both callers must observe the SAME

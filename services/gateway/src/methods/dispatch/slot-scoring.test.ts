@@ -234,16 +234,32 @@ test('slotClaimBlockedByHandoff blocks foreign reservations only', () => {
 });
 
 test('failedRunSlotCleanup resets only owned slots and clears only own reservations', () => {
-  assert.equal(failedRunSlotCleanup({ current_run_id: 'me' }, 'me'), 'reset');
-  assert.equal(failedRunSlotCleanup({ current_run_id: 'me', handoff_run_id: 'me' }, 'me'), 'reset');
+  const liveOwner = (id: string) => (id === 'prior' ? { status: 'monitoring' } : undefined);
+  const deadOwner = (id: string) => (id === 'prior' ? { status: 'cancelled' } : undefined);
+  assert.equal(failedRunSlotCleanup({ current_run_id: 'me' }, 'me', liveOwner), 'reset');
   assert.equal(
-    failedRunSlotCleanup({ current_run_id: 'me', handoff_run_id: 'incoming' }, 'me'),
+    failedRunSlotCleanup({ current_run_id: 'me', handoff_run_id: 'me' }, 'me', liveOwner),
+    'reset',
+  );
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'me', handoff_run_id: 'incoming' }, 'me', liveOwner),
     'release-keep-handoff',
   );
   assert.equal(
-    failedRunSlotCleanup({ current_run_id: 'prior', handoff_run_id: 'me' }, 'me'),
+    failedRunSlotCleanup({ current_run_id: 'prior', handoff_run_id: 'me' }, 'me', liveOwner),
     'clear-reservation',
   );
-  assert.equal(failedRunSlotCleanup({ current_run_id: 'prior' }, 'me'), 'none');
-  assert.equal(failedRunSlotCleanup({}, 'me'), 'none');
+  // The reservation holder is the sanctioned successor: a dead, unknown, or
+  // absent owner means nobody else will tear the slot down.
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'prior', handoff_run_id: 'me' }, 'me', deadOwner),
+    'reset',
+  );
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'vanished', handoff_run_id: 'me' }, 'me', liveOwner),
+    'reset',
+  );
+  assert.equal(failedRunSlotCleanup({ handoff_run_id: 'me' }, 'me', liveOwner), 'reset');
+  assert.equal(failedRunSlotCleanup({ current_run_id: 'prior' }, 'me', liveOwner), 'none');
+  assert.equal(failedRunSlotCleanup({}, 'me', liveOwner), 'none');
 });
