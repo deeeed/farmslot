@@ -194,9 +194,12 @@ export async function runActivateOnSlot(
   } catch (err) {
     // Roll back only OUR claim: a newer claim that took the slot after this
     // activate must not be clobbered by the restore.
-    await updateSlotStatusIf(targetSlot, (slot) => slot.current_run_id === run.id, {
-      current_run_id: priorRunId,
-    });
+    await updateSlotStatusIf(
+      targetSlot,
+      (slot) =>
+        slot.current_run_id === run.id && (Number(slot.slot_epoch) || 0) === (rebind.epoch ?? -1),
+      { current_run_id: priorRunId },
+    );
     updateRun(params.runId, { slotId: priorSlotId });
     throw err;
   }

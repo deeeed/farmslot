@@ -225,6 +225,17 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
     return { ...row, dispatchable: false };
   }
   const activeState = activeSlotPhaseForRun(activeRun);
+  // A ci-watching run has intentionally RELEASED its slot (all ci-watch and
+  // finalize paths free it while the run keeps watching CI), so a cleanly
+  // released row (ready, unowned) must not be resurrected to held/ci-watch —
+  // that would undo the release the moment a refresh ran. Working and
+  // gate-held runs keep the recovery behavior: a probe that lost ownership
+  // is restored from the run store. Trade-off: a refresh after a LOST status
+  // file cannot restore a ci-watch hold; the pr-complete chain re-selects a
+  // slot instead.
+  if (row.lifecycle === 'ready' && !row.current_run_id && activeState.phase === 'ci-watch') {
+    return row;
+  }
   return {
     ...row,
     lifecycle: activeState.lifecycle,
@@ -288,8 +299,10 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
   // before entering the chain would drop any claim (owner + epoch) that
   // landed while the probes ran.
   const checkedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-  const activeRuns = listRuns({ active: true }).runs;
   await rewriteStatusFile((current) => {
+    // Sampled INSIDE the chain: a run finishing (or a slot releasing) while
+    // the slow probes ran must be seen by the reconcile below.
+    const activeRuns = listRuns({ active: true }).runs;
     const prevSlots: Record<string, PreviousSlotStatus> = {};
     for (const row of current?.slots ?? []) {
       prevSlots[String(row.slot)] = row as PreviousSlotStatus;

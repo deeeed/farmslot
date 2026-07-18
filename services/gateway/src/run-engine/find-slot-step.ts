@@ -114,9 +114,17 @@ async function claimSelectedSlot(
       if (opts?.takeoverLiveOwner) return true;
       return slotClaimBlockedByLiveOwner(slot, runId, getRun) === null;
     },
-    // Ownership binds in the SAME claim write: a teardown must be able to see
-    // who owns the slot.
-    { lifecycle: 'busy', phase, current_run_id: runId, ...(agent ? { agent } : {}) },
+    // Ownership binds in the SAME claim write — EXCEPT for the nudge
+    // takeover, which must leave current_run_id with the prior run:
+    // nudgeDispatch's handoff re-reads the owner to terminalize it only
+    // after delivery succeeds, and rebinding here would make it terminalize
+    // the wrong (new) run while the prior worker keeps running.
+    {
+      lifecycle: 'busy',
+      phase,
+      ...(opts?.takeoverLiveOwner ? {} : { current_run_id: runId }),
+      ...(agent ? { agent } : {}),
+    },
   );
   if (!claim.claimed) {
     throw Object.assign(

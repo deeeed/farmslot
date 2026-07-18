@@ -211,9 +211,10 @@ async function slotReleaseImpl(
     const { unwatchSlot } = await import('../../tasks/watcher.js');
     await unwatchSlot(params.slotId);
   } catch (err) {
-    // A failed watcher removal must not strand the slot in `releasing`: the
-    // teardown that follows kills the session anyway, making the watcher
-    // moot, so proceeding is strictly better than aborting here.
+    // A failed watcher removal must not strand the slot in `releasing`. For
+    // a full teardown the killed session moots the watcher; for a
+    // preserveAgents (gate-hold) release the leftover watcher is rebound by
+    // the next watchSlot. In both cases proceeding beats aborting mid-mark.
     console.warn(
       `[release] unwatch failed for ${params.slotId}; continuing teardown: ${(err as Error).message}`,
     );

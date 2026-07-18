@@ -3,9 +3,11 @@ import {
   isCdpLiveValue,
   isDispatchScoreStale,
   isSlotRefreshStaleBranch,
+  type RunStatus,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
   type SlotStatus,
   type SlotTrackingProjectConfig,
+  TERMINAL_RUN_STATUSES,
 } from '@farmslot/protocol';
 
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
@@ -338,9 +340,6 @@ export function slotClaimBlockedByRelease(slot: Readonly<Record<string, unknown>
   return slot.phase === SLOT_PHASE_RELEASING ? 'slot is mid-release' : null;
 }
 
-/** Run statuses after which a slot claim may be taken over. */
-export const TERMINAL_RUN_STATUSES: readonly string[] = ['cancelled', 'failed', 'done'];
-
 /**
  * Claim exclusivity: an existing owner blocks the claim unless it is the
  * claiming run itself, or a run that no longer exists / has gone terminal.
@@ -355,7 +354,7 @@ export function slotClaimBlockedByLiveOwner(
   const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
   if (!owner || owner === runId) return null;
   const ownerRun = ownerRunLookup(owner);
-  if (!ownerRun || TERMINAL_RUN_STATUSES.includes(ownerRun.status)) return null;
+  if (!ownerRun || TERMINAL_RUN_STATUSES.includes(ownerRun.status as RunStatus)) return null;
   return `slot is claimed by live run ${owner}`;
 }
 

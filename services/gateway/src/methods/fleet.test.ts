@@ -484,3 +484,17 @@ test('reconcileRefreshSlotRowWithActiveRun preserves a releasing fence over the 
   assert.equal(reconciled.current_run_id, 'teardown-owner', 'owner untouched');
   assert.equal(reconciled.dispatchable, false);
 });
+
+test('reconcileRefreshSlotRowWithActiveRun does not resurrect a cleanly released row', () => {
+  const row = makeRefreshRow({ lifecycle: 'ready', phase: null, current_run_id: null });
+  const reconciled = reconcileRefreshSlotRowWithActiveRun(row, {
+    id: 'ci-watcher',
+    status: 'ci-watching',
+    flowType: 'fix-bug',
+    steps: [],
+    decisions: [],
+    metrics: {},
+  } as never);
+  assert.equal(reconciled.current_run_id, null, 'released slot stays free');
+  assert.equal(reconciled.lifecycle, 'ready');
+});
