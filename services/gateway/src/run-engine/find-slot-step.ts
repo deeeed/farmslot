@@ -599,7 +599,15 @@ export async function executeFindSlotStep(
       }
     }
 
-    // If user requested reset, do it before proceeding
+    // Claim BEFORE any destructive reset: the claim CAS refuses live-owned,
+    // reserved, and mid-release slots and THROWS, so forged or stale
+    // selectionData with resetBranch can never hard-reset a repo an active
+    // owner's worker is still writing in — and the claim's 'preparing' fence
+    // keeps rivals out for the duration of the reset below.
+    updateRun(runId, { slotId: pickedSlotId });
+    await claimSelectedSlot(pickedSlotId, runId, 'preparing');
+
+    // If user requested reset, do it behind the claim fence
     if (resolvedDecision?.selectionData?.resetBranch) {
       const vars = await loadSlotVars(pickedSlotId);
       // Entry guard mirroring the other destructive-op call sites — never reset
@@ -620,8 +628,6 @@ export async function executeFindSlotStep(
       );
     }
 
-    updateRun(runId, { slotId: pickedSlotId });
-    await claimSelectedSlot(pickedSlotId, runId, 'preparing');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
     return {
       inputs,
