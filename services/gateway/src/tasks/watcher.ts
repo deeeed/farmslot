@@ -249,28 +249,38 @@ export async function watchSlot(
       taskFilePath: contextTaskPath,
       signalFilePath: contextSignalPath,
     };
-    if (existingWatch && !shouldRebindWatch(existingWatch, nextWatchIdentity)) {
+    // Fast path: identical live watch with no rebind in flight — nothing to
+    // do. With one in flight the live entry may be about to change, so the
+    // authoritative check happens inside the chained promise below.
+    if (
+      existingWatch &&
+      !pendingWatchKeys.has(key) &&
+      !shouldRebindWatch(existingWatch, nextWatchIdentity)
+    ) {
       continue;
     }
-    let staleWatch: SlotWatch | undefined = existingWatch;
-    if (!existingWatch) {
-      const pendingWatch = pendingWatchKeys.get(key);
-      if (pendingWatch) {
-        await pendingWatch;
-        const pendingResult = activeWatches.get(key);
-        if (pendingResult && !shouldRebindWatch(pendingResult, nextWatchIdentity)) {
-          continue;
-        }
-        staleWatch = pendingResult;
-      }
-    }
 
+    const priorRebind = pendingWatchKeys.get(key);
     const startWatch: Promise<void> = (async () => {
-      // Stale-watch teardown INSIDE the pending window: unwatchSlot drains
-      // pendingWatchKeys before deciding what remains, so covering the whole
-      // rebind (teardown + registration) closes the gap where a concurrent
-      // unwatch observed the old watch gone but the successor not yet
-      // registered — and wrongly cleared the slot progress overlay.
+      // Per-key serialization: every rebind chains behind the in-flight one
+      // and re-reads the live entry only after it settles. Concurrent rebinds
+      // previously captured the same stale watch, overwrote each other's
+      // pending entry, and leaked the loser's watchers with no registry entry
+      // for unwatchSlot to find. Registering the chained promise in
+      // pendingWatchKeys (below) also keeps unwatchSlot's pending drain
+      // covering the WHOLE chain — including this rebind's stale-watch
+      // teardown — so the overlay clear cannot land in the
+      // teardown-vs-registration gap.
+      if (priorRebind) {
+        try {
+          await priorRebind;
+        } catch {
+          // The prior rebind's failure is reported at its own await site;
+          // this rebind only needs it settled before reading the map.
+        }
+      }
+      const staleWatch = activeWatches.get(key);
+      if (staleWatch && !shouldRebindWatch(staleWatch, nextWatchIdentity)) return;
       if (staleWatch) {
         await unwatchKey(key, staleWatch);
       }
