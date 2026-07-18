@@ -9,6 +9,10 @@ import type {
   ExecutionTemplateSource,
 } from '@farmslot/agent-runtime';
 
+import { dim, green, red, yellow } from '../colors.js';
+import { createEmitter } from '../envelope.js';
+import { OutputContext } from '../output.js';
+
 /**
  * Loaded lazily inside the action handlers: a static import is evaluated at
  * CLI STARTUP (command registration), so a missing or stale agent-runtime
@@ -19,25 +23,45 @@ import type {
  */
 type AgentRuntime = typeof import('@farmslot/agent-runtime');
 
-async function loadAgentRuntime(): Promise<AgentRuntime> {
-  try {
-    return await import('@farmslot/agent-runtime');
-  } catch (err) {
-    throw Object.assign(
-      new Error(
-        `@farmslot/agent-runtime failed to load (${err instanceof Error ? err.message : String(err)})`,
-      ),
-      {
-        code: 'AGENT_RUNTIME_UNAVAILABLE',
-        userAction: 'Run `yarn workspace @farmslot/agent-runtime build` and retry.',
-      },
-    );
+const REQUIRED_AGENT_RUNTIME_EXPORTS: readonly (keyof AgentRuntime)[] = [
+  'createExecutionTemplate',
+  'customTemplateSource',
+  'lintExecutionTemplates',
+  'listExecutionTemplates',
+  'packageFlowTreeTemplateSource',
+  'projectWorkerTemplateSource',
+];
+
+function agentRuntimeUnavailable(detail: string): Error {
+  return Object.assign(new Error(`@farmslot/agent-runtime failed to load (${detail})`), {
+    code: 'AGENT_RUNTIME_UNAVAILABLE',
+    userAction: 'Run `yarn workspace @farmslot/agent-runtime build` and retry.',
+  });
+}
+
+/**
+ * A STALE dist can import successfully while lacking the exports this command
+ * needs (the exact live-incident shape) — a later undefined-function call
+ * would surface as a generic error with no rebuild guidance, so the loader
+ * validates the export surface up front. Exported for tests.
+ */
+export function assertAgentRuntimeExports(mod: Partial<AgentRuntime>): void {
+  const missing = REQUIRED_AGENT_RUNTIME_EXPORTS.filter((name) => typeof mod[name] !== 'function');
+  if (missing.length > 0) {
+    throw agentRuntimeUnavailable(`stale build is missing exports: ${missing.join(', ')}`);
   }
 }
 
-import { dim, green, red, yellow } from '../colors.js';
-import { createEmitter } from '../envelope.js';
-import { OutputContext } from '../output.js';
+async function loadAgentRuntime(): Promise<AgentRuntime> {
+  let mod: AgentRuntime;
+  try {
+    mod = await import('@farmslot/agent-runtime');
+  } catch (err) {
+    throw agentRuntimeUnavailable(err instanceof Error ? err.message : String(err));
+  }
+  assertAgentRuntimeExports(mod);
+  return mod;
+}
 
 interface ListOptions {
   dir?: string[];
