@@ -3,20 +3,65 @@ import { resolve } from 'node:path';
 
 import type { Command } from 'commander';
 
-import {
-  createExecutionTemplate,
-  customTemplateSource,
-  type ExecutionRunMode,
-  type ExecutionTemplateSource,
-  lintExecutionTemplates,
-  listExecutionTemplates,
-  packageFlowTreeTemplateSource,
-  projectWorkerTemplateSource,
+import type {
+  ExecutionRunMode,
+  ExecutionTemplateEntry,
+  ExecutionTemplateSource,
 } from '@farmslot/agent-runtime';
 
 import { dim, green, red, yellow } from '../colors.js';
 import { createEmitter } from '../envelope.js';
 import { OutputContext } from '../output.js';
+
+/**
+ * Loaded lazily inside the action handlers: a static import is evaluated at
+ * CLI STARTUP (command registration), so a missing or stale agent-runtime
+ * dist would break every farmslot command — observed live 2026-07-18 when a
+ * pre-existing dist without the execution-template exports took down the
+ * whole CLI. Lazy loading scopes the failure to this subcommand with a
+ * message naming the rebuild.
+ */
+type AgentRuntime = typeof import('@farmslot/agent-runtime');
+
+const REQUIRED_AGENT_RUNTIME_EXPORTS: readonly (keyof AgentRuntime)[] = [
+  'createExecutionTemplate',
+  'customTemplateSource',
+  'lintExecutionTemplates',
+  'listExecutionTemplates',
+  'packageFlowTreeTemplateSource',
+  'projectWorkerTemplateSource',
+];
+
+function agentRuntimeUnavailable(detail: string): Error {
+  return Object.assign(new Error(`@farmslot/agent-runtime failed to load (${detail})`), {
+    code: 'AGENT_RUNTIME_UNAVAILABLE',
+    userAction: 'Run `yarn workspace @farmslot/agent-runtime build` and retry.',
+  });
+}
+
+/**
+ * A STALE dist can import successfully while lacking the exports this command
+ * needs (the exact live-incident shape) — a later undefined-function call
+ * would surface as a generic error with no rebuild guidance, so the loader
+ * validates the export surface up front. Exported for tests.
+ */
+export function assertAgentRuntimeExports(mod: Partial<AgentRuntime>): void {
+  const missing = REQUIRED_AGENT_RUNTIME_EXPORTS.filter((name) => typeof mod[name] !== 'function');
+  if (missing.length > 0) {
+    throw agentRuntimeUnavailable(`stale build is missing exports: ${missing.join(', ')}`);
+  }
+}
+
+async function loadAgentRuntime(): Promise<AgentRuntime> {
+  let mod: AgentRuntime;
+  try {
+    mod = await import('@farmslot/agent-runtime');
+  } catch (err) {
+    throw agentRuntimeUnavailable(err instanceof Error ? err.message : String(err));
+  }
+  assertAgentRuntimeExports(mod);
+  return mod;
+}
 
 interface ListOptions {
   dir?: string[];
@@ -50,14 +95,14 @@ function parseRunMode(value: string | undefined): ExecutionRunMode | undefined {
   throw new Error(`--run-mode must be autonomous|interactive|validation (got ${value})`);
 }
 
-function buildSources(opts: ListOptions): ExecutionTemplateSource[] {
+function buildSources(rt: AgentRuntime, opts: ListOptions): ExecutionTemplateSource[] {
   const sources: ExecutionTemplateSource[] = [];
   for (const [index, dir] of (opts.dir ?? []).entries()) {
     const root = resolve(dir);
     if (!existsSync(root) || !statSync(root).isDirectory()) {
       throw new Error(`--dir is not a directory: ${root}`);
     }
-    sources.push(customTemplateSource(`dir-${index + 1}`, root, 'flow-tree'));
+    sources.push(rt.customTemplateSource(`dir-${index + 1}`, root, 'flow-tree'));
   }
   if (opts.projectWorker) {
     const input = resolve(opts.projectWorker);
@@ -69,14 +114,16 @@ function buildSources(opts: ListOptions): ExecutionTemplateSource[] {
     if (!existsSync(workerRoot) || !statSync(workerRoot).isDirectory()) {
       throw new Error(`--project-worker is not a directory: ${workerRoot}`);
     }
-    sources.push(projectWorkerTemplateSource(opts.projectName ?? 'project', projectTemplatesDir));
+    sources.push(
+      rt.projectWorkerTemplateSource(opts.projectName ?? 'project', projectTemplatesDir),
+    );
   }
   if (opts.packageTemplates) {
     const root = resolve(opts.packageTemplates);
     if (!existsSync(root) || !statSync(root).isDirectory()) {
       throw new Error(`--package-templates is not a directory: ${root}`);
     }
-    sources.push(packageFlowTreeTemplateSource(opts.packageId ?? 'shared', root));
+    sources.push(rt.packageFlowTreeTemplateSource(opts.packageId ?? 'shared', root));
   }
   if (sources.length === 0) {
     throw new Error(
@@ -86,7 +133,7 @@ function buildSources(opts: ListOptions): ExecutionTemplateSource[] {
   return sources;
 }
 
-function formatListHuman(entries: ReturnType<typeof listExecutionTemplates>): string {
+function formatListHuman(entries: ExecutionTemplateEntry[]): string {
   if (entries.length === 0) return `${dim('no templates found')}\n`;
   const lines: string[] = [];
   for (const entry of entries) {
@@ -126,12 +173,13 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .option('--platform <platform>', 'Filter by platform (mobile|extension|core)')
     .option('--include-shadowed', 'Include shadowed duplicates (default true)', true)
     .option('--no-include-shadowed', 'Hide shadowed duplicates')
-    .action((opts: ListOptions, command: Command) => {
+    .action(async (opts: ListOptions, command: Command) => {
       const output = new OutputContext(Boolean(command.optsWithGlobals().json ?? opts.json));
       const emit = createEmitter(output, command);
       try {
-        const entries = listExecutionTemplates({
-          sources: buildSources(opts),
+        const rt = await loadAgentRuntime();
+        const entries = rt.listExecutionTemplates({
+          sources: buildSources(rt, opts),
           flow: opts.flow,
           runMode: parseRunMode(opts.runMode),
           platform: opts.platform,
@@ -148,11 +196,12 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .command('lint')
     .description('Lint optional frontmatter and parseable checkbox lines')
     .argument('<target>', 'Template file or directory')
-    .action((target: string, opts: LintOptions, command: Command) => {
+    .action(async (target: string, opts: LintOptions, command: Command) => {
       const output = new OutputContext(Boolean(command.optsWithGlobals().json ?? opts.json));
       const emit = createEmitter(output, command);
       try {
-        const result = lintExecutionTemplates(target);
+        const rt = await loadAgentRuntime();
+        const result = rt.lintExecutionTemplates(target);
         if (emit.machine) {
           if (result.ok) {
             emit.ok(result);
@@ -190,7 +239,7 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .option('--platform <platform>', 'Single platform for frontmatter (repeat via comma)')
     .option('--title <title>', 'Template title')
     .option('--force', 'Overwrite an existing file')
-    .action((pathArg: string, opts: NewOptions, command: Command) => {
+    .action(async (pathArg: string, opts: NewOptions, command: Command) => {
       const output = new OutputContext(Boolean(command.optsWithGlobals().json ?? opts.json));
       const emit = createEmitter(output, command);
       try {
@@ -200,7 +249,7 @@ export function registerExecutionTemplateCommand(program: Command): void {
               .map((p) => p.trim())
               .filter(Boolean)
           : undefined;
-        const created = createExecutionTemplate({
+        const created = (await loadAgentRuntime()).createExecutionTemplate({
           path: pathArg,
           flow: opts.flow,
           runMode: parseRunMode(opts.runMode),
