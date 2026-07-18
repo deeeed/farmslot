@@ -49,7 +49,6 @@ import {
 import {
   computePromptAcceptedSinceMs,
   isObservabilityReadingAuthoritative,
-  paneRetiredFromEnv,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
   RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
   selectIdleFromObservabilityAndPane,
@@ -122,21 +121,6 @@ export interface RunnerDefinition {
   observabilityScope: ObservabilityScope;
   /** Post-send hook heartbeat window for degraded-mode detection (ADR-032). Null skips check. */
   observabilityHeartbeatMs?: number | null;
-  /**
-   * ADR-032 Phase 3A per-runner pane-retirement flip. When true (or the
-   * {@link OBS_PANE_RETIRED_ENV} env flag is set AND {@link observabilityPaneRetirementEnvFlag}),
-   * this event-driven runner's send/idle/pending decisions consult hook readings only and never
-   * the pane predicates. Default off — flag-off behavior is byte-identical to Phase 2. Only
-   * meaningful for `event-driven` runners.
-   */
-  observabilityPaneRetired?: boolean;
-  /**
-   * ADR-032 Phase 3A: does the global {@link OBS_PANE_RETIRED_ENV} env flag retire this runner's
-   * pane? Phase 3 of the ADR scopes the dark-launch to Claude only, so only Claude opts in here.
-   * Other event-driven runners (Codex) stay on Phase 2 under the env flag and can be dark-launched
-   * later via the per-runner {@link observabilityPaneRetired} field without widening the ADR.
-   */
-  observabilityPaneRetirementEnvFlag?: boolean;
 }
 
 interface PaneClassifierResult {
@@ -199,8 +183,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: (model) => model === 'unknown' || CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,
-    // ADR-032 Phase 3: the global pane-retirement env flag is scoped to Claude for Phase 3A.
-    observabilityPaneRetirementEnvFlag: true,
   },
   codex: {
     id: 'codex',
@@ -351,31 +333,25 @@ export function getRunnerObservability(runnerId?: string | null): RunnerObservab
 }
 
 export {
-  OBS_PANE_RETIRED_ENV,
-  paneRetiredFromEnv,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
   RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
 } from './observability-send-decision.js';
 
 /**
- * ADR-032 Phase 3A: is the pane retired for this runner's decisions?
+ * ADR-032 Phase 3: is the pane retired for this runner's send/idle/pending decisions?
  *
- * True only for event-driven runners that have a hook observability provider AND either the
- * runner's `observabilityPaneRetired` is true OR the {@link OBS_PANE_RETIRED_ENV} env flag is set
- * for a runner the flag is scoped to (`observabilityPaneRetirementEnvFlag`). ADR-032 Phase 3A
- * scopes the env flag to Claude, so the global flag never retires Codex here — it opts in later
- * via the per-runner field. Pane-only runners (grok/cursor) and `none` are never affected, so
- * their predicate behavior is byte-identical flag-on/off.
+ * Hook-only send decisions require an intrinsic capability profile, not a flag: the runner must be
+ * `event-driven` with a hook observability provider AND not require the busy-composer pane poll.
+ * Claude fits (hooks + `requiresBusyComposerPoll: false`) so its decisions are hook-only and the
+ * pane predicates are never consulted for them. Codex keeps `requiresBusyComposerPoll: true` — its
+ * TUI buffers input and must poll the pane before sending — so it stays on the pane-fallback path.
+ * Pane-only runners (grok/cursor) and `none` have no hook provider and are never retired.
  */
-export function isRunnerPaneRetired(
-  runnerId?: string | null,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
+export function isRunnerPaneRetired(runnerId?: string | null): boolean {
   if (!runnerId) return false;
   const def = getRunnerDefinition(runnerId);
   if (def.observabilityScope !== 'event-driven' || !getRunnerObservability(runnerId)) return false;
-  if (def.observabilityPaneRetired === true) return true;
-  return def.observabilityPaneRetirementEnvFlag === true && paneRetiredFromEnv(env);
+  return def.requiresBusyComposerPoll !== true;
 }
 
 export function resolveSafeSendTimeoutMs(runnerId: string): number {
@@ -1668,7 +1644,7 @@ async function waitForPaneAfterClassifierAction(
 }
 
 /**
- * ADR-032 Phase 3A hook-only send loop. Reached only when {@link isRunnerPaneRetired} is true.
+ * ADR-032 Phase 3 hook-only send loop. Reached only when {@link isRunnerPaneRetired} is true.
  * The decision to send/hold uses hook readings ONLY — the pane predicates
  * (`paneShowsBusyComposer` / `runnerPaneHasPendingInstruction` / `runnerPaneLooksIdle`) are
  * never consulted for the decision. Degraded readings (hook `unknown`/absent/stale) resolve to
@@ -1839,8 +1815,9 @@ export async function sendRunnerInstructionSafely(
   const effectiveTimeoutMs = timeoutMs ?? resolveSafeSendTimeoutMs(runner);
   const loopStartMs = Date.now();
   const promptAcceptedSinceMs = computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
-  // ADR-032 Phase 3A: pane-retired runners resolve the decision from hooks only. Default off
-  // keeps the pane-fallback path below byte-identical to Phase 2.
+  // ADR-032 Phase 3: hook-capable runners that don't need the busy-composer poll (Claude) resolve
+  // the decision from hooks only. Runners that require the poll (Codex) take the pane-fallback path
+  // below.
   if (isRunnerPaneRetired(runner)) {
     return sendRunnerInstructionHookOnly(
       vars,
