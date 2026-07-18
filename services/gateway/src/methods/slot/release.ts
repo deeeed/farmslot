@@ -439,6 +439,7 @@ async function slotReleaseImpl(
   if (!keepWork) {
     if (
       !(await guardedTeardownWrite({
+        handoff_run_id: null,
         task_id: null,
         task_file: null,
         runner: null,

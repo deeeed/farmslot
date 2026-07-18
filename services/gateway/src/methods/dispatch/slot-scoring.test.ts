@@ -9,6 +9,7 @@ import {
   findBestSlot,
   isCdpLive,
   isFreeSlot,
+  slotClaimBlockedByHandoff,
   slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
   slotScore,
@@ -219,5 +220,14 @@ test('slotClaimBlockedByLiveOwner blocks only live non-terminal owners', () => {
   assert.match(
     slotClaimBlockedByLiveOwner({ current_run_id: 'live' }, 'me', lookup) ?? '',
     /claimed by live run live/,
+  );
+});
+
+test('slotClaimBlockedByHandoff blocks foreign reservations only', () => {
+  assert.equal(slotClaimBlockedByHandoff({}, 'me'), null);
+  assert.equal(slotClaimBlockedByHandoff({ handoff_run_id: 'me' }, 'me'), null);
+  assert.match(
+    slotClaimBlockedByHandoff({ handoff_run_id: 'other' }, 'me') ?? '',
+    /reserved for handoff to run other/,
   );
 });

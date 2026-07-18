@@ -80,6 +80,7 @@ import {
   buildSlotClaimStatus,
   evaluateSlotIdentityPolicy,
   SLOT_CLAIM_REFUSED_CODE,
+  slotClaimBlockedByHandoff,
   slotClaimBlockedByRelease,
 } from './slot-scoring.js';
 import { flowTypeToKey } from './task-flow-key.js';
@@ -864,7 +865,9 @@ export async function dispatchExecute(
   step('claim', 'Claiming slot...');
   const claim = await claimSlotStatusIf(
     params.slotId,
-    (slot) => slotClaimBlockedByRelease(slot) === null,
+    (slot) =>
+      slotClaimBlockedByRelease(slot) === null &&
+      slotClaimBlockedByHandoff(slot, params.runId ?? '') === null,
     buildSlotClaimStatus({
       runId: params.runId ?? null,
       taskId,

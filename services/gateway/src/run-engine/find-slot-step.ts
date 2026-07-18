@@ -33,6 +33,7 @@ import {
   isFreeSlot,
   projectConfigsFromProjects,
   SLOT_CLAIM_REFUSED_CODE,
+  slotClaimBlockedByHandoff,
   slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
   slotScore,
@@ -107,6 +108,10 @@ async function claimSelectedSlot(
     slotId,
     (slot) => {
       if (slotClaimBlockedByRelease(slot) !== null) return false;
+      // A foreign handoff reservation blocks every claim — including a second
+      // takeover, which would otherwise deliver a second prompt into the same
+      // worker and split-brain it.
+      if (slotClaimBlockedByHandoff(slot, runId) !== null) return false;
       // Exclusive by default: two selections racing over one free snapshot
       // must not both succeed. The operator-approved nudge takeover is the
       // exception — it deliberately claims over a live worker, whose prior
@@ -122,7 +127,8 @@ async function claimSelectedSlot(
     {
       lifecycle: 'busy',
       phase,
-      ...(opts?.takeoverLiveOwner ? {} : { current_run_id: runId }),
+      // Takeover reserves the handoff instead of rebinding ownership.
+      ...(opts?.takeoverLiveOwner ? { handoff_run_id: runId } : { current_run_id: runId }),
       ...(agent ? { agent } : {}),
     },
   );

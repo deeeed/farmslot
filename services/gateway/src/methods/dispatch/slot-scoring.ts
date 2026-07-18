@@ -359,6 +359,22 @@ export function slotClaimBlockedByLiveOwner(
 }
 
 /**
+ * Handoff reservation: an operator-approved nudge takeover reserves the slot
+ * for exactly one incoming run across the delivery window (ownership stays
+ * with the prior run until nudgeDispatch's post-delivery handoff). Any other
+ * claim — including a second takeover — must refuse a foreign reservation,
+ * or two nudges could deliver to the same worker and split-brain it.
+ */
+export function slotClaimBlockedByHandoff(
+  slot: Readonly<Record<string, unknown>>,
+  runId: string,
+): string | null {
+  const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
+  if (!reserved || reserved === runId) return null;
+  return `slot is reserved for handoff to run ${reserved}`;
+}
+
+/**
  * Error code carried by refused slot claims — the thrower never owned the
  * slot, so failure handling must not reset it.
  */

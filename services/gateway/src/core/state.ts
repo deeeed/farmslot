@@ -256,6 +256,7 @@ function slotResetFields(warm: boolean): Record<string, unknown> {
     current_lane: null,
     current_variant: null,
     agent_contexts: null,
+    handoff_run_id: null,
   };
 }
 

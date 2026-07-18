@@ -35,6 +35,18 @@ test('replaySlotReclaimCheck rejects slots owned by another active run', () => {
   });
 });
 
+test('replaySlotReclaimCheck refuses a slot reserved for a foreign handoff', () => {
+  assert.deepEqual(
+    replaySlotReclaimCheck({ lifecycle: 'busy', handoff_run_id: 'other-run' }, 'run-1'),
+    { ok: false, reason: 'owned-by-other', owner: 'other-run' },
+  );
+  // The reservation holder itself may proceed to the normal owner checks.
+  assert.deepEqual(
+    replaySlotReclaimCheck({ lifecycle: 'ready', handoff_run_id: 'run-1' }, 'run-1'),
+    { ok: true },
+  );
+});
+
 test('replaySlotReclaimCheck refuses a slot mid-release even for its own run id', () => {
   assert.deepEqual(
     replaySlotReclaimCheck(

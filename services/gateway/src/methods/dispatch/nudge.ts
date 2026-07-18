@@ -42,7 +42,11 @@ import { unwatchContext, watchContext, watchSlot } from '../../tasks/watcher.js'
 
 import { ensureWorkerRoleTarget, waitForRunnerProcessExit } from './execute.js';
 import { verifyBranchAffinityNudgeStillEligible } from './preview.js';
-import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
+import {
+  SLOT_CLAIM_REFUSED_CODE,
+  slotClaimBlockedByHandoff,
+  slotClaimBlockedByRelease,
+} from './slot-scoring.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
 
@@ -393,8 +397,13 @@ export async function nudgeDispatch(
   // as "different identity, block".
   const nudgeClaim = await claimSlotStatusIf(
     params.slotId,
-    (slot) => slotClaimBlockedByRelease(slot) === null,
+    // The final handoff claim must be the reservation holder (or the slot has
+    // no reservation — the wizard-shortcut path nudges without one).
+    (slot) =>
+      slotClaimBlockedByRelease(slot) === null &&
+      slotClaimBlockedByHandoff(slot, params.runId) === null,
     {
+      handoff_run_id: null,
       current_run_id: params.runId,
       current_ticket_or_pr: params.ticketOrPr,
       current_flow_type: flowType,

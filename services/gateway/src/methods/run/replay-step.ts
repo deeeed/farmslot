@@ -209,6 +209,12 @@ export function replaySlotReclaimCheck(
   if (slot.phase === SLOT_PHASE_RELEASING) {
     return { ok: false, reason: 'not-reclaimable', lifecycle: 'busy/releasing' };
   }
+  // A pending handoff reservation for another run blocks reclaim the same
+  // way a release fence does — the reserved run's delivery is in flight.
+  const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
+  if (reserved && reserved !== runId) {
+    return { ok: false, reason: 'owned-by-other', owner: reserved };
+  }
   const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
   if (owner && owner !== runId) {
     const ownerStillActive = options?.ownerRunExists?.(owner) ?? true;

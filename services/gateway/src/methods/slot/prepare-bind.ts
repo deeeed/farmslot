@@ -22,6 +22,7 @@ export async function bindRunToSlot(
     params.slotId,
     (slot) =>
       slot.phase !== SLOT_PHASE_RELEASING &&
+      (!slot.handoff_run_id || slot.handoff_run_id === params.bindRunId) &&
       slot.agent !== 'working' &&
       (params.rebind || !slot.current_run_id || slot.current_run_id === params.bindRunId),
     { current_run_id: params.bindRunId },
