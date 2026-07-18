@@ -491,7 +491,7 @@ async function releaseInteractiveDevSlot(run: Run): Promise<string> {
   if (!run.slotId) return 'none';
   const { slotRelease } = await import('./slot.js');
   const noopEmit = () => {};
-  await slotRelease({ slotId: run.slotId, keepWork: true }, noopEmit);
+  await slotRelease({ slotId: run.slotId, keepWork: true, expectedRunId: run.id }, noopEmit);
   return 'released-keep-work';
 }
 

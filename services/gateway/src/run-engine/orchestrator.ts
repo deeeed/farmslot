@@ -24,6 +24,7 @@ import { execOnSlot } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
 import { resetSlot } from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
+import { isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
 import { clearStalePrepareProcess } from '../methods/slot.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import {
@@ -556,8 +557,18 @@ export async function startRun(runId: string): Promise<void> {
 
       await cleanupEvalHarnessForTerminalRun(failedRun, runId, `${stepName} failure`);
 
-      // Handle slot on pre-worker failure (prepare/dispatch/write-task)
+      // Handle slot on pre-worker failure (prepare/dispatch/write-task).
+      // A refused claim is the one exception: this run never owned the slot
+      // (an in-flight release or rival claim does), so resetting it here
+      // would clear the actual owner's lifecycle fence mid-teardown.
+      const claimRefused = isSlotClaimRefusedError(err);
+      if (claimRefused && failedRun.slotId) {
+        console.log(
+          `[run-engine] slot ${failedRun.slotId} left untouched after refused claim (${stepName})`,
+        );
+      }
       if (
+        !claimRefused &&
         failedRun.slotId &&
         (stepName === S.PREPARE ||
           stepName === S.DISPATCH ||

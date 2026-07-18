@@ -134,3 +134,67 @@ test('releaseOwnershipIntact only allows teardown while the entry owner still ho
   // Owner vanished (already released elsewhere): nothing to protect.
   assert.equal(releaseOwnershipIntact({}, 'run-a'), false);
 });
+
+test('slotRelease with expectedRunId leaves a slot held by a different run untouched', async (t) => {
+  const slotId = 'demo-work-1';
+  const rival = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-owner-binding`,
+    slotId,
+  });
+  t.after(() => cleanupRun(rival.id));
+  const { updateSlotStatus, readSlotField } = await import('../../core/index.js');
+  const priorOwner = await readSlotField(slotId, 'current_run_id');
+  await updateSlotStatus(slotId, { current_run_id: rival.id });
+  t.after(async () => {
+    await updateSlotStatus(slotId, { current_run_id: priorOwner ?? null });
+  });
+
+  const result = await slotRelease({ slotId, expectedRunId: 'some-other-run' }, noopEmit);
+
+  assert.deepEqual(result, { released: false });
+  assert.equal(await readSlotField(slotId, 'current_run_id'), rival.id, 'claim untouched');
+});
+
+test('concurrent slotRelease calls for one slot coalesce onto a single in-flight teardown', async (t) => {
+  const slotId = 'demo-work-1';
+  // Reuse the gate-held rejection path: both callers must observe the SAME
+  // teardown attempt (one underlying promise), not two parallel teardowns.
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}-coalesce`,
+    slotId,
+  });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'blocked',
+    steps: [
+      { name: PipelineSteps.COMPLETE, status: 'done', outputs: { slotDisposition: 'gate-held' } },
+    ],
+    decisions: [
+      {
+        id: 'decision-coalesce',
+        type: 'engine_human_gate',
+        title: 'Gate',
+        description: 'Review package',
+        actions: [],
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  });
+
+  const first = slotRelease({ slotId }, noopEmit);
+  const second = slotRelease({ slotId }, noopEmit);
+  const results = await Promise.allSettled([first, second]);
+  assert.equal(results[0].status, 'rejected');
+  assert.equal(results[1].status, 'rejected');
+  // Coalesced: both callers surfaced the SAME underlying failure.
+  assert.equal(
+    (results[0] as PromiseRejectedResult).reason,
+    (results[1] as PromiseRejectedResult).reason,
+  );
+});

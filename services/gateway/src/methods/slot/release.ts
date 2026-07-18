@@ -29,8 +29,8 @@ import {
   readSlotField,
   resetSlot,
   resolveProjectTaskDirName,
+  SLOT_PHASE_RELEASING,
   type SlotVars,
-  updateSlotStatus,
   updateSlotStatusIf,
 } from '../../core/index.js';
 import { slotCopyDir, SlotCopyDirEntryError } from '../../core/slot-io.js';
@@ -73,10 +73,45 @@ export function releaseOwnershipIntact(
   return ((slot.current_run_id as string | null | undefined) ?? null) === entryOwner;
 }
 
+// In-flight teardown coalescing: two concurrent releases for the same slot
+// must be ONE teardown — the slower duplicate previously re-killed and reset
+// whatever claimed the slot after the first release finished.
+const inflightReleases = new Map<string, Promise<{ released: boolean }>>();
+
 export async function slotRelease(
   params: SlotReleaseParams,
   emit: EventEmitter,
 ): Promise<{ released: boolean }> {
+  const inflight = inflightReleases.get(params.slotId);
+  if (inflight) {
+    console.log(
+      `[release] coalescing duplicate release for ${params.slotId} onto in-flight teardown`,
+    );
+    return inflight;
+  }
+  const teardown = slotReleaseImpl(params, emit).finally(() => {
+    inflightReleases.delete(params.slotId);
+  });
+  inflightReleases.set(params.slotId, teardown);
+  return teardown;
+}
+
+async function slotReleaseImpl(
+  params: SlotReleaseParams,
+  emit: EventEmitter,
+): Promise<{ released: boolean }> {
+  // Owner binding FIRST — before any other work: a release initiated for a
+  // specific run must not tear down a slot that a different run now holds.
+  if (params.expectedRunId) {
+    const boundOwner =
+      ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? null;
+    if (boundOwner !== params.expectedRunId) {
+      console.log(
+        `[release] slot ${params.slotId} is held by ${boundOwner ?? 'nobody'}, not expected run ${params.expectedRunId}; leaving it untouched`,
+      );
+      return { released: false };
+    }
+  }
   const vars = await loadSlotVars(params.slotId);
   const forceReset = params.forceReset ?? false;
   const preserveAgents = params.preserveAgents ?? false;
@@ -142,7 +177,7 @@ export async function slotRelease(
   const marked = await updateSlotStatusIf(
     params.slotId,
     (slot) => releaseOwnershipIntact(slot, entryOwner),
-    { lifecycle: 'busy', phase: 'releasing' },
+    { lifecycle: 'busy', phase: SLOT_PHASE_RELEASING },
   );
   if (!marked) {
     step(
@@ -152,6 +187,25 @@ export async function slotRelease(
     complete(0);
     return { released: false };
   }
+  // Ownership epoch at teardown start: claim-type writers bump it, so any
+  // later teardown write guarded on this value fails the moment a rival
+  // claim lands — the remainder of the teardown must then abort rather than
+  // clobber the new owner's state.
+  const entryEpoch = Number(await readSlotField(params.slotId, 'slot_epoch')) || 0;
+  const guardedTeardownWrite = async (fields: Record<string, unknown>): Promise<boolean> => {
+    const ok = await updateSlotStatusIf(
+      params.slotId,
+      (slot) => (Number(slot.slot_epoch) || 0) === entryEpoch,
+      fields,
+    );
+    if (!ok) {
+      step(
+        'claim',
+        `Slot ${params.slotId} was re-claimed mid-teardown (epoch moved past ${entryEpoch}); aborting remaining teardown`,
+      );
+    }
+    return ok;
+  };
 
   // 1. Kill running agent. Local-first publication gate-hold skips slotRelease at
   // COMPLETE entirely (see holdSlotForPublicationGate) and tears down via
@@ -351,32 +405,58 @@ export async function slotRelease(
     killSlotScreenSessions(params.slotId);
   }
 
-  // 6. Update status fields
+  // 6. Update status fields — epoch-guarded: a rival claim landing after the
+  // release marker (only possible through a writer not yet on the claim
+  // protocol) bumps the epoch and the finalize must abort rather than reset
+  // the new owner's claim.
   if (!keepWork) {
-    await updateSlotStatus(params.slotId, {
-      task_id: null,
-      task_file: null,
-      runner: null,
-      model: null,
-      app: null,
-      current_run_id: null,
-      current_flow_type: null,
-      current_ticket_or_pr: null,
-      current_mode: null,
-      current_family_id: null,
-      current_lane: null,
-      current_variant: null,
-    });
+    if (
+      !(await guardedTeardownWrite({
+        task_id: null,
+        task_file: null,
+        runner: null,
+        model: null,
+        app: null,
+        current_run_id: null,
+        current_flow_type: null,
+        current_ticket_or_pr: null,
+        current_mode: null,
+        current_family_id: null,
+        current_lane: null,
+        current_variant: null,
+      }))
+    ) {
+      complete(0);
+      return { released: false };
+    }
   } else if (!keepWarm) {
-    await updateSlotStatus(params.slotId, { app: null });
+    if (!(await guardedTeardownWrite({ app: null }))) {
+      complete(0);
+      return { released: false };
+    }
   }
-  await updateSlotStatus(params.slotId, {
-    completed_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-    agent: 'idle',
-    ...(idleBranchAfterRelease ? { branch: idleBranchAfterRelease } : {}),
-  });
+  if (
+    !(await guardedTeardownWrite({
+      completed_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      agent: 'idle',
+      ...(idleBranchAfterRelease ? { branch: idleBranchAfterRelease } : {}),
+    }))
+  ) {
+    complete(0);
+    return { released: false };
+  }
 
-  // 7. Re-prepare if keep-warm, otherwise mark ready (cold)
+  // 7. Re-prepare if keep-warm, otherwise mark ready (cold). resetSlot writes
+  // unconditionally, so re-verify the epoch immediately before it.
+  const epochBeforeReset = Number(await readSlotField(params.slotId, 'slot_epoch')) || 0;
+  if (epochBeforeReset !== entryEpoch) {
+    step(
+      'claim',
+      `Slot ${params.slotId} was re-claimed before final reset (epoch ${epochBeforeReset} != ${entryEpoch}); aborting reset`,
+    );
+    complete(0);
+    return { released: false };
+  }
   if (keepWarm) {
     step('reprepare', 'Re-preparing slot...');
     try {

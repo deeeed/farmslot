@@ -107,6 +107,44 @@ export async function updateSlotStatusIf(
   return applied;
 }
 
+/**
+ * Claim-type slot write: atomically applies `fields` when `predicate` passes
+ * and bumps the slot ownership epoch in the same serialized write. The epoch
+ * is the coordination token between claimers and teardowns — a teardown
+ * captures it at entry and guards its later writes on it, so a successful
+ * rival claim aborts the remainder of an in-flight teardown instead of being
+ * clobbered by it. Returns the new epoch on success.
+ */
+export async function claimSlotStatusIf(
+  slotId: string,
+  predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+  fields: Record<string, unknown>,
+): Promise<{ claimed: boolean; epoch: number | null }> {
+  let claimed = false;
+  let epoch: number | null = null;
+  const next = writeChain.then(async () => {
+    if (!existsSync(statusFile)) return;
+    const content = await readFile(statusFile, 'utf-8');
+    const data = JSON.parse(content);
+    const slots: Array<Record<string, unknown>> = data.slots ?? [];
+    const slot = slots.find((s) => s.slot === slotId);
+    if (!slot) return;
+    if (!predicate(slot)) return;
+    const nextEpoch = (Number(slot.slot_epoch) || 0) + 1;
+    for (const [key, value] of Object.entries(fields)) {
+      slot[key] = value;
+    }
+    slot.slot_epoch = nextEpoch;
+    await atomicWriteStatus(data);
+    triggerSlotUpdateHook();
+    claimed = true;
+    epoch = nextEpoch;
+  });
+  writeChain = next.catch(() => {});
+  await next;
+  return { claimed, epoch };
+}
+
 // ─── readSlotField ───
 // Read a single field from a slot in .farm-status.json.
 
@@ -126,6 +164,13 @@ export async function readSlotField(slotId: string, field: string): Promise<unkn
 // See docs/adr/022-slot-lifecycle-simplification.md for valid states.
 
 type BusyPhase = 'preparing' | 'dispatching' | 'working' | 'releasing' | 'review-gate';
+
+/**
+ * Coordination token shared by the slot lifecycle protocol: release marks
+ * this phase BEFORE any teardown side effect, and every claim-type writer
+ * refuses a slot carrying it. Centralized so the writers cannot drift.
+ */
+export const SLOT_PHASE_RELEASING: BusyPhase = 'releasing';
 type HeldPhase = 'ci-watch' | 'pr-watch';
 
 export async function resetSlot(slotId: string, warm = false): Promise<void> {

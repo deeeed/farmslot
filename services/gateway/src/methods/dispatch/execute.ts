@@ -15,6 +15,7 @@ import {
 import { markAgentContextStatus, upsertAgentContext } from '../../agents/contexts.js';
 import {
   applyProjectCommandEnv,
+  claimSlotStatusIf,
   execLocal,
   execOnSlot,
   farmslotRoot,
@@ -28,7 +29,6 @@ import {
   resetSlot,
   resolveProjectTaskDirName,
   updateSlotStatus,
-  updateSlotStatusIf,
 } from '../../core/index.js';
 import {
   firstWindowTarget,
@@ -79,6 +79,7 @@ import { resolveDispatchSafetyTier } from './safety-tier.js';
 import {
   buildSlotClaimStatus,
   evaluateSlotIdentityPolicy,
+  SLOT_CLAIM_REFUSED_CODE,
   slotClaimBlockedByRelease,
 } from './slot-scoring.js';
 import { flowTypeToKey } from './task-flow-key.js';
@@ -861,7 +862,7 @@ export async function dispatchExecute(
   // at its end, so a claim accepted during that window would be killed and
   // then clobbered, leaving a zombie worker.
   step('claim', 'Claiming slot...');
-  const claimed = await updateSlotStatusIf(
+  const claim = await claimSlotStatusIf(
     params.slotId,
     (slot) => slotClaimBlockedByRelease(slot) === null,
     buildSlotClaimStatus({
@@ -878,9 +879,14 @@ export async function dispatchExecute(
       fallbackVariant: params.variant ?? null,
     }),
   );
-  if (!claimed) {
-    throw new Error(
-      `Slot ${params.slotId} is mid-release; claim refused — re-run slot selection for a fresh worker`,
+  if (!claim.claimed) {
+    // Typed so failure handling knows this dispatch never owned the slot —
+    // resetting it would clear the in-flight release's fence.
+    throw Object.assign(
+      new Error(
+        `Slot ${params.slotId} is mid-release; claim refused — re-run slot selection for a fresh worker`,
+      ),
+      { code: SLOT_CLAIM_REFUSED_CODE },
     );
   }
   step('claim', 'Slot claimed, lifecycle=busy(dispatching)');

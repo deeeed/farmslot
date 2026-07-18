@@ -16,6 +16,7 @@ import {
 } from '@farmslot/protocol';
 
 import { execOnSlot } from '../../core/exec.js';
+import { SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
 import {
@@ -202,6 +203,12 @@ export function replaySlotReclaimCheck(
   runId: string,
   options?: { ownerRunExists?: (ownerId: string) => boolean },
 ): SlotReclaimCheck {
+  // A slot mid-release must never be reclaimed — even by the same run id
+  // (the release is tearing that very claim down and would kill/reset
+  // whatever lands here). This closes the same-run-id ABA on the owner check.
+  if (slot.phase === SLOT_PHASE_RELEASING) {
+    return { ok: false, reason: 'not-reclaimable', lifecycle: 'busy/releasing' };
+  }
   const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
   if (owner && owner !== runId) {
     const ownerStillActive = options?.ownerRunExists?.(owner) ?? true;
@@ -380,8 +387,10 @@ export async function runReplayStep(
       // can keep stale agentContext.slotId history after its slot is reassigned; blindly
       // writing slot status here would steal that physical worker from the new run.
       try {
-        const { updateSlotStatusIf } = await import('../../core/index.js');
-        const claimed = await updateSlotStatusIf(
+        // Claim-type write: bumps the ownership epoch so a teardown racing this
+        // reclaim aborts its remaining writes instead of clobbering it.
+        const { claimSlotStatusIf } = await import('../../core/index.js');
+        const { claimed } = await claimSlotStatusIf(
           replaySlotId,
           (slot) =>
             replaySlotReclaimCheck(slot, params.runId, {

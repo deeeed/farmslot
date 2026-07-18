@@ -10,6 +10,8 @@ import {
 
 export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
+import { SLOT_PHASE_RELEASING } from '../../core/index.js';
+
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 
 // ─── Slot Scoring ───
@@ -333,5 +335,19 @@ export function buildSlotClaimStatus(params: {
  * claim may proceed.
  */
 export function slotClaimBlockedByRelease(slot: Readonly<Record<string, unknown>>): string | null {
-  return slot.phase === 'releasing' ? 'slot is mid-release' : null;
+  return slot.phase === SLOT_PHASE_RELEASING ? 'slot is mid-release' : null;
+}
+
+/**
+ * Error code carried by refused slot claims — the thrower never owned the
+ * slot, so failure handling must not reset it.
+ */
+export const SLOT_CLAIM_REFUSED_CODE = 'SLOT_CLAIM_REFUSED';
+
+export function isSlotClaimRefusedError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === SLOT_CLAIM_REFUSED_CODE
+  );
 }

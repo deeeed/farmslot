@@ -846,7 +846,10 @@ export async function executeCompleteStep(
   } else {
     // No CI watch (review-pr) or no PR found — release slot
     const noopEmit = () => {};
-    await slotRelease({ slotId: current.slotId, keepWork: true, detachRuns: false }, noopEmit);
+    await slotRelease(
+      { slotId: current.slotId, keepWork: true, detachRuns: false, expectedRunId: current.id },
+      noopEmit,
+    );
     slotDisposition = 'released';
   }
   const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;
