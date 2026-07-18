@@ -112,6 +112,8 @@ export interface RunRecoveryCollaborators {
   quarantineLeakedRun: (run: Run) => Promise<void>;
   reconcileRunAgentRuntime?: (run: Run) => Promise<void>;
   rearmHandoffAutoRecovery: (run: Run) => (() => void) | undefined;
+  recoverInflightPublicationReviews: (runId: string, slotId: string) => Promise<unknown[]>;
+  replayHumanGate: (runId: string) => Promise<void>;
 }
 
 const STEP_TO_STATUS: Record<string, Run['status']> = {
@@ -256,6 +258,41 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                 `[run-engine] failed to backfill blocked review payload for ${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
               );
             }
+          }
+        }
+        // The gate loop that owned a pending human-gate decision died with the
+        // previous process. Ingest reviewer results that finished while nobody
+        // was watching; when that changed the gate's inputs — or a replay
+        // already stacked a duplicate pending gate decision — re-enter the
+        // gate so it presents ONE live decision reflecting current state. A
+        // lone stale decision with nothing recovered is left in place:
+        // loop-less resolution via runResolveDecision's restart fallback
+        // handles it without re-presenting every gate on every restart.
+        const gateDecisions = unresolved.filter((d) => d.type === 'engine_human_gate');
+        if (gateDecisions.length > 0 && run.slotId) {
+          let recoveredReviews = 0;
+          try {
+            recoveredReviews = (await deps.recoverInflightPublicationReviews(run.id, run.slotId))
+              .length;
+          } catch (err) {
+            // A failed ingestion must not abort recovery of the remaining
+            // runs; the gate stays pending and the operator path still works.
+            console.warn(
+              `[run-engine] run ${run.id.slice(0, 8)} — startup review ingestion failed: ${(err as Error).message.slice(0, 200)}`,
+            );
+          }
+          if (recoveredReviews > 0 || gateDecisions.length > 1) {
+            console.log(
+              `[run-engine] run ${run.id.slice(0, 8)} — re-entering human gate after restart (${recoveredReviews} recovered review(s), ${gateDecisions.length} pending gate decision(s))`,
+            );
+            deps.replayHumanGate(run.id).catch((err) => {
+              console.warn(
+                `[run-engine] run ${run.id.slice(0, 8)} — human-gate re-entry failed: ${(err as Error).message.slice(0, 200)}`,
+              );
+            });
+            // Re-entry supersedes the stale decisions and presents a fresh
+            // one; the rebroadcast below would resurrect the stale ones.
+            continue;
           }
         }
         console.log(

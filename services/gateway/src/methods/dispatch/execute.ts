@@ -34,7 +34,6 @@ import {
   resolveTmuxPaneId,
   resolveTmuxSession,
   shellQuote,
-  tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../../core/tmux.js';
 import {
@@ -73,7 +72,7 @@ import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
 
-import { clearLaunchInputWithSessionRecovery } from './launch-clear.js';
+import { runLaunchPreludeAndSend } from './launch-clear.js';
 import { buildDispatchRoleShellCommand, parseCapturedAgentPaneTarget } from './role-target.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
 import { buildSlotClaimStatus, evaluateSlotIdentityPolicy } from './slot-scoring.js';
@@ -1074,20 +1073,6 @@ export async function dispatchExecute(
       if (!usesRoleWindow) return;
       await new Promise((resolve) => setTimeout(resolve, ROLE_WINDOW_STARTUP_SETTLE_MS));
     };
-    const sendPreludeClear = async (stage: string) => {
-      // Self-healing: a parent run's slot release can race a chained
-      // follow-up dispatch and kill the session between prelude sends; a
-      // recreated target must also be used by the launch send below.
-      workerTarget = await clearLaunchInputWithSessionRecovery({
-        stage,
-        runner,
-        target: workerTarget,
-        session,
-        exec: (tmuxCommand) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
-        reensureTarget: () => ensureWorkerRoleTarget(vars, session, runner, workerRole),
-      });
-    };
-
     if (usesRoleWindow) {
       workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
       await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch);
@@ -1108,21 +1093,44 @@ export async function dispatchExecute(
       // already absorbed, the wait lets in-flight responses arrive, and the
       // post-clear sweeps the late arrivals before any user-visible keystrokes.
       // C-c covers heredoc/quote parsing on garbage; C-u clears the prompt line.
-      await sendPreludeClear('pre-clear');
-      await new Promise((resolve) => setTimeout(resolve, LAUNCH_PRELUDE_DA_WAIT_MS));
-      await sendPreludeClear('post-clear');
-      // Tiny settle so the second C-u takes effect before the literal-text
-      // send-keys below appends the launch line to (now-empty) prompt input.
-      await new Promise((resolve) => setTimeout(resolve, LAUNCH_PRELUDE_SETTLE_MS));
-      const launchResult = await execOnSlot(
-        vars,
-        tmuxSendTextCommand(workerTarget, agentLaunch, { enter: true }),
-      );
-      if (launchResult.exitCode !== 0) {
-        throw new Error(
-          `Failed to launch ${runner} in ${workerTarget}: ${launchResult.stderr || launchResult.stdout || `exit ${launchResult.exitCode}`}`,
-        );
-      }
+      // Every send is covered by fenced lost-session recovery: a parent run's
+      // slot release can race this chained dispatch and kill the session
+      // mid-sequence, but recreation is only legitimate while this dispatch
+      // still owns the slot — a cancel/recycle marks the run terminal BEFORE
+      // killing tmux, and resurrecting the session then would revive a worker
+      // on a deliberately torn-down slot.
+      const launched = await runLaunchPreludeAndSend({
+        runner,
+        target: workerTarget,
+        session,
+        launchCommand: agentLaunch,
+        waits: {
+          daWaitMs: LAUNCH_PRELUDE_DA_WAIT_MS,
+          settleMs: LAUNCH_PRELUDE_SETTLE_MS,
+          recreateSettleMs: ROLE_WINDOW_STARTUP_SETTLE_MS,
+        },
+        exec: (tmuxCommand: string) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
+        assertOwnership: async () => {
+          const latest = currentRun ? getRun(currentRun.id) : null;
+          if (currentRun && !latest) {
+            throw new Error(
+              `Run ${currentRun.id.slice(0, 8)} disappeared mid-dispatch; not recreating session ${session}`,
+            );
+          }
+          if (latest && ['cancelled', 'failed', 'done'].includes(latest.status)) {
+            throw new Error(
+              `Run ${latest.id.slice(0, 8)} is ${latest.status}; session ${session} teardown was intentional — not recreating`,
+            );
+          }
+          if (latest?.slotId && latest.slotId !== vars.slotId) {
+            throw new Error(
+              `Run ${latest.id.slice(0, 8)} moved to slot ${latest.slotId}; not recreating session ${session} on ${vars.slotId}`,
+            );
+          }
+        },
+        reensureTarget: () => ensureWorkerRoleTarget(vars, session, runner, workerRole),
+      });
+      workerTarget = launched.target;
     }
     // tmux send-keys returning exit 0 only proves the keystrokes were typed,
     // NOT that the receiving shell parsed them as the launch command. If shell
