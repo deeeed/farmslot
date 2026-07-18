@@ -14,6 +14,7 @@ import {
   fleetStatus,
   type FleetStatusDeps,
   isFleetCheckedAtStale,
+  preserveClaimedRowsUnknownToProbe,
   reconcileRefreshSlotRowWithActiveRun,
 } from './fleet.js';
 
@@ -499,6 +500,21 @@ test('reconcileRefreshSlotRowWithActiveRun does not resurrect a cleanly released
   } as never);
   assert.equal(reconciled.current_run_id, null, 'released slot stays free');
   assert.equal(reconciled.lifecycle, 'ready');
+});
+
+test('preserveClaimedRowsUnknownToProbe keeps live claims a stale refresh never probed', () => {
+  const rows = [
+    { slot: 'probed-slot', current_run_id: 'run-x', lifecycle: 'busy' },
+    { slot: 'new-claimed', current_run_id: 'run-y', lifecycle: 'busy', slot_epoch: 1 },
+    { slot: 'new-reserved', handoff_run_id: 'run-z' },
+    { slot: 'pool-removed', lifecycle: 'ready', current_run_id: null },
+  ];
+  const preserved = preserveClaimedRowsUnknownToProbe(rows, new Set(['probed-slot']));
+  assert.deepEqual(
+    preserved.map((r) => r.slot),
+    ['new-claimed', 'new-reserved'],
+    'claimed/reserved unknown rows survive; probed and pool-removed rows do not',
+  );
 });
 
 test('buildRefreshSlotRow carries the handoff reservation and epoch through a refresh', () => {

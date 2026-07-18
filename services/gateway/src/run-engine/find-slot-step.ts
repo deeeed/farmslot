@@ -504,6 +504,17 @@ export async function executeFindSlotStep(
           const pickedSlotId =
             (resolvedDecision?.selectionData?.slotId as string | undefined) ?? null;
           if (pickedSlotId) {
+            // selectionData is operator-supplied and unconstrained: now that
+            // claims create missing status rows, a typo'd or forged slot id
+            // would allocate a ghost row. Require live-fleet membership.
+            const pickedExists = (await loadFleetStatus()).slots.some(
+              (s) => s.slot === pickedSlotId,
+            );
+            if (!pickedExists) {
+              throw new Error(
+                `Picked slot '${pickedSlotId}' is not in the fleet; pick a slot again`,
+              );
+            }
             updateRun(runId, { slotId: pickedSlotId });
             await claimSelectedSlot(pickedSlotId, runId, 'preparing');
             broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });

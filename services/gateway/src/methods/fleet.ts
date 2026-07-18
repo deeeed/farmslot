@@ -5,13 +5,14 @@ import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type {
-  AgentContextSummary,
-  FleetStatus,
-  FleetStatusParams,
-  FleetStatusResult,
-  Run,
-  RunStatus,
+import {
+  type AgentContextSummary,
+  type FleetStatus,
+  type FleetStatusParams,
+  type FleetStatusResult,
+  type Run,
+  type RunStatus,
+  SLOT_LIFECYCLE,
 } from '@farmslot/protocol';
 
 import { summarizeAgentContexts } from '../agents/contexts.js';
@@ -314,11 +315,38 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
         newestActiveRunForSlot(activeRuns, r.slot),
       ),
     );
-    return { checked_at: checkedAt, slots };
+    const preserved = preserveClaimedRowsUnknownToProbe(
+      current?.slots ?? [],
+      new Set(results.map((r) => r.slot)),
+    );
+    return { checked_at: checkedAt, slots: [...slots, ...preserved] };
   });
 
   const fleet = await loadFleetStatus(true);
   return { fleet };
+}
+
+/**
+ * A slot added to the pool AND claimed while a refresh's slow probes ran is
+ * invisible to that refresh's stale membership snapshot — rebuilding the file
+ * exclusively from probe results would erase the live claim (owner, epoch,
+ * reservation) while its preparation continues. Claimed rows the probe never
+ * saw are preserved verbatim; unclaimed unknown rows still drop, so rows for
+ * slots removed from the pool get cleaned up.
+ */
+export function preserveClaimedRowsUnknownToProbe(
+  currentRows: Array<Record<string, unknown>>,
+  probedSlotIds: ReadonlySet<string>,
+): Array<Record<string, unknown>> {
+  return currentRows.filter((row) => {
+    if (probedSlotIds.has(String(row.slot))) return false;
+    return Boolean(
+      row.current_run_id ||
+      row.handoff_run_id ||
+      row.lifecycle === SLOT_LIFECYCLE.busy ||
+      row.lifecycle === SLOT_LIFECYCLE.held,
+    );
+  });
 }
 
 export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {

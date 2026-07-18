@@ -11,6 +11,18 @@ export type SlotLifecycle =
   | 'manual' // Human working on slot — blocks dispatch, easy UI toggle to release.
   | 'disabled'; // Offline or excluded from all operations.
 
+/**
+ * Canonical SlotLifecycle values for runtime logic. String literals at call
+ * sites drift silently when the union changes; reference these instead.
+ */
+export const SLOT_LIFECYCLE = {
+  ready: 'ready',
+  busy: 'busy',
+  held: 'held',
+  manual: 'manual',
+  disabled: 'disabled',
+} as const satisfies Record<string, SlotLifecycle>;
+
 // Sub-state detail for UI display. Not used for dispatch logic.
 export type SlotPhase =
   | 'preparing' // busy: Gateway running prepare-slot.sh
