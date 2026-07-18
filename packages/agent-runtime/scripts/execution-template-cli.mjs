@@ -3,7 +3,7 @@
  * Standalone execution-template CLI for ADR-049.
  * Used by `farmslot-agent execution-template` and thin Consensys wrappers.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -77,7 +77,9 @@ async function cmdList(args, runtime) {
   const sources = [];
   for (const [index, dir] of opts.dirs.entries()) {
     const root = resolve(dir);
-    if (!existsSync(root)) throw new Error(`--dir not found: ${root}`);
+    if (!existsSync(root) || !statSync(root).isDirectory()) {
+      throw new Error(`--dir is not a directory: ${root}`);
+    }
     sources.push(runtime.customTemplateSource(`dir-${index + 1}`, root, 'flow-tree'));
   }
   if (opts.projectWorker) {
@@ -86,14 +88,17 @@ async function cmdList(args, runtime) {
       input.endsWith('/worker') || input.endsWith('\\worker') ? resolve(input, '..') : input;
     // An explicitly named source that does not exist is operator error — a
     // silent empty catalog hides typos (worker/ is appended by the source).
-    if (!existsSync(resolve(projectTemplatesDir, 'worker'))) {
-      throw new Error(`--project-worker not found: ${resolve(projectTemplatesDir, 'worker')}`);
+    const workerRoot = resolve(projectTemplatesDir, 'worker');
+    if (!existsSync(workerRoot) || !statSync(workerRoot).isDirectory()) {
+      throw new Error(`--project-worker is not a directory: ${workerRoot}`);
     }
     sources.push(runtime.projectWorkerTemplateSource(opts.projectName, projectTemplatesDir));
   }
   if (opts.packageTemplates) {
     const root = resolve(opts.packageTemplates);
-    if (!existsSync(root)) throw new Error(`--package-templates not found: ${root}`);
+    if (!existsSync(root) || !statSync(root).isDirectory()) {
+      throw new Error(`--package-templates is not a directory: ${root}`);
+    }
     sources.push(runtime.packageFlowTreeTemplateSource(opts.packageId, root));
   }
   if (sources.length === 0) {

@@ -52,18 +52,20 @@ export function inferFlowFromBasename(basename: string): string | null {
  * flow-tree in the parent directory name.
  */
 export function inferFlowFromPath(absolutePath: string): string | null {
-  const fromBasename = inferFlowFromBasename(path.basename(absolutePath));
-  if (fromBasename) return fromBasename;
+  // Parent directory wins over the basename, matching catalog metadata
+  // (inferTemplateMetadata: frontmatter || flow dir || basename) — otherwise
+  // fix-bug/dev.md would create/lint as `dev` but catalog as `fix-bug`.
   const parent = path.basename(path.dirname(absolutePath)).toLowerCase();
-  return (FARMSLOT_FLOW_PREFIXES as readonly string[]).includes(parent) ? parent : null;
+  if ((FARMSLOT_FLOW_PREFIXES as readonly string[]).includes(parent)) return parent;
+  return inferFlowFromBasename(path.basename(absolutePath));
 }
 
 export function inferRunModeFromBasename(basename: string): ExecutionRunMode | null {
   const stem = basename.replace(/\.md$/i, '').toLowerCase();
-  if (/(?:^|[.-])interactive(?:[.-]|$)/.test(stem) || stem.includes('-interactive')) {
+  if (/(?:^|[.-])interactive(?:[.-]|$)/.test(stem)) {
     return 'interactive';
   }
-  if (/(?:^|[.-])autonomous(?:[.-]|$)/.test(stem) || stem.includes('-autonomous')) {
+  if (/(?:^|[.-])autonomous(?:[.-]|$)/.test(stem)) {
     return 'autonomous';
   }
   if (/(?:^|[.-])validation(?:[.-]|$)/.test(stem)) {

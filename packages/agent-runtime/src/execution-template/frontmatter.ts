@@ -42,9 +42,21 @@ export function parseMarkdownDocument(text: string): ParsedMarkdownDocument {
   let body = normalized;
 
   if (normalized.startsWith('---\n') || normalized.startsWith('---\r\n')) {
-    // Search from 3 (the opening fence's own newline) so an EMPTY block
-    // (`---\n---`) still finds its closing fence.
-    const end = normalized.indexOf('\n---', 3);
+    // The closing fence must be exactly `---` on its own line — a line that
+    // merely STARTS with --- (e.g. `---not-a-fence`) is content, and accepting
+    // it would defeat unterminated-frontmatter detection. Search from 3 (the
+    // opening fence's own newline) so an EMPTY block still closes.
+    let end = -1;
+    for (let from = 3; ; ) {
+      const candidate = normalized.indexOf('\n---', from);
+      if (candidate === -1) break;
+      const after = normalized.slice(candidate + 4, candidate + 6);
+      if (after === '' || after.startsWith('\n') || after.startsWith('\r')) {
+        end = candidate;
+        break;
+      }
+      from = candidate + 1;
+    }
     if (end !== -1) {
       const fmBlock = normalized.slice(4, end).replace(/\r/g, '');
       const rest = normalized.slice(end + '\n---'.length).replace(/^\r?\n/, '');

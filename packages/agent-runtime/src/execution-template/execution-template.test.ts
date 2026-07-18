@@ -348,3 +348,39 @@ test('flow-tree paths create and lint via the parent flow directory', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('parent flow directory wins over a contradicting basename, and lint flags it', () => {
+  // fix-bug/dev.md must resolve as fix-bug everywhere (catalog parity)…
+  assert.equal(catalogRelativeId('fix-bug/dev.md', 'flow-tree'), 'fix-bug/dev');
+  const issues = lintExecutionTemplateText('/tmp/fix-bug/dev.md', '# T\n\n- [ ] step\n');
+  // …and the misleading name is an authoring error.
+  assert.ok(issues.some((i) => /contradicts the flow directory/.test(i.message)));
+});
+
+test('mode tokens are exact, not substrings', () => {
+  assert.equal(inferRunModeFromBasename('dev-interactively.md'), null);
+  assert.equal(inferRunModeFromBasename('dev-autonomousness.md'), null);
+});
+
+test('a line merely starting with --- is not a closing fence', () => {
+  const parsed = parseMarkdownDocument('---\nrunMode: autonomous\n---not-a-fence\n\n# T\n');
+  assert.equal(parsed.frontmatter, null);
+  const issues = lintExecutionTemplateText(
+    '/virtual/dev.md',
+    '---\nrunMode: autonomous\n---not-a-fence\n\n# T\n\n- [ ] step\n',
+  );
+  assert.ok(issues.some((i) => /unterminated frontmatter/.test(i.message)));
+});
+
+test('directory lint flags files that canonicalize to the same catalog id', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'et-dup-'));
+  try {
+    writeFileSync(join(dir, 'dev-interactive.md'), '# A\n');
+    writeFileSync(join(dir, 'dev.interactive.md'), '# B\n');
+    const result = lintExecutionTemplates(dir);
+    assert.equal(result.ok, false);
+    assert.ok(result.issues.some((i) => /duplicate catalog id 'dev\/interactive'/.test(i.message)));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

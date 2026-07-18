@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type { Command } from 'commander';
@@ -15,6 +15,7 @@ import {
 } from '@farmslot/agent-runtime';
 
 import { dim, green, red, yellow } from '../colors.js';
+import { createEmitter } from '../envelope.js';
 import { OutputContext } from '../output.js';
 
 interface ListOptions {
@@ -53,7 +54,9 @@ function buildSources(opts: ListOptions): ExecutionTemplateSource[] {
   const sources: ExecutionTemplateSource[] = [];
   for (const [index, dir] of (opts.dir ?? []).entries()) {
     const root = resolve(dir);
-    if (!existsSync(root)) throw new Error(`--dir not found: ${root}`);
+    if (!existsSync(root) || !statSync(root).isDirectory()) {
+      throw new Error(`--dir is not a directory: ${root}`);
+    }
     sources.push(customTemplateSource(`dir-${index + 1}`, root, 'flow-tree'));
   }
   if (opts.projectWorker) {
@@ -62,14 +65,17 @@ function buildSources(opts: ListOptions): ExecutionTemplateSource[] {
       input.endsWith('/worker') || input.endsWith('\\worker') ? resolve(input, '..') : input;
     // The source appends worker/ — validate the directory that will actually
     // be scanned, or a typo silently yields an empty catalog.
-    if (!existsSync(resolve(projectTemplatesDir, 'worker'))) {
-      throw new Error(`--project-worker not found: ${resolve(projectTemplatesDir, 'worker')}`);
+    const workerRoot = resolve(projectTemplatesDir, 'worker');
+    if (!existsSync(workerRoot) || !statSync(workerRoot).isDirectory()) {
+      throw new Error(`--project-worker is not a directory: ${workerRoot}`);
     }
     sources.push(projectWorkerTemplateSource(opts.projectName ?? 'project', projectTemplatesDir));
   }
   if (opts.packageTemplates) {
     const root = resolve(opts.packageTemplates);
-    if (!existsSync(root)) throw new Error(`--package-templates not found: ${root}`);
+    if (!existsSync(root) || !statSync(root).isDirectory()) {
+      throw new Error(`--package-templates is not a directory: ${root}`);
+    }
     sources.push(packageFlowTreeTemplateSource(opts.packageId ?? 'shared', root));
   }
   if (sources.length === 0) {
@@ -121,8 +127,8 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .option('--include-shadowed', 'Include shadowed duplicates (default true)', true)
     .option('--no-include-shadowed', 'Hide shadowed duplicates')
     .action((opts: ListOptions, command: Command) => {
-      const json = Boolean(command.optsWithGlobals().json ?? opts.json);
-      const output = new OutputContext(json);
+      const output = new OutputContext(Boolean(command.optsWithGlobals().json ?? opts.json));
+      const emit = createEmitter(output, command);
       try {
         const entries = listExecutionTemplates({
           sources: buildSources(opts),
@@ -131,14 +137,10 @@ export function registerExecutionTemplateCommand(program: Command): void {
           platform: opts.platform,
           includeShadowed: opts.includeShadowed !== false,
         });
-        if (json) {
-          output.writeJson({ templates: entries });
-          return;
-        }
-        output.write(formatListHuman(entries));
+        if (emit.machine) emit.ok({ templates: entries });
+        else output.write(formatListHuman(entries));
       } catch (err) {
-        output.failure(err);
-        process.exitCode = 1;
+        emit.fail(err);
       }
     });
 
@@ -147,12 +149,12 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .description('Lint optional frontmatter and parseable checkbox lines')
     .argument('<target>', 'Template file or directory')
     .action((target: string, opts: LintOptions, command: Command) => {
-      const json = Boolean(command.optsWithGlobals().json ?? opts.json);
-      const output = new OutputContext(json);
+      const output = new OutputContext(Boolean(command.optsWithGlobals().json ?? opts.json));
+      const emit = createEmitter(output, command);
       try {
         const result = lintExecutionTemplates(target);
-        if (json) {
-          output.writeJson(result);
+        if (emit.machine) {
+          emit.ok(result);
         } else if (result.ok) {
           output.write(`${green('pass')} ${result.filesChecked} template(s)\n`);
         } else {
@@ -161,10 +163,11 @@ export function registerExecutionTemplateCommand(program: Command): void {
             output.write(`${color(issue.severity)} ${issue.path}: ${issue.message}\n`);
           }
         }
+        // Lint findings are DATA (the envelope reports them), but a failed lint
+        // still exits non-zero for scripted callers.
         if (!result.ok) process.exitCode = 1;
       } catch (err) {
-        output.failure(err);
-        process.exitCode = 1;
+        emit.fail(err);
       }
     });
 
@@ -178,8 +181,8 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .option('--title <title>', 'Template title')
     .option('--force', 'Overwrite an existing file')
     .action((pathArg: string, opts: NewOptions, command: Command) => {
-      const json = Boolean(command.optsWithGlobals().json ?? opts.json);
-      const output = new OutputContext(json);
+      const output = new OutputContext(Boolean(command.optsWithGlobals().json ?? opts.json));
+      const emit = createEmitter(output, command);
       try {
         const platforms = opts.platform
           ? opts.platform
@@ -195,14 +198,10 @@ export function registerExecutionTemplateCommand(program: Command): void {
           title: opts.title,
           force: Boolean(opts.force),
         });
-        if (json) {
-          output.writeJson(created);
-          return;
-        }
-        output.write(`${green('created')} ${created.path}\n`);
+        if (emit.machine) emit.ok(created);
+        else output.write(`${green('created')} ${created.path}\n`);
       } catch (err) {
-        output.failure(err);
-        process.exitCode = 1;
+        emit.fail(err);
       }
     });
 }

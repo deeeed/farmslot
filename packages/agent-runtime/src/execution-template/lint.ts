@@ -2,7 +2,13 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { frontmatterPlatforms, frontmatterRunMode, parseMarkdownDocument } from './frontmatter.js';
-import { FARMSLOT_FLOW_PREFIXES, inferFlowFromPath, inferRunModeFromBasename } from './infer.js';
+import {
+  catalogRelativeId,
+  FARMSLOT_FLOW_PREFIXES,
+  inferFlowFromBasename,
+  inferFlowFromPath,
+  inferRunModeFromBasename,
+} from './infer.js';
 import type { LintExecutionTemplatesResult, LintIssue } from './types.js';
 
 const CHECKBOX_RE = /^\s*[-*]\s+\[([ xX])\]\s+\S/;
@@ -46,11 +52,23 @@ export function lintExecutionTemplateText(filePath: string, text: string): LintI
     });
   }
 
-  if (!inferFlowFromPath(filePath)) {
+  const pathFlow = inferFlowFromPath(filePath);
+  if (!pathFlow) {
     issues.push({
       path: filePath,
       severity: 'error',
       message: `path must encode a Farmslot flow — flow-prefixed filename or flow directory (${FARMSLOT_FLOW_PREFIXES.join(', ')})`,
+    });
+  }
+  // fix-bug/dev.md would create under one flow and catalog under another —
+  // the parent directory wins, so a basename claiming a DIFFERENT flow is a
+  // misleading name.
+  const basenameFlow = inferFlowFromBasename(basename);
+  if (pathFlow && basenameFlow && pathFlow !== basenameFlow) {
+    issues.push({
+      path: filePath,
+      severity: 'error',
+      message: `filename flow '${basenameFlow}' contradicts the flow directory '${pathFlow}'`,
     });
   }
 
@@ -165,6 +183,32 @@ export function lintExecutionTemplates(target: string): LintExecutionTemplatesRe
   }
 
   const issues = files.flatMap(lintOne);
+
+  // Two files that canonicalize to the same catalog id (dev-interactive.md vs
+  // dev.interactive.md) would resolve by filename order silently — surface the
+  // collision at authoring time. Layout per file mirrors the resolver: a file
+  // under a flow-named directory is flow-tree, otherwise worker-flat.
+  const root = path.resolve(target);
+  const byId = new Map<string, string[]>();
+  for (const file of files) {
+    const parent = path.basename(path.dirname(file)).toLowerCase();
+    const layout = (FARMSLOT_FLOW_PREFIXES as readonly string[]).includes(parent)
+      ? ('flow-tree' as const)
+      : ('worker-flat' as const);
+    const rel =
+      layout === 'flow-tree' ? path.join(parent, path.basename(file)) : path.basename(file);
+    const id = catalogRelativeId(rel, layout);
+    byId.set(id, [...(byId.get(id) ?? []), file]);
+  }
+  for (const [id, paths] of byId) {
+    if (paths.length < 2) continue;
+    issues.push({
+      path: root,
+      severity: 'error',
+      message: `duplicate catalog id '${id}' from: ${paths.map((f) => path.relative(root, f)).join(', ')}`,
+    });
+  }
+
   return {
     ok: issues.every((issue) => issue.severity !== 'error'),
     filesChecked: files.length,
