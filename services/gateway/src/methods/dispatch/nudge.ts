@@ -20,7 +20,9 @@ import {
   loadSlotVars,
   type RawProjectJson,
   readSlotField,
+  readSlotRow,
   resolveProjectTaskDirName,
+  SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
 import {
   firstWindowTarget,
@@ -450,17 +452,25 @@ export async function nudgeDispatch(
     await watchSlot(params.slotId);
   }
 
-  // An operator release that lands after the final claim has already torn the
-  // slot down and removed its watchers — a watcher wired after that would leak
-  // against a slot the registry says is free, and dispatch.done would report a
-  // successful nudge onto a dead worker. Re-verify ownership after wiring and
-  // undo it on loss.
-  const ownerAfterWatch = await readSlotField(params.slotId, 'current_run_id');
-  if (ownerAfterWatch !== params.runId) {
+  // A release that lands after the final claim has already torn the slot down
+  // (or is mid-teardown behind its releasing marker) and removed its watchers
+  // — a watcher wired after that would leak against a slot the registry says
+  // is free, and dispatch.done would report a successful nudge onto a dead
+  // worker. Re-verify from ONE row snapshot (owner may be retained while the
+  // releasing marker is up, so checking current_run_id alone misses an
+  // in-flight teardown) and undo only THIS run's wiring on loss — context
+  // keys are role-based and reused, so an unscoped unwatch could strip a
+  // successor's watch.
+  const rowAfterWatch = await readSlotRow(params.slotId);
+  const stillOwned =
+    rowAfterWatch != null &&
+    rowAfterWatch.current_run_id === params.runId &&
+    rowAfterWatch.phase !== SLOT_PHASE_RELEASING;
+  if (!stillOwned) {
     if (workingContext) {
-      await unwatchContext(params.slotId, workingContext.id);
+      await unwatchContext(params.slotId, workingContext.id, { expectedRunId: params.runId });
     } else {
-      await unwatchSlot(params.slotId);
+      await unwatchSlot(params.slotId, { expectedRunId: params.runId });
     }
     throw new Error(
       `Slot ${params.slotId} was released while the nudge was completing; run ${params.runId} no longer owns it`,

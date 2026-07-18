@@ -365,7 +365,10 @@ export async function watchContext(slotId: string, context: AgentContext): Promi
 
 // ─── Stop watching a slot ───
 
-export async function unwatchSlot(slotId: string): Promise<void> {
+export async function unwatchSlot(
+  slotId: string,
+  opts?: { expectedRunId?: string },
+): Promise<void> {
   // Drain pending watches first so they don't complete after unwatch
   for (const [key, pending] of pendingWatchKeys) {
     if (slotIdFromWatchKey(key) === slotId) {
@@ -378,16 +381,40 @@ export async function unwatchSlot(slotId: string): Promise<void> {
       }
     }
   }
-  const keys = [...activeWatches.keys()].filter((key) => slotIdFromWatchKey(key) === slotId);
+  const slotKeys = [...activeWatches.keys()].filter((key) => slotIdFromWatchKey(key) === slotId);
+  // Owner-scoped removal (see unwatchContext): a caller undoing only its own
+  // wiring must never strip watches a successor run registered since.
+  const keys = opts?.expectedRunId
+    ? slotKeys.filter((key) => activeWatches.get(key)?.runId === opts.expectedRunId)
+    : slotKeys;
   for (const key of keys) {
     await unwatchKey(key);
   }
-  clearTaskProgressOverlay(slotId);
+  if (keys.length === slotKeys.length) {
+    clearTaskProgressOverlay(slotId);
+  }
   console.log(`[task-watcher] stopped watching ${slotId}`);
 }
 
-export async function unwatchContext(slotId: string, contextId: string): Promise<void> {
-  await unwatchKey(watchKey(slotId, contextId));
+export async function unwatchContext(
+  slotId: string,
+  contextId: string,
+  opts?: { expectedRunId?: string },
+): Promise<void> {
+  const key = watchKey(slotId, contextId);
+  if (opts?.expectedRunId) {
+    const sw = activeWatches.get(key);
+    // Context IDs are role-based and reused across runs: a successor may have
+    // re-registered this key already, and removing its watch would strip the
+    // new owner's observability. Owner-scoped removal only.
+    if (sw && sw.runId !== opts.expectedRunId) {
+      console.log(
+        `[task-watcher] skip unwatch ${slotId}:${contextId} — watch now belongs to run ${sw.runId ?? 'unknown'}`,
+      );
+      return;
+    }
+  }
+  await unwatchKey(key);
   console.log(`[task-watcher] stopped watching ${slotId}:${contextId}`);
 }
 

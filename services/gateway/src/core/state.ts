@@ -291,6 +291,21 @@ export function slotOwnershipReleaseFields(): Record<string, unknown> {
 }
 
 /**
+ * Single-snapshot row read: both fields of a multi-field check come from ONE
+ * file read, so a writer landing between two readSlotField calls cannot show
+ * a torn view (e.g. stale owner + fresh phase).
+ */
+export async function readSlotRow(
+  slotId: string,
+): Promise<Readonly<Record<string, unknown>> | null> {
+  if (!existsSync(statusFile)) return null;
+  const content = await readFile(statusFile, 'utf-8');
+  const data = JSON.parse(content);
+  const slots: Array<Record<string, unknown>> = data.slots ?? [];
+  return slots.find((s) => s.slot === slotId) ?? null;
+}
+
+/**
  * Compute-and-apply slot transition in ONE serialized write: `decide` runs
  * INSIDE the write chain against the current row, so classification and the
  * matching write cannot be split by a rival write landing between them (the

@@ -70,6 +70,7 @@ export {
   markSlotHeld,
   markSlotStatusIf,
   readSlotField,
+  readSlotRow,
   resetSlot,
   resetSlotIf,
   rewriteStatusFile,
