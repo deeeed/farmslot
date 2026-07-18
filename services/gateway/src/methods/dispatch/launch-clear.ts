@@ -56,8 +56,10 @@ export function recreationOwnershipViolation(opts: {
   if (['cancelled', 'failed', 'done'].includes(opts.run.status)) {
     return `run is ${opts.run.status}; the session teardown was intentional`;
   }
-  if (opts.run.slotId && opts.run.slotId !== opts.slotId) {
-    return `run moved to slot ${opts.run.slotId}`;
+  if (opts.run.slotId !== opts.slotId) {
+    // Strict equality: a null/detached slotId must block too — a run not
+    // bound to THIS slot has no authority to recreate its session.
+    return `run is bound to slot ${opts.run.slotId ?? 'none'}, not ${opts.slotId}`;
   }
   if (opts.slotPhase === 'releasing') {
     return 'slot is releasing; the session teardown is intentional';
@@ -138,6 +140,23 @@ export async function runLaunchPreludeAndSend(
     console.log(`[dispatch] ${err.message}; recreating it and restarting the launch sequence`);
     target = await prelude.reensureTarget();
     await sleep(prelude.waits.recreateSettleMs);
+    // Close the check/recreate TOCTOU: a teardown that began after the fence
+    // above marks the slot BEFORE its kill, so re-validating ownership now —
+    // after the recreate — necessarily observes it. On violation, destroy the
+    // session we just resurrected instead of leaving it squatting on a slot
+    // that was deliberately torn down. (A teardown whose kill lands after this
+    // point kills the recreated session; that surfaces as a second loss below
+    // and fails the dispatch honestly.)
+    try {
+      await prelude.assertOwnership();
+    } catch (ownershipErr) {
+      const killed = await prelude.exec(`kill-session -t ${shellQuote(prelude.session)}`);
+      const cleanup =
+        killed.exitCode === 0
+          ? 'recreated session destroyed'
+          : `recreated session cleanup failed: ${killed.stderr || killed.stdout || `exit ${killed.exitCode}`}`;
+      throw new Error(`${(ownershipErr as Error).message} (detected after recreation; ${cleanup})`);
+    }
     // Second loss is NOT recovered — it propagates as an honest dispatch
     // failure rather than looping against a slot something keeps tearing down.
     try {

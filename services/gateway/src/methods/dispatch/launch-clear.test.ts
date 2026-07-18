@@ -85,11 +85,42 @@ test('a session lost mid-prelude restarts the WHOLE sequence on the fresh target
   const { target } = await runLaunchPreludeAndSend(h.prelude);
   assert.equal(target, 'ff-2:worker');
   assert.equal(h.reensured, 1);
-  assert.equal(h.ownershipChecks, 1);
+  // Fenced twice: before recreation, and again after it to close the
+  // check/recreate TOCTOU window.
+  assert.equal(h.ownershipChecks, 2);
   // Full restart: the fresh shell gets its own pre-clear + DA wait + post-clear,
   // never a resumed mid-sequence send that fresh-shell DA output could poison.
   assert.deepEqual(h.commands.slice(-4), FULL_SEQUENCE('ff-2:worker'));
   assert.deepEqual(h.sleeps, [700, 1200, 700, 150]);
+});
+
+test('an ownership violation appearing only after recreation destroys the resurrected session', async () => {
+  let checks = 0;
+  const h = harness({
+    exec: (tmuxCommand) => {
+      if (tmuxCommand.startsWith('has-session')) return { exitCode: 1, stdout: '' };
+      if (tmuxCommand === "send-keys -t 'ff-2:1' C-c C-u") {
+        return { exitCode: 1, stdout: '', stderr: "can't find session: ff-2" };
+      }
+      return { exitCode: 0, stdout: '' };
+    },
+    assertOwnership: async () => {
+      checks += 1;
+      // First check passes (teardown had not marked state yet); the re-check
+      // after recreation observes the release that raced us.
+      if (checks >= 2) {
+        throw new Error(
+          'Not recreating session ff-2: slot is releasing; the session teardown is intentional',
+        );
+      }
+    },
+  });
+  await assert.rejects(
+    () => runLaunchPreludeAndSend(h.prelude),
+    /teardown is intentional \(detected after recreation; recreated session destroyed\)/,
+  );
+  assert.equal(h.reensured, 1);
+  assert.equal(h.commands.at(-1), "kill-session -t 'ff-2'");
 });
 
 test('a session lost at the launch-line send restarts from the pre-clear, not mid-sequence', async () => {
@@ -205,7 +236,18 @@ test('recreationOwnershipViolation blocks terminal, moved, and context-less disp
       slotLifecycle: 'busy',
       slotPhase: 'dispatching',
     }) ?? '',
-    /run moved to slot macwork-ff-3/,
+    /run is bound to slot macwork-ff-3, not macwork-ff-2/,
+  );
+  // Strict equality: a detached run (slotId null) has no authority either.
+  assert.match(
+    recreationOwnershipViolation({
+      run: { ...activeRun, slotId: null },
+      hasRunContext: true,
+      slotId: 'macwork-ff-2',
+      slotLifecycle: 'busy',
+      slotPhase: 'dispatching',
+    }) ?? '',
+    /run is bound to slot none, not macwork-ff-2/,
   );
   assert.match(
     recreationOwnershipViolation({
