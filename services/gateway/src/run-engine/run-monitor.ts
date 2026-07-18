@@ -8,6 +8,7 @@ import {
   type AgentRole,
   Events,
   FLOW_STEPS,
+  type FlowType,
   type MonitorSnapshot,
   type MonitorViolation,
   PipelineSteps,
@@ -26,6 +27,7 @@ import {
   getOrchestratorTaskRoot,
   loadProjectVars,
   loadSlotVars,
+  type RawProjectJson,
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
@@ -94,25 +96,68 @@ function readNumericMonitorField(
   return n;
 }
 
-async function loadMonitorConfig(project: string): Promise<MonitorConfig> {
+type MonitoringSection = NonNullable<RawProjectJson['monitoring']>;
+
+/**
+ * Resolve monitor thresholds from the raw project `monitoring` section, applying
+ * per-flow overrides. Only total/stuck timeouts are per-flow overridable; a flow
+ * value falls back to the top-level project value, which falls back to the default.
+ * Pure — no I/O — so config-loader tests can exercise it directly.
+ */
+export function resolveMonitorConfig(
+  monitoring: MonitoringSection | undefined,
+  project: string,
+  flowType?: FlowType,
+): MonitorConfig {
+  if (!monitoring) return DEFAULT_CONFIG;
+  const flow = flowType ? monitoring.flows?.[flowType] : undefined;
+  const flowLabel = (field: string): string => (flowType ? `flows.${flowType}.${field}` : field);
+
+  const projectStuckMin = readNumericMonitorField(
+    monitoring.stuck_timeout_min,
+    'stuck_timeout_min',
+    20,
+    project,
+  );
+  const projectTotalMin = readNumericMonitorField(
+    monitoring.total_timeout_min,
+    'total_timeout_min',
+    90,
+    project,
+  );
+
+  return {
+    pollIntervalMs:
+      readNumericMonitorField(monitoring.poll_interval_min, 'poll_interval_min', 1, project) *
+      60_000,
+    stuckTimeoutMs:
+      readNumericMonitorField(
+        flow?.stuck_timeout_min,
+        flowLabel('stuck_timeout_min'),
+        projectStuckMin,
+        project,
+      ) * 60_000,
+    idleTimeoutMs:
+      readNumericMonitorField(monitoring.idle_timeout_min, 'idle_timeout_min', 15, project) *
+      60_000,
+    totalTimeoutMs:
+      readNumericMonitorField(
+        flow?.total_timeout_min,
+        flowLabel('total_timeout_min'),
+        projectTotalMin,
+        project,
+      ) * 60_000,
+    // max_nudges=0 is a legitimate "escalate immediately, no nudges" config.
+    maxNudges: readNumericMonitorField(monitoring.max_nudges, 'max_nudges', 5, project, {
+      allowZero: true,
+    }),
+  };
+}
+
+async function loadMonitorConfig(project: string, flowType?: FlowType): Promise<MonitorConfig> {
   try {
     const pv = await loadProjectVars(project);
-    const m = pv.projectJson.monitoring;
-    if (!m) return DEFAULT_CONFIG;
-    return {
-      pollIntervalMs:
-        readNumericMonitorField(m.poll_interval_min, 'poll_interval_min', 1, project) * 60_000,
-      stuckTimeoutMs:
-        readNumericMonitorField(m.stuck_timeout_min, 'stuck_timeout_min', 20, project) * 60_000,
-      idleTimeoutMs:
-        readNumericMonitorField(m.idle_timeout_min, 'idle_timeout_min', 15, project) * 60_000,
-      totalTimeoutMs:
-        readNumericMonitorField(m.total_timeout_min, 'total_timeout_min', 90, project) * 60_000,
-      // max_nudges=0 is a legitimate "escalate immediately, no nudges" config.
-      maxNudges: readNumericMonitorField(m.max_nudges, 'max_nudges', 5, project, {
-        allowZero: true,
-      }),
-    };
+    return resolveMonitorConfig(pv.projectJson.monitoring, project, flowType);
   } catch (err) {
     console.warn(
       `[run-monitor] failed to load monitor config for ${project}: ${(err as Error).message}`,
@@ -217,6 +262,24 @@ export function signalMatchesMonitorContext(
   if (monitorContext.id && signal.contextId && signal.contextId !== monitorContext.id) return false;
   if (monitorContext.role && signal.role && signal.role !== monitorContext.role) return false;
   return true;
+}
+
+/**
+ * True when a signal qualifies to auto-resolve a pending interactive_handoff:
+ * a FRESH TERMINAL signal that matches the monitor context. Mirrors the freshness
+ * rule the `signal-written` action applies via probeWorkerSignalForRun, so a stale
+ * terminal signal (predating the worker context) and any non-terminal signal
+ * (e.g. `status: running`) are both rejected.
+ */
+export function isFreshTerminalHandoffSignal(
+  run: FreshnessRunContext,
+  signal: WorkerSignal,
+  monitorContext?: MonitorContextIdentity | null,
+): boolean {
+  const bound = bindSignalToMonitorContext(signal, monitorContext);
+  if (!isTerminalWorkerSignal(bound)) return false;
+  if (!signalMatchesMonitorContext(bound, monitorContext)) return false;
+  return isWorkerSignalFreshForRun(run, bound);
 }
 
 async function resolveSignalJsonPathForRun(
@@ -481,7 +544,7 @@ export async function monitorRun(
     return monitorContext;
   };
 
-  const config = await loadMonitorConfig(run.project);
+  const config = await loadMonitorConfig(run.project, run.flowType);
   const terminalContract = await loadTerminalContractForRun(initialRun, slotId);
   const holdIfMissingSignal = (current: Pick<Run, 'flowType' | 'mode'>) =>
     shouldHoldForMissingTerminalSignal(terminalContract, current);
@@ -1109,6 +1172,95 @@ function buildNudgeMessage(violation: MonitorViolation): string {
 
 // ─── Decision creation + wait ───
 
+const HANDOFF_AUTO_RECOVERY_POLL_MS = 60_000;
+
+export const HANDOFF_AUTO_RESOLVE_ACTION = 'signal-written';
+
+/**
+ * Auto-resolution gate for a pending interactive_handoff. When `signal` is a fresh
+ * terminal signal matching the monitor context, stamps the auto-resolution onto the
+ * decision context and returns true (the caller then resolves the decision). Stale
+ * terminal signals and non-terminal signals (`status: running`) return false and
+ * leave the decision untouched. Pure aside from the passed-in `nowIso`.
+ */
+export function applyHandoffAutoResolution(
+  run: FreshnessRunContext,
+  decision: Pick<RunDecision, 'context'>,
+  signal: WorkerSignal,
+  monitorContext?: MonitorContextIdentity | null,
+  nowIso: string = new Date().toISOString(),
+): boolean {
+  if (!isFreshTerminalHandoffSignal(run, signal, monitorContext)) return false;
+  const bound = bindSignalToMonitorContext(signal, monitorContext);
+  decision.context = {
+    ...decision.context,
+    autoResolved: true,
+    autoResolvedBy: 'terminal-signal',
+    autoResolvedAt: nowIso,
+    autoResolvedStatus: bound.status,
+  };
+  return true;
+}
+
+/**
+ * While an interactive_handoff decision is pending, watch the run's signal file. A
+ * fresh terminal signal (same freshness rule as the signal-written action) resolves
+ * the decision as `signal-written` and records the auto-resolution on the decision,
+ * so the run resumes without an operator round-trip. Returns a disarm cleanup.
+ */
+function armInteractiveHandoffAutoRecovery(
+  runId: string,
+  slotId: string,
+  decision: RunDecision,
+  resolve: (actionId: string) => void,
+): () => void {
+  let settled = false;
+  let poll: ReturnType<typeof setInterval> | undefined;
+  let unsub: (() => void) | undefined;
+
+  const cleanup = (): void => {
+    settled = true;
+    unsub?.();
+    if (poll) clearInterval(poll);
+  };
+
+  const consider = (signal: WorkerSignal): void => {
+    if (settled) return;
+    const latestRun = getRun(runId);
+    if (!latestRun) return;
+    const ctx = selectAgentContext(latestRun, { role: primaryRoleForFlow(latestRun.flowType) });
+    if (applyHandoffAutoResolution(latestRun, decision, signal, ctx)) {
+      cleanup();
+      console.log(
+        `[run-monitor] run ${runId.slice(0, 8)} — interactive handoff auto-resolved by fresh terminal signal (status=${signal.status})`,
+      );
+      resolve(HANDOFF_AUTO_RESOLVE_ACTION);
+    }
+  };
+
+  const handlePush = (sigSlotId: string, sigRunId: string | null, ws: WorkerSignal): void => {
+    if (settled) return;
+    if (sigSlotId !== slotId) return;
+    if (sigRunId && sigRunId !== runId) return;
+    const normalized = normalizeWorkerSignal(ws);
+    if (!normalized.ok) return;
+    consider(normalized.signal);
+  };
+  unsub = onWorkerSignal(handlePush);
+
+  // Fallback poll — the task-watcher push can miss a write and the operator hold may
+  // outlive the watcher, so re-read the file directly on the monitor's poll cadence.
+  poll = setInterval(() => {
+    void (async () => {
+      if (settled) return;
+      const signal = await readFreshTerminalSignalForRun(runId, slotId);
+      if (signal) consider(signal);
+    })();
+  }, HANDOFF_AUTO_RECOVERY_POLL_MS);
+
+  return cleanup;
+}
+
 async function createBlockedDecision(
   runId: string,
   reason: string,
@@ -1151,10 +1303,17 @@ async function createBlockedDecision(
   broadcastFn(Events.RUN_DECISION_NEW, { runId, decision, slotId: run.slotId });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 
-  // Wait for resolution
+  // Wait for resolution. Interactive handoffs also auto-resolve when a fresh
+  // terminal signal lands on the slot — no operator round-trip required.
+  let disarmAutoRecovery: (() => void) | undefined;
   const actionId = await new Promise<string>((resolve) => {
     decisionResolvers.set(decision.id, resolve);
+    if (reason === 'interactive_handoff' && run.slotId) {
+      disarmAutoRecovery = armInteractiveHandoffAutoRecovery(runId, run.slotId, decision, resolve);
+    }
   });
+  disarmAutoRecovery?.();
+  decisionResolvers.delete(decision.id);
 
   // Mark decision resolved
   decision.resolvedAt = new Date().toISOString();

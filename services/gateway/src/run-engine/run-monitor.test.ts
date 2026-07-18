@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { RunDecision } from '@farmslot/protocol';
+
 import {
+  applyHandoffAutoResolution,
   bindSignalToMonitorContext,
+  isFreshTerminalHandoffSignal,
   isWorkerSignalFreshForRun,
   type MonitorNudgeRunView,
+  resolveMonitorConfig,
   runHasOpenHumanGate,
   shouldHoldForInteractivePrComplete,
   shouldHoldForMissingTerminalSignal,
@@ -220,4 +225,136 @@ test('shouldHoldForInteractivePrComplete only gates interactive PR-complete hand
     shouldHoldForInteractivePrComplete({ flowType: 'dev', mode: 'interactive' } as any),
     false,
   );
+});
+
+// ─── Per-flow monitor config (deliverable 1) ───
+
+test('resolveMonitorConfig applies the per-flow total_timeout_min override', () => {
+  const cfg = resolveMonitorConfig(
+    { total_timeout_min: 90, flows: { 'pr-complete': { total_timeout_min: 180 } } },
+    'proj',
+    'pr-complete',
+  );
+  assert.equal(cfg.totalTimeoutMs, 180 * 60_000);
+});
+
+test('resolveMonitorConfig applies the per-flow stuck_timeout_min override', () => {
+  const cfg = resolveMonitorConfig(
+    { stuck_timeout_min: 20, flows: { 'fix-bug': { stuck_timeout_min: 45 } } },
+    'proj',
+    'fix-bug',
+  );
+  assert.equal(cfg.stuckTimeoutMs, 45 * 60_000);
+});
+
+test('resolveMonitorConfig falls back to the project total for flows without an override', () => {
+  const cfg = resolveMonitorConfig(
+    { total_timeout_min: 120, flows: { 'pr-complete': { total_timeout_min: 180 } } },
+    'proj',
+    'dev',
+  );
+  assert.equal(cfg.totalTimeoutMs, 120 * 60_000);
+});
+
+test('resolveMonitorConfig falls back to the default when neither flow nor project value is set', () => {
+  const cfg = resolveMonitorConfig(
+    { flows: { 'pr-complete': { total_timeout_min: 180 } } },
+    'proj',
+    'dev',
+  );
+  assert.equal(cfg.totalTimeoutMs, 90 * 60_000);
+  assert.equal(cfg.stuckTimeoutMs, 20 * 60_000);
+});
+
+test('resolveMonitorConfig ignores an invalid per-flow override and uses the project value', () => {
+  const cfg = resolveMonitorConfig(
+    { total_timeout_min: 120, flows: { 'pr-complete': { total_timeout_min: -5 } } },
+    'proj',
+    'pr-complete',
+  );
+  assert.equal(cfg.totalTimeoutMs, 120 * 60_000);
+});
+
+// ─── Terminal-signal auto-recovery (deliverable 2) ───
+
+const handoffRun = {
+  steps: [
+    { name: 'monitor' as const, status: 'running' as const, startedAt: '2026-04-25T08:00:00Z' },
+  ],
+};
+
+test('isFreshTerminalHandoffSignal accepts a fresh terminal signal', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'complete',
+      outcome: 'success',
+      timestamp: '2026-04-25T08:30:00Z',
+    }),
+    true,
+  );
+});
+
+test('isFreshTerminalHandoffSignal rejects a stale terminal signal predating the worker context', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'complete',
+      outcome: 'success',
+      timestamp: '2026-04-25T07:00:00Z',
+    }),
+    false,
+  );
+});
+
+test('isFreshTerminalHandoffSignal rejects a non-terminal running signal', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'running',
+      timestamp: '2026-04-25T08:30:00Z',
+    }),
+    false,
+  );
+});
+
+test('applyHandoffAutoResolution stamps the decision and resumes for a fresh terminal signal', () => {
+  const decision: Pick<RunDecision, 'context'> = { context: { signalFile: 'SIGNAL.json' } };
+  const resumed = applyHandoffAutoResolution(
+    handoffRun,
+    decision,
+    { status: 'complete', outcome: 'success', timestamp: '2026-04-25T08:30:00Z' },
+    null,
+    '2026-04-25T08:30:01Z',
+  );
+  assert.equal(resumed, true);
+  assert.equal(decision.context?.autoResolved, true);
+  assert.equal(decision.context?.autoResolvedBy, 'terminal-signal');
+  assert.equal(decision.context?.autoResolvedStatus, 'complete');
+  assert.equal(decision.context?.autoResolvedAt, '2026-04-25T08:30:01Z');
+  // Existing context is preserved, not clobbered.
+  assert.equal(decision.context?.signalFile, 'SIGNAL.json');
+});
+
+test('applyHandoffAutoResolution leaves the decision untouched for a stale terminal signal', () => {
+  const decision: Pick<RunDecision, 'context'> = { context: { signalFile: 'SIGNAL.json' } };
+  const resumed = applyHandoffAutoResolution(
+    handoffRun,
+    decision,
+    { status: 'complete', outcome: 'success', timestamp: '2026-04-25T07:00:00Z' },
+    null,
+    '2026-04-25T08:30:01Z',
+  );
+  assert.equal(resumed, false);
+  assert.equal(decision.context?.autoResolved, undefined);
+});
+
+test('applyHandoffAutoResolution never fires for a non-terminal running signal', () => {
+  const decision: Pick<RunDecision, 'context'> = { context: {} };
+  const resumed = applyHandoffAutoResolution(
+    handoffRun,
+    decision,
+    { status: 'running', timestamp: '2026-04-25T08:30:00Z' },
+    null,
+    '2026-04-25T08:30:01Z',
+  );
+  assert.equal(resumed, false);
+  assert.equal(decision.context?.autoResolved, undefined);
 });

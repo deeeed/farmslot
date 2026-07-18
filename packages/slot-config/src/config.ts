@@ -199,6 +199,18 @@ export interface RawProjectJson {
     idle_timeout_min?: number;
     total_timeout_min?: number;
     max_nudges?: number;
+    /**
+     * Per-flow timeout overrides keyed by FlowType (dev, fix-bug, pr-complete, …).
+     * Only total_timeout_min and stuck_timeout_min are overridable; when absent the
+     * top-level monitoring value (then the built-in default) applies.
+     */
+    flows?: Record<
+      string,
+      {
+        total_timeout_min?: number;
+        stuck_timeout_min?: number;
+      }
+    >;
   };
   ci?: {
     enabled?: boolean;
