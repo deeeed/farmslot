@@ -235,6 +235,11 @@ test('slotClaimBlockedByHandoff blocks foreign reservations only', () => {
 
 test('failedRunSlotCleanup resets only owned slots and clears only own reservations', () => {
   assert.equal(failedRunSlotCleanup({ current_run_id: 'me' }, 'me'), 'reset');
+  assert.equal(failedRunSlotCleanup({ current_run_id: 'me', handoff_run_id: 'me' }, 'me'), 'reset');
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'me', handoff_run_id: 'incoming' }, 'me'),
+    'release-keep-handoff',
+  );
   assert.equal(
     failedRunSlotCleanup({ current_run_id: 'prior', handoff_run_id: 'me' }, 'me'),
     'clear-reservation',

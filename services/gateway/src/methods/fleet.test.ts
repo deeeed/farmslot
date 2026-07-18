@@ -9,6 +9,7 @@ import { markGhostSlots } from '../fleet/state.js';
 import { isFreeSlot } from './dispatch/slot-scoring.js';
 import { makeRun } from './run/test-fixtures.js';
 import {
+  buildRefreshSlotRow,
   fleetStaleThresholdMs,
   fleetStatus,
   type FleetStatusDeps,
@@ -500,7 +501,32 @@ test('reconcileRefreshSlotRowWithActiveRun does not resurrect a cleanly released
   assert.equal(reconciled.lifecycle, 'ready');
 });
 
-test('buildRefreshSlotRow carries the handoff reservation through a refresh', () => {
-  const row = makeRefreshRow({ handoff_run_id: 'incoming-run' });
-  assert.equal(row.handoff_run_id, 'incoming-run');
+test('buildRefreshSlotRow carries the handoff reservation and epoch through a refresh', () => {
+  const probe = {
+    slot: 'macwork-mm-4',
+    machine: 'macwork',
+    platform: 'ios',
+    project: 'metamask-mobile-farm',
+    ssh: 'LOCAL',
+    dev: 'sim:OK',
+    devserver: 'OK',
+    device: 'mm-4',
+    cdp: 'OFF',
+    fixtures: '7/10',
+    branch: 'feat-branch',
+    agent: 'working',
+    enabled: true,
+    mode: 'dispatch',
+    dispatchable: false,
+  };
+  const row = buildRefreshSlotRow(probe, {
+    lifecycle: 'busy',
+    phase: 'working',
+    current_run_id: 'prior-owner',
+    slot_epoch: 4,
+    handoff_run_id: 'incoming-run',
+  });
+  assert.equal(row.handoff_run_id, 'incoming-run', 'reservation survives refresh');
+  assert.equal(row.slot_epoch, 4, 'epoch survives refresh');
+  assert.equal(row.current_run_id, 'prior-owner', 'ownership survives refresh');
 });

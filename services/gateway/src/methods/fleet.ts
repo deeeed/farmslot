@@ -321,7 +321,7 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
   return { fleet };
 }
 
-function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
+export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
   // Map pool mode + old lifecycle values to new 5-state model.
   let lifecycle: string;
   let phase: string | null = (prev.phase as string | null) ?? null;

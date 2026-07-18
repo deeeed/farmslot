@@ -16,7 +16,6 @@ import {
   claimSlotStatusIf,
   getProjectField,
   loadProjectVars,
-  readSlotField,
   updateSlotStatus,
 } from '../core/index.js';
 import { loadFleetStatus, loadProjectConfigs } from '../fleet/state.js';
@@ -99,21 +98,6 @@ export interface FindSlotStepContext {
  * this claim aborts its remaining writes instead of clobbering the claim.
  */
 
-/**
- * Fresh reuse destroys the prior worker BEFORE its guarded claim, so a
- * pending foreign handoff must be refused before any destruction — the
- * reserved run's delivery is in flight on that worker.
- */
-async function assertNoForeignHandoffReservation(slotId: string, runId: string): Promise<void> {
-  const reservation = await readSlotField(slotId, 'handoff_run_id');
-  if (typeof reservation === 'string' && reservation && reservation !== runId) {
-    throw Object.assign(
-      new Error(`Slot ${slotId} is reserved for handoff to run ${reservation}; cannot fresh-reuse`),
-      { code: SLOT_CLAIM_REFUSED_CODE },
-    );
-  }
-}
-
 async function claimSelectedSlot(
   slotId: string,
   runId: string,
@@ -130,9 +114,11 @@ async function claimSelectedSlot(
       // worker and split-brain it.
       if (slotClaimBlockedByHandoff(slot, runId) !== null) return false;
       // Exclusive by default: two selections racing over one free snapshot
-      // must not both succeed. The operator-approved nudge takeover is the
-      // exception — it deliberately claims over a live worker, whose prior
-      // run is terminalized by nudgeDispatch right after.
+      // must not both succeed. The takeover mode is the exception — it
+      // deliberately claims over a live worker, either for an
+      // operator-approved nudge (prior run terminalized by nudgeDispatch
+      // after delivery) or as the fresh-reuse fence taken before the prior
+      // worker is destroyed.
       if (opts?.takeoverLiveOwner) return true;
       return slotClaimBlockedByLiveOwner(slot, runId, getRun) === null;
     },
@@ -144,8 +130,12 @@ async function claimSelectedSlot(
     {
       lifecycle: 'busy',
       phase,
-      // Takeover reserves the handoff instead of rebinding ownership.
-      ...(opts?.takeoverLiveOwner ? { handoff_run_id: runId } : { current_run_id: runId }),
+      // Takeover reserves the handoff instead of rebinding ownership. An
+      // ordinary claim consumes the claimant's own reservation (fresh reuse
+      // fences with one before teardown); a foreign one was refused above.
+      ...(opts?.takeoverLiveOwner
+        ? { handoff_run_id: runId }
+        : { current_run_id: runId, handoff_run_id: null }),
       ...(agent ? { agent } : {}),
     },
   );
@@ -265,7 +255,13 @@ export async function executeFindSlotStep(
     if (eligibilityFail) {
       throw new Error(`Fresh-reuse no longer valid: ${eligibilityFail}. Pick a slot again.`);
     }
-    await assertNoForeignHandoffReservation(run.slotId, runId);
+    // Atomic fence BEFORE destroying the prior worker: reserve the handoff in
+    // the same CAS that refuses foreign reservations. A read-then-teardown
+    // check would let a nudge reserve in the gap and have its in-flight
+    // delivery killed here. The ordinary claim below consumes the fence.
+    await claimSelectedSlot(run.slotId, runId, 'preparing', undefined, {
+      takeoverLiveOwner: true,
+    });
     await prepareSlotForFreshReuse(run.slotId, runId);
     await claimSelectedSlot(run.slotId, runId, 'preparing');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
@@ -473,7 +469,11 @@ export async function executeFindSlotStep(
           // dependency install would race against a still-writing worker in the same
           // worktree and corrupt slot state. prepareSlotForFreshReuse handles
           // terminalize-prior-run + kill-worker-on-slot in the right order.
-          await assertNoForeignHandoffReservation(top.slot.slot, runId);
+          // Atomic fence BEFORE destroying the prior worker — same rationale
+          // as the freshReuse wizard-shortcut above.
+          await claimSelectedSlot(top.slot.slot, runId, 'preparing', undefined, {
+            takeoverLiveOwner: true,
+          });
           await prepareSlotForFreshReuse(top.slot.slot, runId);
           updateRun(runId, { slotId: top.slot.slot });
           await claimSelectedSlot(top.slot.slot, runId, 'preparing');

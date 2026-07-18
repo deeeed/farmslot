@@ -278,6 +278,26 @@ export async function resetSlotIf(
   return applied;
 }
 
+/**
+ * Ownership release for a terminal run whose slot carries a pending foreign
+ * handoff reservation: applies the full ready/idle reset EXCEPT
+ * `handoff_run_id`, which stays so the reserved run's final claim still
+ * succeeds after its delivery landed. CAS'd like resetSlotIf; listeners fire
+ * only when applied (the dying owner's reviewer sessions must still end).
+ */
+export async function releaseSlotOwnershipPreservingHandoffIf(
+  slotId: string,
+  predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+): Promise<boolean> {
+  const fields = { ...slotResetFields(false) };
+  delete fields.handoff_run_id;
+  const applied = await updateSlotStatusIf(slotId, predicate, fields);
+  if (applied) {
+    for (const listener of slotResetListeners) listener(slotId);
+  }
+  return applied;
+}
+
 export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // Lifecycle reset DOES NOT shut down resources. Release flips the slot
   // back to `ready` but leaves the simulator / dev-server / browser alive

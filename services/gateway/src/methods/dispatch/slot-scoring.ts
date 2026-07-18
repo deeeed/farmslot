@@ -359,16 +359,23 @@ export function slotClaimBlockedByLiveOwner(
 }
 
 /**
- * What a FAILED run may do to its slot: reset it only when it actually owns
- * it; a run that merely held a handoff reservation clears just that
- * reservation (the prior owner's worker is still running and must not be
- * marked ready); a run named nowhere on the slot touches nothing.
+ * What a terminal (failed/blocked) run may do to its slot: full reset only
+ * when it owns the slot AND no other run holds a handoff reservation; an
+ * owner with a pending foreign reservation releases ownership but keeps the
+ * reservation (the incoming nudge's delivery is mid-flight — clearing it
+ * would strand that run after its prompt already landed); a run that merely
+ * held a reservation clears just that reservation (the prior owner's worker
+ * is still running and must not be marked ready); a run named nowhere on the
+ * slot touches nothing.
  */
 export function failedRunSlotCleanup(
   slot: Readonly<Record<string, unknown>>,
   runId: string,
-): 'reset' | 'clear-reservation' | 'none' {
-  if (slot.current_run_id === runId) return 'reset';
+): 'reset' | 'release-keep-handoff' | 'clear-reservation' | 'none' {
+  if (slot.current_run_id === runId) {
+    const reserved = typeof slot.handoff_run_id === 'string' ? slot.handoff_run_id : '';
+    return reserved && reserved !== runId ? 'release-keep-handoff' : 'reset';
+  }
   if (slot.handoff_run_id === runId) return 'clear-reservation';
   return 'none';
 }

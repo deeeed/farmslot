@@ -135,42 +135,48 @@ class MonitorTerminalError extends Error {
 const S = PipelineSteps;
 
 /**
- * A failed run may reset only a slot it OWNS. A run that merely held a
- * handoff reservation (nudge takeover) clears just that reservation — the
- * prior owner's worker is still running and must not be marked ready — and a
- * run named nowhere on the slot touches nothing.
+ * A terminal run may reset only a slot it OWNS — and even then a pending
+ * foreign handoff reservation survives (the incoming nudge's delivery is
+ * mid-flight; see failedRunSlotCleanup). A run that merely held a
+ * reservation clears just that reservation — the prior owner's worker is
+ * still running and must not be marked ready — and a run named nowhere on
+ * the slot touches nothing. Every branch re-evaluates the plan INSIDE the
+ * serialized status write, so a successor claiming the slot between a read
+ * and this cleanup is never clobbered.
  */
 async function cleanupSlotAfterRunFailure(
   slotId: string,
   runId: string,
   reason: string,
 ): Promise<void> {
-  const {
-    readSlotField,
-    resetSlot: resetSlotState,
-    updateSlotStatusIf,
-  } = await import('../core/index.js');
-  const [owner, reservation] = await Promise.all([
-    readSlotField(slotId, 'current_run_id'),
-    readSlotField(slotId, 'handoff_run_id'),
-  ]);
-  const plan = failedRunSlotCleanup(
-    { current_run_id: owner ?? null, handoff_run_id: reservation ?? null },
-    runId,
-  );
-  if (plan === 'reset') {
-    await resetSlotState(slotId);
+  const { releaseSlotOwnershipPreservingHandoffIf, resetSlotIf, updateSlotStatusIf } =
+    await import('../core/index.js');
+  if (await resetSlotIf(slotId, (slot) => failedRunSlotCleanup(slot, runId) === 'reset')) {
     console.log(`[run-engine] slot ${slotId} reset to ready/idle after ${reason}`);
     return;
   }
-  if (plan === 'clear-reservation') {
-    await updateSlotStatusIf(slotId, (slot) => slot.handoff_run_id === runId, {
-      handoff_run_id: null,
-    });
+  if (
+    await releaseSlotOwnershipPreservingHandoffIf(
+      slotId,
+      (slot) => failedRunSlotCleanup(slot, runId) === 'release-keep-handoff',
+    )
+  ) {
+    console.log(
+      `[run-engine] slot ${slotId} ownership released after ${reason}; pending handoff reservation preserved`,
+    );
+    return;
+  }
+  if (
+    await updateSlotStatusIf(
+      slotId,
+      (slot) => failedRunSlotCleanup(slot, runId) === 'clear-reservation',
+      { handoff_run_id: null },
+    )
+  ) {
     console.log(`[run-engine] cleared handoff reservation on ${slotId} after ${reason}`);
     return;
   }
-  console.log(`[run-engine] slot ${slotId} not owned by failed run; left untouched (${reason})`);
+  console.log(`[run-engine] slot ${slotId} not owned by terminal run; left untouched (${reason})`);
 }
 
 const STEP_TO_STATUS: Record<string, RunStatus> = {
@@ -331,7 +337,7 @@ async function finalizeNonThrownTerminalRun(
       if (currentRun) {
         await teardownGateHeldAgentsIfNeeded(currentRun);
       }
-      await resetSlot(run.slotId);
+      await cleanupSlotAfterRunFailure(run.slotId, runId, `non-thrown ${run.status}`);
     } catch (err) {
       // Surface but do not mask the run's terminal state.
       console.warn(
@@ -489,7 +495,7 @@ export async function startRun(runId: string): Promise<void> {
           await cleanupEvalHarnessForTerminalRun(blockedRun, runId, 'blocked run');
           try {
             await teardownGateHeldAgentsIfNeeded(blockedRun);
-            await resetSlot(blockedRun.slotId);
+            await cleanupSlotAfterRunFailure(blockedRun.slotId, runId, 'blocked run');
           } catch (resetErr) {
             console.warn(
               `[run-engine] final slot reset failed for blocked run ${blockedRun.slotId}: ${(resetErr as Error).message.slice(0, 200)}`,
@@ -546,7 +552,11 @@ export async function startRun(runId: string): Promise<void> {
             );
           }
           try {
-            await resetSlot(monitorRun.slotId);
+            await cleanupSlotAfterRunFailure(
+              monitorRun.slotId,
+              runId,
+              `monitor-terminal ${err.status}`,
+            );
           } catch (resetErr) {
             console.warn(
               `[run-engine] slot reset after monitor-terminal ${err.status} for ${monitorRun.slotId}: ${(resetErr as Error).message.slice(0, 200)}`,

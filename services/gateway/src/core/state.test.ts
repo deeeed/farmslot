@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   claimSlotStatusIf,
   markSlotStatusIf,
+  releaseSlotOwnershipPreservingHandoffIf,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
   statusFile,
@@ -147,4 +148,36 @@ test('resetSlotIf applies the ready/idle reset only while its predicate holds', 
   after = await readSlotFixture(slotId);
   assert.equal(after.lifecycle, 'ready');
   assert.equal(after.current_run_id, null);
+});
+
+test('releaseSlotOwnershipPreservingHandoffIf resets ownership but keeps the reservation', async (t) => {
+  const slotId = await withStatusFixture(t, {
+    slot: 'epoch-test-6',
+    lifecycle: 'busy',
+    phase: 'working',
+    agent: 'working',
+    current_run_id: 'dying-owner',
+    handoff_run_id: 'incoming-run',
+    slot_epoch: 5,
+  });
+
+  const applied = await releaseSlotOwnershipPreservingHandoffIf(
+    slotId,
+    (slot) => slot.current_run_id === 'dying-owner',
+  );
+  assert.equal(applied, true);
+  const after = await readSlotFixture(slotId);
+  assert.equal(after.lifecycle, 'ready');
+  assert.equal(after.current_run_id, null);
+  assert.equal(
+    after.handoff_run_id,
+    'incoming-run',
+    'the pending handoff reservation must survive the owner release',
+  );
+
+  const refused = await releaseSlotOwnershipPreservingHandoffIf(
+    slotId,
+    (slot) => slot.current_run_id === 'dying-owner',
+  );
+  assert.equal(refused, false, 'predicate no longer holds after the release');
 });
