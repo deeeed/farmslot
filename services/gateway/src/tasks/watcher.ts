@@ -282,7 +282,9 @@ export async function watchSlot(
       const staleWatch = activeWatches.get(key);
       if (staleWatch && !shouldRebindWatch(staleWatch, nextWatchIdentity)) return;
       if (staleWatch) {
-        await unwatchKey(key, staleWatch);
+        // Raw teardown: this code IS the chained operation for this key —
+        // the chain-aware unwatchKey would await its own promise.
+        await closeWatchEntry(key, staleWatch);
       }
       const sw: SlotWatch = {
         slotId,
@@ -445,7 +447,37 @@ export async function unwatchContext(
   console.log(`[task-watcher] stopped watching ${slotId}:${contextId}`);
 }
 
+/**
+ * Chain-aware teardown for external callers: registers itself in
+ * pendingWatchKeys behind whatever operation is in flight, so a concurrent
+ * watchSlot can neither fast-path past a mid-close teardown (it would observe
+ * the still-active entry, skip registering, and end up with no watch once the
+ * delete lands) nor interleave its rebind with one. Code already running
+ * INSIDE a chained operation must call closeWatchEntry directly — chaining
+ * from within the chain would await itself.
+ */
 async function unwatchKey(key: string, expected?: SlotWatch): Promise<void> {
+  const prior = pendingWatchKeys.get(key);
+  const teardown: Promise<void> = (async () => {
+    if (prior) {
+      try {
+        await prior;
+      } catch {
+        // The prior operation's failure is reported at its own await site;
+        // this teardown only needs it settled before touching the entry.
+      }
+    }
+    await closeWatchEntry(key, expected);
+  })();
+  pendingWatchKeys.set(key, teardown);
+  try {
+    await teardown;
+  } finally {
+    if (pendingWatchKeys.get(key) === teardown) pendingWatchKeys.delete(key);
+  }
+}
+
+async function closeWatchEntry(key: string, expected?: SlotWatch): Promise<void> {
   const sw = activeWatches.get(key);
   if (!sw) return;
   // Identity guard: a successor may have replaced this key's entry between
