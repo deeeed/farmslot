@@ -1,20 +1,16 @@
 import type { loadSlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
-import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 
 import { claudeHookObservability } from './claude-observability.js';
 import { normalizeRunner } from './registry.js';
 
 /**
- * Extract Claude's context-window utilization (0-100) from a captured tmux pane.
+ * ADR-032 Phase 3: debug-only helper — no production caller. Claude's context-% is sourced solely
+ * from the Farmslot statusline JSON via {@link claudeHookObservability}; this pane regex is retained
+ * for local diagnostics (comparing a captured pane against the statusline reading) only.
  *
- * Internal helper used only by {@link KNOWN_RUNNER_STATUS_PROVIDERS}'s Claude entry — name is
- * runner-explicit on purpose so the call site knows what regex shape it accepted. New runners
- * (codex, opencode) get their own `parse<Runner>CtxPctFromPane` next to this one and a separate
- * provider in the registry; do not extend this function with multi-runner regex sets.
- *
- * Returns `null` when no `ctx:N%` marker is present (likely cause: pane is on alt-screen, scrolled
- * past the status line, or the runner version dropped the marker).
+ * Extract Claude's context-window utilization (0-100) from a captured tmux pane. Returns `null`
+ * when no `ctx:N%` marker is present (likely cause: pane is on alt-screen, scrolled past the status
+ * line, or the runner version dropped the marker).
  */
 export function parseClaudeCtxPctFromPane(pane: string): number | null {
   if (!pane) return null;
@@ -50,19 +46,9 @@ export interface RunnerStatusProvider {
 
 const claudeStatusProvider: RunnerStatusProvider = {
   async getContextPct(vars, target) {
-    // Pane parse first for target attribution: the statusline snapshot is a
-    // slot-wide last-writer-wins record with no pane id, so on a slot running
-    // worker + reviewer sessions it can report the OTHER session's ctx%. The
-    // pane capture is scoped to `target` by construction; the statusline stays
-    // as the fallback for alt-screen/scrolled panes where the marker is hidden.
-    const pane = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -40`),
-      )
-    ).stdout;
-    const panePct = parseClaudeCtxPctFromPane(pane);
-    if (panePct != null) return panePct;
+    // ADR-032 Phase 3: the Farmslot statusline JSON is the sole ctx-% source for Claude — the
+    // hook/statusline command writes a per-session reading and the pane regex
+    // (parseClaudeCtxPctFromPane) is retired to a debug helper.
     try {
       const reading = await claudeHookObservability.getContextPct(vars, target);
       if (reading) return reading.value;

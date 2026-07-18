@@ -20,7 +20,6 @@ import {
   getRunnerObservability,
   grokPaneShowsColdStartSession,
   isRunnerPaneRetired,
-  KNOWN_RUNNERS,
   normalizeRunner,
   resolveSafeSendTimeoutMs,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
@@ -1252,44 +1251,30 @@ describe('buildLaunchCommand', () => {
     });
   });
 
-  describe('ADR-032 phase 3A pane-retirement flag', () => {
-    const ON = { FARMSLOT_OBS_PANE_RETIRED: '1' } as NodeJS.ProcessEnv;
-    const OFF = {} as NodeJS.ProcessEnv;
-
-    it('defaults OFF for every runner (no env, no per-def flip)', () => {
-      for (const runner of ['claude', 'codex', 'grok', 'cursor', 'opencode', 'none']) {
-        assert.equal(isRunnerPaneRetired(runner, OFF), false, `${runner} should default off`);
-      }
+  describe('ADR-032 phase 3 pane retirement (intrinsic, no flag)', () => {
+    it('retires the pane for Claude unconditionally (hook-capable, no busy-composer poll)', () => {
+      // Phase 3: Claude is event-driven with a hook provider and does not require the
+      // busy-composer poll, so its send/idle/pending decisions are hook-only — no flag.
+      assert.equal(isRunnerPaneRetired('claude'), true);
     });
 
-    it('env flag is scoped to Claude for Phase 3A (Codex stays on Phase 2)', () => {
-      // ADR-032 Phase 3 retires the pane for Claude only; the global env flag must NOT widen the
-      // dark-launch to Codex even though it is also event-driven.
-      assert.equal(isRunnerPaneRetired('claude', ON), true);
-      assert.equal(isRunnerPaneRetired('codex', ON), false);
-      // pane-only + none stay byte-identical (flag never applies).
-      assert.equal(isRunnerPaneRetired('grok', ON), false);
-      assert.equal(isRunnerPaneRetired('cursor', ON), false);
-      assert.equal(isRunnerPaneRetired('opencode', ON), false);
-      assert.equal(isRunnerPaneRetired('none', ON), false);
+    it('keeps Codex on the pane-fallback path (requiresBusyComposerPoll)', () => {
+      // Codex is event-driven too, but its TUI buffers input and it must poll the pane before
+      // sending (requiresBusyComposerPoll: true), so it is never retired.
+      assert.equal(isRunnerPaneRetired('codex'), false);
     });
 
-    it('per-runner observabilityPaneRetired opts a runner in without the env flag', () => {
-      // The per-runner field is the opt-in path for runners the env flag does not cover (Codex).
-      const original = KNOWN_RUNNERS.codex.observabilityPaneRetired;
-      KNOWN_RUNNERS.codex.observabilityPaneRetired = true;
-      try {
-        assert.equal(isRunnerPaneRetired('codex', OFF), true);
-        // grok has no hook observability provider, so the per-runner field can never retire it.
-        assert.equal(isRunnerPaneRetired('grok', OFF), false);
-      } finally {
-        KNOWN_RUNNERS.codex.observabilityPaneRetired = original;
-      }
+    it('never retires pane-only or observability-less runners', () => {
+      // grok/cursor are pane-only (no hook provider); opencode/none have no observability at all.
+      assert.equal(isRunnerPaneRetired('grok'), false);
+      assert.equal(isRunnerPaneRetired('cursor'), false);
+      assert.equal(isRunnerPaneRetired('opencode'), false);
+      assert.equal(isRunnerPaneRetired('none'), false);
     });
 
     it('null/undefined runner is never retired', () => {
-      assert.equal(isRunnerPaneRetired(null, ON), false);
-      assert.equal(isRunnerPaneRetired(undefined, ON), false);
+      assert.equal(isRunnerPaneRetired(null), false);
+      assert.equal(isRunnerPaneRetired(undefined), false);
     });
   });
 

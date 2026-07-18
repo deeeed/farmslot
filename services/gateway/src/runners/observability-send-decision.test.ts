@@ -4,8 +4,6 @@ import { test } from 'node:test';
 import {
   computePromptAcceptedSinceMs,
   isObservabilityReadingAuthoritative,
-  OBS_PANE_RETIRED_ENV,
-  paneRetiredFromEnv,
   selectBusyFromObservabilityAndPane,
   selectIdleFromObservabilityAndPane,
   selectPendingFromObservabilityAndPane,
@@ -132,17 +130,6 @@ test('selectBusyFromObservabilityAndPane falls back to pane on low confidence', 
     source: 'pane',
     confidence: null,
   });
-});
-
-// --- ADR-032 Phase 3A pane-retirement flag ---
-
-test('paneRetiredFromEnv reads the flag from env truthy values only', () => {
-  assert.equal(paneRetiredFromEnv({ [OBS_PANE_RETIRED_ENV]: '1' }), true);
-  assert.equal(paneRetiredFromEnv({ [OBS_PANE_RETIRED_ENV]: 'true' }), true);
-  assert.equal(paneRetiredFromEnv({ [OBS_PANE_RETIRED_ENV]: 'TRUE' }), true);
-  assert.equal(paneRetiredFromEnv({ [OBS_PANE_RETIRED_ENV]: '0' }), false);
-  assert.equal(paneRetiredFromEnv({ [OBS_PANE_RETIRED_ENV]: '' }), false);
-  assert.equal(paneRetiredFromEnv({}), false);
 });
 
 test('selectBusy pane-retired: authoritative hook still wins, pane never consulted', () => {

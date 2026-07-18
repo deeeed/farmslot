@@ -12,21 +12,8 @@ export const RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS = 10_000;
 export const RUNNER_PANE_SAFE_SEND_TIMEOUT_MS = 30_000;
 
 /**
- * ADR-032 Phase 3A dark-launch switch. When set (`1`/`true`), event-driven runners
- * (Claude/Codex) resolve send/idle/pending decisions from hook readings ONLY — pane
- * predicates are never consulted for the decision. Default OFF; when off the selectors
- * behave byte-identically to Phase 2 (pane fallback on hook `unknown`/`null`/low).
- */
-export const OBS_PANE_RETIRED_ENV = 'FARMSLOT_OBS_PANE_RETIRED';
-
-export function paneRetiredFromEnv(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env[OBS_PANE_RETIRED_ENV];
-  return raw === '1' || raw?.toLowerCase() === 'true';
-}
-
-/**
- * A send-decision outcome. `source: 'degraded'` marks the ADR-032 Phase 3A case where the
- * pane retirement flag is on but the hook reading is `unknown`/`null`/low — there is no
+ * A send-decision outcome. `source: 'degraded'` marks the ADR-032 Phase 3 case where the pane is
+ * retired for this runner (hook-only) but the hook reading is `unknown`/`null`/low — there is no
  * authoritative signal and the pane is deliberately not consulted, so the decision resolves
  * conservatively to busy (never send into a blind composer).
  */

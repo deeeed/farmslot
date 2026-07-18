@@ -19,6 +19,7 @@ function usage(exitCode = 0) {
     '  recipe-quality build [--input input.json] [--output artifacts/recipe-quality.json]',
     '    (flags override top-level input fields; training fields are merged)',
     '  contract resolve --flow <flow> [--project-config path] [--mode mode]',
+    '  execution-template <list|lint|new> [options]',
   ].join('\n');
   (exitCode === 0 ? console.log : console.error)(text);
   process.exit(exitCode);
@@ -470,6 +471,11 @@ async function main() {
     resolveContract(rest);
   } else if (command === 'recipe-quality' && subcommand === 'build') {
     await buildRecipeQuality(rest);
+  } else if (command === 'execution-template') {
+    runNode(
+      path.join(packageRoot, 'scripts', 'execution-template-cli.mjs'),
+      [subcommand, ...rest].filter((arg) => arg !== undefined),
+    );
   } else {
     usage(2);
   }
