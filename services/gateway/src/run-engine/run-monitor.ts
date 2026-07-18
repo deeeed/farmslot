@@ -47,7 +47,7 @@ import { onWorkerSignal, resolveContextFilePath } from '../tasks/watcher.js';
 import {
   isTerminalWorkerSignal,
   normalizeWorkerSignal,
-  parseFiniteIsoMs,
+  parseStrictIsoMs,
   signalFreshAfterAll,
 } from '../tasks/worker-signals.js';
 import { loadTerminalContractForRun } from '../tasks/worker-terminal-contract.js';
@@ -283,8 +283,9 @@ export function isFreshTerminalHandoffSignal(
   // Unattended resolution must PROVE freshness. The shared freshness helpers
   // treat an unparseable timestamp as fresh (lenient for operator-confirmed
   // paths), which here would let a corrupt or timestamp-less SIGNAL.json
-  // resolve a handoff with nobody watching — so require a verifiable one.
-  if (parseFiniteIsoMs(bound.timestamp) === null) return false;
+  // resolve a handoff with nobody watching — so require a strictly-shaped,
+  // parseable timestamp (Date.parse alone accepts trailing junk).
+  if (parseStrictIsoMs(bound.timestamp) === null) return false;
   return isWorkerSignalFreshForRun(run, bound);
 }
 
@@ -1234,8 +1235,16 @@ function armInteractiveHandoffAutoRecovery(
     if (settled) return;
     const latestRun = getRun(runId);
     if (!latestRun) return;
+    // Re-read the decision from the store: after a manual resolve this
+    // watcher is stale (its disposer may have been lost across a restart),
+    // so disarm instead of stamping an already-resolved decision.
+    const liveDecision = latestRun.decisions.find((d) => d.id === decision.id);
+    if (!liveDecision || liveDecision.resolvedAt) {
+      cleanup();
+      return;
+    }
     const ctx = selectAgentContext(latestRun, { role: primaryRoleForFlow(latestRun.flowType) });
-    if (applyHandoffAutoResolution(latestRun, decision, signal, ctx)) {
+    if (applyHandoffAutoResolution(latestRun, liveDecision, signal, ctx)) {
       cleanup();
       console.log(
         `[run-monitor] run ${runId.slice(0, 8)} — interactive handoff auto-resolved by fresh terminal signal (status=${signal.status})`,
@@ -1295,12 +1304,16 @@ export function rearmInteractiveHandoffAutoRecovery(
   if (!decision) return undefined;
   return armInteractiveHandoffAutoRecovery(run.id, slotId, decision, (actionId) => {
     resolveDecision(run.id, decision.id, actionId).catch((err) => {
-      // The watcher disarmed itself before resolving, so a failed resolve
-      // would otherwise vanish silently; the decision stays unresolved and
-      // the operator can still resolve it manually from the dashboard.
+      // The watcher disarmed itself before this resolve ran, so a transient
+      // failure (e.g. the signal file momentarily unreadable, or losing the
+      // race to a concurrent operator resolve) would otherwise permanently
+      // strand auto-recovery. Warn and re-arm: if the decision is already
+      // resolved the re-arm declines, otherwise the next poll retries.
       console.warn(
         `[run-monitor] run ${run.id.slice(0, 8)} — auto-resolve of interactive handoff failed after restart: ${(err as Error).message}`,
       );
+      const latest = getRun(run.id);
+      if (latest) rearmInteractiveHandoffAutoRecovery(latest, resolveDecision);
     });
   });
 }

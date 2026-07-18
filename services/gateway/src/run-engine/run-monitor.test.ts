@@ -324,6 +324,28 @@ test('isFreshTerminalHandoffSignal rejects a terminal signal with an unparseable
   );
 });
 
+test('isFreshTerminalHandoffSignal rejects a timestamp with trailing junk that Date.parse tolerates', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'complete',
+      outcome: 'success',
+      timestamp: '2026-04-25junk',
+    }),
+    false,
+  );
+});
+
+test('isFreshTerminalHandoffSignal accepts a fresh strictly-shaped timestamp with a UTC offset', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'complete',
+      outcome: 'success',
+      timestamp: '2026-04-25T10:30:00+02:00',
+    }),
+    true,
+  );
+});
+
 test('isFreshTerminalHandoffSignal rejects a non-terminal running signal', () => {
   assert.equal(
     isFreshTerminalHandoffSignal(handoffRun, {
