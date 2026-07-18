@@ -359,6 +359,21 @@ export function slotClaimBlockedByLiveOwner(
 }
 
 /**
+ * What a FAILED run may do to its slot: reset it only when it actually owns
+ * it; a run that merely held a handoff reservation clears just that
+ * reservation (the prior owner's worker is still running and must not be
+ * marked ready); a run named nowhere on the slot touches nothing.
+ */
+export function failedRunSlotCleanup(
+  slot: Readonly<Record<string, unknown>>,
+  runId: string,
+): 'reset' | 'clear-reservation' | 'none' {
+  if (slot.current_run_id === runId) return 'reset';
+  if (slot.handoff_run_id === runId) return 'clear-reservation';
+  return 'none';
+}
+
+/**
  * Handoff reservation: an operator-approved nudge takeover reserves the slot
  * for exactly one incoming run across the delivery window (ownership stays
  * with the prior run until nudgeDispatch's post-delivery handoff). Any other

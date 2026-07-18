@@ -186,6 +186,9 @@ async function slotReleaseImpl(
   const mark = await markSlotStatusIf(
     params.slotId,
     (slot: Readonly<Record<string, unknown>>) => {
+      // A pending handoff reservation means an incoming run's delivery is in
+      // flight on this worker — no teardown (bound or not) may start under it.
+      if (typeof slot.handoff_run_id === 'string' && slot.handoff_run_id) return false;
       const owner = ((slot.current_run_id as string | null | undefined) ?? null) as string | null;
       if (params.expectedRunId) return owner === params.expectedRunId;
       // Unbound (operator) release: releases whoever currently holds the slot,

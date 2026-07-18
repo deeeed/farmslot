@@ -141,6 +141,7 @@ interface PreviousSlotStatus {
   runner?: string | null;
   model?: string | null;
   slot_epoch?: unknown;
+  handoff_run_id?: unknown;
 }
 
 type RefreshSlotRow = ReturnType<typeof buildRefreshSlotRow>;
@@ -402,6 +403,7 @@ function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
     // Ownership epoch is a lifecycle-protocol token: dropping it on refresh
     // would let a stale teardown's epoch guard pass again.
     slot_epoch: Number(prev.slot_epoch) || 0,
+    handoff_run_id: prev.handoff_run_id ?? null,
     task_id: prev.task_id ?? null,
     task_file: prev.task_file ?? null,
     current_run_id: prev.current_run_id ?? null,

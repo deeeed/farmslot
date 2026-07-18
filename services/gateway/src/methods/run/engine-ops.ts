@@ -24,7 +24,11 @@ import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
 import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
 import { refreshReviewGate } from '../../run-engine/review-gate.js';
 import { getRun, updateRun } from '../../runs/store.js';
-import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from '../dispatch/slot-scoring.js';
+import {
+  SLOT_CLAIM_REFUSED_CODE,
+  slotClaimBlockedByHandoff,
+  slotClaimBlockedByRelease,
+} from '../dispatch/slot-scoring.js';
 
 import { runReplayStep } from './replay-step.js';
 
@@ -164,7 +168,8 @@ export async function runActivateOnSlot(
   );
   const rebind = await claimSlotStatusIf(
     targetSlot,
-    (slot) => slotClaimBlockedByRelease(slot) === null,
+    (slot) =>
+      slotClaimBlockedByRelease(slot) === null && slotClaimBlockedByHandoff(slot, run.id) === null,
     { current_run_id: run.id },
   );
   if (!rebind.claimed) {

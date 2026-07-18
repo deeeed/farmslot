@@ -16,6 +16,7 @@ import {
   claimSlotStatusIf,
   getProjectField,
   loadProjectVars,
+  readSlotField,
   updateSlotStatus,
 } from '../core/index.js';
 import { loadFleetStatus, loadProjectConfigs } from '../fleet/state.js';
@@ -97,6 +98,22 @@ export interface FindSlotStepContext {
  * whatever lands there) and bump the ownership epoch so any teardown racing
  * this claim aborts its remaining writes instead of clobbering the claim.
  */
+
+/**
+ * Fresh reuse destroys the prior worker BEFORE its guarded claim, so a
+ * pending foreign handoff must be refused before any destruction — the
+ * reserved run's delivery is in flight on that worker.
+ */
+async function assertNoForeignHandoffReservation(slotId: string, runId: string): Promise<void> {
+  const reservation = await readSlotField(slotId, 'handoff_run_id');
+  if (typeof reservation === 'string' && reservation && reservation !== runId) {
+    throw Object.assign(
+      new Error(`Slot ${slotId} is reserved for handoff to run ${reservation}; cannot fresh-reuse`),
+      { code: SLOT_CLAIM_REFUSED_CODE },
+    );
+  }
+}
+
 async function claimSelectedSlot(
   slotId: string,
   runId: string,
@@ -209,6 +226,9 @@ export async function executeFindSlotStep(
         `Branch-affinity nudge no longer valid: ${eligibilityFail}. Pick a slot again.`,
       );
     }
+    // Reserve the handoff exactly like the decision-card path: without this,
+    // two wizard nudges racing the same worker would both deliver.
+    await claimSelectedSlot(run.slotId, runId, 'working', 'working', { takeoverLiveOwner: true });
     return {
       inputs,
       outputs: {
@@ -245,6 +265,7 @@ export async function executeFindSlotStep(
     if (eligibilityFail) {
       throw new Error(`Fresh-reuse no longer valid: ${eligibilityFail}. Pick a slot again.`);
     }
+    await assertNoForeignHandoffReservation(run.slotId, runId);
     await prepareSlotForFreshReuse(run.slotId, runId);
     await claimSelectedSlot(run.slotId, runId, 'preparing');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
@@ -452,6 +473,7 @@ export async function executeFindSlotStep(
           // dependency install would race against a still-writing worker in the same
           // worktree and corrupt slot state. prepareSlotForFreshReuse handles
           // terminalize-prior-run + kill-worker-on-slot in the right order.
+          await assertNoForeignHandoffReservation(top.slot.slot, runId);
           await prepareSlotForFreshReuse(top.slot.slot, runId);
           updateRun(runId, { slotId: top.slot.slot });
           await claimSelectedSlot(top.slot.slot, runId, 'preparing');

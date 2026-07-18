@@ -6,6 +6,7 @@ import type { SlotStatus } from '@farmslot/protocol';
 import {
   branchContainsJiraKey,
   evaluateSlotIdentityPolicy,
+  failedRunSlotCleanup,
   findBestSlot,
   isCdpLive,
   isFreeSlot,
@@ -230,4 +231,14 @@ test('slotClaimBlockedByHandoff blocks foreign reservations only', () => {
     slotClaimBlockedByHandoff({ handoff_run_id: 'other' }, 'me') ?? '',
     /reserved for handoff to run other/,
   );
+});
+
+test('failedRunSlotCleanup resets only owned slots and clears only own reservations', () => {
+  assert.equal(failedRunSlotCleanup({ current_run_id: 'me' }, 'me'), 'reset');
+  assert.equal(
+    failedRunSlotCleanup({ current_run_id: 'prior', handoff_run_id: 'me' }, 'me'),
+    'clear-reservation',
+  );
+  assert.equal(failedRunSlotCleanup({ current_run_id: 'prior' }, 'me'), 'none');
+  assert.equal(failedRunSlotCleanup({}, 'me'), 'none');
 });

@@ -19,6 +19,7 @@ import {
 function makeRefreshRow(overrides: Record<string, unknown> = {}) {
   return {
     slot_epoch: 0,
+    handoff_run_id: null,
     slot: 'macwork-mm-4',
     machine: 'macwork',
     platform: 'ios',
@@ -497,4 +498,9 @@ test('reconcileRefreshSlotRowWithActiveRun does not resurrect a cleanly released
   } as never);
   assert.equal(reconciled.current_run_id, null, 'released slot stays free');
   assert.equal(reconciled.lifecycle, 'ready');
+});
+
+test('buildRefreshSlotRow carries the handoff reservation through a refresh', () => {
+  const row = makeRefreshRow({ handoff_run_id: 'incoming-run' });
+  assert.equal(row.handoff_run_id, 'incoming-run');
 });

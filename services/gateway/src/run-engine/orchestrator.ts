@@ -24,7 +24,7 @@ import { execOnSlot } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
 import { resetSlot } from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
-import { isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
+import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
 import { clearStalePrepareProcess } from '../methods/slot.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import {
@@ -133,6 +133,46 @@ class MonitorTerminalError extends Error {
   }
 }
 const S = PipelineSteps;
+
+/**
+ * A failed run may reset only a slot it OWNS. A run that merely held a
+ * handoff reservation (nudge takeover) clears just that reservation — the
+ * prior owner's worker is still running and must not be marked ready — and a
+ * run named nowhere on the slot touches nothing.
+ */
+async function cleanupSlotAfterRunFailure(
+  slotId: string,
+  runId: string,
+  reason: string,
+): Promise<void> {
+  const {
+    readSlotField,
+    resetSlot: resetSlotState,
+    updateSlotStatusIf,
+  } = await import('../core/index.js');
+  const [owner, reservation] = await Promise.all([
+    readSlotField(slotId, 'current_run_id'),
+    readSlotField(slotId, 'handoff_run_id'),
+  ]);
+  const plan = failedRunSlotCleanup(
+    { current_run_id: owner ?? null, handoff_run_id: reservation ?? null },
+    runId,
+  );
+  if (plan === 'reset') {
+    await resetSlotState(slotId);
+    console.log(`[run-engine] slot ${slotId} reset to ready/idle after ${reason}`);
+    return;
+  }
+  if (plan === 'clear-reservation') {
+    await updateSlotStatusIf(slotId, (slot) => slot.handoff_run_id === runId, {
+      handoff_run_id: null,
+    });
+    console.log(`[run-engine] cleared handoff reservation on ${slotId} after ${reason}`);
+    return;
+  }
+  console.log(`[run-engine] slot ${slotId} not owned by failed run; left untouched (${reason})`);
+}
+
 const STEP_TO_STATUS: Record<string, RunStatus> = {
   [S.GRADE]: 'grading',
   [S.WRITE_TASK]: 'writing-task',
@@ -580,13 +620,7 @@ export async function startRun(runId: string): Promise<void> {
           if (stepName === S.PREPARE) {
             await cleanupSlotProcesses(failedRun.slotId);
           }
-          // Reset slot to dispatchable: lifecycle=ready + agent=idle.
-          // Previous approach left agent='working' to "reserve for retry" but in practice
-          // users create new runs and the slot rots in a stale working state forever.
-          await resetSlot(failedRun.slotId);
-          console.log(
-            `[run-engine] slot ${failedRun.slotId} reset to ready/idle after ${stepName} failure`,
-          );
+          await cleanupSlotAfterRunFailure(failedRun.slotId, runId, `${stepName} failure`);
         } catch (err) {
           // The run has already failed; reset/cleanup errors are surfaced in
           // logs but should not hide the original pipeline failure.
@@ -615,7 +649,7 @@ export async function startRun(runId: string): Promise<void> {
       if (failedRun.slotId && !claimRefused) {
         try {
           await teardownGateHeldAgentsIfNeeded(failedRun);
-          await resetSlot(failedRun.slotId);
+          await cleanupSlotAfterRunFailure(failedRun.slotId, runId, 'terminal safety net');
         } catch (err) {
           // The run failure has already been recorded; surface reset failure
           // without replacing the root-cause error shown to the operator.
