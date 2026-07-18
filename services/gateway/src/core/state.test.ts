@@ -4,6 +4,8 @@ import test from 'node:test';
 
 import {
   claimSlotStatusIf,
+  markSlotStatusIf,
+  resetSlotIf,
   SLOT_PHASE_RELEASING,
   statusFile,
   updateSlotStatusIf,
@@ -92,4 +94,57 @@ test('a teardown write guarded on a stale epoch is rejected after a rival claim'
   const after = await readSlotFixture(slotId);
   assert.equal(after.current_run_id, 'run-b');
   assert.equal(after.lifecycle, 'busy');
+});
+
+test('markSlotStatusIf validates, marks, and captures the epoch in one write (no bump)', async (t) => {
+  const slotId = await withStatusFixture(t, {
+    slot: 'epoch-test-4',
+    lifecycle: 'busy',
+    phase: 'working',
+    current_run_id: 'run-a',
+    slot_epoch: 3,
+  });
+
+  const mark = await markSlotStatusIf(slotId, (slot) => slot.current_run_id === 'run-a', {
+    phase: SLOT_PHASE_RELEASING,
+  });
+
+  assert.deepEqual(mark, { applied: true, epoch: 3 });
+  const after = await readSlotFixture(slotId);
+  assert.equal(after.phase, SLOT_PHASE_RELEASING);
+  assert.equal(after.slot_epoch, 3, 'teardown marks never bump the epoch');
+
+  // Owner validation and marking are the same write: a mismatched owner
+  // refuses without touching anything.
+  const refused = await markSlotStatusIf(slotId, (slot) => slot.current_run_id === 'run-b', {
+    phase: 'working',
+  });
+  assert.deepEqual(refused, { applied: false, epoch: null });
+});
+
+test('resetSlotIf applies the ready/idle reset only while its predicate holds', async (t) => {
+  const slotId = await withStatusFixture(t, {
+    slot: 'epoch-test-5',
+    lifecycle: 'busy',
+    phase: SLOT_PHASE_RELEASING,
+    current_run_id: 'run-a',
+    slot_epoch: 2,
+  });
+
+  // Rival claim bumps the epoch mid-teardown.
+  await claimSlotStatusIf(slotId, () => true, {
+    lifecycle: 'busy',
+    phase: 'dispatching',
+    current_run_id: 'run-b',
+  });
+  const blocked = await resetSlotIf(slotId, (slot) => (Number(slot.slot_epoch) || 0) === 2);
+  assert.equal(blocked, false);
+  let after = await readSlotFixture(slotId);
+  assert.equal(after.current_run_id, 'run-b', 'rival claim survives');
+
+  const allowed = await resetSlotIf(slotId, (slot) => (Number(slot.slot_epoch) || 0) === 3);
+  assert.equal(allowed, true);
+  after = await readSlotFixture(slotId);
+  assert.equal(after.lifecycle, 'ready');
+  assert.equal(after.current_run_id, null);
 });

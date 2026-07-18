@@ -145,6 +145,55 @@ export async function claimSlotStatusIf(
   return { claimed, epoch };
 }
 
+/**
+ * Teardown-entry CAS: atomically validates `predicate`, applies `fields`, and
+ * returns the slot's CURRENT ownership epoch (no bump — only claims bump).
+ * Release uses this so owner validation, the releasing marker, and epoch
+ * capture happen in ONE serialized write: an owner sampled before unrelated
+ * awaits can never be silently replaced by a rival claim's.
+ */
+export async function markSlotStatusIf(
+  slotId: string,
+  predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+  fields: Record<string, unknown>,
+): Promise<{ applied: boolean; epoch: number | null }> {
+  let applied = false;
+  let epoch: number | null = null;
+  const next = writeChain.then(async () => {
+    if (!existsSync(statusFile)) return;
+    const content = await readFile(statusFile, 'utf-8');
+    const data = JSON.parse(content);
+    const slots: Array<Record<string, unknown>> = data.slots ?? [];
+    const slot = slots.find((s) => s.slot === slotId);
+    if (!slot) return;
+    if (!predicate(slot)) return;
+    for (const [key, value] of Object.entries(fields)) {
+      slot[key] = value;
+    }
+    await atomicWriteStatus(data);
+    triggerSlotUpdateHook();
+    applied = true;
+    epoch = Number(slot.slot_epoch) || 0;
+  });
+  writeChain = next.catch(() => {});
+  await next;
+  return { applied, epoch };
+}
+
+/**
+ * Full status-file replacement routed through the same write chain as every
+ * other slot write — fleet refresh previously rebuilt the file outside the
+ * chain, racing (and losing) against concurrent lifecycle CAS writes.
+ */
+export async function replaceStatusFile(data: unknown): Promise<void> {
+  const next = writeChain.then(async () => {
+    await atomicWriteStatus(data);
+    triggerSlotUpdateHook();
+  });
+  writeChain = next.catch(() => {});
+  await next;
+}
+
 // ─── readSlotField ───
 // Read a single field from a slot in .farm-status.json.
 
@@ -173,6 +222,41 @@ type BusyPhase = 'preparing' | 'dispatching' | 'working' | 'releasing' | 'review
 export const SLOT_PHASE_RELEASING: BusyPhase = 'releasing';
 type HeldPhase = 'ci-watch' | 'pr-watch';
 
+function slotResetFields(warm: boolean): Record<string, unknown> {
+  return {
+    lifecycle: 'ready',
+    phase: null,
+    agent: 'idle',
+    warm,
+    current_run_id: null,
+    current_flow_type: null,
+    current_ticket_or_pr: null,
+    current_mode: null,
+    current_family_id: null,
+    current_lane: null,
+    current_variant: null,
+    agent_contexts: null,
+  };
+}
+
+/**
+ * CAS'd variant of resetSlot for teardowns: applies the ready/idle reset only
+ * while `predicate` still holds (release guards on its entry epoch), so a
+ * rival claim landing mid-teardown is never clobbered by the final reset.
+ * Listeners fire only when the reset was actually applied.
+ */
+export async function resetSlotIf(
+  slotId: string,
+  predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
+  warm = false,
+): Promise<boolean> {
+  const applied = await updateSlotStatusIf(slotId, predicate, slotResetFields(warm));
+  if (applied) {
+    for (const listener of slotResetListeners) listener(slotId);
+  }
+  return applied;
+}
+
 export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // Lifecycle reset DOES NOT shut down resources. Release flips the slot
   // back to `ready` but leaves the simulator / dev-server / browser alive
@@ -188,20 +272,7 @@ export async function resetSlot(slotId: string, warm = false): Promise<void> {
   // registration (see initSelfReview) keeps core/ free of upward imports.
   for (const listener of slotResetListeners) listener(slotId);
 
-  await updateSlotStatus(slotId, {
-    lifecycle: 'ready',
-    phase: null,
-    agent: 'idle',
-    warm,
-    current_run_id: null,
-    current_flow_type: null,
-    current_ticket_or_pr: null,
-    current_mode: null,
-    current_family_id: null,
-    current_lane: null,
-    current_variant: null,
-    agent_contexts: null,
-  });
+  await updateSlotStatus(slotId, slotResetFields(warm));
 }
 
 export async function markSlotBusy(

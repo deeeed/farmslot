@@ -18,6 +18,7 @@ import {
 
 function makeRefreshRow(overrides: Record<string, unknown> = {}) {
   return {
+    slot_epoch: 0,
     slot: 'macwork-mm-4',
     machine: 'macwork',
     platform: 'ios',

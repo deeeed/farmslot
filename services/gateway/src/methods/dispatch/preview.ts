@@ -11,7 +11,13 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 
-import { execOnSlot, isLocal, loadSlotVars, updateSlotStatus } from '../../core/index.js';
+import {
+  execOnSlot,
+  isLocal,
+  loadSlotVars,
+  SLOT_PHASE_RELEASING,
+  updateSlotStatus,
+} from '../../core/index.js';
 import { firstWindowTarget, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
 import { buildFollowUpLineage } from '../../family-observability/context.js';
 import { findFollowUpParentRun } from '../../family-observability/state.js';
@@ -362,6 +368,9 @@ export function selectBranchAffinityEligibleSlots(
     // which is exactly the population we want to nudge into. Skip the no-go lifecycles
     // (manual / disabled / held) so we don't try to nudge a parked or human-driven slot.
     if (s.lifecycle === 'manual' || s.lifecycle === 'disabled' || s.lifecycle === 'held') continue;
+    // A slot mid-release is being torn down; surfacing it as a nudge candidate
+    // would claim over an in-flight teardown.
+    if (s.phase === SLOT_PHASE_RELEASING) continue;
     if (s.agent !== 'working') continue;
     // Runner capability is per-action, not per-eligibility: codex / opencode slots still
     // surface as branch-matched candidates so the operator sees "this slot is on the PR's

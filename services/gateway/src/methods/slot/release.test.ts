@@ -5,7 +5,7 @@ import { PipelineSteps } from '@farmslot/protocol';
 
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
-import { releaseOwnershipIntact, slotRelease } from './release.js';
+import { slotRelease } from './release.js';
 
 // These tests resolve the committed demo pool's slots (demo-work-1), which the
 // loaders hide unless explicitly opted in.
@@ -123,18 +123,6 @@ test('slotRelease rejects post-approval gate-held runs until FINALIZE completes'
   );
 });
 
-test('releaseOwnershipIntact only allows teardown while the entry owner still holds the slot', () => {
-  // Unchanged owner (or an unclaimed slot released as unclaimed) may proceed.
-  assert.equal(releaseOwnershipIntact({ current_run_id: 'run-a' }, 'run-a'), true);
-  assert.equal(releaseOwnershipIntact({}, null), true);
-  // A rival claim landing after release entry owns the slot now: killing its
-  // session and resetting its claim would leave a zombie worker.
-  assert.equal(releaseOwnershipIntact({ current_run_id: 'run-b' }, 'run-a'), false);
-  assert.equal(releaseOwnershipIntact({ current_run_id: 'run-b' }, null), false);
-  // Owner vanished (already released elsewhere): nothing to protect.
-  assert.equal(releaseOwnershipIntact({}, 'run-a'), false);
-});
-
 test('slotRelease with expectedRunId leaves a slot held by a different run untouched', async (t) => {
   const slotId = 'demo-work-1';
   const rival = createRun({
@@ -145,11 +133,31 @@ test('slotRelease with expectedRunId leaves a slot held by a different run untou
     slotId,
   });
   t.after(() => cleanupRun(rival.id));
-  const { updateSlotStatus, readSlotField } = await import('../../core/index.js');
-  const priorOwner = await readSlotField(slotId, 'current_run_id');
-  await updateSlotStatus(slotId, { current_run_id: rival.id });
+  // Self-contained slot row: CI status files have no demo rows, and the
+  // status helpers no-op on missing slots.
+  const { readFile, rm, writeFile } = await import('node:fs/promises');
+  const { statusFile } = await import('../../core/state.js');
+  const { readSlotField } = await import('../../core/index.js');
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const data = priorStatus ? JSON.parse(priorStatus) : { slots: [] };
+  const others = (data.slots ?? []).filter((row: { slot: string }) => row.slot !== slotId);
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      {
+        ...data,
+        slots: [
+          ...others,
+          { slot: slotId, lifecycle: 'busy', phase: 'working', current_run_id: rival.id },
+        ],
+      },
+      null,
+      2,
+    ) + '\n',
+  );
   t.after(async () => {
-    await updateSlotStatus(slotId, { current_run_id: priorOwner ?? null });
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
   });
 
   const result = await slotRelease({ slotId, expectedRunId: 'some-other-run' }, noopEmit);

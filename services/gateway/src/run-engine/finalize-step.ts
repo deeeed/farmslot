@@ -176,7 +176,13 @@ export async function executeFinalizeStep(
     if (noCodeDisposition) {
       const noopEmit = () => {};
       await slotRelease(
-        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        {
+          slotId: current.slotId,
+          keepWork: true,
+          keepWarm: true,
+          detachRuns: false,
+          expectedRunId: current.id,
+        },
         noopEmit,
       );
     } else {

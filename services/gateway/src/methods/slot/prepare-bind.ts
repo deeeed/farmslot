@@ -1,6 +1,6 @@
 import type { SlotPrepareParams } from '@farmslot/protocol';
 
-import { type SlotVars,updateSlotStatusIf } from '../../core/index.js';
+import { claimSlotStatusIf, SLOT_PHASE_RELEASING, type SlotVars } from '../../core/index.js';
 import { pushRunRecipeToSlot } from '../../run-completion/artifact-mirror.js';
 import { getRun } from '../../runs/store.js';
 
@@ -18,9 +18,10 @@ export async function bindRunToSlot(
       `Cannot bind run ${params.bindRunId.slice(0, 8)} to ${params.slotId}: run project '${boundRun.project}' does not match slot project '${vars.projectName}'.`,
     );
   }
-  const bound = await updateSlotStatusIf(
+  const { claimed: bound } = await claimSlotStatusIf(
     params.slotId,
     (slot) =>
+      slot.phase !== SLOT_PHASE_RELEASING &&
       slot.agent !== 'working' &&
       (params.rebind || !slot.current_run_id || slot.current_run_id === params.bindRunId),
     { current_run_id: params.bindRunId },

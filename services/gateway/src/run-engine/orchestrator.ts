@@ -610,7 +610,9 @@ export async function startRun(runId: string): Promise<void> {
       // Safety net: always reset slot fully when a run terminates.
       // Individual steps may already handle this, but if they don't (or throw
       // before reaching their cleanup), this prevents stale busy/held state.
-      if (failedRun.slotId) {
+      // EXCEPT after a refused claim: this run never owned the slot, and the
+      // reset would reopen it mid-teardown for the release that does.
+      if (failedRun.slotId && !claimRefused) {
         try {
           await teardownGateHeldAgentsIfNeeded(failedRun);
           await resetSlot(failedRun.slotId);

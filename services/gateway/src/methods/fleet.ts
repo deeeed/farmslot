@@ -1,8 +1,8 @@
 // methods/fleet.ts — fleet.status, fleet.refresh (native TS)
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
@@ -31,6 +31,7 @@ import {
   type RawProjectJson,
   readSlotField,
   renderFixtureTemplate,
+  replaceStatusFile,
   type SlotVars,
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
@@ -140,6 +141,7 @@ interface PreviousSlotStatus {
   completed_at?: string | null;
   runner?: string | null;
   model?: string | null;
+  slot_epoch?: unknown;
 }
 
 type RefreshSlotRow = ReturnType<typeof buildRefreshSlotRow>;
@@ -298,9 +300,9 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
     ),
   );
 
-  const tmpFile = `${statusFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmpFile, JSON.stringify({ checked_at: checkedAt, slots }, null, 2) + '\n');
-  await rename(tmpFile, statusFile);
+  // Through the shared write chain: rebuilding the file outside it raced (and
+  // could lose against) concurrent lifecycle CAS writes.
+  await replaceStatusFile({ checked_at: checkedAt, slots });
 
   const fleet = await loadFleetStatus(true);
   return { fleet };
@@ -385,6 +387,9 @@ function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
     lifecycle,
     phase,
     warm,
+    // Ownership epoch is a lifecycle-protocol token: dropping it on refresh
+    // would let a stale teardown's epoch guard pass again.
+    slot_epoch: Number(prev.slot_epoch) || 0,
     task_id: prev.task_id ?? null,
     task_file: prev.task_file ?? null,
     current_run_id: prev.current_run_id ?? null,

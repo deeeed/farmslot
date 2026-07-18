@@ -11,6 +11,7 @@ import {
 
 import { upsertAgentContext } from '../../agents/contexts.js';
 import {
+  claimSlotStatusIf,
   execLocal,
   execOnSlot,
   farmslotRoot,
@@ -21,7 +22,6 @@ import {
   type RawProjectJson,
   readSlotField,
   resolveProjectTaskDirName,
-  updateSlotStatus,
 } from '../../core/index.js';
 import {
   firstWindowTarget,
@@ -42,6 +42,7 @@ import { unwatchContext, watchContext, watchSlot } from '../../tasks/watcher.js'
 
 import { ensureWorkerRoleTarget, waitForRunnerProcessExit } from './execute.js';
 import { verifyBranchAffinityNudgeStillEligible } from './preview.js';
+import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
 
@@ -390,17 +391,26 @@ export async function nudgeDispatch(
   // half-cleared slot state — a later same-family dispatch would see
   // current_run_id=<new-id> + family=null and trip evaluateSlotIdentityPolicy
   // as "different identity, block".
-  await updateSlotStatus(params.slotId, {
-    current_run_id: params.runId,
-    current_ticket_or_pr: params.ticketOrPr,
-    current_flow_type: flowType,
-    current_family_id: requestingRun.familyId ?? null,
-    current_lane: requestingRun.lane ?? null,
-    current_variant: requestingRun.variant ?? null,
-    task_id: taskFolderId,
-    task_file: `${workerTaskDir}/TASK.md`,
-    dispatched_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-  });
+  const nudgeClaim = await claimSlotStatusIf(
+    params.slotId,
+    (slot) => slotClaimBlockedByRelease(slot) === null,
+    {
+      current_run_id: params.runId,
+      current_ticket_or_pr: params.ticketOrPr,
+      current_flow_type: flowType,
+      current_family_id: requestingRun.familyId ?? null,
+      current_lane: requestingRun.lane ?? null,
+      current_variant: requestingRun.variant ?? null,
+      task_id: taskFolderId,
+      task_file: `${workerTaskDir}/TASK.md`,
+      dispatched_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    },
+  );
+  if (!nudgeClaim.claimed) {
+    throw Object.assign(new Error(`Slot ${params.slotId} is mid-release; nudge cannot claim it`), {
+      code: SLOT_CLAIM_REFUSED_CODE,
+    });
+  }
 
   // STEP D: register the new run's agent context under the actual targeted role + bump nudge
   // count. We register under `workerRole` (the existing worker's role) rather than the new
