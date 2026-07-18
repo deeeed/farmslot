@@ -2,11 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { frontmatterPlatforms, frontmatterRunMode, parseMarkdownDocument } from './frontmatter.js';
-import {
-  FARMSLOT_FLOW_PREFIXES,
-  inferFlowFromBasename,
-  inferRunModeFromBasename,
-} from './infer.js';
+import { FARMSLOT_FLOW_PREFIXES, inferFlowFromPath, inferRunModeFromBasename } from './infer.js';
 import type { LintExecutionTemplatesResult, LintIssue } from './types.js';
 
 const CHECKBOX_RE = /^\s*[-*]\s+\[([ xX])\]\s+\S/;
@@ -50,11 +46,11 @@ export function lintExecutionTemplateText(filePath: string, text: string): LintI
     });
   }
 
-  if (!inferFlowFromBasename(basename)) {
+  if (!inferFlowFromPath(filePath)) {
     issues.push({
       path: filePath,
       severity: 'error',
-      message: `filename must start with a Farmslot flow name (${FARMSLOT_FLOW_PREFIXES.join(', ')})`,
+      message: `path must encode a Farmslot flow — flow-prefixed filename or flow directory (${FARMSLOT_FLOW_PREFIXES.join(', ')})`,
     });
   }
 
@@ -84,12 +80,12 @@ export function lintExecutionTemplateText(filePath: string, text: string): LintI
       }
     }
     const fmFlow = typeof frontmatter.flow === 'string' ? frontmatter.flow.trim() : null;
-    const fileFlow = inferFlowFromBasename(basename);
+    const fileFlow = inferFlowFromPath(filePath);
     if (fmFlow && fileFlow && fmFlow !== fileFlow) {
       issues.push({
         path: filePath,
         severity: 'error',
-        message: `frontmatter flow '${fmFlow}' contradicts filename flow '${fileFlow}'`,
+        message: `frontmatter flow '${fmFlow}' contradicts the path's flow '${fileFlow}'`,
       });
     }
     if (frontmatter.runMode != null || frontmatter.run_mode != null) {

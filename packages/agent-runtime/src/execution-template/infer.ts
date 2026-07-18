@@ -47,6 +47,17 @@ export function inferFlowFromBasename(basename: string): string | null {
   return null;
 }
 
+/**
+ * Flow for a template PATH: worker-flat encodes it in the filename prefix,
+ * flow-tree in the parent directory name.
+ */
+export function inferFlowFromPath(absolutePath: string): string | null {
+  const fromBasename = inferFlowFromBasename(path.basename(absolutePath));
+  if (fromBasename) return fromBasename;
+  const parent = path.basename(path.dirname(absolutePath)).toLowerCase();
+  return (FARMSLOT_FLOW_PREFIXES as readonly string[]).includes(parent) ? parent : null;
+}
+
 export function inferRunModeFromBasename(basename: string): ExecutionRunMode | null {
   const stem = basename.replace(/\.md$/i, '').toLowerCase();
   if (/(?:^|[.-])interactive(?:[.-]|$)/.test(stem) || stem.includes('-interactive')) {

@@ -11,6 +11,7 @@ export {
   FARMSLOT_FLOW_PREFIXES,
   humanizeBasename,
   inferFlowFromBasename,
+  inferFlowFromPath,
   inferPlatformsFromBasename,
   inferRunModeFromBasename,
   inferTemplateMetadata,

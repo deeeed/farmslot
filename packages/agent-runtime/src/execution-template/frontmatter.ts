@@ -42,7 +42,9 @@ export function parseMarkdownDocument(text: string): ParsedMarkdownDocument {
   let body = normalized;
 
   if (normalized.startsWith('---\n') || normalized.startsWith('---\r\n')) {
-    const end = normalized.indexOf('\n---', 4);
+    // Search from 3 (the opening fence's own newline) so an EMPTY block
+    // (`---\n---`) still finds its closing fence.
+    const end = normalized.indexOf('\n---', 3);
     if (end !== -1) {
       const fmBlock = normalized.slice(4, end).replace(/\r/g, '');
       const rest = normalized.slice(end + '\n---'.length).replace(/^\r?\n/, '');

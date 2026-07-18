@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { inferFlowFromBasename, inferRunModeFromBasename } from './infer.js';
+import { inferFlowFromPath, inferRunModeFromBasename } from './infer.js';
 import { lintExecutionTemplateText } from './lint.js';
 import type { CreateExecutionTemplateOptions, ExecutionRunMode } from './types.js';
 
@@ -16,12 +16,15 @@ function renderTemplate(input: {
   platforms: string[];
   title: string;
 }): string {
-  const lines: string[] = ['---'];
-  if (input.runMode) lines.push(`runMode: ${input.runMode}`);
+  const meta: string[] = [];
+  if (input.runMode) meta.push(`runMode: ${input.runMode}`);
   if (input.platforms.length > 0 && !(input.platforms.length === 1 && input.platforms[0] === '*')) {
-    lines.push(`platforms: [${input.platforms.join(', ')}]`);
+    meta.push(`platforms: [${input.platforms.join(', ')}]`);
   }
-  lines.push('---', '', `# ${input.title}`, '', 'Checklist:', '');
+  // No metadata → no frontmatter block: an empty fence pair is pointless and
+  // easy for permissive parsers to misread as an unterminated block.
+  const lines: string[] = meta.length > 0 ? ['---', ...meta, '---', ''] : [];
+  lines.push(`# ${input.title}`, '', 'Checklist:', '');
   lines.push(
     '- [ ] Read the task prompt and confirm acceptance criteria.',
     '- [ ] Implement the smallest correct change.',
@@ -51,21 +54,21 @@ export function createExecutionTemplate(options: CreateExecutionTemplateOptions)
   // catalog derives flow from the filename, so a --flow that the filename does
   // not encode (or contradicts) would create a template that resolves as a
   // different flow than requested.
-  const fileFlow = inferFlowFromBasename(basename);
+  const fileFlow = inferFlowFromPath(absolute);
   const flow = options.flow ?? fileFlow;
   if (!flow) {
     throw new Error(
-      'could not infer flow from filename; use a flow-prefixed name (e.g. dev-autonomous.mobile.md)',
+      'could not infer flow from the path; use a flow-prefixed filename (dev-autonomous.mobile.md) or a flow directory (fix-bug/core.md)',
     );
   }
   if (options.flow && fileFlow && options.flow !== fileFlow) {
     throw new Error(
-      `requested flow '${options.flow}' contradicts filename flow '${fileFlow}'; rename the file or drop --flow`,
+      `requested flow '${options.flow}' contradicts the path's flow '${fileFlow}'; rename the file or drop --flow`,
     );
   }
   if (options.flow && !fileFlow) {
     throw new Error(
-      `filename must start with the flow name ('${options.flow}') for the catalog to resolve it (e.g. ${options.flow}.md)`,
+      `the path must encode the flow ('${options.flow}') for the catalog to resolve it — flow-prefixed filename or a ${options.flow}/ directory`,
     );
   }
 

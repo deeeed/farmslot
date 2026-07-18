@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { createExecutionTemplate } from './create.js';
+import { parseMarkdownDocument } from './frontmatter.js';
 import {
   catalogRelativeId,
   inferFlowFromBasename,
@@ -247,14 +248,14 @@ test('create validates before writing: failure leaves no file and force never de
     // Un-prefixed filename with explicit flow: rejected BEFORE write.
     assert.throws(
       () => createExecutionTemplate({ path: join(dir, 'evil.md'), flow: 'dev' }),
-      /filename must start with the flow name/,
+      /path must encode the flow/,
     );
     assert.equal(existsSync(join(dir, 'evil.md')), false);
 
     // Contradicting --flow: rejected before write.
     assert.throws(
       () => createExecutionTemplate({ path: join(dir, 'dev.md'), flow: 'review-pr' }),
-      /contradicts filename flow/,
+      /contradicts the path's flow/,
     );
     assert.equal(existsSync(join(dir, 'dev.md')), false);
 
@@ -263,7 +264,7 @@ test('create validates before writing: failure leaves no file and force never de
     writeFileSync(keep, '# keep\n\n- [ ] precious\n');
     assert.throws(
       () => createExecutionTemplate({ path: keep, flow: 'dev', force: true }),
-      /contradicts filename flow/,
+      /contradicts the path's flow/,
     );
     assert.match(readFileSync(keep, 'utf8'), /precious/);
   } finally {
@@ -277,7 +278,7 @@ test('lint rejects traversal-like frontmatter ids and flow/filename contradictio
     '---\nid: ../../escape\nflow: review-pr\n---\n\n# T\n\n- [ ] step\n',
   );
   assert.ok(bad.some((i) => /safe catalog id/.test(i.message)));
-  assert.ok(bad.some((i) => /contradicts filename flow/.test(i.message)));
+  assert.ok(bad.some((i) => /contradicts the path's flow/.test(i.message)));
 });
 
 test('lint exempts interactive templates from the checkbox requirement', () => {
@@ -299,4 +300,51 @@ test('lint flags unterminated frontmatter instead of silently treating it as bod
     '---\nrunMode: autonomous\n\n# Heading\n\n- [ ] step\n',
   );
   assert.ok(issues.some((i) => /unterminated frontmatter/.test(i.message)));
+});
+
+test('create with no metadata renders without a frontmatter block and round-trips through list', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'et-roundtrip-'));
+  try {
+    mkdirSync(join(dir, 'worker'), { recursive: true });
+    // Bare title: no runMode token in the filename, default platforms — the
+    // generated file must still lint clean and be discoverable.
+    createExecutionTemplate({ path: join(dir, 'worker', 'fix-bug.core.md'), title: 'Round trip' });
+    const text = readFileSync(join(dir, 'worker', 'fix-bug.core.md'), 'utf8');
+    assert.ok(!text.startsWith('---'), 'no empty frontmatter fence pair');
+    const entries = listExecutionTemplates({
+      sources: [projectWorkerTemplateSource('p', dir)],
+    });
+    const entry = entries.find((e) => e.id === 'fix-bug/core');
+    assert.equal(entry?.title, 'Round trip');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('parser closes an empty frontmatter block', () => {
+  const parsed = parseMarkdownDocument('---\n---\n\n# T\n\n- [ ] step\n');
+  assert.notEqual(parsed.frontmatter, null);
+  assert.equal(parsed.heading, 'T');
+});
+
+test('flow-tree paths create and lint via the parent flow directory', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'et-flowtree-'));
+  try {
+    mkdirSync(join(dir, 'fix-bug'), { recursive: true });
+    // Basename has no flow prefix — the fix-bug/ directory carries it.
+    createExecutionTemplate({ path: join(dir, 'fix-bug', 'core.md'), title: 'Tree base' });
+    const issues = lintExecutionTemplates(join(dir, 'fix-bug', 'core.md'));
+    assert.equal(issues.ok, true);
+    const entries = listExecutionTemplates({
+      sources: [packageFlowTreeTemplateSource('s', dir)],
+    });
+    assert.equal(entries.find((e) => e.id === 'fix-bug/core')?.title, 'Tree base');
+    // A contradicting --flow still fails against the directory flow.
+    assert.throws(
+      () => createExecutionTemplate({ path: join(dir, 'fix-bug', 'other.md'), flow: 'dev' }),
+      /contradicts the path's flow/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
