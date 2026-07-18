@@ -18,7 +18,10 @@ import {
 import { execOnSlot } from '../../core/exec.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
-import { hasValidPrNumber } from '../../run-engine/gate-policy.js';
+import {
+  hasValidPrNumber,
+  supersedeStaleHumanGateDecisions,
+} from '../../run-engine/gate-policy.js';
 import {
   bumpRunGeneration,
   cancelRunEngine,
@@ -321,6 +324,32 @@ export async function runReplayStep(
   cancelRunEngine(params.runId);
   bumpRunGeneration(params.runId);
 
+  const replaysCompletionOrGate =
+    targetIdx >= 0 &&
+    completeIdx >= 0 &&
+    humanGateIdx >= 0 &&
+    targetIdx >= completeIdx &&
+    targetIdx <= humanGateIdx;
+  const replaysPostGate = targetIdx >= 0 && humanGateIdx >= 0 && targetIdx > humanGateIdx;
+  const replaysTaskGeneration = targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx <= writeTaskIdx;
+  // Supersede pending human-gate decisions NOW, before any awaited work: the
+  // engine loop was just cancelled, so a stale decision resolving during the
+  // slot/artifact awaits below would trigger runResolveDecision's restart
+  // fallback and start a competing engine loop at this replay's generation.
+  // Persisting the supersession synchronously closes that window — the
+  // resolver rejects already-resolved decisions from here on. Retained (not
+  // deleted) for audit; 'superseded' is not an approval action so
+  // decision-replay can never mistake it for an operator verdict. Scoped to
+  // the gate/task-generation replay paths only — a no-human-gate finalize
+  // retry must keep its pending decisions actionable.
+  const supersededGateAudit =
+    replaysTaskGeneration || replaysCompletionOrGate
+      ? existing.decisions.filter((d) => d.type === 'engine_human_gate' && !d.resolvedAt)
+      : [];
+  if (supersedeStaleHumanGateDecisions(supersededGateAudit) > 0) {
+    updateRun(params.runId, { decisions: existing.decisions });
+  }
+
   let replayTaskFile = existing.taskFile ?? null;
   let effectiveSlotId = existing.slotId;
 
@@ -562,17 +591,12 @@ export async function runReplayStep(
   // approval makes recovery impossible without forcing a redundant re-review.
   // Flows without a human gate keep the default behavior below: preserve only
   // unresolved decisions rather than inventing a gate boundary they do not have.
-  const replaysCompletionOrGate =
-    targetIdx >= 0 &&
-    completeIdx >= 0 &&
-    humanGateIdx >= 0 &&
-    targetIdx >= completeIdx &&
-    targetIdx <= humanGateIdx;
-  const replaysPostGate = targetIdx >= 0 && humanGateIdx >= 0 && targetIdx > humanGateIdx;
-  const replaysTaskGeneration = targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx <= writeTaskIdx;
+  // The supersession itself already happened synchronously right after the
+  // generation bump (before the first awaited operation); this just selects
+  // which decisions the reset below carries forward.
   const clearedDecisions =
     replaysTaskGeneration || replaysCompletionOrGate
-      ? []
+      ? supersededGateAudit
       : replaysPostGate
         ? existing.decisions
         : existing.decisions.filter((d) => {

@@ -48,6 +48,7 @@ import {
   reviewFinalSnapshotMatchesPreparedPackage,
   shouldForceNoChangeHumanGate,
   stampPublishGateReviewStatusForPackage,
+  supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
 import {
   requiresPublicationApproval,
@@ -600,6 +601,18 @@ export async function executeHumanGateStep(
   if (current.slotId) {
     await markSlotBusy(current.slotId, 'review-gate', 'working');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+  }
+
+  // Gate re-entry (restart recovery, step replay) presents a fresh decision;
+  // a pending one left by a dead engine loop must be closed first so exactly
+  // one live gate decision can receive the approval.
+  const supersededGateDecisions = supersedeStaleHumanGateDecisions(current.decisions);
+  if (supersededGateDecisions > 0) {
+    updateRun(runId, { decisions: current.decisions });
+    console.log(
+      `[run-engine] run ${runId.slice(0, 8)} — superseded ${supersededGateDecisions} stale human-gate decision(s) on gate entry`,
+    );
+    broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   }
 
   // Track wait duration
