@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { IndependentReviewStatus, RunDecision } from '@farmslot/protocol';
+import type { IndependentReviewStatus } from '@farmslot/protocol';
 
 import {
   buildNoChangeGateInputs,
@@ -10,55 +10,8 @@ import {
   noChangeRejectionMessage,
   shouldForceNoChangeHumanGate,
   staleReviewsAreEvidenceOnly,
-  supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
-
-test('supersedeStaleHumanGateDecisions closes only unresolved gate decisions and keeps them for audit', () => {
-  const decisions: RunDecision[] = [
-    {
-      id: 'stale-gate',
-      type: 'engine_human_gate',
-      title: 'gate',
-      description: 'gate',
-      actions: [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' }],
-      createdAt: '2026-07-18T10:00:00Z',
-    },
-    {
-      id: 'already-resolved-gate',
-      type: 'engine_human_gate',
-      title: 'gate',
-      description: 'gate',
-      actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
-      createdAt: '2026-07-18T09:00:00Z',
-      resolvedAt: '2026-07-18T09:30:00Z',
-      resolvedAction: 'hold',
-    },
-    {
-      id: 'handoff',
-      type: 'monitor_interactive_handoff',
-      title: 'handoff',
-      description: 'handoff',
-      actions: [{ id: 'signal-written', label: 'Resume', style: 'primary' }],
-      createdAt: '2026-07-18T10:05:00Z',
-    },
-  ];
-
-  const superseded = supersedeStaleHumanGateDecisions(decisions, '2026-07-18T11:00:00Z');
-
-  assert.equal(superseded, 1);
-  assert.equal(decisions[0].resolvedAt, '2026-07-18T11:00:00Z');
-  assert.equal(decisions[0].resolvedAction, 'superseded');
-  assert.equal(decisions[0].context?.supersededBy, 'gate-reentry');
-  // Already-resolved and non-gate decisions are untouched.
-  assert.equal(decisions[1].resolvedAction, 'hold');
-  assert.equal(decisions[2].resolvedAt, undefined);
-});
-
-test('supersedeStaleHumanGateDecisions is a no-op when nothing is pending', () => {
-  const decisions: RunDecision[] = [];
-  assert.equal(supersedeStaleHumanGateDecisions(decisions), 0);
-});
 
 function makeApprovingReview(
   overrides: Partial<IndependentReviewStatus> = {},

@@ -252,30 +252,6 @@ export function noChangeRejectionMessage(
     : `No-change result marked blocked; insufficient evidence for ${ticketOrPr}`;
 }
 
-/**
- * A gateway restart kills the engine loop that owned a pending human-gate
- * decision; re-entering the gate then presents a NEW decision. Any older
- * unresolved gate decision must be closed out first — two pending gate
- * decisions mean an approval can land on one no live loop owns (observed: the
- * approve resolved the dead loop's decision and the run stalled at
- * pending_publish). Resolves stale ones as superseded — kept for audit, never
- * silently deleted — and returns how many were superseded.
- */
-export function supersedeStaleHumanGateDecisions(
-  decisions: RunDecision[],
-  nowIso: string = new Date().toISOString(),
-): number {
-  let superseded = 0;
-  for (const decision of decisions) {
-    if (decision.type !== 'engine_human_gate' || decision.resolvedAt) continue;
-    decision.resolvedAt = nowIso;
-    decision.resolvedAction = 'superseded';
-    decision.context = { ...decision.context, supersededBy: 'gate-reentry' };
-    superseded += 1;
-  }
-  return superseded;
-}
-
 export function validatePackageApprovalSelection(
   preparedPackage: ReadyGatePrPackage,
   decision: RunDecision | undefined,

@@ -98,8 +98,6 @@ test('recoverActiveRuns isolates tmux runtime reconciliation failures', async ()
     updateRunStep: () => {},
     setPrHealthOverlay: () => {},
     quarantineLeakedRun: async () => {},
-    recoverInflightPublicationReviews: async () => [],
-    replayHumanGate: async () => {},
   } as unknown as RunRecoveryCollaborators;
 
   await recoverActiveRuns(deps);
@@ -139,8 +137,6 @@ test('recoverActiveRuns clears stale human-gate running detail while re-presenti
     broadcast: () => {},
     setPrHealthOverlay: () => {},
     quarantineLeakedRun: async () => {},
-    recoverInflightPublicationReviews: async () => [],
-    replayHumanGate: async () => {},
   } as unknown as RunRecoveryCollaborators;
 
   await recoverActiveRuns(deps);
@@ -226,97 +222,6 @@ test('recoverActiveRuns does not re-arm handoff auto-recovery for non-handoff de
   await recoverActiveRuns(deps);
 
   assert.equal(rearmed, false);
-});
-
-function humanGateDecision(id: string): Run['decisions'][number] {
-  return {
-    id,
-    type: 'engine_human_gate',
-    title: 'Review publish package',
-    description: 'Review publish package',
-    actions: [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' }],
-    createdAt: '2026-07-18T10:00:00.000Z',
-  };
-}
-
-function gateRecoveryDeps(
-  run: Run,
-  opts: { recovered: unknown[] },
-): {
-  deps: RunRecoveryCollaborators;
-  calls: { replayed: string[]; rebroadcastDecisionIds: string[] };
-} {
-  const calls = { replayed: [] as string[], rebroadcastDecisionIds: [] as string[] };
-  const deps = {
-    listRuns: () => ({ runs: [run] }),
-    loadFleetStatus: async () => ({
-      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
-    }),
-    updateRun: () => {},
-    updateRunStep: () => {},
-    broadcast: (_event: string, payload: { decision?: { id: string } }) => {
-      if (payload.decision) calls.rebroadcastDecisionIds.push(payload.decision.id);
-    },
-    setPrHealthOverlay: () => {},
-    quarantineLeakedRun: async () => {},
-    rearmHandoffAutoRecovery: () => undefined,
-    recoverInflightPublicationReviews: async () => opts.recovered,
-    replayHumanGate: async (runId: string) => {
-      calls.replayed.push(runId);
-    },
-  } as unknown as RunRecoveryCollaborators;
-  return { deps, calls };
-}
-
-test('recovery re-enters the human gate when a lost reviewer result was ingested at startup', async () => {
-  const run = minimalActiveRun({
-    ticketOrPr: 'RECOVERY-5',
-    familyRootTicketOrPr: 'RECOVERY-5',
-    taskFile: '/tmp/farmslot-recovery-5/TASK.md',
-    status: 'blocked',
-    steps: [{ name: 'human-gate', status: 'running' }],
-    decisions: [humanGateDecision('gate-1')],
-  });
-  const { deps, calls } = gateRecoveryDeps(run, { recovered: [{ id: 'rev1' }] });
-
-  await recoverActiveRuns(deps);
-
-  assert.deepEqual(calls.replayed, [run.id]);
-  assert.deepEqual(calls.rebroadcastDecisionIds, [], 'stale decision must not be re-presented');
-});
-
-test('recovery re-enters the human gate when duplicate pending gate decisions exist', async () => {
-  const run = minimalActiveRun({
-    ticketOrPr: 'RECOVERY-6',
-    familyRootTicketOrPr: 'RECOVERY-6',
-    taskFile: '/tmp/farmslot-recovery-6/TASK.md',
-    status: 'blocked',
-    steps: [{ name: 'human-gate', status: 'running' }],
-    decisions: [humanGateDecision('gate-1'), humanGateDecision('gate-2')],
-  });
-  const { deps, calls } = gateRecoveryDeps(run, { recovered: [] });
-
-  await recoverActiveRuns(deps);
-
-  assert.deepEqual(calls.replayed, [run.id]);
-  assert.deepEqual(calls.rebroadcastDecisionIds, []);
-});
-
-test('recovery leaves a lone pending gate decision in place when nothing was recovered', async () => {
-  const run = minimalActiveRun({
-    ticketOrPr: 'RECOVERY-7',
-    familyRootTicketOrPr: 'RECOVERY-7',
-    taskFile: '/tmp/farmslot-recovery-7/TASK.md',
-    status: 'blocked',
-    steps: [{ name: 'human-gate', status: 'running' }],
-    decisions: [humanGateDecision('gate-1')],
-  });
-  const { deps, calls } = gateRecoveryDeps(run, { recovered: [] });
-
-  await recoverActiveRuns(deps);
-
-  assert.deepEqual(calls.replayed, [], 'no re-entry churn for an unchanged lone gate');
-  assert.deepEqual(calls.rebroadcastDecisionIds, ['gate-1'], 'decision re-presented as before');
 });
 
 test('prepareSubstepsShowCompletion recognises a terminal health sub-step', () => {

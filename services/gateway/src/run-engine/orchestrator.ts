@@ -77,7 +77,6 @@ import {
   executeReadyGate,
   readPreparedPackage,
 } from './ready-gate.js';
-import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import {
   recoverActiveRuns as recoverActiveRunsImpl,
   type RunRecoveryCollaborators,
@@ -685,15 +684,6 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
           broadcastFn(event, payload),
         );
       }),
-    recoverInflightPublicationReviews,
-    replayHumanGate: async (runId) => {
-      // replay-step.ts imports this module (startRun), so import lazily.
-      const { runReplayStep } = await import('../methods/run/replay-step.js');
-      await runReplayStep(
-        { runId, stepName: S.HUMAN_GATE, triggeredBy: 'auto-recovery' },
-        (event, payload) => broadcastFn(event, payload),
-      );
-    },
   };
 }
 
