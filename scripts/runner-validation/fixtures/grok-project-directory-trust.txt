@@ -1,0 +1,10 @@
+
+  ┃
+  ┃  Run Grok Build in a project directory?
+  ┃
+  ┃  1 (○) farmslot-grok-probe (current)                                     █
+  ┃                                /private/tmp/farmslot-grok-probe          █
+  ┃  2 (○) farmslot                ~/dev/farmslot  (9m ago)
+  ┃
+  ┃  ↑/↓ navigate · y copy                                    Enter:submit
+  ┃

@@ -20,12 +20,13 @@ import { listScenarios } from './scenarios/index.mjs';
 
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/panes');
 
-test('runner-validation catalog includes four runners and nine scenarios', () => {
+test('runner-validation catalog includes four runners and twelve scenarios', () => {
   assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
-  assert.equal(listScenarios().length, 9);
+  assert.equal(listScenarios().length, 12);
   assert.ok(listScenarios().includes('hook-smoke'));
   assert.ok(listScenarios().includes('pane-smoke'));
   assert.ok(listScenarios().includes('interaction-smoke'));
+  assert.ok(listScenarios().includes('dispatch-prompt-trust'));
   assert.ok(listScenarios().includes('session-attribution-smoke'));
   assert.ok(listScenarios().includes('token-usage-smoke'));
 });
@@ -43,6 +44,19 @@ test('grok project-directory blocker detection matches gateway contract', () => 
 `;
   assert.equal(detectLaunchBlocker(pane, 'grok')?.kind, 'project-directory');
   assert.equal(detectLaunchBlocker(pane, 'cursor'), null);
+});
+
+test('grok directory-trust fixture matches project-directory blocker contract', () => {
+  const pane = fs.readFileSync(
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'fixtures/grok-project-directory-trust.txt',
+    ),
+    'utf8',
+  );
+  const blocker = detectLaunchBlocker(pane, 'grok');
+  assert.equal(blocker?.kind, 'project-directory');
+  assert.equal(blocker?.autoAction, 'grok-select-current-project');
 });
 
 test('cursor workspace-trust blocker detection matches gateway contract', () => {

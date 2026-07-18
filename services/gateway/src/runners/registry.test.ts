@@ -20,6 +20,7 @@ import {
   getRunnerObservability,
   grokPaneShowsColdStartSession,
   isRunnerPaneRetired,
+  keyForClassifierTrustAction,
   normalizeRunner,
   resolveSafeSendTimeoutMs,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
@@ -285,6 +286,52 @@ describe('cursor runner', () => {
       autoAction: 'grok-select-current-project',
     });
     assert.equal(detectRunnerLaunchBlocker(pane, 'cursor'), null);
+  });
+
+  it('maps classifier trust_prompt/send_yes to the Grok project-directory confirmation key', () => {
+    const pane = `
+  Run Grok Build in a project directory?
+  1 (○) farmslot-grok-probe (current)
+  Enter:submit
+`;
+    assert.equal(
+      keyForClassifierTrustAction(
+        { state: 'trust_prompt', confidence: 0.99, suggestedAction: 'send_yes' },
+        'grok',
+        pane,
+      ),
+      'Enter',
+    );
+    assert.equal(
+      keyForClassifierTrustAction(
+        { state: 'trust_prompt', confidence: 0.99, suggestedAction: 'send_yes' },
+        'cursor',
+        `
+  ▶ [a] Trust this workspace
+    [q] Quit
+  Use arrow keys to navigate
+`,
+      ),
+      'a',
+    );
+    // Truncated pane: detector may miss markers, but classifier send_yes still
+    // maps to Grok's confirmation key so ready-timeout recovery can fire.
+    assert.equal(
+      keyForClassifierTrustAction(
+        { state: 'trust_prompt', confidence: 0.99, suggestedAction: 'send_yes' },
+        'grok',
+        'Run Grok Build in a project directory?\n1 (○) probe',
+      ),
+      'Enter',
+    );
+    assert.equal(
+      keyForClassifierTrustAction(
+        { state: 'ready', confidence: 0.99, suggestedAction: 'send_yes' },
+        'grok',
+        pane,
+      ),
+      null,
+    );
   });
 
   it('classifies auth blockers without assigning an unsafe auto action', () => {
