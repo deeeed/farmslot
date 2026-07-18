@@ -4368,6 +4368,7 @@ __metadata:
   resolution: "@farmslot/cli@workspace:packages/cli"
   dependencies:
     "@clack/prompts": "npm:^1.7.0"
+    "@farmslot/agent-runtime": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-harness": "workspace:*"
     "@farmslot/run-bundle": "workspace:*"

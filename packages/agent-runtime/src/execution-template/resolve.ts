@@ -64,15 +64,22 @@ export function listExecutionTemplates(
   options: ListExecutionTemplatesOptions,
 ): ExecutionTemplateEntry[] {
   const includeShadowed = options.includeShadowed !== false;
-  const sources = [...options.sources].sort((a, b) => {
-    const rank = SOURCE_KIND_RANK[a.kind] - SOURCE_KIND_RANK[b.kind];
-    if (rank !== 0) return rank;
-    return a.id.localeCompare(b.id);
-  });
+  // Same-kind ties break by CALLER order (the order sources were provided),
+  // not alphabetical ids — the caller's ordering is the intent.
+  const sources = options.sources
+    .map((source, callerIndex) => ({ source, callerIndex }))
+    .sort((a, b) => {
+      const rank = SOURCE_KIND_RANK[a.source.kind] - SOURCE_KIND_RANK[b.source.kind];
+      if (rank !== 0) return rank;
+      return a.callerIndex - b.callerIndex;
+    })
+    .map(({ source }) => source);
 
   const winners = new Map<string, ExecutionTemplateEntry>();
   const shadowed: ExecutionTemplateEntry[] = [];
 
+  // Shadowing resolves BEFORE filters: a filtered-out winner must not let a
+  // lower-precedence duplicate become effective through the filter.
   for (const source of sources) {
     for (const absolutePath of listMarkdownFiles(source.root, source.layout)) {
       const relativePath = path.relative(source.root, absolutePath);
@@ -83,7 +90,6 @@ export function listExecutionTemplates(
         source,
         text,
       });
-      if (!matchesFilters(entry, options)) continue;
 
       const existing = winners.get(entry.id);
       if (!existing) {
@@ -94,8 +100,10 @@ export function listExecutionTemplates(
     }
   }
 
-  const result = [...winners.values()];
-  if (includeShadowed) result.push(...shadowed);
+  const result = [...winners.values()].filter((entry) => matchesFilters(entry, options));
+  if (includeShadowed) {
+    result.push(...shadowed.filter((entry) => matchesFilters(entry, options)));
+  }
   return result.sort((a, b) => {
     if (a.flow !== b.flow) return a.flow.localeCompare(b.flow);
     if (Boolean(a.shadowedBy) !== Boolean(b.shadowedBy)) return a.shadowedBy ? 1 : -1;

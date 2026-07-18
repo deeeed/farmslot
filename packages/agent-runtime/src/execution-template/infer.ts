@@ -16,6 +16,7 @@ import type {
 
 /** Longest-first so `fix-bug` / `pr-complete` / `self-review` win over shorter prefixes. */
 export const FARMSLOT_FLOW_PREFIXES = [
+  'self-review-fix',
   'pr-complete',
   'fix-bug',
   'review-pr',
@@ -54,8 +55,12 @@ export function inferRunModeFromBasename(basename: string): ExecutionRunMode | n
   if (/(?:^|[.-])autonomous(?:[.-]|$)/.test(stem) || stem.includes('-autonomous')) {
     return 'autonomous';
   }
-  // Legacy Farmslot: bare flow.md (and other flow-prefixed names without mode) → autonomous.
-  if (inferFlowFromBasename(basename)) return 'autonomous';
+  if (/(?:^|[.-])validation(?:[.-]|$)/.test(stem)) {
+    return 'validation';
+  }
+  // A bare flow name encodes no mode: dispatch mode is a run property, and
+  // flows like review-pr run interactive as often as autonomous — defaulting
+  // here would misclassify them, so leave the mode unresolved.
   return null;
 }
 
@@ -67,24 +72,20 @@ export function inferPlatformsFromBasename(basename: string): string[] | null {
   return null;
 }
 
-export function legacyWorkerTemplateId(basename: string): string {
-  const stem = basename.replace(/\.md$/i, '');
-  if (stem === 'dev') return 'legacy-dev-default';
-  if (stem === 'dev-interactive') return 'legacy-dev-interactive';
-  if (stem === 'fix-bug') return 'legacy-fix-bug-default';
-  if (stem === 'review-pr') return 'legacy-review-pr-default';
-  if (stem === 'pr-complete') return 'legacy-pr-complete-default';
-  if (stem === 'pr-complete-interactive') return 'legacy-pr-complete-interactive';
-  return `legacy-${stem}`;
-}
-
+/**
+ * Canonical catalog id. Both layouts normalize to `<flow>/<variant>` so a
+ * project worker-flat `fix-bug.core.md` and a package flow-tree
+ * `fix-bug/core.md` collide — precedence/shadowing cannot work otherwise.
+ */
 export function catalogRelativeId(relativePath: string, layout: ExecutionTemplateLayout): string {
   const normalized = relativePath.replace(/\\/g, '/').replace(/^\.\//, '');
   const withoutExt = normalized.replace(/\.md$/i, '');
-  if (layout === 'worker-flat') {
-    return legacyWorkerTemplateId(path.basename(normalized));
-  }
-  return withoutExt;
+  if (layout !== 'worker-flat') return withoutExt;
+  const stem = path.basename(withoutExt);
+  const flow = inferFlowFromBasename(`${stem}.md`);
+  if (!flow) return stem;
+  const variant = stem.slice(flow.length).replace(/^[._-]+/, '');
+  return `${flow}/${variant || 'default'}`;
 }
 
 export function inferTemplateMetadata(input: {

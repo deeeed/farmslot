@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { createExecutionTemplate } from './create.js';
 import {
+  catalogRelativeId,
   inferFlowFromBasename,
   inferRunModeFromBasename,
   inferTemplateMetadata,
-  legacyWorkerTemplateId,
 } from './infer.js';
-import { lintExecutionTemplates } from './lint.js';
+import { lintExecutionTemplates, lintExecutionTemplateText } from './lint.js';
 import {
   customTemplateSource,
   listExecutionTemplates,
@@ -36,17 +36,29 @@ test('inferFlowFromBasename uses longest Farmslot flow prefix', () => {
   assert.equal(inferFlowFromBasename('notes.md'), null);
 });
 
-test('inferRunModeFromBasename maps legacy and mode tokens', () => {
-  assert.equal(inferRunModeFromBasename('dev.md'), 'autonomous');
+test('inferRunModeFromBasename resolves only explicit mode tokens', () => {
+  // A bare flow name encodes no mode — review-pr/update-branch run interactive
+  // as often as autonomous, so nothing may default here.
+  assert.equal(inferRunModeFromBasename('dev.md'), null);
+  assert.equal(inferRunModeFromBasename('review-pr.md'), null);
   assert.equal(inferRunModeFromBasename('dev-interactive.md'), 'interactive');
   assert.equal(inferRunModeFromBasename('dev-autonomous.mobile.md'), 'autonomous');
   assert.equal(inferRunModeFromBasename('fix-bug-interactive.extension.md'), 'interactive');
 });
 
-test('legacyWorkerTemplateId preserves ADR compatibility ids', () => {
-  assert.equal(legacyWorkerTemplateId('dev.md'), 'legacy-dev-default');
-  assert.equal(legacyWorkerTemplateId('dev-interactive.md'), 'legacy-dev-interactive');
-  assert.equal(legacyWorkerTemplateId('fix-bug.md'), 'legacy-fix-bug-default');
+test('self-review-fix resolves as its own prefix, not self-review', () => {
+  assert.equal(inferFlowFromBasename('self-review-fix.md'), 'self-review-fix');
+  assert.equal(inferFlowFromBasename('self-review.md'), 'self-review');
+});
+
+test('catalog ids collide across worker-flat and flow-tree layouts', () => {
+  // Precedence/shadowing is keyed on id — a project worker-flat override and a
+  // package flow-tree base MUST normalize to the same id.
+  assert.equal(catalogRelativeId('fix-bug.core.md', 'worker-flat'), 'fix-bug/core');
+  assert.equal(catalogRelativeId('fix-bug/core.md', 'flow-tree'), 'fix-bug/core');
+  assert.equal(catalogRelativeId('dev.md', 'worker-flat'), 'dev/default');
+  assert.equal(catalogRelativeId('dev-interactive.md', 'worker-flat'), 'dev/interactive');
+  assert.equal(catalogRelativeId('notes.md', 'worker-flat'), 'notes');
 });
 
 test('inferTemplateMetadata prefers frontmatter then filename/heading', () => {
@@ -92,7 +104,7 @@ test('listExecutionTemplates reports shadowing across project and package source
     writeFileSync(
       join(packageTpl, 'dev', 'dev-autonomous.mobile.md'),
       `---
-id: legacy-dev-default
+id: dev/default
 runMode: autonomous
 platforms: [mobile]
 ---
@@ -112,8 +124,8 @@ platforms: [mobile]
       includeShadowed: true,
     });
 
-    const winners = entries.filter((e) => !e.shadowedBy && e.id === 'legacy-dev-default');
-    const shadowed = entries.filter((e) => e.shadowedBy && e.id === 'legacy-dev-default');
+    const winners = entries.filter((e) => !e.shadowedBy && e.id === 'dev/default');
+    const shadowed = entries.filter((e) => e.shadowedBy && e.id === 'dev/default');
     assert.equal(winners.length, 1);
     assert.equal(winners[0]?.sourceKind, 'project');
     assert.equal(shadowed.length, 1);
@@ -175,4 +187,116 @@ test('custom source outranks package source for the same id', () => {
     assert.equal(winner?.sourceKind, 'custom');
     assert.equal(winner?.title, 'custom');
   });
+});
+
+test('shadowing resolves before filters — a filtered winner still shadows its duplicate', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'et-filter-'));
+  try {
+    mkdirSync(join(dir, 'proj', 'worker'), { recursive: true });
+    mkdirSync(join(dir, 'pkg', 'dev'), { recursive: true });
+    // Project winner is mobile-only; package duplicate claims extension.
+    writeFileSync(
+      join(dir, 'proj', 'worker', 'dev.md'),
+      '---\nplatforms: [mobile]\n---\n\n# P\n\n- [ ] step\n',
+    );
+    writeFileSync(
+      join(dir, 'pkg', 'dev', 'default.md'),
+      '---\nplatforms: [extension]\n---\n\n# S\n\n- [ ] step\n',
+    );
+    const entries = listExecutionTemplates({
+      sources: [
+        projectWorkerTemplateSource('p', join(dir, 'proj')),
+        packageFlowTreeTemplateSource('s', join(dir, 'pkg')),
+      ],
+      platform: 'extension',
+    });
+    // The package copy is shadowed by the (filtered-out) project winner — the
+    // filter must not resurrect it as effective.
+    const effective = entries.filter((e) => !e.shadowedBy);
+    assert.equal(effective.length, 0);
+    const shadowedEntry = entries.find((e) => e.shadowedBy);
+    assert.equal(shadowedEntry?.sourceKind, 'package');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('same-kind precedence follows caller order, not source-id alphabet', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'et-order-'));
+  try {
+    mkdirSync(join(dir, 'zeta', 'dev'), { recursive: true });
+    mkdirSync(join(dir, 'alpha', 'dev'), { recursive: true });
+    writeFileSync(join(dir, 'zeta', 'dev', 'default.md'), '# Z\n\n- [ ] step\n');
+    writeFileSync(join(dir, 'alpha', 'dev', 'default.md'), '# A\n\n- [ ] step\n');
+    const entries = listExecutionTemplates({
+      sources: [
+        customTemplateSource('zeta', join(dir, 'zeta')),
+        customTemplateSource('alpha', join(dir, 'alpha')),
+      ],
+    });
+    const winner = entries.find((e) => e.id === 'dev/default' && !e.shadowedBy);
+    assert.equal(winner?.sourceId, 'custom:zeta');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('create validates before writing: failure leaves no file and force never destroys', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'et-create-'));
+  try {
+    // Un-prefixed filename with explicit flow: rejected BEFORE write.
+    assert.throws(
+      () => createExecutionTemplate({ path: join(dir, 'evil.md'), flow: 'dev' }),
+      /filename must start with the flow name/,
+    );
+    assert.equal(existsSync(join(dir, 'evil.md')), false);
+
+    // Contradicting --flow: rejected before write.
+    assert.throws(
+      () => createExecutionTemplate({ path: join(dir, 'dev.md'), flow: 'review-pr' }),
+      /contradicts filename flow/,
+    );
+    assert.equal(existsSync(join(dir, 'dev.md')), false);
+
+    // force on an invalid request must not destroy the existing file.
+    const keep = join(dir, 'fix-bug.md');
+    writeFileSync(keep, '# keep\n\n- [ ] precious\n');
+    assert.throws(
+      () => createExecutionTemplate({ path: keep, flow: 'dev', force: true }),
+      /contradicts filename flow/,
+    );
+    assert.match(readFileSync(keep, 'utf8'), /precious/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('lint rejects traversal-like frontmatter ids and flow/filename contradictions', () => {
+  const bad = lintExecutionTemplateText(
+    '/virtual/dev.md',
+    '---\nid: ../../escape\nflow: review-pr\n---\n\n# T\n\n- [ ] step\n',
+  );
+  assert.ok(bad.some((i) => /safe catalog id/.test(i.message)));
+  assert.ok(bad.some((i) => /contradicts filename flow/.test(i.message)));
+});
+
+test('lint exempts interactive templates from the checkbox requirement', () => {
+  const interactive = lintExecutionTemplateText(
+    '/virtual/dev-interactive.md',
+    '# Conversational template\n\nNo checklist by design.\n',
+  );
+  assert.equal(interactive.filter((i) => i.severity === 'error').length, 0);
+  const autonomous = lintExecutionTemplateText(
+    '/virtual/dev.md',
+    '# Missing checklist\n\nprose only\n',
+  );
+  assert.ok(autonomous.some((i) => /no parseable checkbox/.test(i.message)));
+});
+
+test('lint flags unterminated frontmatter instead of silently treating it as body', () => {
+  const issues = lintExecutionTemplateText(
+    '/virtual/dev.md',
+    '---\nrunMode: autonomous\n\n# Heading\n\n- [ ] step\n',
+  );
+  assert.ok(issues.some((i) => /unterminated frontmatter/.test(i.message)));
 });

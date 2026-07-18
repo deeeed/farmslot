@@ -14,9 +14,8 @@ export {
   inferPlatformsFromBasename,
   inferRunModeFromBasename,
   inferTemplateMetadata,
-  legacyWorkerTemplateId,
 } from './infer.js';
-export { lintExecutionTemplates } from './lint.js';
+export { lintExecutionTemplates, lintExecutionTemplateText } from './lint.js';
 export {
   customTemplateSource,
   listExecutionTemplates,

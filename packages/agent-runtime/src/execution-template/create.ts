@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { inferFlowFromBasename, inferRunModeFromBasename } from './infer.js';
-import { lintExecutionTemplates } from './lint.js';
+import { lintExecutionTemplateText } from './lint.js';
 import type { CreateExecutionTemplateOptions, ExecutionRunMode } from './types.js';
 
 function defaultTitle(flow: string, runMode: ExecutionRunMode | null): string {
@@ -47,10 +47,25 @@ export function createExecutionTemplate(options: CreateExecutionTemplateOptions)
     throw new Error('template path must end with .md');
   }
 
-  const flow = options.flow ?? inferFlowFromBasename(basename);
+  // Resolve and cross-check flow BEFORE anything touches the filesystem: the
+  // catalog derives flow from the filename, so a --flow that the filename does
+  // not encode (or contradicts) would create a template that resolves as a
+  // different flow than requested.
+  const fileFlow = inferFlowFromBasename(basename);
+  const flow = options.flow ?? fileFlow;
   if (!flow) {
     throw new Error(
-      'could not infer flow from filename; pass flow explicitly or use a flow-prefixed name (e.g. dev-autonomous.mobile.md)',
+      'could not infer flow from filename; use a flow-prefixed name (e.g. dev-autonomous.mobile.md)',
+    );
+  }
+  if (options.flow && fileFlow && options.flow !== fileFlow) {
+    throw new Error(
+      `requested flow '${options.flow}' contradicts filename flow '${fileFlow}'; rename the file or drop --flow`,
+    );
+  }
+  if (options.flow && !fileFlow) {
+    throw new Error(
+      `filename must start with the flow name ('${options.flow}') for the catalog to resolve it (e.g. ${options.flow}.md)`,
     );
   }
 
@@ -59,14 +74,18 @@ export function createExecutionTemplate(options: CreateExecutionTemplateOptions)
   const title = options.title ?? defaultTitle(flow, runMode);
   const body = renderTemplate({ flow, runMode, platforms, title });
 
+  // Lint the rendered TEXT before writing — a failed creation must leave no
+  // file behind (and must never destroy an existing file via force).
+  const issues = lintExecutionTemplateText(absolute, body).filter(
+    (issue) => issue.severity === 'error',
+  );
+  if (issues.length > 0) {
+    const detail = issues.map((issue) => issue.message).join('; ');
+    throw new Error(`template would fail lint: ${detail}`);
+  }
+
   mkdirSync(path.dirname(absolute), { recursive: true });
   writeFileSync(absolute, body, 'utf8');
-
-  const lint = lintExecutionTemplates(absolute);
-  if (!lint.ok) {
-    const detail = lint.issues.map((issue) => issue.message).join('; ');
-    throw new Error(`created template failed lint: ${detail}`);
-  }
 
   return { path: absolute, created: true };
 }

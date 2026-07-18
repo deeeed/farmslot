@@ -60,8 +60,10 @@ function buildSources(opts: ListOptions): ExecutionTemplateSource[] {
     const input = resolve(opts.projectWorker);
     const projectTemplatesDir =
       input.endsWith('/worker') || input.endsWith('\\worker') ? resolve(input, '..') : input;
-    if (!existsSync(projectTemplatesDir)) {
-      throw new Error(`--project-worker not found: ${projectTemplatesDir}`);
+    // The source appends worker/ — validate the directory that will actually
+    // be scanned, or a typo silently yields an empty catalog.
+    if (!existsSync(resolve(projectTemplatesDir, 'worker'))) {
+      throw new Error(`--project-worker not found: ${resolve(projectTemplatesDir, 'worker')}`);
     }
     sources.push(projectWorkerTemplateSource(opts.projectName ?? 'project', projectTemplatesDir));
   }
@@ -147,18 +149,23 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .action((target: string, opts: LintOptions, command: Command) => {
       const json = Boolean(command.optsWithGlobals().json ?? opts.json);
       const output = new OutputContext(json);
-      const result = lintExecutionTemplates(target);
-      if (json) {
-        output.writeJson(result);
-      } else if (result.ok) {
-        output.write(`${green('pass')} ${result.filesChecked} template(s)\n`);
-      } else {
-        for (const issue of result.issues) {
-          const color = issue.severity === 'error' ? red : yellow;
-          output.write(`${color(issue.severity)} ${issue.path}: ${issue.message}\n`);
+      try {
+        const result = lintExecutionTemplates(target);
+        if (json) {
+          output.writeJson(result);
+        } else if (result.ok) {
+          output.write(`${green('pass')} ${result.filesChecked} template(s)\n`);
+        } else {
+          for (const issue of result.issues) {
+            const color = issue.severity === 'error' ? red : yellow;
+            output.write(`${color(issue.severity)} ${issue.path}: ${issue.message}\n`);
+          }
         }
+        if (!result.ok) process.exitCode = 1;
+      } catch (err) {
+        output.failure(err);
+        process.exitCode = 1;
       }
-      if (!result.ok) process.exitCode = 1;
     });
 
   cmd

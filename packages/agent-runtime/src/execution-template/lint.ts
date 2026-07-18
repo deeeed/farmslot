@@ -2,7 +2,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { frontmatterPlatforms, frontmatterRunMode, parseMarkdownDocument } from './frontmatter.js';
-import { FARMSLOT_FLOW_PREFIXES, inferFlowFromBasename } from './infer.js';
+import {
+  FARMSLOT_FLOW_PREFIXES,
+  inferFlowFromBasename,
+  inferRunModeFromBasename,
+} from './infer.js';
 import type { LintExecutionTemplatesResult, LintIssue } from './types.js';
 
 const CHECKBOX_RE = /^\s*[-*]\s+\[([ xX])\]\s+\S/;
@@ -28,11 +32,23 @@ function collectMarkdownTargets(target: string): string[] {
   return out.sort((a, b) => a.localeCompare(b));
 }
 
-function lintOne(filePath: string): LintIssue[] {
+const SAFE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+/** Lint template TEXT under a (possibly virtual) path — used by `create` to validate before writing. */
+export function lintExecutionTemplateText(filePath: string, text: string): LintIssue[] {
   const issues: LintIssue[] = [];
   const basename = path.basename(filePath);
-  const text = readFileSync(filePath, 'utf8');
   const { frontmatter, body } = parseMarkdownDocument(text);
+
+  // The parser treats an unterminated frontmatter fence as body — surface it
+  // instead of silently linting metadata as prose.
+  if (/^\uFEFF?---\r?\n/.test(text) && frontmatter === null) {
+    issues.push({
+      path: filePath,
+      severity: 'error',
+      message: 'unterminated frontmatter block (opening --- without closing ---)',
+    });
+  }
 
   if (!inferFlowFromBasename(basename)) {
     issues.push({
@@ -51,6 +67,31 @@ function lintOne(filePath: string): LintIssue[] {
   }
 
   if (frontmatter) {
+    if (frontmatter.id != null) {
+      const id = frontmatter.id;
+      const unsafe =
+        typeof id !== 'string' ||
+        !SAFE_ID_RE.test(id) ||
+        id.split('/').includes('..') ||
+        id.includes('\\');
+      if (unsafe) {
+        issues.push({
+          path: filePath,
+          severity: 'error',
+          message:
+            'frontmatter id must be a safe catalog id (alphanumeric start; letters, digits, ./_- only; no .. segments)',
+        });
+      }
+    }
+    const fmFlow = typeof frontmatter.flow === 'string' ? frontmatter.flow.trim() : null;
+    const fileFlow = inferFlowFromBasename(basename);
+    if (fmFlow && fileFlow && fmFlow !== fileFlow) {
+      issues.push({
+        path: filePath,
+        severity: 'error',
+        message: `frontmatter flow '${fmFlow}' contradicts filename flow '${fileFlow}'`,
+      });
+    }
     if (frontmatter.runMode != null || frontmatter.run_mode != null) {
       if (!frontmatterRunMode(frontmatter)) {
         issues.push({
@@ -92,7 +133,10 @@ function lintOne(filePath: string): LintIssue[] {
     });
   }
 
-  if (checkboxCount === 0) {
+  // Interactive templates are conversation-driven and legitimately have no
+  // checklist; only non-interactive templates must carry parseable checkboxes.
+  const runMode = frontmatterRunMode(frontmatter) ?? inferRunModeFromBasename(basename);
+  if (checkboxCount === 0 && runMode !== 'interactive') {
     issues.push({
       path: filePath,
       severity: 'error',
@@ -101,6 +145,10 @@ function lintOne(filePath: string): LintIssue[] {
   }
 
   return issues;
+}
+
+function lintOne(filePath: string): LintIssue[] {
+  return lintExecutionTemplateText(filePath, readFileSync(filePath, 'utf8'));
 }
 
 /** Lint optional frontmatter and parseable checkbox structure for a file or directory. */

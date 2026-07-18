@@ -76,18 +76,25 @@ async function cmdList(args, runtime) {
 
   const sources = [];
   for (const [index, dir] of opts.dirs.entries()) {
-    sources.push(runtime.customTemplateSource(`dir-${index + 1}`, resolve(dir), 'flow-tree'));
+    const root = resolve(dir);
+    if (!existsSync(root)) throw new Error(`--dir not found: ${root}`);
+    sources.push(runtime.customTemplateSource(`dir-${index + 1}`, root, 'flow-tree'));
   }
   if (opts.projectWorker) {
     const input = resolve(opts.projectWorker);
     const projectTemplatesDir =
       input.endsWith('/worker') || input.endsWith('\\worker') ? resolve(input, '..') : input;
+    // An explicitly named source that does not exist is operator error — a
+    // silent empty catalog hides typos (worker/ is appended by the source).
+    if (!existsSync(resolve(projectTemplatesDir, 'worker'))) {
+      throw new Error(`--project-worker not found: ${resolve(projectTemplatesDir, 'worker')}`);
+    }
     sources.push(runtime.projectWorkerTemplateSource(opts.projectName, projectTemplatesDir));
   }
   if (opts.packageTemplates) {
-    sources.push(
-      runtime.packageFlowTreeTemplateSource(opts.packageId, resolve(opts.packageTemplates)),
-    );
+    const root = resolve(opts.packageTemplates);
+    if (!existsSync(root)) throw new Error(`--package-templates not found: ${root}`);
+    sources.push(runtime.packageFlowTreeTemplateSource(opts.packageId, root));
   }
   if (sources.length === 0) {
     throw new Error('provide --dir, --project-worker, and/or --package-templates');
