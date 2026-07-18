@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat: add shared Markdown execution-template resolver/lint/new (ADR-049) with `farmslot-agent execution-template` CLI.
 - refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the worker terminal contract, checklist marker, and task artifact contract.
 - Active-development baseline; add user-facing changes here before release or package publication.
 

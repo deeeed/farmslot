@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat: add `farmslot execution-template` (`list` / `lint` / `new`) for ADR-049 shared Markdown template discovery.
+
 - chore: comment-only sweep — code comments describe rationale inline instead of citing ticket numbers (no behavior change).
 
 - feat: `bug batch --enqueue-threshold <p>` — autonomous intake bridge (MANUAL-000036). After scoring, creates backlog items (sourceKind github/jira, flow `fix-bug`, tag `bug-intake`, status candidate — never auto-dispatch) for issues whose p(one-shot) — final score preferred, heuristic fallback — meets the threshold. Idempotent across re-runs (case-insensitive sourceRef dedup against the existing backlog incl. archived), skips issues whose validity check said `still_valid: false`, and reports per-item bridge failures without aborting the batch. Requires a reachable gateway only when the flag is passed.
