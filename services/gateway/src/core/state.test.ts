@@ -5,10 +5,11 @@ import test from 'node:test';
 import {
   claimSlotStatusIf,
   markSlotStatusIf,
-  releaseSlotOwnershipPreservingHandoffIf,
   resetSlotIf,
   SLOT_PHASE_RELEASING,
+  slotOwnershipReleaseFields,
   statusFile,
+  transitionSlotStatus,
   updateSlotStatusIf,
 } from './state.js';
 
@@ -150,7 +151,7 @@ test('resetSlotIf applies the ready/idle reset only while its predicate holds', 
   assert.equal(after.current_run_id, null);
 });
 
-test('releaseSlotOwnershipPreservingHandoffIf resets ownership but keeps the reservation', async (t) => {
+test('transitionSlotStatus classifies and writes in one pass, preserving a pending handoff on owner release', async (t) => {
   const slotId = await withStatusFixture(t, {
     slot: 'epoch-test-6',
     lifecycle: 'busy',
@@ -161,11 +162,12 @@ test('releaseSlotOwnershipPreservingHandoffIf resets ownership but keeps the res
     slot_epoch: 5,
   });
 
-  const applied = await releaseSlotOwnershipPreservingHandoffIf(
-    slotId,
-    (slot) => slot.current_run_id === 'dying-owner',
+  const transition = await transitionSlotStatus(slotId, (slot) =>
+    slot.current_run_id === 'dying-owner'
+      ? { fields: slotOwnershipReleaseFields(), endsOwnership: true }
+      : null,
   );
-  assert.equal(applied, true);
+  assert.deepEqual(transition, { applied: true, epoch: 5 }, 'mark-type: no epoch bump');
   const after = await readSlotFixture(slotId);
   assert.equal(after.lifecycle, 'ready');
   assert.equal(after.current_run_id, null);
@@ -175,9 +177,14 @@ test('releaseSlotOwnershipPreservingHandoffIf resets ownership but keeps the res
     'the pending handoff reservation must survive the owner release',
   );
 
-  const refused = await releaseSlotOwnershipPreservingHandoffIf(
-    slotId,
-    (slot) => slot.current_run_id === 'dying-owner',
+  const refused = await transitionSlotStatus(slotId, (slot) =>
+    slot.current_run_id === 'dying-owner'
+      ? { fields: slotOwnershipReleaseFields(), endsOwnership: true }
+      : null,
   );
-  assert.equal(refused, false, 'predicate no longer holds after the release');
+  assert.deepEqual(
+    refused,
+    { applied: false, epoch: null },
+    'a null decision writes nothing — classification cannot go stale between check and write',
+  );
 });

@@ -22,7 +22,7 @@ import {
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
-import { resetSlot } from '../core/state.js';
+import { resetSlot, SLOT_PHASE_RELEASING } from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { failedRunSlotCleanup, isSlotClaimRefusedError } from '../methods/dispatch/slot-scoring.js';
 import { clearStalePrepareProcess } from '../methods/slot.js';
@@ -140,43 +140,80 @@ const S = PipelineSteps;
  * mid-flight; see failedRunSlotCleanup). A run that merely held a
  * reservation clears just that reservation — the prior owner's worker is
  * still running and must not be marked ready — and a run named nowhere on
- * the slot touches nothing. Every branch re-evaluates the plan INSIDE the
- * serialized status write, so a successor claiming the slot between a read
- * and this cleanup is never clobbered.
+ * the slot touches nothing.
+ *
+ * Classification and the matching write happen in ONE serialized transition:
+ * a per-plan CAS cascade let a rival write shift the plan between attempts
+ * and strand the slot. The full-reset branch first fences the slot as
+ * `releasing` (every claim path refuses it), runs the caller's destructive
+ * process/agent teardown behind that fence — never on an unfenced slot a
+ * rival could claim or reserve mid-kill — then applies the final reset
+ * guarded on the fence epoch, mirroring slotRelease. A slot already
+ * mid-release is left to the release that owns the teardown.
  */
 async function cleanupSlotAfterRunFailure(
   slotId: string,
   runId: string,
   reason: string,
+  destructiveCleanup?: () => Promise<void>,
 ): Promise<void> {
-  const { releaseSlotOwnershipPreservingHandoffIf, resetSlotIf, updateSlotStatusIf } =
+  const { resetSlotIf, slotOwnershipReleaseFields, transitionSlotStatus } =
     await import('../core/index.js');
-  if (await resetSlotIf(slotId, (slot) => failedRunSlotCleanup(slot, runId) === 'reset')) {
+  // Object holder rather than a `let`: assignments inside the decide closure
+  // are invisible to control-flow narrowing on a plain local.
+  const planRef: { value: ReturnType<typeof failedRunSlotCleanup> | 'already-releasing' } = {
+    value: 'none',
+  };
+  const transition = await transitionSlotStatus(slotId, (slot) => {
+    if (slot.phase === SLOT_PHASE_RELEASING) {
+      planRef.value = 'already-releasing';
+      return null;
+    }
+    const plan = failedRunSlotCleanup(slot, runId);
+    planRef.value = plan;
+    switch (plan) {
+      case 'reset':
+        return { fields: { lifecycle: 'busy', phase: SLOT_PHASE_RELEASING } };
+      case 'release-keep-handoff':
+        return { fields: slotOwnershipReleaseFields(), endsOwnership: true };
+      case 'clear-reservation':
+        return { fields: { handoff_run_id: null } };
+      default:
+        return null;
+    }
+  });
+  if (planRef.value === 'reset' && transition.applied) {
+    if (destructiveCleanup) {
+      try {
+        await destructiveCleanup();
+      } catch (err) {
+        // The fence must not strand the slot in `releasing`: surface the
+        // teardown error but continue to the final reset.
+        console.warn(
+          `[run-engine] destructive cleanup for ${slotId} after ${reason}: ${(err as Error).message.slice(0, 200)}`,
+        );
+      }
+    }
+    await resetSlotIf(
+      slotId,
+      (slot) => (Number(slot.slot_epoch) || 0) === (transition.epoch ?? -1),
+    );
     console.log(`[run-engine] slot ${slotId} reset to ready/idle after ${reason}`);
     return;
   }
-  if (
-    await releaseSlotOwnershipPreservingHandoffIf(
-      slotId,
-      (slot) => failedRunSlotCleanup(slot, runId) === 'release-keep-handoff',
-    )
-  ) {
+  if (planRef.value === 'release-keep-handoff' && transition.applied) {
     console.log(
       `[run-engine] slot ${slotId} ownership released after ${reason}; pending handoff reservation preserved`,
     );
     return;
   }
-  if (
-    await updateSlotStatusIf(
-      slotId,
-      (slot) => failedRunSlotCleanup(slot, runId) === 'clear-reservation',
-      { handoff_run_id: null },
-    )
-  ) {
+  if (planRef.value === 'clear-reservation' && transition.applied) {
     console.log(`[run-engine] cleared handoff reservation on ${slotId} after ${reason}`);
     return;
   }
-  console.log(`[run-engine] slot ${slotId} not owned by terminal run; left untouched (${reason})`);
+  console.log(
+    `[run-engine] slot ${slotId} cleanup after ${reason}: ${planRef.value === 'already-releasing' ? 'in-flight release owns the teardown' : 'not owned by terminal run'}; left untouched`,
+  );
 }
 
 const STEP_TO_STATUS: Record<string, RunStatus> = {
@@ -320,24 +357,21 @@ async function finalizeNonThrownTerminalRun(
   }
   await cleanupEvalHarnessForTerminalRun(run, runId, `non-thrown ${run.status}`);
   if (run.slotId) {
-    // Kill stale worker/browser/webpack processes before reset. Mirrors the failed-step
-    // PREPARE branch — when MONITOR observes a blocked worker, the prepare-spawned browser
-    // and webpack are still alive and would otherwise survive into the next dispatch.
-    // cleanupSlotProcesses is idempotent (kill 2>/dev/null + rm -f) so calling it on flows
-    // where prepare did not run is a no-op.
+    const slotId = run.slotId;
     try {
-      await cleanupSlotProcesses(run.slotId);
-    } catch (err) {
-      console.warn(
-        `[run-engine] cleanup processes after non-thrown ${run.status} for ${run.slotId}: ${(err as Error).message.slice(0, 200)}`,
-      );
-    }
-    try {
-      const currentRun = getRun(runId);
-      if (currentRun) {
-        await teardownGateHeldAgentsIfNeeded(currentRun);
-      }
-      await cleanupSlotAfterRunFailure(run.slotId, runId, `non-thrown ${run.status}`);
+      // Destructive teardown (stale worker/browser/webpack kill + gate-held
+      // agents) runs INSIDE the cleanup helper, behind its releasing fence and
+      // only when this run still owns the slot exclusively — an incoming
+      // nudge's reserved worker must never be killed by the dying owner.
+      // cleanupSlotProcesses is idempotent (kill 2>/dev/null + rm -f) so
+      // calling it on flows where prepare did not run is a no-op.
+      await cleanupSlotAfterRunFailure(slotId, runId, `non-thrown ${run.status}`, async () => {
+        await cleanupSlotProcesses(slotId);
+        const currentRun = getRun(runId);
+        if (currentRun) {
+          await teardownGateHeldAgentsIfNeeded(currentRun);
+        }
+      });
     } catch (err) {
       // Surface but do not mask the run's terminal state.
       console.warn(
@@ -494,8 +528,9 @@ export async function startRun(runId: string): Promise<void> {
         if (blockedRun.slotId) {
           await cleanupEvalHarnessForTerminalRun(blockedRun, runId, 'blocked run');
           try {
-            await teardownGateHeldAgentsIfNeeded(blockedRun);
-            await cleanupSlotAfterRunFailure(blockedRun.slotId, runId, 'blocked run');
+            await cleanupSlotAfterRunFailure(blockedRun.slotId, runId, 'blocked run', () =>
+              teardownGateHeldAgentsIfNeeded(blockedRun),
+            );
           } catch (resetErr) {
             console.warn(
               `[run-engine] final slot reset failed for blocked run ${blockedRun.slotId}: ${(resetErr as Error).message.slice(0, 200)}`,
@@ -545,17 +580,12 @@ export async function startRun(runId: string): Promise<void> {
             `monitor-terminal ${err.status}`,
           );
           try {
-            await cleanupSlotProcesses(monitorRun.slotId);
-          } catch (cleanupErr) {
-            console.warn(
-              `[run-engine] cleanup processes after monitor-terminal ${err.status} for ${monitorRun.slotId}: ${(cleanupErr as Error).message.slice(0, 200)}`,
-            );
-          }
-          try {
+            const monitorSlotId = monitorRun.slotId;
             await cleanupSlotAfterRunFailure(
-              monitorRun.slotId,
+              monitorSlotId,
               runId,
               `monitor-terminal ${err.status}`,
+              () => cleanupSlotProcesses(monitorSlotId),
             );
           } catch (resetErr) {
             console.warn(
@@ -626,11 +656,15 @@ export async function startRun(runId: string): Promise<void> {
           stepName === S.FIND_SLOT)
       ) {
         try {
-          // Kill stale processes left by failed prepare (browser, webpack, launcher)
-          if (stepName === S.PREPARE) {
-            await cleanupSlotProcesses(failedRun.slotId);
-          }
-          await cleanupSlotAfterRunFailure(failedRun.slotId, runId, `${stepName} failure`);
+          const failedSlotId = failedRun.slotId;
+          // Stale processes left by failed prepare (browser, webpack, launcher)
+          // are killed behind the cleanup fence, owner-only.
+          await cleanupSlotAfterRunFailure(
+            failedSlotId,
+            runId,
+            `${stepName} failure`,
+            stepName === S.PREPARE ? () => cleanupSlotProcesses(failedSlotId) : undefined,
+          );
         } catch (err) {
           // The run has already failed; reset/cleanup errors are surfaced in
           // logs but should not hide the original pipeline failure.
@@ -658,8 +692,9 @@ export async function startRun(runId: string): Promise<void> {
       // reset would reopen it mid-teardown for the release that does.
       if (failedRun.slotId && !claimRefused) {
         try {
-          await teardownGateHeldAgentsIfNeeded(failedRun);
-          await cleanupSlotAfterRunFailure(failedRun.slotId, runId, 'terminal safety net');
+          await cleanupSlotAfterRunFailure(failedRun.slotId, runId, 'terminal safety net', () =>
+            teardownGateHeldAgentsIfNeeded(failedRun),
+          );
         } catch (err) {
           // The run failure has already been recorded; surface reset failure
           // without replacing the root-cause error shown to the operator.

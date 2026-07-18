@@ -474,8 +474,11 @@ export async function executeFindSlotStep(
           await claimSelectedSlot(top.slot.slot, runId, 'preparing', undefined, {
             takeoverLiveOwner: true,
           });
-          await prepareSlotForFreshReuse(top.slot.slot, runId);
+          // Bind the slot BEFORE the destructive teardown: if preparation
+          // throws, failure cleanup locates the slot via run.slotId and can
+          // clear the reservation the fence just wrote.
           updateRun(runId, { slotId: top.slot.slot });
+          await prepareSlotForFreshReuse(top.slot.slot, runId);
           await claimSelectedSlot(top.slot.slot, runId, 'preparing');
           broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
           return {

@@ -18,7 +18,6 @@ import {
   isLocal,
   loadProjectVars,
   loadSlotVars,
-  markSlotBusy,
   type RawProjectJson,
   readSlotField,
   resolveProjectTaskDirName,
@@ -162,7 +161,7 @@ export async function killWorkerOnSlot(slotId: string, runner: string): Promise<
 /**
  * Combined teardown for fresh-reuse: terminalize prior Run + hard-kill worker on slot.
  * Engine call sites (decision-card 'fresh' branch, FIND_SLOT freshReuse wizard-shortcut)
- * must call this BEFORE markSlotBusy('preparing') / before PREPARE runs, so that PREPARE
+ * must call this BEFORE the ordinary 'preparing' claim / before PREPARE runs, so that PREPARE
  * doesn't race the prior worker mutating the same git worktree.
  */
 export async function prepareSlotForFreshReuse(slotId: string, newRunId: string): Promise<void> {
@@ -398,6 +397,12 @@ export async function nudgeDispatch(
     // absent reservation means it was cleared by a failure path or rival.
     (slot) => slotClaimBlockedByRelease(slot) === null && slot.handoff_run_id === params.runId,
     {
+      // Working state is part of the SAME claim write: a separate follow-up
+      // markSlotBusy would overwrite a release marker that landed in between
+      // without bumping the epoch, letting that release kill the new owner.
+      lifecycle: 'busy',
+      phase: 'working',
+      agent: 'working',
       handoff_run_id: null,
       current_run_id: params.runId,
       current_ticket_or_pr: params.ticketOrPr,
@@ -430,7 +435,6 @@ export async function nudgeDispatch(
     target: primaryTarget,
     nudgeCount: priorNudgeCount + 1,
   });
-  await markSlotBusy(params.slotId, 'working', 'working');
   step(
     'nudge',
     `Worker nudged on ${workerTarget} (role=${workerRole}, nudgeCount=${priorNudgeCount + 1})`,

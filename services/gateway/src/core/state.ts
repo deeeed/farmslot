@@ -279,23 +279,58 @@ export async function resetSlotIf(
 }
 
 /**
- * Ownership release for a terminal run whose slot carries a pending foreign
- * handoff reservation: applies the full ready/idle reset EXCEPT
+ * Ownership-release fields for a terminal run whose slot carries a pending
+ * foreign handoff reservation: the full ready/idle reset EXCEPT
  * `handoff_run_id`, which stays so the reserved run's final claim still
- * succeeds after its delivery landed. CAS'd like resetSlotIf; listeners fire
- * only when applied (the dying owner's reviewer sessions must still end).
+ * succeeds after its delivery landed.
  */
-export async function releaseSlotOwnershipPreservingHandoffIf(
-  slotId: string,
-  predicate: (slot: Readonly<Record<string, unknown>>) => boolean,
-): Promise<boolean> {
+export function slotOwnershipReleaseFields(): Record<string, unknown> {
   const fields = { ...slotResetFields(false) };
   delete fields.handoff_run_id;
-  const applied = await updateSlotStatusIf(slotId, predicate, fields);
-  if (applied) {
+  return fields;
+}
+
+/**
+ * Compute-and-apply slot transition in ONE serialized write: `decide` runs
+ * INSIDE the write chain against the current row, so classification and the
+ * matching write cannot be split by a rival write landing between them (the
+ * flaw in running one CAS attempt per possible plan). Mark-type: never bumps
+ * the epoch. Fires reset listeners when the applied transition declares it
+ * ends ownership (a dying owner's reviewer sessions must still end).
+ */
+export async function transitionSlotStatus(
+  slotId: string,
+  decide: (
+    slot: Readonly<Record<string, unknown>>,
+  ) => { fields: Record<string, unknown>; endsOwnership?: boolean } | null,
+): Promise<{ applied: boolean; epoch: number | null }> {
+  let applied = false;
+  let epoch: number | null = null;
+  let endedOwnership = false;
+  const next = writeChain.then(async () => {
+    if (!existsSync(statusFile)) return;
+    const content = await readFile(statusFile, 'utf-8');
+    const data = JSON.parse(content);
+    const slots: Array<Record<string, unknown>> = data.slots ?? [];
+    const slot = slots.find((s) => s.slot === slotId);
+    if (!slot) return;
+    const decision = decide(slot);
+    if (!decision) return;
+    for (const [key, value] of Object.entries(decision.fields)) {
+      slot[key] = value;
+    }
+    await atomicWriteStatus(data);
+    triggerSlotUpdateHook();
+    applied = true;
+    epoch = Number(slot.slot_epoch) || 0;
+    endedOwnership = decision.endsOwnership === true;
+  });
+  writeChain = next.catch(() => {});
+  await next;
+  if (applied && endedOwnership) {
     for (const listener of slotResetListeners) listener(slotId);
   }
-  return applied;
+  return { applied, epoch };
 }
 
 export async function resetSlot(slotId: string, warm = false): Promise<void> {

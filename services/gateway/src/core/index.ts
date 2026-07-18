@@ -70,11 +70,12 @@ export {
   markSlotHeld,
   markSlotStatusIf,
   readSlotField,
-  releaseSlotOwnershipPreservingHandoffIf,
   resetSlot,
   resetSlotIf,
   rewriteStatusFile,
   SLOT_PHASE_RELEASING,
+  slotOwnershipReleaseFields,
+  transitionSlotStatus,
   updateSlotStatus,
   updateSlotStatusIf,
 } from './state.js';
