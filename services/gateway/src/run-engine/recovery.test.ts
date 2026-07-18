@@ -302,6 +302,42 @@ test('recovery re-enters the human gate when duplicate pending gate decisions ex
   assert.deepEqual(calls.rebroadcastDecisionIds, []);
 });
 
+test('recovery falls back to re-presenting still-pending decisions when gate re-entry fails', async () => {
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-8',
+    familyRootTicketOrPr: 'RECOVERY-8',
+    taskFile: '/tmp/farmslot-recovery-8/TASK.md',
+    status: 'blocked',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [humanGateDecision('gate-1'), humanGateDecision('gate-2')],
+  });
+  const calls = { rebroadcastDecisionIds: [] as string[] };
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
+    }),
+    updateRun: () => {},
+    updateRunStep: () => {},
+    broadcast: (_event: string, payload: { decision?: { id: string } }) => {
+      if (payload.decision) calls.rebroadcastDecisionIds.push(payload.decision.id);
+    },
+    setPrHealthOverlay: () => {},
+    quarantineLeakedRun: async () => {},
+    rearmHandoffAutoRecovery: () => undefined,
+    recoverInflightPublicationReviews: async () => [],
+    replayHumanGate: async () => {
+      throw new Error('replay preflight failed');
+    },
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  // Suppressing the rebroadcast after a failed replay would leave the
+  // operator with no actionable decision at all.
+  assert.deepEqual(calls.rebroadcastDecisionIds, ['gate-1', 'gate-2']);
+});
+
 test('recovery leaves a lone pending gate decision in place when nothing was recovered', async () => {
   const run = minimalActiveRun({
     ticketOrPr: 'RECOVERY-7',

@@ -285,14 +285,21 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
             console.log(
               `[run-engine] run ${run.id.slice(0, 8)} — re-entering human gate after restart (${recoveredReviews} recovered review(s), ${gateDecisions.length} pending gate decision(s))`,
             );
-            deps.replayHumanGate(run.id).catch((err) => {
+            try {
+              // Awaited: skip the stale rebroadcast only once the replay has
+              // actually taken gate ownership (it supersedes the pending
+              // decisions before presenting a fresh one; the engine resume it
+              // schedules is detached, so this stays bounded).
+              await deps.replayHumanGate(run.id);
+              continue;
+            } catch (err) {
+              // Re-entry failed before establishing ownership — fall through
+              // so whatever is STILL unresolved gets re-presented; suppressing
+              // it would leave the operator with no actionable decision.
               console.warn(
                 `[run-engine] run ${run.id.slice(0, 8)} — human-gate re-entry failed: ${(err as Error).message.slice(0, 200)}`,
               );
-            });
-            // Re-entry supersedes the stale decisions and presents a fresh
-            // one; the rebroadcast below would resurrect the stale ones.
-            continue;
+            }
           }
         }
         console.log(
@@ -305,6 +312,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
           });
         }
         for (const d of unresolved) {
+          // Re-check at broadcast time: a replay that failed partway may have
+          // superseded some of these before dying.
+          if (d.resolvedAt) continue;
           deps.broadcast(Events.RUN_DECISION_NEW, {
             runId: run.id,
             decision: d,

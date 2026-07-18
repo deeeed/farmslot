@@ -18,7 +18,10 @@ import {
 import { execOnSlot } from '../../core/exec.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
-import { hasValidPrNumber } from '../../run-engine/gate-policy.js';
+import {
+  hasValidPrNumber,
+  supersedeStaleHumanGateDecisions,
+} from '../../run-engine/gate-policy.js';
 import {
   bumpRunGeneration,
   cancelRunEngine,
@@ -570,9 +573,22 @@ export async function runReplayStep(
     targetIdx <= humanGateIdx;
   const replaysPostGate = targetIdx >= 0 && humanGateIdx >= 0 && targetIdx > humanGateIdx;
   const replaysTaskGeneration = targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx <= writeTaskIdx;
+  // On the gate/task-generation replay paths, pending human-gate decisions
+  // are superseded and RETAINED, not dropped: deleting them destroys the
+  // audit trail, and the moment this update lands an operator can no longer
+  // resolve a decision the replayed gate is about to disown (the resolver
+  // rejects already-resolved decisions). 'superseded' is not an approval
+  // action, so decision-replay can never mistake it for an operator verdict.
+  // Other replay paths must NOT touch pending decisions — a no-human-gate
+  // finalize retry keeps its unresolved decisions actionable.
+  const supersededGateAudit =
+    replaysTaskGeneration || replaysCompletionOrGate
+      ? existing.decisions.filter((d) => d.type === 'engine_human_gate' && !d.resolvedAt)
+      : [];
+  supersedeStaleHumanGateDecisions(supersededGateAudit);
   const clearedDecisions =
     replaysTaskGeneration || replaysCompletionOrGate
-      ? []
+      ? supersededGateAudit
       : replaysPostGate
         ? existing.decisions
         : existing.decisions.filter((d) => {
