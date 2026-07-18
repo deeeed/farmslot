@@ -338,6 +338,27 @@ export function slotClaimBlockedByRelease(slot: Readonly<Record<string, unknown>
   return slot.phase === SLOT_PHASE_RELEASING ? 'slot is mid-release' : null;
 }
 
+/** Run statuses after which a slot claim may be taken over. */
+export const TERMINAL_RUN_STATUSES: readonly string[] = ['cancelled', 'failed', 'done'];
+
+/**
+ * Claim exclusivity: an existing owner blocks the claim unless it is the
+ * claiming run itself, or a run that no longer exists / has gone terminal.
+ * Shared by find-slot selection and the ci-watch replay reclaim so the rule
+ * cannot drift between writers.
+ */
+export function slotClaimBlockedByLiveOwner(
+  slot: Readonly<Record<string, unknown>>,
+  runId: string,
+  ownerRunLookup: (id: string) => { status: string } | undefined,
+): string | null {
+  const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
+  if (!owner || owner === runId) return null;
+  const ownerRun = ownerRunLookup(owner);
+  if (!ownerRun || TERMINAL_RUN_STATUSES.includes(ownerRun.status)) return null;
+  return `slot is claimed by live run ${owner}`;
+}
+
 /**
  * Error code carried by refused slot claims — the thrower never owned the
  * slot, so failure handling must not reset it.

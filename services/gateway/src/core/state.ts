@@ -193,7 +193,14 @@ export async function rewriteStatusFile(
     let current: { slots?: Array<Record<string, unknown>> } | null = null;
     if (existsSync(statusFile)) {
       try {
-        current = JSON.parse(await readFile(statusFile, 'utf-8'));
+        const parsed = JSON.parse(await readFile(statusFile, 'utf-8'));
+        // Malformed-but-parseable shapes (slots as an object, null rows) must
+        // not crash the rebuild that would repair them — normalize to a clean
+        // row array or regenerate from live checks via null.
+        const slots = Array.isArray(parsed?.slots)
+          ? parsed.slots.filter((row: unknown) => row && typeof row === 'object')
+          : null;
+        current = slots ? { ...parsed, slots } : null;
       } catch {
         // A corrupt status file must not block the rebuild that repairs it —
         // the builder receives null and regenerates from live checks.

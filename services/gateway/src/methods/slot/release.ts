@@ -207,8 +207,17 @@ async function slotReleaseImpl(
   // Stop TASK.md watching — only after the CAS proves this teardown owns the
   // slot; removing watchers first would strip a rival claim's watchers even
   // when the release is then correctly refused.
-  const { unwatchSlot } = await import('../../tasks/watcher.js');
-  await unwatchSlot(params.slotId);
+  try {
+    const { unwatchSlot } = await import('../../tasks/watcher.js');
+    await unwatchSlot(params.slotId);
+  } catch (err) {
+    // A failed watcher removal must not strand the slot in `releasing`: the
+    // teardown that follows kills the session anyway, making the watcher
+    // moot, so proceeding is strictly better than aborting here.
+    console.warn(
+      `[release] unwatch failed for ${params.slotId}; continuing teardown: ${(err as Error).message}`,
+    );
+  }
   const guardedTeardownWrite = async (fields: Record<string, unknown>): Promise<boolean> => {
     const ok = await updateSlotStatusIf(
       params.slotId,

@@ -468,3 +468,19 @@ test('resolveSlot failures teach the escape with a structured userAction', async
     },
   );
 });
+
+test('reconcileRefreshSlotRowWithActiveRun preserves a releasing fence over the active run phase', () => {
+  const row = makeRefreshRow({
+    lifecycle: 'busy',
+    phase: 'releasing',
+    current_run_id: 'teardown-owner',
+  });
+  const reconciled = reconcileRefreshSlotRowWithActiveRun(row, {
+    id: 'active-run',
+    status: 'monitoring',
+    flowType: 'fix-bug',
+  } as never);
+  assert.equal(reconciled.phase, 'releasing', 'fence preserved');
+  assert.equal(reconciled.current_run_id, 'teardown-owner', 'owner untouched');
+  assert.equal(reconciled.dispatchable, false);
+});

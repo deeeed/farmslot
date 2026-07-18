@@ -33,6 +33,7 @@ import {
   isFreeSlot,
   projectConfigsFromProjects,
   SLOT_CLAIM_REFUSED_CODE,
+  slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
   slotScore,
 } from '../methods/dispatch/slot-scoring.js';
@@ -100,18 +101,18 @@ async function claimSelectedSlot(
   runId: string,
   phase: 'preparing' | 'working',
   agent?: 'working',
+  opts?: { takeoverLiveOwner?: boolean },
 ): Promise<void> {
   const claim = await claimSlotStatusIf(
     slotId,
     (slot) => {
       if (slotClaimBlockedByRelease(slot) !== null) return false;
-      // Exclusive: two selections racing over the same free snapshot must not
-      // both succeed. An existing owner blocks the claim unless it is this
-      // run, or a run that no longer exists / has gone terminal.
-      const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
-      if (!owner || owner === runId) return true;
-      const ownerRun = getRun(owner);
-      return !ownerRun || ['cancelled', 'failed', 'done'].includes(ownerRun.status);
+      // Exclusive by default: two selections racing over one free snapshot
+      // must not both succeed. The operator-approved nudge takeover is the
+      // exception — it deliberately claims over a live worker, whose prior
+      // run is terminalized by nudgeDispatch right after.
+      if (opts?.takeoverLiveOwner) return true;
+      return slotClaimBlockedByLiveOwner(slot, runId, getRun) === null;
     },
     // Ownership binds in the SAME claim write: a teardown must be able to see
     // who owns the slot.
@@ -415,7 +416,9 @@ export async function executeFindSlotStep(
           // decision-card nudge fail its own eligibility recheck. The wizard-shortcut path
           // doesn't markSlotBusy at all (slot already has agent=working from the prior run);
           // this branch needs the same preservation.
-          await claimSelectedSlot(top.slot.slot, runId, 'working', 'working');
+          await claimSelectedSlot(top.slot.slot, runId, 'working', 'working', {
+            takeoverLiveOwner: true,
+          });
           broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
           return {
             inputs,

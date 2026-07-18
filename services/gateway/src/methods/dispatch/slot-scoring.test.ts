@@ -9,6 +9,7 @@ import {
   findBestSlot,
   isCdpLive,
   isFreeSlot,
+  slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
   slotScore,
   validateSlot,
@@ -204,4 +205,19 @@ test('slotClaimBlockedByRelease refuses only slots mid-release', () => {
   assert.equal(slotClaimBlockedByRelease({ phase: 'dispatching' }), null);
   assert.equal(slotClaimBlockedByRelease({ phase: 'working' }), null);
   assert.equal(slotClaimBlockedByRelease({}), null);
+});
+
+test('slotClaimBlockedByLiveOwner blocks only live non-terminal owners', () => {
+  const lookup = (id: string) =>
+    ({ live: { status: 'monitoring' }, dead: undefined, finished: { status: 'done' } })[
+      id as 'live'
+    ];
+  assert.equal(slotClaimBlockedByLiveOwner({}, 'me', lookup), null);
+  assert.equal(slotClaimBlockedByLiveOwner({ current_run_id: 'me' }, 'me', lookup), null);
+  assert.equal(slotClaimBlockedByLiveOwner({ current_run_id: 'dead' }, 'me', lookup), null);
+  assert.equal(slotClaimBlockedByLiveOwner({ current_run_id: 'finished' }, 'me', lookup), null);
+  assert.match(
+    slotClaimBlockedByLiveOwner({ current_run_id: 'live' }, 'me', lookup) ?? '',
+    /claimed by live run live/,
+  );
 });

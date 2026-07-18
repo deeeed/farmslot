@@ -18,7 +18,7 @@ import {
 } from '@farmslot/protocol';
 
 import { pokeCIPoll } from '../../ci-monitor/service.js';
-import { claimSlotStatusIf, updateSlotStatus } from '../../core/index.js';
+import { claimSlotStatusIf, updateSlotStatusIf } from '../../core/index.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { refreshArtifactMirror } from '../../run-completion/artifact-mirror.js';
 import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
@@ -192,7 +192,11 @@ export async function runActivateOnSlot(
       emit,
     );
   } catch (err) {
-    await updateSlotStatus(targetSlot, { current_run_id: priorRunId });
+    // Roll back only OUR claim: a newer claim that took the slot after this
+    // activate must not be clobbered by the restore.
+    await updateSlotStatusIf(targetSlot, (slot) => slot.current_run_id === run.id, {
+      current_run_id: priorRunId,
+    });
     updateRun(params.runId, { slotId: priorSlotId });
     throw err;
   }

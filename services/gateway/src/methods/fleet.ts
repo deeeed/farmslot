@@ -31,6 +31,7 @@ import {
   readSlotField,
   renderFixtureTemplate,
   rewriteStatusFile,
+  SLOT_PHASE_RELEASING,
   type SlotVars,
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
@@ -217,6 +218,12 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
   activeRun: Run | null,
 ): T {
   if (!activeRun) return row;
+  // A releasing fence belongs to an in-flight teardown: overwriting it with
+  // the active run's phase would reopen the slot mid-destruction. Preserve
+  // the fence; the teardown's own CAS finalize decides what comes next.
+  if (row.phase === SLOT_PHASE_RELEASING) {
+    return { ...row, dispatchable: false };
+  }
   const activeState = activeSlotPhaseForRun(activeRun);
   return {
     ...row,

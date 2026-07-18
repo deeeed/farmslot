@@ -832,11 +832,15 @@ export async function runRehydratePrNumber(
   // without them would break same-family reuse checks in dispatch.ts:480-483.
   if (slotStatus.currentRunId !== params.runId) {
     const { claimSlotStatusIf } = await import('../core/index.js');
-    const { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } =
+    const { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease, slotClaimBlockedByLiveOwner } =
       await import('./dispatch/slot-scoring.js');
     const reclaim = await claimSlotStatusIf(
       run.slotId,
-      (slot) => slotClaimBlockedByRelease(slot) === null,
+      // Exclusivity decided INSIDE the CAS — the fleet snapshot consulted
+      // above can be stale by the time this write runs.
+      (slot) =>
+        slotClaimBlockedByRelease(slot) === null &&
+        slotClaimBlockedByLiveOwner(slot, params.runId, getRun) === null,
       {
         current_run_id: params.runId,
         current_flow_type: run.flowType || null,
