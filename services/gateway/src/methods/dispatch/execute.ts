@@ -28,6 +28,7 @@ import {
   resetSlot,
   resolveProjectTaskDirName,
   updateSlotStatus,
+  updateSlotStatusIf,
 } from '../../core/index.js';
 import {
   firstWindowTarget,
@@ -75,7 +76,11 @@ import { killAgentInSession, slotPrepare } from '../slot.js';
 import { recreationOwnershipViolation, runLaunchPreludeAndSend } from './launch-clear.js';
 import { buildDispatchRoleShellCommand, parseCapturedAgentPaneTarget } from './role-target.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
-import { buildSlotClaimStatus, evaluateSlotIdentityPolicy } from './slot-scoring.js';
+import {
+  buildSlotClaimStatus,
+  evaluateSlotIdentityPolicy,
+  slotClaimBlockedByRelease,
+} from './slot-scoring.js';
 import { flowTypeToKey } from './task-flow-key.js';
 
 export {
@@ -851,10 +856,14 @@ export async function dispatchExecute(
     }
   }
 
-  // 1. Claim slot
+  // 1. Claim slot — CAS'd against a mid-flight release. Release marks the
+  // slot busy/releasing before killing tmux and resets state unconditionally
+  // at its end, so a claim accepted during that window would be killed and
+  // then clobbered, leaving a zombie worker.
   step('claim', 'Claiming slot...');
-  await updateSlotStatus(
+  const claimed = await updateSlotStatusIf(
     params.slotId,
+    (slot) => slotClaimBlockedByRelease(slot) === null,
     buildSlotClaimStatus({
       runId: params.runId ?? null,
       taskId,
@@ -869,6 +878,11 @@ export async function dispatchExecute(
       fallbackVariant: params.variant ?? null,
     }),
   );
+  if (!claimed) {
+    throw new Error(
+      `Slot ${params.slotId} is mid-release; claim refused — re-run slot selection for a fresh worker`,
+    );
+  }
   step('claim', 'Slot claimed, lifecycle=busy(dispatching)');
 
   // 2. Prepare slot

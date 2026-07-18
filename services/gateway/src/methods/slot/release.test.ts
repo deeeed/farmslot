@@ -5,7 +5,7 @@ import { PipelineSteps } from '@farmslot/protocol';
 
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
-import { slotRelease } from './release.js';
+import { releaseOwnershipIntact, slotRelease } from './release.js';
 
 // These tests resolve the committed demo pool's slots (demo-work-1), which the
 // loaders hide unless explicitly opted in.
@@ -121,4 +121,16 @@ test('slotRelease rejects post-approval gate-held runs until FINALIZE completes'
     () => slotRelease({ slotId }, noopEmit),
     new RegExp(`gate-held for run ${run.id}`),
   );
+});
+
+test('releaseOwnershipIntact only allows teardown while the entry owner still holds the slot', () => {
+  // Unchanged owner (or an unclaimed slot released as unclaimed) may proceed.
+  assert.equal(releaseOwnershipIntact({ current_run_id: 'run-a' }, 'run-a'), true);
+  assert.equal(releaseOwnershipIntact({}, null), true);
+  // A rival claim landing after release entry owns the slot now: killing its
+  // session and resetting its claim would leave a zombie worker.
+  assert.equal(releaseOwnershipIntact({ current_run_id: 'run-b' }, 'run-a'), false);
+  assert.equal(releaseOwnershipIntact({ current_run_id: 'run-b' }, null), false);
+  // Owner vanished (already released elsewhere): nothing to protect.
+  assert.equal(releaseOwnershipIntact({}, 'run-a'), false);
 });
