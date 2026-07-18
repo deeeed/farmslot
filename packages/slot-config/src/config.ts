@@ -8,6 +8,7 @@ import path from 'node:path';
 import {
   DEFAULT_TASK_DIR,
   FAILURE_CATEGORIES,
+  type FlowType,
   type PoolSlotMode,
   PREPARE_PHASES,
   PREPARE_REQUIREMENTS,
@@ -201,15 +202,19 @@ export interface RawProjectJson {
     max_nudges?: number;
     /**
      * Per-flow timeout overrides keyed by FlowType (dev, fix-bug, pr-complete, …).
-     * Only total_timeout_min and stuck_timeout_min are overridable; when absent the
+     * Keys are restricted to the FlowType union so a typo'd flow name fails the
+     * typecheck/schema instead of silently never matching at runtime. Only
+     * total_timeout_min and stuck_timeout_min are overridable; when absent the
      * top-level monitoring value (then the built-in default) applies.
      */
-    flows?: Record<
-      string,
-      {
-        total_timeout_min?: number;
-        stuck_timeout_min?: number;
-      }
+    flows?: Partial<
+      Record<
+        FlowType,
+        {
+          total_timeout_min?: number;
+          stuck_timeout_min?: number;
+        }
+      >
     >;
   };
   ci?: {

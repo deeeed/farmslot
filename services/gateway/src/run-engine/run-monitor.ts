@@ -47,6 +47,7 @@ import { onWorkerSignal, resolveContextFilePath } from '../tasks/watcher.js';
 import {
   isTerminalWorkerSignal,
   normalizeWorkerSignal,
+  parseFiniteIsoMs,
   signalFreshAfterAll,
 } from '../tasks/worker-signals.js';
 import { loadTerminalContractForRun } from '../tasks/worker-terminal-contract.js';
@@ -279,6 +280,11 @@ export function isFreshTerminalHandoffSignal(
   const bound = bindSignalToMonitorContext(signal, monitorContext);
   if (!isTerminalWorkerSignal(bound)) return false;
   if (!signalMatchesMonitorContext(bound, monitorContext)) return false;
+  // Unattended resolution must PROVE freshness. The shared freshness helpers
+  // treat an unparseable timestamp as fresh (lenient for operator-confirmed
+  // paths), which here would let a corrupt or timestamp-less SIGNAL.json
+  // resolve a handoff with nobody watching — so require a verifiable one.
+  if (parseFiniteIsoMs(bound.timestamp) === null) return false;
   return isWorkerSignalFreshForRun(run, bound);
 }
 
@@ -1253,12 +1259,50 @@ function armInteractiveHandoffAutoRecovery(
   poll = setInterval(() => {
     void (async () => {
       if (settled) return;
-      const signal = await readFreshTerminalSignalForRun(runId, slotId);
-      if (signal) consider(signal);
+      try {
+        const signal = await readFreshTerminalSignalForRun(runId, slotId);
+        if (signal) consider(signal);
+      } catch (err) {
+        // A failed probe must not become an unhandled rejection (which can
+        // kill the gateway); the poll retries on the next tick and the
+        // operator path stays available, so warn-and-continue is safe.
+        console.warn(
+          `[run-monitor] run ${runId.slice(0, 8)} — handoff auto-recovery poll failed: ${(err as Error).message}`,
+        );
+      }
     })();
   }, HANDOFF_AUTO_RECOVERY_POLL_MS);
 
   return cleanup;
+}
+
+/**
+ * Restart path: the engine promise that owned a pending interactive_handoff
+ * died with the previous gateway process, taking its auto-recovery watcher
+ * with it. Recovery re-arms the watcher here. Resolution cannot use the dead
+ * promise's resolver, so it routes through the injected decision resolver
+ * (the public resolve path), whose restart fallback resumes the pipeline.
+ */
+export function rearmInteractiveHandoffAutoRecovery(
+  run: Run,
+  resolveDecision: (runId: string, decisionId: string, actionId: string) => Promise<void>,
+): (() => void) | undefined {
+  const slotId = run.slotId;
+  if (!slotId) return undefined;
+  const decision = run.decisions.find(
+    (d) => !d.resolvedAt && d.type === 'monitor_interactive_handoff',
+  );
+  if (!decision) return undefined;
+  return armInteractiveHandoffAutoRecovery(run.id, slotId, decision, (actionId) => {
+    resolveDecision(run.id, decision.id, actionId).catch((err) => {
+      // The watcher disarmed itself before resolving, so a failed resolve
+      // would otherwise vanish silently; the decision stays unresolved and
+      // the operator can still resolve it manually from the dashboard.
+      console.warn(
+        `[run-monitor] run ${run.id.slice(0, 8)} — auto-resolve of interactive handoff failed after restart: ${(err as Error).message}`,
+      );
+    });
+  });
 }
 
 async function createBlockedDecision(

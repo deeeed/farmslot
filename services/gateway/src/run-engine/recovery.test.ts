@@ -144,6 +144,86 @@ test('recoverActiveRuns clears stale human-gate running detail while re-presenti
   assert.deepEqual(stepUpdates, [{ detail: 'Waiting for operator decision' }]);
 });
 
+test('recoverActiveRuns re-arms handoff auto-recovery for a blocked interactive handoff', async () => {
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-3',
+    familyRootTicketOrPr: 'RECOVERY-3',
+    taskFile: '/tmp/farmslot-recovery-3/TASK.md',
+    status: 'blocked',
+    steps: [{ name: 'monitor', status: 'running' }],
+    decisions: [
+      {
+        id: 'decision-handoff',
+        type: 'monitor_interactive_handoff',
+        title: 'Interactive handoff',
+        description: 'Waiting for SIGNAL.json',
+        actions: [{ id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' }],
+        createdAt: '2026-06-30T14:20:00.000Z',
+      },
+    ],
+  });
+  const rearmedRunIds: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
+    }),
+    updateRun: () => {},
+    updateRunStep: () => {},
+    broadcast: () => {},
+    setPrHealthOverlay: () => {},
+    quarantineLeakedRun: async () => {},
+    rearmHandoffAutoRecovery: (r: Run) => {
+      rearmedRunIds.push(r.id);
+      return () => {};
+    },
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(rearmedRunIds, [run.id]);
+});
+
+test('recoverActiveRuns does not re-arm handoff auto-recovery for non-handoff decisions', async () => {
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-4',
+    familyRootTicketOrPr: 'RECOVERY-4',
+    taskFile: '/tmp/farmslot-recovery-4/TASK.md',
+    status: 'blocked',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [
+      {
+        id: 'decision-1',
+        type: 'engine_human_gate',
+        title: 'Review publish package',
+        description: 'Review publish package',
+        actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+        createdAt: '2026-06-30T14:20:00.000Z',
+      },
+    ],
+  });
+  let rearmed = false;
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
+    }),
+    updateRun: () => {},
+    updateRunStep: () => {},
+    broadcast: () => {},
+    setPrHealthOverlay: () => {},
+    quarantineLeakedRun: async () => {},
+    rearmHandoffAutoRecovery: () => {
+      rearmed = true;
+      return () => {};
+    },
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.equal(rearmed, false);
+});
+
 test('prepareSubstepsShowCompletion recognises a terminal health sub-step', () => {
   const complete = (detail: string): RunStep => ({
     name: 'prepare',

@@ -832,6 +832,9 @@
         "flows": {
           "type": "object",
           "description": "Per-flow timeout overrides keyed by FlowType (dev, fix-bug, review-pr, pr-complete, update-branch). Falls back to the top-level monitoring value, then the built-in default. Only total_timeout_min and stuck_timeout_min are overridable; poll_interval_min, idle_timeout_min, and max_nudges stay project-wide.",
+          "propertyNames": {
+            "enum": ["fix-bug", "review-pr", "dev", "pr-complete", "update-branch"]
+          },
           "additionalProperties": {
             "type": "object",
             "properties": {

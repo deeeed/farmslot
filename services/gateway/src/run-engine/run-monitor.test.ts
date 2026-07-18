@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RunDecision } from '@farmslot/protocol';
+import type { Run, RunDecision, WorkerSignal } from '@farmslot/protocol';
 
 import {
   applyHandoffAutoResolution,
@@ -9,6 +9,7 @@ import {
   isFreshTerminalHandoffSignal,
   isWorkerSignalFreshForRun,
   type MonitorNudgeRunView,
+  rearmInteractiveHandoffAutoRecovery,
   resolveMonitorConfig,
   runHasOpenHumanGate,
   shouldHoldForInteractivePrComplete,
@@ -305,6 +306,24 @@ test('isFreshTerminalHandoffSignal rejects a stale terminal signal predating the
   );
 });
 
+test('isFreshTerminalHandoffSignal rejects a terminal signal with no timestamp', () => {
+  // The type requires timestamp, but a hand-written SIGNAL.json can omit it —
+  // model that file shape directly.
+  const timestampless = { status: 'complete', outcome: 'success' } as WorkerSignal;
+  assert.equal(isFreshTerminalHandoffSignal(handoffRun, timestampless), false);
+});
+
+test('isFreshTerminalHandoffSignal rejects a terminal signal with an unparseable timestamp', () => {
+  assert.equal(
+    isFreshTerminalHandoffSignal(handoffRun, {
+      status: 'complete',
+      outcome: 'success',
+      timestamp: 'not-a-date',
+    }),
+    false,
+  );
+});
+
 test('isFreshTerminalHandoffSignal rejects a non-terminal running signal', () => {
   assert.equal(
     isFreshTerminalHandoffSignal(handoffRun, {
@@ -357,4 +376,55 @@ test('applyHandoffAutoResolution never fires for a non-terminal running signal',
   );
   assert.equal(resumed, false);
   assert.equal(decision.context?.autoResolved, undefined);
+});
+
+// ─── restart re-arm ───
+
+function handoffBlockedRun(overrides: Partial<Run> = {}): Run {
+  return {
+    id: 'a0466ede-9c65-4a55-8f2e-3b1f8f6f0001',
+    slotId: 'macwork-ff-2',
+    decisions: [
+      {
+        id: 'decision-handoff',
+        type: 'monitor_interactive_handoff',
+        title: 'Interactive handoff',
+        description: 'Waiting for SIGNAL.json',
+        actions: [{ id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' }],
+        createdAt: '2026-04-25T08:10:00Z',
+      },
+    ],
+    ...overrides,
+  } as Run;
+}
+
+test('rearmInteractiveHandoffAutoRecovery arms a watcher for an unresolved handoff and returns a disarm', () => {
+  const disarm = rearmInteractiveHandoffAutoRecovery(handoffBlockedRun(), async () => {});
+  assert.equal(typeof disarm, 'function');
+  disarm?.();
+});
+
+test('rearmInteractiveHandoffAutoRecovery declines without a slot', () => {
+  assert.equal(
+    rearmInteractiveHandoffAutoRecovery(handoffBlockedRun({ slotId: null }), async () => {}),
+    undefined,
+  );
+});
+
+test('rearmInteractiveHandoffAutoRecovery declines when the handoff is already resolved', () => {
+  const run = handoffBlockedRun();
+  run.decisions[0].resolvedAt = '2026-04-25T08:20:00Z';
+  assert.equal(
+    rearmInteractiveHandoffAutoRecovery(run, async () => {}),
+    undefined,
+  );
+});
+
+test('rearmInteractiveHandoffAutoRecovery declines when only non-handoff decisions are pending', () => {
+  const run = handoffBlockedRun();
+  run.decisions[0].type = 'engine_human_gate';
+  assert.equal(
+    rearmInteractiveHandoffAutoRecovery(run, async () => {}),
+    undefined,
+  );
 });
