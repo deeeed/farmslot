@@ -595,6 +595,88 @@ test('runReplayStep supersedes a pending human-gate decision instead of deleting
   assert.equal(superseded.context?.supersededBy, 'gate-reentry');
 });
 
+test('runReplayStep supersedes pending gate decisions before its first awaited operation', async (t) => {
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  const taskFile = '/tmp/farmslot-human-gate-race/TASK.md';
+  const slotOwner = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}1`,
+  });
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}2`,
+  });
+  const pendingGate: RunDecision = {
+    id: 'pending-gate-race',
+    type: 'engine_human_gate',
+    title: 'Ready to publish?',
+    description: 'Pending decision that must close before any await',
+    actions: [{ id: 'approve-publish', label: 'Approve publish', style: 'primary' as const }],
+    createdAt: '2026-07-18T10:00:00.000Z',
+  };
+  const doneThroughComplete = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+  ]);
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile,
+    slotId: 'macwork-ff-9',
+    decisions: [pendingGate],
+    steps: run.steps.map((step) =>
+      doneThroughComplete.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'human-gate'
+          ? { ...step, status: 'running' }
+          : step,
+    ),
+  });
+  // The slot is owned by ANOTHER live run, so the replay's first awaited
+  // operation — the slot re-claim — fails.
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      { slots: [{ slot: 'macwork-ff-9', lifecycle: 'busy', current_run_id: slotOwner.id }] },
+      null,
+      2,
+    ) + '\n',
+  );
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
+    for (const r of [run, slotOwner]) {
+      if (getRun(r.id)) {
+        updateRun(r.id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(r.id);
+      }
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {}),
+    /no longer safely reclaimable/,
+  );
+
+  // Even though the replay died at its FIRST awaited operation, the pending
+  // gate decision was already superseded — an operator resolving it during
+  // the awaited window can no longer spawn a competing engine loop.
+  const after = getRun(run.id);
+  assert.ok(after);
+  const superseded = after.decisions.find((d) => d.id === 'pending-gate-race');
+  assert.ok(superseded);
+  assert.equal(superseded.resolvedAction, 'superseded');
+  assert.equal(superseded.context?.supersededBy, 'gate-reentry');
+});
+
 test('runReplayStep drops a stale monitor decision when replaying from prepare', async (t) => {
   const taskFile = '/tmp/farmslot-monitor-replay/TASK.md';
   const run = createRun({
