@@ -1215,6 +1215,18 @@ export function applyHandoffAutoResolution(
  * the decision as `signal-written` and records the auto-resolution on the decision,
  * so the run resumes without an operator round-trip. Returns a disarm cleanup.
  */
+/**
+ * A watcher can outlive its decision when the operator resolves the handoff
+ * manually and no fresh terminal signal ever arrives (consider() then never
+ * runs). Both delivery paths check this FIRST so a dead decision disarms the
+ * watcher on the next push event or poll tick instead of leaking the interval
+ * and subscription until process exit. Exported for tests.
+ */
+export function handoffDecisionStillPending(runId: string, decisionId: string): boolean {
+  const decision = getRun(runId)?.decisions.find((d) => d.id === decisionId);
+  return Boolean(decision && !decision.resolvedAt);
+}
+
 function armInteractiveHandoffAutoRecovery(
   runId: string,
   slotId: string,
@@ -1255,6 +1267,10 @@ function armInteractiveHandoffAutoRecovery(
 
   const handlePush = (sigSlotId: string, sigRunId: string | null, ws: WorkerSignal): void => {
     if (settled) return;
+    if (!handoffDecisionStillPending(runId, decision.id)) {
+      cleanup();
+      return;
+    }
     if (sigSlotId !== slotId) return;
     if (sigRunId && sigRunId !== runId) return;
     const normalized = normalizeWorkerSignal(ws);
@@ -1268,6 +1284,10 @@ function armInteractiveHandoffAutoRecovery(
   poll = setInterval(() => {
     void (async () => {
       if (settled) return;
+      if (!handoffDecisionStillPending(runId, decision.id)) {
+        cleanup();
+        return;
+      }
       try {
         const signal = await readFreshTerminalSignalForRun(runId, slotId);
         if (signal) consider(signal);

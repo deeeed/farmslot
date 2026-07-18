@@ -3,9 +3,12 @@ import test from 'node:test';
 
 import type { Run, RunDecision, WorkerSignal } from '@farmslot/protocol';
 
+import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+
 import {
   applyHandoffAutoResolution,
   bindSignalToMonitorContext,
+  handoffDecisionStillPending,
   isFreshTerminalHandoffSignal,
   isWorkerSignalFreshForRun,
   type MonitorNudgeRunView,
@@ -440,6 +443,43 @@ test('rearmInteractiveHandoffAutoRecovery declines when the handoff is already r
     rearmInteractiveHandoffAutoRecovery(run, async () => {}),
     undefined,
   );
+});
+
+test('handoffDecisionStillPending tracks manual resolution so a signal-less watcher can disarm', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `WATCHER-LIVENESS-${Date.now().toString(16).toUpperCase()}`,
+    mode: 'autonomous',
+    initialContext: 'Exercise watcher liveness predicate',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  const decision: RunDecision = {
+    id: 'handoff-live',
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description: 'Waiting for SIGNAL.json',
+    actions: [
+      { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' as const },
+    ],
+    createdAt: '2026-04-25T08:10:00Z',
+  };
+  updateRun(run.id, { decisions: [decision] });
+  assert.equal(handoffDecisionStillPending(run.id, decision.id), true);
+
+  // Operator resolves manually while no terminal signal ever arrives: the
+  // predicate must flip so the armed watcher's next tick disarms it.
+  updateRun(run.id, {
+    decisions: [{ ...decision, resolvedAt: '2026-04-25T08:20:00Z', resolvedAction: 'abort' }],
+  });
+  assert.equal(handoffDecisionStillPending(run.id, decision.id), false);
+  assert.equal(handoffDecisionStillPending(run.id, 'missing-decision'), false);
+  assert.equal(handoffDecisionStillPending('missing-run', decision.id), false);
 });
 
 test('rearmInteractiveHandoffAutoRecovery declines when only non-handoff decisions are pending', () => {
