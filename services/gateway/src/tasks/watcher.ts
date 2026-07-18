@@ -481,12 +481,16 @@ async function unwatchKey(key: string, opts?: UnwatchGuardOpts): Promise<void> {
 }
 
 interface UnwatchGuardOpts {
-  /** Exact entry the caller intends to tear down (identity guard). */
+  /**
+   * Exact entry the caller intends to tear down (identity guard). Consulted
+   * ONLY when no owner scope is given — see closeWatchEntry.
+   */
   expected?: SlotWatch;
   /**
-   * Owner scope re-checked HERE, after any chained prior operation settled:
-   * a pre-chain snapshot can be absent mid-rebind, and tearing down without
-   * this authoritative check would close the successor the rebind registers.
+   * Owner scope, authoritative when present and re-checked HERE against the
+   * LIVE entry after any chained prior operation settled: the caller is
+   * undoing ALL wiring for that run, so a same-run replacement installed
+   * mid-chain must still be torn down; only a foreign run's entry survives.
    */
   expectedRunId?: string;
 }
@@ -494,14 +498,20 @@ interface UnwatchGuardOpts {
 async function closeWatchEntry(key: string, opts?: UnwatchGuardOpts): Promise<void> {
   const sw = activeWatches.get(key);
   if (!sw) return;
-  // Identity guard: a successor may have replaced this key's entry between
-  // the caller's ownership check and this get — closing the CURRENT entry
-  // would tear down the successor's live watch.
-  if (opts?.expected && sw !== opts.expected) return;
-  if (opts?.expectedRunId && sw.runId !== opts.expectedRunId) {
-    console.log(
-      `[task-watcher] skip unwatch ${key} — watch now belongs to run ${sw.runId ?? 'unknown'}`,
-    );
+  if (opts?.expectedRunId) {
+    // Owner scope decides alone — letting the exact-entry guard veto here
+    // would skip a same-run replacement installed mid-chain and leave the
+    // losing run's wiring alive.
+    if (sw.runId !== opts.expectedRunId) {
+      console.log(
+        `[task-watcher] skip unwatch ${key} — watch now belongs to run ${sw.runId ?? 'unknown'}`,
+      );
+      return;
+    }
+  } else if (opts?.expected && sw !== opts.expected) {
+    // Identity guard for in-chain rebind cleanup: a successor may have
+    // replaced this key's entry — closing the CURRENT entry would tear down
+    // the successor's live watch.
     return;
   }
 
