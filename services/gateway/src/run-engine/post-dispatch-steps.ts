@@ -54,6 +54,7 @@ import {
   shouldPrepareLocalFirstPackage,
 } from './publication-policy.js';
 import { verifyWorkerPushedBranch } from './push-verification.js';
+import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import { type MonitorResult, monitorRun } from './run-monitor.js';
 
 interface StepIO {
@@ -611,6 +612,18 @@ export async function executeHumanGateStep(
     await executeReviewGate(runId);
   } else {
     if (publicationApprovalGate) {
+      // Restart mid-review recovery: a gateway restart during a publish-gate
+      // review's await abandons the completed reviewer's result. Re-entering the
+      // human gate, ingest any finished-but-lost reviews before re-presenting so
+      // a completed review is never silently discarded.
+      if (current.slotId) {
+        const recovered = await recoverInflightPublicationReviews(runId, current.slotId);
+        if (recovered.length) {
+          console.log(
+            `[run-engine] run ${runId.slice(0, 8)} — recovered ${recovered.length} in-flight publication review(s) after restart`,
+          );
+        }
+      }
       const initialPlan = getRun(runId)?.engineState?.publishGate?.pendingReviewPlan ?? [];
       if (initialPlan.length) {
         const dispatchReviewSlotId = current.slotId;
