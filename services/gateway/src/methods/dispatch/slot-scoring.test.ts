@@ -10,6 +10,7 @@ import {
   findBestSlot,
   isCdpLive,
   isFreeSlot,
+  pickedSlotIneligibility,
   slotClaimBlockedByHandoff,
   slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
@@ -230,6 +231,31 @@ test('slotClaimBlockedByHandoff blocks foreign reservations only', () => {
   assert.match(
     slotClaimBlockedByHandoff({ handoff_run_id: 'other' }, 'me') ?? '',
     /reserved for handoff to run other/,
+  );
+});
+
+test('pickedSlotIneligibility rejects ghosts, foreign projects, and undispatchable slots', () => {
+  const base = {
+    enabled: true,
+    lifecycle: 'ready',
+    missingFromPool: false,
+    project: 'proj-a',
+  } as never;
+  assert.equal(pickedSlotIneligibility(base, 'proj-a'), null);
+  assert.match(pickedSlotIneligibility(undefined, 'proj-a') ?? '', /not in the fleet/);
+  assert.match(
+    pickedSlotIneligibility({ ...(base as object), missingFromPool: true } as never, 'proj-a') ??
+      '',
+    /missing from the pool/,
+  );
+  assert.match(pickedSlotIneligibility(base, 'proj-b') ?? '', /belongs to project/);
+  assert.match(
+    pickedSlotIneligibility({ ...(base as object), enabled: false } as never, 'proj-a') ?? '',
+    /disabled in the pool/,
+  );
+  assert.match(
+    pickedSlotIneligibility({ ...(base as object), lifecycle: 'manual' } as never, 'proj-a') ?? '',
+    /lifecycle is 'manual'/,
   );
 });
 

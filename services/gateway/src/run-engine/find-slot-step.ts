@@ -31,6 +31,7 @@ import {
 import {
   isCdpLive,
   isFreeSlot,
+  pickedSlotIneligibility,
   projectConfigsFromProjects,
   SLOT_CLAIM_REFUSED_CODE,
   slotClaimBlockedByHandoff,
@@ -504,6 +505,17 @@ export async function executeFindSlotStep(
           const pickedSlotId =
             (resolvedDecision?.selectionData?.slotId as string | undefined) ?? null;
           if (pickedSlotId) {
+            // selectionData is operator-supplied and unconstrained: now that
+            // claims create missing status rows, a typo'd or forged slot id
+            // would allocate a ghost row — and a ghost/disabled/foreign-
+            // project row must not be claimable either.
+            const picked = (await loadFleetStatus()).slots.find((s) => s.slot === pickedSlotId);
+            const ineligible = pickedSlotIneligibility(picked, run.project);
+            if (ineligible) {
+              throw new Error(
+                `Picked slot '${pickedSlotId}' is not eligible (${ineligible}); pick a slot again`,
+              );
+            }
             updateRun(runId, { slotId: pickedSlotId });
             await claimSelectedSlot(pickedSlotId, runId, 'preparing');
             broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
@@ -575,8 +587,27 @@ export async function executeFindSlotStep(
     );
     const pickedSlotId = (resolvedDecision?.selectionData?.slotId as string) || null;
     if (!pickedSlotId) throw new Error('No slot selected');
+    // Same unconstrained-selectionData exposure as the decision-card 'pick'
+    // branch above: the picked id must be an eligible live pool member.
+    {
+      const picked = (await loadFleetStatus()).slots.find((s) => s.slot === pickedSlotId);
+      const ineligible = pickedSlotIneligibility(picked, run.project);
+      if (ineligible) {
+        throw new Error(
+          `Picked slot '${pickedSlotId}' is not eligible (${ineligible}); pick a slot again`,
+        );
+      }
+    }
 
-    // If user requested reset, do it before proceeding
+    // Claim BEFORE any destructive reset: the claim CAS refuses live-owned,
+    // reserved, and mid-release slots and THROWS, so forged or stale
+    // selectionData with resetBranch can never hard-reset a repo an active
+    // owner's worker is still writing in — and the claim's 'preparing' fence
+    // keeps rivals out for the duration of the reset below.
+    updateRun(runId, { slotId: pickedSlotId });
+    await claimSelectedSlot(pickedSlotId, runId, 'preparing');
+
+    // If user requested reset, do it behind the claim fence
     if (resolvedDecision?.selectionData?.resetBranch) {
       const vars = await loadSlotVars(pickedSlotId);
       // Entry guard mirroring the other destructive-op call sites — never reset
@@ -597,8 +628,6 @@ export async function executeFindSlotStep(
       );
     }
 
-    updateRun(runId, { slotId: pickedSlotId });
-    await claimSelectedSlot(pickedSlotId, runId, 'preparing');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
     return {
       inputs,

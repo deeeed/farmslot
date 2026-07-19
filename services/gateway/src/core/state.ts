@@ -123,12 +123,21 @@ export async function claimSlotStatusIf(
   let claimed = false;
   let epoch: number | null = null;
   const next = writeChain.then(async () => {
-    if (!existsSync(statusFile)) return;
-    const content = await readFile(statusFile, 'utf-8');
-    const data = JSON.parse(content);
-    const slots: Array<Record<string, unknown>> = data.slots ?? [];
-    const slot = slots.find((s) => s.slot === slotId);
-    if (!slot) return;
+    const data: { slots?: Array<Record<string, unknown>> } = existsSync(statusFile)
+      ? JSON.parse(await readFile(statusFile, 'utf-8'))
+      : {};
+    const slots: Array<Record<string, unknown>> = (data.slots = data.slots ?? []);
+    let slot = slots.find((s) => s.slot === slotId);
+    if (!slot) {
+      // A missing row means NOTHING owns the slot: a freshly added pool entry
+      // has no status until the first fleet refresh. Refusing here would
+      // conflate "no state" with "mid-release" and make new slots permanently
+      // unclaimable (teardown-type writers correctly stay no-ops on missing
+      // rows — there is nothing to tear down). The claim creates the row it
+      // claims.
+      slot = { slot: slotId, slot_epoch: 0 };
+      slots.push(slot);
+    }
     if (!predicate(slot)) return;
     const nextEpoch = (Number(slot.slot_epoch) || 0) + 1;
     for (const [key, value] of Object.entries(fields)) {
