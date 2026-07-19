@@ -160,6 +160,11 @@ test('classifies official recipe actions by execution capability', () => {
     'host-read-export',
     'app-mutation',
   ]);
+  assert.deepEqual(officialRecipeActionCapabilities('cdp.network'), [
+    'host-read-export',
+    'app-mutation',
+    'external-mutation',
+  ]);
   assert.deepEqual(officialRecipeActionCapabilities('app.status'), ['host-read-export']);
   assert.deepEqual(officialRecipeActionCapabilities('state_read'), ['host-read-export']);
   assert.deepEqual(officialRecipeActionCapabilities('cdp.target'), ['host-read-export']);

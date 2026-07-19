@@ -101,6 +101,7 @@ const EXTERNAL_MUTATION_ACTIONS = new Set<OfficialActionName>([
   'ui.press',
   'ui.key_press',
   'ui.gesture',
+  'cdp.network',
 ]);
 
 export function officialRecipeActionCapabilities(

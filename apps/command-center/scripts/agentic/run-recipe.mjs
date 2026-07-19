@@ -40,6 +40,18 @@ const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 
+export const COMMAND_CENTER_RECIPE_SOURCE = Object.freeze({
+  kind: 'operator',
+  trust: 'trusted',
+  name: '@farmslot/command-center',
+});
+
+const COMMAND_CENTER_PRECONDITION_SOURCE = Object.freeze({
+  kind: 'bundled',
+  trust: 'trusted',
+  name: '@farmslot/command-center/preconditions',
+});
+
 function die(message, code = 1) {
   console.error(message);
   process.exit(code);
@@ -267,10 +279,12 @@ async function fetchOk(url) {
   return response.ok;
 }
 
-function buildPreconditions({ uiUrl, gatewayPort, cdpPort }) {
+export function buildPreconditions({ uiUrl, gatewayPort, cdpPort }) {
   return [
     {
       id: 'command_center.dev_server.ready',
+      capabilities: [],
+      source: COMMAND_CENTER_PRECONDITION_SOURCE,
       async execute() {
         const ok = await fetchOk(`${uiUrl}/`);
         return {
@@ -281,6 +295,8 @@ function buildPreconditions({ uiUrl, gatewayPort, cdpPort }) {
     },
     {
       id: 'gateway.reachable',
+      capabilities: [],
+      source: COMMAND_CENTER_PRECONDITION_SOURCE,
       async execute() {
         if (!gatewayPort) return { ok: true };
         const ok = await fetchOk(`http://127.0.0.1:${gatewayPort}/health`);
@@ -292,6 +308,8 @@ function buildPreconditions({ uiUrl, gatewayPort, cdpPort }) {
     },
     {
       id: 'runtime.browser.open',
+      capabilities: [],
+      source: COMMAND_CENTER_PRECONDITION_SOURCE,
       async execute() {
         try {
           await listCdpTargets('127.0.0.1', cdpPort);
@@ -666,6 +684,7 @@ async function main() {
   const hudEnabled = filteredManifest.supported_official_actions.includes('app.hud');
   const runner = createRecipeRunner({
     actionManifest: filteredManifest,
+    defaultSource: COMMAND_CENTER_RECIPE_SOURCE,
     adapters: [
       ...createStandardUiAdapters({
         transport,
