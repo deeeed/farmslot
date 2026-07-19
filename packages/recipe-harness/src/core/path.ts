@@ -85,6 +85,8 @@ async function openOutputFileWithinRoot(
     relativePath,
   );
   const outputPath = path.join(parentReal, path.basename(normalized));
+  // A hostile same-user process can still swap an already-checked parent; closing
+  // that race requires directory-fd/openat isolation beyond this accidental-use guard.
   try {
     const existing = await lstat(outputPath);
     if (existing.isSymbolicLink()) {
