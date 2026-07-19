@@ -188,7 +188,7 @@ export function enforceRecipeExecutionPlan(
   });
   if (blocked.length === 0) return;
   if (request.approval?.planDigest === plan.digest) return;
-  const publicBlocked = blocked.map(redactPlanNodePaths);
+  const publicBlocked = blocked.map(redactPlanNodeProvenance);
   if (request.approval) {
     throw new RecipeTrustError({
       code: 'RECIPE_APPROVAL_MISMATCH',
@@ -220,17 +220,19 @@ function effectiveInvocationOrigin(
   return invocationOrigin ?? definitionOrigin;
 }
 
-function redactPlanNodePaths(node: RecipePlanNode): RecipePlanNode {
+function redactPlanNodeProvenance(node: RecipePlanNode): RecipePlanNode {
   return {
     ...node,
-    origin: redactSourcePath(node.origin),
-    ...(node.invocationOrigin ? { invocationOrigin: redactSourcePath(node.invocationOrigin) } : {}),
-    ...(node.adapterOrigin ? { adapterOrigin: redactSourcePath(node.adapterOrigin) } : {}),
+    origin: redactSourceDetails(node.origin),
+    ...(node.invocationOrigin
+      ? { invocationOrigin: redactSourceDetails(node.invocationOrigin) }
+      : {}),
+    ...(node.adapterOrigin ? { adapterOrigin: redactSourceDetails(node.adapterOrigin) } : {}),
   };
 }
 
-function redactSourcePath(source: RecipeSourceProvenance): RecipeSourceProvenance {
-  const { path: _path, ...publicSource } = source;
+function redactSourceDetails(source: RecipeSourceProvenance): RecipeSourceProvenance {
+  const { name: _name, path: _path, ...publicSource } = source;
   return publicSource;
 }
 

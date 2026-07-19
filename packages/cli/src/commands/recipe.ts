@@ -56,6 +56,11 @@ interface RecipeRunOptions {
   artifactsDir?: string;
   actionManifest?: string;
   projectRoot?: string;
+  sourceTrust?: string;
+  sourceKind?: string;
+  sourceName?: string;
+  sourceDigest?: string;
+  approvePlan?: string;
 }
 
 interface RecipeProjectHookOptions {
@@ -666,6 +671,11 @@ export function registerRecipeCommand(program: Command): void {
       '--project-root <path>',
       'Project root used for command execution and artifact indexing',
     )
+    .option('--source-trust <trust>', 'Recipe source trust: trusted, untrusted, or unknown')
+    .option('--source-kind <kind>', 'Recipe source kind supplied by the caller')
+    .option('--source-name <name>', 'Human-readable recipe source name')
+    .option('--source-digest <digest>', 'Caller-computed source digest')
+    .option('--approve-plan <digest>', 'Approve exactly one resolved execution-plan digest')
     .action(async (recipePath: string, opts: RecipeRunOptions, cmd: Command) => {
       const globals = cmd.optsWithGlobals();
       const output = new OutputContext(Boolean(globals.json));
@@ -692,7 +702,13 @@ export function registerRecipeCommand(program: Command): void {
           projectRoot: opts.projectRoot
             ? resolveRecipeCliPath(opts.projectRoot)
             : resolveRecipeCliPath('.'),
-          ...resolveRecipeTrustInput(),
+          ...resolveRecipeTrustInput({
+            sourceTrust: opts.sourceTrust,
+            sourceKind: opts.sourceKind,
+            sourceName: opts.sourceName,
+            sourceDigest: opts.sourceDigest,
+            approvalDigest: opts.approvePlan,
+          }),
         });
         if (emit.machine) {
           emit.ok(result);

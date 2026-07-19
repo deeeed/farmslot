@@ -35,6 +35,8 @@ const RECIPE_SOURCE_ENV_NAMES = [
 /**
  * Mark agent commands spawned for a task containing caller-untrusted recipe
  * input. The source sidecar is written by the gateway, not by recipe content.
+ * This preserves provenance across runner launches; it is not an OS sandbox for
+ * a worker that already has unrestricted shell access.
  */
 export function withTaskRecipeTrustEnvironment(
   command: string,

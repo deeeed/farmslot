@@ -237,12 +237,17 @@ test('untrusted read-only recipes run while command is denied before side effect
         recipeDocument: recipe({ action: 'command', cmd: 'touch blocked.txt' }),
         artifactsDir,
         projectRoot: root,
-        source: { ...untrusted, path: '/private/task/recipe.json' },
+        source: {
+          ...untrusted,
+          name: '/private/task/recipe.json',
+          path: '/private/task/recipe.json',
+        },
       }),
       (error: unknown) => {
         assert.ok(error instanceof RecipeTrustError);
         assert.equal(error.code, 'RECIPE_TRUST_REQUIRED');
         assert.deepEqual(error.failure.blocked?.[0]?.capabilities, ['host-exec']);
+        assert.equal(error.failure.blocked?.[0]?.origin.name, undefined);
         assert.equal(error.failure.blocked?.[0]?.origin.path, undefined);
         return true;
       },
