@@ -633,6 +633,46 @@ test('exact-plan approval is bound to the execution context before side effects'
   }
 });
 
+test('explicit execution environments exclude ambient host control variables', async () => {
+  const root = await tempRoot();
+  const priorAmbient = process.env.FARMSLOT_RECIPE_CONTEXT_TEST;
+  try {
+    process.env.FARMSLOT_RECIPE_CONTEXT_TEST = 'preview';
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+    });
+    const request = {
+      recipeDocument: recipe({ action: 'command', cmd: 'touch explicit-env-marker.txt' }),
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      env: { PATH: process.env.PATH, RECIPE_MODE: 'review' },
+      inheritProcessEnv: false,
+      source: untrusted,
+    };
+    let planDigest = '';
+    try {
+      await runner.preflight(request);
+      assert.fail('expected trust preflight to reject');
+    } catch (error) {
+      assert.ok(error instanceof RecipeTrustError);
+      planDigest = error.failure.recipeDigest ?? '';
+    }
+
+    process.env.FARMSLOT_RECIPE_CONTEXT_TEST = 'execute';
+    const result = await runner.run({
+      ...request,
+      approval: { planDigest },
+    });
+    assert.equal(result.status, 'pass');
+    assert.equal(await missing(path.join(root, 'explicit-env-marker.txt')), false);
+  } finally {
+    if (priorAmbient === undefined) delete process.env.FARMSLOT_RECIPE_CONTEXT_TEST;
+    else process.env.FARMSLOT_RECIPE_CONTEXT_TEST = priorAmbient;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('untrusted recipes cannot export checkout files through index_artifacts', async () => {
   const root = await tempRoot();
   try {

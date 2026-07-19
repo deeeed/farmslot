@@ -238,7 +238,10 @@ class DefaultRecipeRunner implements RecipeRunner {
     }
     const projectRoot = path.resolve(request.projectRoot ?? process.cwd());
     const artifactsDir = path.resolve(request.artifactsDir);
-    const env = { ...process.env, ...(request.env ?? {}) };
+    const env = {
+      ...(request.inheritProcessEnv === false ? {} : process.env),
+      ...(request.env ?? {}),
+    };
     const trustEnv = new Set<string>(Object.values(RECIPE_TRUST_ENV));
     for (const [key, value] of Object.entries(env)) {
       if (value === undefined || trustEnv.has(key)) delete env[key];

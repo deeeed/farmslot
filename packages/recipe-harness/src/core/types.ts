@@ -18,6 +18,8 @@ export interface RecipeRunRequest {
   artifactsDir: string;
   projectRoot?: string;
   env?: Record<string, string | undefined>;
+  /** Disable ambient process inheritance when the caller supplies the complete execution environment. */
+  inheritProcessEnv?: boolean;
   recordVideo?: boolean | RecipeVideoRecordingMode | RecipeVideoRecordingOptions;
   /** Provenance assigned by the caller; omitted sources receive unknown trust. */
   source?: RecipeSourceProvenance;
