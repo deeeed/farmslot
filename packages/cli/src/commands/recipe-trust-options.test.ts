@@ -36,6 +36,7 @@ test('recipe run blocks an untrusted command until the exact plan is approved', 
   const recipePath = path.join(root, 'recipe.json');
   const manifestPath = path.join(root, 'manifest.json');
   const markerPath = path.join(root, 'approved.txt');
+  const artifactsDir = path.join(root, 'artifacts');
   const commonArgs = [
     entry,
     '--json',
@@ -84,11 +85,11 @@ test('recipe run blocks an untrusted command until the exact plan is approved', 
       }),
     );
 
-    const blocked = spawnSync(
-      tsxBin,
-      [...commonArgs, '--artifacts-dir', path.join(root, 'blocked-artifacts')],
-      { cwd: packageDir, env: { ...process.env, FARMSLOT_HOME: root }, encoding: 'utf-8' },
-    );
+    const blocked = spawnSync(tsxBin, [...commonArgs, '--artifacts-dir', artifactsDir], {
+      cwd: packageDir,
+      env: { ...process.env, FARMSLOT_HOME: root },
+      encoding: 'utf-8',
+    });
     assert.notEqual(blocked.status, 0);
     assert.equal(existsSync(markerPath), false);
     const failure = JSON.parse(blocked.stdout) as {
@@ -100,13 +101,7 @@ test('recipe run blocks an untrusted command until the exact plan is approved', 
 
     const approved = spawnSync(
       tsxBin,
-      [
-        ...commonArgs,
-        '--artifacts-dir',
-        path.join(root, 'approved-artifacts'),
-        '--approve-plan',
-        digest,
-      ],
+      [...commonArgs, '--artifacts-dir', artifactsDir, '--approve-plan', digest],
       { cwd: packageDir, env: { ...process.env, FARMSLOT_HOME: root }, encoding: 'utf-8' },
     );
     assert.equal(approved.status, 0, approved.stderr || approved.stdout);
