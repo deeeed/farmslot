@@ -1125,6 +1125,8 @@ function expandRefinementRunnerCommand(
       .map(shellQuote)
       .join(' '),
   };
+  // A raw {{...}} surviving into a shell command is worse than into a prompt.
+  assertNoUnknownPlaceholders(command, Object.keys(replacements), 'Roadmap refinement command');
   let expanded = command;
   for (const [key, value] of Object.entries(replacements)) {
     expanded = expanded.replaceAll(`{{${key}}}`, value);

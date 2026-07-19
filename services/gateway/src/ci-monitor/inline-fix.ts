@@ -23,7 +23,7 @@ import {
 import { execOnSlot } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
-  expandTemplate,
+  expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
 import {
@@ -378,12 +378,10 @@ async function writeCIFixTask(
     [...Object.keys(ciReplacements), ...knownTemplatePlaceholders(vars, pv)],
     `CI-fix template for ${run.project}`,
   );
-  // Hooks pass first; explicit values last so CI_ISSUES comment text (which
-  // may quote {{...}} tokens verbatim) is never re-expanded.
-  let expanded = expandTemplate(template, vars, pv);
-  for (const [key, val] of Object.entries(ciReplacements)) {
-    expanded = expanded.replaceAll(`{{${key}}}`, val);
-  }
+  // Explicit values land last so CI_ISSUES comment text (which may quote
+  // {{...}} tokens verbatim) is never re-expanded and a colliding var cannot
+  // consume the placeholder.
+  const expanded = expandTemplateWithReservedLast(template, vars, pv, ciReplacements);
 
   // Write CI-FIX.md to slot using the shared safe text writer
   const taskPath = taskDirRelPath(taskDir, CI_FIX_CHECKLIST_TARGET.checklist);

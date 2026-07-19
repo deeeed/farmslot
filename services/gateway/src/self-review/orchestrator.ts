@@ -28,7 +28,7 @@ import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core
 import { execOnSlot } from '../core/exec.js';
 import {
   assertNoUnknownPlaceholders,
-  expandTemplate,
+  expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
 import { onSlotReset } from '../core/state.js';
@@ -998,14 +998,10 @@ async function sendFeedbackToWorker(
     [...Object.keys(replacements), ...knownTemplatePlaceholders(vars, pv)],
     `Self-review fix template for ${project}`,
   );
-  // Hooks pass first: slot resources, project.json vars, reference repos —
-  // the fix templates use {{farmslot_dir}}, {{SLOT_ID}}, {{recipe_*}} beyond
-  // the explicit set. Explicit values go last so reviewer-authored ISSUES
-  // text is never re-expanded (it may quote {{...}} tokens verbatim).
-  let expanded = expandTemplate(template, vars, pv);
-  for (const [key, val] of Object.entries(replacements)) {
-    expanded = expanded.replaceAll(`{{${key}}}`, val);
-  }
+  // Hooks pass covers {{farmslot_dir}}, {{SLOT_ID}}, {{recipe_*}} beyond the
+  // explicit set; explicit values land last so reviewer-authored ISSUES text
+  // is never re-expanded and a colliding var cannot consume the placeholder.
+  const expanded = expandTemplateWithReservedLast(template, vars, pv, replacements);
 
   // Clear any stale fix-pass signal before sending new feedback.
   const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);

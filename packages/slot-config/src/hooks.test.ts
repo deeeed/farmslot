@@ -7,6 +7,7 @@ import {
   collectTemplatePlaceholders,
   expandDispatchCmd,
   expandTemplate,
+  expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
 } from './hooks.js';
 
@@ -357,4 +358,61 @@ test('knownTemplatePlaceholders stays in sync with expandTemplate', () => {
   ]) {
     assert.ok(known.has(name), `known set is missing ${name}`);
   }
+
+  // A project var whose value cannot fully resolve in the nested pass must
+  // not count as known — expanding it would smuggle raw {{...}} to a worker.
+  const leakyVars = {
+    ...projectVars,
+    projectJson: {
+      ...projectVars.projectJson,
+      vars: { leaky: '{{no_such_thing}}/x', clean: '{{runtime_dir}}/ok' },
+    },
+  } as ProjectVars;
+  const leakyKnown = knownTemplatePlaceholders(slotVars, leakyVars);
+  assert.ok(!leakyKnown.has('leaky'));
+  assert.ok(leakyKnown.has('clean'));
+});
+
+test('expandTemplateWithReservedLast protects reserved values from collisions and re-expansion', () => {
+  const slotVars: SlotVars = {
+    slotId: 's1',
+    machine: 'm',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: 'x',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/r',
+    session: 's',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'x@localhost',
+    remoteRepo: '/tmp/r',
+    projectName: 'demo',
+    resourceVars: {},
+  };
+  const projectVars = {
+    projectName: 'demo',
+    projectConfig: '/x/project.json',
+    projectFixturesDir: '/x/fixtures',
+    projectTemplatesDir: '/x/templates',
+    projectJson: { vars: { ISSUES: 'colliding-project-var' } },
+    runtimeDir: '.agent',
+    artifactDir: '.task',
+  } as ProjectVars;
+  const rendered = expandTemplateWithReservedLast(
+    'in {{repo}}: {{ISSUES}}',
+    slotVars,
+    projectVars,
+    { ISSUES: 'reviewer text quoting {{repo}} verbatim' },
+  );
+  // Reserved value wins over the colliding project var, and its quoted
+  // {{repo}} token survives un-expanded.
+  assert.equal(rendered, 'in /tmp/r: reviewer text quoting {{repo}} verbatim');
 });

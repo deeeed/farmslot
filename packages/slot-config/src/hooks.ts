@@ -180,15 +180,16 @@ export function knownTemplatePlaceholders(
   projectVars?: ProjectVars,
   extraVars?: Record<string, string>,
 ): Set<string> {
-  const known = new Set<string>();
-  const add = (name: string) => {
-    known.add(name);
-    known.add(name.toUpperCase());
+  const addTo = (set: Set<string>, name: string) => {
+    set.add(name);
+    set.add(name.toUpperCase());
   };
-  for (const key of Object.keys(extraVars ?? {})) add(key);
-  for (const key of Object.keys(slotVars.resourceVars)) add(key);
+  // Names the nested project-var value pass can resolve (it runs without
+  // extras and without other project vars — see expandTemplateInternal).
+  const nested = new Set<string>();
+  for (const key of Object.keys(slotVars.resourceVars)) addTo(nested, key);
   for (const key of ['port', 'cdp_port', 'simulator', 'avd', 'adb_serial', 'headless', 'snapshot'])
-    add(key);
+    addTo(nested, key);
   for (const key of [
     'runtime_dir',
     'artifact_dir',
@@ -201,10 +202,43 @@ export function knownTemplatePlaceholders(
     'primary_repo',
     'domain',
   ])
-    add(key);
-  for (const key of Object.keys(projectVars?.projectJson.reference_repos ?? {})) add(`${key}_repo`);
-  for (const key of Object.keys(projectVars?.projectJson.vars ?? {})) add(key);
+    addTo(nested, key);
+  for (const key of Object.keys(projectVars?.projectJson.reference_repos ?? {}))
+    addTo(nested, `${key}_repo`);
+
+  const known = new Set(nested);
+  for (const key of Object.keys(extraVars ?? {})) addTo(known, key);
+  // A project var only counts as known when its value fully resolves in the
+  // nested pass — otherwise expanding it would smuggle raw {{...}} past the
+  // guard through the value itself.
+  for (const [key, rawValue] of Object.entries(projectVars?.projectJson.vars ?? {})) {
+    const valueNames = collectTemplatePlaceholders(String(rawValue));
+    if ([...valueNames].every((name) => nested.has(name))) addTo(known, key);
+  }
   return known;
+}
+
+/**
+ * Render a template where `reserved` placeholders receive their values only
+ * after the hooks pass: their content (reviewer/CI comment text) must never
+ * be re-expanded, and a colliding project or resource var must not consume
+ * the placeholder first. NUL sentinels are safe — templates are NUL-free text.
+ */
+export function expandTemplateWithReservedLast(
+  template: string,
+  slotVars: SlotVars,
+  projectVars: ProjectVars | undefined,
+  reserved: Record<string, string>,
+): string {
+  let masked = template;
+  for (const key of Object.keys(reserved)) {
+    masked = masked.replaceAll(`{{${key}}}`, `\u0000${key}\u0000`);
+  }
+  let expanded = expandTemplate(masked, slotVars, projectVars);
+  for (const [key, value] of Object.entries(reserved)) {
+    expanded = expanded.replaceAll(`\u0000${key}\u0000`, value);
+  }
+  return expanded;
 }
 
 export function assertNoUnknownPlaceholders(
