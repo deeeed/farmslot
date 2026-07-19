@@ -643,6 +643,19 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   const runtimeDir = projectJson.paths?.runtime_dir || '.agent';
   const artifactDir = projectJson.paths?.artifact_dir || '.task';
   const recipeDir = projectJson.paths?.recipe_dir || `${runtimeDir}/recipes`;
+  // Path values are substituted verbatim into hooks, task files, and prompts —
+  // a {{...}} token here would ship raw to a worker (same rule as resources).
+  for (const [field, dir] of Object.entries({
+    'paths.runtime_dir': runtimeDir,
+    'paths.artifact_dir': artifactDir,
+    'paths.recipe_dir': recipeDir,
+  })) {
+    if (/\{\{[^{}\n]+\}\}/.test(dir)) {
+      throw new Error(
+        `${field} in ${projectConfig} must not contain template placeholders: ${dir}`,
+      );
+    }
+  }
   const roadmap = normalizeRawProjectRoadmap(projectJson.roadmap);
 
   const value: ProjectVars = {
