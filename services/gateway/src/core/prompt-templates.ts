@@ -24,8 +24,10 @@ export async function loadPromptTemplate(
   let raw: string;
   try {
     raw = await readFile(templatePath, 'utf-8');
-  } catch {
+  } catch (err) {
     // Missing template is an expected state — caller uses its fallback.
+    // Anything else (EACCES, EIO, ...) is a real failure and must surface.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     return null;
   }
   const known = new Set<string>();

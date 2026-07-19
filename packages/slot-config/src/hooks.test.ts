@@ -291,6 +291,11 @@ test('assertNoUnknownPlaceholders passes known names and throws on unknown ones'
       ),
     /Prompt template worker-dispatch\.md.*\{\{recipe_quality_path\}\}/,
   );
+  // Every unknown name must appear in one error, not just the first.
+  assert.throws(
+    () => assertNoUnknownPlaceholders('{{alpha}} {{beta}}', [], 'multi'),
+    /\{\{alpha\}\}, \{\{beta\}\}/,
+  );
 });
 
 test('knownTemplatePlaceholders stays in sync with expandTemplate', () => {
@@ -336,4 +341,20 @@ test('knownTemplatePlaceholders stays in sync with expandTemplate', () => {
   const template = [...known].map((name) => `{{${name}}}`).join(' ');
   const expanded = expandTemplate(template, slotVars, projectVars, extraVars);
   assert.deepEqual([...collectTemplatePlaceholders(expanded)], []);
+  // Floor pin for the reverse direction: names expandTemplate substitutes must
+  // stay in the known set, or the guard would falsely reject valid templates.
+  for (const name of [
+    'watcher_port',
+    'WATCHER_PORT',
+    'recipe_dir',
+    'DOMAIN',
+    'mobile_repo',
+    'MOBILE_REPO',
+    'recipe_quality_path',
+    'RECIPE_QUALITY_PATH',
+    'extra_var',
+    'cdp_port',
+  ]) {
+    assert.ok(known.has(name), `known set is missing ${name}`);
+  }
 });

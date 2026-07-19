@@ -373,16 +373,17 @@ async function writeCIFixTask(
     CI_ISSUE_TYPE: ciIssueType,
   };
 
-  let expanded = template;
-  for (const [key, val] of Object.entries(ciReplacements)) {
-    expanded = expanded.replaceAll(`{{${key}}}`, val);
-  }
-  expanded = expandTemplate(expanded, vars, pv);
   assertNoUnknownPlaceholders(
     template,
     [...Object.keys(ciReplacements), ...knownTemplatePlaceholders(vars, pv)],
     `CI-fix template for ${run.project}`,
   );
+  // Hooks pass first; explicit values last so CI_ISSUES comment text (which
+  // may quote {{...}} tokens verbatim) is never re-expanded.
+  let expanded = expandTemplate(template, vars, pv);
+  for (const [key, val] of Object.entries(ciReplacements)) {
+    expanded = expanded.replaceAll(`{{${key}}}`, val);
+  }
 
   // Write CI-FIX.md to slot using the shared safe text writer
   const taskPath = taskDirRelPath(taskDir, CI_FIX_CHECKLIST_TARGET.checklist);

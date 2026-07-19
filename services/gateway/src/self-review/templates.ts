@@ -106,6 +106,14 @@ export async function expandSelfReviewTemplate(
     farmslot_dir: farmslotDir,
   };
 
+  assertNoUnknownPlaceholders(
+    template,
+    [...Object.keys(replacements), ...knownTemplatePlaceholders(vars, pv ?? undefined)],
+    `Self-review template for ${project} (${validationDepth})`,
+  );
+  // Explicit values first so the existence-checked MOBILE_REPO wins over the
+  // hooks pass's unchecked reference-repo path; all values here are paths/
+  // ports/ids, so re-expanding them in the second pass is a non-issue.
   let expanded = template;
   for (const [key, val] of Object.entries(replacements)) {
     expanded = expanded.replaceAll(`{{${key}}}`, val);
@@ -113,11 +121,6 @@ export async function expandSelfReviewTemplate(
   // Second pass: slot resources, project.json vars, reference repos — same
   // coverage as CI-fix task rendering, so templates can use {{recipe_*}} etc.
   expanded = expandTemplate(expanded, vars, pv ?? undefined);
-  assertNoUnknownPlaceholders(
-    template,
-    [...Object.keys(replacements), ...knownTemplatePlaceholders(vars, pv ?? undefined)],
-    `Self-review template for ${project} (${validationDepth})`,
-  );
   return expanded;
 }
 

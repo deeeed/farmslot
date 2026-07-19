@@ -166,7 +166,9 @@ const PLACEHOLDER_RE = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
 
 export function collectTemplatePlaceholders(text: string): Set<string> {
   const names = new Set<string>();
-  for (const match of text.matchAll(PLACEHOLDER_RE)) names.add(match[1] as string);
+  for (const match of text.matchAll(PLACEHOLDER_RE)) {
+    if (match[1]) names.add(match[1]);
+  }
   return names;
 }
 
