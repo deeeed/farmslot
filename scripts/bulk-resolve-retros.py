@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from glob import glob
@@ -29,7 +30,34 @@ REPO = Path(__file__).resolve().parent.parent
 RUNS_DIR = REPO / ".runs"
 DIGEST_DIR = REPO / ".omc" / "retro-digest"
 CDP_BIN = REPO / "apps" / "command-center" / "scripts" / "cdp.mjs"
-GATEWAY_HEALTH = "http://localhost:7777/health"
+
+
+def _gateway_endpoints() -> tuple[str, str]:
+    """Normalize FARMSLOT_GATEWAY ONCE into (ws url, health url) so the
+    reachability gate and the cdp.mjs RPC target the same instance — a value
+    normalized only for the probe would let health pass while every RPC
+    fails on the raw form. Userinfo is dropped (cdp.mjs authenticates via
+    FARMSLOT_GATEWAY_TOKEN/PASSWORD, and credentials must not leak into
+    error output); wss maps to https for the probe; IPv6 hosts re-bracket."""
+    raw = os.environ.get("FARMSLOT_GATEWAY", "").strip() or "ws://localhost:7777"
+    parts = urllib.parse.urlsplit(raw)
+    if not parts.netloc:
+        # Bare host:port without a scheme — reparse so netloc populates.
+        parts = urllib.parse.urlsplit(f"ws://{raw}")
+    ws_scheme = "wss" if parts.scheme.lower() == "wss" else "ws"
+    host = parts.hostname or "localhost"
+    if ":" in host:
+        host = f"[{host}]"
+    port = f":{parts.port}" if parts.port else ""
+    authority = f"{host}{port}"
+    http_scheme = "https" if ws_scheme == "wss" else "http"
+    # The WS path survives (path-routing proxies serve RPC at e.g. /ws);
+    # only query/fragment/userinfo are dropped. Health stays authority-rooted.
+    path = parts.path if parts.path not in ("", "/") else ""
+    return f"{ws_scheme}://{authority}{path}", f"{http_scheme}://{authority}/health"
+
+
+GATEWAY_WS, GATEWAY_HEALTH = _gateway_endpoints()
 
 
 def gateway_alive() -> bool:
@@ -82,7 +110,9 @@ def resolve_one(run_id: str, decision_id: str, dry_run: bool) -> tuple[bool, str
     if dry_run:
         return True, f"DRY: {' '.join(cmd)}"
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        # The SAME normalized target the health gate probed — never the raw env.
+        env = {**os.environ, "FARMSLOT_GATEWAY": GATEWAY_WS}
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10, env=env)
     except subprocess.TimeoutExpired:
         return False, "timeout"
     if r.returncode != 0:
