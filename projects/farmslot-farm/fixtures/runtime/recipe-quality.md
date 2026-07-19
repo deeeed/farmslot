@@ -6,7 +6,7 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
 
 - Graph envelope: `schema_version: 1`, `validate.workflow.entry`, `validate.workflow.nodes`, `intent` on every executable node. Include `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"` for editor/tooling support; when present it must match `schema_version`.
 - Runner: `{{recipe_validate_wrapper}}` with `{{recipe_manifest_path}}`.
-- Discovery: before authoring, inspect action names in `{{recipe_manifest_path}}`, then read only the relevant metadata/examples and existing recipes under `docs/examples/recipes/farmslot/`; reuse declared capabilities instead of guessing action names.
+- Discovery: before authoring, inspect action names in `{{recipe_manifest_path}}`, then read only the relevant metadata/examples and existing recipes under `{{farmslot_dir}}/docs/examples/recipes/farmslot/`; reuse declared capabilities instead of guessing action names.
 - Doctor: `cd {{REPO}} && node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --json`
 - Fast validation run (no video):
   ```bash
