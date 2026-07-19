@@ -43,10 +43,10 @@ export function withTaskRecipeTrustEnvironment(
   repo: string,
   taskDir?: string,
 ): string {
-  if (!taskDir) return command;
+  const clear = `unset ${RECIPE_SOURCE_ENV_NAMES.join(' ')}`;
+  if (!taskDir) return `${clear}; ${command}`;
   const taskRoot = path.posix.isAbsolute(taskDir) ? taskDir : path.posix.join(repo, taskDir);
   const sidecar = path.posix.join(taskRoot, 'inputs/inherited/recipe-source.json');
-  const clear = `unset ${RECIPE_SOURCE_ENV_NAMES.join(' ')}`;
   const mark = [
     'unset FARMSLOT_RECIPE_SOURCE_DIGEST FARMSLOT_RECIPE_APPROVE_PLAN',
     'export FARMSLOT_RECIPE_SOURCE_TRUST=untrusted',

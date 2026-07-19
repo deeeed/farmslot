@@ -9,6 +9,7 @@ import type { RecipeActionManifestDocument, RecipeSourceProvenance } from '@farm
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { writeJsonFile } from '../src/core/json.js';
+import { loadRecipeLibraries } from '../src/core/library.js';
 import { createRecipeRunner } from '../src/core/runner.js';
 import { canonicalRecipeJson } from '../src/core/trust.js';
 import { RecipeTrustError } from '../src/core/trust-error.js';
@@ -998,6 +999,36 @@ test('uses catalogs cannot escape the project root through symlinks', async () =
         projectRoot: root,
         source: trusted,
       }),
+      (error: unknown) =>
+        error instanceof RecipeTrustError && error.code === 'RECIPE_SOURCE_INVALID',
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('library catalogs cannot escape the library root through symlinks', async () => {
+  const root = await tempRoot();
+  const outside = await tempRoot();
+  try {
+    await mkdir(path.join(root, 'flows'), { recursive: true });
+    await writeJsonFile(path.join(root, 'library.json'), {
+      schema_version: 1,
+      kind: 'recipe-library',
+      name: 'linked-library',
+    });
+    await writeJsonFile(path.join(outside, 'outside.flows.json'), {
+      schema_version: 1,
+      kind: 'recipe-flow-catalog',
+      flows: {},
+    });
+    await symlink(
+      path.join(outside, 'outside.flows.json'),
+      path.join(root, 'flows', 'linked.flows.json'),
+    );
+    await assert.rejects(
+      loadRecipeLibraries([{ root, provenance: trusted }]),
       (error: unknown) =>
         error instanceof RecipeTrustError && error.code === 'RECIPE_SOURCE_INVALID',
     );

@@ -11,6 +11,9 @@ import {
 } from './launch-command.js';
 import { resolveWorkerDispatchPrompt } from './worker-prompt.js';
 
+const CLEAR_RECIPE_TRUST_ENV =
+  'unset FARMSLOT_RECIPE_SOURCE_TRUST FARMSLOT_RECIPE_SOURCE_KIND FARMSLOT_RECIPE_SOURCE_NAME FARMSLOT_RECIPE_SOURCE_DIGEST FARMSLOT_RECIPE_APPROVE_PLAN; ';
+
 async function dispatchPrompt(taskFile: string): Promise<string> {
   return resolveWorkerDispatchPrompt('farmslot-farm', { taskFile });
 }
@@ -30,8 +33,10 @@ describe('recipe source trust environment', () => {
     assert.match(command, /; cd \/repo && claude$/);
   });
 
-  it('does not decorate runner commands without a task directory', () => {
-    assert.equal(withTaskRecipeTrustEnvironment('claude', '/repo'), 'claude');
+  it('clears stale recipe provenance without a task directory', () => {
+    const command = withTaskRecipeTrustEnvironment('claude', '/repo');
+    assert.match(command, /^unset FARMSLOT_RECIPE_SOURCE_TRUST /);
+    assert.match(command, /FARMSLOT_RECIPE_APPROVE_PLAN; claude$/);
   });
 });
 import {
@@ -1468,7 +1473,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'",
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'`,
       );
     });
 
@@ -1477,7 +1482,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'",
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'`,
       );
       assert.match(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--print/);
@@ -1494,7 +1499,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && /opt/cursor/bin/agent --force --sandbox enabled --model sonnet-4 'Read TASK.md and execute.'",
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /opt/cursor/bin/agent --force --sandbox enabled --model sonnet-4 'Read TASK.md and execute.'`,
       );
       assert.match(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--print/);
@@ -1521,13 +1526,16 @@ describe('buildLaunchCommand', () => {
     it('falls back to bare `grok` on PATH when no grok_path is configured', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
-      assert.equal(cmd, "cd '/tmp/repo' && grok --model grok-build");
+      assert.equal(cmd, `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --model grok-build`);
     });
 
     it('falls back to inline Grok launcher with grok-build default model', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
-      assert.equal(cmd, "cd '/tmp/repo' && /usr/local/bin/grok --model grok-build");
+      assert.equal(
+        cmd,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --model grok-build`,
+      );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--single/);
       assert.doesNotMatch(cmd, /--print/);
@@ -1541,7 +1549,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && /Users/deeeed/.grok/bin/grok --permission-mode auto --effort xhigh --model grok-composer-2.5-fast",
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /Users/deeeed/.grok/bin/grok --permission-mode auto --effort xhigh --model grok-composer-2.5-fast`,
       );
     });
 
@@ -1679,7 +1687,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     });
     assert.equal(
       cmd,
-      "cd '/tmp/repo' && /opt/bin/grok --permission-mode bypassPermissions --effort xhigh --model grok-code-fast-1 --resume 'grok-session'",
+      `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /opt/bin/grok --permission-mode bypassPermissions --effort xhigh --model grok-code-fast-1 --resume 'grok-session'`,
     );
   });
 
