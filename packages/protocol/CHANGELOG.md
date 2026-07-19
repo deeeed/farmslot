@@ -3,6 +3,7 @@
 ## Unreleased
 
 - feat: add recipe provenance, execution-capability, exact-plan approval, and stable trust-failure contracts.
+- fix: bind recipe approvals to the project root, artifact destination, and effective run environment.
 - fix: reject parameter-templated flow references that cannot be represented in a static execution plan.
 
 - feat: `SLOT_LIFECYCLE` — canonical `SlotLifecycle` value constants for runtime logic (companion to the type union; string literals drift silently).

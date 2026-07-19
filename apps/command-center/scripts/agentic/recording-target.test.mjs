@@ -7,6 +7,7 @@ import {
   gatewayTokenSeedScript,
   resolveCommandCenterRecipeTrust,
   resolveRecordingTarget,
+  withCapturableRecordingTarget,
 } from './run-recipe.mjs';
 
 describe('recipe trust provenance', () => {
@@ -123,6 +124,31 @@ describe('resolveRecordingTarget', () => {
       resolveCaptureHelperTarget: async () => ({ selected: { id: '1' } }),
     });
     assert.equal(target.kind, 'app-window');
+  });
+});
+
+describe('withCapturableRecordingTarget', () => {
+  it('defers window preparation until recording starts', async () => {
+    let prepareCalls = 0;
+    let startedTarget;
+    const recorder = withCapturableRecordingTarget(
+      {
+        name: 'capture-helper',
+        async start(request) {
+          startedTarget = request.target;
+          return { async stop() {} };
+        },
+      },
+      async () => {
+        prepareCalls += 1;
+        return { kind: 'window-id', windowId: 'prepared' };
+      },
+    );
+
+    assert.equal(prepareCalls, 0);
+    await recorder.start({ target: { kind: 'pid', pid: 123 } });
+    assert.equal(prepareCalls, 1);
+    assert.deepEqual(startedTarget, { kind: 'window-id', windowId: 'prepared' });
   });
 });
 

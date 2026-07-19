@@ -82,7 +82,7 @@ function defineCommandAdapter(): ActionAdapter {
         node.timeout_ms == null ? undefined : asNumber(node.timeout_ms, 'command.timeout_ms');
       const result = await runShellCommand(command, {
         cwd: cwd ? context.resolveProjectPath(cwd) : context.projectRoot,
-        env: { ...process.env, ...context.env },
+        env: context.env,
         timeoutMs,
       });
       if (node.allow_failure !== true && result.exitCode !== 0) {

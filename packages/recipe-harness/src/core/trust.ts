@@ -65,6 +65,9 @@ export function buildRecipeExecutionPlan({
   adapters,
   preconditions,
   actionManifest,
+  projectRoot,
+  artifactsDir,
+  env,
   hud,
   recordVideo,
 }: {
@@ -75,6 +78,9 @@ export function buildRecipeExecutionPlan({
   adapters: ReadonlyMap<string, ActionAdapter>;
   preconditions: ReadonlyMap<string, PreconditionChecker>;
   actionManifest: RecipeActionManifestDocument;
+  projectRoot: string;
+  artifactsDir: string;
+  env: Record<string, string | undefined>;
   hud?: RecipeHudOptions | false;
   recordVideo?: RecipeRunRequest['recordVideo'];
 }): RecipeExecutionPlan {
@@ -165,8 +171,12 @@ export function buildRecipeExecutionPlan({
     digestNodes.push({ plan: planNode, node: { recordVideo } });
   }
 
-  const planBody = { schemaVersion: 1 as const, source, nodes };
-  return { ...planBody, digest: digestValue({ recipe, source, nodes: digestNodes }) };
+  const executionContextDigest = digestValue({ projectRoot, artifactsDir, env });
+  const planBody = { schemaVersion: 1 as const, executionContextDigest, source, nodes };
+  return {
+    ...planBody,
+    digest: digestValue({ recipe, source, executionContextDigest, nodes: digestNodes }),
+  };
 }
 
 export function enforceRecipeExecutionPlan(

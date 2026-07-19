@@ -548,6 +548,91 @@ test('approved custom implementations are re-hashed immediately before execution
   }
 });
 
+test('exact-plan approval is bound to the execution context before side effects', async () => {
+  const firstRoot = await tempRoot();
+  const secondRoot = await tempRoot();
+  const priorAmbient = process.env.FARMSLOT_RECIPE_CONTEXT_TEST;
+  const priorApproval = process.env.FARMSLOT_RECIPE_APPROVE_PLAN;
+  try {
+    process.env.FARMSLOT_RECIPE_CONTEXT_TEST = 'review';
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+    });
+    const baseRequest = {
+      recipeDocument: recipe({ action: 'command', cmd: 'touch context-marker.txt' }),
+      artifactsDir: path.join(firstRoot, 'artifacts'),
+      projectRoot: firstRoot,
+      env: { RECIPE_MODE: 'review' },
+      source: untrusted,
+    };
+    const blockedDigest = async (request: typeof baseRequest): Promise<string> => {
+      try {
+        await runner.preflight(request);
+        assert.fail('expected trust preflight to reject');
+      } catch (error) {
+        assert.ok(error instanceof RecipeTrustError);
+        assert.equal(error.code, 'RECIPE_TRUST_REQUIRED');
+        return error.failure.recipeDigest ?? '';
+      }
+    };
+
+    const approvedDigest = await blockedDigest(baseRequest);
+    process.env.FARMSLOT_RECIPE_APPROVE_PLAN = approvedDigest;
+    assert.equal(await blockedDigest(baseRequest), approvedDigest);
+    delete process.env.FARMSLOT_RECIPE_APPROVE_PLAN;
+    const otherArtifactsDigest = await blockedDigest({
+      ...baseRequest,
+      artifactsDir: path.join(firstRoot, 'other-artifacts'),
+    });
+    const otherEnvDigest = await blockedDigest({
+      ...baseRequest,
+      env: { RECIPE_MODE: 'execute' },
+    });
+    const undefinedEnvDigest = await blockedDigest({
+      ...baseRequest,
+      env: { ...baseRequest.env, OMITTED_VALUE: undefined },
+    });
+    assert.notEqual(otherArtifactsDigest, approvedDigest);
+    assert.notEqual(otherEnvDigest, approvedDigest);
+    assert.equal(undefinedEnvDigest, approvedDigest);
+
+    process.env.FARMSLOT_RECIPE_CONTEXT_TEST = 'execute';
+    await assert.rejects(
+      runner.run({
+        ...baseRequest,
+        approval: { planDigest: approvedDigest },
+      }),
+      (error: unknown) =>
+        error instanceof RecipeTrustError && error.code === 'RECIPE_APPROVAL_MISMATCH',
+    );
+    assert.equal(await missing(path.join(firstRoot, 'context-marker.txt')), true);
+
+    const currentDigest = await blockedDigest(baseRequest);
+    await assert.rejects(
+      runner.run({
+        ...baseRequest,
+        projectRoot: secondRoot,
+        artifactsDir: path.join(secondRoot, 'artifacts'),
+        approval: { planDigest: currentDigest },
+      }),
+      (error: unknown) =>
+        error instanceof RecipeTrustError && error.code === 'RECIPE_APPROVAL_MISMATCH',
+    );
+    assert.equal(await missing(path.join(secondRoot, 'context-marker.txt')), true);
+    assert.equal(await missing(path.join(secondRoot, 'artifacts')), true);
+  } finally {
+    if (priorAmbient === undefined) delete process.env.FARMSLOT_RECIPE_CONTEXT_TEST;
+    else process.env.FARMSLOT_RECIPE_CONTEXT_TEST = priorAmbient;
+    if (priorApproval === undefined) delete process.env.FARMSLOT_RECIPE_APPROVE_PLAN;
+    else process.env.FARMSLOT_RECIPE_APPROVE_PLAN = priorApproval;
+    await Promise.all([
+      rm(firstRoot, { recursive: true, force: true }),
+      rm(secondRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
 test('untrusted recipes cannot export checkout files through index_artifacts', async () => {
   const root = await tempRoot();
   try {

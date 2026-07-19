@@ -53,6 +53,7 @@ import {
   recipeSourceForRequest,
   verifyExecutableSource,
 } from './trust.js';
+import { RECIPE_TRUST_ENV } from './trust-input.js';
 import type {
   ActionAdapter,
   ActiveVideoRecording,
@@ -87,6 +88,7 @@ interface ResolvedRecipeRun {
   sourceRecipePath?: string;
   recipe: unknown;
   recipeSource: ReturnType<typeof recipeSourceForRequest>;
+  env: Record<string, string | undefined>;
   libraryResolution?: RecipeLibraryResolution;
   graph: WorkflowGraph;
   usedLibraryFlows: Map<string, ResolvedLibraryFlow>;
@@ -236,6 +238,11 @@ class DefaultRecipeRunner implements RecipeRunner {
     }
     const projectRoot = path.resolve(request.projectRoot ?? process.cwd());
     const artifactsDir = path.resolve(request.artifactsDir);
+    const env = { ...process.env, ...(request.env ?? {}) };
+    const trustEnv = new Set<string>(Object.values(RECIPE_TRUST_ENV));
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined || trustEnv.has(key)) delete env[key];
+    }
     const sourceRecipePath = request.recipePath ? path.resolve(request.recipePath) : undefined;
     const recipe = request.recipeDocument ?? (await readJsonFile(sourceRecipePath!));
     const recipeSource = recipeSourceForRequest(
@@ -274,6 +281,9 @@ class DefaultRecipeRunner implements RecipeRunner {
       adapters: this.#adapters,
       preconditions: this.#preconditions,
       actionManifest: this.#actionManifest,
+      projectRoot,
+      artifactsDir,
+      env,
       hud: this.#hud,
       recordVideo: request.recordVideo,
     });
@@ -283,6 +293,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       sourceRecipePath,
       recipe,
       recipeSource,
+      env,
       libraryResolution,
       graph,
       usedLibraryFlows,
@@ -297,6 +308,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       projectRoot,
       artifactsDir,
       recipe,
+      env,
       libraryResolution,
       graph,
       usedLibraryFlows,
@@ -344,7 +356,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           recipe,
           projectRoot,
           artifactsDir,
-          env: request.env ?? {},
+          env,
         });
       } catch (error) {
         const message = errorMessage(error);
@@ -370,7 +382,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           recipe,
           projectRoot,
           artifactsDir,
-          request,
+          env,
           outputs,
           artifactWriter,
           traceWriter,
@@ -414,7 +426,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           recipe,
           projectRoot,
           artifactsDir,
-          env: request.env ?? {},
+          env,
           outputs,
           artifactWriter,
           runFileOffsets,
@@ -637,7 +649,7 @@ class DefaultRecipeRunner implements RecipeRunner {
             recipe,
             projectRoot,
             artifactsDir,
-            env: request.env ?? {},
+            env,
             outputs,
           });
         } catch (error) {
@@ -755,7 +767,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     recipe,
     projectRoot,
     artifactsDir,
-    request,
+    env,
     outputs,
     artifactWriter,
     traceWriter,
@@ -765,7 +777,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     recipe: unknown;
     projectRoot: string;
     artifactsDir: string;
-    request: RecipeRunRequest;
+    env: Record<string, string | undefined>;
     outputs: Map<string, unknown>;
     artifactWriter: JsonArtifactWriter;
     traceWriter: JsonTraceWriter;
@@ -791,7 +803,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         recipe,
         projectRoot,
         artifactsDir,
-        env: request.env ?? {},
+        env,
         outputs,
         artifactWriter,
         runFileOffsets,

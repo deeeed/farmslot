@@ -16,7 +16,7 @@
  *     [--json]
  */
 import { execFile } from 'node:child_process';
-import { mkdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -573,6 +573,19 @@ async function ensureCapturableRecordingTarget(target) {
   return target;
 }
 
+export function withCapturableRecordingTarget(
+  recorder,
+  prepareTarget = ensureCapturableRecordingTarget,
+) {
+  return {
+    ...recorder,
+    doctor: recorder.doctor?.bind(recorder),
+    async start(request) {
+      return recorder.start({ ...request, target: await prepareTarget(request.target) });
+    },
+  };
+}
+
 async function main() {
   const { recipePath, options } = parseArgs(process.argv.slice(2));
   const uiUrl = await resolveUiUrl(options.projectRoot, options.uiUrl);
@@ -607,7 +620,6 @@ async function main() {
 
   const recipeDocument = substituteDeep(recipeRaw, inputs);
   const artifactsDir = path.resolve(options.artifactsDir);
-  await mkdir(artifactsDir, { recursive: true });
 
   const coreActions = [
     'end',
@@ -681,10 +693,11 @@ async function main() {
   const webVideoRecorder = options.recordVideo
     ? await resolveWebVideoRecorder(options.cdpPort, captureHelperBin())
     : undefined;
-  let recordingTarget = options.recordVideo ? await resolveRecordingTarget(options) : undefined;
-  if (recordingTarget && webVideoRecorder?.name === 'capture-helper') {
-    recordingTarget = await ensureCapturableRecordingTarget(recordingTarget);
-  }
+  const recordingTarget = options.recordVideo ? await resolveRecordingTarget(options) : undefined;
+  const videoRecorder =
+    webVideoRecorder?.name === 'capture-helper'
+      ? withCapturableRecordingTarget(webVideoRecorder)
+      : webVideoRecorder;
 
   const hudEnabled = filteredManifest.supported_official_actions.includes('app.hud');
   const trust = resolveCommandCenterRecipeTrust();
@@ -719,7 +732,7 @@ async function main() {
     logger: console,
     recording: {
       videoRecorder:
-        webVideoRecorder ??
+        videoRecorder ??
         createCaptureHelperVideoRecorder({
           captureHelperPath: captureHelperBin(),
         }),

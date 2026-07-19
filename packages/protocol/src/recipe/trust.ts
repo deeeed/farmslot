@@ -41,6 +41,8 @@ export interface RecipePlanNode {
 export interface RecipeExecutionPlan {
   schemaVersion: 1;
   digest: string;
+  /** Binds approval to the project, artifact destination, and effective run environment without exposing their values. */
+  executionContextDigest: string;
   source: RecipeSourceProvenance;
   nodes: RecipePlanNode[];
 }
