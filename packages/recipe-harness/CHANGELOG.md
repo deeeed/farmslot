@@ -4,12 +4,16 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
-- Added provenance-aware preflight/execution planning that blocks restricted capabilities from unknown or untrusted sources before side effects; approvals bind to the exact resolved plan digest.
-- Included automatic HUD execution in the approved plan.
-- Bound approvals to the project root, artifact destination, and effective run environment.
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.8.0 - 2026-07-19
+
+- Added provenance-aware preflight/execution planning that blocks restricted capabilities from unknown or untrusted sources before side effects; approvals bind to the exact resolved plan digest
+- Included automatic HUD execution in the approved plan
+- Bound approvals to the project root, artifact destination, and effective run environment
+- Fixed source-swap and symlink boundary bypasses across custom implementations, project reads, flow catalogs, and artifact/video writes
+- Fixed managed-run approval recovery instructions and caller-selected library trust defaults
 - Added an explicit-environment mode so host wrappers can exclude internal control variables from recipe execution and approval identity.
-- Fixed source-swap and symlink boundary bypasses across custom implementations, project reads, flow catalogs, and artifact/video writes.
-- Fixed managed-run approval recovery instructions and caller-selected library trust defaults.
 
 ## 0.7.0 - 2026-07-19
 
