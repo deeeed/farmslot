@@ -5,7 +5,7 @@ compatibility: Claude, Codex, Cursor, and Markdown skill runners with shell acce
 metadata:
   package: '@farmslot/skills'
   related_package: '@farmslot/recipe-harness'
-allowed-tools: Read Bash(rg:*) Bash(node:*) Bash(npm:*) Bash(yarn:*) Bash(pnpm:*)
+allowed-tools: Read Bash(rg:*) Bash(node:*) Bash(npm:*) Bash(yarn:*) Bash(pnpm:*) Bash(farmslot-recipe:*)
 ---
 
 # Recipe Harness
@@ -16,9 +16,10 @@ Use the local recipe runtime when one exists, or recommend the smallest install 
 
 1. Find the project-owned recipe command first.
 2. If no command exists, check for `@farmslot/recipe-harness` or an app-specific harness package.
-3. Run dry-run or schema validation before live execution when available.
-4. Record artifact paths and validation output.
-5. If no runner exists, stop with a concrete install recommendation.
+3. Before authoring, inspect declared actions and reusable flows. Prefer project discovery commands. For generic flow discovery, run `farmslot-recipe flows list` and `farmslot-recipe flows describe <ref>`. If no action discovery command exists, read only the relevant project manifest entries and examples.
+4. Run dry-run or schema validation before live execution when available.
+5. Record artifact paths and validation output.
+6. If no runner exists, stop with a concrete install recommendation.
 
 ## Hard Rules
 
