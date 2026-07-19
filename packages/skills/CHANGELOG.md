@@ -5,6 +5,7 @@ All notable changes to `@farmslot/skills` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Teach recipe authors to inspect declared actions and reusable flows before creating new capabilities.
 
 ## 0.1.3 - 2026-07-08
 
