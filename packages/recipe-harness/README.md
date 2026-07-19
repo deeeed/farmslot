@@ -253,6 +253,8 @@ reviewers can understand what the agent is doing from screenshots or videos.
 - Plan approval prevents accidental execution of changed recipes or adapters; it
   is not an OS sandbox or an authorization boundary against code already running
   as the same user. Approved custom code retains that user's permissions.
+- Programmatic custom adapters must declare source provenance plus a pinned
+  digest or `resolveSourceDigest`; the bundled standard adapters already do so.
 - Keep artifact paths relative to the artifact directory.
 - Do not put secrets in recipe text, HUD text, trace output, screenshots, or
   artifact paths.
