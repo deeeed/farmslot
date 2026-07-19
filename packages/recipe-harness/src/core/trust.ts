@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import {
   DEFAULT_UNTRUSTED_RECIPE_BLOCKED_CAPABILITIES,
+  normalizeRecipeFlowRef,
   OFFICIAL_RECIPE_ACTIONS,
   officialRecipeActionCapabilities,
   type RecipeActionCatalogEntry,
@@ -100,7 +101,10 @@ export function buildRecipeExecutionPlan({
     nodes.push(planNode);
     digestNodes.push({ plan: planNode, node });
     if (node.action === 'call' && typeof node.ref === 'string') {
-      visitFlow(node.ref, effectiveInvocationOrigin(origin, invocationOrigin));
+      visitFlow(
+        normalizeRecipeFlowRef(node.ref),
+        effectiveInvocationOrigin(origin, invocationOrigin),
+      );
     }
   };
 

@@ -186,6 +186,70 @@ test('untrusted read-only recipes run while command is denied before side effect
   }
 });
 
+test('flow-ref normalization cannot hide a restricted flow behind a whitespace collision', async () => {
+  const root = await tempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+    });
+    const document = {
+      schema_version: 1,
+      title: 'Flow collision test',
+      description: 'Proves planning and execution resolve the same flow.',
+      flows: {
+        ' restricted': {
+          workflow: {
+            entry: 'safe',
+            nodes: { safe: { action: 'end', status: 'pass' } },
+          },
+        },
+        restricted: {
+          workflow: {
+            entry: 'exec',
+            nodes: {
+              exec: {
+                intent: 'Attempt a restricted host command',
+                action: 'command',
+                cmd: 'touch escaped.txt',
+                next: 'done',
+              },
+              done: { action: 'end', status: 'pass' },
+            },
+          },
+        },
+      },
+      validate: {
+        workflow: {
+          entry: 'invoke',
+          nodes: {
+            invoke: {
+              intent: 'Invoke the normalized flow reference',
+              action: 'call',
+              ref: ' restricted',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+
+    await assert.rejects(
+      runner.run({
+        recipeDocument: document,
+        artifactsDir: path.join(root, 'artifacts'),
+        projectRoot: root,
+        source: untrusted,
+      }),
+      /collides with another flow after whitespace normalization/u,
+    );
+    assert.equal(await missing(path.join(root, 'escaped.txt')), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('preflight authorizes the exact plan without actions or artifact writes', async () => {
   const root = await tempRoot();
   try {

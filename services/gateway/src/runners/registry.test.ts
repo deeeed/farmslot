@@ -1226,6 +1226,15 @@ describe('buildLaunchCommand', () => {
   const TASK_FILE = `${TASK_DIR}/TASK.md`;
   const PROMPT = 'Read TASK.md and execute.';
 
+  it('derives recipe provenance scope from a task file when taskDir is omitted', () => {
+    const vars = makeVars({ dispatchCmd: '' });
+    const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, {
+      taskFile: TASK_FILE,
+    });
+    assert.match(cmd, /[.]task\/fix\/abc\/inputs\/inherited\/recipe-source[.]json/u);
+    assert.match(cmd, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/u);
+  });
+
   describe('claude runner', () => {
     it('inline-launches with --dangerously-skip-permissions when the full-auto tier is explicit', () => {
       // Intrinsic runner default is sandboxed; pre-refactor dangerous posture

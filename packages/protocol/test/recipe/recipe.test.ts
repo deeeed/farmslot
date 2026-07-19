@@ -1318,6 +1318,48 @@ test('validates inline flow actions, transitions, and cycles', () => {
   assert.ok(result.findings.some((finding) => finding.code === 'flow.call_cycle'));
 });
 
+test('rejects inline flow ids that collide after flow-ref normalization', () => {
+  const result = validateRecipeWithManifest(
+    {
+      schema_version: 1,
+      title: 'Normalized flow ids',
+      description: 'Flow identifiers must have one canonical runtime meaning.',
+      flows: {
+        ' example': {
+          entry: 'done',
+          nodes: { done: { action: 'end', status: 'pass' } },
+        },
+        example: {
+          entry: 'done',
+          nodes: { done: { action: 'end', status: 'pass' } },
+        },
+      },
+      validate: {
+        workflow: {
+          entry: 'call-flow',
+          nodes: {
+            'call-flow': {
+              intent: 'Invoke the canonical flow reference',
+              action: 'call',
+              ref: ' example',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    },
+    {
+      runner_protocol_version: 1,
+      action_registry_version: 1,
+      supported_official_actions: ['call', 'end'],
+    },
+  );
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(result.findings.some((finding) => finding.code === 'flow.duplicate_id'));
+});
+
 test('rejects artifact packages without typed manifests', () => {
   const result = validateRecipeArtifactPackage({ artifactPaths: ['summary.json', 'trace.json'] });
 

@@ -335,6 +335,7 @@ export async function runReviewAgent(
     const coldLaunchCommand = () =>
       buildLaunchCommand(vars, runner, model, taskPrompt, {
         taskFile: taskMdPath,
+        taskDir,
         effort: parentRun?.effort,
         safetyTier: parentSafetyTier,
         runtimeDir,

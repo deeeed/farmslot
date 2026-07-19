@@ -1,4 +1,4 @@
-import type { RecipeSourceProvenance } from '@farmslot/protocol';
+import { normalizeRecipeFlowRef, type RecipeSourceProvenance } from '@farmslot/protocol';
 
 import { collectFlows, type InlineFlow } from './flows.js';
 import { isRecord } from './json.js';
@@ -31,7 +31,7 @@ function callRefsInNodes(nodes: Record<string, unknown> | undefined): string[] {
       typeof node.ref === 'string' &&
       node.ref.trim()
     ) {
-      refs.push(node.ref);
+      refs.push(normalizeRecipeFlowRef(node.ref));
     }
   }
   return refs;
@@ -48,7 +48,7 @@ function callRefsInLifecycle(list: unknown): string[] {
       typeof node.ref === 'string' &&
       node.ref.trim()
     ) {
-      refs.push(node.ref);
+      refs.push(normalizeRecipeFlowRef(node.ref));
     }
   }
   return refs;
@@ -79,7 +79,7 @@ function collectRequiredFlowRefs(
     recipe.startState.action === 'call' &&
     typeof recipe.startState.ref === 'string'
   ) {
-    seeds.push(recipe.startState.ref);
+    seeds.push(normalizeRecipeFlowRef(recipe.startState.ref));
   }
 
   const required = new Set<string>();

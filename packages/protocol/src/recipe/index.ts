@@ -55,4 +55,8 @@ export {
   type RecipeSourceTrust,
   type RecipeTrustFailure,
 } from './trust.js';
-export { getRecipeWorkflowActions, getRecipeWorkflowNodeIds } from './workflow.js';
+export {
+  getRecipeWorkflowActions,
+  getRecipeWorkflowNodeIds,
+  normalizeRecipeFlowRef,
+} from './workflow.js';

@@ -374,7 +374,11 @@ export function buildLaunchCommand(
   const launchPrompt = runnerNeedsPostLaunchPrompt(runner) ? '' : prompt;
 
   const withRecipeTrust = (command: string): string =>
-    withTaskRecipeTrustEnvironment(command, repo, opts.taskDir);
+    withTaskRecipeTrustEnvironment(
+      command,
+      repo,
+      opts.taskDir ?? (opts.taskFile ? path.posix.dirname(opts.taskFile) : undefined),
+    );
 
   // none runner: no launch command (silent sentinel; callers decide what to do).
   if (runner === 'none') return '';

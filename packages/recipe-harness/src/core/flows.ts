@@ -2,7 +2,11 @@ import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import type { RecipeSourceProvenance, UiObserverRef } from '@farmslot/protocol';
+import {
+  normalizeRecipeFlowRef,
+  type RecipeSourceProvenance,
+  type UiObserverRef,
+} from '@farmslot/protocol';
 
 import { JsonTraceWriter } from '../node/writers.js';
 
@@ -137,8 +141,10 @@ export function readCatalogFlows(catalog: unknown, source: string): CatalogFlowE
     throw new Error(`Flow catalog ${source} must contain a flows object.`);
   }
   return Object.entries(catalog.flows).map(([ref, flow]) => {
+    const normalizedRef = normalizeRecipeFlowRef(ref);
+    if (!normalizedRef) throw new Error(`Flow id in ${source} must not be empty.`);
     if (!isRecord(flow)) throw new Error(`Flow ${ref} in ${source} must be an object.`);
-    return { ref, flow: normalizeFlow(ref, flow, source), raw: flow };
+    return { ref: normalizedRef, flow: normalizeFlow(normalizedRef, flow, source), raw: flow };
   });
 }
 
@@ -190,7 +196,7 @@ export async function executeInlineFlowCall({
   declaredObserverRefs: readonly UiObserverRef[];
   publishHudProgress?: FlowHudPublisher;
 }): Promise<ActionResult> {
-  const ref = typeof node.ref === 'string' && node.ref.trim() ? node.ref.trim() : '';
+  const ref = typeof node.ref === 'string' ? normalizeRecipeFlowRef(node.ref) : '';
   if (!ref) throw new Error('call.ref must be a non-empty flow id.');
   if (callStack.includes(ref)) {
     throw new Error(`Flow call cycle detected: ${[...callStack, ref].join(' -> ')}.`);

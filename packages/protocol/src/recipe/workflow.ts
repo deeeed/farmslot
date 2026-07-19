@@ -58,6 +58,11 @@ const IMPLEMENTATION_INTENTS = new Set([
   'payload',
 ]);
 
+/** Canonical flow identifier used by validation, planning, and execution. */
+export function normalizeRecipeFlowRef(value: string): string {
+  return value.trim();
+}
+
 function normalizeIntent(value: string): string {
   return value.trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
 }
@@ -649,9 +654,26 @@ export function validateInlineFlows(
     return;
   }
 
-  const inlineFlowIds = new Set(Object.keys(flows));
+  const inlineFlowIds = new Set<string>();
+  for (const flowId of Object.keys(flows)) {
+    const normalizedFlowId = normalizeRecipeFlowRef(flowId);
+    if (!normalizedFlowId) {
+      addFinding(ctx, 'error', 'flow.invalid_id', `flows.${flowId}`, 'Flow id must not be empty.');
+    } else if (inlineFlowIds.has(normalizedFlowId)) {
+      addFinding(
+        ctx,
+        'error',
+        'flow.duplicate_id',
+        `flows.${flowId}`,
+        `Flow id ${flowId} collides with another flow after whitespace normalization.`,
+      );
+    } else {
+      inlineFlowIds.add(normalizedFlowId);
+    }
+  }
   const callGraph = new Map<string, string[]>();
   for (const [flowId, flow] of Object.entries(flows)) {
+    const normalizedFlowId = normalizeRecipeFlowRef(flowId);
     const flowPath = `flows.${flowId}`;
     if (!isRecord(flow)) {
       addFinding(ctx, 'error', 'flow.invalid_flow', flowPath, `Flow ${flowId} must be an object.`);
@@ -716,8 +738,9 @@ export function validateInlineFlows(
         );
         continue;
       }
-      if (node.action === 'call' && isNonEmptyString(node.ref) && inlineFlowIds.has(node.ref)) {
-        callees.push(node.ref);
+      if (node.action === 'call' && isNonEmptyString(node.ref)) {
+        const ref = normalizeRecipeFlowRef(node.ref);
+        if (inlineFlowIds.has(ref)) callees.push(ref);
       }
       if (node.action !== 'end') {
         validateNodeIntent(ctx, 'flow', nodeId, node, nodePath);
@@ -807,7 +830,7 @@ export function validateInlineFlows(
         );
       }
     }
-    callGraph.set(flowId, callees);
+    if (normalizedFlowId) callGraph.set(normalizedFlowId, callees);
   }
   validateInlineFlowCycles(ctx, callGraph);
 }
@@ -957,7 +980,9 @@ export function validateFlowCalls(
     externalCatalogsResolvable?: boolean;
   },
 ): void {
-  const inlineFlows = isRecord(recipe.flows) ? new Set(Object.keys(recipe.flows)) : new Set();
+  const inlineFlows = isRecord(recipe.flows)
+    ? new Set(Object.keys(recipe.flows).map(normalizeRecipeFlowRef))
+    : new Set<string>();
   const externalCatalogsResolvable = options?.externalCatalogsResolvable !== false;
   const hasExternalCatalogs =
     externalCatalogsResolvable && Array.isArray(recipe.uses) && recipe.uses.length > 0;
@@ -983,11 +1008,12 @@ export function validateFlowCalls(
       );
       continue;
     }
+    const ref = normalizeRecipeFlowRef(node.ref);
     if (
       options?.skipResolution !== true &&
       !hasExternalCatalogs &&
-      !inlineFlows.has(node.ref) &&
-      !externalFlowIds?.has(node.ref)
+      !inlineFlows.has(ref) &&
+      !externalFlowIds?.has(ref)
     ) {
       addFinding(
         ctx,

@@ -2,6 +2,8 @@ import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import { normalizeRecipeFlowRef } from '@farmslot/protocol';
+
 import { readCatalogFlows } from './flows.js';
 import { isRecord, readJsonFile, writeJsonFile } from './json.js';
 import { listFlowCatalogFiles } from './library.js';
@@ -285,7 +287,14 @@ function collectCallNodeIds(
   for (const [key, child] of Object.entries(recipe)) {
     if (key === 'nodes' && isRecord(child)) {
       for (const [nodeId, node] of Object.entries(child)) {
-        if (isRecord(node) && node.action === 'call' && node.ref === flowRef) out.add(nodeId);
+        if (
+          isRecord(node) &&
+          node.action === 'call' &&
+          typeof node.ref === 'string' &&
+          normalizeRecipeFlowRef(node.ref) === flowRef
+        ) {
+          out.add(nodeId);
+        }
       }
     }
     collectCallNodeIds(child, flowRef, out);
