@@ -297,6 +297,12 @@ test('assertNoUnknownPlaceholders passes known names and throws on unknown ones'
     () => assertNoUnknownPlaceholders('{{alpha}} {{beta}}', [], 'multi'),
     /\{\{alpha\}\}, \{\{beta\}\}/,
   );
+  // Malformed names can never be substituted — they must fail, not slip
+  // through an identifier-only scan.
+  assert.throws(
+    () => assertNoUnknownPlaceholders('run {{foo-bar}} now', ['foo_bar'], 'grammar'),
+    /grammar.*\{\{foo-bar\}\}/,
+  );
 });
 
 test('knownTemplatePlaceholders stays in sync with expandTemplate', () => {
@@ -371,6 +377,19 @@ test('knownTemplatePlaceholders stays in sync with expandTemplate', () => {
   const leakyKnown = knownTemplatePlaceholders(slotVars, leakyVars);
   assert.ok(!leakyKnown.has('leaky'));
   assert.ok(leakyKnown.has('clean'));
+
+  // Resource and extra values are substituted verbatim — one carrying a
+  // {{...}} token must disqualify its key from the known set.
+  const dirtyResourceKnown = knownTemplatePlaceholders(
+    { ...slotVars, resourceVars: { port: '{{smuggled}}', cdp_port: '9222' } },
+    projectVars,
+    { good_extra: 'v', bad_extra: '{{also_smuggled}}' },
+  );
+  assert.ok(!dirtyResourceKnown.has('port'));
+  assert.ok(!dirtyResourceKnown.has('PORT'));
+  assert.ok(dirtyResourceKnown.has('cdp_port'));
+  assert.ok(dirtyResourceKnown.has('good_extra'));
+  assert.ok(!dirtyResourceKnown.has('bad_extra'));
 });
 
 test('expandTemplateWithReservedLast protects reserved values from collisions and re-expansion', () => {
