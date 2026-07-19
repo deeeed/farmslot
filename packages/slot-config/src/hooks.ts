@@ -208,12 +208,13 @@ export function knownTemplatePlaceholders(
 
   const known = new Set(nested);
   for (const key of Object.keys(extraVars ?? {})) addTo(known, key);
-  // A project var only counts as known when its value fully resolves in the
-  // nested pass — otherwise expanding it would smuggle raw {{...}} past the
-  // guard through the value itself.
+  // A project var only counts as known when its value fully resolves — run
+  // the real nested pass rather than predicting it, so this cannot drift.
+  // Otherwise expanding the var would smuggle raw {{...}} past the guard
+  // through the value itself.
   for (const [key, rawValue] of Object.entries(projectVars?.projectJson.vars ?? {})) {
-    const valueNames = collectTemplatePlaceholders(String(rawValue));
-    if ([...valueNames].every((name) => nested.has(name))) addTo(known, key);
+    const rendered = expandTemplateInternal(String(rawValue), slotVars, projectVars, false);
+    if (collectTemplatePlaceholders(rendered).size === 0) addTo(known, key);
   }
   return known;
 }

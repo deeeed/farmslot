@@ -19,7 +19,7 @@ import {
 } from '@farmslot/protocol';
 
 import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
-import { expandTemplate } from '../core/hooks.js';
+import { collectTemplatePlaceholders, expandTemplate } from '../core/hooks.js';
 import { execLocal, farmslotRoot, getOrchestratorTaskRoot } from '../core/index.js';
 import {
   buildFollowUpScopeContractSection,
@@ -679,8 +679,18 @@ export async function writeTaskFile(
   // in project.json so worker templates don't hardcode repo-local tool paths.
   if (projectVars.projectJson.vars) {
     for (const [key, rawValue] of Object.entries(projectVars.projectJson.vars)) {
-      vars[key] = expandTemplate(String(rawValue), slotVars, projectVars);
-      vars[key.toUpperCase()] = vars[key];
+      const rendered = expandTemplate(String(rawValue), slotVars, projectVars);
+      // A var value that does not fully resolve would smuggle raw {{...}}
+      // into TASK.md past the template guard — fail the dispatch instead.
+      const leftover = collectTemplatePlaceholders(rendered);
+      if (leftover.size > 0) {
+        throw new Error(
+          `Project var '${key}' for ${run.project} leaves unresolved placeholder(s): ` +
+            [...leftover].map((name) => `{{${name}}}`).join(', '),
+        );
+      }
+      vars[key] = rendered;
+      vars[key.toUpperCase()] = rendered;
     }
   }
 

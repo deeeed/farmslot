@@ -1,7 +1,29 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildSmartBranch, coerceStrategyToken } from './engine.js';
+import { buildSmartBranch, coerceStrategyToken, generateTaskContent } from './engine.js';
+
+test('generateTaskContent expands supplied vars', async () => {
+  assert.equal(
+    await generateTaskContent('cd {{REPO}} && cat {{TASK_DIR}}/TASK.md', {
+      REPO: '/tmp/r',
+      TASK_DIR: '.task/t1',
+    }),
+    'cd /tmp/r && cat .task/t1/TASK.md',
+  );
+});
+
+test('generateTaskContent fails hard on placeholders outside the var set', async () => {
+  await assert.rejects(
+    () =>
+      generateTaskContent(
+        'read {{ORIGINAL_TICKET}}',
+        { TICKET: 'X-1' },
+        'Worker template pr-complete.md',
+      ),
+    /Worker template pr-complete\.md.*\{\{ORIGINAL_TICKET\}\}/,
+  );
+});
 
 test('buildSmartBranch appends variant suffix for comparison runs', () => {
   assert.equal(
