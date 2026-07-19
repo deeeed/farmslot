@@ -91,6 +91,45 @@ test('resolveTaskRelDir supports alternate task filenames when requested', () =>
   );
 });
 
+test('loadProjectVars resolves documented recipe_dir default and rejects other placeholders in paths', async (t) => {
+  const project = `paths-placeholder-config-${process.pid}`;
+  const projectDir = path.join(farmslotRoot, 'projects', project);
+  await mkdir(projectDir, { recursive: true });
+  t.after(async () => {
+    await rm(projectDir, { recursive: true, force: true });
+  });
+  await writeFile(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({
+      name: project,
+      paths: { runtime_dir: '.agent', recipe_dir: '{{runtime_dir}}/recipes' },
+    }),
+  );
+  const pv = await loadProjectVars(project);
+  assert.equal(pv.recipeDir, '.agent/recipes');
+
+  for (const paths of [
+    { runtime_dir: '{{smuggled}}/state' },
+    { artifact_dir: 'x/{{smuggled}}' },
+    { recipe_dir: '{{smuggled}}/recipes' },
+  ]) {
+    const invalidProject = `${project}-${Object.keys(paths)[0]}`;
+    const invalidDir = path.join(farmslotRoot, 'projects', invalidProject);
+    await mkdir(invalidDir, { recursive: true });
+    t.after(async () => {
+      await rm(invalidDir, { recursive: true, force: true });
+    });
+    await writeFile(
+      path.join(invalidDir, 'project.json'),
+      JSON.stringify({ name: invalidProject, paths }),
+    );
+    await assert.rejects(
+      () => loadProjectVars(invalidProject),
+      /must not contain template placeholders.*\{\{smuggled\}\}/,
+    );
+  }
+});
+
 test('loadProjectVars validates auto_recovery disabled_patterns as string array', async (t) => {
   const project = `auto-recovery-config-${process.pid}`;
   const projectDir = path.join(farmslotRoot, 'projects', project);

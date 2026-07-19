@@ -157,6 +157,150 @@ function expandTemplateInternal(
   return result;
 }
 
+// ─── Template placeholder guard ───
+// Sinks that render worker-facing text (task files, dispatch prompts) assert
+// the raw template's placeholders against the known expansion set and fail
+// hard at dispatch, instead of shipping literal {{...}} to an agent.
+//
+// Deliberately exempt: fixture rendering (renderFixtureTemplate /
+// expandFixturePath — overlay paths legitimately keep an unresolved
+// {{domain}} so unselected overlays skip quietly) and hook/recycle/dispatch
+// command expansion (missing optional resources render empty by design).
+// Free-text content values (ticket descriptions, review issue text, CI
+// comments) may legitimately contain {{...}} and are inserted, never
+// expanded; config-derived values (project vars, slot resources) are
+// verified below because they ARE expanded or substituted verbatim.
+
+const PLACEHOLDER_RE = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+// Any double-brace token, valid identifier or not — a malformed name like
+// {{foo-bar}} can never be substituted, so it must fail the guard rather
+// than slip through an identifier-only scan.
+const PLACEHOLDER_TOKEN_RE = /\{\{[^{}\n]+\}\}/g;
+
+export function collectTemplatePlaceholders(text: string): Set<string> {
+  const names = new Set<string>();
+  for (const match of text.matchAll(PLACEHOLDER_RE)) {
+    if (match[1]) names.add(match[1]);
+  }
+  return names;
+}
+
+/** Full {{...}} tokens present in the text, including malformed names. */
+export function collectPlaceholderTokens(text: string): Set<string> {
+  return new Set(Array.from(text.matchAll(PLACEHOLDER_TOKEN_RE), (match) => match[0]));
+}
+
+// Every placeholder name expandTemplate() can substitute for this slot/project.
+// Keep in sync with expandTemplateInternal — hooks.test.ts locks the two
+// together by expanding a template built from this set.
+export function knownTemplatePlaceholders(
+  slotVars: SlotVars,
+  projectVars?: ProjectVars,
+  extraVars?: Record<string, string>,
+): Set<string> {
+  const addTo = (set: Set<string>, name: string) => {
+    set.add(name);
+    set.add(name.toUpperCase());
+  };
+  // A resource value is substituted verbatim, never expanded — one that
+  // itself contains {{...}} would smuggle raw tokens to a worker, so its
+  // key must not count as known (neither directly nor via the optional-
+  // empty pass, which skips keys the resource pass already consumed).
+  const dirtyResourceKeys = new Set(
+    Object.entries(slotVars.resourceVars)
+      .filter(([, value]) => collectPlaceholderTokens(value).size > 0)
+      .map(([key]) => key),
+  );
+  // Names the nested project-var value pass can resolve (it runs without
+  // extras and without other project vars — see expandTemplateInternal).
+  const nested = new Set<string>();
+  for (const key of Object.keys(slotVars.resourceVars)) {
+    if (!dirtyResourceKeys.has(key)) addTo(nested, key);
+  }
+  for (const key of [
+    'port',
+    'cdp_port',
+    'simulator',
+    'avd',
+    'adb_serial',
+    'headless',
+    'snapshot',
+  ]) {
+    if (!dirtyResourceKeys.has(key)) addTo(nested, key);
+  }
+  for (const key of [
+    'runtime_dir',
+    'artifact_dir',
+    'recipe_dir',
+    'farmslot_dir',
+    'watcher_port',
+    'slot_id',
+    'session',
+    'repo',
+    'primary_repo',
+    'domain',
+  ])
+    addTo(nested, key);
+  for (const key of Object.keys(projectVars?.projectJson.reference_repos ?? {}))
+    addTo(nested, `${key}_repo`);
+
+  const known = new Set(nested);
+  // Extras are substituted verbatim — same smuggling rule as resources.
+  for (const [key, value] of Object.entries(extraVars ?? {})) {
+    if (collectPlaceholderTokens(value).size === 0) addTo(known, key);
+  }
+  // A project var only counts as known when its value fully resolves — run
+  // the real nested pass rather than predicting it, so this cannot drift.
+  // Otherwise expanding the var would smuggle raw {{...}} past the guard
+  // through the value itself.
+  for (const [key, rawValue] of Object.entries(projectVars?.projectJson.vars ?? {})) {
+    const rendered = expandTemplateInternal(String(rawValue), slotVars, projectVars, false);
+    if (collectPlaceholderTokens(rendered).size === 0) addTo(known, key);
+  }
+  return known;
+}
+
+/**
+ * Render a template where `reserved` placeholders receive their values only
+ * after the hooks pass: their content (reviewer/CI comment text) must never
+ * be re-expanded, and a colliding project or resource var must not consume
+ * the placeholder first. NUL sentinels are safe — templates are NUL-free text.
+ */
+export function expandTemplateWithReservedLast(
+  template: string,
+  slotVars: SlotVars,
+  projectVars: ProjectVars | undefined,
+  reserved: Record<string, string>,
+): string {
+  let masked = template;
+  for (const key of Object.keys(reserved)) {
+    masked = masked.replaceAll(`{{${key}}}`, `\u0000${key}\u0000`);
+  }
+  let expanded = expandTemplate(masked, slotVars, projectVars);
+  for (const [key, value] of Object.entries(reserved)) {
+    expanded = expanded.replaceAll(`\u0000${key}\u0000`, value);
+  }
+  return expanded;
+}
+
+export function assertNoUnknownPlaceholders(
+  template: string,
+  known: Iterable<string>,
+  source: string,
+): void {
+  const knownSet = known instanceof Set ? known : new Set(known);
+  const unknown = [...collectPlaceholderTokens(template)].filter((token) => {
+    const name = token.slice(2, -2);
+    return !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || !knownSet.has(name);
+  });
+  if (unknown.length > 0) {
+    throw new Error(
+      `${source} references placeholder(s) with no expansion value: ${unknown.join(', ')} — ` +
+        `supply the variable or remove the placeholder from the template`,
+    );
+  }
+}
+
 // ─── expandHook ───
 // Reads hooks.<hookName> from project.json, substitutes slot variables.
 // Returns empty string if hook not defined.

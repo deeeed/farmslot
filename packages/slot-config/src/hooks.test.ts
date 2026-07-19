@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ProjectVars, SlotVars } from './config.js';
-import { expandDispatchCmd, expandTemplate } from './hooks.js';
+import {
+  assertNoUnknownPlaceholders,
+  collectTemplatePlaceholders,
+  expandDispatchCmd,
+  expandTemplate,
+  expandTemplateWithReservedLast,
+  knownTemplatePlaceholders,
+} from './hooks.js';
 
 test('expandTemplate exposes the full slot id for configured actions', () => {
   const slotVars: SlotVars = {
@@ -265,4 +272,166 @@ test('{{domain}} precedence: extras > project vars > pool default > empty', () =
   // Project vars beat the pool-level default when both are present.
   assert.equal(expandTemplate('{{domain}}', { ...base, domain: 'pool' }, projectVars), 'static');
   assert.equal(expandTemplate('{{domain}}', base, projectVars, { domain: 'runtime' }), 'runtime');
+});
+
+test('collectTemplatePlaceholders finds each placeholder name once', () => {
+  assert.deepEqual(
+    [...collectTemplatePlaceholders('{{a}} {{b}} {{a}} {{not a placeholder}} {{9bad}}')].sort(),
+    ['a', 'b'],
+  );
+});
+
+test('assertNoUnknownPlaceholders passes known names and throws on unknown ones', () => {
+  assertNoUnknownPlaceholders('run {{TASK_FILE}} in {{TASK_DIR}}', ['TASK_FILE', 'TASK_DIR'], 'x');
+  assert.throws(
+    () =>
+      assertNoUnknownPlaceholders(
+        'read {{recipe_quality_path}} and {{TASK_FILE}}',
+        ['TASK_FILE'],
+        'Prompt template worker-dispatch.md',
+      ),
+    /Prompt template worker-dispatch\.md.*\{\{recipe_quality_path\}\}/,
+  );
+  // Every unknown name must appear in one error, not just the first.
+  assert.throws(
+    () => assertNoUnknownPlaceholders('{{alpha}} {{beta}}', [], 'multi'),
+    /\{\{alpha\}\}, \{\{beta\}\}/,
+  );
+  // Malformed names can never be substituted — they must fail, not slip
+  // through an identifier-only scan.
+  assert.throws(
+    () => assertNoUnknownPlaceholders('run {{foo-bar}} now', ['foo_bar'], 'grammar'),
+    /grammar.*\{\{foo-bar\}\}/,
+  );
+});
+
+test('knownTemplatePlaceholders stays in sync with expandTemplate', () => {
+  const slotVars: SlotVars = {
+    slotId: 's1',
+    machine: 'm',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: 'x',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/r',
+    session: 's',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'x@localhost',
+    remoteRepo: '/tmp/r',
+    projectName: 'demo',
+    resourceVars: { port: '1234', cdp_port: '9222' },
+  };
+  const projectVars = {
+    projectName: 'demo',
+    projectConfig: '/x/project.json',
+    projectFixturesDir: '/x/fixtures',
+    projectTemplatesDir: '/x/templates',
+    projectJson: {
+      vars: { recipe_quality_path: '{{runtime_dir}}/recipe-quality.md' },
+      reference_repos: { mobile: { repo_url: 'https://example.com/mm.git', local_name: 'mm-ref' } },
+    },
+    runtimeDir: '.agent',
+    artifactDir: '.task',
+  } as ProjectVars;
+  const extraVars = { extra_var: 'v' };
+  // Every name the guard reports as known must actually be substituted by
+  // expandTemplate — a placeholder surviving expansion means the two drifted.
+  const known = knownTemplatePlaceholders(slotVars, projectVars, extraVars);
+  const template = [...known].map((name) => `{{${name}}}`).join(' ');
+  const expanded = expandTemplate(template, slotVars, projectVars, extraVars);
+  assert.deepEqual([...collectTemplatePlaceholders(expanded)], []);
+  // Floor pin for the reverse direction: names expandTemplate substitutes must
+  // stay in the known set, or the guard would falsely reject valid templates.
+  for (const name of [
+    'watcher_port',
+    'WATCHER_PORT',
+    'recipe_dir',
+    'DOMAIN',
+    'mobile_repo',
+    'MOBILE_REPO',
+    'recipe_quality_path',
+    'RECIPE_QUALITY_PATH',
+    'extra_var',
+    'cdp_port',
+  ]) {
+    assert.ok(known.has(name), `known set is missing ${name}`);
+  }
+
+  // A project var whose value cannot fully resolve in the nested pass must
+  // not count as known — expanding it would smuggle raw {{...}} to a worker.
+  const leakyVars = {
+    ...projectVars,
+    projectJson: {
+      ...projectVars.projectJson,
+      vars: { leaky: '{{no_such_thing}}/x', clean: '{{runtime_dir}}/ok' },
+    },
+  } as ProjectVars;
+  const leakyKnown = knownTemplatePlaceholders(slotVars, leakyVars);
+  assert.ok(!leakyKnown.has('leaky'));
+  assert.ok(leakyKnown.has('clean'));
+
+  // Resource and extra values are substituted verbatim — one carrying a
+  // {{...}} token must disqualify its key from the known set.
+  const dirtyResourceKnown = knownTemplatePlaceholders(
+    { ...slotVars, resourceVars: { port: '{{smuggled}}', cdp_port: '9222' } },
+    projectVars,
+    { good_extra: 'v', bad_extra: '{{also_smuggled}}' },
+  );
+  assert.ok(!dirtyResourceKnown.has('port'));
+  assert.ok(!dirtyResourceKnown.has('PORT'));
+  assert.ok(dirtyResourceKnown.has('cdp_port'));
+  assert.ok(dirtyResourceKnown.has('good_extra'));
+  assert.ok(!dirtyResourceKnown.has('bad_extra'));
+});
+
+test('expandTemplateWithReservedLast protects reserved values from collisions and re-expansion', () => {
+  const slotVars: SlotVars = {
+    slotId: 's1',
+    machine: 'm',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: 'x',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/r',
+    session: 's',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'x@localhost',
+    remoteRepo: '/tmp/r',
+    projectName: 'demo',
+    resourceVars: {},
+  };
+  const projectVars = {
+    projectName: 'demo',
+    projectConfig: '/x/project.json',
+    projectFixturesDir: '/x/fixtures',
+    projectTemplatesDir: '/x/templates',
+    projectJson: { vars: { ISSUES: 'colliding-project-var' } },
+    runtimeDir: '.agent',
+    artifactDir: '.task',
+  } as ProjectVars;
+  const rendered = expandTemplateWithReservedLast(
+    'in {{repo}}: {{ISSUES}}',
+    slotVars,
+    projectVars,
+    { ISSUES: 'reviewer text quoting {{repo}} verbatim' },
+  );
+  // Reserved value wins over the colliding project var, and its quoted
+  // {{repo}} token survives un-expanded.
+  assert.equal(rendered, 'in /tmp/r: reviewer text quoting {{repo}} verbatim');
 });

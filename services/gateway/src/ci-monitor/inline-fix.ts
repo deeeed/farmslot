@@ -21,7 +21,11 @@ import {
   resolveProjectTaskDirName,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { expandTemplate } from '../core/hooks.js';
+import {
+  assertNoUnknownPlaceholders,
+  expandTemplateWithReservedLast,
+  knownTemplatePlaceholders,
+} from '../core/hooks.js';
 import {
   respawnTmuxWindowWithCommand,
   shellQuote,
@@ -369,11 +373,15 @@ async function writeCIFixTask(
     CI_ISSUE_TYPE: ciIssueType,
   };
 
-  let expanded = template;
-  for (const [key, val] of Object.entries(ciReplacements)) {
-    expanded = expanded.replaceAll(`{{${key}}}`, val);
-  }
-  expanded = expandTemplate(expanded, vars, pv);
+  assertNoUnknownPlaceholders(
+    template,
+    [...Object.keys(ciReplacements), ...knownTemplatePlaceholders(vars, pv)],
+    `CI-fix template for ${run.project}`,
+  );
+  // Explicit values land last so CI_ISSUES comment text (which may quote
+  // {{...}} tokens verbatim) is never re-expanded and a colliding var cannot
+  // consume the placeholder.
+  const expanded = expandTemplateWithReservedLast(template, vars, pv, ciReplacements);
 
   // Write CI-FIX.md to slot using the shared safe text writer
   const taskPath = taskDirRelPath(taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
