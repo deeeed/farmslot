@@ -16,7 +16,7 @@
  *     [--json]
  */
 import { execFile } from 'node:child_process';
-import { mkdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -26,6 +26,7 @@ import {
   createCaptureHelperVideoRecorder,
   createCdpVideoRecorder,
   createRecipeRunner,
+  resolveRecipeTrustInput,
 } from '@farmslot/recipe-harness';
 import { createStandardCoreAdapters } from '@farmslot/recipe-harness/adapters/core';
 import { createStandardUiAdapters } from '@farmslot/recipe-harness/adapters/ui';
@@ -39,6 +40,22 @@ const execFileAsync = promisify(execFile);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
+
+export const COMMAND_CENTER_RECIPE_SOURCE = Object.freeze({
+  kind: 'operator',
+  trust: 'trusted',
+  name: '@farmslot/command-center',
+});
+
+export function resolveCommandCenterRecipeTrust(env = process.env) {
+  return resolveRecipeTrustInput({}, env);
+}
+
+const COMMAND_CENTER_PRECONDITION_SOURCE = Object.freeze({
+  kind: 'bundled',
+  trust: 'trusted',
+  name: '@farmslot/command-center/preconditions',
+});
 
 function die(message, code = 1) {
   console.error(message);
@@ -267,10 +284,12 @@ async function fetchOk(url) {
   return response.ok;
 }
 
-function buildPreconditions({ uiUrl, gatewayPort, cdpPort }) {
+export function buildPreconditions({ uiUrl, gatewayPort, cdpPort }) {
   return [
     {
       id: 'command_center.dev_server.ready',
+      capabilities: [],
+      source: COMMAND_CENTER_PRECONDITION_SOURCE,
       async execute() {
         const ok = await fetchOk(`${uiUrl}/`);
         return {
@@ -281,6 +300,8 @@ function buildPreconditions({ uiUrl, gatewayPort, cdpPort }) {
     },
     {
       id: 'gateway.reachable',
+      capabilities: [],
+      source: COMMAND_CENTER_PRECONDITION_SOURCE,
       async execute() {
         if (!gatewayPort) return { ok: true };
         const ok = await fetchOk(`http://127.0.0.1:${gatewayPort}/health`);
@@ -292,6 +313,8 @@ function buildPreconditions({ uiUrl, gatewayPort, cdpPort }) {
     },
     {
       id: 'runtime.browser.open',
+      capabilities: [],
+      source: COMMAND_CENTER_PRECONDITION_SOURCE,
       async execute() {
         try {
           await listCdpTargets('127.0.0.1', cdpPort);
@@ -550,6 +573,19 @@ async function ensureCapturableRecordingTarget(target) {
   return target;
 }
 
+export function withCapturableRecordingTarget(
+  recorder,
+  prepareTarget = ensureCapturableRecordingTarget,
+) {
+  return {
+    ...recorder,
+    doctor: recorder.doctor?.bind(recorder),
+    async start(request) {
+      return recorder.start({ ...request, target: await prepareTarget(request.target) });
+    },
+  };
+}
+
 async function main() {
   const { recipePath, options } = parseArgs(process.argv.slice(2));
   const uiUrl = await resolveUiUrl(options.projectRoot, options.uiUrl);
@@ -584,7 +620,6 @@ async function main() {
 
   const recipeDocument = substituteDeep(recipeRaw, inputs);
   const artifactsDir = path.resolve(options.artifactsDir);
-  await mkdir(artifactsDir, { recursive: true });
 
   const coreActions = [
     'end',
@@ -658,14 +693,17 @@ async function main() {
   const webVideoRecorder = options.recordVideo
     ? await resolveWebVideoRecorder(options.cdpPort, captureHelperBin())
     : undefined;
-  let recordingTarget = options.recordVideo ? await resolveRecordingTarget(options) : undefined;
-  if (recordingTarget && webVideoRecorder?.name === 'capture-helper') {
-    recordingTarget = await ensureCapturableRecordingTarget(recordingTarget);
-  }
+  const recordingTarget = options.recordVideo ? await resolveRecordingTarget(options) : undefined;
+  const videoRecorder =
+    webVideoRecorder?.name === 'capture-helper'
+      ? withCapturableRecordingTarget(webVideoRecorder)
+      : webVideoRecorder;
 
   const hudEnabled = filteredManifest.supported_official_actions.includes('app.hud');
+  const trust = resolveCommandCenterRecipeTrust();
   const runner = createRecipeRunner({
     actionManifest: filteredManifest,
+    defaultSource: COMMAND_CENTER_RECIPE_SOURCE,
     adapters: [
       ...createStandardUiAdapters({
         transport,
@@ -694,7 +732,7 @@ async function main() {
     logger: console,
     recording: {
       videoRecorder:
-        webVideoRecorder ??
+        videoRecorder ??
         createCaptureHelperVideoRecorder({
           captureHelperPath: captureHelperBin(),
         }),
@@ -710,6 +748,7 @@ async function main() {
   });
 
   const result = await runner.run({
+    ...trust,
     recipeDocument,
     recipePath,
     artifactsDir,

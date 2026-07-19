@@ -36,6 +36,13 @@ export {
 export type { PromoteFlowRequest, PromoteFlowResult } from './core/promote.js';
 export { promoteRecipeFlow } from './core/promote.js';
 export { createRecipeRunner, defineActionAdapter } from './core/runner.js';
+export {
+  buildRecipeExecutionPlan,
+  enforceRecipeExecutionPlan,
+  recipeSourceForRequest,
+} from './core/trust.js';
+export { RecipeTrustError } from './core/trust-error.js';
+export { RECIPE_TRUST_ENV, resolveRecipeTrustInput } from './core/trust-input.js';
 export type * from './core/types.js';
 export type { CaptureHelperVideoRecorderOptions } from './recording/capture-helper.js';
 export {

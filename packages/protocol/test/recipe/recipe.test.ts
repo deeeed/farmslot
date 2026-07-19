@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   mergeRecipeValidationResults,
+  officialRecipeActionCapabilities,
   RECIPE_PROTOCOL_SCHEMA_URL,
   type RecipeArtifactManifestDocument,
   recipeProtocolSchemaUrlForVersion,
@@ -146,6 +147,30 @@ test('validates portable backend and UI v1 example recipes', async () => {
   }
 });
 
+test('classifies official recipe actions by execution capability', () => {
+  assert.deepEqual(officialRecipeActionCapabilities('command'), ['host-exec']);
+  assert.deepEqual(officialRecipeActionCapabilities('index_artifacts'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('assert_json'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('ui.screenshot'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('ui.press'), [
+    'app-mutation',
+    'external-mutation',
+  ]);
+  assert.deepEqual(officialRecipeActionCapabilities('cdp.storage'), [
+    'host-read-export',
+    'app-mutation',
+  ]);
+  assert.deepEqual(officialRecipeActionCapabilities('cdp.network'), [
+    'host-read-export',
+    'app-mutation',
+    'external-mutation',
+  ]);
+  assert.deepEqual(officialRecipeActionCapabilities('app.status'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('state_read'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('cdp.target'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('ui.wait_for'), ['host-read-export']);
+});
+
 test('publishes the same Recipe v1 JSON Schema in protocol package and docs static', async () => {
   assert.equal(recipeProtocolSchemaUrlForVersion(1), RECIPE_PROTOCOL_SCHEMA_URL);
   assert.equal(
@@ -179,6 +204,44 @@ test('validates runner action manifests and rejects undeclared recipe actions', 
   assert.ok(
     restrictedResult.findings.some(
       (finding) => finding.code === 'recipe.action_not_declared_by_manifest',
+    ),
+  );
+});
+
+test('validates execution-capability metadata for official and custom actions', () => {
+  const valid = validateRecipeActionManifestDocument({
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['command', 'end'],
+    action_metadata: {
+      command: { execution_capabilities: ['host-exec'] },
+    },
+    custom_actions: [
+      {
+        name: 'example.mutate',
+        description: 'Mutates an external system.',
+        execution_capabilities: ['external-mutation'],
+      },
+    ],
+  });
+  assert.equal(valid.status, 'valid');
+
+  const invalid = validateRecipeActionManifestDocument({
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+    custom_actions: [
+      {
+        name: 'example.bad',
+        description: 'Declares an unknown risk.',
+        execution_capabilities: ['network-ish'],
+      },
+    ],
+  });
+  assert.equal(invalid.status, 'invalid');
+  assert.ok(
+    invalid.findings.some(
+      (finding) => finding.code === 'action_manifest.unknown_execution_capability',
     ),
   );
 });
@@ -1031,6 +1094,37 @@ test('rejects unresolved call refs and lifecycle transitions', () => {
   );
 });
 
+test('rejects parameter-templated call refs before flow resolution', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    title: 'Dynamic call ref',
+    description: 'Flow identifiers must be part of the static execution plan.',
+    flows: {
+      '{{params.target}}': {
+        entry: 'done',
+        nodes: { done: { action: 'end', status: 'pass' } },
+      },
+    },
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': {
+            action: 'call',
+            intent: 'Attempt a dynamic flow dispatch',
+            ref: '{{params.target}}',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(result.findings.some((finding) => finding.code === 'workflow.dynamic_call_ref'));
+});
+
 test('accepts call refs resolvable from declared external flow ids', () => {
   const recipe = {
     schema_version: 1,
@@ -1258,6 +1352,48 @@ test('validates inline flow actions, transitions, and cycles', () => {
   assert.ok(result.findings.some((finding) => finding.code === 'flow.missing_target'));
   assert.ok(result.findings.some((finding) => finding.code === 'flow.no_reachable_terminal'));
   assert.ok(result.findings.some((finding) => finding.code === 'flow.call_cycle'));
+});
+
+test('rejects inline flow ids that collide after flow-ref normalization', () => {
+  const result = validateRecipeWithManifest(
+    {
+      schema_version: 1,
+      title: 'Normalized flow ids',
+      description: 'Flow identifiers must have one canonical runtime meaning.',
+      flows: {
+        ' example': {
+          entry: 'done',
+          nodes: { done: { action: 'end', status: 'pass' } },
+        },
+        example: {
+          entry: 'done',
+          nodes: { done: { action: 'end', status: 'pass' } },
+        },
+      },
+      validate: {
+        workflow: {
+          entry: 'call-flow',
+          nodes: {
+            'call-flow': {
+              intent: 'Invoke the canonical flow reference',
+              action: 'call',
+              ref: ' example',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    },
+    {
+      runner_protocol_version: 1,
+      action_registry_version: 1,
+      supported_official_actions: ['call', 'end'],
+    },
+  );
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(result.findings.some((finding) => finding.code === 'flow.duplicate_id'));
 });
 
 test('rejects artifact packages without typed manifests', () => {

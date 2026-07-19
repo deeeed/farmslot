@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import WebSocket from 'ws';
@@ -7,6 +6,7 @@ import type { UiObserverRef } from '@farmslot/protocol';
 
 import type { StandardUiAction, UiActionTransport, UiTransportResult } from '../adapters/ui.js';
 import { asNumber, asOptionalString, asString, isRecord } from '../core/json.js';
+import { writeFileWithinRoot } from '../core/path.js';
 import type { ActionExecutionContext, RecipeObservationResult } from '../core/types.js';
 
 export function sleep(ms: number): Promise<void> {
@@ -439,9 +439,11 @@ export class CdpWebPage {
     if (!result.data) throw new Error('CDP screenshot did not return data.');
     if (!context) return result.data;
     const relativePath = relPath ?? `screenshots/${context.nodeId}.png`;
-    const outputPath = context.resolveArtifactPath(relativePath);
-    await mkdir(path.dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, Buffer.from(result.data, 'base64'));
+    await writeFileWithinRoot(
+      context.artifactsDir,
+      relativePath,
+      Buffer.from(result.data, 'base64'),
+    );
     return {
       path: relativePath,
       type: 'screenshot',

@@ -11,7 +11,7 @@ import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
 import { loadRecipeLibraries } from '../src/core/library.js';
 import { promoteRecipeFlow } from '../src/core/promote.js';
-import { createRecipeRunner } from '../src/core/runner.js';
+import { createRecipeRunner as createRawRecipeRunner } from '../src/core/runner.js';
 import type { SummaryDocument } from '../src/core/types.js';
 
 const coreActionManifest: RecipeActionManifestDocument = {
@@ -33,6 +33,21 @@ const coreActionManifest: RecipeActionManifestDocument = {
     'manual',
   ],
 };
+
+function createRecipeRunner(options: Parameters<typeof createRawRecipeRunner>[0]) {
+  return createRawRecipeRunner({
+    ...options,
+    adapters: options.adapters.map((adapter) => ({
+      ...adapter,
+      source: adapter.source ?? {
+        kind: 'bundled',
+        trust: 'trusted',
+        name: 'recipe promote test',
+      },
+    })),
+    defaultSource: { kind: 'operator', trust: 'trusted', name: 'recipe promote test' },
+  });
+}
 
 async function createTempRoot(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'farmslot-recipe-promote-'));
@@ -309,7 +324,13 @@ test('re-verifies a library-resolved flow from the run resolution report', async
       recipePath: composedPath,
       artifactsDir: composedArtifactsDir,
       projectRoot: tempRoot,
-      librarySources: [{ name: 'personal', root: targetRoot }],
+      librarySources: [
+        {
+          name: 'personal',
+          root: targetRoot,
+          provenance: { kind: 'operator', trust: 'trusted' },
+        },
+      ],
     });
     assert.equal(composedResult.status, 'pass');
 
@@ -475,7 +496,13 @@ test('a promoted flow is immediately composable from the library by a new recipe
       recipePath: composedRecipePath,
       artifactsDir: path.join(tempRoot, 'artifacts'),
       projectRoot: tempRoot,
-      librarySources: [{ name: 'personal', root: targetRoot }],
+      librarySources: [
+        {
+          name: 'personal',
+          root: targetRoot,
+          provenance: { kind: 'operator', trust: 'trusted' },
+        },
+      ],
     });
     assert.equal(result.status, 'pass');
     assert.equal(await readFile(path.join(tempRoot, 'marker.txt'), 'utf-8'), 'promoted-ok');

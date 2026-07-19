@@ -335,6 +335,7 @@ export async function runReviewAgent(
     const coldLaunchCommand = () =>
       buildLaunchCommand(vars, runner, model, taskPrompt, {
         taskFile: taskMdPath,
+        taskDir,
         effort: parentRun?.effort,
         safetyTier: parentSafetyTier,
         runtimeDir,
@@ -436,7 +437,7 @@ export async function runReviewAgent(
         runner,
         model,
         warmSession.runnerSessionId,
-        { effort: parentRun?.effort, safetyTier: parentSafetyTier, runtimeDir },
+        { effort: parentRun?.effort, safetyTier: parentSafetyTier, runtimeDir, taskDir },
       )}`;
       try {
         await launchReviewer(reloadCmd, taskPrompt, warmSession);

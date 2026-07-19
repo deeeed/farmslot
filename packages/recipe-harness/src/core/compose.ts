@@ -1,3 +1,5 @@
+import { normalizeRecipeFlowRef, type RecipeSourceProvenance } from '@farmslot/protocol';
+
 import { collectFlows, type InlineFlow } from './flows.js';
 import { isRecord } from './json.js';
 import {
@@ -29,7 +31,7 @@ function callRefsInNodes(nodes: Record<string, unknown> | undefined): string[] {
       typeof node.ref === 'string' &&
       node.ref.trim()
     ) {
-      refs.push(node.ref);
+      refs.push(normalizeRecipeFlowRef(node.ref));
     }
   }
   return refs;
@@ -46,7 +48,7 @@ function callRefsInLifecycle(list: unknown): string[] {
       typeof node.ref === 'string' &&
       node.ref.trim()
     ) {
-      refs.push(node.ref);
+      refs.push(normalizeRecipeFlowRef(node.ref));
     }
   }
   return refs;
@@ -77,7 +79,7 @@ function collectRequiredFlowRefs(
     recipe.startState.action === 'call' &&
     typeof recipe.startState.ref === 'string'
   ) {
-    seeds.push(recipe.startState.ref);
+    seeds.push(normalizeRecipeFlowRef(recipe.startState.ref));
   }
 
   const required = new Set<string>();
@@ -135,6 +137,7 @@ export interface ComposeRecipeOptions {
   /** Library sources whose flows count as resolvable, mirroring run resolution. */
   librarySources?: RecipeLibrarySource[];
   logger?: RecipeLogger;
+  recipeSource?: RecipeSourceProvenance;
 }
 
 export interface ComposeRecipeResult {
@@ -157,6 +160,7 @@ export async function composeRecipe(
   const recipeLocalFlows = await collectFlows(recipe, {
     projectRoot: options.projectRoot,
     recipeDir: options.recipeDir,
+    recipeSource: options.recipeSource,
   });
   const resolution =
     options.librarySources && options.librarySources.length > 0

@@ -1,6 +1,10 @@
 import type {
   RecipeActionManifestDocument,
   RecipeArtifactManifestEntry,
+  RecipeExecutionApproval,
+  RecipeExecutionCapability,
+  RecipeExecutionPlan,
+  RecipeSourceProvenance,
   UiObserverRef,
 } from '@farmslot/protocol';
 
@@ -14,7 +18,13 @@ export interface RecipeRunRequest {
   artifactsDir: string;
   projectRoot?: string;
   env?: Record<string, string | undefined>;
+  /** Disable ambient process inheritance when the caller supplies the complete execution environment. */
+  inheritProcessEnv?: boolean;
   recordVideo?: boolean | RecipeVideoRecordingMode | RecipeVideoRecordingOptions;
+  /** Provenance assigned by the caller; omitted sources receive unknown trust. */
+  source?: RecipeSourceProvenance;
+  /** Out-of-band approval bound to the fully resolved execution-plan digest. */
+  approval?: RecipeExecutionApproval;
   /** Ordered recipe library sources; the first source declaring a flow ref wins. */
   librarySources?: RecipeLibrarySource[];
 }
@@ -24,12 +34,15 @@ export interface RecipeLibrarySource {
   name?: string;
   /** Library root directory containing library.json and flows/. */
   root: string;
+  /** Trust comes from caller configuration, never from library.json. */
+  provenance?: RecipeSourceProvenance;
 }
 
 export interface LoadedRecipeLibrarySource {
   name: string;
   root: string;
   flowCount: number;
+  provenance: RecipeSourceProvenance;
 }
 
 export interface RecipeFlowResolutionEntry {
@@ -76,6 +89,8 @@ export interface RecipeRunResult {
 }
 
 export interface RecipeRunner {
+  /** Resolve and authorize the exact execution plan without running actions or writing artifacts. */
+  preflight(request: RecipeRunRequest): Promise<RecipeExecutionPlan>;
   run(request: RecipeRunRequest): Promise<RecipeRunResult>;
 }
 
@@ -95,11 +110,15 @@ export interface RecipeRunnerProvenance {
 export interface CreateRecipeRunnerOptions {
   actionManifest: RecipeActionManifestDocument;
   adapters: ActionAdapter[];
+  /** Caller-owned default provenance. Omit to fail closed with unknown trust. */
+  defaultSource?: RecipeSourceProvenance;
   preconditions?: PreconditionChecker[];
   logger?: RecipeLogger;
   hud?: RecipeHudOptions | false;
   runner?: RecipeRunnerProvenance;
   recording?: RecipeRecordingOptions;
+  /** Capabilities denied when recipe or implementation provenance is not trusted. */
+  blockedCapabilities?: RecipeExecutionCapability[];
 }
 
 export interface RecipeVideoRecordingOptions {
@@ -212,6 +231,9 @@ export interface ActionExecutionContext {
 export interface ActionAdapter {
   action: string;
   testOnly?: boolean;
+  capabilities?: RecipeExecutionCapability[];
+  source?: RecipeSourceProvenance;
+  resolveSourceDigest?: () => Promise<string>;
   execute(node: Record<string, unknown>, context: ActionExecutionContext): Promise<ActionResult>;
   observe?(
     refs: readonly UiObserverRef[],
@@ -248,6 +270,9 @@ export interface PreconditionResult {
 
 export interface PreconditionChecker {
   id: string;
+  capabilities?: RecipeExecutionCapability[];
+  source?: RecipeSourceProvenance;
+  resolveSourceDigest?: () => Promise<string>;
   execute(
     gate: RecipePreconditionGate,
     context: ActionExecutionContext,

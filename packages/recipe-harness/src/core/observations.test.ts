@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import type { RecipeActionManifestDocument } from '@farmslot/protocol';
 
 import { resolveObserveRefs } from './passive-observations.js';
-import { createRecipeRunner } from './runner.js';
+import { createRecipeRunner as createRawRecipeRunner } from './runner.js';
 import type { ActionAdapter, RecipeRunResult, TraceEntry } from './types.js';
 
 const manifest = {
@@ -31,6 +31,21 @@ const manifest = {
     },
   ],
 } as const;
+
+function createRecipeRunner(options: Parameters<typeof createRawRecipeRunner>[0]) {
+  return createRawRecipeRunner({
+    ...options,
+    adapters: options.adapters.map((adapter) => ({
+      ...adapter,
+      source: adapter.source ?? {
+        kind: 'bundled',
+        trust: 'trusted',
+        name: 'observation test',
+      },
+    })),
+    defaultSource: { kind: 'operator', trust: 'trusted', name: 'observation test' },
+  });
+}
 
 async function runRecipe(
   pressNode: Record<string, unknown>,

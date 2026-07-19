@@ -1221,10 +1221,14 @@ async function relaunchWorkerForFix(
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
   const parentSafetyTier = parentRun?.safetyTier;
   const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
+  const taskDir = parentRun
+    ? await resolveWorkerTaskDir(vars, parentRun.project, parentRun.taskFile)
+    : null;
   let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
     effort: parentRun?.effort,
     safetyTier: parentSafetyTier,
     runtimeDir,
+    taskDir: taskDir ?? undefined,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd);

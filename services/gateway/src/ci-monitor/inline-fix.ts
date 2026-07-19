@@ -163,10 +163,12 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   const prompt = 'Continue working on the current TASK.md and CI follow-up fixes.';
   // Inherit parent run's safety tier (ADR-023) so CI-watch relaunch keeps the posture.
   const runtimeDir = await resolveProjectRuntimeDir(run.project);
+  const taskDir = await resolveSlotTaskDir(runId, run.project);
   let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
     effort: run.effort,
     safetyTier: run.safetyTier,
     runtimeDir,
+    taskDir: taskDir ?? undefined,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 

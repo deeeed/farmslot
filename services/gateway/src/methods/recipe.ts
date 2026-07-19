@@ -52,6 +52,7 @@ import {
   attachLiveRecipeContext,
   listRecipeRunArtifactGroupsForRun,
 } from '../live-recipe/context.js';
+import { withTaskRecipeTrustEnvironment } from '../runners/launch-command.js';
 import { getRun, updateRun } from '../runs/store.js';
 
 import { runHealthCheck } from './slot/check.js';
@@ -967,6 +968,7 @@ async function buildRecipeExecutionCommand(
     recipeCmd,
     recipeRunOptionsForProject(projectVars.projectJson, { playbackSlowMs, recordVideo }),
   );
+  recipeCmd = withTaskRecipeTrustEnvironment(recipeCmd, slotVars.remoteRepo, workerTaskDir);
   return {
     recipePath: slotRecipePath,
     artifactRoot: slotRecipeRunArtifactsDir,

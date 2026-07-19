@@ -4,6 +4,9 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- fix: propagate recipe source trust into Command Center execution and preconditions.
+- fix: defer artifact creation and Chrome capture preparation until after recipe trust preflight.
+
 - chore: type-escape baseline pruned — `fleet/state.ts` no longer contains `as any` casts (RawSlot honest optionality).
 
 - refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the orphan-run backfill flow map.

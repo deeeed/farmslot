@@ -10,6 +10,9 @@ import {
   RECIPE_PROTOCOL_SCHEMA_VERSION,
   type RecipeValidationResult,
 } from './common.js';
+import { RECIPE_EXECUTION_CAPABILITIES } from './trust.js';
+
+const recipeExecutionCapabilitySet = new Set<string>(RECIPE_EXECUTION_CAPABILITIES);
 
 export function getRecipeActionManifestActionNames(manifest: unknown): string[] {
   if (!isRecord(manifest)) return [];
@@ -71,6 +74,30 @@ function validateActionCatalogEntry(
       `${path}.schema`,
       `${path}.schema must be a JSON Schema object when present.`,
     );
+  }
+
+  if (entry.execution_capabilities != null) {
+    if (!Array.isArray(entry.execution_capabilities)) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.invalid_execution_capabilities',
+        `${path}.execution_capabilities`,
+        `${path}.execution_capabilities must be an array when present.`,
+      );
+    } else {
+      entry.execution_capabilities.forEach((capability, index) => {
+        if (!isNonEmptyString(capability) || !recipeExecutionCapabilitySet.has(capability)) {
+          addFinding(
+            ctx,
+            'error',
+            'action_manifest.unknown_execution_capability',
+            `${path}.execution_capabilities[${index}]`,
+            `${String(capability)} is not a Recipe Protocol execution capability.`,
+          );
+        }
+      });
+    }
   }
 
   if (entry.examples == null) return;

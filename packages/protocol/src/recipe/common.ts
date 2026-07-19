@@ -1,5 +1,7 @@
 import { RECIPE_ARTIFACT_TYPES } from '../recipes/step-io.js';
 
+import type { RecipeExecutionCapability } from './trust.js';
+
 export const RECIPE_PROTOCOL_SCHEMA_VERSION = 1;
 export const RECIPE_PROTOCOL_SCHEMA_URL = 'https://farmslot.io/schemas/recipe-v1.schema.json';
 export const RECIPE_PROTOCOL_SCHEMA_URLS = {
@@ -57,6 +59,8 @@ export interface RecipeActionCatalogEntry {
   description?: string;
   schema?: Record<string, unknown>;
   examples?: RecipeActionCatalogExample[];
+  /** Security-relevant effects. Discovery metadata only; runtime adapters may add but never remove capabilities. */
+  execution_capabilities?: RecipeExecutionCapability[];
   when_to_use?: string;
   avoid_when?: string;
   proof_effect?: string;

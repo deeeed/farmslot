@@ -1,5 +1,7 @@
 // agents/runtime-recovery.ts — reconcile persisted agent context state with live tmux runtime.
 
+import path from 'node:path';
+
 import {
   type AgentContext,
   type AgentContextStatus,
@@ -494,6 +496,7 @@ export async function restoreTmuxWorker(
         effort: run.effort,
         runtimeDir,
         safetyTier,
+        taskDir: run.taskFile ? path.posix.dirname(run.taskFile) : undefined,
       },
     )}`;
     await respawnTmuxWindowWithCommand(vars, nextTarget.target, launchCommand);

@@ -7,12 +7,38 @@ import {
   buildCodexExecLaunch,
   buildLaunchCommand,
   buildRunnerSessionReloadCommand,
+  withTaskRecipeTrustEnvironment,
 } from './launch-command.js';
 import { resolveWorkerDispatchPrompt } from './worker-prompt.js';
+
+const CLEAR_RECIPE_TRUST_ENV =
+  'unset FARMSLOT_RECIPE_SOURCE_TRUST FARMSLOT_RECIPE_SOURCE_KIND FARMSLOT_RECIPE_SOURCE_NAME FARMSLOT_RECIPE_SOURCE_DIGEST FARMSLOT_RECIPE_APPROVE_PLAN; ';
 
 async function dispatchPrompt(taskFile: string): Promise<string> {
   return resolveWorkerDispatchPrompt('farmslot-farm', { taskFile });
 }
+
+describe('recipe source trust environment', () => {
+  it('marks task-scoped PR recipe input untrusted before launching any runner', () => {
+    const command = withTaskRecipeTrustEnvironment(
+      'cd /repo && claude',
+      '/repo',
+      '.task/review/pr-1',
+    );
+    assert.match(command, /inputs\/inherited\/recipe-source\.json/);
+    assert.match(command, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/);
+    assert.match(command, /FARMSLOT_RECIPE_SOURCE_KIND=task/);
+    assert.match(command, /FARMSLOT_RECIPE_SOURCE_NAME=task-inherited/);
+    assert.match(command, /else unset FARMSLOT_RECIPE_SOURCE_TRUST/);
+    assert.match(command, /; cd \/repo && claude$/);
+  });
+
+  it('clears stale recipe provenance without a task directory', () => {
+    const command = withTaskRecipeTrustEnvironment('claude', '/repo');
+    assert.match(command, /^unset FARMSLOT_RECIPE_SOURCE_TRUST /);
+    assert.match(command, /FARMSLOT_RECIPE_APPROVE_PLAN; claude$/);
+  });
+});
 import {
   assertSupportedRunnerSpelling,
   confirmTrustPromptWithFreshEvidence,
@@ -1205,6 +1231,15 @@ describe('buildLaunchCommand', () => {
   const TASK_FILE = `${TASK_DIR}/TASK.md`;
   const PROMPT = 'Read TASK.md and execute.';
 
+  it('derives recipe provenance scope from a task file when taskDir is omitted', () => {
+    const vars = makeVars({ dispatchCmd: '' });
+    const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, {
+      taskFile: TASK_FILE,
+    });
+    assert.match(cmd, /[.]task\/fix\/abc\/inputs\/inherited\/recipe-source[.]json/u);
+    assert.match(cmd, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/u);
+  });
+
   describe('claude runner', () => {
     it('inline-launches with --dangerously-skip-permissions when the full-auto tier is explicit', () => {
       // Intrinsic runner default is sandboxed; pre-refactor dangerous posture
@@ -1438,7 +1473,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'",
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'`,
       );
     });
 
@@ -1447,7 +1482,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'",
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'`,
       );
       assert.match(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--print/);
@@ -1464,7 +1499,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && /opt/cursor/bin/agent --force --sandbox enabled --model sonnet-4 'Read TASK.md and execute.'",
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /opt/cursor/bin/agent --force --sandbox enabled --model sonnet-4 'Read TASK.md and execute.'`,
       );
       assert.match(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--print/);
@@ -1491,13 +1526,16 @@ describe('buildLaunchCommand', () => {
     it('falls back to bare `grok` on PATH when no grok_path is configured', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
-      assert.equal(cmd, "cd '/tmp/repo' && grok --model grok-build");
+      assert.equal(cmd, `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --model grok-build`);
     });
 
     it('falls back to inline Grok launcher with grok-build default model', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
-      assert.equal(cmd, "cd '/tmp/repo' && /usr/local/bin/grok --model grok-build");
+      assert.equal(
+        cmd,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --model grok-build`,
+      );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--single/);
       assert.doesNotMatch(cmd, /--print/);
@@ -1511,7 +1549,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && /Users/deeeed/.grok/bin/grok --permission-mode auto --effort xhigh --model grok-composer-2.5-fast",
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /Users/deeeed/.grok/bin/grok --permission-mode auto --effort xhigh --model grok-composer-2.5-fast`,
       );
     });
 
@@ -1545,7 +1583,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /^cd '\/tmp\/worker-checkout' && FARMSLOT_ROOT="\$PWD" FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 node "\$PWD\/packages\/cli\/bin\/farmslot\.mjs" scripted-runner/,
+        /cd '\/tmp\/worker-checkout' && FARMSLOT_ROOT="\$PWD" FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 node "\$PWD\/packages\/cli\/bin\/farmslot\.mjs" scripted-runner/,
       );
       assert.doesNotMatch(cmd, /FARMSLOT_ROOT='[^']+'/);
       assert.doesNotMatch(cmd, /node '[^']+\/packages\/cli/);
@@ -1603,6 +1641,16 @@ describe('buildLaunchCommand', () => {
 });
 
 describe('buildRunnerSessionReloadCommand', () => {
+  it('restores task recipe provenance before resuming a persisted runner', () => {
+    const vars = makeVars({ dispatchCmd: '', grokPath: '/opt/bin/grok' });
+    const cmd = buildRunnerSessionReloadCommand(vars, 'grok', 'grok-code-fast-1', 'session', {
+      taskDir: 'temp/tasks/TASK-1',
+    });
+    assert.match(cmd, /inputs\/inherited\/recipe-source[.]json/);
+    assert.match(cmd, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/);
+    assert.match(cmd, /grok-code-fast-1 --resume 'session'$/);
+  });
+
   it('builds a Claude resume command with observability and safety flags', () => {
     const vars = makeVars({ dispatchCmd: '', claudePath: '/opt/bin/claude' });
     const cmd = buildRunnerSessionReloadCommand(vars, 'claude', 'sonnet', 'session-123', {
@@ -1639,7 +1687,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     });
     assert.equal(
       cmd,
-      "cd '/tmp/repo' && /opt/bin/grok --permission-mode bypassPermissions --effort xhigh --model grok-code-fast-1 --resume 'grok-session'",
+      `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /opt/bin/grok --permission-mode bypassPermissions --effort xhigh --model grok-code-fast-1 --resume 'grok-session'`,
     );
   });
 
