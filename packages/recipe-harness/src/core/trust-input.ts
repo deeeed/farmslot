@@ -51,7 +51,11 @@ export function resolveRecipeTrustInput(
     'environment',
   );
   const source = restrictSource(environmentSource, optionSource);
-  const approvalDigest = options.approvalDigest ?? env[RECIPE_TRUST_ENV.approvalDigest];
+  const environmentApproval = env[RECIPE_TRUST_ENV.approvalDigest];
+  const approvalDigest =
+    environmentSource && environmentSource.trust !== 'trusted'
+      ? environmentApproval
+      : (options.approvalDigest ?? environmentApproval);
 
   return {
     ...(source ? { source } : {}),

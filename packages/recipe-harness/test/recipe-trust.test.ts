@@ -111,6 +111,22 @@ test('inherited untrusted provenance cannot be upgraded by CLI source flags', ()
   );
 });
 
+test('inherited untrusted provenance ignores CLI approval digests', () => {
+  assert.deepEqual(
+    resolveRecipeTrustInput(
+      { approvalDigest: 'sha256:self-approved' },
+      {
+        FARMSLOT_RECIPE_SOURCE_TRUST: 'untrusted',
+        FARMSLOT_RECIPE_SOURCE_KIND: 'task',
+        FARMSLOT_RECIPE_SOURCE_NAME: 'pr-body',
+      },
+    ),
+    {
+      source: { trust: 'untrusted', kind: 'task', name: 'pr-body' },
+    },
+  );
+});
+
 test('CLI JSON trust failures expose stable code, message, and userAction', async () => {
   const root = await tempRoot();
   const priorExitCode = process.exitCode;

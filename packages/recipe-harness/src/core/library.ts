@@ -8,6 +8,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { type InlineFlow, readCatalogFlows } from './flows.js';
 import { isRecord, readJsonFile } from './json.js';
+import { isPathWithin } from './path.js';
 import { invalidRecipeSource } from './trust-error.js';
 import type { LoadedRecipeLibrarySource, RecipeLibrarySource, RecipeLogger } from './types.js';
 
@@ -135,7 +136,7 @@ export async function loadRecipeLibraries(
     for (const file of await listFlowCatalogFiles(root)) {
       const catalogPath = path.join(root, LIBRARY_FLOWS_DIR, file);
       const catalogReal = await realpath(catalogPath);
-      if (!isWithin(rootReal, catalogReal)) {
+      if (!isPathWithin(rootReal, catalogReal)) {
         throw invalidRecipeSource(
           `Library catalog ${catalogPath} resolves outside ${root}.`,
           'move the catalog inside the library root or remove the escaping symlink',
@@ -172,14 +173,6 @@ export async function loadRecipeLibraries(
 
   if (logger) logResolution(logger, { sources: loadedSources, flows });
   return { sources: loadedSources, flows };
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative === '' ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
-  );
 }
 
 export interface EffectiveFlowCatalog {

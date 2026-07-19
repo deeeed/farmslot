@@ -18,6 +18,7 @@ import {
   resolveObserveRefs,
   runPassiveObservers,
 } from './passive-observations.js';
+import { isPathWithin } from './path.js';
 import { evaluateNodeGate, evaluatePredicate, getPathValue } from './predicates.js';
 import { traceNodeMetadata } from './trace.js';
 import { invalidRecipeSource } from './trust-error.js';
@@ -94,28 +95,20 @@ async function resolveUsePath(
       'reference a catalog within the project root using a relative path',
     );
   }
-  const candidate = isWithin(options.projectRoot, fromRecipe)
+  const candidate = isPathWithin(options.projectRoot, fromRecipe)
     ? fromRecipe
     : path.join(options.projectRoot, normalized);
   const [projectReal, candidateReal] = await Promise.all([
     realpath(options.projectRoot),
     realpath(candidate),
   ]);
-  if (!isWithin(projectReal, candidateReal)) {
+  if (!isPathWithin(projectReal, candidateReal)) {
     throw invalidRecipeSource(
       `uses entry ${catalogPath} resolves outside project root.`,
       'move the catalog inside the project root or remove the escaping symlink',
     );
   }
   return candidateReal;
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative === '' ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
-  );
 }
 
 function addCatalogFlows(
