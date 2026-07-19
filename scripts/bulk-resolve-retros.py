@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from glob import glob
@@ -34,11 +35,16 @@ CDP_BIN = REPO / "apps" / "command-center" / "scripts" / "cdp.mjs"
 def gateway_health_url() -> str:
     """Derive the health URL from the same FARMSLOT_GATEWAY env cdp.mjs uses
     for the RPC — the reachability gate must test the instance the resolve
-    calls will hit (machine-local stacks run the gateway off the default port)."""
-    ws = os.environ.get("FARMSLOT_GATEWAY", "ws://localhost:7777")
-    m = re.match(r"wss?://([^/]+)", ws)
-    host = m.group(1) if m else "localhost:7777"
-    return f"http://{host}/health"
+    calls will hit (machine-local stacks run the gateway off the default
+    port), over the matching transport (wss gateways serve https health)."""
+    raw = os.environ.get("FARMSLOT_GATEWAY", "").strip() or "ws://localhost:7777"
+    parts = urllib.parse.urlsplit(raw)
+    if not parts.netloc:
+        # Bare host:port without a scheme — reparse so netloc populates.
+        parts = urllib.parse.urlsplit(f"ws://{raw}")
+    scheme = "https" if parts.scheme.lower() == "wss" else "http"
+    host = parts.netloc or "localhost:7777"
+    return f"{scheme}://{host}/health"
 
 
 GATEWAY_HEALTH = gateway_health_url()
