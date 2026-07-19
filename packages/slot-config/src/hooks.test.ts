@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { ProjectVars, SlotVars } from './config.js';
-import { expandDispatchCmd, expandTemplate } from './hooks.js';
+import {
+  assertNoUnknownPlaceholders,
+  collectTemplatePlaceholders,
+  expandDispatchCmd,
+  expandTemplate,
+  knownTemplatePlaceholders,
+} from './hooks.js';
 
 test('expandTemplate exposes the full slot id for configured actions', () => {
   const slotVars: SlotVars = {
@@ -265,4 +271,69 @@ test('{{domain}} precedence: extras > project vars > pool default > empty', () =
   // Project vars beat the pool-level default when both are present.
   assert.equal(expandTemplate('{{domain}}', { ...base, domain: 'pool' }, projectVars), 'static');
   assert.equal(expandTemplate('{{domain}}', base, projectVars, { domain: 'runtime' }), 'runtime');
+});
+
+test('collectTemplatePlaceholders finds each placeholder name once', () => {
+  assert.deepEqual(
+    [...collectTemplatePlaceholders('{{a}} {{b}} {{a}} {{not a placeholder}} {{9bad}}')].sort(),
+    ['a', 'b'],
+  );
+});
+
+test('assertNoUnknownPlaceholders passes known names and throws on unknown ones', () => {
+  assertNoUnknownPlaceholders('run {{TASK_FILE}} in {{TASK_DIR}}', ['TASK_FILE', 'TASK_DIR'], 'x');
+  assert.throws(
+    () =>
+      assertNoUnknownPlaceholders(
+        'read {{recipe_quality_path}} and {{TASK_FILE}}',
+        ['TASK_FILE'],
+        'Prompt template worker-dispatch.md',
+      ),
+    /Prompt template worker-dispatch\.md.*\{\{recipe_quality_path\}\}/,
+  );
+});
+
+test('knownTemplatePlaceholders stays in sync with expandTemplate', () => {
+  const slotVars: SlotVars = {
+    slotId: 's1',
+    machine: 'm',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: 'x',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/r',
+    session: 's',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'x@localhost',
+    remoteRepo: '/tmp/r',
+    projectName: 'demo',
+    resourceVars: { port: '1234', cdp_port: '9222' },
+  };
+  const projectVars = {
+    projectName: 'demo',
+    projectConfig: '/x/project.json',
+    projectFixturesDir: '/x/fixtures',
+    projectTemplatesDir: '/x/templates',
+    projectJson: {
+      vars: { recipe_quality_path: '{{runtime_dir}}/recipe-quality.md' },
+      reference_repos: { mobile: { repo_url: 'https://example.com/mm.git', local_name: 'mm-ref' } },
+    },
+    runtimeDir: '.agent',
+    artifactDir: '.task',
+  } as ProjectVars;
+  const extraVars = { extra_var: 'v' };
+  // Every name the guard reports as known must actually be substituted by
+  // expandTemplate — a placeholder surviving expansion means the two drifted.
+  const known = knownTemplatePlaceholders(slotVars, projectVars, extraVars);
+  const template = [...known].map((name) => `{{${name}}}`).join(' ');
+  const expanded = expandTemplate(template, slotVars, projectVars, extraVars);
+  assert.deepEqual([...collectTemplatePlaceholders(expanded)], []);
 });

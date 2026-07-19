@@ -10,6 +10,7 @@ import {
   type StepLLMUsage,
 } from '@farmslot/protocol';
 
+import { assertNoUnknownPlaceholders } from '../core/hooks.js';
 import { loadPromptTemplate } from '../core/prompt-templates.js';
 import { getLLMConfig } from '../llm/config.js';
 import { callLLM, type LLMCallResult } from '../llm/index.js';
@@ -510,8 +511,10 @@ export function computeOverrideRate(
 export async function generateTaskContent(
   template: string,
   vars: Record<string, string>,
+  source = 'task template',
 ): Promise<string> {
   // Simple variable expansion — no LLM needed
+  assertNoUnknownPlaceholders(template, Object.keys(vars), source);
   let content = template;
   for (const [key, value] of Object.entries(vars)) {
     content = content.replaceAll(`{{${key}}}`, value);

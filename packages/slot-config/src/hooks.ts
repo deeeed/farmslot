@@ -157,6 +157,70 @@ function expandTemplateInternal(
   return result;
 }
 
+// ─── Template placeholder guard ───
+// Sinks that render worker-facing text (task files, dispatch prompts) assert
+// the raw template's placeholders against the known expansion set and fail
+// hard at dispatch, instead of shipping literal {{...}} to an agent.
+
+const PLACEHOLDER_RE = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
+
+export function collectTemplatePlaceholders(text: string): Set<string> {
+  const names = new Set<string>();
+  for (const match of text.matchAll(PLACEHOLDER_RE)) names.add(match[1] as string);
+  return names;
+}
+
+// Every placeholder name expandTemplate() can substitute for this slot/project.
+// Keep in sync with expandTemplateInternal — hooks.test.ts locks the two
+// together by expanding a template built from this set.
+export function knownTemplatePlaceholders(
+  slotVars: SlotVars,
+  projectVars?: ProjectVars,
+  extraVars?: Record<string, string>,
+): Set<string> {
+  const known = new Set<string>();
+  const add = (name: string) => {
+    known.add(name);
+    known.add(name.toUpperCase());
+  };
+  for (const key of Object.keys(extraVars ?? {})) add(key);
+  for (const key of Object.keys(slotVars.resourceVars)) add(key);
+  for (const key of ['port', 'cdp_port', 'simulator', 'avd', 'adb_serial', 'headless', 'snapshot'])
+    add(key);
+  for (const key of [
+    'runtime_dir',
+    'artifact_dir',
+    'recipe_dir',
+    'farmslot_dir',
+    'watcher_port',
+    'slot_id',
+    'session',
+    'repo',
+    'primary_repo',
+    'domain',
+  ])
+    add(key);
+  for (const key of Object.keys(projectVars?.projectJson.reference_repos ?? {})) add(`${key}_repo`);
+  for (const key of Object.keys(projectVars?.projectJson.vars ?? {})) add(key);
+  return known;
+}
+
+export function assertNoUnknownPlaceholders(
+  template: string,
+  known: Iterable<string>,
+  source: string,
+): void {
+  const knownSet = known instanceof Set ? known : new Set(known);
+  const unknown = [...collectTemplatePlaceholders(template)].filter((name) => !knownSet.has(name));
+  if (unknown.length > 0) {
+    throw new Error(
+      `${source} references placeholder(s) with no expansion value: ` +
+        `${unknown.map((name) => `{{${name}}}`).join(', ')} — ` +
+        `supply the variable or remove the placeholder from the template`,
+    );
+  }
+}
+
 // ─── expandHook ───
 // Reads hooks.<hookName> from project.json, substitutes slot variables.
 // Returns empty string if hook not defined.

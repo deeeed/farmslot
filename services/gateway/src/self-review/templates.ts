@@ -13,6 +13,11 @@ import {
   resolveTaskRelDir,
 } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
+import {
+  assertNoUnknownPlaceholders,
+  expandTemplate,
+  knownTemplatePlaceholders,
+} from '../core/hooks.js';
 import { getRun } from '../runs/store.js';
 
 import { parseReviewSessionPolicy, type ReviewSessionPolicy } from './session-policy.js';
@@ -63,11 +68,12 @@ export async function expandSelfReviewTemplate(
 
   // Resolve runtimeDir and mobile reference repo path from project vars
   const runtimeDir = await resolveProjectRuntimeDir(project);
+  let pv: Awaited<ReturnType<typeof loadProjectVars>> | null = null;
   let mobileRepo = '';
   try {
-    const pv = await loadProjectVars(project);
+    pv = await loadProjectVars(project);
     const parentDir = path.dirname(vars.remoteRepo);
-    const refName = pv.projectJson.reference_repos?.mobile?.local_name;
+    const refName = pv?.projectJson.reference_repos?.mobile?.local_name;
     const candidates = refName
       ? [path.join(parentDir, refName), path.join(parentDir, refName.replace(/-ref$/, '-1'))]
       : [];
@@ -90,7 +96,7 @@ export async function expandSelfReviewTemplate(
     REPO: vars.remoteRepo,
     PLATFORM: vars.platform || 'ios',
     WATCHER_PORT: vars.resourceVars.port ?? '',
-    CDP_PORT: vars.resourceVars.cdpPort ?? '',
+    CDP_PORT: vars.resourceVars.cdp_port ?? '',
     RUNTIME_DIR: runtimeDir,
     TICKET: run?.ticketOrPr ?? '',
     SESSION: vars.session,
@@ -104,6 +110,14 @@ export async function expandSelfReviewTemplate(
   for (const [key, val] of Object.entries(replacements)) {
     expanded = expanded.replaceAll(`{{${key}}}`, val);
   }
+  // Second pass: slot resources, project.json vars, reference repos — same
+  // coverage as CI-fix task rendering, so templates can use {{recipe_*}} etc.
+  expanded = expandTemplate(expanded, vars, pv ?? undefined);
+  assertNoUnknownPlaceholders(
+    template,
+    [...Object.keys(replacements), ...knownTemplatePlaceholders(vars, pv ?? undefined)],
+    `Self-review template for ${project} (${validationDepth})`,
+  );
   return expanded;
 }
 

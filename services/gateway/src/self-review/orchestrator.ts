@@ -24,8 +24,13 @@ import {
   resolveAgentTarget,
   upsertAgentContext,
 } from '../agents/contexts.js';
-import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import {
+  assertNoUnknownPlaceholders,
+  expandTemplate,
+  knownTemplatePlaceholders,
+} from '../core/hooks.js';
 import { onSlotReset } from '../core/state.js';
 import {
   respawnTmuxWindowWithCommand,
@@ -978,6 +983,7 @@ async function sendFeedbackToWorker(
   }
 
   const runtimeDir = await resolveProjectRuntimeDir(project);
+  const pv = await loadProjectVars(project);
 
   const replacements: Record<string, string> = {
     TASK_DIR: taskDir,
@@ -991,6 +997,15 @@ async function sendFeedbackToWorker(
   for (const [key, val] of Object.entries(replacements)) {
     expanded = expanded.replaceAll(`{{${key}}}`, val);
   }
+  // Second pass: slot resources, project.json vars, reference repos — the fix
+  // templates use {{farmslot_dir}}, {{SLOT_ID}}, {{recipe_*}} beyond the
+  // explicit set above.
+  expanded = expandTemplate(expanded, vars, pv);
+  assertNoUnknownPlaceholders(
+    template,
+    [...Object.keys(replacements), ...knownTemplatePlaceholders(vars, pv)],
+    `Self-review fix template for ${project}`,
+  );
 
   // Clear any stale fix-pass signal before sending new feedback.
   const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);

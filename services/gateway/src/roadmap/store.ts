@@ -53,6 +53,7 @@ import {
   updateBacklogItem,
 } from '../backlog/store.js';
 import { isLocal } from '../core/exec.js';
+import { assertNoUnknownPlaceholders } from '../core/hooks.js';
 import { loadPromptTemplate } from '../core/prompt-templates.js';
 import { farmslotRoot, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
 import { runnerFlagsForTier } from '../runners/registry.js';
@@ -913,7 +914,12 @@ async function refinementPromptVars(
   };
 }
 
-function expandPromptTemplate(template: string, vars: Record<string, string>): string {
+function expandPromptTemplate(
+  template: string,
+  vars: Record<string, string>,
+  source: string,
+): string {
+  assertNoUnknownPlaceholders(template, Object.keys(vars), source);
   let rendered = template;
   for (const [key, value] of Object.entries(vars)) {
     rendered = rendered.replaceAll(`{{${key}}}`, value);
@@ -929,7 +935,11 @@ async function loadExplicitRefinementPromptTemplate(
   const promptPath = path.isAbsolute(refinementPromptPath)
     ? refinementPromptPath
     : path.join(farmslotRoot, 'projects', project, refinementPromptPath);
-  return expandPromptTemplate(await readFile(promptPath, 'utf-8'), vars);
+  return expandPromptTemplate(
+    await readFile(promptPath, 'utf-8'),
+    vars,
+    `Roadmap refinement prompt ${promptPath}`,
+  );
 }
 
 async function resolveRoadmapRefinementPrompt(
@@ -946,7 +956,12 @@ async function resolveRoadmapRefinementPrompt(
   if (config.refinementPromptPath) {
     return loadExplicitRefinementPromptTemplate(item.project, config.refinementPromptPath, vars);
   }
-  if (config.refinementPrompt) return expandPromptTemplate(config.refinementPrompt, vars);
+  if (config.refinementPrompt)
+    return expandPromptTemplate(
+      config.refinementPrompt,
+      vars,
+      `Inline roadmap refinement prompt for ${item.project}`,
+    );
 
   const projectTemplate = await loadPromptTemplate(
     item.project,

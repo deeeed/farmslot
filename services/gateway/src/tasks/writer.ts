@@ -859,12 +859,17 @@ export async function writeTaskFile(
       break;
     }
   }
+  vars.mobile_repo = vars.MOBILE_REPO;
 
   emit('substep', {
     name: 'render-template',
     detail: `Rendering ${path.basename(taskAbsDir)}/TASK.md`,
   });
-  const content = await generateTaskContent(template, vars);
+  const content = await generateTaskContent(
+    template,
+    vars,
+    `Worker template ${templatePath ?? templateName}`,
+  );
   const taskFilePath = path.join(taskAbsDir, 'TASK.md');
   const withInheritedContext = inheritedContext
     ? `${content.trimEnd()}\n${buildFollowUpScopeContractSection(vars.TASK_DIR, inheritedContext)}\n`
