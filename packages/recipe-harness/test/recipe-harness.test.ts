@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -14,6 +24,7 @@ import { createStandardUiAdapters, type UiActionTransport } from '../src/adapter
 import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { validateRecipeCliInput } from '../src/cli/support.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
+import { writeFileWithinRoot } from '../src/core/path.js';
 import { cleanupAbortedRunVideoRecording } from '../src/core/recording-cleanup.js';
 import {
   createRecipeRunner as createRawRecipeRunner,
@@ -163,6 +174,23 @@ function createSmokeRecipe(): unknown {
   };
 }
 
+function createSingleActionRecipe(node: Record<string, unknown>): unknown {
+  return {
+    schema_version: 1,
+    title: 'Single action security check',
+    description: 'Exercises one adapter through the real runner.',
+    validate: {
+      workflow: {
+        entry: 'check',
+        nodes: {
+          check: { ...node, intent: 'Exercise the selected adapter', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+}
+
 test('runs a backend/headless recipe and writes a v1 artifact package', async () => {
   const tempRoot = await createTempRoot();
   try {
@@ -215,6 +243,111 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
     assert.deepEqual(packageResult.findings, []);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('project read and artifact export actions reject symlink escapes', async () => {
+  const tempRoot = await createTempRoot();
+  const outsideRoot = await createTempRoot();
+  try {
+    const outsideFile = path.join(outsideRoot, 'secret.json');
+    await writeFile(outsideFile, '{"secret":true}\n');
+    await symlink(outsideFile, path.join(tempRoot, 'linked.json'));
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+
+    for (const [index, node] of [
+      { action: 'assert_file', path: 'linked.json' },
+      {
+        action: 'assert_json',
+        path: 'linked.json',
+        assert: { path: '$.secret', operator: 'eq', value: true },
+      },
+      { action: 'index_artifacts', artifacts: ['linked.json'] },
+    ].entries()) {
+      const result = await runner.run({
+        recipeDocument: createSingleActionRecipe(node),
+        artifactsDir: path.join(tempRoot, `artifacts-${index}`),
+        projectRoot: tempRoot,
+      });
+      assert.equal(result.status, 'fail');
+      const trace = JSON.parse(await readFile(result.tracePath, 'utf-8')) as Array<{
+        error?: string;
+      }>;
+      assert.match(trace.find((entry) => entry.error)?.error ?? '', /resolves outside its root/u);
+    }
+
+    await assert.rejects(
+      runner.run({
+        recipeDocument: createSingleActionRecipe({ action: 'watch_logs', path: 'linked.json' }),
+        artifactsDir: path.join(tempRoot, 'watch-artifacts'),
+        projectRoot: tempRoot,
+      }),
+      /resolves outside its root/u,
+    );
+  } finally {
+    await Promise.all([
+      rm(tempRoot, { recursive: true, force: true }),
+      rm(outsideRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test('artifact writes reject pre-existing symlink destinations', async () => {
+  const tempRoot = await createTempRoot();
+  const outsideRoot = await createTempRoot();
+  try {
+    await writeFile(path.join(tempRoot, 'proof.txt'), 'approved proof\n');
+    const artifactsDir = path.join(tempRoot, 'artifacts');
+    await mkdir(artifactsDir, { recursive: true });
+    const outsideFile = path.join(outsideRoot, 'untouched.txt');
+    await writeFile(outsideFile, 'do not replace\n');
+    await symlink(outsideFile, path.join(artifactsDir, 'proof.txt'));
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const result = await runner.run({
+      recipeDocument: createSingleActionRecipe({
+        action: 'index_artifacts',
+        artifacts: ['proof.txt'],
+      }),
+      artifactsDir,
+      projectRoot: tempRoot,
+    });
+    assert.equal(result.status, 'fail');
+    assert.equal(await readFile(outsideFile, 'utf-8'), 'do not replace\n');
+  } finally {
+    await Promise.all([
+      rm(tempRoot, { recursive: true, force: true }),
+      rm(outsideRoot, { recursive: true, force: true }),
+    ]);
+  }
+});
+
+test('artifact parent rejection does not create directories through an escaping symlink', async () => {
+  const tempRoot = await createTempRoot();
+  const outsideRoot = await createTempRoot();
+  try {
+    const artifactsDir = path.join(tempRoot, 'artifacts');
+    await mkdir(artifactsDir, { recursive: true });
+    await symlink(outsideRoot, path.join(artifactsDir, 'escape'));
+    await assert.rejects(
+      writeFileWithinRoot(artifactsDir, 'escape/created-before-reject/proof.txt', 'proof\n'),
+      /resolves outside its root/u,
+    );
+    await assert.rejects(
+      readFile(path.join(outsideRoot, 'created-before-reject', 'proof.txt')),
+      /ENOENT/u,
+    );
+    await assert.rejects(access(path.join(outsideRoot, 'created-before-reject')), /ENOENT/u);
+  } finally {
+    await Promise.all([
+      rm(tempRoot, { recursive: true, force: true }),
+      rm(outsideRoot, { recursive: true, force: true }),
+    ]);
   }
 });
 
@@ -461,6 +594,58 @@ test('records one opt-in whole-recipe video and registers it in the artifact man
     });
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('record-video stages privately and rejects a symlinked artifact destination', async () => {
+  const tempRoot = await createTempRoot();
+  const outsideRoot = await createTempRoot();
+  try {
+    const artifactsDir = path.join(tempRoot, 'artifacts');
+    await mkdir(path.join(artifactsDir, 'videos'), { recursive: true });
+    const outsideFile = path.join(outsideRoot, 'untouched.mp4');
+    await writeFile(outsideFile, 'do not replace');
+    await symlink(outsideFile, path.join(artifactsDir, 'videos', 'recipe-run.mp4'));
+    let recorderOutputPath = '';
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      async start(request) {
+        recorderOutputPath = request.outputPath;
+        return {
+          async stop() {
+            await writeFile(request.outputPath, 'safe staged mp4');
+            return {};
+          },
+        };
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: {
+          async resolveRecordingTarget() {
+            return { kind: 'pid', pid: 123 };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: createSmokeRecipe(),
+      artifactsDir,
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'fail');
+    assert.equal(await readFile(outsideFile, 'utf-8'), 'do not replace');
+    assert.equal(recorderOutputPath.startsWith(`${artifactsDir}${path.sep}`), false);
+  } finally {
+    await Promise.all([
+      rm(tempRoot, { recursive: true, force: true }),
+      rm(outsideRoot, { recursive: true, force: true }),
+    ]);
   }
 });
 

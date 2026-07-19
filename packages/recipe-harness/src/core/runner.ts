@@ -1,4 +1,5 @@
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -39,6 +40,7 @@ import {
   resolveObserveRefs,
   runPassiveObservers,
 } from './passive-observations.js';
+import { copyFileWithinRoots, statFileWithinRoot, writeFileWithinRoot } from './path.js';
 import { evaluateNodeGate } from './predicates.js';
 import {
   cleanupAbortedRunVideoRecording,
@@ -49,6 +51,7 @@ import {
   buildRecipeExecutionPlan,
   enforceRecipeExecutionPlan,
   recipeSourceForRequest,
+  verifyExecutableSource,
 } from './trust.js';
 import type {
   ActionAdapter,
@@ -170,7 +173,7 @@ async function collectRunFileOffsets({
   for (const flow of flows.values()) collectWatchLogPaths(paths, flow.nodes);
   for (const relativePath of paths) {
     try {
-      const info = await stat(path.join(projectRoot, relativePath));
+      const info = await statFileWithinRoot(projectRoot, relativePath);
       offsets.set(relativePath, info.size);
     } catch (error) {
       if (!isNodeFileMissingError(error)) throw error;
@@ -331,9 +334,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const maxTransitions = Object.keys(graph.nodes).length * 3;
     const videoOptions = normalizeVideoRecordingOptions(request.recordVideo);
     const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
-    let runRecording:
-      | { recording: ActiveVideoRecording; entry: RecipeArtifactManifestEntry; outputPath: string }
-      | undefined;
+    let runRecording: RunVideoRecording | undefined;
     if (videoRecorder) {
       try {
         runRecording = await this.#startRunVideoRecording({
@@ -448,27 +449,30 @@ class DefaultRecipeRunner implements RecipeRunner {
             status = 'fail';
             break;
           }
-          const result =
-            action === 'call'
-              ? await executeInlineFlowCall({
-                  callNodeId: activeNodeId,
-                  node,
-                  context,
-                  flowCatalog,
-                  adapters: this.#adapters,
-                  traceWriter,
-                  callStack: [],
-                  maxCallDepth: DEFAULT_MAX_FLOW_CALL_DEPTH,
-                  logger: this.#logger,
-                  defaultObserverRefs: this.#defaultObserverRefs,
-                  declaredObserverRefs: this.#declaredObserverRefs,
-                  publishHudProgress: (hudStatus, flowEvent) =>
-                    this.#publishHudProgressOrRecord(traceWriter, hudStatus, {
-                      ...flowEvent,
-                      recipe,
-                    }),
-                })
-              : await adapter!.execute(node, context);
+          let result;
+          if (action === 'call') {
+            result = await executeInlineFlowCall({
+              callNodeId: activeNodeId,
+              node,
+              context,
+              flowCatalog,
+              adapters: this.#adapters,
+              traceWriter,
+              callStack: [],
+              maxCallDepth: DEFAULT_MAX_FLOW_CALL_DEPTH,
+              logger: this.#logger,
+              defaultObserverRefs: this.#defaultObserverRefs,
+              declaredObserverRefs: this.#declaredObserverRefs,
+              publishHudProgress: (hudStatus, flowEvent) =>
+                this.#publishHudProgressOrRecord(traceWriter, hudStatus, {
+                  ...flowEvent,
+                  recipe,
+                }),
+            });
+          } else {
+            await verifyExecutableSource(adapter!, `Action ${action}`);
+            result = await adapter!.execute(node, context);
+          }
           const observeRefs = resolveObserveRefs(
             action,
             node,
@@ -597,8 +601,9 @@ class DefaultRecipeRunner implements RecipeRunner {
         libraryResolution &&
         (usedLibraryFlows.size > 0 || flowOverrides.length > 0 || shadowedFlows.length > 0)
       ) {
-        await writeFile(
-          path.join(artifactsDir, 'resolved-flows.json'),
+        await writeFileWithinRoot(
+          artifactsDir,
+          'resolved-flows.json',
           `${JSON.stringify(
             {
               schema_version: 1,
@@ -658,6 +663,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         } catch (error) {
           const message = errorMessage(error);
           await removePartialRunVideoOutput(recordingToStop.outputPath, this.#logger);
+          await rm(recordingToStop.stagingRoot, { recursive: true, force: true });
           traceWriter.record({
             nodeId: 'recipe-run:video',
             action: 'record.video',
@@ -790,6 +796,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         runFileOffsets,
       });
       try {
+        await verifyExecutableSource(checker, `Precondition ${gate.id}`);
         const rawResult = await checker.execute(gate, context);
         const result = normalizePreconditionResult(rawResult);
         if (result.output !== undefined) outputs.set(nodeId, result.output);
@@ -886,11 +893,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     projectRoot: string;
     artifactsDir: string;
     env: Record<string, string | undefined>;
-  }): Promise<{
-    recording: ActiveVideoRecording;
-    entry: RecipeArtifactManifestEntry;
-    outputPath: string;
-  }> {
+  }): Promise<RunVideoRecording> {
     const doctor = await recorder.doctor?.();
     if (doctor && !doctor.ok) {
       throw new Error(
@@ -920,8 +923,9 @@ class DefaultRecipeRunner implements RecipeRunner {
       );
     }
     const relativePath = 'videos/recipe-run.mp4';
-    const outputPath = path.join(artifactsDir, relativePath);
-    await mkdir(path.dirname(outputPath), { recursive: true });
+    const stagingRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-recipe-video-'));
+    const stagingRelativePath = 'recipe-run.mp4';
+    const outputPath = path.join(stagingRoot, stagingRelativePath);
     let recording: ActiveVideoRecording;
     try {
       recording = await recorder.start({
@@ -934,6 +938,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       });
     } catch (error) {
       await removePartialRunVideoOutput(outputPath, this.#logger);
+      await rm(stagingRoot, { recursive: true, force: true });
       throw error;
     }
     const entry: RecipeArtifactManifestEntry = {
@@ -951,16 +956,28 @@ class DefaultRecipeRunner implements RecipeRunner {
       },
       ...(videoOptions.maxFps != null ? { maxFps: videoOptions.maxFps } : {}),
     };
-    return { recording, entry, outputPath };
+    return {
+      recording,
+      entry,
+      outputPath,
+      stagingRoot,
+      stagingRelativePath,
+      artifactsDir,
+    };
   }
 
-  async #stopRunVideoRecording(runRecording: {
-    recording: ActiveVideoRecording;
-    entry: RecipeArtifactManifestEntry;
-    outputPath: string;
-  }): Promise<RecipeArtifactManifestEntry> {
+  async #stopRunVideoRecording(
+    runRecording: RunVideoRecording,
+  ): Promise<RecipeArtifactManifestEntry> {
     const result = await runRecording.recording.stop();
     await assertVideoOutputReady(runRecording.outputPath);
+    await copyFileWithinRoots(
+      runRecording.stagingRoot,
+      runRecording.stagingRelativePath,
+      runRecording.artifactsDir,
+      runRecording.entry.path,
+    );
+    await rm(runRecording.stagingRoot, { recursive: true, force: true });
     return result.recorder
       ? {
           ...runRecording.entry,
@@ -1027,6 +1044,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     if (!hudAction || event.action === hudAction) return;
     const adapter = this.#adapters.get(hudAction);
     if (!adapter) return;
+    await verifyExecutableSource(adapter, `Action ${hudAction}`);
     await adapter.execute(buildHudNode(status, event, this.#hud), event.context);
   }
 
@@ -1044,6 +1062,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     if (!hudAction) return;
     const adapter = this.#adapters.get(hudAction);
     if (!adapter) return;
+    await verifyExecutableSource(adapter, `Action ${hudAction}`);
     const context = {
       nodeId: 'recipe-complete',
       recipe: request.recipe,
@@ -1088,6 +1107,15 @@ class DefaultRecipeRunner implements RecipeRunner {
     if (isRecord(recipe) && typeof recipe.title === 'string') return recipe.title;
     return 'Recipe run';
   }
+}
+
+interface RunVideoRecording {
+  recording: ActiveVideoRecording;
+  entry: RecipeArtifactManifestEntry;
+  outputPath: string;
+  stagingRoot: string;
+  stagingRelativePath: string;
+  artifactsDir: string;
 }
 
 function buildFlowResolutionSummary(

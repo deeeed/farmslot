@@ -491,6 +491,63 @@ test('caller source digests cannot misrepresent the loaded recipe document', asy
   }
 });
 
+test('approved custom implementations are re-hashed immediately before execution', async () => {
+  const root = await tempRoot();
+  try {
+    let currentDigest = 'sha256:adapter-v1';
+    let executed = false;
+    const customManifest: RecipeActionManifestDocument = {
+      ...manifest,
+      custom_actions: [{ name: 'custom.exec', execution_capabilities: ['arbitrary-code'] }],
+    };
+    const runner = createRecipeRunner({
+      actionManifest: customManifest,
+      adapters: [
+        ...createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+        {
+          action: 'custom.exec',
+          capabilities: ['arbitrary-code'],
+          source: {
+            kind: 'custom-adapter',
+            trust: 'untrusted',
+            name: 'task adapter',
+            digest: 'sha256:adapter-v1',
+          },
+          async resolveSourceDigest() {
+            return currentDigest;
+          },
+          async execute() {
+            executed = true;
+            return { status: 'pass' as const };
+          },
+        },
+      ],
+    });
+    const request = {
+      recipeDocument: recipe({ action: 'custom.exec' }),
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      source: untrusted,
+    };
+    let planDigest = '';
+    await assert.rejects(runner.preflight(request), (error: unknown) => {
+      assert.ok(error instanceof RecipeTrustError);
+      planDigest = error.failure.recipeDigest ?? '';
+      return error.code === 'RECIPE_TRUST_REQUIRED';
+    });
+    assert.match(planDigest, /^sha256:/u);
+    currentDigest = 'sha256:adapter-v2';
+    const result = await runner.run({
+      ...request,
+      approval: { planDigest },
+    });
+    assert.equal(result.status, 'fail');
+    assert.equal(executed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('untrusted recipes cannot export checkout files through index_artifacts', async () => {
   const root = await tempRoot();
   try {
@@ -616,6 +673,54 @@ test('custom adapters default to arbitrary code and cannot self-downgrade', asyn
       },
     );
     assert.equal(executed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('custom adapter capabilities are unique in public trust failures', async () => {
+  const root = await tempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: {
+        runner_protocol_version: 1,
+        action_registry_version: 1,
+        supported_official_actions: ['end'],
+        custom_actions: [
+          {
+            name: 'example.exec',
+            execution_capabilities: ['arbitrary-code'],
+          },
+        ],
+      },
+      adapters: [
+        ...createStandardCoreAdapters({ actions: ['end'] }),
+        {
+          action: 'example.exec',
+          source: {
+            kind: 'custom-adapter',
+            trust: 'untrusted',
+            digest: 'sha256:adapter-v1',
+          },
+          async execute() {
+            return { status: 'pass' };
+          },
+        },
+      ],
+    });
+    await assert.rejects(
+      runner.preflight({
+        recipeDocument: recipe({ action: 'example.exec' }),
+        artifactsDir: path.join(root, 'artifacts'),
+        projectRoot: root,
+        source: trusted,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof RecipeTrustError);
+        assert.deepEqual(error.failure.blocked?.[0]?.capabilities, ['arbitrary-code']);
+        return true;
+      },
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

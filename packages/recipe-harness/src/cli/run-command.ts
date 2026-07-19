@@ -87,9 +87,9 @@ export function registerRunCommand(program: Command): void {
           })
         ).map((source) => ({
           ...source,
-          provenance: {
+          provenance: source.provenance ?? {
             kind: 'library' as const,
-            trust: 'trusted' as const,
+            trust: 'unknown' as const,
             name: source.name,
             path: source.root,
           },

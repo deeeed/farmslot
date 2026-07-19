@@ -231,6 +231,7 @@ export interface ActionAdapter {
   testOnly?: boolean;
   capabilities?: RecipeExecutionCapability[];
   source?: RecipeSourceProvenance;
+  resolveSourceDigest?: () => Promise<string>;
   execute(node: Record<string, unknown>, context: ActionExecutionContext): Promise<ActionResult>;
   observe?(
     refs: readonly UiObserverRef[],
@@ -269,6 +270,7 @@ export interface PreconditionChecker {
   id: string;
   capabilities?: RecipeExecutionCapability[];
   source?: RecipeSourceProvenance;
+  resolveSourceDigest?: () => Promise<string>;
   execute(
     gate: RecipePreconditionGate,
     context: ActionExecutionContext,

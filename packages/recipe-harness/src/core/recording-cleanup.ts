@@ -5,6 +5,7 @@ import type { ActiveVideoRecording, RecipeLogger } from './types.js';
 interface AbortedRunVideoRecording {
   recording: ActiveVideoRecording;
   outputPath: string;
+  stagingRoot?: string;
 }
 
 function cleanupErrorMessage(error: unknown): string {
@@ -22,6 +23,15 @@ export async function cleanupAbortedRunVideoRecording(
     logger.error(`record.video cleanup failed after run abort: ${cleanupErrorMessage(error)}`);
   }
   await removePartialRunVideoOutput(runRecording.outputPath, logger);
+  if (runRecording.stagingRoot) {
+    try {
+      await rm(runRecording.stagingRoot, { recursive: true, force: true });
+    } catch (error) {
+      logger.error(
+        `record.video cleanup could not remove staging directory: ${cleanupErrorMessage(error)}`,
+      );
+    }
+  }
 }
 
 export async function removePartialRunVideoOutput(

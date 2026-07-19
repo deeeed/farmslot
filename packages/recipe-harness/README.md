@@ -248,7 +248,11 @@ reviewers can understand what the agent is doing from screenshots or videos.
 
 ## Security and portability
 
-- Run recipes from trusted sources only; `command` executes local shell commands.
+- Unknown or untrusted recipes must preflight before side effects. Restricted
+  capabilities require approval of the resolved plan digest.
+- Plan approval prevents accidental execution of changed recipes or adapters; it
+  is not an OS sandbox or an authorization boundary against code already running
+  as the same user. Approved custom code retains that user's permissions.
 - Keep artifact paths relative to the artifact directory.
 - Do not put secrets in recipe text, HUD text, trace output, screenshots, or
   artifact paths.

@@ -5,7 +5,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 ## Unreleased
 
 - Added provenance-aware preflight/execution planning that blocks restricted capabilities from unknown or untrusted sources before side effects; approvals bind to the exact resolved plan digest.
-- Fixed catalog boundary bypasses from escaping symlinks and parameter-templated flow references.
+- Fixed source-swap and symlink boundary bypasses across custom implementations, project reads, flow catalogs, and artifact/video writes.
+- Fixed managed-run approval recovery instructions and caller-selected library trust defaults.
 
 ## 0.7.0 - 2026-07-19
 

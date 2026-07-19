@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
@@ -65,11 +65,7 @@ class CdpVideoRecorder implements VideoRecorder {
   }
 
   async start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording> {
-    const framesDir = path.join(
-      path.dirname(request.outputPath),
-      `.cdp-frames-${path.basename(request.outputPath, path.extname(request.outputPath))}`,
-    );
-    await mkdir(framesDir, { recursive: true });
+    const framesDir = await mkdtemp(path.join(path.dirname(request.outputPath), '.cdp-frames-'));
 
     let frameIndex = 0;
     let capturing = true;

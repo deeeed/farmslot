@@ -193,7 +193,7 @@ export function enforceRecipeExecutionPlan(
     throw new RecipeTrustError({
       code: 'RECIPE_APPROVAL_MISMATCH',
       message: 'Recipe approval does not match the resolved execution plan.',
-      userAction: `review the resolved plan, then rerun with --approve-plan ${plan.digest}`,
+      userAction: approvalUserAction(plan.digest),
       reason: 'approval-mismatch',
       recipeDigest: plan.digest,
       trust: plan.source.trust,
@@ -203,12 +203,40 @@ export function enforceRecipeExecutionPlan(
   throw new RecipeTrustError({
     code: 'RECIPE_TRUST_REQUIRED',
     message: 'Untrusted recipe sources cannot execute restricted capabilities.',
-    userAction: `review the resolved plan, then rerun with --approve-plan ${plan.digest}`,
+    userAction: approvalUserAction(plan.digest),
     reason: 'blocked-capability',
     recipeDigest: plan.digest,
     trust: plan.source.trust,
     blocked: publicBlocked,
   });
+}
+
+export async function verifyExecutableSource(
+  executable: Pick<ActionAdapter | PreconditionChecker, 'source' | 'resolveSourceDigest'>,
+  label: string,
+): Promise<void> {
+  if (!executable.resolveSourceDigest) return;
+  if (!executable.source?.digest) {
+    throw invalidRecipeSource(
+      `${label} has an integrity verifier but no approved source digest.`,
+      'resolve the implementation again and review its content digest before execution',
+    );
+  }
+  const actualDigest = await executable.resolveSourceDigest();
+  if (actualDigest !== executable.source.digest) {
+    throw invalidRecipeSource(
+      `${label} changed after the execution plan was resolved.`,
+      'resolve and review a new execution plan for the current implementation bytes',
+    );
+  }
+}
+
+function approvalUserAction(planDigest: string): string {
+  return (
+    `review the resolved plan, then approve ${planDigest} through the trusted caller ` +
+    `(direct CLI: --approve-plan ${planDigest}; managed run: ` +
+    `FARMSLOT_RECIPE_APPROVE_PLAN=${planDigest})`
+  );
 }
 
 function effectiveInvocationOrigin(
@@ -254,7 +282,7 @@ function actionCapabilities(
       ? [...new Set([...manifestCapabilities, ...declared])]
       : action === 'call'
         ? []
-        : ['arbitrary-code', ...manifestCapabilities];
+        : [...new Set<RecipeExecutionCapability>(['arbitrary-code', ...manifestCapabilities])];
   if (adapterOrigin?.trust === 'trusted' || base.includes('arbitrary-code')) return [...base];
   return [...base, 'arbitrary-code'];
 }

@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { access, copyFile, mkdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -12,6 +11,7 @@ import {
   getJsonPathValue,
   normalizeRelativePath,
 } from '../core/json.js';
+import { copyFileWithinRoots, readFileWithinRoot, statFileWithinRoot } from '../core/path.js';
 import type { ActionAdapter } from '../core/types.js';
 
 export function createStandardCoreAdapters(
@@ -98,11 +98,9 @@ function defineAssertFileAdapter(): ActionAdapter {
     action: 'assert_file',
     async execute(node, context) {
       const filePath = asString(node.path, 'assert_file.path');
-      const absolutePath = context.resolveProjectPath(filePath);
-      await access(absolutePath);
-      const stats = await stat(absolutePath);
+      const stats = await statFileWithinRoot(context.projectRoot, filePath);
       if (node.contains != null) {
-        const content = await readFile(absolutePath, 'utf-8');
+        const content = (await readFileWithinRoot(context.projectRoot, filePath)).toString('utf-8');
         const expected = asString(node.contains, 'assert_file.contains');
         if (!content.includes(expected)) {
           throw new Error(
@@ -120,7 +118,7 @@ function defineAssertJsonAdapter(): ActionAdapter {
     action: 'assert_json',
     async execute(node, context) {
       const filePath = asString(node.path, 'assert_json.path');
-      const content = await readFile(context.resolveProjectPath(filePath), 'utf-8');
+      const content = (await readFileWithinRoot(context.projectRoot, filePath)).toString('utf-8');
       const document: unknown = JSON.parse(content);
       const assertion = parseAssertionNode(node.assert, 'assert_json.assert');
       assertAssertion(document, assertion, `JSON ${filePath}`);
@@ -241,7 +239,7 @@ function defineWatchLogsAdapter(): ActionAdapter {
       if (rawScope !== 'run' && rawScope !== 'file') {
         throw new Error('watch_logs.scope must be "run" or "file".');
       }
-      const contentBuffer = await readFile(context.resolveProjectPath(filePath));
+      const contentBuffer = await readFileWithinRoot(context.projectRoot, filePath);
       const baseline = rawScope === 'file' ? 0 : (context.getRunFileOffset(filePath) ?? 0);
       const start = baseline > contentBuffer.length ? 0 : baseline;
       const content = contentBuffer.subarray(start).toString('utf-8');
@@ -273,10 +271,12 @@ function defineIndexArtifactsAdapter(): ActionAdapter {
       const entries: RecipeArtifactManifestEntry[] = [];
       for (const artifact of node.artifacts) {
         const entry = parseArtifactEntry(artifact, context.nodeId);
-        const sourcePath = context.resolveProjectPath(entry.path);
-        const outputPath = context.resolveArtifactPath(entry.path);
-        await mkdir(path.dirname(outputPath), { recursive: true });
-        await copyFile(sourcePath, outputPath);
+        await copyFileWithinRoots(
+          context.projectRoot,
+          entry.path,
+          context.artifactsDir,
+          entry.path,
+        );
         context.registerArtifact(entry);
         entries.push(entry);
       }

@@ -22,6 +22,7 @@ import {
 import { isPathWithin } from './path.js';
 import { evaluateNodeGate, evaluatePredicate, getPathValue } from './predicates.js';
 import { traceNodeMetadata } from './trace.js';
+import { verifyExecutableSource } from './trust.js';
 import { invalidRecipeSource } from './trust-error.js';
 import type { ActionAdapter, ActionResult, RecipeLogger } from './types.js';
 
@@ -330,23 +331,26 @@ async function executeInlineFlow({
         });
         if (!hudStarted) throw new Error(`app.hud running update failed for ${namespacedNodeId}.`);
       }
-      const result =
-        action === 'call'
-          ? await executeInlineFlowCall({
-              callNodeId: namespacedNodeId,
-              node: flowNode,
-              context: childContext,
-              flowCatalog,
-              adapters,
-              traceWriter,
-              callStack,
-              maxCallDepth,
-              logger,
-              defaultObserverRefs,
-              declaredObserverRefs,
-              publishHudProgress,
-            })
-          : await adapter!.execute(flowNode, childContext);
+      let result;
+      if (action === 'call') {
+        result = await executeInlineFlowCall({
+          callNodeId: namespacedNodeId,
+          node: flowNode,
+          context: childContext,
+          flowCatalog,
+          adapters,
+          traceWriter,
+          callStack,
+          maxCallDepth,
+          logger,
+          defaultObserverRefs,
+          declaredObserverRefs,
+          publishHudProgress,
+        });
+      } else {
+        await verifyExecutableSource(adapter!, `Action ${action}`);
+        result = await adapter!.execute(flowNode, childContext);
+      }
       const observeRefs = resolveObserveRefs(
         action,
         flowNode,

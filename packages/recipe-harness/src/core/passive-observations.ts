@@ -1,5 +1,6 @@
 import type { RecipeActionManifestDocument, UiObserverRef } from '@farmslot/protocol';
 
+import { verifyExecutableSource } from './trust.js';
 import type {
   ActionAdapter,
   ActionResult,
@@ -163,6 +164,7 @@ export async function runPassiveObservers({
     };
   }
   try {
+    await verifyExecutableSource(adapter, `Observer ${action}`);
     return await adapter.observe(refs, node, context);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
