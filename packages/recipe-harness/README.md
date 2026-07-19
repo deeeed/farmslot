@@ -166,6 +166,8 @@ run executed, so evidence stays reviewable without access to the libraries.
 
 ```bash
 farmslot-recipe flows list --library personal=~/.farmslot/recipe-library
+farmslot-recipe flows describe demo.write-marker \
+  --library personal=~/.farmslot/recipe-library
 farmslot-recipe run recipe.json --artifacts-dir artifacts \
   --action-manifest action-manifest.json \
   --library personal=~/.farmslot/recipe-library --library team=../team-recipes

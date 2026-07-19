@@ -8,10 +8,14 @@ import { registerValidateCommand } from './validate-command.js';
 
 const CLI_VERSION = '0.1.0';
 
-export function createRecipeHarnessProgram(): Command {
+export interface RecipeHarnessCliOptions {
+  commandName?: string;
+}
+
+export function createRecipeHarnessProgram(options: RecipeHarnessCliOptions = {}): Command {
   const program = new Command();
   program
-    .name('farmslot-recipe')
+    .name(options.commandName ?? 'farmslot-recipe')
     .description('Farmslot v1 recipe harness CLI')
     .version(CLI_VERSION);
 
@@ -22,8 +26,11 @@ export function createRecipeHarnessProgram(): Command {
   return program;
 }
 
-export async function runRecipeHarnessCli(argv: string[]): Promise<void> {
-  await createRecipeHarnessProgram().parseAsync(argv, { from: 'user' });
+export async function runRecipeHarnessCli(
+  argv: string[],
+  options: RecipeHarnessCliOptions = {},
+): Promise<void> {
+  await createRecipeHarnessProgram(options).parseAsync(argv, { from: 'user' });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

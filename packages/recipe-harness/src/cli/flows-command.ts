@@ -7,6 +7,7 @@ import {
   loadRecipeLibraries,
   personalRecipeLibraryRoot,
   type RecipeLibraryResolution,
+  type ResolvedLibraryFlow,
   resolveRecipeLibrarySources,
 } from '../core/library.js';
 import { promoteRecipeFlow } from '../core/promote.js';
@@ -15,6 +16,11 @@ import type { RecipeLibrarySource } from '../core/types.js';
 import { resolveRecipeCliPath } from './support.js';
 
 interface FlowsListOptions {
+  library: string[];
+  json?: boolean;
+}
+
+interface FlowsDescribeOptions {
   library: string[];
   json?: boolean;
 }
@@ -30,6 +36,7 @@ interface FlowsPromoteOptions {
 }
 
 export function registerFlowsCommand(program: Command): void {
+  const cliName = program.name();
   const flows = program
     .command('flows')
     .description('Inspect flows available from configured recipe library sources');
@@ -58,10 +65,54 @@ export function registerFlowsCommand(program: Command): void {
       }
       const resolution = await loadRecipeLibraries(sources, options.json ? undefined : console);
       if (options.json) {
-        console.log(JSON.stringify(flowsListDocument(resolution), null, 2));
+        console.log(JSON.stringify(flowsListDocument(resolution, cliName), null, 2));
         return;
       }
-      printFlowsList(resolution);
+      printFlowsList(resolution, cliName);
+    });
+
+  flows
+    .command('describe <ref>')
+    .description(
+      'Describe one resolved flow with its source, parameters, definition, and call node',
+    )
+    .option(
+      '--library <entry>',
+      'Recipe library source as name=path or path (repeatable; order is precedence, first wins). Defaults to RECIPE_LIBRARY_PATH, then the personal library under the farmslot home.',
+      collectRepeatable,
+      [] as string[],
+    )
+    .option('--json', 'Print the resolved flow contract as JSON')
+    .action(async (ref: string, options: FlowsDescribeOptions) => {
+      const sources = await resolveRecipeLibrarySources({ cliEntries: options.library });
+      if (sources.length === 0) {
+        describeFailure(
+          options.json,
+          'FLOW_LIBRARY_NOT_CONFIGURED',
+          'No recipe library sources are configured.',
+          'Pass --library name=path, set RECIPE_LIBRARY_PATH, or create a personal recipe library.',
+        );
+        return;
+      }
+      const resolution = await loadRecipeLibraries(sources, options.json ? undefined : console);
+      const flow = resolution.flows.get(ref);
+      if (!flow) {
+        const availableFlows = [...resolution.flows.keys()].sort();
+        describeFailure(
+          options.json,
+          'FLOW_NOT_FOUND',
+          `Flow ${ref} is not available from the configured recipe libraries.`,
+          `Run ${flowListCommand(resolution, cliName, options.json)} to inspect ${availableFlows.length} available flow(s).`,
+          availableFlows,
+        );
+        return;
+      }
+      const document = flowDescribeDocument(resolution, flow, cliName);
+      if (options.json) {
+        console.log(JSON.stringify(document, null, 2));
+        return;
+      }
+      printFlowDescription(document.flow, document.nextCommand);
     });
 
   flows
@@ -111,6 +162,112 @@ export function registerFlowsCommand(program: Command): void {
     });
 }
 
+function flowDescribeDocument(
+  resolution: RecipeLibraryResolution,
+  flow: ResolvedLibraryFlow,
+  cliName: string,
+) {
+  const sourceIndex = resolution.sources.findIndex((source) => source.name === flow.source);
+  const source = resolution.sources[sourceIndex];
+  if (!source)
+    throw new Error(`Resolved flow ${flow.ref} refers to unknown source ${flow.source}.`);
+  const shadows = flow.shadows.map((name) => {
+    const index = resolution.sources.findIndex((candidate) => candidate.name === name);
+    const shadowedSource = resolution.sources[index];
+    return {
+      name,
+      ...(shadowedSource ? { root: shadowedSource.root, precedence: index + 1 } : {}),
+    };
+  });
+  const authoredCallNode = exampleCallNode(flow.raw);
+  return {
+    schemaVersion: 1,
+    command: 'flows describe',
+    status: 'pass',
+    flow: {
+      ref: flow.ref,
+      ...(flowDescription(flow.raw) ? { description: flowDescription(flow.raw) } : {}),
+      source: flow.source,
+      sourceRoot: source.root,
+      sourcePrecedence: sourceIndex + 1,
+      file: flow.file,
+      path: path.join(source.root, flow.file),
+      parameters: {
+        schema: isRecord(flow.raw.paramsSchema) ? flow.raw.paramsSchema : null,
+        required: requiredParams(flow.raw),
+        defaults: parameterDefaults(flow.raw),
+      },
+      ...(shadows.length > 0 ? { shadows } : {}),
+      ...(flow.lastVerified ? { lastVerified: flow.lastVerified } : {}),
+      definition: flow.raw,
+      callNode: authoredCallNode ?? callNodeTemplate(flow.ref, flow.raw),
+      callNodeSource: authoredCallNode ? 'authored-example' : 'generated-template',
+    },
+    nextCommand: flowDescribeCommand(resolution, cliName, flow.ref, true),
+  };
+}
+
+type FlowDescriptionDocument = ReturnType<typeof flowDescribeDocument>;
+
+function printFlowDescription(flow: FlowDescriptionDocument['flow'], nextCommand: string): void {
+  console.log(flow.ref);
+  if (flow.description) console.log(`  ${flow.description}`);
+  console.log(`  source: ${flow.source} (precedence ${flow.sourcePrecedence})`);
+  console.log(`  file: ${flow.path}`);
+  if (flow.shadows?.length) {
+    console.log(`  shadows: ${flow.shadows.map((source) => source.name).join(', ')}`);
+  }
+  if (flow.parameters.required.length > 0) {
+    console.log(`  required params: ${flow.parameters.required.join(', ')}`);
+  } else {
+    console.log('  required params: none');
+  }
+  const defaults = Object.entries(flow.parameters.defaults);
+  if (defaults.length > 0) {
+    console.log(
+      `  defaults: ${defaults.map(([name, value]) => `${name}=${JSON.stringify(value)}`).join(', ')}`,
+    );
+  }
+  console.log(
+    flow.callNodeSource === 'authored-example'
+      ? '  recipe node (authored example):'
+      : '  recipe node template (replace placeholder values):',
+  );
+  for (const line of JSON.stringify(flow.callNode, null, 2).split('\n')) {
+    console.log(`    ${line}`);
+  }
+  console.log(`  Full definition: ${nextCommand}`);
+}
+
+function describeFailure(
+  json: boolean | undefined,
+  code: string,
+  message: string,
+  userAction: string,
+  availableFlows?: string[],
+): void {
+  if (json) {
+    console.log(
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          command: 'flows describe',
+          status: 'error',
+          exitCode: 1,
+          error: { code, message, userAction },
+          ...(availableFlows ? { availableFlows } : {}),
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    console.error(message);
+    console.error(`Next: ${userAction}`);
+  }
+  process.exitCode = 1;
+}
+
 async function resolvePromoteTarget(
   to: string,
   cliEntries: string[],
@@ -145,7 +302,8 @@ async function libraryManifestName(root: string): Promise<string | undefined> {
   return undefined;
 }
 
-function flowsListDocument(resolution: RecipeLibraryResolution) {
+function flowsListDocument(resolution: RecipeLibraryResolution, cliName: string) {
+  const firstRef = [...resolution.flows.keys()].sort()[0];
   return {
     sources: resolution.sources,
     flows: [...resolution.flows.values()]
@@ -161,10 +319,11 @@ function flowsListDocument(resolution: RecipeLibraryResolution) {
         ...(flow.shadows.length > 0 ? { shadows: flow.shadows } : {}),
         ...(flow.lastVerified ? { lastVerified: flow.lastVerified } : {}),
       })),
+    ...(firstRef ? { nextCommand: flowDescribeCommand(resolution, cliName, firstRef, true) } : {}),
   };
 }
 
-function printFlowsList(resolution: RecipeLibraryResolution): void {
+function printFlowsList(resolution: RecipeLibraryResolution, cliName: string): void {
   if (resolution.flows.size === 0) {
     console.log('No flows found in the configured recipe libraries.');
     return;
@@ -182,6 +341,8 @@ function printFlowsList(resolution: RecipeLibraryResolution): void {
     const params = requiredParams(flow.raw);
     if (params.length > 0) console.log(`  params: ${params.join(', ')}`);
   }
+  const firstRef = [...resolution.flows.keys()].sort()[0];
+  if (firstRef) console.log(`Inspect one: ${flowDescribeCommand(resolution, cliName, firstRef)}`);
 }
 
 function flowDescription(raw: Record<string, unknown>): string | undefined {
@@ -191,6 +352,78 @@ function flowDescription(raw: Record<string, unknown>): string | undefined {
 function requiredParams(raw: Record<string, unknown>): string[] {
   if (!isRecord(raw.paramsSchema) || !Array.isArray(raw.paramsSchema.required)) return [];
   return raw.paramsSchema.required.filter((entry): entry is string => typeof entry === 'string');
+}
+
+function parameterDefaults(raw: Record<string, unknown>): Record<string, unknown> {
+  if (!isRecord(raw.paramsSchema) || !isRecord(raw.paramsSchema.properties)) return {};
+  return Object.fromEntries(
+    Object.entries(raw.paramsSchema.properties).flatMap(([name, schema]) =>
+      isRecord(schema) && Object.hasOwn(schema, 'default') ? [[name, schema.default]] : [],
+    ),
+  );
+}
+
+function exampleCallNode(raw: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!Array.isArray(raw.examples)) return undefined;
+  for (const example of raw.examples) {
+    if (isRecord(example) && isRecord(example.node) && example.node.action === 'call') {
+      return example.node;
+    }
+  }
+  return undefined;
+}
+
+function callNodeTemplate(ref: string, raw: Record<string, unknown>): Record<string, unknown> {
+  const defaults = parameterDefaults(raw);
+  const params = Object.fromEntries(
+    requiredParams(raw).map((name) => [
+      name,
+      Object.hasOwn(defaults, name) ? defaults[name] : `<${name}>`,
+    ]),
+  );
+  return {
+    action: 'call',
+    ref,
+    ...(Object.keys(params).length > 0 ? { params } : {}),
+    intent: flowDescription(raw) ?? `Run ${ref}`,
+    next: 'done',
+  };
+}
+
+function flowDescribeCommand(
+  resolution: RecipeLibraryResolution,
+  cliName: string,
+  ref: string,
+  json = false,
+): string {
+  const args = [
+    cliName,
+    'flows',
+    'describe',
+    ref,
+    ...resolution.sources.flatMap((source) => ['--library', `${source.name}=${source.root}`]),
+    ...(json ? ['--json'] : []),
+  ];
+  return args.map(shellQuoteArg).join(' ');
+}
+
+function flowListCommand(
+  resolution: RecipeLibraryResolution,
+  cliName: string,
+  json = false,
+): string {
+  const args = [
+    cliName,
+    'flows',
+    'list',
+    ...resolution.sources.flatMap((source) => ['--library', `${source.name}=${source.root}`]),
+    ...(json ? ['--json'] : []),
+  ];
+  return args.map(shellQuoteArg).join(' ');
+}
+
+function shellQuoteArg(value: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/u.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function collectRepeatable(value: string, previous: string[]): string[] {
