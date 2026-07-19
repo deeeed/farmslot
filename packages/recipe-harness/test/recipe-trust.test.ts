@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -10,6 +10,7 @@ import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { writeJsonFile } from '../src/core/json.js';
 import { createRecipeRunner } from '../src/core/runner.js';
+import { canonicalRecipeJson } from '../src/core/trust.js';
 import { RecipeTrustError } from '../src/core/trust-error.js';
 import { resolveRecipeTrustInput } from '../src/core/trust-input.js';
 
@@ -127,6 +128,13 @@ test('inherited untrusted provenance ignores CLI approval digests', () => {
   );
 });
 
+test('canonical recipe JSON uses locale-independent code-unit key ordering', () => {
+  assert.equal(
+    canonicalRecipeJson({ ä: 1, z: { ß: true, A: false }, a: undefined }),
+    '{"z":{"A":false,"ß":true},"ä":1}',
+  );
+});
+
 test('CLI JSON trust failures expose stable code, message, and userAction', async () => {
   const root = await tempRoot();
   const priorExitCode = process.exitCode;
@@ -186,12 +194,13 @@ test('untrusted read-only recipes run while command is denied before side effect
         recipeDocument: recipe({ action: 'command', cmd: 'touch blocked.txt' }),
         artifactsDir,
         projectRoot: root,
-        source: untrusted,
+        source: { ...untrusted, path: '/private/task/recipe.json' },
       }),
       (error: unknown) => {
         assert.ok(error instanceof RecipeTrustError);
         assert.equal(error.code, 'RECIPE_TRUST_REQUIRED');
         assert.deepEqual(error.failure.blocked?.[0]?.capabilities, ['host-exec']);
+        assert.equal(error.failure.blocked?.[0]?.origin.path, undefined);
         return true;
       },
     );
@@ -725,7 +734,6 @@ test('flow provenance is enforced transitively and exact-digest approval detects
         },
       },
     });
-    const realCatalogPath = await realpath(catalogPath);
     const runner = createRecipeRunner({
       actionManifest: manifest,
       adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
@@ -741,7 +749,7 @@ test('flow provenance is enforced transitively and exact-digest approval detects
     await assert.rejects(runner.run(request), (error: unknown) => {
       assert.ok(error instanceof RecipeTrustError);
       digest = error.failure.recipeDigest ?? '';
-      assert.equal(error.failure.blocked?.[0]?.origin.path, realCatalogPath);
+      assert.equal(error.failure.blocked?.[0]?.origin.path, undefined);
       return true;
     });
     const approved = await runner.run({ ...request, approval: { planDigest: digest } });

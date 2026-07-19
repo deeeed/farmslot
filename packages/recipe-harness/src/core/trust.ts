@@ -188,6 +188,7 @@ export function enforceRecipeExecutionPlan(
   });
   if (blocked.length === 0) return;
   if (request.approval?.planDigest === plan.digest) return;
+  const publicBlocked = blocked.map(redactPlanNodePaths);
   if (request.approval) {
     throw new RecipeTrustError({
       code: 'RECIPE_APPROVAL_MISMATCH',
@@ -196,7 +197,7 @@ export function enforceRecipeExecutionPlan(
       reason: 'approval-mismatch',
       recipeDigest: plan.digest,
       trust: plan.source.trust,
-      blocked,
+      blocked: publicBlocked,
     });
   }
   throw new RecipeTrustError({
@@ -206,7 +207,7 @@ export function enforceRecipeExecutionPlan(
     reason: 'blocked-capability',
     recipeDigest: plan.digest,
     trust: plan.source.trust,
-    blocked,
+    blocked: publicBlocked,
   });
 }
 
@@ -217,6 +218,20 @@ function effectiveInvocationOrigin(
   if (invocationOrigin && invocationOrigin.trust !== 'trusted') return invocationOrigin;
   if (definitionOrigin.trust !== 'trusted') return definitionOrigin;
   return invocationOrigin ?? definitionOrigin;
+}
+
+function redactPlanNodePaths(node: RecipePlanNode): RecipePlanNode {
+  return {
+    ...node,
+    origin: redactSourcePath(node.origin),
+    ...(node.invocationOrigin ? { invocationOrigin: redactSourcePath(node.invocationOrigin) } : {}),
+    ...(node.adapterOrigin ? { adapterOrigin: redactSourcePath(node.adapterOrigin) } : {}),
+  };
+}
+
+function redactSourcePath(source: RecipeSourceProvenance): RecipeSourceProvenance {
+  const { path: _path, ...publicSource } = source;
+  return publicSource;
 }
 
 function actionCapabilities(
@@ -267,16 +282,16 @@ function adapterSource(
 }
 
 function digestValue(value: unknown): string {
-  return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`;
+  return `sha256:${createHash('sha256').update(canonicalRecipeJson(value)).digest('hex')}`;
 }
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+export function canonicalRecipeJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalRecipeJson).join(',')}]`;
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, entry]) => entry !== undefined)
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
-    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`).join(',')}}`;
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalRecipeJson(entry)}`).join(',')}}`;
   }
   return JSON.stringify(value) ?? 'null';
 }
