@@ -4,6 +4,9 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- feat: template placeholder guard — `collectTemplatePlaceholders` / `collectPlaceholderTokens` / `knownTemplatePlaceholders` / `assertNoUnknownPlaceholders` / `expandTemplateWithReservedLast`; worker-facing render sinks fail hard on unexpandable `{{...}}` instead of shipping raw tokens to agents.
+- fix: config values substituted verbatim (slot resource values, `paths.*`, project var values) are validated against `{{...}}` smuggling at load; the documented `{{runtime_dir}}/recipes` recipe_dir default now resolves in the loader.
+
 - feat: `monitoring.flows` project config field — per-flow `total_timeout_min` / `stuck_timeout_min` overrides. Keys are restricted to the `FlowType` union (schema `propertyNames` enum + `Partial<Record<FlowType, …>>`) so a typo'd flow name fails validation instead of silently never matching.
 
 - feat: `self_review.session_policy` project config field (`'fresh-per-pass' | 'warm-per-reviewer'`) — reviewer session lifecycle across one run's review loops (MANUAL-000009).
