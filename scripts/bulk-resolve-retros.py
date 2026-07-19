@@ -29,7 +29,19 @@ REPO = Path(__file__).resolve().parent.parent
 RUNS_DIR = REPO / ".runs"
 DIGEST_DIR = REPO / ".omc" / "retro-digest"
 CDP_BIN = REPO / "apps" / "command-center" / "scripts" / "cdp.mjs"
-GATEWAY_HEALTH = "http://localhost:7777/health"
+
+
+def gateway_health_url() -> str:
+    """Derive the health URL from the same FARMSLOT_GATEWAY env cdp.mjs uses
+    for the RPC — the reachability gate must test the instance the resolve
+    calls will hit (machine-local stacks run the gateway off the default port)."""
+    ws = os.environ.get("FARMSLOT_GATEWAY", "ws://localhost:7777")
+    m = re.match(r"wss?://([^/]+)", ws)
+    host = m.group(1) if m else "localhost:7777"
+    return f"http://{host}/health"
+
+
+GATEWAY_HEALTH = gateway_health_url()
 
 
 def gateway_alive() -> bool:
