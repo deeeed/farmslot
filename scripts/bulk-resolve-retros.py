@@ -51,7 +51,10 @@ def _gateway_endpoints() -> tuple[str, str]:
     port = f":{parts.port}" if parts.port else ""
     authority = f"{host}{port}"
     http_scheme = "https" if ws_scheme == "wss" else "http"
-    return f"{ws_scheme}://{authority}", f"{http_scheme}://{authority}/health"
+    # The WS path survives (path-routing proxies serve RPC at e.g. /ws);
+    # only query/fragment/userinfo are dropped. Health stays authority-rooted.
+    path = parts.path if parts.path not in ("", "/") else ""
+    return f"{ws_scheme}://{authority}{path}", f"{http_scheme}://{authority}/health"
 
 
 GATEWAY_WS, GATEWAY_HEALTH = _gateway_endpoints()
