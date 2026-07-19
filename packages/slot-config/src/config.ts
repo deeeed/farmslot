@@ -547,7 +547,15 @@ export async function loadSlotVars(slotId: string): Promise<SlotVars> {
     for (const [field, value] of Object.entries(instance)) {
       if (field in resourceVars)
         throw new Error(`Duplicate resource field '${field}' in slot ${slotId}`);
-      resourceVars[field] = String(value);
+      const text = String(value);
+      // Resource values are substituted verbatim into hooks, task files, and
+      // dispatch prompts — a {{...}} token here would ship raw to a worker.
+      if (/\{\{[^{}\n]+\}\}/.test(text)) {
+        throw new Error(
+          `Resource field '${field}' in slot ${slotId} must not contain template placeholders: ${text}`,
+        );
+      }
+      resourceVars[field] = text;
     }
   }
   if (resourceVars.cdp_port) {
