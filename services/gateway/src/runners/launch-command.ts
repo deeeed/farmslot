@@ -49,7 +49,7 @@ export function withTaskRecipeTrustEnvironment(
     'unset FARMSLOT_RECIPE_SOURCE_DIGEST FARMSLOT_RECIPE_APPROVE_PLAN',
     'export FARMSLOT_RECIPE_SOURCE_TRUST=untrusted',
     'export FARMSLOT_RECIPE_SOURCE_KIND=task',
-    'export FARMSLOT_RECIPE_SOURCE_NAME=pr-body-inherited',
+    'export FARMSLOT_RECIPE_SOURCE_NAME=task-inherited',
   ].join('; ');
   return `if [ -f ${shellExpressionForRemotePath(sidecar)} ]; then ${mark}; else ${clear}; fi; ${command}`;
 }

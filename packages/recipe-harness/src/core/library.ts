@@ -79,8 +79,11 @@ export async function defaultRecipeLibrarySources(
   const personalRoot = personalRecipeLibraryRoot(env);
   try {
     await readFile(path.join(personalRoot, LIBRARY_MANIFEST_FILE), 'utf-8');
-  } catch {
-    return [];
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
   }
   return [{ name: 'personal', root: personalRoot }];
 }

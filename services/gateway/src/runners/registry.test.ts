@@ -25,7 +25,7 @@ describe('recipe source trust environment', () => {
     assert.match(command, /inputs\/inherited\/recipe-source\.json/);
     assert.match(command, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/);
     assert.match(command, /FARMSLOT_RECIPE_SOURCE_KIND=task/);
-    assert.match(command, /FARMSLOT_RECIPE_SOURCE_NAME=pr-body-inherited/);
+    assert.match(command, /FARMSLOT_RECIPE_SOURCE_NAME=task-inherited/);
     assert.match(command, /else unset FARMSLOT_RECIPE_SOURCE_TRUST/);
     assert.match(command, /; cd \/repo && claude$/);
   });

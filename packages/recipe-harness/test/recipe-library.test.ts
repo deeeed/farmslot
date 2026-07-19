@@ -155,6 +155,13 @@ test('resolveRecipeLibrarySources prefers CLI entries, then env, then the person
       FARMSLOT_HOME: path.join(tempRoot, 'missing-home'),
     });
     assert.deepEqual(none, []);
+
+    const brokenHome = path.join(tempRoot, 'broken-home');
+    await mkdir(path.join(brokenHome, 'recipe-library', 'library.json'), { recursive: true });
+    await assert.rejects(
+      defaultRecipeLibrarySources({ FARMSLOT_HOME: brokenHome }),
+      (error: unknown) => error instanceof Error && 'code' in error && error.code === 'EISDIR',
+    );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
