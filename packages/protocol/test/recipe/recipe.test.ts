@@ -1094,6 +1094,37 @@ test('rejects unresolved call refs and lifecycle transitions', () => {
   );
 });
 
+test('rejects parameter-templated call refs before flow resolution', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    title: 'Dynamic call ref',
+    description: 'Flow identifiers must be part of the static execution plan.',
+    flows: {
+      '{{params.target}}': {
+        entry: 'done',
+        nodes: { done: { action: 'end', status: 'pass' } },
+      },
+    },
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': {
+            action: 'call',
+            intent: 'Attempt a dynamic flow dispatch',
+            ref: '{{params.target}}',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(result.findings.some((finding) => finding.code === 'workflow.dynamic_call_ref'));
+});
+
 test('accepts call refs resolvable from declared external flow ids', () => {
   const recipe = {
     schema_version: 1,

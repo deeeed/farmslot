@@ -58,5 +58,6 @@ export {
 export {
   getRecipeWorkflowActions,
   getRecipeWorkflowNodeIds,
+  isDynamicRecipeFlowRef,
   normalizeRecipeFlowRef,
 } from './workflow.js';

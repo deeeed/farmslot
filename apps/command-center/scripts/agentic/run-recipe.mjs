@@ -26,6 +26,7 @@ import {
   createCaptureHelperVideoRecorder,
   createCdpVideoRecorder,
   createRecipeRunner,
+  resolveRecipeTrustInput,
 } from '@farmslot/recipe-harness';
 import { createStandardCoreAdapters } from '@farmslot/recipe-harness/adapters/core';
 import { createStandardUiAdapters } from '@farmslot/recipe-harness/adapters/ui';
@@ -45,6 +46,10 @@ export const COMMAND_CENTER_RECIPE_SOURCE = Object.freeze({
   trust: 'trusted',
   name: '@farmslot/command-center',
 });
+
+export function resolveCommandCenterRecipeTrust(env = process.env) {
+  return resolveRecipeTrustInput({}, env);
+}
 
 const COMMAND_CENTER_PRECONDITION_SOURCE = Object.freeze({
   kind: 'bundled',
@@ -682,6 +687,7 @@ async function main() {
   }
 
   const hudEnabled = filteredManifest.supported_official_actions.includes('app.hud');
+  const trust = resolveCommandCenterRecipeTrust();
   const runner = createRecipeRunner({
     actionManifest: filteredManifest,
     defaultSource: COMMAND_CENTER_RECIPE_SOURCE,
@@ -729,6 +735,7 @@ async function main() {
   });
 
   const result = await runner.run({
+    ...trust,
     recipeDocument,
     recipePath,
     artifactsDir,

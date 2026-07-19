@@ -605,8 +605,13 @@ test('rejects library flow catalogs symlinked outside the declared source root',
 
     await assert.rejects(
       loadRecipeLibraries([{ name: 'personal', root: libraryRoot }]),
-      (error: unknown) =>
-        error instanceof RecipeTrustError && error.code === 'RECIPE_SOURCE_INVALID',
+      (error: unknown) => {
+        assert.ok(error instanceof RecipeTrustError);
+        assert.equal(error.code, 'RECIPE_SOURCE_INVALID');
+        assert.equal(error.message.includes(tempRoot), false);
+        assert.match(error.message, /flows[/\\]linked\.flows\.json/);
+        return true;
+      },
     );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

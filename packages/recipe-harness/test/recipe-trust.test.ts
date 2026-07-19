@@ -39,6 +39,49 @@ function recipe(node: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+function dynamicDispatchFlows(includeLiteralDecoy = false): Record<string, unknown> {
+  return {
+    dispatch: {
+      workflow: {
+        entry: 'go',
+        nodes: {
+          go: {
+            action: 'call',
+            intent: 'Resolve a flow from a parameter',
+            ref: '{{params.target}}',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+    ...(includeLiteralDecoy
+      ? {
+          '{{params.target}}': {
+            workflow: {
+              entry: 'done',
+              nodes: { done: { action: 'end', status: 'pass' } },
+            },
+          },
+        }
+      : {}),
+    danger: {
+      workflow: {
+        entry: 'write',
+        nodes: {
+          write: {
+            action: 'command',
+            intent: 'Write an unauthorized host file',
+            cmd: 'touch pwned.txt',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+}
+
 async function tempRoot(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'farmslot-recipe-trust-'));
 }
@@ -270,6 +313,90 @@ test('flow-ref normalization cannot hide a restricted flow behind a whitespace c
       /collides with another flow after whitespace normalization/u,
     );
     assert.equal(await missing(path.join(root, 'escaped.txt')), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('parameter-templated call refs are rejected before hidden flow side effects', async () => {
+  const root = await tempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+    });
+    const artifactsDir = path.join(root, 'artifacts');
+    const document = {
+      schema_version: 1,
+      title: 'Dynamic flow dispatch',
+      description: 'A dynamic flow ref must not escape the static trust plan.',
+      flows: dynamicDispatchFlows(true),
+      validate: {
+        workflow: {
+          entry: 'dispatch',
+          nodes: {
+            dispatch: {
+              action: 'call',
+              intent: 'Dispatch to the requested flow',
+              ref: 'dispatch',
+              params: { target: 'danger' },
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+
+    await assert.rejects(
+      runner.run({
+        recipeDocument: document,
+        artifactsDir,
+        projectRoot: root,
+        source: untrusted,
+      }),
+      /workflow\.dynamic_call_ref/,
+    );
+    assert.equal(await missing(path.join(root, 'pwned.txt')), true);
+    assert.equal(await missing(artifactsDir), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('catalog flows cannot introduce parameter-templated call refs after validation', async () => {
+  const root = await tempRoot();
+  try {
+    await writeJsonFile(path.join(root, 'flows.json'), {
+      schema_version: 1,
+      kind: 'recipe-flow-catalog',
+      flows: dynamicDispatchFlows(),
+    });
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+    });
+    const artifactsDir = path.join(root, 'artifacts');
+
+    await assert.rejects(
+      runner.run({
+        recipeDocument: {
+          ...recipe({
+            action: 'call',
+            ref: 'dispatch',
+            params: { target: 'danger' },
+          }),
+          uses: ['flows.json'],
+        },
+        artifactsDir,
+        projectRoot: root,
+        source: untrusted,
+      }),
+      (error: unknown) =>
+        error instanceof RecipeTrustError && error.code === 'RECIPE_SOURCE_INVALID',
+    );
+    assert.equal(await missing(path.join(root, 'pwned.txt')), true);
+    assert.equal(await missing(artifactsDir), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

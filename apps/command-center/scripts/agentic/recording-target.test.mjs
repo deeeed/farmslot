@@ -5,6 +5,7 @@ import {
   buildPreconditions,
   COMMAND_CENTER_RECIPE_SOURCE,
   gatewayTokenSeedScript,
+  resolveCommandCenterRecipeTrust,
   resolveRecordingTarget,
 } from './run-recipe.mjs';
 
@@ -33,6 +34,21 @@ describe('recipe trust provenance', () => {
         name: '@farmslot/command-center/preconditions',
       });
     }
+  });
+
+  it('preserves inherited untrusted recipe provenance and approval', () => {
+    assert.deepEqual(
+      resolveCommandCenterRecipeTrust({
+        FARMSLOT_RECIPE_SOURCE_TRUST: 'untrusted',
+        FARMSLOT_RECIPE_SOURCE_KIND: 'task',
+        FARMSLOT_RECIPE_SOURCE_NAME: 'pr-body',
+        FARMSLOT_RECIPE_APPROVE_PLAN: 'sha256:approved',
+      }),
+      {
+        source: { trust: 'untrusted', kind: 'task', name: 'pr-body' },
+        approval: { planDigest: 'sha256:approved' },
+      },
+    );
   });
 });
 

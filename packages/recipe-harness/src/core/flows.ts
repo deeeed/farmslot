@@ -3,6 +3,7 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import {
+  isDynamicRecipeFlowRef,
   normalizeRecipeFlowRef,
   type RecipeSourceProvenance,
   type UiObserverRef,
@@ -152,7 +153,18 @@ function normalizeFlow(ref: string, flow: unknown, source: string): InlineFlow {
     Record<string, unknown>
   >;
   for (const [nodeId, node] of Object.entries(workflow.nodes)) {
-    if (isRecord(node)) nodes[nodeId] = node;
+    if (!isRecord(node)) continue;
+    if (
+      node.action === 'call' &&
+      typeof node.ref === 'string' &&
+      isDynamicRecipeFlowRef(node.ref)
+    ) {
+      throw invalidRecipeSource(
+        `Flow ${ref} node ${nodeId} has a parameter-templated call.ref.`,
+        'replace it with a static flow identifier',
+      );
+    }
+    nodes[nodeId] = node;
   }
   return {
     entry: workflow.entry,

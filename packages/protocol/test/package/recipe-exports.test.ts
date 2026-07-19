@@ -20,6 +20,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'getRecipeActionManifestActionNames',
     'getRecipeWorkflowActions',
     'getRecipeWorkflowNodeIds',
+    'isDynamicRecipeFlowRef',
     'isRecord',
     'mergeRecipeValidationResults',
     'normalizeRecipeFlowRef',

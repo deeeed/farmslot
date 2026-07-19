@@ -138,7 +138,7 @@ export async function loadRecipeLibraries(
       const catalogReal = await realpath(catalogPath);
       if (!isPathWithin(rootReal, catalogReal)) {
         throw invalidRecipeSource(
-          `Library catalog ${catalogPath} resolves outside ${root}.`,
+          `Library catalog ${path.join(LIBRARY_FLOWS_DIR, file)} resolves outside its library root.`,
           'move the catalog inside the library root or remove the escaping symlink',
         );
       }

@@ -63,6 +63,10 @@ export function normalizeRecipeFlowRef(value: string): string {
   return value.trim();
 }
 
+export function isDynamicRecipeFlowRef(value: string): boolean {
+  return /\{\{params\.[A-Za-z0-9_.-]+\}\}/.test(value);
+}
+
 function normalizeIntent(value: string): string {
   return value.trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
 }
@@ -1005,6 +1009,16 @@ export function validateFlowCalls(
         'workflow.invalid_call_ref',
         `${path}.ref`,
         'call.ref must be a non-empty string.',
+      );
+      continue;
+    }
+    if (isDynamicRecipeFlowRef(node.ref)) {
+      addFinding(
+        ctx,
+        'error',
+        'workflow.dynamic_call_ref',
+        `${path}.ref`,
+        'call.ref must be static; parameter templates are not allowed in flow identifiers.',
       );
       continue;
     }
