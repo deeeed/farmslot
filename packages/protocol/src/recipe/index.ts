@@ -42,4 +42,17 @@ export {
   getRecipeActionManifestActionNames,
   validateRecipeActionManifestDocument,
 } from './manifest.js';
+export {
+  DEFAULT_UNTRUSTED_RECIPE_BLOCKED_CAPABILITIES,
+  officialRecipeActionCapabilities,
+  RECIPE_EXECUTION_CAPABILITIES,
+  type RecipeExecutionApproval,
+  type RecipeExecutionCapability,
+  type RecipeExecutionPlan,
+  type RecipePlanNode,
+  type RecipeSourceKind,
+  type RecipeSourceProvenance,
+  type RecipeSourceTrust,
+  type RecipeTrustFailure,
+} from './trust.js';
 export { getRecipeWorkflowActions, getRecipeWorkflowNodeIds } from './workflow.js';

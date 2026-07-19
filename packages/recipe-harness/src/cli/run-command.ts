@@ -8,6 +8,8 @@ import {
 import { createStandardCoreAdapters } from '../adapters/core.js';
 import { resolveRecipeLibrarySources } from '../core/library.js';
 import { createRecipeRunner } from '../core/runner.js';
+import { RecipeTrustError } from '../core/trust-error.js';
+import { resolveRecipeTrustInput } from '../core/trust-input.js';
 import type { RecipeVideoRecordingOptions } from '../core/types.js';
 
 import {
@@ -30,6 +32,11 @@ interface RunCommandOptions {
   recordWindowName?: string;
   recordWindowId?: string;
   recordPid?: string;
+  sourceTrust?: string;
+  sourceKind?: string;
+  sourceName?: string;
+  sourceDigest?: string;
+  approvePlan?: string;
 }
 
 export function registerRunCommand(program: Command): void {
@@ -53,33 +60,74 @@ export function registerRunCommand(program: Command): void {
     .option('--record-window-name <substring>', 'macOS window title substring for recording target')
     .option('--record-window-id <id>', 'macOS window id from `capture-helper list --json`')
     .option('--record-pid <pid>', 'macOS process id for recording target')
+    .option('--source-trust <trust>', 'Recipe source trust: trusted, untrusted, or unknown')
+    .option('--source-kind <kind>', 'Recipe source kind supplied by the caller')
+    .option('--source-name <name>', 'Human-readable recipe source name')
+    .option('--source-digest <digest>', 'Caller-computed source digest')
+    .option('--approve-plan <digest>', 'Approve exactly one resolved execution-plan digest')
     .option('--json', 'Print run result as JSON')
     .action(async (recipePath: string, options: RunCommandOptions) => {
-      const manifest = await readRecipeCliJsonFile(options.actionManifest);
-      const runner = createRecipeRunner({
-        actionManifest: manifest as RecipeActionManifestDocument,
-        adapters: createStandardCoreAdapters({
-          actions: getRecipeActionManifestActionNames(manifest),
-        }),
-        logger: console,
-      });
-      const librarySources = await resolveRecipeLibrarySources({ cliEntries: options.library });
-      const result = await runner.run({
-        recipePath: resolveRecipeCliPath(recipePath),
-        artifactsDir: resolveRecipeCliPath(options.artifactsDir),
-        projectRoot: options.projectRoot
-          ? resolveRecipeCliPath(options.projectRoot)
-          : resolveRecipeCliPath('.'),
-        recordVideo: parseRecordVideoOptions(options),
-        ...(librarySources.length > 0 ? { librarySources } : {}),
-      });
-      if (options.json) {
-        console.log(JSON.stringify(result, null, 2));
-      } else {
-        console.log(`Recipe run: ${result.status}`);
-        console.log(`Artifacts: ${result.artifactManifestPath}`);
+      try {
+        const manifest = await readRecipeCliJsonFile(options.actionManifest);
+        const runner = createRecipeRunner({
+          actionManifest: manifest as RecipeActionManifestDocument,
+          adapters: createStandardCoreAdapters({
+            actions: getRecipeActionManifestActionNames(manifest),
+          }),
+          defaultSource: {
+            kind: 'operator',
+            trust: 'trusted',
+            name: '@farmslot/recipe-harness CLI',
+          },
+          logger: console,
+        });
+        const librarySources = (
+          await resolveRecipeLibrarySources({
+            cliEntries: options.library,
+          })
+        ).map((source) => ({
+          ...source,
+          provenance: {
+            kind: 'library' as const,
+            trust: 'trusted' as const,
+            name: source.name,
+            path: source.root,
+          },
+        }));
+        const trust = resolveRecipeTrustInput({
+          sourceTrust: options.sourceTrust,
+          sourceKind: options.sourceKind,
+          sourceName: options.sourceName,
+          sourceDigest: options.sourceDigest,
+          approvalDigest: options.approvePlan,
+        });
+        const result = await runner.run({
+          recipePath: resolveRecipeCliPath(recipePath),
+          artifactsDir: resolveRecipeCliPath(options.artifactsDir),
+          projectRoot: options.projectRoot
+            ? resolveRecipeCliPath(options.projectRoot)
+            : resolveRecipeCliPath('.'),
+          recordVideo: parseRecordVideoOptions(options),
+          ...trust,
+          ...(librarySources.length > 0 ? { librarySources } : {}),
+        });
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Recipe run: ${result.status}`);
+          console.log(`Artifacts: ${result.artifactManifestPath}`);
+        }
+        if (result.status !== 'pass') process.exitCode = 1;
+      } catch (error) {
+        if (!(error instanceof RecipeTrustError)) throw error;
+        if (options.json) {
+          console.log(JSON.stringify(error.failure, null, 2));
+        } else {
+          console.error(`Error [${error.code}]: ${error.message}`);
+          console.error(`Next: ${error.userAction}`);
+        }
+        process.exitCode = 1;
       }
-      if (result.status !== 'pass') process.exit(1);
     });
 }
 

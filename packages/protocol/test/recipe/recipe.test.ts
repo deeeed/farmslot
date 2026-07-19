@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   mergeRecipeValidationResults,
+  officialRecipeActionCapabilities,
   RECIPE_PROTOCOL_SCHEMA_URL,
   type RecipeArtifactManifestDocument,
   recipeProtocolSchemaUrlForVersion,
@@ -146,6 +147,25 @@ test('validates portable backend and UI v1 example recipes', async () => {
   }
 });
 
+test('classifies official recipe actions by execution capability', () => {
+  assert.deepEqual(officialRecipeActionCapabilities('command'), ['host-exec']);
+  assert.deepEqual(officialRecipeActionCapabilities('index_artifacts'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('assert_json'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('ui.screenshot'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('ui.press'), [
+    'app-mutation',
+    'external-mutation',
+  ]);
+  assert.deepEqual(officialRecipeActionCapabilities('cdp.storage'), [
+    'host-read-export',
+    'app-mutation',
+  ]);
+  assert.deepEqual(officialRecipeActionCapabilities('app.status'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('state_read'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('cdp.target'), ['host-read-export']);
+  assert.deepEqual(officialRecipeActionCapabilities('ui.wait_for'), ['host-read-export']);
+});
+
 test('publishes the same Recipe v1 JSON Schema in protocol package and docs static', async () => {
   assert.equal(recipeProtocolSchemaUrlForVersion(1), RECIPE_PROTOCOL_SCHEMA_URL);
   assert.equal(
@@ -179,6 +199,44 @@ test('validates runner action manifests and rejects undeclared recipe actions', 
   assert.ok(
     restrictedResult.findings.some(
       (finding) => finding.code === 'recipe.action_not_declared_by_manifest',
+    ),
+  );
+});
+
+test('validates execution-capability metadata for official and custom actions', () => {
+  const valid = validateRecipeActionManifestDocument({
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['command', 'end'],
+    action_metadata: {
+      command: { execution_capabilities: ['host-exec'] },
+    },
+    custom_actions: [
+      {
+        name: 'example.mutate',
+        description: 'Mutates an external system.',
+        execution_capabilities: ['external-mutation'],
+      },
+    ],
+  });
+  assert.equal(valid.status, 'valid');
+
+  const invalid = validateRecipeActionManifestDocument({
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+    custom_actions: [
+      {
+        name: 'example.bad',
+        description: 'Declares an unknown risk.',
+        execution_capabilities: ['network-ish'],
+      },
+    ],
+  });
+  assert.equal(invalid.status, 'invalid');
+  assert.ok(
+    invalid.findings.some(
+      (finding) => finding.code === 'action_manifest.unknown_execution_capability',
     ),
   );
 });

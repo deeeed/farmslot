@@ -9,7 +9,9 @@ test('recipe module exposes only the public recipe protocol surface', async () =
   const facade = await import('../../src/recipe/index.js');
   assert.deepEqual(Object.keys(facade).sort(), [
     'BUILT_IN_UI_OBSERVERS',
+    'DEFAULT_UNTRUSTED_RECIPE_BLOCKED_CAPABILITIES',
     'OFFICIAL_RECIPE_ACTIONS',
+    'RECIPE_EXECUTION_CAPABILITIES',
     'RECIPE_PLAYBACK_SLOW_MS_MAX',
     'RECIPE_PLAYBACK_SLOW_MS_MIN',
     'RECIPE_PROTOCOL_SCHEMA_URL',
@@ -20,6 +22,7 @@ test('recipe module exposes only the public recipe protocol surface', async () =
     'getRecipeWorkflowNodeIds',
     'isRecord',
     'mergeRecipeValidationResults',
+    'officialRecipeActionCapabilities',
     'recipeProtocolSchemaUrlForVersion',
     'validateArtifactManifestDocument',
     'validateRecipeActionManifestDocument',

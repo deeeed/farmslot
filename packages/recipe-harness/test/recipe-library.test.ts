@@ -17,7 +17,8 @@ import {
   parseRecipeLibraryPath,
   resolveRecipeLibrarySources,
 } from '../src/core/library.js';
-import { createRecipeRunner } from '../src/core/runner.js';
+import { createRecipeRunner as createRawRecipeRunner } from '../src/core/runner.js';
+import { RecipeTrustError } from '../src/core/trust-error.js';
 import type { RecipeLogger, SummaryDocument } from '../src/core/types.js';
 
 const coreActionManifest: RecipeActionManifestDocument = {
@@ -39,6 +40,21 @@ const coreActionManifest: RecipeActionManifestDocument = {
     'manual',
   ],
 };
+
+function createRecipeRunner(options: Parameters<typeof createRawRecipeRunner>[0]) {
+  return createRawRecipeRunner({
+    ...options,
+    adapters: options.adapters.map((adapter) => ({
+      ...adapter,
+      source: adapter.source ?? {
+        kind: 'bundled',
+        trust: 'trusted',
+        name: 'recipe library test',
+      },
+    })),
+    defaultSource: { kind: 'operator', trust: 'trusted', name: 'recipe library test' },
+  });
+}
 
 async function createTempRoot(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'farmslot-recipe-library-'));
@@ -388,8 +404,16 @@ test('runs a recipe composed from a library flow and reports the resolution in e
       artifactsDir,
       projectRoot: tempRoot,
       librarySources: [
-        { name: 'personal', root: libraryRoot },
-        { name: 'team', root: teamRoot },
+        {
+          name: 'personal',
+          root: libraryRoot,
+          provenance: { kind: 'library', trust: 'trusted', name: 'personal' },
+        },
+        {
+          name: 'team',
+          root: teamRoot,
+          provenance: { kind: 'library', trust: 'trusted', name: 'team' },
+        },
       ],
     });
     assert.equal(result.status, 'pass');
@@ -564,7 +588,7 @@ test('validate accepts library-resolved call refs only when sources are configur
   }
 });
 
-test('loads flow catalogs referenced through symlinks', async () => {
+test('rejects library flow catalogs symlinked outside the declared source root', async () => {
   const tempRoot = await createTempRoot();
   try {
     const sharedCatalog = path.join(tempRoot, 'shared-catalog.flows.json');
@@ -579,8 +603,11 @@ test('loads flow catalogs referenced through symlinks', async () => {
     await rm(path.join(libraryRoot, 'flows', 'main.flows.json'));
     await symlink(sharedCatalog, path.join(libraryRoot, 'flows', 'linked.flows.json'));
 
-    const resolution = await loadRecipeLibraries([{ name: 'personal', root: libraryRoot }]);
-    assert.equal(resolution.flows.get('lib.linked')?.source, 'personal');
+    await assert.rejects(
+      loadRecipeLibraries([{ name: 'personal', root: libraryRoot }]),
+      (error: unknown) =>
+        error instanceof RecipeTrustError && error.code === 'RECIPE_SOURCE_INVALID',
+    );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

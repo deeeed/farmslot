@@ -24,6 +24,35 @@ import {
 } from './runner-observability.js';
 
 const CODEX_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
+const RECIPE_SOURCE_ENV_NAMES = [
+  'FARMSLOT_RECIPE_SOURCE_TRUST',
+  'FARMSLOT_RECIPE_SOURCE_KIND',
+  'FARMSLOT_RECIPE_SOURCE_NAME',
+  'FARMSLOT_RECIPE_SOURCE_DIGEST',
+  'FARMSLOT_RECIPE_APPROVE_PLAN',
+] as const;
+
+/**
+ * Mark agent commands spawned for a task containing caller-untrusted recipe
+ * input. The source sidecar is written by the gateway, not by recipe content.
+ */
+export function withTaskRecipeTrustEnvironment(
+  command: string,
+  repo: string,
+  taskDir?: string,
+): string {
+  if (!taskDir) return command;
+  const taskRoot = path.posix.isAbsolute(taskDir) ? taskDir : path.posix.join(repo, taskDir);
+  const sidecar = path.posix.join(taskRoot, 'inputs/inherited/recipe-source.json');
+  const clear = `unset ${RECIPE_SOURCE_ENV_NAMES.join(' ')}`;
+  const mark = [
+    'unset FARMSLOT_RECIPE_SOURCE_DIGEST FARMSLOT_RECIPE_APPROVE_PLAN',
+    'export FARMSLOT_RECIPE_SOURCE_TRUST=untrusted',
+    'export FARMSLOT_RECIPE_SOURCE_KIND=task',
+    'export FARMSLOT_RECIPE_SOURCE_NAME=pr-body-inherited',
+  ].join('; ');
+  return `if [ -f ${shellExpressionForRemotePath(sidecar)} ]; then ${mark}; else ${clear}; fi; ${command}`;
+}
 
 /**
  * How long post-launch prompt delivery waits for an interactive runner TUI to
@@ -86,6 +115,7 @@ export function buildRunnerSessionReloadCommand(
   sessionId: string,
   opts: {
     repo?: string;
+    taskDir?: string;
     effort?: string | null;
     safetyTier?: SafetyTier;
     runtimeDir?: string;
@@ -107,9 +137,13 @@ export function buildRunnerSessionReloadCommand(
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const claudePath = vars.claudePath || 'claude';
-    return withRunnerObservabilityInstall(
-      `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag} --resume ${quotedSessionId}`,
-      installCommand,
+    return withTaskRecipeTrustEnvironment(
+      withRunnerObservabilityInstall(
+        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag} --resume ${quotedSessionId}`,
+        installCommand,
+      ),
+      repo,
+      opts.taskDir,
     );
   }
 
@@ -126,11 +160,15 @@ export function buildRunnerSessionReloadCommand(
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const codexHomeSetup = buildCodexHomeSetup(repo, opts.runtimeDir ?? '.agent');
-    return withRunnerObservabilityInstall(
-      `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
-        vars.codexPath,
-      )} resume --disable plugin_hooks${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}`,
-      installCommand,
+    return withTaskRecipeTrustEnvironment(
+      withRunnerObservabilityInstall(
+        `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
+          vars.codexPath,
+        )} resume --disable plugin_hooks${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}`,
+        installCommand,
+      ),
+      repo,
+      opts.taskDir,
     );
   }
 
@@ -139,9 +177,13 @@ export function buildRunnerSessionReloadCommand(
     const effortFlag = opts.effort?.trim() ? ` --effort ${opts.effort.trim()}` : '';
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
-    return `cd ${shellQuote(repo)} && ${resolveGrokBinary(
-      vars.grokPath,
-    )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}`;
+    return withTaskRecipeTrustEnvironment(
+      `cd ${shellQuote(repo)} && ${resolveGrokBinary(
+        vars.grokPath,
+      )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}`,
+      repo,
+      opts.taskDir,
+    );
   }
 
   throw new Error(`Runner '${runner}' does not support persisted session reload`);
@@ -331,6 +373,9 @@ export function buildLaunchCommand(
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
   const launchPrompt = runnerNeedsPostLaunchPrompt(runner) ? '' : prompt;
 
+  const withRecipeTrust = (command: string): string =>
+    withTaskRecipeTrustEnvironment(command, repo, opts.taskDir);
+
   // none runner: no launch command (silent sentinel; callers decide what to do).
   if (runner === 'none') return '';
 
@@ -342,13 +387,15 @@ export function buildLaunchCommand(
     if (!opts.scripted) {
       throw new Error(`Runner 'scripted' requires opts.scripted`);
     }
-    return buildScriptedRunnerLaunch({
-      repo,
-      projectName: vars.projectName,
-      taskDir: opts.taskDir,
-      scripted: opts.scripted,
-      command: opts.scriptedCommand,
-    });
+    return withRecipeTrust(
+      buildScriptedRunnerLaunch({
+        repo,
+        projectName: vars.projectName,
+        taskDir: opts.taskDir,
+        scripted: opts.scripted,
+        command: opts.scriptedCommand,
+      }),
+    );
   }
 
   const safetyFlagsString = runnerFlagsForTier(runner, tier).join(' ');
@@ -376,17 +423,21 @@ export function buildLaunchCommand(
       if (!hasDispatchCmd) {
         throw new Error(`No dispatch_cmd in pool config for ${vars.machine}`);
       }
-      return withRunnerObservabilityInstall(
-        `unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}`,
-        installCommand,
+      return withRecipeTrust(
+        withRunnerObservabilityInstall(
+          `unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}`,
+          installCommand,
+        ),
       );
     }
     const claudePath = vars.claudePath || 'claude';
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.join(' ');
-    return withRunnerObservabilityInstall(
-      `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`,
-      installCommand,
+    return withRecipeTrust(
+      withRunnerObservabilityInstall(
+        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`,
+        installCommand,
+      ),
     );
   }
 
@@ -401,25 +452,29 @@ export function buildLaunchCommand(
       opts.runtimeDir,
     );
     if (cmdIsRunnerAware) {
-      return withRunnerObservabilityInstall(
-        `unset CLAUDECODE && ${buildCodexHomeSetup(repo, opts.runtimeDir)} && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort)}`,
-        installCommand,
+      return withRecipeTrust(
+        withRunnerObservabilityInstall(
+          `unset CLAUDECODE && ${buildCodexHomeSetup(repo, opts.runtimeDir)} && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort)}`,
+          installCommand,
+        ),
       );
     }
     // Use the configured codex_path when present; otherwise leave resolution to
     // the worker shell's PATH. Do not infer a Node-sibling binary because asdf
     // toolchains can leave stale Codex installs beside older Node versions.
-    return withRunnerObservabilityInstall(
-      buildCodexExecLaunch({
-        binary: resolveCodexBinary(vars.codexPath),
-        model,
-        effort: opts.effort,
-        prompt: launchPrompt,
-        repo,
-        runtimeDir: opts.runtimeDir,
-        safetyTier: tier,
-      }),
-      installCommand,
+    return withRecipeTrust(
+      withRunnerObservabilityInstall(
+        buildCodexExecLaunch({
+          binary: resolveCodexBinary(vars.codexPath),
+          model,
+          effort: opts.effort,
+          prompt: launchPrompt,
+          repo,
+          runtimeDir: opts.runtimeDir,
+          safetyTier: tier,
+        }),
+        installCommand,
+      ),
     );
   }
 
@@ -428,31 +483,35 @@ export function buildLaunchCommand(
   // after the interactive composer is ready.
   if (runner === 'cursor') {
     if (cmdIsRunnerAware) {
-      return expanded;
+      return withRecipeTrust(expanded);
     }
-    return buildCursorAgentLaunch({
-      binary: resolveCursorAgentBinary(vars.cursorPath),
-      model,
-      prompt,
-      repo,
-      safetyTier: tier,
-    });
+    return withRecipeTrust(
+      buildCursorAgentLaunch({
+        binary: resolveCursorAgentBinary(vars.cursorPath),
+        model,
+        prompt,
+        repo,
+        safetyTier: tier,
+      }),
+    );
   }
 
   // Grok Build CLI: same interactive contract as Cursor. Launch the TUI first
   // and deliver the task prompt after the composer is ready.
   if (runner === 'grok') {
     if (cmdIsRunnerAware) {
-      return expanded;
+      return withRecipeTrust(expanded);
     }
-    return buildGrokLaunch({
-      binary: resolveGrokBinary(vars.grokPath),
-      model,
-      effort: opts.effort,
-      prompt,
-      repo,
-      safetyTier: tier,
-    });
+    return withRecipeTrust(
+      buildGrokLaunch({
+        binary: resolveGrokBinary(vars.grokPath),
+        model,
+        effort: opts.effort,
+        prompt,
+        repo,
+        safetyTier: tier,
+      }),
+    );
   }
 
   // Any other runner (opencode + future additions): must have a runner-aware
@@ -463,7 +522,7 @@ export function buildLaunchCommand(
         `Use {runner_path} or a runner-specific placeholder such as {opencode_path}/{cursor_path}/{grok_path}.`,
     );
   }
-  return `unset CLAUDECODE && ${expanded}`;
+  return withRecipeTrust(`unset CLAUDECODE && ${expanded}`);
 }
 
 function injectCodexReasoningEffortFlag(

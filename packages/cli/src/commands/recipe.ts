@@ -23,6 +23,7 @@ import {
   createStandardCoreAdapters,
   parseRecipeLibraryPath,
   type RecipeLibrarySource,
+  resolveRecipeTrustInput,
 } from '@farmslot/recipe-harness';
 import {
   readRecipeCliJsonFile,
@@ -32,7 +33,7 @@ import {
 
 import { green, red, yellow } from '../colors.js';
 import { resolveContext } from '../context.js';
-import { isMachineMode } from '../envelope.js';
+import { createEmitter, isMachineMode } from '../envelope.js';
 import { OutputContext } from '../output.js';
 import { withProgress } from '../progress.js';
 
@@ -668,6 +669,7 @@ export function registerRecipeCommand(program: Command): void {
     .action(async (recipePath: string, opts: RecipeRunOptions, cmd: Command) => {
       const globals = cmd.optsWithGlobals();
       const output = new OutputContext(Boolean(globals.json));
+      const emit = createEmitter(output, cmd);
 
       try {
         if (!opts.artifactsDir) throw new Error('Missing --artifacts-dir.');
@@ -678,6 +680,11 @@ export function registerRecipeCommand(program: Command): void {
           adapters: createStandardCoreAdapters({
             actions: getRecipeActionManifestActionNames(actionManifest),
           }),
+          defaultSource: {
+            kind: 'operator',
+            trust: 'trusted',
+            name: '@farmslot/cli',
+          },
         });
         const result = await runner.run({
           recipePath: resolveRecipeCliPath(recipePath),
@@ -685,18 +692,18 @@ export function registerRecipeCommand(program: Command): void {
           projectRoot: opts.projectRoot
             ? resolveRecipeCliPath(opts.projectRoot)
             : resolveRecipeCliPath('.'),
+          ...resolveRecipeTrustInput(),
         });
-        if (output.json) {
-          output.writeJson(result);
+        if (emit.machine) {
+          emit.ok(result);
         } else {
           output.write(
             `Recipe run: ${runStatusLabel(result.status)}\nArtifacts: ${result.artifactManifestPath}\n`,
           );
         }
-        if (result.status !== 'pass') process.exit(1);
+        if (result.status !== 'pass') process.exitCode = 1;
       } catch (error) {
-        output.error(error instanceof Error ? error.message : String(error));
-        process.exit(1);
+        emit.fail(error);
       }
     });
 }

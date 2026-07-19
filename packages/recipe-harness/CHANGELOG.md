@@ -4,6 +4,9 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Added provenance-aware preflight/execution planning that blocks restricted capabilities from unknown or untrusted sources before side effects; approvals bind to the exact resolved plan digest.
+- Fixed `uses` and library catalog symlinks escaping their declared project or library roots.
+
 ## 0.7.0 - 2026-07-19
 
 - Added `flows describe <ref>` with resolved provenance, parameter schema/defaults, the complete flow definition, and an authored call node or clearly labeled template in human and stable JSON output.

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: add recipe provenance, execution-capability, exact-plan approval, and stable trust-failure contracts.
+
 - feat: `SLOT_LIFECYCLE` — canonical `SlotLifecycle` value constants for runtime logic (companion to the type union; string literals drift silently).
 
 - feat: `SlotReleaseParams.expectedRunId` — optional owner binding for slot release: when set, the teardown proceeds only while that run still holds the slot's claim, so a release initiated for one run can never destroy a rival run's fresh claim (additive; absent means the pre-existing unbound behavior).

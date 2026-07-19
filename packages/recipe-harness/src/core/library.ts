@@ -1,12 +1,14 @@
 import type { Dirent } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import type { RecipeSourceProvenance } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { type InlineFlow, readCatalogFlows } from './flows.js';
 import { isRecord, readJsonFile } from './json.js';
+import { invalidRecipeSource } from './trust-error.js';
 import type { LoadedRecipeLibrarySource, RecipeLibrarySource, RecipeLogger } from './types.js';
 
 const LIBRARY_MANIFEST_FILE = 'library.json';
@@ -115,8 +117,15 @@ export async function loadRecipeLibraries(
 
   for (const source of sources) {
     const root = path.resolve(expandTilde(source.root));
+    const rootReal = await realpath(root);
     const manifest = await readLibraryManifest(root);
     const name = source.name ?? manifest.name ?? path.basename(root);
+    const provenance: RecipeSourceProvenance = source.provenance ?? {
+      kind: 'library',
+      trust: 'unknown',
+      name,
+      path: root,
+    };
     if (seenNames.has(name)) {
       throw new Error(`Recipe library source ${name} is configured more than once.`);
     }
@@ -125,15 +134,22 @@ export async function loadRecipeLibraries(
     const sourceFlows = new Map<string, ResolvedLibraryFlow>();
     for (const file of await listFlowCatalogFiles(root)) {
       const catalogPath = path.join(root, LIBRARY_FLOWS_DIR, file);
-      const catalog = await readJsonFile(catalogPath);
-      assertFlowCatalogKind(catalog, catalogPath);
-      for (const entry of readCatalogFlows(catalog, catalogPath)) {
+      const catalogReal = await realpath(catalogPath);
+      if (!isWithin(rootReal, catalogReal)) {
+        throw invalidRecipeSource(
+          `Library catalog ${catalogPath} resolves outside ${root}.`,
+          'move the catalog inside the library root or remove the escaping symlink',
+        );
+      }
+      const catalog = await readJsonFile(catalogReal);
+      assertFlowCatalogKind(catalog, catalogReal);
+      for (const entry of readCatalogFlows(catalog, catalogReal)) {
         if (sourceFlows.has(entry.ref)) {
           throw new Error(`Flow ${entry.ref} is declared more than once in library ${name}.`);
         }
         sourceFlows.set(entry.ref, {
           ref: entry.ref,
-          flow: entry.flow,
+          flow: { ...entry.flow, origin: { ...provenance, path: catalogReal } },
           raw: entry.raw,
           source: name,
           file: path.join(LIBRARY_FLOWS_DIR, file),
@@ -142,7 +158,7 @@ export async function loadRecipeLibraries(
         });
       }
     }
-    loadedSources.push({ name, root, flowCount: sourceFlows.size });
+    loadedSources.push({ name, root, flowCount: sourceFlows.size, provenance });
 
     for (const [ref, resolved] of sourceFlows) {
       const winner = flows.get(ref);
@@ -156,6 +172,14 @@ export async function loadRecipeLibraries(
 
   if (logger) logResolution(logger, { sources: loadedSources, flows });
   return { sources: loadedSources, flows };
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === '' ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+  );
 }
 
 export interface EffectiveFlowCatalog {

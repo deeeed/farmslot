@@ -62,6 +62,11 @@ export function createStandardUiAdapters(
     (action) => !requestedActions || requestedActions.has(action),
   ).map((action) => ({
     action,
+    source: {
+      kind: 'bundled' as const,
+      trust: 'trusted' as const,
+      name: '@farmslot/recipe-harness',
+    },
     async execute(node, context) {
       return normalizeUiTransportResult(await options.transport.execute(action, node, context));
     },

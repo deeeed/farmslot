@@ -69,6 +69,11 @@ export function createAppLifecycleAdapter(
   const commandRunner = options.commandRunner ?? defaultCommandRunner();
   return {
     action: 'app.lifecycle',
+    source: {
+      kind: 'bundled',
+      trust: 'trusted',
+      name: '@farmslot/recipe-harness',
+    },
     async execute(node, context) {
       // Validate every node input before resolving the target or running any
       // command, so a bad knob can never fail the action after side effects.

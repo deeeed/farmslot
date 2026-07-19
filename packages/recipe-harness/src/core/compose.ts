@@ -1,3 +1,5 @@
+import type { RecipeSourceProvenance } from '@farmslot/protocol';
+
 import { collectFlows, type InlineFlow } from './flows.js';
 import { isRecord } from './json.js';
 import {
@@ -135,6 +137,7 @@ export interface ComposeRecipeOptions {
   /** Library sources whose flows count as resolvable, mirroring run resolution. */
   librarySources?: RecipeLibrarySource[];
   logger?: RecipeLogger;
+  recipeSource?: RecipeSourceProvenance;
 }
 
 export interface ComposeRecipeResult {
@@ -157,6 +160,7 @@ export async function composeRecipe(
   const recipeLocalFlows = await collectFlows(recipe, {
     projectRoot: options.projectRoot,
     recipeDir: options.recipeDir,
+    recipeSource: options.recipeSource,
   });
   const resolution =
     options.librarySources && options.librarySources.length > 0

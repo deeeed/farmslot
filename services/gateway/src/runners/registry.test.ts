@@ -7,12 +7,33 @@ import {
   buildCodexExecLaunch,
   buildLaunchCommand,
   buildRunnerSessionReloadCommand,
+  withTaskRecipeTrustEnvironment,
 } from './launch-command.js';
 import { resolveWorkerDispatchPrompt } from './worker-prompt.js';
 
 async function dispatchPrompt(taskFile: string): Promise<string> {
   return resolveWorkerDispatchPrompt('farmslot-farm', { taskFile });
 }
+
+describe('recipe source trust environment', () => {
+  it('marks task-scoped PR recipe input untrusted before launching any runner', () => {
+    const command = withTaskRecipeTrustEnvironment(
+      'cd /repo && claude',
+      '/repo',
+      '.task/review/pr-1',
+    );
+    assert.match(command, /inputs\/inherited\/recipe-source\.json/);
+    assert.match(command, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/);
+    assert.match(command, /FARMSLOT_RECIPE_SOURCE_KIND=task/);
+    assert.match(command, /FARMSLOT_RECIPE_SOURCE_NAME=pr-body-inherited/);
+    assert.match(command, /else unset FARMSLOT_RECIPE_SOURCE_TRUST/);
+    assert.match(command, /; cd \/repo && claude$/);
+  });
+
+  it('does not decorate runner commands without a task directory', () => {
+    assert.equal(withTaskRecipeTrustEnvironment('claude', '/repo'), 'claude');
+  });
+});
 import {
   assertSupportedRunnerSpelling,
   confirmTrustPromptWithFreshEvidence,
@@ -1545,7 +1566,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /^cd '\/tmp\/worker-checkout' && FARMSLOT_ROOT="\$PWD" FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 node "\$PWD\/packages\/cli\/bin\/farmslot\.mjs" scripted-runner/,
+        /cd '\/tmp\/worker-checkout' && FARMSLOT_ROOT="\$PWD" FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 node "\$PWD\/packages\/cli\/bin\/farmslot\.mjs" scripted-runner/,
       );
       assert.doesNotMatch(cmd, /FARMSLOT_ROOT='[^']+'/);
       assert.doesNotMatch(cmd, /node '[^']+\/packages\/cli/);
@@ -1603,6 +1624,16 @@ describe('buildLaunchCommand', () => {
 });
 
 describe('buildRunnerSessionReloadCommand', () => {
+  it('restores task recipe provenance before resuming a persisted runner', () => {
+    const vars = makeVars({ dispatchCmd: '', grokPath: '/opt/bin/grok' });
+    const cmd = buildRunnerSessionReloadCommand(vars, 'grok', 'grok-code-fast-1', 'session', {
+      taskDir: 'temp/tasks/TASK-1',
+    });
+    assert.match(cmd, /inputs\/inherited\/recipe-source[.]json/);
+    assert.match(cmd, /FARMSLOT_RECIPE_SOURCE_TRUST=untrusted/);
+    assert.match(cmd, /grok-code-fast-1 --resume 'session'$/);
+  });
+
   it('builds a Claude resume command with observability and safety flags', () => {
     const vars = makeVars({ dispatchCmd: '', claudePath: '/opt/bin/claude' });
     const cmd = buildRunnerSessionReloadCommand(vars, 'claude', 'sonnet', 'session-123', {

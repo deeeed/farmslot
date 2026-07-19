@@ -12,6 +12,7 @@ import {
   type RecipeVideoRecordingOptions,
   type RecordingTarget,
   type RecordingTargetProvider,
+  resolveRecipeTrustInput,
   type UiActionTransport,
   type VideoRecorder,
 } from '@farmslot/recipe-harness';
@@ -88,6 +89,11 @@ export async function runExpoRecipeDocument(
   const runner = createRecipeRunner({
     actionManifest: manifest,
     adapters,
+    defaultSource: {
+      kind: 'operator',
+      trust: 'trusted',
+      name: '@farmslot/expo-recipe',
+    },
     hud: false,
     runner: {
       source: '@farmslot/expo-recipe',
@@ -110,6 +116,7 @@ export async function runExpoRecipeDocument(
         FARMSLOT_RECIPE_ARTIFACTS_DIR: artifactsDir,
       },
       recordVideo: options.recordVideo,
+      ...resolveRecipeTrustInput(),
     });
   } finally {
     await closeUiTransportQuietly(transport);

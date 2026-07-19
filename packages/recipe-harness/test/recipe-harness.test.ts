@@ -15,7 +15,10 @@ import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { validateRecipeCliInput } from '../src/cli/support.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
 import { cleanupAbortedRunVideoRecording } from '../src/core/recording-cleanup.js';
-import { createRecipeRunner, defineActionAdapter } from '../src/core/runner.js';
+import {
+  createRecipeRunner as createRawRecipeRunner,
+  defineActionAdapter,
+} from '../src/core/runner.js';
 import type { VideoRecorder, VideoRecorderStartRequest } from '../src/core/types.js';
 import { createCaptureHelperVideoRecorder } from '../src/recording/capture-helper.js';
 import { extensionIdFromTarget } from '../src/runtime/browser-extension.js';
@@ -44,6 +47,21 @@ const coreActionManifest: RecipeActionManifestDocument = {
     'manual',
   ],
 };
+
+function createRecipeRunner(options: Parameters<typeof createRawRecipeRunner>[0]) {
+  return createRawRecipeRunner({
+    ...options,
+    adapters: options.adapters.map((adapter) => ({
+      ...adapter,
+      source: adapter.source ?? {
+        kind: 'bundled',
+        trust: 'trusted',
+        name: 'recipe harness test',
+      },
+    })),
+    defaultSource: { kind: 'operator', trust: 'trusted', name: 'recipe harness test' },
+  });
+}
 
 async function createTempRoot(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'farmslot-recipe-harness-'));
@@ -938,12 +956,14 @@ test('executes manifest-declared preconditions before lifecycle nodes', async ()
       preconditions: [
         {
           id: 'workspace.ready',
+          source: { kind: 'bundled', trust: 'trusted', name: 'recipe harness test' },
           async execute() {
             return { output: { ready: true } };
           },
         },
         {
           id: 'fixture.named',
+          source: { kind: 'bundled', trust: 'trusted', name: 'recipe harness test' },
           async execute(gate) {
             return { ok: gate.params?.name === 'dev7', output: { checkedName: gate.params?.name } };
           },

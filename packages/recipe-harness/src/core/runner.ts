@@ -5,6 +5,7 @@ import {
   getRecipeActionManifestActionNames,
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestEntry,
+  type RecipeExecutionPlan,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 
@@ -44,6 +45,11 @@ import {
   removePartialRunVideoOutput,
 } from './recording-cleanup.js';
 import { recordSyntheticFailure, traceNodeMetadata } from './trace.js';
+import {
+  buildRecipeExecutionPlan,
+  enforceRecipeExecutionPlan,
+  recipeSourceForRequest,
+} from './trust.js';
 import type {
   ActionAdapter,
   ActiveVideoRecording,
@@ -71,6 +77,20 @@ const noopLogger: RecipeLogger = {
   warn() {},
   error() {},
 };
+
+interface ResolvedRecipeRun {
+  projectRoot: string;
+  artifactsDir: string;
+  sourceRecipePath?: string;
+  recipe: unknown;
+  recipeSource: ReturnType<typeof recipeSourceForRequest>;
+  libraryResolution?: RecipeLibraryResolution;
+  graph: WorkflowGraph;
+  usedLibraryFlows: Map<string, ResolvedLibraryFlow>;
+  flowCatalog: ReadonlyMap<string, InlineFlow>;
+  flowOverrides: RecipeFlowResolutionSummary['overrides'];
+  executionPlan: RecipeExecutionPlan;
+}
 
 export function defineActionAdapter(adapter: ActionAdapter): ActionAdapter {
   if (!adapter.action.trim()) throw new Error('Action adapter action must be a non-empty string.');
@@ -123,6 +143,8 @@ export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRu
     options.hud,
     options.runner,
     options.recording,
+    options.defaultSource,
+    options.blockedCapabilities,
   );
 }
 
@@ -172,6 +194,8 @@ class DefaultRecipeRunner implements RecipeRunner {
   readonly #hud: RecipeHudOptions | false | undefined;
   readonly #runnerProvenance: CreateRecipeRunnerOptions['runner'];
   readonly #recording: RecipeRecordingOptions | undefined;
+  readonly #defaultSource: CreateRecipeRunnerOptions['defaultSource'];
+  readonly #blockedCapabilities: CreateRecipeRunnerOptions['blockedCapabilities'];
 
   constructor(
     actionManifest: RecipeActionManifestDocument,
@@ -181,6 +205,8 @@ class DefaultRecipeRunner implements RecipeRunner {
     hud: RecipeHudOptions | false | undefined,
     runnerProvenance: CreateRecipeRunnerOptions['runner'],
     recording: RecipeRecordingOptions | undefined,
+    defaultSource: CreateRecipeRunnerOptions['defaultSource'],
+    blockedCapabilities: CreateRecipeRunnerOptions['blockedCapabilities'],
   ) {
     this.#actionManifest = actionManifest;
     this.#adapters = adapters;
@@ -191,19 +217,30 @@ class DefaultRecipeRunner implements RecipeRunner {
     this.#hud = hud;
     this.#runnerProvenance = runnerProvenance;
     this.#recording = recording;
+    this.#defaultSource = defaultSource;
+    this.#blockedCapabilities = blockedCapabilities;
   }
 
-  async run(request: RecipeRunRequest): Promise<RecipeRunResult> {
+  async preflight(request: RecipeRunRequest): Promise<RecipeExecutionPlan> {
+    const { executionPlan } = await this.#resolveRequest(request);
+    enforceRecipeExecutionPlan(executionPlan, request, this.#blockedCapabilities);
+    return executionPlan;
+  }
+
+  async #resolveRequest(request: RecipeRunRequest): Promise<ResolvedRecipeRun> {
     if (!request.recipePath && request.recipeDocument == null) {
       throw new Error('Recipe run requires recipePath or recipeDocument.');
     }
     const projectRoot = path.resolve(request.projectRoot ?? process.cwd());
     const artifactsDir = path.resolve(request.artifactsDir);
-    const startedAt = new Date();
-    await mkdir(artifactsDir, { recursive: true });
-
     const sourceRecipePath = request.recipePath ? path.resolve(request.recipePath) : undefined;
     const recipe = request.recipeDocument ?? (await readJsonFile(sourceRecipePath!));
+    const recipeSource = recipeSourceForRequest(
+      request,
+      recipe,
+      sourceRecipePath,
+      this.#defaultSource,
+    );
     const libraryResolution: RecipeLibraryResolution | undefined =
       request.librarySources && request.librarySources.length > 0
         ? await loadRecipeLibraries(request.librarySources, this.#logger)
@@ -217,6 +254,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     const recipeLocalFlows = await collectFlows(recipe, {
       projectRoot,
       recipeDir: sourceRecipePath ? path.dirname(sourceRecipePath) : projectRoot,
+      recipeSource,
     });
     const usedLibraryFlows = new Map<string, ResolvedLibraryFlow>();
     const { catalog: flowCatalog, overrides: flowOverrides } = createEffectiveFlowCatalog(
@@ -225,6 +263,46 @@ class DefaultRecipeRunner implements RecipeRunner {
       usedLibraryFlows,
       this.#logger,
     );
+    const executionPlan = buildRecipeExecutionPlan({
+      recipe,
+      source: recipeSource,
+      graph,
+      flows: flowCatalog,
+      adapters: this.#adapters,
+      preconditions: this.#preconditions,
+      actionManifest: this.#actionManifest,
+      recordVideo: request.recordVideo,
+    });
+    return {
+      projectRoot,
+      artifactsDir,
+      sourceRecipePath,
+      recipe,
+      recipeSource,
+      libraryResolution,
+      graph,
+      usedLibraryFlows,
+      flowCatalog,
+      flowOverrides,
+      executionPlan,
+    };
+  }
+
+  async run(request: RecipeRunRequest): Promise<RecipeRunResult> {
+    const {
+      projectRoot,
+      artifactsDir,
+      recipe,
+      libraryResolution,
+      graph,
+      usedLibraryFlows,
+      flowCatalog,
+      flowOverrides,
+      executionPlan,
+    } = await this.#resolveRequest(request);
+    enforceRecipeExecutionPlan(executionPlan, request, this.#blockedCapabilities);
+    const startedAt = new Date();
+    await mkdir(artifactsDir, { recursive: true });
     const runFileOffsets = await collectRunFileOffsets({
       graph,
       flows: flowCatalog,

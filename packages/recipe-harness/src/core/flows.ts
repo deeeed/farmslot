@@ -1,7 +1,8 @@
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import type { UiObserverRef } from '@farmslot/protocol';
+import type { RecipeSourceProvenance, UiObserverRef } from '@farmslot/protocol';
 
 import { JsonTraceWriter } from '../node/writers.js';
 
@@ -15,6 +16,7 @@ import {
 } from './passive-observations.js';
 import { evaluateNodeGate, evaluatePredicate, getPathValue } from './predicates.js';
 import { traceNodeMetadata } from './trace.js';
+import { invalidRecipeSource } from './trust-error.js';
 import type { ActionAdapter, ActionResult, RecipeLogger } from './types.js';
 
 type FlowHudPublisher = (
@@ -35,22 +37,32 @@ export interface InlineFlow {
   nodes: Record<string, Record<string, unknown>>;
   paramsSchema?: unknown;
   postcondition?: unknown;
+  origin?: RecipeSourceProvenance;
 }
 
 export async function collectFlows(
   recipe: unknown,
-  options: { projectRoot: string; recipeDir: string },
+  options: {
+    projectRoot: string;
+    recipeDir: string;
+    recipeSource?: RecipeSourceProvenance;
+  },
 ): Promise<ReadonlyMap<string, InlineFlow>> {
   const flows = new Map<string, InlineFlow>();
   if (!isRecord(recipe)) return flows;
 
   for (const catalogPath of collectUsePaths(recipe.uses)) {
-    const catalog = await readJsonFile(resolveUsePath(catalogPath, options));
-    addCatalogFlows(flows, catalog, catalogPath);
+    const resolvedPath = await resolveUsePath(catalogPath, options);
+    const catalog = await readJsonFile(resolvedPath);
+    addCatalogFlows(flows, catalog, catalogPath, {
+      kind: 'uses-catalog',
+      trust: options.recipeSource?.trust ?? 'unknown',
+      path: resolvedPath,
+    });
   }
 
   if (isRecord(recipe.flows)) {
-    addCatalogFlows(flows, { flows: recipe.flows }, 'recipe.flows');
+    addCatalogFlows(flows, { flows: recipe.flows }, 'recipe.flows', options.recipeSource);
   }
   return flows;
 }
@@ -66,26 +78,51 @@ function collectUsePaths(value: unknown): string[] {
   });
 }
 
-function resolveUsePath(
+async function resolveUsePath(
   catalogPath: string,
   options: { projectRoot: string; recipeDir: string },
-): string {
+): Promise<string> {
   const normalized = normalizeRelativePath(catalogPath);
   const fromRecipe = path.join(options.recipeDir, normalized);
   if (path.isAbsolute(catalogPath)) {
-    throw new Error(`uses entry ${catalogPath} must be relative.`);
+    throw invalidRecipeSource(
+      `uses entry ${catalogPath} must be relative.`,
+      'reference a catalog within the project root using a relative path',
+    );
   }
-  const relativeToProject = path.relative(options.projectRoot, fromRecipe);
-  if (!relativeToProject.startsWith('..') && !path.isAbsolute(relativeToProject)) {
-    return fromRecipe;
+  const candidate = isWithin(options.projectRoot, fromRecipe)
+    ? fromRecipe
+    : path.join(options.projectRoot, normalized);
+  const [projectReal, candidateReal] = await Promise.all([
+    realpath(options.projectRoot),
+    realpath(candidate),
+  ]);
+  if (!isWithin(projectReal, candidateReal)) {
+    throw invalidRecipeSource(
+      `uses entry ${catalogPath} resolves outside project root.`,
+      'move the catalog inside the project root or remove the escaping symlink',
+    );
   }
-  return path.join(options.projectRoot, normalized);
+  return candidateReal;
 }
 
-function addCatalogFlows(flows: Map<string, InlineFlow>, catalog: unknown, source: string): void {
+function isWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === '' ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+  );
+}
+
+function addCatalogFlows(
+  flows: Map<string, InlineFlow>,
+  catalog: unknown,
+  source: string,
+  origin?: RecipeSourceProvenance,
+): void {
   for (const entry of readCatalogFlows(catalog, source)) {
     if (flows.has(entry.ref)) throw new Error(`Flow ${entry.ref} is declared more than once.`);
-    flows.set(entry.ref, entry.flow);
+    flows.set(entry.ref, { ...entry.flow, ...(origin ? { origin } : {}) });
   }
 }
 

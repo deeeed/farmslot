@@ -31,9 +31,17 @@ export function createStandardCoreAdapters(
     defineSwitchAdapter(),
     defineManualAdapter(),
   ];
-  if (!options.actions) return adapters;
+  const bundled = adapters.map((adapter) => ({
+    ...adapter,
+    source: {
+      kind: 'bundled' as const,
+      trust: 'trusted' as const,
+      name: '@farmslot/recipe-harness',
+    },
+  }));
+  if (!options.actions) return bundled;
   const actions = new Set(options.actions);
-  return adapters.filter((adapter) => actions.has(adapter.action));
+  return bundled.filter((adapter) => actions.has(adapter.action));
 }
 
 function defineEndAdapter(): ActionAdapter {

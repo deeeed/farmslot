@@ -239,6 +239,63 @@ test('redacts sensitive command output before writing trace artifacts', async ()
   }
 });
 
+test('inherited untrusted provenance blocks Expo recipe actions before side effects', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-trust-'));
+  const envNames = [
+    'FARMSLOT_RECIPE_SOURCE_TRUST',
+    'FARMSLOT_RECIPE_SOURCE_KIND',
+    'FARMSLOT_RECIPE_SOURCE_NAME',
+    'FARMSLOT_RECIPE_APPROVE_PLAN',
+  ] as const;
+  const savedEnv = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
+  try {
+    await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
+    await installExpoRecipeScaffold({ projectRoot: root });
+    await writeJson(path.join(root, DEFAULT_EXPO_RECIPE_PATH), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      schema_version: 1,
+      title: 'Trust boundary',
+      description: 'Verifies inherited task provenance reaches the Expo wrapper.',
+      validate: {
+        workflow: {
+          entry: 'command',
+          nodes: {
+            command: {
+              action: 'command',
+              intent: 'Attempt a restricted host action',
+              cmd: 'touch blocked.txt',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    });
+    process.env.FARMSLOT_RECIPE_SOURCE_TRUST = 'untrusted';
+    process.env.FARMSLOT_RECIPE_SOURCE_KIND = 'task';
+    process.env.FARMSLOT_RECIPE_SOURCE_NAME = 'pr-body';
+    delete process.env.FARMSLOT_RECIPE_APPROVE_PLAN;
+
+    await assert.rejects(
+      runExpoRecipeDocument(DEFAULT_EXPO_RECIPE_PATH, {
+        projectRoot: root,
+        artifactsDir: path.join(root, 'artifacts'),
+      }),
+      (error: unknown) =>
+        error instanceof Error && 'code' in error && error.code === 'RECIPE_TRUST_REQUIRED',
+    );
+    await assert.rejects(readFile(path.join(root, 'blocked.txt')));
+    await assert.rejects(readFile(path.join(root, 'artifacts', 'summary.json')));
+  } finally {
+    for (const name of envNames) {
+      const value = savedEnv[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('CLI rejects missing option values before treating the next flag as a path', async () => {
   await assert.rejects(
     () => runExpoRecipeCli(['run', '--artifacts-dir', '--dry-run']),

@@ -436,7 +436,7 @@ export async function runReviewAgent(
         runner,
         model,
         warmSession.runnerSessionId,
-        { effort: parentRun?.effort, safetyTier: parentSafetyTier, runtimeDir },
+        { effort: parentRun?.effort, safetyTier: parentSafetyTier, runtimeDir, taskDir },
       )}`;
       try {
         await launchReviewer(reloadCmd, taskPrompt, warmSession);
