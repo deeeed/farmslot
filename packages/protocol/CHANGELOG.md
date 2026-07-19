@@ -2,36 +2,27 @@
 
 ## Unreleased
 
-- feat: add recipe provenance, execution-capability, exact-plan approval, and stable trust-failure contracts.
-- fix: bind recipe approvals to the project root, artifact destination, and effective run environment.
-- fix: reject parameter-templated flow references that cannot be represented in a static execution plan.
-
-- feat: `SLOT_LIFECYCLE` — canonical `SlotLifecycle` value constants for runtime logic (companion to the type union; string literals drift silently).
-
-- feat: `SlotReleaseParams.expectedRunId` — optional owner binding for slot release: when set, the teardown proceeds only while that run still holds the slot's claim, so a release initiated for one run can never destroy a rival run's fresh claim (additive; absent means the pre-existing unbound behavior).
-
-- feat: `AgentContext.attemptStartedAt` — launch time of the current attempt/pass, so restart recovery can tell a current-attempt signal from a prior loop's (startedAt survives warm reuse; updatedAt is rewritten by startup reconciliation).
-
-- feat: `TmuxWorkerAttentionReason` gains `'observability-degraded'` — surfaced when hook/statusline liveness lapses for an event-driven runner while the ADR-032 Phase 3A pane-retirement flag is on, so the operator is alerted before a nudge is attempted (additive; older readers ignore the new reason).
-
-- feat: `ReviewSessionPolicy` (`'fresh-per-pass' | 'warm-per-reviewer'`), `REVIEW_SESSION_POLICIES`, and `DEFAULT_REVIEW_SESSION_POLICY` — reviewer session lifecycle across one run's review loops (MANUAL-000009), shared by the gateway and `@farmslot/slot-config`.
-
-- chore: comment-only sweep — code comments describe rationale inline instead of citing ticket numbers (no behavior change).
-
-- feat: `ReviewSummary.independentReviews[]` rows gain optional `source` and `runner` so gate-summary surfaces can render _Independent review (requested)_ and `runner: <id>` policy metadata (additive; older persisted summaries simply omit them); review-loop JSDoc comments use independent-review language.
-
-- feat: launch-plan attempt fields for MANUAL-000037 — `QueueItem.launchAttempt`, `Run.launchAttempt`, `RunCreateParams.launchAttempt`, and `BacklogLaunchCandidateProjection.attempt`: a monotonic per-candidate attempt so backlog run observations can tell a legitimate re-enqueue takeover from a stale echo of a superseded run.
-
-- feat: `BacklogItem.multiPr` (+ create/update inputs) — marks items whose acceptance criteria span multiple PRs so a finished run returns them to `ready` instead of auto-closing them; final closure stays the explicit `backlog.closeShipped` call.
-- feat: `CICheck.status` and `PRStatus.checkSummary` gain `skipped` — watched-check surfaces distinguish path-skipped CI jobs from pending ones. `CiCheckSummary.skipped` is optional (absent in run outputs persisted before skipped tracking).
-- feat: `contracts/bug-score.ts` — decision cores for the LLM grade / validity / batch stages of the bug pipeline, ported from `grade-bug.sh`, `validate-bug.sh`, and the `batch-triage.sh` GitHub post-filter: `normalizeLlmGrade` + `computeFinalScore` (LLM grade validation and the deterministic heuristic/LLM final-score merge), `normalizeBugValidation` (validity-check defaults), `parseLlmJson` (fence-stripping JSON parse), and `filterBatchIssues` (since/exclude-assigned filter), plus the `LlmGrade`/`FinalScore`/`BugValidation`/`LlmComplexity`/`FinalScoreSource` types and `LLM_COMPLEXITIES`/`FINAL_SCORE_SOURCES` constants. Companion to `contracts/bug-input.ts`; both back the new `farmslot bug` CLI command family.
-  - `computeFinalScore` rounds the merged one-shot probability half-to-even to approximate the retired Python grader's `round(x, 2)`, but does not bit-match it on binary near-ties: `final.one_shot_probability` may differ by 0.01 from the old Python output on values like `0.015` (JS rounds to `0.02`, Python to `0.01`). Deliberate — bit-parity would need arbitrary-precision decimals for a cosmetic delta.
-- feat: `contracts/bug-input.ts` — `scoreKeyForGithub` / `scoreKeyForJira` expose the score-file key rules (`gh-<n>` / lowercased Jira key) that `deriveScoreKey` now delegates to, so the batch/skip-existing fast paths derive a key from a raw ref without duplicating the rules.
-- feat: slot helper RPCs — `Methods.SLOT_MONITOR`/`SLOT_SHOW`/`SLOT_SOFT_REFRESH`/`SLOT_REOPEN`/`SLOT_AUTO_REFRESH` (+ matching `SlotMethods` entries) and their params/results (`SlotMonitorParams`/`Result`, `SlotShowParams`, `SlotSoftRefreshParams`, `SlotReopenParams`, `SlotCommandResult` extending `ExecResult`, `SlotAutoRefreshParams`/`Result`) for the ported slot helper CLI verbs.
-- **BREAKING** feat: rename the branch-maintenance flow `merge-main` → `update-branch` in `FlowType`. Adds load-boundary migrations `normalizeFlowType` (`merge-main`→`update-branch`, `feature`→`dev`) and `normalizeCiActionId` (`dispatch-merge-main`→`dispatch-update-branch`), the `BranchUpdateStrategy` type + `BRANCH_UPDATE_STRATEGIES`/`isBranchUpdateStrategy`, and `Run.branchUpdateStrategy`/`RunCreateParams.branchUpdateStrategy`. `update-branch` is PR-bound; its worker report artifact is `report.md`.
-- docs: slot-selection comments reference the retired find-slot.sh script (comment-only; no behavior change).
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.10.0 - 2026-07-19
+
+- feat: add recipe provenance, execution-capability, exact-plan approval, and stable trust-failure contracts
+- fix: bind recipe approvals to the project root, artifact destination, and effective run environment
+- fix: reject parameter-templated flow references that cannot be represented in a static execution plan
+- feat: `CICheck.status` and `PRStatus.checkSummary` gain `skipped` — watched-check surfaces distinguish path-skipped CI jobs from pending ones. `CiCheckSummary.skipped` is optional (absent in run outputs persisted before skipped tracking).
+- feat: `SLOT_LIFECYCLE` — canonical `SlotLifecycle` value constants for runtime logic (companion to the type union; string literals drift silently)
+- feat: `SlotReleaseParams.expectedRunId` — optional owner binding for slot release: when set, the teardown proceeds only while that run still holds the slot's claim, so a release initiated for one run can never destroy a rival run's fresh claim (additive; absent means the pre-existing unbound behavior)
+- feat: `AgentContext.attemptStartedAt` — launch time of the current attempt/pass, so restart recovery can tell a current-attempt signal from a prior loop's (startedAt survives warm reuse; updatedAt is rewritten by startup reconciliation)
+- feat: `TmuxWorkerAttentionReason` gains `'observability-degraded'` — surfaced when hook/statusline liveness lapses for an event-driven runner while the ADR-032 Phase 3A pane-retirement flag is on, so the operator is alerted before a nudge is attempted (additive; older readers ignore the new reason)
+- feat: `ReviewSessionPolicy` (`'fresh-per-pass' | 'warm-per-reviewer'`), `REVIEW_SESSION_POLICIES`, and `DEFAULT_REVIEW_SESSION_POLICY` — reviewer session lifecycle across one run's review loops (MANUAL-000009), shared by the gateway and `@farmslot/slot-config`
+- feat: `ReviewSummary.independentReviews[]` rows gain optional `source` and `runner` so gate-summary surfaces can render _Independent review (requested)_ and `runner: <id>` policy metadata (additive; older persisted summaries simply omit them); review-loop JSDoc comments use independent-review language
+- feat: launch-plan attempt fields for MANUAL-000037 — `QueueItem.launchAttempt`, `Run.launchAttempt`, `RunCreateParams.launchAttempt`, and `BacklogLaunchCandidateProjection.attempt`: a monotonic per-candidate attempt so backlog run observations can tell a legitimate re-enqueue takeover from a stale echo of a superseded run
+- feat: `BacklogItem.multiPr` (+ create/update inputs) — marks items whose acceptance criteria span multiple PRs so a finished run returns them to `ready` instead of auto-closing them; final closure stays the explicit `backlog.closeShipped` call
+- feat: `contracts/bug-score.ts` — decision cores for the LLM grade / validity / batch stages of the bug pipeline, ported from `grade-bug.sh`, `validate-bug.sh`, and the `batch-triage.sh` GitHub post-filter: `normalizeLlmGrade` + `computeFinalScore` (LLM grade validation and the deterministic heuristic/LLM final-score merge), `normalizeBugValidation` (validity-check defaults), `parseLlmJson` (fence-stripping JSON parse), and `filterBatchIssues` (since/exclude-assigned filter), plus the `LlmGrade`/`FinalScore`/`BugValidation`/`LlmComplexity`/`FinalScoreSource` types and `LLM_COMPLEXITIES`/`FINAL_SCORE_SOURCES` constants. Companion to `contracts/bug-input.ts`; both back the new `farmslot bug` CLI command family
+- `computeFinalScore` rounds the merged one-shot probability half-to-even to approximate the retired Python grader's `round(x, 2)`, but does not bit-match it on binary near-ties: `final.one_shot_probability` may differ by 0.01 from the old Python output on values like `0.015` (JS rounds to `0.02`, Python to `0.01`). Deliberate — bit-parity would need arbitrary-precision decimals for a cosmetic delta
+- feat: `contracts/bug-input.ts` — `scoreKeyForGithub` / `scoreKeyForJira` expose the score-file key rules (`gh-<n>` / lowercased Jira key) that `deriveScoreKey` now delegates to, so the batch/skip-existing fast paths derive a key from a raw ref without duplicating the rules
+- feat: slot helper RPCs — `Methods.SLOT_MONITOR`/`SLOT_SHOW`/`SLOT_SOFT_REFRESH`/`SLOT_REOPEN`/`SLOT_AUTO_REFRESH` (+ matching `SlotMethods` entries) and their params/results (`SlotMonitorParams`/`Result`, `SlotShowParams`, `SlotSoftRefreshParams`, `SlotReopenParams`, `SlotCommandResult` extending `ExecResult`, `SlotAutoRefreshParams`/`Result`) for the ported slot helper CLI verbs
+- **BREAKING** feat: rename the branch-maintenance flow `merge-main` → `update-branch` in `FlowType`. Adds load-boundary migrations `normalizeFlowType` (`merge-main`→`update-branch`, `feature`→`dev`) and `normalizeCiActionId` (`dispatch-merge-main`→`dispatch-update-branch`), the `BranchUpdateStrategy` type + `BRANCH_UPDATE_STRATEGIES`/`isBranchUpdateStrategy`, and `Run.branchUpdateStrategy`/`RunCreateParams.branchUpdateStrategy`. `update-branch` is PR-bound; its worker report artifact is `report.md`
 
 ## 0.9.0 - 2026-07-13
 

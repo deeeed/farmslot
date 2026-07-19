@@ -4,9 +4,11 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
-- Security: recipe runs honor inherited source provenance before device actions.
-
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.3.0 - 2026-07-19
+
+- Security: recipe runs honor inherited source provenance before device actions
 
 ## 0.2.0 - 2026-07-12
 
