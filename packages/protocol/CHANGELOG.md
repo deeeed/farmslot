@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-- chore: comment-only sweep — code comments describe rationale inline instead of citing ticket numbers (no behavior change).
-- feat: `CICheck.status` and `PRStatus.checkSummary` gain `skipped` — watched-check surfaces distinguish path-skipped CI jobs from pending ones. `CiCheckSummary.skipped` is optional (absent in run outputs persisted before skipped tracking).
-- docs: slot-selection comments reference the retired find-slot.sh script (comment-only; no behavior change).
-
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.10.0 - 2026-07-19
@@ -13,6 +9,7 @@
 - feat: add recipe provenance, execution-capability, exact-plan approval, and stable trust-failure contracts
 - fix: bind recipe approvals to the project root, artifact destination, and effective run environment
 - fix: reject parameter-templated flow references that cannot be represented in a static execution plan
+- feat: `CICheck.status` and `PRStatus.checkSummary` gain `skipped` — watched-check surfaces distinguish path-skipped CI jobs from pending ones. `CiCheckSummary.skipped` is optional (absent in run outputs persisted before skipped tracking).
 - feat: `SLOT_LIFECYCLE` — canonical `SlotLifecycle` value constants for runtime logic (companion to the type union; string literals drift silently)
 - feat: `SlotReleaseParams.expectedRunId` — optional owner binding for slot release: when set, the teardown proceeds only while that run still holds the slot's claim, so a release initiated for one run can never destroy a rival run's fresh claim (additive; absent means the pre-existing unbound behavior)
 - feat: `AgentContext.attemptStartedAt` — launch time of the current attempt/pass, so restart recovery can tell a current-attempt signal from a prior loop's (startedAt survives warm reuse; updatedAt is rewritten by startup reconciliation)

@@ -13,7 +13,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 - Bound approvals to the project root, artifact destination, and effective run environment
 - Fixed source-swap and symlink boundary bypasses across custom implementations, project reads, flow catalogs, and artifact/video writes
 - Fixed managed-run approval recovery instructions and caller-selected library trust defaults
-- Added an explicit-environment mode so host wrappers can exclude internal control variables from recipe execution and approval identity.
+- Added an explicit-environment mode so host wrappers can exclude internal control variables from recipe execution and approval identity
 
 ## 0.7.0 - 2026-07-19
 
