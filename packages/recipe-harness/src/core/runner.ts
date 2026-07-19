@@ -274,6 +274,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       adapters: this.#adapters,
       preconditions: this.#preconditions,
       actionManifest: this.#actionManifest,
+      hud: this.#hud,
       recordVideo: request.recordVideo,
     });
     return {

@@ -16,7 +16,12 @@ import {
 import type { InlineFlow } from './flows.js';
 import type { WorkflowGraph } from './graph.js';
 import { invalidRecipeSource, RecipeTrustError } from './trust-error.js';
-import type { ActionAdapter, PreconditionChecker, RecipeRunRequest } from './types.js';
+import type {
+  ActionAdapter,
+  PreconditionChecker,
+  RecipeHudOptions,
+  RecipeRunRequest,
+} from './types.js';
 
 const officialActions = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
 const bundledSource: RecipeSourceProvenance = {
@@ -60,6 +65,7 @@ export function buildRecipeExecutionPlan({
   adapters,
   preconditions,
   actionManifest,
+  hud,
   recordVideo,
 }: {
   recipe: unknown;
@@ -69,6 +75,7 @@ export function buildRecipeExecutionPlan({
   adapters: ReadonlyMap<string, ActionAdapter>;
   preconditions: ReadonlyMap<string, PreconditionChecker>;
   actionManifest: RecipeActionManifestDocument;
+  hud?: RecipeHudOptions | false;
   recordVideo?: RecipeRunRequest['recordVideo'];
 }): RecipeExecutionPlan {
   const nodes: RecipePlanNode[] = [];
@@ -140,6 +147,10 @@ export function buildRecipeExecutionPlan({
     };
     nodes.push(planNode);
     digestNodes.push({ plan: planNode, node: { ...gate } });
+  }
+
+  if (hud !== false && hud?.enabled !== false && adapters.has('app.hud')) {
+    addNode('run:hud', { action: 'app.hud', automatic: true, options: hud ?? {} }, source);
   }
 
   if (recordVideo && recordVideo !== 'off') {

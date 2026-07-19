@@ -941,6 +941,106 @@ test('untrusted recipes require exact approval before starting video capture', a
   }
 });
 
+test('automatic HUD implementation is included in trust preflight', async () => {
+  const root = await tempRoot();
+  try {
+    let hudExecutions = 0;
+    const runner = createRecipeRunner({
+      actionManifest: {
+        ...manifest,
+        supported_official_actions: [...manifest.supported_official_actions, 'app.hud'],
+      },
+      adapters: [
+        ...createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+        {
+          action: 'app.hud',
+          source: {
+            kind: 'custom-adapter',
+            trust: 'untrusted',
+            name: 'task HUD',
+            digest: 'sha256:hud-v1',
+          },
+          async resolveSourceDigest() {
+            return 'sha256:hud-v1';
+          },
+          async execute() {
+            hudExecutions += 1;
+            return { status: 'pass' };
+          },
+        },
+      ],
+      defaultSource: trusted,
+    });
+    const request = {
+      recipeDocument: recipe({ action: 'end', status: 'pass' }),
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+    };
+    let planDigest = '';
+    await assert.rejects(runner.preflight(request), (error: unknown) => {
+      assert.ok(error instanceof RecipeTrustError);
+      planDigest = error.failure.recipeDigest ?? '';
+      const hudNode = error.failure.blocked?.find((node) => node.nodeId === 'run:hud');
+      assert.equal(hudNode?.action, 'app.hud');
+      assert.ok(hudNode?.capabilities.includes('app-mutation'));
+      assert.ok(hudNode?.capabilities.includes('arbitrary-code'));
+      return error.code === 'RECIPE_TRUST_REQUIRED';
+    });
+    assert.equal(hudExecutions, 0);
+
+    const approved = await runner.run({ ...request, approval: { planDigest } });
+    assert.equal(approved.status, 'pass');
+    assert.ok(hudExecutions > 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('untrusted recipes cannot trigger automatic HUD mutations before approval', async () => {
+  const root = await tempRoot();
+  try {
+    let hudExecutions = 0;
+    const runner = createRecipeRunner({
+      actionManifest: {
+        ...manifest,
+        supported_official_actions: [...manifest.supported_official_actions, 'app.hud'],
+      },
+      adapters: [
+        ...createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+        {
+          action: 'app.hud',
+          source: trusted,
+          async execute() {
+            hudExecutions += 1;
+            return { status: 'pass' };
+          },
+        },
+      ],
+    });
+    const request = {
+      recipeDocument: recipe({ action: 'end', status: 'pass' }),
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      source: untrusted,
+    };
+    let planDigest = '';
+    await assert.rejects(runner.preflight(request), (error: unknown) => {
+      assert.ok(error instanceof RecipeTrustError);
+      planDigest = error.failure.recipeDigest ?? '';
+      const hudNode = error.failure.blocked?.find((node) => node.nodeId === 'run:hud');
+      assert.deepEqual(hudNode?.capabilities, ['app-mutation']);
+      return error.code === 'RECIPE_TRUST_REQUIRED';
+    });
+    assert.equal(hudExecutions, 0);
+
+    const approved = await runner.run({ ...request, approval: { planDigest } });
+    assert.equal(approved.status, 'pass');
+    assert.ok(hudExecutions > 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('flow provenance is enforced transitively and exact-digest approval detects changes', async () => {
   const root = await tempRoot();
   try {
