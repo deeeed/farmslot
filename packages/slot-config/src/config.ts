@@ -642,9 +642,14 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
 
   const runtimeDir = projectJson.paths?.runtime_dir || '.agent';
   const artifactDir = projectJson.paths?.artifact_dir || '.task';
-  const recipeDir = projectJson.paths?.recipe_dir || `${runtimeDir}/recipes`;
+  // The schema documents recipe_dir's default as "{{runtime_dir}}/recipes" —
+  // resolve that reference here so a config using the documented form works.
+  const recipeDir = (projectJson.paths?.recipe_dir || `${runtimeDir}/recipes`)
+    .replaceAll('{{runtime_dir}}', runtimeDir)
+    .replaceAll('{{RUNTIME_DIR}}', runtimeDir);
   // Path values are substituted verbatim into hooks, task files, and prompts —
-  // a {{...}} token here would ship raw to a worker (same rule as resources).
+  // any other {{...}} token here would ship raw to a worker (same rule as
+  // resource values).
   for (const [field, dir] of Object.entries({
     'paths.runtime_dir': runtimeDir,
     'paths.artifact_dir': artifactDir,
