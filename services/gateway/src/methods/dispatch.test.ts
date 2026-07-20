@@ -40,6 +40,7 @@ import {
 import { flowTypeToKey } from './dispatch/task-flow-key.js';
 import { assertTicketRefMatchesProjectRepo, normalizeTicketRef } from './dispatch/ticket-ref.js';
 import {
+  candidateIneligibilityReason,
   classifyRefreshSlotAction,
   findAffinitySlot,
   PoolConfigError,
@@ -917,7 +918,7 @@ test('validateSlotForTargetBranch rejects linked worktree branch already checked
   );
 });
 
-test('candidate ineligibility annotation: full-fleet ownership scan, nudge rows excluded', () => {
+test('candidateIneligibilityReason: full-fleet ownership scan, nudge rows excluded', () => {
   const targetBranch = 'feat/candidate-annotation';
   const owner = makeSlot({
     slot: 'mach-b-1',
@@ -935,15 +936,21 @@ test('candidate ineligibility annotation: full-fleet ownership scan, nudge rows 
     lifecycle: 'ready',
     agent: 'idle',
   });
-  // The owner may sit outside the wizard's machine filter — annotation must scan the
-  // FULL fleet (like FIND_SLOT); a filtered slot list would wrongly pass.
+  // The owner may sit outside the wizard's machine filter — the annotation scans the
+  // FULL fleet (like FIND_SLOT); a machine-filtered slot list would wrongly pass.
   assert.match(
-    validateSlotForDispatch(requested, [requested, owner], { targetBranch }) ?? '',
+    candidateIneligibilityReason(requested, [requested, owner], {
+      isNudgeRow: false,
+      targetBranch,
+    }) ?? '',
     /already checked out/,
   );
-  assert.equal(validateSlotForDispatch(requested, [requested], { targetBranch }), null);
-  // A busy reuse-eligible slot always fails base validation — candidate annotation must
-  // exclude nudge rows or every REUSE WORKER row would be disabled.
+  assert.equal(
+    candidateIneligibilityReason(requested, [requested], { isNudgeRow: false, targetBranch }),
+    null,
+  );
+  // A genuinely reuse-eligible nudge row is busy — the base validator would reject it,
+  // so the annotation must skip nudge rows or every REUSE WORKER row would be disabled.
   const busyNudgeRow = makeSlot({
     slot: 'mach-a-2',
     project: 'farmslot-farm',
@@ -952,6 +959,21 @@ test('candidate ineligibility annotation: full-fleet ownership scan, nudge rows 
     agent: 'working',
   });
   assert.notEqual(validateSlotForDispatch(busyNudgeRow, [busyNudgeRow], { targetBranch }), null);
+  assert.equal(
+    candidateIneligibilityReason(busyNudgeRow, [busyNudgeRow, owner], {
+      isNudgeRow: true,
+      targetBranch,
+    }),
+    null,
+  );
+  // Busy rows that are NOT nudge-eligible are informational-only — never annotated.
+  assert.equal(
+    candidateIneligibilityReason(busyNudgeRow, [busyNudgeRow, owner], {
+      isNudgeRow: false,
+      targetBranch,
+    }),
+    null,
+  );
 });
 
 test('validateSlotForTargetBranch rejects disabled linked worktree branch owners', () => {
