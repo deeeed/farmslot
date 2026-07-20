@@ -1,8 +1,8 @@
 # ADR Implementation Status
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-07-04 (ADR-034 Recipe Protocol v1 adoption refresh)
-**Stale by:** 2026-09-08
+**Last updated:** 2026-07-20 (ADR-045/ADR-049 sections added alongside the ROADMAP-next refresh through PR #361)
+**Stale by:** 2026-09-20
 **Authority:** Derived visibility doc. When this file disagrees with an ADR body, the ADR wins for intent; git history and `IMPLEMENTED-HISTORY.md` win for what actually shipped.
 
 This matrix answers: **for each current ADR, what is shipped, what is partial, and what is still open?** Use it with [adr/README.md](../adr/README.md), [ROADMAP-next.md](../ROADMAP-next.md), and [IMPLEMENTED-HISTORY.md](../IMPLEMENTED-HISTORY.md).
@@ -13,29 +13,32 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | --------------- | ------------------------------------------------------------------------------------------- |
 | **Shipped**     | Decision is implemented in `main` for its core scope; only polish/policy tuning may remain. |
 | **Partial**     | Foundational code or UX exists; ADR follow-ups or product closure items are still open.     |
+| **In progress** | Implementation is actively landing; core scope not yet complete on `main`.                  |
 | **Not started** | Accepted/planned decision with no meaningful implementation yet.                            |
 | **Proposed**    | ADR not accepted — treat as design intent only.                                             |
 
-## Summary (ADR-026 – ADR-042)
+## Summary (ADR-026 – ADR-049)
 
-| ADR                                                        | Title                             | ADR status | Implementation | Top open gap                                                         |
-| ---------------------------------------------------------- | --------------------------------- | ---------- | -------------- | -------------------------------------------------------------------- |
-| [026](../adr/026-self-improvement-recursive-loop.md)       | Self-improvement recursive loop   | Proposed   | Partial        | Structured retrospective grading + improvement loop not fully wired  |
-| [030](../adr/030-replay-provenance-and-reference-evals.md) | Eval packages on run families     | Accepted   | Partial        | Replay closure: baseline/head identity, live regression evidence     |
-| [031](../adr/031-deterministic-first-auto-recovery.md)     | Deterministic-first auto-recovery | Accepted   | Shipped        | Policy tuning from audit evidence                                    |
-| [032](../adr/032-runner-observability-via-hooks.md)        | Runner observability via hooks    | Accepted   | Shipped        | Phase 3 shipped — Claude send path is hook-only (pane retired)       |
-| [033](../adr/033-mobile-tmux-worker-control.md)            | Mobile tmux worker control        | Accepted   | Shipped        | Deferred: background wake-word, auto-send, remote provisioning       |
-| [034](../adr/034-recipe-protocol-v1.md)                    | Recipe Protocol v1                | Accepted   | Shipped        | Maintenance: external adoption and replay use                        |
-| [035](../adr/035-node-support-bundles.md)                  | Node support bundles              | Accepted   | Partial        | Gateway prepare sync; not all projects declare bundles               |
-| [036](../adr/036-cli-gateway-profiles.md)                  | CLI gateway profiles              | Accepted   | Partial        | Core shipped; demo/onboarding rehearsal follow-ups                   |
-| [037](../adr/037-prepare-profiles.md)                      | Prepare profiles                  | Accepted   | Shipped        | Automatic profile selection deferred by ADR                          |
-| [038](../adr/038-gate-held-worker-session.md)              | Gate-held worker session          | Accepted   | Partial        | Companion gate-held affordances; optional pane-died softening        |
-| [039](../adr/039-run-portable-bundles.md)                  | Portable run bundles              | Accepted   | Shipped        | v1.1 selectors, CC export UI, `--seed-eval` helper                   |
-| [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration          | Proposed   | Partial        | Scheduler/graph UI exists; dispatch config parity + E2E polish open  |
-| [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement  | Proposed   | Partial        | Multi-project `targetProjects` + project-aware promotion fan-out     |
-| [042](../adr/042-slot-tracking-branches.md)                | Slot tracking branches            | Accepted   | Partial        | `release.ts` idle reset; configurable tracking branch + rebase merge |
-| [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel      | Accepted   | In progress    | Experimental read-only transcript mirror on active sessions          |
-| [048](../adr/048-interactive-operator-packets.md)          | Interactive operator packets      | Accepted   | Partial        | Eval/replay packet response persistence remains open                 |
+| ADR                                                        | Title                              | ADR status | Implementation | Top open gap                                                                 |
+| ---------------------------------------------------------- | ---------------------------------- | ---------- | -------------- | ---------------------------------------------------------------------------- |
+| [026](../adr/026-self-improvement-recursive-loop.md)       | Self-improvement recursive loop    | Proposed   | Partial        | Structured retrospective grading + improvement loop not fully wired          |
+| [030](../adr/030-replay-provenance-and-reference-evals.md) | Eval packages on run families      | Accepted   | Partial        | Replay closure: baseline/head identity, live regression evidence             |
+| [031](../adr/031-deterministic-first-auto-recovery.md)     | Deterministic-first auto-recovery  | Accepted   | Shipped        | Policy tuning from audit evidence                                            |
+| [032](../adr/032-runner-observability-via-hooks.md)        | Runner observability via hooks     | Accepted   | Shipped        | Phase 3 shipped — Claude send path is hook-only (pane retired)               |
+| [033](../adr/033-mobile-tmux-worker-control.md)            | Mobile tmux worker control         | Accepted   | Shipped        | Deferred: background wake-word, auto-send, remote provisioning               |
+| [034](../adr/034-recipe-protocol-v1.md)                    | Recipe Protocol v1                 | Accepted   | Shipped        | Maintenance: external adoption and replay use                                |
+| [035](../adr/035-node-support-bundles.md)                  | Node support bundles               | Accepted   | Partial        | Gateway prepare sync; not all projects declare bundles                       |
+| [036](../adr/036-cli-gateway-profiles.md)                  | CLI gateway profiles               | Accepted   | Partial        | Core shipped; demo/onboarding rehearsal follow-ups                           |
+| [037](../adr/037-prepare-profiles.md)                      | Prepare profiles                   | Accepted   | Shipped        | Automatic profile selection deferred by ADR                                  |
+| [038](../adr/038-gate-held-worker-session.md)              | Gate-held worker session           | Accepted   | Partial        | Companion gate-held affordances; optional pane-died softening                |
+| [039](../adr/039-run-portable-bundles.md)                  | Portable run bundles               | Accepted   | Shipped        | v1.1 selectors, CC export UI, `--seed-eval` helper                           |
+| [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration           | Proposed   | Partial        | Scheduler/graph UI exists; dispatch config parity + E2E polish open          |
+| [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement   | Proposed   | Partial        | Multi-project `targetProjects` + project-aware promotion fan-out             |
+| [042](../adr/042-slot-tracking-branches.md)                | Slot tracking branches             | Accepted   | Shipped        | Polish: fleet-status `@ origin/main` display string; bash release parity doc |
+| [045](../adr/045-worker-terminal-contract.md)              | Worker terminal contract           | Accepted   | Partial        | Author-time lint skips templates that omit `./mark` entirely                 |
+| [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel       | Accepted   | In progress    | Experimental read-only transcript mirror on active sessions                  |
+| [048](../adr/048-interactive-operator-packets.md)          | Interactive operator packets       | Accepted   | Partial        | Eval/replay packet response persistence remains open                         |
+| [049](../adr/049-agent-execution-template-selection.md)    | Agent execution template selection | Proposed   | Partial        | Resolver + `list`/`lint`/`new` only; dispatch/render/skills integration open |
 
 Older ADRs **001–025** are foundation/shipped for their core scope. This file does not re-audit every legacy ADR; use `IMPLEMENTED-HISTORY.md` for historical detail.
 
@@ -261,6 +264,34 @@ shipped because the human review loop and promotion-to-backlog UX still need clo
 | Fleet status shows tracking branch @ default      | Partial | `.farm-status.json` persists `linked_worktree`; `@ origin/main` display still TBD   |
 
 **Follow-ups:** bash `release-slot.sh` parity doc, fleet-status `@ origin/main` display string.
+
+---
+
+## ADR-045 — Worker Terminal Contract (Accepted)
+
+**Implementation: Partial (runtime enforcement shipped; author-time lint has an omission gap)**
+
+| ADR requirement                                 | Status  | Evidence / gap                                                                                                                                                                            |
+| ----------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Project-owned `worker_terminal` config          | Shipped | `projects/farmslot-farm/project.json`; task writer emits `inputs/worker-terminal-contract.json`                                                                                           |
+| `./mark` + artifact contract enforcement        | Shipped | `packages/agent-runtime/scripts/mark-checklist-step.cjs` + `check-task-artifact-contract.mjs`                                                                                             |
+| Terminal template lint                          | Partial | `check-worker-template-contract.mjs` skips templates that never mention `./mark` (`templateUsesTerminalMark` gate), so a template omitting the required mark command entirely passes lint |
+| Monitor holds on missing terminal `SIGNAL.json` | Shipped | `requireSignal` hold when the agent exits without a terminal signal                                                                                                                       |
+
+**Follow-ups:** lint templates that omit `./mark` entirely (close the `templateUsesTerminalMark` skip); authoring-quality tooling (`fs-worker-template-quality`) stays optional, not runtime.
+
+## ADR-049 — Agent Execution Template Selection (Proposed)
+
+**Implementation: Partial (resolver + CLI tools shipped in PR #347, MANUAL-000012)**
+
+| ADR requirement                                     | Status      | Evidence / gap                                                    |
+| --------------------------------------------------- | ----------- | ----------------------------------------------------------------- |
+| Markdown templates with optional frontmatter        | Shipped     | execution-template resolver in `@farmslot/agent-runtime`          |
+| `list`/`lint`/`new` tools                           | Shipped     | `farmslot-agent execution-template` CLI + `@farmslot/cli` command |
+| Gateway dispatch consumption of the shared resolver | Not started | no `services/gateway` consumer of the resolver exists yet         |
+| Render/skills integration + migration               | Not started | ADR phases beyond the resolver/CLI slice remain open              |
+
+**Follow-ups:** wire dispatch/render/skills consumers, then accept or revise the ADR body.
 
 ---
 
