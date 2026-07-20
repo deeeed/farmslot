@@ -1,8 +1,8 @@
 # ADR Implementation Status
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-07-04 (ADR-034 Recipe Protocol v1 adoption refresh)
-**Stale by:** 2026-09-08
+**Last updated:** 2026-07-20 (ADR-045/ADR-049 sections added alongside the ROADMAP-next refresh through PR #361)
+**Stale by:** 2026-09-20
 **Authority:** Derived visibility doc. When this file disagrees with an ADR body, the ADR wins for intent; git history and `IMPLEMENTED-HISTORY.md` win for what actually shipped.
 
 This matrix answers: **for each current ADR, what is shipped, what is partial, and what is still open?** Use it with [adr/README.md](../adr/README.md), [ROADMAP-next.md](../ROADMAP-next.md), and [IMPLEMENTED-HISTORY.md](../IMPLEMENTED-HISTORY.md).
@@ -261,6 +261,33 @@ shipped because the human review loop and promotion-to-backlog UX still need clo
 | Fleet status shows tracking branch @ default      | Partial | `.farm-status.json` persists `linked_worktree`; `@ origin/main` display still TBD   |
 
 **Follow-ups:** bash `release-slot.sh` parity doc, fleet-status `@ origin/main` display string.
+
+---
+
+## ADR-045 — Worker Terminal Contract (Accepted)
+
+**Implementation: Shipped**
+
+| ADR requirement                                 | Status  | Evidence / gap                                                                                  |
+| ----------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| Project-owned `worker_terminal` config          | Shipped | `projects/farmslot-farm/project.json`; task writer emits `inputs/worker-terminal-contract.json` |
+| `./mark` + artifact contract enforcement        | Shipped | `packages/agent-runtime/scripts/mark-checklist-step.cjs` + `check-task-artifact-contract.mjs`   |
+| Terminal template lint                          | Shipped | `scripts/quality/check-worker-template-contract.mjs`; `yarn quality:worker-templates`           |
+| Monitor holds on missing terminal `SIGNAL.json` | Shipped | `requireSignal` hold when the agent exits without a terminal signal                             |
+
+**Follow-ups:** none tracked; authoring-quality tooling (`fs-worker-template-quality`) is optional, not runtime.
+
+## ADR-049 — Agent Execution Template Selection (Proposed)
+
+**Implementation: Shipped (PR #347, MANUAL-000012) — ADR status not yet flipped**
+
+| ADR requirement                                     | Status  | Evidence / gap                                                           |
+| --------------------------------------------------- | ------- | ------------------------------------------------------------------------ |
+| Markdown templates with optional frontmatter        | Shipped | `farmslot-agent execution-template` resolver (`@farmslot/agent-runtime`) |
+| `list`/`lint`/`new` tools                           | Shipped | `farmslot-agent execution-template` CLI                                  |
+| Default template + domain overlays, shared resolver | Shipped | shared resolver consumed by dispatch template selection                  |
+
+**Follow-ups:** flip the ADR body from Proposed to Accepted (or revise) — implementation landed before the status update.
 
 ---
 
