@@ -92,6 +92,15 @@ assert.match(
 );
 assert.match(lintWorkerTemplateStructure(structureBad).join(' '), /double braces/);
 
+// Reviewer flows require the artifacts their templates actually produce, not learnings.
+const selfReviewContract = resolveWorkerTerminalContract(null, 'self-review');
+assert.deepEqual(selfReviewContract.commands.complete.artifacts, ['artifacts/review-feedback.md']);
+const selfReviewFixContract = resolveWorkerTerminalContract(null, 'self-review-fix');
+assert.deepEqual(selfReviewFixContract.commands.complete.artifacts, ['artifacts/report.md']);
+assert.deepEqual(selfReviewFixContract.commands['no-change'].artifacts, [
+  'artifacts/no-change-report.md',
+]);
+
 // A template that omits `./mark` entirely must fail lint when the contract
 // requires a terminal signal, and pass when it does not (pr-complete interactive).
 const marklessTemplate = ['# Worker: Dev — DEV-123', '- [ ] Do the work'].join('\n');

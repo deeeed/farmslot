@@ -81,6 +81,7 @@ projects/farmslot-farm/templates/prompts/*
 projects/farmslot-farm/fixtures/*
 !projects/farmslot-farm/templates/worker/dev.md
 !projects/farmslot-farm/templates/worker/self-review.md
+!projects/farmslot-farm/templates/worker/self-review-fix.md
 !projects/farmslot-farm/templates/worker/dev-interactive.md
 !projects/farmslot-farm/templates/worker/fix-bug.md
 !projects/farmslot-farm/templates/worker/review-pr.md
