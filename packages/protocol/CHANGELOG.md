@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: `DispatchCandidate.ineligibleReason` — optional dispatch-validation failure reason for candidate rows.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.10.0 - 2026-07-19

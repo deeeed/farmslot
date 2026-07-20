@@ -736,6 +736,16 @@ export async function dispatchCandidates(
   const candidates = projectSlots
     .map((s) => {
       const nudge = nudgeMetaBySlot.get(s.slot);
+      // Same validation FIND_SLOT applies at dispatch time. Surfaced on selectable
+      // rows (free or reuse-eligible) so the wizard can disable them up front
+      // instead of advertising a pick that fails after queueing.
+      const ineligibleReason =
+        isFreeSlot(s) || nudge
+          ? validateSlotForDispatch(s, projectSlots, {
+              targetBranch: resolvedTargetBranch,
+              requiredPrepareProfile,
+            })
+          : null;
       return {
         slotId: s.slot,
         score: isFreeSlot(s)
@@ -753,6 +763,7 @@ export async function dispatchCandidates(
         familyAffinity: Boolean(
           familyContext.familyId && s.currentFamilyId === familyContext.familyId,
         ),
+        ...(ineligibleReason ? { ineligibleReason } : {}),
         ...(nudge
           ? {
               nudgeEligible: true,

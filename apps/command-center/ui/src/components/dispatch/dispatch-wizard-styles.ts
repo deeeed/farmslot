@@ -847,6 +847,17 @@ export const dispatchWizardStyles = css`
     letter-spacing: 0.5px;
   }
 
+  .cand-ineligible {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: ${unsafeCSS(colors.statusFail)}22;
+    border: 1px solid ${unsafeCSS(colors.statusFail)}88;
+    color: ${unsafeCSS(colors.statusFail)};
+    white-space: nowrap;
+    letter-spacing: 0.5px;
+  }
+
   .cand-nudge-chips {
     display: flex;
     flex-wrap: wrap;

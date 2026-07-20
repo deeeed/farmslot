@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(gateway): `dispatch.candidates` rows carry `ineligibleReason` when FIND_SLOT dispatch validation (branch ownership, companion resources) would reject the slot, so the wizard disables the row instead of advertising a selection that fails after queueing.
+
 - fix(gateway): harden inline CI-fix dispatch so deferred runner nudges do not create phantom CI-fix contexts (an undelivered nudge refunds the attempt and schedules a retry poll), and prevent Codex shell launch text from being misclassified as an auth blocker.
 
 - fix(gateway): fail PR-bound dispatch before prepare when a linked worktree already has the target branch checked out elsewhere, and block PR bodies/comments that still expose local-only artifact paths.

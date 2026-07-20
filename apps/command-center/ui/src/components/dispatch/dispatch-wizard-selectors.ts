@@ -47,6 +47,9 @@ export function resolveTargetBranch(input: {
 }
 
 export function candidateDispatchable(candidate: DispatchCandidate): boolean {
+  // A row FIND_SLOT would reject (branch ownership, missing companion resources)
+  // must not be selectable, even when the slot itself is free/reuse-eligible.
+  if (candidate.ineligibleReason) return false;
   return candidate.free === true || candidate.nudgeEligible === true;
 }
 
