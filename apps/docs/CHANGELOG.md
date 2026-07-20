@@ -4,6 +4,8 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- docs: worker-template-quality, worker-artifacts-by-flow, and worker-run-finish state the reviewer-flow exception — self-review/self-review-fix require their feedback/report artifact instead of `learnings.md`, and self-review no-change requires `review-feedback.md`.
+
 - docs: the human-ready-gate demo capture (fixture label, verification list, prose, recipe assertion) uses the unified _Independent Review_ language (MANUAL-000008); the checked-in demo screenshot refreshes on the next capture-harness run.
 
 - docs: rename the branch-maintenance flow `merge-main` → `update-branch` across the worker-artifacts/finish/quality reference pages, the customize-worker-prompts guide, and generated template-variable docs.

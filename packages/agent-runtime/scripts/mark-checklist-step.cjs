@@ -21,6 +21,8 @@ const FLOW_REPORT_ARTIFACTS = {
   'pr-complete': ['comments-report.md', 'report.md'],
   'update-branch': ['branch-update-report.md', 'report.md'],
   'ci-fix': ['report.md'],
+  'self-review': ['review-feedback.md', 'report.md'],
+  'self-review-fix': ['report.md'],
 };
 const FALLBACK_REPORT_ARTIFACTS = [
   'report.md',
@@ -45,8 +47,8 @@ function printHelp() {
       '  ./mark complete [--mark-last] [--no-self-review] [--skip-learnings] [--skip-checklist]',
       '  ./mark no-change --reason "..." [--already-fixed] [--mark-last] [--skip-learnings] [--skip-checklist]',
       '  ./mark blocked --reason "..." [--mark-last]',
-      'Terminal success paths require non-empty artifacts/learnings.md and a flow outcome artifact (complete) or no-change-report (no-change).',
-      'PR flows (dev, fix-bug): write artifacts/pr-description.md. Other flows: review.md, branch-update-report.md, report.md, etc.',
+      'Terminal success paths require the flow contract artifacts: contribution flows need non-empty artifacts/learnings.md plus a flow outcome artifact (complete) or no-change-report (no-change); reviewer flows (self-review, self-review-fix) need their feedback/report artifact instead of learnings.',
+      'PR flows (dev, fix-bug): write artifacts/pr-description.md. Other flows: review.md, review-feedback.md, branch-update-report.md, report.md, etc.',
       'With --mark-last, every checklist box must be [x] unless --skip-checklist. complete also runs check-task-artifact-contract.mjs.',
       'Do not write SIGNAL.json by hand or with echo.',
     ].join('\n'),
@@ -250,6 +252,9 @@ function inferFlowType(taskPath) {
     if (label.includes('pr-complete') || label.includes('pr complete')) return 'pr-complete';
     if (label.includes('update-branch') || label.includes('update branch')) return 'update-branch';
     if (label.includes('ci-fix') || label.includes('ci fix')) return 'ci-fix';
+    if (label.includes('self-review fix') || label.includes('self-review-fix'))
+      return 'self-review-fix';
+    if (label.includes('self-review') || label.includes('self review')) return 'self-review';
     if (label.includes('interactive dev')) return 'dev';
     if (/\bdev\b/.test(label) && !label.includes('review')) return 'dev';
   }
@@ -297,7 +302,15 @@ function assertArtifactContract(taskDir, contract, terminalCommand) {
     if (terminalCommand) args.push('--terminal', terminalCommand);
     if (opts['skip-learnings']) args.push('--skip-learnings');
   } else {
-    if (!opts['skip-learnings']) args.push('--require-learnings');
+    // No persisted contract file — honor the resolved builtin contract instead of
+    // assuming learnings: reviewer flows (self-review, self-review-fix) require their
+    // feedback/report artifact, not artifacts/learnings.md.
+    const contractRequiresLearnings = contract
+      ? (contract.commands?.[terminalCommand ?? 'complete']?.artifacts ?? []).includes(
+          LEARNINGS_ARTIFACT.split(path.sep).join('/'),
+        )
+      : true;
+    if (!opts['skip-learnings'] && contractRequiresLearnings) args.push('--require-learnings');
     if (fs.existsSync(path.join(taskDir, 'artifacts', 'recipe.json'))) {
       args.push('--require-recipe-coverage-if-recipe', '--require-recipe-quality-if-recipe');
     }

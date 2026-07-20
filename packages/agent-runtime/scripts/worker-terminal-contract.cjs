@@ -106,19 +106,26 @@ const BUILTIN_FLOW_COMMANDS = {
     },
     blocked: { artifacts: [] },
   },
+  // Reviewer flows produce feedback/report artifacts, not learnings.md — the
+  // reviewer evaluates someone else's work, so the learnings requirement that
+  // applies to contribution flows does not apply here (matches the templates
+  // and the runtime FLOW_REPORT_ARTIFACTS mapping).
   'self-review': {
-    complete: { artifacts: [LEARNINGS] },
+    complete: {
+      report: 'artifacts/review-feedback.md',
+      artifacts: ['artifacts/review-feedback.md'],
+    },
     'no-change': {
-      report: 'artifacts/no-change-report.md',
-      artifacts: [LEARNINGS, 'artifacts/no-change-report.md'],
+      report: 'artifacts/review-feedback.md',
+      artifacts: ['artifacts/review-feedback.md'],
     },
     blocked: { artifacts: [] },
   },
   'self-review-fix': {
-    complete: { report: 'artifacts/report.md', artifacts: [LEARNINGS, 'artifacts/report.md'] },
+    complete: { report: 'artifacts/report.md', artifacts: ['artifacts/report.md'] },
     'no-change': {
       report: 'artifacts/no-change-report.md',
-      artifacts: [LEARNINGS, 'artifacts/no-change-report.md'],
+      artifacts: ['artifacts/no-change-report.md'],
     },
     blocked: { artifacts: [] },
   },
@@ -313,21 +320,14 @@ function lintWorkerTemplateAgainstContract(templateContent, contract) {
   /** @type {string[]} */
   const issues = [];
   if (!templateUsesTerminalMark(templateContent)) {
-    issues.push(
-      'terminal worker template must instruct `./mark complete`, `./mark no-change`, or `./mark blocked`',
-    );
-    return issues;
-  }
-
-  if (contract.requireSignal) {
-    if (!templateUsesTerminalMark(templateContent)) {
+    // Omitting `./mark` entirely is only acceptable when the resolved contract
+    // does not require a terminal signal (e.g. pr-complete interactive).
+    if (contract.requireSignal) {
       issues.push(
         'requireSignal is true but template has no terminal `./mark` or mark-checklist-step command',
       );
     }
-    if (/never hand-write `SIGNAL\.json`|Do not write.*SIGNAL\.json/i.test(templateContent)) {
-      // allowed when paired with mark instructions
-    }
+    return issues;
   }
 
   const commands = templateTerminalCommands(templateContent);

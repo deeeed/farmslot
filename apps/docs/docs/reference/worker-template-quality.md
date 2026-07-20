@@ -66,13 +66,14 @@ See also [Worker signal protocol](worker-signal-protocol.md) and [Customize work
 
 ## Flow artifact quick reference
 
-| Flow          | Typical complete artifacts                                                       |
-| ------------- | -------------------------------------------------------------------------------- |
-| dev / fix-bug | `learnings.md`, `report.md`                                                      |
-| review-pr     | `learnings.md`, `review.md`, `line-comments.json` (when posting inline comments) |
-| pr-complete   | `learnings.md`, `comments-report.md`                                             |
-| update-branch | `learnings.md`, `report.md`                                                      |
-| ci-fix        | `learnings.md`, `report.md`                                                      |
-| self-review   | `learnings.md` (no report required)                                              |
+| Flow            | Typical complete artifacts                                                       |
+| --------------- | -------------------------------------------------------------------------------- |
+| dev / fix-bug   | `learnings.md`, `report.md`                                                      |
+| review-pr       | `learnings.md`, `review.md`, `line-comments.json` (when posting inline comments) |
+| pr-complete     | `learnings.md`, `comments-report.md`                                             |
+| update-branch   | `learnings.md`, `report.md`                                                      |
+| ci-fix          | `learnings.md`, `report.md`                                                      |
+| self-review     | `review-feedback.md` (reviewer flow — no learnings required)                     |
+| self-review-fix | `report.md` (reviewer-fix flow — no learnings required)                          |
 
 Projects may override lists via `worker_terminal` in `project.json` — see [ADR-045](https://github.com/deeeed/farmslot/blob/main/docs/adr/045-worker-terminal-contract.md).

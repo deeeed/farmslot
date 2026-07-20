@@ -97,10 +97,14 @@ function lintProjectRoot(projectRoot, issues) {
  * @param {string[]} issues
  */
 function collectTemplateIssues(displayPath, fileName, content, workerTerminal, issues) {
-  if (!templateUsesTerminalMark(content)) return;
-
-  for (const issue of lintWorkerTemplateStructure(content)) {
-    issues.push(`${displayPath}: ${issue}`);
+  // No mark-usage gate here: the contract lint itself decides whether a
+  // mark-less template is acceptable (only when the resolved contract has
+  // requireSignal=false). Skipping mark-less templates entirely let a template
+  // omit the required terminal command without any author-time signal.
+  if (templateUsesTerminalMark(content)) {
+    for (const issue of lintWorkerTemplateStructure(content)) {
+      issues.push(`${displayPath}: ${issue}`);
+    }
   }
 
   const { flowType, mode } = inferFlowTypeFromTemplate(fileName, content);

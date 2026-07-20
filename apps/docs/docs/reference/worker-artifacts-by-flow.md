@@ -10,12 +10,12 @@ For the short worker checklist, see [Finish a worker run](worker-run-finish.md).
 
 ## Every terminal run
 
-| Artifact                   | Required                                   | Purpose                                                                                      |
-| -------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `artifacts/learnings.md`   | **Yes** (unless `./mark --skip-learnings`) | Process meta for retrospective and improvement — 3–5 bullets; one bullet if nothing relevant |
-| Flow outcome file          | **Yes** (see table below)                  | What happened: fix summary, review, PR body, merge notes, or no-change investigation         |
-| `SIGNAL.json`              | **Yes**                                    | Written only by `./mark` — never hand-edited                                                 |
-| `CHECKLIST.md` / `TASK.md` | **Yes**                                    | Every box `[x]` when using `--mark-last`                                                     |
+| Artifact                   | Required                                                                                                                                                | Purpose                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `artifacts/learnings.md`   | **Contribution flows** (unless `./mark --skip-learnings`); reviewer flows (self-review, self-review-fix) require their feedback/report artifact instead | Process meta for retrospective and improvement — 3–5 bullets; one bullet if nothing relevant |
+| Flow outcome file          | **Yes** (see table below)                                                                                                                               | What happened: fix summary, review, PR body, merge notes, or no-change investigation         |
+| `SIGNAL.json`              | **Yes**                                                                                                                                                 | Written only by `./mark` — never hand-edited                                                 |
+| `CHECKLIST.md` / `TASK.md` | **Yes**                                                                                                                                                 | Every box `[x]` when using `--mark-last`                                                     |
 
 ## Outcome file by flow
 
@@ -28,7 +28,7 @@ PR-producing flows use **`pr-description.md`** as the single outcome artifact (i
 | **review-pr**                                     | `artifacts/review.md`           | Primary review output. Also `artifacts/line-comments.json` (may be `[]`).                                                      |
 | **pr-complete**                                   | `artifacts/comments-report.md`  | Comment triage + fixes; interactive handoff may omit worker terminal signal.                                                   |
 | **update-branch**                                 | `artifacts/report.md`           | Conflicts resolved, validation, risk notes.                                                                                    |
-| **no-change** (any flow)                          | `artifacts/no-change-report.md` | Use `./mark no-change --reason "…" --mark-last`.                                                                               |
+| **no-change** (contribution flows)                | `artifacts/no-change-report.md` | Use `./mark no-change --reason "…" --mark-last`. Exception: `self-review` no-change requires `review-feedback.md` instead.     |
 | **ci-fix**, **validate-dep**, **self-review-fix** | `artifacts/report.md`           | Secondary/utility flows — no PR package.                                                                                       |
 
 ### Standalone recipe skills (no Farmslot dispatch)
