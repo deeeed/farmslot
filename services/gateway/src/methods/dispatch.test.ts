@@ -917,6 +917,43 @@ test('validateSlotForTargetBranch rejects linked worktree branch already checked
   );
 });
 
+test('candidate ineligibility annotation: full-fleet ownership scan, nudge rows excluded', () => {
+  const targetBranch = 'feat/candidate-annotation';
+  const owner = makeSlot({
+    slot: 'mach-b-1',
+    project: 'farmslot-farm',
+    branch: targetBranch,
+    linkedWorktree: true,
+    lifecycle: 'ready',
+    agent: 'idle',
+  });
+  const requested = makeSlot({
+    slot: 'mach-a-1',
+    project: 'farmslot-farm',
+    branch: 'wt/a-1',
+    linkedWorktree: true,
+    lifecycle: 'ready',
+    agent: 'idle',
+  });
+  // The owner may sit outside the wizard's machine filter — annotation must scan the
+  // FULL fleet (like FIND_SLOT); a filtered slot list would wrongly pass.
+  assert.match(
+    validateSlotForDispatch(requested, [requested, owner], { targetBranch }) ?? '',
+    /already checked out/,
+  );
+  assert.equal(validateSlotForDispatch(requested, [requested], { targetBranch }), null);
+  // A busy reuse-eligible slot always fails base validation — candidate annotation must
+  // exclude nudge rows or every REUSE WORKER row would be disabled.
+  const busyNudgeRow = makeSlot({
+    slot: 'mach-a-2',
+    project: 'farmslot-farm',
+    branch: targetBranch,
+    lifecycle: 'held',
+    agent: 'working',
+  });
+  assert.notEqual(validateSlotForDispatch(busyNudgeRow, [busyNudgeRow], { targetBranch }), null);
+});
+
 test('validateSlotForTargetBranch rejects disabled linked worktree branch owners', () => {
   const targetBranch = 'feat/manual-000011-recipe-ui-passive-observations';
   const branchOwner = makeSlot({
