@@ -58,6 +58,10 @@ export interface DispatchCandidatesParams {
    * preserving nudge instead of dispatching fresh on a stale free slot.
    */
   ticketOrPr?: string;
+  /** App/surface hint used to derive prepare-profile resource requirements. */
+  app?: string;
+  /** Named prepare profile from the project's prepare.profiles. */
+  prepareProfile?: string;
   /** Run lane (production/validation/comparison). Comparison-lane suppresses nudge
    * candidates so sibling comparison runs still require explicit scrub between them
    * per ADR-024 §7. */

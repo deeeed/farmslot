@@ -9,6 +9,7 @@ import {
   buildRunnerSessionReloadCommand,
   withTaskRecipeTrustEnvironment,
 } from './launch-command.js';
+import { readPaneStateFromCapture } from './pane-state-script.js';
 import { resolveWorkerDispatchPrompt } from './worker-prompt.js';
 
 const CLEAR_RECIPE_TRUST_ENV =
@@ -450,6 +451,26 @@ describe('cursor runner', () => {
     });
   });
 
+  it('classifies real Claude and Codex expired-auth prompts', () => {
+    const panes = [
+      { runner: 'claude', text: 'OAuth token has expired. Please run /login.' },
+      { runner: 'claude', text: 'Invalid API key · please run /login' },
+      { runner: 'claude', text: 'Login expired. Please re-authenticate.' },
+      { runner: 'codex', text: 'Session expired. Run codex login to reauthenticate.' },
+      { runner: 'codex', text: 'Authentication is required to continue.' },
+      { runner: 'cursor', text: 'Login is required before starting a session.' },
+    ];
+
+    for (const { runner, text } of panes) {
+      assert.deepEqual(detectRunnerLaunchBlocker(text, runner), {
+        kind: 'auth-required',
+        summary: `${runner} requires login/authentication before Farmslot can deliver the task prompt.`,
+        autoAction: null,
+      });
+      assert.equal(readPaneStateFromCapture(text, runner).launchBlocker, 'auth-required');
+    }
+  });
+
   it('classifies codex usage-limit banners as launch blockers', () => {
     const pane = [
       '╭──────────────────────────────────────╮',
@@ -499,6 +520,16 @@ describe('cursor runner', () => {
     assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
   });
 
+  it('does not classify generic unauthorized app output as runner auth blockers', () => {
+    const pane = [
+      'gh api returned HTTP 401: Unauthorized',
+      'app log: session expired for test fixture',
+      '❯ ',
+    ].join('\n');
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
+  });
+
   it('does not combine auth words across unrelated lines of leftover pane prose', () => {
     // Prior worker's recap left on screen: "auth" and "needed" live on separate
     // lines and neither line is itself an auth blocker. Flattening the whole pane
@@ -511,6 +542,21 @@ describe('cursor runner', () => {
     ].join('\n');
 
     assert.equal(detectRunnerLaunchBlocker(pane, 'claude'), null);
+  });
+
+  it('does not classify shell launch command text with auth.json paths as runner auth blockers', () => {
+    const pane = [
+      'export DISABLE_OMC=1 DISABLE_OMX=1; ASDF_SHIMS="${ASDF_DATA_DIR:-$HOME/.asdf}/shims"; if [ -d "$ASDF_SHIMS" ]; then export PATH="$ASDF_SHIMS:$PATH"; fi &&',
+      "(node '/Users/deeeed/dev/farmslot/scripts/install-runner-observability.mjs' --runner 'codex' --repo '/Users/deeeed/dev/farmslot-wt/farmslot-3' --runtime-dir '.sandbox/farmslot-farm/agent' --slot-id 'macwork-ff-3' || echo '[farmslot-observability] install failed; continuing without hooks' >&2) && unset CLAUDECODE && cd '/Users/deeeed/dev/farmslot-wt/farmslot-3' && if [ -e '/Users/deeeed/dev/farmslot-wt/farmslot-3/.sandbox/farmslot-farm/agent/codex-home/auth.json' ]; then export CODEX_HOME='/Users/deeeed/dev/farmslot-wt/farmslot-3/.sandbox/farmslot-farm/agent/codex-home'; fi && /Users/deeeed/.npm-global/bin/codex --model gpt-5.5",
+      '╭───────────────────────────────────────────╮',
+      '│ >_ OpenAI Codex (v0.144.0)                │',
+      '╰───────────────────────────────────────────╯',
+      '• You have 3 usage limit resets available. Run /usage to use one.',
+      '› Find and fix a bug in @filename',
+    ].join('\n');
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
+    assert.equal(readPaneStateFromCapture(pane, 'codex').launchBlocker, null);
   });
 
   it('detects Codex instructions buffered at the live composer without progress', async () => {

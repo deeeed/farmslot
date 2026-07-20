@@ -70,6 +70,27 @@ assert.equal(result.status, 0, result.stderr);
 parsed = JSON.parse(readFileSync(devSignal, 'utf8'));
 assert.equal(parsed.evidence?.reportPath, 'artifacts/pr-description.md');
 
+const ciFixHyphenDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-ci-fix-hyphen-'));
+writeManifest(ciFixHyphenDir, 'CI-FIX.md');
+const ciFixHyphenTask = path.join(ciFixHyphenDir, 'CI-FIX.md');
+const ciFixHyphenSignal = path.join(ciFixHyphenDir, 'CI-FIX-SIGNAL.json');
+mkdirSync(path.join(ciFixHyphenDir, 'artifacts'), { recursive: true });
+writeFileSync(ciFixHyphenTask, ['# Worker: CI-Fix Pass', '', '- [x] Fix CI failure'].join('\n'));
+writeFileSync(path.join(ciFixHyphenDir, 'artifacts', 'learnings.md'), '- Fixed CI.\n');
+writeFileSync(path.join(ciFixHyphenDir, 'artifacts', 'review.md'), '# Review\n');
+result = spawnSync(process.execPath, [helper, ciFixHyphenDir, 'complete', '--mark-last'], {
+  encoding: 'utf8',
+});
+assert.equal(result.status, 1, 'CI-Fix heading must not fall back to review.md');
+assert.match(result.stderr, /artifacts\/report\.md/);
+writeFileSync(path.join(ciFixHyphenDir, 'artifacts', 'report.md'), '# CI fix report\n');
+result = spawnSync(process.execPath, [helper, ciFixHyphenDir, 'complete', '--mark-last'], {
+  encoding: 'utf8',
+});
+assert.equal(result.status, 0, result.stderr);
+parsed = JSON.parse(readFileSync(ciFixHyphenSignal, 'utf8'));
+assert.equal(parsed.status, 'complete');
+
 const noChangeDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-nochange-'));
 writeManifest(noChangeDir, 'TASK.md');
 const noChangeTask = path.join(noChangeDir, 'TASK.md');

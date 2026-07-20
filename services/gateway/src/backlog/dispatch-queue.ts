@@ -11,6 +11,7 @@ import {
   isTerminalRunStatus,
   normalizeRunTags,
   type QueueItem,
+  type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
 
@@ -19,6 +20,8 @@ import { evalSuiteCapUsage } from '../evals/suite-cap-store.js';
 import { farmslotRoot, loadFleetStatus } from '../fleet/state.js';
 import { resolveDispatchPreviewFromFleet } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
+import { detectProfileFit } from '../run-engine/profile-fit-gate.js';
+import { fetchTicketData } from '../run-engine/ticket-data.js';
 import { getAllRuns } from '../runs/store.js';
 
 function shouldUseIsolatedQueueFile(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
@@ -37,6 +40,8 @@ function resolveQueueFile(): string {
 const QUEUE_FILE = resolveQueueFile();
 const queue: QueueItem[] = [];
 let queuePersistChain: Promise<void> = Promise.resolve();
+const queueProfileFitCache = new Map<string, string | null>();
+const queueProfileFitDeferUntil = new Map<string, number>();
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 let _broadcast: BroadcastFn | null = null;
@@ -90,6 +95,22 @@ function enqueuePersist(reason: string): Promise<void> {
 
 function schedulePersist(reason: string): void {
   enqueuePersist(reason).catch(() => undefined);
+}
+
+function queueProfileFitCacheKey(item: QueueItem): string {
+  return [item.id, item.ticketOrPr, item.app ?? '', item.prepareProfile ?? '', item.createdAt].join(
+    '\0',
+  );
+}
+
+function clearQueueProfileFitCache(item: QueueItem): void {
+  const prefix = `${item.id}\0`;
+  for (const key of queueProfileFitCache.keys()) {
+    if (key.startsWith(prefix)) queueProfileFitCache.delete(key);
+  }
+  for (const key of queueProfileFitDeferUntil.keys()) {
+    if (key.startsWith(prefix)) queueProfileFitDeferUntil.delete(key);
+  }
 }
 
 export async function persistQueueNow(): Promise<void> {
@@ -278,6 +299,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
 function removeItemAtIndex(idx: number, reason: string): void {
   const [removed] = queue.splice(idx, 1);
   if (!removed) return;
+  clearQueueProfileFitCache(removed);
   schedulePersist(reason);
   console.log(`[dispatch-queue] removed item ${removed.id.slice(0, 8)} (${reason})`);
   broadcastQueue();
@@ -313,6 +335,7 @@ export async function cancelGraphQueuedItem(params: {
   if (idx < 0) return false;
   const [item] = queue.splice(idx, 1);
   if (!item) return false;
+  clearQueueProfileFitCache(item);
   await enqueuePersist('graph-dependency-regressed');
   console.log(
     `[dispatch-queue] cancelled graph queue item ${item.id.slice(0, 8)}: ${params.reason}`,
@@ -395,6 +418,8 @@ export function buildQueuePreviewParams(item: QueueItem) {
     familyId: item.familyId,
     lane: item.lane,
     variant: item.variant ?? null,
+    app: item.app,
+    prepareProfile: item.prepareProfile,
     // Forward the UI-resolved allow list so the dispatcher refuses to land the
     // queued run on a machine the operator explicitly filtered out.
     allowedSlots: item.allowedSlots ?? undefined,
@@ -402,7 +427,85 @@ export function buildQueuePreviewParams(item: QueueItem) {
   };
 }
 
-export function selectQueueDispatchSlot(slots: SlotStatus[], item: QueueItem): string | null {
+async function requiredPrepareProfileForQueueItem(item: QueueItem): Promise<string | null> {
+  if (item.prepareProfile) return item.prepareProfile;
+  const cacheKey = queueProfileFitCacheKey(item);
+  if (queueProfileFitCache.has(cacheKey)) {
+    return queueProfileFitCache.get(cacheKey) ?? null;
+  }
+  const deferUntil = queueProfileFitDeferUntil.get(cacheKey);
+  if (deferUntil && deferUntil > Date.now()) {
+    throw new Error(
+      `Ticket metadata unavailable for ${item.ticketOrPr}; retrying profile fit after ${new Date(deferUntil).toISOString()}`,
+    );
+  }
+  if (item.project !== 'farmslot-farm') {
+    queueProfileFitCache.set(cacheKey, null);
+    return null;
+  }
+  const previewRun = {
+    id: item.runId ?? item.id,
+    familyId: item.familyId ?? item.id,
+    lane: item.lane ?? 'production',
+    flowType: item.flowType,
+    status: 'created',
+    project: item.project,
+    ticketOrPr: item.ticketOrPr,
+    slotId: item.slotId ?? null,
+    branch: item.branch ?? null,
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: item.model ?? null, runner: item.runner ?? null },
+    createdAt: item.createdAt,
+    updatedAt: item.createdAt,
+    prepareProfile: item.prepareProfile,
+    app: item.app,
+  } as Run;
+  // Prefer the payload persisted at intake (manual backlog metadata is richer than
+  // anything a re-fetch of a free-form ticket string can produce).
+  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = item.ticketData ?? null;
+  if (!ticketData) {
+    try {
+      ticketData = await fetchTicketData(previewRun);
+    } catch {
+      // Queue metadata can outlive network/GitHub availability; explicit app/profile still gate.
+    }
+  }
+  // Strict ref shape only (`#123` / `owner/repo#123`): free-form titles that merely
+  // contain '#' (e.g. "improve the #runs view") must not trigger metadata deferral.
+  const githubRef = /^(?:[\w.-]+\/[\w.-]+)?#\d+$/.test(item.ticketOrPr.trim());
+  const onlyFallbackTicketData =
+    ticketData?.source === 'manual' &&
+    ticketData.title === item.ticketOrPr &&
+    !ticketData.description &&
+    (ticketData.acceptanceCriteria?.length ?? 0) === 0 &&
+    (ticketData.labels?.length ?? 0) === 0;
+  if (githubRef && onlyFallbackTicketData) {
+    queueProfileFitDeferUntil.set(cacheKey, Date.now() + 60_000);
+    throw new Error(
+      `Ticket metadata unavailable for ${item.ticketOrPr}; deferring queued dispatch so implicit profile fit cannot bind the wrong slot`,
+    );
+  }
+  const profileFit = detectProfileFit(previewRun, ticketData, {
+    prepareProfile: item.prepareProfile,
+    app: item.app,
+    slotPlatform: null,
+  });
+  const requiredPrepareProfile = profileFit?.suggestedPrepareProfile ?? null;
+  queueProfileFitCache.set(cacheKey, requiredPrepareProfile);
+  if (requiredPrepareProfile) {
+    item.prepareProfile = requiredPrepareProfile;
+    schedulePersist('profile-fit');
+  }
+  return requiredPrepareProfile;
+}
+
+export async function selectQueueDispatchSlot(
+  slots: SlotStatus[],
+  item: QueueItem,
+): Promise<string | null> {
+  const requiredPrepareProfile = await requiredPrepareProfileForQueueItem(item);
   if (item.launchSlotPolicy === 'spread' && item.launchGroupId) {
     const activeSiblingSlots = new Set(
       getAllRuns()
@@ -423,12 +526,16 @@ export function selectQueueDispatchSlot(slots: SlotStatus[], item: QueueItem): s
         const preview = resolveDispatchPreviewFromFleet(
           { ...buildQueuePreviewParams(item), allowedSlots: allowed },
           slots,
+          undefined,
+          { requiredPrepareProfile },
         );
         return preview.preview.slotId;
       }
     }
   }
-  const preview = resolveDispatchPreviewFromFleet(buildQueuePreviewParams(item), slots);
+  const preview = resolveDispatchPreviewFromFleet(buildQueuePreviewParams(item), slots, undefined, {
+    requiredPrepareProfile,
+  });
   return preview.preview.slotId;
 }
 
@@ -483,7 +590,7 @@ async function tryDispatchNextOnce(): Promise<void> {
 
     let slot: SlotStatus | undefined;
     try {
-      const slotId = selectQueueDispatchSlot(fleet.slots, item);
+      const slotId = await selectQueueDispatchSlot(fleet.slots, item);
       slot = fleet.slots.find((s) => s.slot === slotId);
     } catch (error) {
       console.debug(
@@ -504,7 +611,10 @@ async function tryDispatchNextOnce(): Promise<void> {
       await _createAndStartRun(item);
       // Remove from queue on success
       const idx = queue.findIndex((q) => q.id === item.id);
-      if (idx >= 0) queue.splice(idx, 1);
+      if (idx >= 0) {
+        clearQueueProfileFitCache(queue[idx]);
+        queue.splice(idx, 1);
+      }
       schedulePersist('auto-dispatch-success');
       _broadcast('queue.updated', { items: listItems() });
     } catch (err) {
@@ -517,6 +627,7 @@ async function tryDispatchNextOnce(): Promise<void> {
         // Cancel non-retryable items loudly instead of head-of-line retry loops.
         item.status = 'cancelled';
         item.runId = undefined;
+        clearQueueProfileFitCache(item);
         schedulePersist(
           isStartRefPolicyError(err)
             ? 'auto-dispatch-start-ref-policy-failure'

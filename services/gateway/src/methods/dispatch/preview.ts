@@ -35,13 +35,15 @@ import { getRunnerStatusProvider } from '../../runners/status-provider.js';
 import { getAllRuns } from '../../runs/store.js';
 
 import {
+  companionResourceBlocker,
   findBestSlot,
   isCdpLive,
   isDispatchStaleBranch,
   isFreeSlot,
+  prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
   slotScore,
-  validateSlot,
+  validateSlotForDispatch,
 } from './slot-scoring.js';
 import { resolveDispatchTargetBranch } from './target-branch.js';
 import { normalizeTicketRef } from './ticket-ref.js';
@@ -345,6 +347,7 @@ export function selectBranchAffinityEligibleSlots(
     variant?: string | null;
     allowedSlots?: string[] | null;
     targetBranch?: string | null;
+    requiredPrepareProfile?: string | null;
   },
 ): Array<{ slot: SlotStatus; prMatchKind: 'pr-number' | 'branch-slug'; canNudge: boolean }> {
   if (options?.lane === 'comparison') return [];
@@ -377,6 +380,7 @@ export function selectBranchAffinityEligibleSlots(
     // branch" — but `canNudge` gates only the Nudge action; Fresh dispatch works for any
     // runner because it tears down + relaunches.
     if (!passesBranchAffinityLaneGate(s, options)) continue;
+    if (companionResourceBlocker(s, options?.requiredPrepareProfile)) continue;
     const m = isBranchAffinityCandidateBranchMatch(s, ticketSlug, prNumber, targetBranch);
     if (!m.matched) continue;
     eligible.push({ slot: s, prMatchKind: m.kind, canNudge: runnerSupportsTmuxNudges(s.runner) });
@@ -394,6 +398,7 @@ export async function collectBranchAffinityNudgeCandidates(
     variant?: string | null;
     allowedSlots?: string[] | null;
     targetBranch?: string | null;
+    requiredPrepareProfile?: string | null;
   },
 ): Promise<BranchAffinityNudgeCandidate[]> {
   const eligibleEntries = selectBranchAffinityEligibleSlots(slots, project, ticketOrPr, options);
@@ -458,6 +463,7 @@ export async function findBranchAffinityNudgeCandidate(
     variant?: string | null;
     allowedSlots?: string[] | null;
     targetBranch?: string | null;
+    requiredPrepareProfile?: string | null;
   },
 ): Promise<BranchAffinityNudgeCandidate | null> {
   const all = await collectBranchAffinityNudgeCandidates(slots, project, ticketOrPr, options);
@@ -513,6 +519,7 @@ export async function verifyBranchAffinityNudgeStillEligible(
     variant?: string | null;
     allowedSlots?: string[] | null;
     targetBranch?: string | null;
+    requiredPrepareProfile?: string | null;
   },
 ): Promise<string | null> {
   if (!slot) return 'slot not found in fleet';
@@ -525,6 +532,8 @@ export async function verifyBranchAffinityNudgeStillEligible(
     return `slot ${slot.slot} is no longer dispatchable (lifecycle=${slot.lifecycle})`;
   if (slot.agent !== 'working')
     return `slot ${slot.slot} has no active run to nudge (agent=${slot.agent}) — use Fresh dispatch instead`;
+  const resourceBlocker = companionResourceBlocker(slot, options?.requiredPrepareProfile);
+  if (resourceBlocker) return resourceBlocker;
   const launchCommand = await launchCommandForSlotCurrentRun(slot);
   if (!runnerSupportsTmuxNudgesForLaunch(slot.runner, launchCommand)) {
     return `slot ${slot.slot} runner '${slot.runner ?? 'unknown'}' launch mode does not support tmux nudges`;
@@ -654,6 +663,39 @@ export async function dispatchCandidates(
     projectSlots,
     logPrefix: 'dispatch.candidates',
   });
+  const previewRun = {
+    id: 'dispatch-candidates',
+    familyId: 'dispatch-candidates',
+    lane: params.lane ?? 'production',
+    flowType: params.flowType as FlowType,
+    status: 'created',
+    project: params.project,
+    ticketOrPr: params.ticketOrPr,
+    slotId: null,
+    branch: null,
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+    prepareProfile: params.prepareProfile,
+    app: params.app,
+  } as Run;
+  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
+  try {
+    ticketData = await fetchTicketData(previewRun);
+  } catch {
+    // Ticket metadata is optional for candidate listing. Explicit app/profile inputs still
+    // drive resource filtering; implicit profile suggestions are skipped when unavailable.
+  }
+  const profileFit = detectProfileFit(previewRun, ticketData, {
+    prepareProfile: params.prepareProfile,
+    app: params.app,
+    slotPlatform: null,
+  });
+  const requiredPrepareProfile =
+    params.prepareProfile || profileFit?.suggestedPrepareProfile || null;
 
   const familyContext = resolveDispatchFamilyContext({
     ...params,
@@ -685,6 +727,7 @@ export async function dispatchCandidates(
         lane: params.lane ?? null,
         variant: params.variant ?? null,
         targetBranch: resolvedTargetBranch ?? null,
+        requiredPrepareProfile,
       },
     );
     nudgeMetaBySlot = new Map(candidatesList.map((c) => [c.slot.slot, c]));
@@ -754,12 +797,6 @@ export async function dispatchPreview(
   const enriched = { ...params, targetBranch: resolvedTargetBranch };
   const projectConfigList = await loadProjectConfigs();
   const projectConfigs = projectConfigsFromProjects(projectConfigList);
-  const result = resolveDispatchPreviewFromFleet(
-    { ...enriched, ...resolveDispatchFamilyContext(enriched) },
-    fleet.slots,
-    projectConfigs,
-  );
-  const slotInfo = fleet.slots.find((s) => s.slot === result.preview.slotId);
   const previewRun = {
     id: 'dispatch-preview',
     familyId: 'dispatch-preview',
@@ -768,7 +805,7 @@ export async function dispatchPreview(
     status: 'created',
     project: params.project,
     ticketOrPr: params.ticketOrPr,
-    slotId: result.preview.slotId,
+    slotId: params.slotId ?? null,
     branch: null,
     taskFile: null,
     steps: [],
@@ -779,7 +816,27 @@ export async function dispatchPreview(
     prepareProfile: params.prepareProfile,
     app: params.app,
   } as Run;
-  const ticketData = await fetchTicketData(previewRun).catch(() => null);
+  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
+  try {
+    ticketData = await fetchTicketData(previewRun);
+  } catch {
+    // Ticket metadata is optional for preview. Without it, explicit app/profile inputs
+    // still drive resource filtering and profile-fit suggestions are simply omitted.
+  }
+  const initialProfileFit = detectProfileFit(previewRun, ticketData, {
+    prepareProfile: params.prepareProfile,
+    app: params.app,
+    slotPlatform: null,
+  });
+  const requiredPrepareProfile =
+    params.prepareProfile || initialProfileFit?.suggestedPrepareProfile || null;
+  const result = resolveDispatchPreviewFromFleet(
+    { ...enriched, ...resolveDispatchFamilyContext(enriched) },
+    fleet.slots,
+    projectConfigs,
+    { requiredPrepareProfile },
+  );
+  const slotInfo = fleet.slots.find((s) => s.slot === result.preview.slotId);
   const profileFit = detectProfileFit(previewRun, ticketData, {
     prepareProfile: params.prepareProfile,
     app: params.app,
@@ -795,13 +852,18 @@ export function resolveDispatchPreviewFromFleet(
   params: DispatchPreviewParams,
   slots: SlotStatus[],
   projectConfigs?: ReturnType<typeof projectConfigsFromProjects>,
+  options?: { requiredPrepareProfile?: string | null },
 ): DispatchPreviewResult {
   let slotInfo: SlotStatus;
+  const requiredPrepareProfile = options?.requiredPrepareProfile ?? params.prepareProfile ?? null;
 
   if (params.slotId) {
     const found = slots.find((s) => s.slot === params.slotId);
     if (!found) throw new Error(`Slot ${params.slotId} not found`);
-    const err = validateSlot(found);
+    const err = validateSlotForDispatch(found, slots, {
+      targetBranch: params.targetBranch,
+      requiredPrepareProfile,
+    });
     if (err) throw new Error(`Slot ${params.slotId}: ${err}`);
     slotInfo = found;
   } else {
@@ -813,7 +875,13 @@ export function resolveDispatchPreviewFromFleet(
         variant: params.variant ?? null,
         allowedSlots: params.allowedSlots ?? null,
       });
-      if (affinitySlot) {
+      if (
+        affinitySlot &&
+        !validateSlotForDispatch(affinitySlot, slots, {
+          targetBranch: params.targetBranch,
+          requiredPrepareProfile,
+        })
+      ) {
         console.log(
           `[dispatch] ${params.flowType} affinity: reusing slot ${affinitySlot.slot} (lifecycle=${affinitySlot.lifecycle}, branch=${affinitySlot.branch})`,
         );
@@ -839,6 +907,7 @@ export function resolveDispatchPreviewFromFleet(
       familyId: params.familyId,
       lane: params.lane,
       variant: params.variant,
+      requiredPrepareProfile,
       projectConfigs,
     });
     if (!best) {
@@ -851,10 +920,39 @@ export function resolveDispatchPreviewFromFleet(
         const filterHint = allow ? ` within allowed slots (${[...allow].join(',')})` : '';
         throw new Error(`No slots found for project ${params.project}${filterHint}`);
       }
-      const reasons = projectSlots.map(
-        (s) => `${s.slot}: lifecycle=${s.lifecycle}, phase=${s.phase}, agent=${s.agent}`,
+      if (prepareProfileNeedsCompanionResource(requiredPrepareProfile)) {
+        const freeSlots = projectSlots.filter(isFreeSlot);
+        const freeSlotsMissingCompanionResource = freeSlots.every((s) =>
+          companionResourceBlocker(s, requiredPrepareProfile),
+        );
+        const eligibleFreeSlots = freeSlots.filter(
+          (s) =>
+            !validateSlotForDispatch(s, slots, {
+              targetBranch: params.targetBranch,
+              requiredPrepareProfile,
+            }),
+        );
+        if (
+          freeSlots.length > 0 &&
+          eligibleFreeSlots.length === 0 &&
+          freeSlotsMissingCompanionResource
+        ) {
+          throw new Error(
+            `No free slots for project ${params.project} have resources required by prepare profile ${requiredPrepareProfile}`,
+          );
+        }
+      }
+      const reasons = projectSlots.map((s) => {
+        const blocker =
+          validateSlotForDispatch(s, slots, {
+            targetBranch: params.targetBranch,
+            requiredPrepareProfile,
+          }) ?? 'unknown blocker';
+        return `${s.slot}: ${blocker} (lifecycle=${s.lifecycle}, phase=${s.phase}, agent=${s.agent})`;
+      });
+      throw new Error(
+        `No dispatchable slots for project ${params.project}:\n${reasons.join('\n')}`,
       );
-      throw new Error(`All ${projectSlots.length} slots occupied:\n${reasons.join('\n')}`);
     }
     slotInfo = best;
   }

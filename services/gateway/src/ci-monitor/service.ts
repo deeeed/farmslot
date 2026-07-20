@@ -534,6 +534,15 @@ export async function monitorCI(
             });
             return buildOutcome('blocked', ['INLINE_FIX_BLOCKED']);
           }
+          if (inlineFix.retryScheduled) {
+            checkTimeline.push({
+              timestamp: new Date().toISOString(),
+              status: 'inline-ci-fix-retry-scheduled',
+              detail: `attempt ${inlineFix.attempts} refunded — nudge undelivered, re-polling`,
+            });
+            forceNextRefresh = await waitForNextPoll('polling');
+            continue;
+          }
           checkTimeline.push({
             timestamp: new Date().toISOString(),
             status: 'inline-ci-fix-failed',
@@ -635,6 +644,15 @@ export async function monitorCI(
             detail: inlineFix.blockedReason ?? `attempt ${inlineFix.attempts}`,
           });
           return buildOutcome('blocked', failedNames);
+        }
+        if (inlineFix.retryScheduled) {
+          checkTimeline.push({
+            timestamp: new Date().toISOString(),
+            status: 'inline-ci-fix-retry-scheduled',
+            detail: `attempt ${inlineFix.attempts} refunded — nudge undelivered, re-polling`,
+          });
+          forceNextRefresh = await waitForNextPoll('polling');
+          continue;
         }
         checkTimeline.push({
           timestamp: new Date().toISOString(),
@@ -740,6 +758,15 @@ export async function monitorCI(
             detail: inlineFix.blockedReason ?? `attempt ${inlineFix.attempts}`,
           });
           return buildOutcome('blocked', ['INLINE_FIX_BLOCKED']);
+        }
+        if (inlineFix.retryScheduled) {
+          checkTimeline.push({
+            timestamp: new Date().toISOString(),
+            status: 'inline-ci-fix-retry-scheduled',
+            detail: `attempt ${inlineFix.attempts} refunded — nudge undelivered, re-polling`,
+          });
+          forceNextRefresh = await waitForNextPoll('polling');
+          continue;
         }
         checkTimeline.push({
           timestamp: new Date().toISOString(),

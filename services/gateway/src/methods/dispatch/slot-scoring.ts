@@ -27,6 +27,12 @@ const STALE_BRANCH_PENALTY = SLOT_STALE_BRANCH_SCORE_PENALTY;
 const CDP_MISSING_PENALTY = 5;
 const DEVICE_MISSING_PENALTY = 5;
 const FIXTURE_STALE_PENALTY = 1;
+const COMPANION_RESOURCE_IDS = ['ios-sim', 'android-emu', 'android-device'] as const;
+const COMPANION_PREPARE_PROFILES = new Set([
+  'sandbox-companion',
+  'companion-warm',
+  'companion-full',
+]);
 
 export function isFreeSlot(slot: SlotStatus): boolean {
   // Ghost slots (status-file entries absent from live pools) can never be
@@ -38,6 +44,24 @@ export function isFreeSlot(slot: SlotStatus): boolean {
 
 export function isCdpLive(cdp: string): boolean {
   return isCdpLiveValue(cdp);
+}
+
+export function prepareProfileNeedsCompanionResource(profile?: string | null): boolean {
+  const normalized = profile?.trim();
+  return Boolean(normalized && COMPANION_PREPARE_PROFILES.has(normalized));
+}
+
+export function slotHasCompanionResource(slot: Pick<SlotStatus, 'resources'>): boolean {
+  return COMPANION_RESOURCE_IDS.some((id) => Boolean(slot.resources?.[id]));
+}
+
+export function companionResourceBlocker(
+  slot: Pick<SlotStatus, 'resources'>,
+  requiredPrepareProfile?: string | null,
+): string | null {
+  if (!prepareProfileNeedsCompanionResource(requiredPrepareProfile)) return null;
+  if (slotHasCompanionResource(slot)) return null;
+  return `Prepare profile ${requiredPrepareProfile} requires one of: ${COMPANION_RESOURCE_IDS.join(', ')}`;
 }
 
 export type SlotScoringProjectConfig = SlotTrackingProjectConfig;
@@ -166,6 +190,7 @@ export function findBestSlot(
     familyId?: string | null;
     lane?: string | null;
     variant?: string | null;
+    requiredPrepareProfile?: string | null;
     projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
   },
 ): SlotStatus | null {
@@ -174,6 +199,8 @@ export function findBestSlot(
   const candidates = slots
     .filter((s) => {
       if (s.project !== project || !isFreeSlot(s) || (allow && !allow.has(s.slot))) return false;
+      if (slotBranchCheckoutBlocker(s, slots, options?.targetBranch)) return false;
+      if (companionResourceBlocker(s, options?.requiredPrepareProfile)) return false;
       if (
         !s.currentRunId &&
         !s.currentFamilyId &&
@@ -214,6 +241,46 @@ export function findBestSlot(
   if (candidates.length === 0) return null;
   const cdpCandidates = candidates.filter((s) => isCdpLive(s.health.cdp));
   return cdpCandidates.length > 0 ? cdpCandidates[0] : candidates[0];
+}
+
+export function slotBranchCheckoutBlocker(
+  slot: SlotStatus,
+  slots: readonly SlotStatus[],
+  targetBranch?: string | null,
+): SlotStatus | null {
+  if (!targetBranch || !slot.linkedWorktree || slot.branch === targetBranch) return null;
+  return (
+    slots.find(
+      (other) =>
+        other.slot !== slot.slot &&
+        other.project === slot.project &&
+        other.linkedWorktree &&
+        other.branch === targetBranch,
+    ) ?? null
+  );
+}
+
+export function validateSlotForTargetBranch(
+  slot: SlotStatus,
+  slots: readonly SlotStatus[],
+  targetBranch?: string | null,
+): string | null {
+  const baseError = validateSlot(slot);
+  if (baseError) return baseError;
+  const blocker = slotBranchCheckoutBlocker(slot, slots, targetBranch);
+  if (!blocker) return null;
+  return `Branch ${targetBranch} is already checked out by linked worktree slot ${blocker.slot}`;
+}
+
+export function validateSlotForDispatch(
+  slot: SlotStatus,
+  slots: readonly SlotStatus[],
+  options?: { targetBranch?: string | null; requiredPrepareProfile?: string | null },
+): string | null {
+  return (
+    validateSlotForTargetBranch(slot, slots, options?.targetBranch) ??
+    companionResourceBlocker(slot, options?.requiredPrepareProfile)
+  );
 }
 
 export function validateSlot(slot: SlotStatus): string | null {

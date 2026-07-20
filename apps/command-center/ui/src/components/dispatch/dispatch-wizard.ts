@@ -377,6 +377,8 @@ export class DispatchWizard extends DispatchWizardState {
         machines,
         targetBranch,
         ticketOrPr: this._ticketId || undefined,
+        app: this._app || undefined,
+        prepareProfile: this._prepareProfile.trim() || undefined,
         comparison:
           this._comparisonLane && this._comparisonFamilyId
             ? {
@@ -978,6 +980,8 @@ export class DispatchWizard extends DispatchWizardState {
       selectProject: (project) => this._selectProject(project),
       setApp: (app) => {
         this._app = app;
+        // App drives companion-resource eligibility on candidate rows.
+        void this._fetchCandidates(this._project);
       },
       setTaskTemplateFileName: (fileName) => {
         this._selectedTaskTemplateFileName = fileName;
@@ -996,10 +1000,12 @@ export class DispatchWizard extends DispatchWizardState {
       setPrepareProfile: (prepareProfile) => {
         this._prepareProfile = prepareProfile;
         this._profileFitSuggestion = null;
+        void this._fetchCandidates(this._project);
       },
       applySuggestedPrepareProfile: (prepareProfile) => {
         this._prepareProfile = prepareProfile;
         this._profileFitSuggestion = null;
+        void this._fetchCandidates(this._project);
       },
       setDevInteractiveProfile: (profile) => {
         this._devInteractiveProfile = profile;
