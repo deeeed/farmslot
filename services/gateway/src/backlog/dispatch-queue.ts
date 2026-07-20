@@ -462,13 +462,19 @@ async function requiredPrepareProfileForQueueItem(item: QueueItem): Promise<stri
     prepareProfile: item.prepareProfile,
     app: item.app,
   } as Run;
-  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
-  try {
-    ticketData = await fetchTicketData(previewRun);
-  } catch {
-    // Queue metadata can outlive network/GitHub availability; explicit app/profile still gate.
+  // Prefer the payload persisted at intake (manual backlog metadata is richer than
+  // anything a re-fetch of a free-form ticket string can produce).
+  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = item.ticketData ?? null;
+  if (!ticketData) {
+    try {
+      ticketData = await fetchTicketData(previewRun);
+    } catch {
+      // Queue metadata can outlive network/GitHub availability; explicit app/profile still gate.
+    }
   }
-  const githubRef = item.ticketOrPr.includes('#');
+  // Strict ref shape only (`#123` / `owner/repo#123`): free-form titles that merely
+  // contain '#' (e.g. "improve the #runs view") must not trigger metadata deferral.
+  const githubRef = /^(?:[\w.-]+\/[\w.-]+)?#\d+$/.test(item.ticketOrPr.trim());
   const onlyFallbackTicketData =
     ticketData?.source === 'manual' &&
     ticketData.title === item.ticketOrPr &&

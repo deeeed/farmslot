@@ -42,6 +42,8 @@ export interface DispatchWizardCandidatesRequest {
   machines: readonly string[];
   targetBranch: string | undefined;
   ticketOrPr: string | undefined;
+  app: string | undefined;
+  prepareProfile: string | undefined;
   comparison:
     | {
         familyId: string;
@@ -71,6 +73,10 @@ export async function requestDispatchWizardCandidates(
       // can't run the branch/PR-number match in collectBranchAffinityNudgeCandidates and
       // the wizard sees free-slot rows only — no REUSE WORKER affordance.
       ticketOrPr: input.ticketOrPr,
+      // Forward app/profile so candidate rows reflect companion-resource eligibility —
+      // otherwise a resource-ineligible busy slot advertises reuse that FIND_SLOT rejects.
+      app: input.app,
+      prepareProfile: input.prepareProfile,
       ...(input.comparison
         ? {
             lane: 'comparison' as const,

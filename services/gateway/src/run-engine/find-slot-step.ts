@@ -198,12 +198,16 @@ export async function executeFindSlotStep(
     (run.flowType === 'review-pr' || run.flowType === 'pr-complete') && run.branch
       ? run.branch
       : undefined;
-  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
-  try {
-    ticketData = await fetchTicketData(run);
-  } catch {
-    // Ticket metadata is optional for slot allocation. Without it we fall back to the
-    // explicit run prepareProfile/app fields and skip profile-fit resource narrowing.
+  // Prefer metadata already persisted on the run (e.g. manual backlog payloads) —
+  // a fresh fetch can only see less than what intake already captured.
+  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = run.ticketData ?? null;
+  if (!ticketData) {
+    try {
+      ticketData = await fetchTicketData(run);
+    } catch {
+      // Ticket metadata is optional for slot allocation. Without it we fall back to the
+      // explicit run prepareProfile/app fields and skip profile-fit resource narrowing.
+    }
   }
   const profileFit = detectProfileFit(run, ticketData, {
     prepareProfile: run.prepareProfile,

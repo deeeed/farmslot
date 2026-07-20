@@ -542,9 +542,10 @@ async function attemptInlineCIFix(
         // Undelivered nudge burns no attempt: refund the dedup counters and
         // schedule a fallback poll so the fix retries instead of stalling.
         const retryAt = new Date(Date.now() + INLINE_FIX_FALLBACK_POLL_MS).toISOString();
+        // Refund the consecutive window only: totalAttempts stays consumed so a
+        // never-delivering pane cannot retry unboundedly past MAX_INLINE_CI_FIX_TOTAL.
         mutateDedup(runId, (s) => {
           s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
-          s.totalAttempts = Math.max(0, s.totalAttempts - 1);
         });
         clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt });
         return {
@@ -559,8 +560,21 @@ async function attemptInlineCIFix(
       console.warn(
         `[ci-monitor] run ${runId.slice(0, 8)} — failed to send nudge: ${(err as Error).message}`,
       );
-      clearInlineFixState(runId, { phase: 'polling' });
-      return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
+      // Same undelivered semantics as a deferred send: refund the consecutive
+      // window and schedule a fallback poll. totalAttempts stays consumed so a
+      // permanently dead session is still bounded by MAX_INLINE_CI_FIX_TOTAL.
+      const retryAt = new Date(Date.now() + INLINE_FIX_FALLBACK_POLL_MS).toISOString();
+      mutateDedup(runId, (s) => {
+        s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
+      });
+      clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt });
+      return {
+        attempted: true,
+        success: false,
+        attempts,
+        durationMs: Date.now() - startedAt,
+        retryScheduled: true,
+      };
     }
     const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
       status: 'working',
