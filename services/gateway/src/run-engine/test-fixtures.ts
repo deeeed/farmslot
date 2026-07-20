@@ -28,6 +28,7 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     flowType: overrides.flowType ?? 'fix-bug',
     mode: overrides.mode ?? 'interactive',
     devInteractiveProfile: overrides.devInteractiveProfile,
+    prepareProfile: overrides.prepareProfile,
     status: overrides.status ?? 'ci-watching',
     project: overrides.project ?? 'example-mobile-farm',
     ticketOrPr: overrides.ticketOrPr ?? 'PROJ-1',

@@ -29,15 +29,18 @@ import {
   verifyBranchAffinityNudgeStillEligible,
 } from '../methods/dispatch.js';
 import {
+  companionResourceBlocker,
   isCdpLive,
   isFreeSlot,
   pickedSlotIneligibility,
+  prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
   SLOT_CLAIM_REFUSED_CODE,
   slotClaimBlockedByHandoff,
   slotClaimBlockedByLiveOwner,
   slotClaimBlockedByRelease,
   slotScore,
+  validateSlotForDispatch,
 } from '../methods/dispatch/slot-scoring.js';
 import {
   assertSlotNotOperatorRoot,
@@ -47,6 +50,9 @@ import {
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { precheckTaskDirCollision } from '../tasks/writer.js';
+
+import { detectProfileFit } from './profile-fit-gate.js';
+import { fetchTicketData } from './ticket-data.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
@@ -185,6 +191,27 @@ export async function executeFindSlotStep(
     }
   }
 
+  // For PR-bound flows the run branch is the PR head. Resolve profile fit before any
+  // branch-affinity shortcut so wizard nudge/fresh-reuse paths honor simulator resources
+  // the same way the normal slot picker does.
+  const targetBranch =
+    (run.flowType === 'review-pr' || run.flowType === 'pr-complete') && run.branch
+      ? run.branch
+      : undefined;
+  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
+  try {
+    ticketData = await fetchTicketData(run);
+  } catch {
+    // Ticket metadata is optional for slot allocation. Without it we fall back to the
+    // explicit run prepareProfile/app fields and skip profile-fit resource narrowing.
+  }
+  const profileFit = detectProfileFit(run, ticketData, {
+    prepareProfile: run.prepareProfile,
+    app: run.app,
+    slotPlatform: null,
+  });
+  const requiredPrepareProfile = run.prepareProfile || profileFit?.suggestedPrepareProfile || null;
+
   // Wizard-shortcut: when run.create was issued with `nudgeReuse: true` (operator picked
   // the busy branch-matched slot in the dispatch wizard), the slotId is already bound and
   // FIND_SLOT has no decision to make. Return immediately so DISPATCH can route through
@@ -209,7 +236,8 @@ export async function executeFindSlotStep(
         allowedSlots: run.allowedSlots ?? null,
         // PR head branch the wizard resolved against pr.list — exact match wins regardless
         // of whether prHealth has been populated for the slot yet.
-        targetBranch: run.branch ?? null,
+        targetBranch: targetBranch ?? null,
+        requiredPrepareProfile,
       },
     );
     if (eligibilityFail) {
@@ -250,7 +278,8 @@ export async function executeFindSlotStep(
         lane: run.lane ?? null,
         variant: run.variant ?? null,
         allowedSlots: run.allowedSlots ?? null,
-        targetBranch: run.branch ?? null,
+        targetBranch: targetBranch ?? null,
+        requiredPrepareProfile,
       },
     );
     if (eligibilityFail) {
@@ -293,18 +322,17 @@ export async function executeFindSlotStep(
   );
   const freeSlots = projectSlots.filter(isFreeSlot);
   if (freeSlots.length > 0) await refreshBranches(freeSlots);
-  // PR-bound flows resolve a `targetBranch` so slotScore flips the stale
-  // penalty into a bonus for slots already on that branch. Without this,
-  // the candidate preview + stale-threshold gate would flag the PR's own
-  // branch-ready slot as stale and prefer a clean main slot — the exact
-  // regression dispatch.candidates' targetBranch bonus is meant to avoid.
-  const targetBranch =
-    (run.flowType === 'review-pr' || run.flowType === 'pr-complete') && run.branch
-      ? run.branch
-      : undefined;
+  const isEligibleFreeSlot = (slot: (typeof freeSlots)[number]) =>
+    !validateSlotForDispatch(slot, fleet.slots, {
+      targetBranch,
+      requiredPrepareProfile,
+    });
+  const eligibleFreeSlots = freeSlots.filter(isEligibleFreeSlot);
   const candidates = freeSlots.slice(0, 10).map((s) => ({
     slotId: s.slot,
-    score: slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
+    score: isEligibleFreeSlot(s)
+      ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+      : -1,
     cdpLive: isCdpLive(s.health.cdp),
   }));
 
@@ -316,7 +344,13 @@ export async function executeFindSlotStep(
       variant: run.variant ?? null,
       allowedSlots: run.allowedSlots ?? null,
     });
-    if (affinitySlot) {
+    if (
+      affinitySlot &&
+      !validateSlotForDispatch(affinitySlot, fleet.slots, {
+        targetBranch,
+        requiredPrepareProfile,
+      })
+    ) {
       console.log(
         `[run-engine] ${run.flowType} affinity: reusing slot ${affinitySlot.slot} (branch=${affinitySlot.branch})`,
       );
@@ -357,6 +391,7 @@ export async function executeFindSlotStep(
           // Same targetBranch the slotScore step uses — set when run.branch is the PR's
           // head branch, falsy on non-PR flows.
           targetBranch: targetBranch ?? null,
+          requiredPrepareProfile,
         },
       );
       if (nudgeCandidates.length > 0) {
@@ -398,7 +433,9 @@ export async function executeFindSlotStep(
           },
           freeSlotCandidates: projectSlots.filter(isFreeSlot).map((s) => ({
             slotId: s.slot,
-            score: slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
+            score: isEligibleFreeSlot(s)
+              ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+              : -1,
             branch: s.branch || '',
             lifecycle: s.lifecycle,
             health: s.health,
@@ -508,14 +545,27 @@ export async function executeFindSlotStep(
             // selectionData is operator-supplied and unconstrained: now that
             // claims create missing status rows, a typo'd or forged slot id
             // would allocate a ghost row — and a ghost/disabled/foreign-
-            // project row must not be claimable either.
-            const picked = (await loadFleetStatus()).slots.find((s) => s.slot === pickedSlotId);
+            // project row must not be claimable either. Re-probe the fleet so
+            // the check sees live lifecycle/branch state, then run the full
+            // dispatch validation (branch ownership, companion resources).
+            const freshFleet = await loadFleetStatus(true);
+            const picked = freshFleet.slots.find((s) => s.slot === pickedSlotId);
             const ineligible = pickedSlotIneligibility(picked, run.project);
-            if (ineligible) {
+            if (ineligible || !picked) {
               throw new Error(
-                `Picked slot '${pickedSlotId}' is not eligible (${ineligible}); pick a slot again`,
+                `Picked slot '${pickedSlotId}' is not eligible (${ineligible ?? 'not in the fleet'}); pick a slot again`,
               );
             }
+            if (allowSet && !allowSet.has(pickedSlotId)) {
+              throw new Error(
+                `Picked slot '${pickedSlotId}' is not in the allowed slot list; pick a slot again`,
+              );
+            }
+            const err = validateSlotForDispatch(picked, freshFleet.slots, {
+              targetBranch,
+              requiredPrepareProfile,
+            });
+            if (err) throw new Error(`Selected slot ${pickedSlotId}: ${err}`);
             updateRun(runId, { slotId: pickedSlotId });
             await claimSelectedSlot(pickedSlotId, runId, 'preparing');
             broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
@@ -537,19 +587,32 @@ export async function executeFindSlotStep(
   // Human intervention when no good candidates exist
   if (
     !run.slotId &&
-    (freeSlots.length === 0 ||
-      freeSlots.every((s) =>
+    (eligibleFreeSlots.length === 0 ||
+      eligibleFreeSlots.every((s) =>
         isDispatchScoreStale(
           slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
         ),
       ))
   ) {
-    const reason = freeSlots.length === 0 ? 'no_free_slots' : 'all_stale';
+    const freeSlotsMissingCompanionResource =
+      freeSlots.length > 0 &&
+      prepareProfileNeedsCompanionResource(requiredPrepareProfile) &&
+      freeSlots.every((s) => companionResourceBlocker(s, requiredPrepareProfile));
+    const reason =
+      freeSlots.length === 0
+        ? 'no_free_slots'
+        : eligibleFreeSlots.length === 0 && freeSlotsMissingCompanionResource
+          ? 'missing_required_resources'
+          : 'all_stale';
     const allProjectSlots = projectSlots.map((s) => ({
       slotId: s.slot,
-      score: isFreeSlot(s)
-        ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
-        : -1,
+      score:
+        isFreeSlot(s) && isEligibleFreeSlot(s)
+          ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+          : reason === 'missing_required_resources' &&
+              !companionResourceBlocker(s, requiredPrepareProfile)
+            ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+            : -1,
       branch: s.branch || '',
       lifecycle: s.lifecycle,
       health: s.health,
@@ -559,7 +622,9 @@ export async function executeFindSlotStep(
     const desc =
       reason === 'no_free_slots'
         ? `No free slots for **${run.project}**. ${projectSlots.length} slots exist but all are busy or disabled.`
-        : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${SLOT_STALE_BRANCH_SCORE_PENALTY}). Pick one to reset or use as-is.`;
+        : reason === 'missing_required_resources'
+          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Wait until a listed iOS or Android resource slot is ready, then pick it.`
+          : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${SLOT_STALE_BRANCH_SCORE_PENALTY}). Pick one to reset or use as-is.`;
 
     const slotPickerPayload: import('@farmslot/protocol').SlotPickerPayload = {
       kind: 'slot_picker',
@@ -588,15 +653,27 @@ export async function executeFindSlotStep(
     const pickedSlotId = (resolvedDecision?.selectionData?.slotId as string) || null;
     if (!pickedSlotId) throw new Error('No slot selected');
     // Same unconstrained-selectionData exposure as the decision-card 'pick'
-    // branch above: the picked id must be an eligible live pool member.
+    // branch above: the picked id must be an eligible live pool member, and it
+    // must pass full dispatch validation against a fresh fleet probe.
     {
-      const picked = (await loadFleetStatus()).slots.find((s) => s.slot === pickedSlotId);
+      const freshFleet = await loadFleetStatus(true);
+      const picked = freshFleet.slots.find((s) => s.slot === pickedSlotId);
       const ineligible = pickedSlotIneligibility(picked, run.project);
-      if (ineligible) {
+      if (ineligible || !picked) {
         throw new Error(
-          `Picked slot '${pickedSlotId}' is not eligible (${ineligible}); pick a slot again`,
+          `Picked slot '${pickedSlotId}' is not eligible (${ineligible ?? 'not in the fleet'}); pick a slot again`,
         );
       }
+      if (allowSet && !allowSet.has(pickedSlotId)) {
+        throw new Error(
+          `Picked slot '${pickedSlotId}' is not in the allowed slot list; pick a slot again`,
+        );
+      }
+      const pickedSlotError = validateSlotForDispatch(picked, freshFleet.slots, {
+        targetBranch,
+        requiredPrepareProfile,
+      });
+      if (pickedSlotError) throw new Error(`Selected slot ${pickedSlotId}: ${pickedSlotError}`);
     }
 
     // Claim BEFORE any destructive reset: the claim CAS refuses live-owned,

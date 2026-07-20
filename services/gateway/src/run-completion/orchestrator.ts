@@ -770,11 +770,9 @@ export async function runCompletionPipeline(
       /* tracked via flag */
     }
     // Replace local artifact paths with uploaded URLs + auto-check author checklist boxes
-    try {
-      await postProcessPRBody(updatedRun, ciRepo, prNumber, artifactUrls);
-    } catch {
-      /* non-fatal */
-    }
+    await postProcessPRBody(updatedRun, ciRepo, prNumber, artifactUrls, undefined, {
+      failOnError: true,
+    });
   }
 
   // 6. Create retrospective decision for user review

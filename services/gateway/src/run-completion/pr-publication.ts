@@ -10,6 +10,8 @@ import { loadProjectVars } from '../core/config.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { formatPrTitleSuffix } from '../tasks/writer.js';
 
+import { localPrBodyPathResidues } from './publication-artifacts.js';
+
 // ─── PR comment ───
 
 function formatDuration(ms: number | undefined): string {
@@ -165,6 +167,13 @@ export async function postPRComment(
     }
 
     const comment = await buildPRComment(run, report, workflowMmd);
+    const localResidues = localPrBodyPathResidues(comment);
+    if (localResidues.length > 0) {
+      const message = `PR comment still contains local artifact path(s): ${localResidues.join(', ')}`;
+      if (options.failOnError) throw new Error(message);
+      console.warn(`[run-completion] skipping PR comment: ${message}`);
+      return false;
+    }
 
     const tmpFile = `/tmp/farmslot-pr-comment-${run.id.slice(0, 8)}.md`;
     await writeFile(tmpFile, comment, 'utf-8');

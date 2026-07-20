@@ -153,6 +153,12 @@ test('localPrBodyPathResidues flags local media paths before approved publicatio
     'artifacts/before.png',
   ]);
   assert.deepEqual(localPrBodyPathResidues('See artifacts/report.md'), ['artifacts/report.md']);
+  assert.deepEqual(localPrBodyPathResidues('See `artifacts/recipe.json`.'), [
+    'artifacts/recipe.json',
+  ]);
+  assert.deepEqual(localPrBodyPathResidues('See `/Users/me/task/artifacts/after.png`.'), [
+    '/Users/me/task/artifacts/after.png',
+  ]);
   assert.deepEqual(localPrBodyPathResidues('See .task/run/artifacts/summary.json'), [
     '.task/run/artifacts/summary.json',
   ]);

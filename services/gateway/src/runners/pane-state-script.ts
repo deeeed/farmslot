@@ -42,12 +42,7 @@ function detectAuthRequired(pane: string): boolean {
   for (const line of pane.split('\n')) {
     const normalized = line.trim().toLowerCase();
     if (!normalized || /\bmcp\b/.test(normalized)) continue;
-    if (
-      /\b(login|log in|authenticate|authentication|auth)\b/.test(normalized) &&
-      /\b(expired|required|failed|please|needed|unauthorized|not authenticated|not logged in)\b/.test(
-        normalized,
-      )
-    ) {
+    if (lineHasAuthBlockerPhrase(normalized)) {
       return true;
     }
   }
@@ -77,6 +72,24 @@ function detectUsageLimit(pane: string): boolean {
     if (USAGE_LIMIT_BANNER_PATTERNS.some((pattern) => pattern.test(normalized))) return true;
   }
   return false;
+}
+
+export function lineHasAuthBlockerPhrase(line: string): boolean {
+  return (
+    /\bauthentication\s+(expired|required|failed|needed)\b/.test(line) ||
+    /\bauth\s+(is\s+)?(required|needed|failed)\b/.test(line) ||
+    /\b(login|log in)\s+(required|needed|failed|to continue)\b/.test(line) ||
+    /\b(oauth|api key|token|login|auth(?:entication)?)\s+(has\s+)?expired\b/.test(line) ||
+    (/\bsession\s+(has\s+)?expired\b/.test(line) &&
+      /\b(login|log in|auth|authenticate|reauthenticate)\b/.test(line)) ||
+    /\bplease\s+run\s+\/?login\b/.test(line) ||
+    /\brun\s+(codex|claude|cursor-agent)?\s*login\b/.test(line) ||
+    /\brequires?\s+(login|log in|authentication|authenticate)\b/.test(line) ||
+    /\bplease\s+(log in|login|authenticate)\b/.test(line) ||
+    /\bnot\s+(authenticated|logged in)\b/.test(line) ||
+    (/\bunauthorized\b/.test(line) &&
+      /\b(login|log in|auth|authenticate|authentication|token|session)\b/.test(line))
+  );
 }
 
 function detectLaunchBlocker(

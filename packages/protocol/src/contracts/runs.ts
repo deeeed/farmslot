@@ -625,7 +625,7 @@ export interface SlotPickerPayload {
     health: SlotHealth;
     machine: string;
   }>;
-  reason: 'no_free_slots' | 'all_stale' | 'all_unhealthy';
+  reason: 'no_free_slots' | 'all_stale' | 'all_unhealthy' | 'missing_required_resources';
 }
 
 /**

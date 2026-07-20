@@ -24,12 +24,18 @@ import {
 import { resolveDispatchSafetyTier } from './dispatch/safety-tier.js';
 import {
   branchContainsJiraKey,
+  companionResourceBlocker,
   evaluateSlotIdentityPolicy,
   isDispatchStaleBranch,
   isFreeSlot,
+  prepareProfileNeedsCompanionResource,
   resolveJiraTargetBranchFromFleet,
+  slotBranchCheckoutBlocker,
+  slotHasCompanionResource,
   slotScore,
   validateSlot,
+  validateSlotForDispatch,
+  validateSlotForTargetBranch,
 } from './dispatch/slot-scoring.js';
 import { flowTypeToKey } from './dispatch/task-flow-key.js';
 import { assertTicketRefMatchesProjectRepo, normalizeTicketRef } from './dispatch/ticket-ref.js';
@@ -347,6 +353,109 @@ test('dispatch preview echoes the domain overlay and omits it when unset', () =>
     slots,
   );
   assert.equal('domain' in withoutDomain.preview, false);
+});
+
+test('companion prepare profiles require a slot-owned simulator resource', () => {
+  const plainCli = makeSlot({ slot: 'macwork-ff-3', resources: undefined });
+  const companionCli = makeSlot({
+    slot: 'macwork-ff-2',
+    resources: { 'ios-sim': { simulator: 'fs-2', headless: true } },
+  });
+
+  assert.equal(prepareProfileNeedsCompanionResource('sandbox-companion'), true);
+  assert.equal(prepareProfileNeedsCompanionResource('sandbox'), false);
+  assert.equal(slotHasCompanionResource(plainCli), false);
+  assert.equal(slotHasCompanionResource(companionCli), true);
+  assert.match(
+    companionResourceBlocker(plainCli, 'sandbox-companion') ?? '',
+    /requires one of: ios-sim, android-emu, android-device/,
+  );
+  assert.equal(
+    validateSlotForDispatch(companionCli, [plainCli, companionCli], {
+      requiredPrepareProfile: 'sandbox-companion',
+    }),
+    null,
+  );
+});
+
+test('dispatch preview skips plain CLI slots when sandbox-companion requires an isolated simulator', () => {
+  const plainCli = makeSlot({
+    slot: 'macwork-ff-3',
+    branch: 'main',
+    lifecycle: 'ready',
+    phase: null,
+    health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+  const simulatorSlot = makeSlot({
+    slot: 'macwork-ff-2',
+    branch: 'feat/manual-000011-recipe-ui-passive-observations',
+    lifecycle: 'ready',
+    phase: null,
+    resources: { 'ios-sim': { simulator: 'fs-2', headless: true } },
+    health: { ssh: 'LOCAL', device: 'fs-2:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+
+  const result = resolveDispatchPreviewFromFleet(
+    {
+      project: 'farmslot-farm',
+      flowType: 'pr-complete',
+      ticketOrPr: 'deeeed/farmslot#304',
+    },
+    [plainCli, simulatorSlot],
+    undefined,
+    { requiredPrepareProfile: 'sandbox-companion' },
+  );
+
+  assert.equal(result.preview.slotId, 'macwork-ff-2');
+  assert.throws(
+    () =>
+      resolveDispatchPreviewFromFleet(
+        {
+          project: 'farmslot-farm',
+          flowType: 'pr-complete',
+          ticketOrPr: 'deeeed/farmslot#304',
+          slotId: 'macwork-ff-3',
+        },
+        [plainCli, simulatorSlot],
+        undefined,
+        { requiredPrepareProfile: 'sandbox-companion' },
+      ),
+    /Slot macwork-ff-3: Prepare profile sandbox-companion requires one of: ios-sim, android-emu, android-device/,
+  );
+});
+
+test('dispatch preview blocks instead of selecting a plain CLI slot when simulator slots are busy', () => {
+  const plainCli = makeSlot({
+    slot: 'macwork-ff-3',
+    branch: 'main',
+    lifecycle: 'ready',
+    phase: null,
+    health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+  const busySimulatorSlot = makeSlot({
+    slot: 'macwork-ff-2',
+    branch: 'main',
+    lifecycle: 'busy',
+    phase: 'review-gate',
+    agent: 'working',
+    resources: { 'ios-sim': { simulator: 'fs-2', headless: true } },
+    health: { ssh: 'LOCAL', device: 'fs-2:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+
+  assert.throws(
+    () =>
+      resolveDispatchPreviewFromFleet(
+        {
+          project: 'farmslot-farm',
+          flowType: 'pr-complete',
+          ticketOrPr: 'deeeed/farmslot#304',
+        },
+        [plainCli, busySimulatorSlot],
+        undefined,
+        { requiredPrepareProfile: 'sandbox-companion' },
+      ),
+    /No free slots for project farmslot-farm have resources required by prepare profile sandbox-companion/,
+  );
 });
 
 test('flowTypeToKey ignores eval wrapper flow names', () => {
@@ -777,6 +886,117 @@ test('slotScore treats configured tracking branches as idle', () => {
   assert.equal(isDispatchStaleBranch(featureSlot, projectConfigs), true);
   assert.equal(slotScore(trackingSlot, undefined, { projectConfigs }), 0);
   assert.equal(slotScore(featureSlot, undefined, { projectConfigs }), 50);
+});
+
+test('validateSlotForTargetBranch rejects linked worktree branch already checked out elsewhere', () => {
+  const targetBranch = 'feat/manual-000011-recipe-ui-passive-observations';
+  const branchOwner = makeSlot({
+    slot: 'macwork-ff-3',
+    project: 'farmslot-farm',
+    branch: targetBranch,
+    linkedWorktree: true,
+    lifecycle: 'busy',
+    agent: 'working',
+  });
+  const requested = makeSlot({
+    slot: 'macwork-ff-4',
+    project: 'farmslot-farm',
+    branch: 'wt/ff-4',
+    linkedWorktree: true,
+    lifecycle: 'ready',
+    agent: 'idle',
+  });
+
+  assert.equal(
+    slotBranchCheckoutBlocker(requested, [requested, branchOwner], targetBranch),
+    branchOwner,
+  );
+  assert.equal(
+    validateSlotForTargetBranch(requested, [requested, branchOwner], targetBranch),
+    `Branch ${targetBranch} is already checked out by linked worktree slot macwork-ff-3`,
+  );
+});
+
+test('validateSlotForTargetBranch rejects disabled linked worktree branch owners', () => {
+  const targetBranch = 'feat/manual-000011-recipe-ui-passive-observations';
+  const branchOwner = makeSlot({
+    slot: 'macwork-ff-3',
+    project: 'farmslot-farm',
+    branch: targetBranch,
+    linkedWorktree: true,
+    lifecycle: 'disabled',
+    agent: 'idle',
+  });
+  const requested = makeSlot({
+    slot: 'macwork-ff-4',
+    project: 'farmslot-farm',
+    branch: 'wt/ff-4',
+    linkedWorktree: true,
+    lifecycle: 'ready',
+    agent: 'idle',
+  });
+
+  assert.equal(
+    validateSlotForTargetBranch(requested, [requested, branchOwner], targetBranch),
+    `Branch ${targetBranch} is already checked out by linked worktree slot macwork-ff-3`,
+  );
+});
+
+test('resolveDispatchPreviewFromFleet skips free linked worktree slots blocked by target branch owner', () => {
+  const targetBranch = 'feat/manual-000011-recipe-ui-passive-observations';
+  const branchOwner = makeSlot({
+    slot: 'macwork-ff-3',
+    project: 'farmslot-farm',
+    branch: targetBranch,
+    linkedWorktree: true,
+    lifecycle: 'busy',
+    agent: 'working',
+  });
+  const blockedFree = makeSlot({
+    slot: 'macwork-ff-4',
+    project: 'farmslot-farm',
+    branch: 'wt/ff-4',
+    linkedWorktree: true,
+    lifecycle: 'ready',
+    agent: 'idle',
+    health: { ssh: 'LOCAL', device: 'ext:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+  const unlinkedFree = makeSlot({
+    slot: 'standalone-1',
+    project: 'farmslot-farm',
+    branch: 'main',
+    linkedWorktree: false,
+    lifecycle: 'ready',
+    agent: 'idle',
+    health: { ssh: 'LOCAL', device: 'ext:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+
+  assert.equal(
+    resolveDispatchPreviewFromFleet(
+      {
+        project: 'farmslot-farm',
+        flowType: 'pr-complete',
+        ticketOrPr: 'deeeed/farmslot#304',
+        targetBranch,
+      },
+      [branchOwner, blockedFree, unlinkedFree],
+    ).preview.slotId,
+    'standalone-1',
+  );
+  assert.throws(
+    () =>
+      resolveDispatchPreviewFromFleet(
+        {
+          project: 'farmslot-farm',
+          flowType: 'pr-complete',
+          ticketOrPr: 'deeeed/farmslot#304',
+          targetBranch,
+          slotId: 'macwork-ff-4',
+        },
+        [branchOwner, blockedFree, unlinkedFree],
+      ),
+    /Slot macwork-ff-4: Branch feat\/manual-000011-recipe-ui-passive-observations is already checked out by linked worktree slot macwork-ff-3/,
+  );
 });
 
 test('slotScore prefers a same-family stale slot over unrelated main', () => {
@@ -1277,6 +1497,36 @@ test('selectBranchAffinityEligibleSlots surfaces a busy claude slot whose branch
   // targetBranch exact match → strongest signal, recorded as 'pr-number' even when prHealth.pr is null.
   assert.equal(eligible[0].prMatchKind, 'pr-number');
   assert.equal(eligible[0].canNudge, true);
+});
+
+test('branch-affinity nudge resource filter keeps working simulator slots', () => {
+  const slot = makeBusyClaudeSlot({
+    resources: { 'ios-sim': { simulator: 'fs-2', headless: true } },
+  });
+  const eligible = selectBranchAffinityEligibleSlots([slot], PROJECT, PR_TICKET, {
+    targetBranch: PR_BRANCH,
+    requiredPrepareProfile: 'sandbox-companion',
+  });
+
+  assert.equal(eligible.length, 1);
+  assert.equal(companionResourceBlocker(eligible[0].slot, 'sandbox-companion'), null);
+  assert.equal(
+    validateSlotForDispatch(eligible[0].slot, [slot], {
+      targetBranch: PR_BRANCH,
+      requiredPrepareProfile: 'sandbox-companion',
+    }),
+    'Agent is working',
+  );
+});
+
+test('branch-affinity nudge resource filter excludes working non-simulator slots', () => {
+  const slot = makeBusyClaudeSlot({ resources: {} });
+  const eligible = selectBranchAffinityEligibleSlots([slot], PROJECT, PR_TICKET, {
+    targetBranch: PR_BRANCH,
+    requiredPrepareProfile: 'sandbox-companion',
+  });
+
+  assert.equal(eligible.length, 0);
 });
 
 test('selectBranchAffinityEligibleSlots returns empty for comparison lane (defends ADR-024 §7 scrub-between-siblings)', () => {

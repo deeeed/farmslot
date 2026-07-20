@@ -56,6 +56,8 @@ test('buildQueuePreviewParams preserves family/lane/variant identity', () => {
     familyId: 'family-1',
     lane: 'comparison',
     variant: 'claude',
+    app: undefined,
+    prepareProfile: undefined,
     allowedSlots: undefined,
     targetBranch: undefined,
   });
@@ -432,7 +434,7 @@ test('queue preview params can drive family-aware comparison affinity', () => {
   );
 });
 
-test('selectQueueDispatchSlot prefers identity-matching held comparison slot', () => {
+test('selectQueueDispatchSlot prefers identity-matching held comparison slot', async () => {
   const item: QueueItem = {
     id: 'queue-3',
     flowType: 'review-pr',
@@ -446,6 +448,7 @@ test('selectQueueDispatchSlot prefers identity-matching held comparison slot', (
     priority: 1,
     createdAt: '2026-04-15T00:00:00.000Z',
     status: 'queued',
+    prepareProfile: 'sandbox',
   };
   const slots: SlotStatus[] = [
     {
@@ -509,10 +512,10 @@ test('selectQueueDispatchSlot prefers identity-matching held comparison slot', (
       taskStepProgress: null,
     },
   ];
-  assert.equal(selectQueueDispatchSlot(slots, item), 'held-slot');
+  assert.equal(await selectQueueDispatchSlot(slots, item), 'held-slot');
 });
 
-test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls back to ready slot', () => {
+test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls back to ready slot', async () => {
   const item: QueueItem = {
     id: 'queue-4',
     flowType: 'review-pr',
@@ -526,6 +529,7 @@ test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls b
     priority: 1,
     createdAt: '2026-04-15T00:00:00.000Z',
     status: 'queued',
+    prepareProfile: 'sandbox',
   };
   const slots: SlotStatus[] = [
     {
@@ -589,7 +593,151 @@ test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls b
       taskStepProgress: null,
     },
   ];
-  assert.equal(selectQueueDispatchSlot(slots, item), 'ready-slot');
+  assert.equal(await selectQueueDispatchSlot(slots, item), 'ready-slot');
+});
+
+test('selectQueueDispatchSlot blocks implicit companion profile on plain CLI slots', async () => {
+  const item: QueueItem = {
+    id: 'queue-companion',
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'companion gateway task',
+    priority: 1,
+    createdAt: '2026-04-15T00:00:00.000Z',
+    status: 'queued',
+  };
+  const slots: SlotStatus[] = [
+    {
+      slot: 'plain-cli',
+      machine: 'demo',
+      platform: 'cli',
+      project: 'farmslot-farm',
+      health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+      branch: 'main',
+      agent: 'idle',
+      enabled: true,
+      dispatchable: true,
+      lifecycle: 'ready',
+      phase: null,
+      warm: false,
+      taskId: null,
+      taskFile: null,
+      currentRunId: null,
+      currentFlowType: null,
+      currentTicketOrPr: null,
+      currentMode: null,
+      currentFamilyId: null,
+      currentLane: null,
+      currentVariant: null,
+      dispatchedAt: null,
+      completedAt: null,
+      runner: 'claude',
+      model: 'sonnet',
+      deviceName: null,
+      taskPhase: null,
+      taskStepProgress: null,
+    },
+  ];
+
+  await assert.rejects(
+    () => selectQueueDispatchSlot(slots, item),
+    /No free slots for project farmslot-farm have resources required by prepare profile sandbox-companion/,
+  );
+});
+
+test('selectQueueDispatchSlot defers bare GitHub refs when ticket metadata is unavailable', async () => {
+  const item: QueueItem = {
+    id: 'queue-metadata-miss',
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'example-org/example-mobile#424242',
+    priority: 1,
+    createdAt: '2026-04-15T00:00:00.000Z',
+    status: 'queued',
+  };
+  const slots: SlotStatus[] = [
+    {
+      slot: 'plain-cli',
+      machine: 'demo',
+      platform: 'cli',
+      project: 'farmslot-farm',
+      health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+      branch: 'main',
+      agent: 'idle',
+      enabled: true,
+      dispatchable: true,
+      lifecycle: 'ready',
+      phase: null,
+      warm: false,
+      taskId: null,
+      taskFile: null,
+      currentRunId: null,
+      currentFlowType: null,
+      currentTicketOrPr: null,
+      currentMode: null,
+      currentFamilyId: null,
+      currentLane: null,
+      currentVariant: null,
+      dispatchedAt: null,
+      completedAt: null,
+      runner: 'claude',
+      model: 'sonnet',
+      deviceName: null,
+      taskPhase: null,
+      taskStepProgress: null,
+    },
+  ];
+
+  await assert.rejects(
+    () => selectQueueDispatchSlot(slots, item),
+    /Ticket metadata unavailable for example-org\/example-mobile#424242/,
+  );
+});
+
+test('selectQueueDispatchSlot does not defer non-farmslot queues on unavailable metadata', async () => {
+  const item: QueueItem = {
+    id: 'queue-other-project',
+    flowType: 'pr-complete',
+    project: 'metamask-mobile-farm',
+    ticketOrPr: 'example-org/example-mobile#424242',
+    priority: 1,
+    createdAt: '2026-04-15T00:00:00.000Z',
+    status: 'queued',
+  };
+  const slots: SlotStatus[] = [
+    {
+      slot: 'mm-cli',
+      machine: 'demo',
+      platform: 'cli',
+      project: 'metamask-mobile-farm',
+      health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+      branch: 'main',
+      agent: 'idle',
+      enabled: true,
+      dispatchable: true,
+      lifecycle: 'ready',
+      phase: null,
+      warm: false,
+      taskId: null,
+      taskFile: null,
+      currentRunId: null,
+      currentFlowType: null,
+      currentTicketOrPr: null,
+      currentMode: null,
+      currentFamilyId: null,
+      currentLane: null,
+      currentVariant: null,
+      dispatchedAt: null,
+      completedAt: null,
+      runner: 'claude',
+      model: 'sonnet',
+      deviceName: null,
+      taskPhase: null,
+      taskStepProgress: null,
+    },
+  ];
+
+  assert.equal(await selectQueueDispatchSlot(slots, item), 'mm-cli');
 });
 
 test('selectQueueDispatchSlot spreads launch candidates away from active siblings when possible', async () => {
@@ -679,8 +827,11 @@ test('selectQueueDispatchSlot spreads launch candidates away from active sibling
   };
 
   try {
-    assert.equal(selectQueueDispatchSlot(slots, item), 'slot-b');
-    assert.equal(selectQueueDispatchSlot(slots, { ...item, allowedSlots: ['slot-a'] }), 'slot-a');
+    assert.equal(await selectQueueDispatchSlot(slots, item), 'slot-b');
+    assert.equal(
+      await selectQueueDispatchSlot(slots, { ...item, allowedSlots: ['slot-a'] }),
+      'slot-a',
+    );
   } finally {
     await cleanupRun(activeSibling.id);
   }

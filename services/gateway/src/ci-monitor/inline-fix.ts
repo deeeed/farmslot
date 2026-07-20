@@ -493,16 +493,6 @@ async function attemptInlineCIFix(
       run?.flowType,
     );
     const session = primaryTarget.session;
-    const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
-      status: 'working',
-      taskFile: writeResult.taskPath,
-      signalFile: taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal),
-      runner,
-      model: run?.metrics.model ?? null,
-      target: { session, window: null, pane: null, target: workerTarget },
-    });
-    if (ciFixContext) await watchContext(slotId, ciFixContext);
-    ciFixContextStarted = true;
 
     // Send one-liner nudge to worker
     const ciFixTaskFile = taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
@@ -549,18 +539,33 @@ async function attemptInlineCIFix(
       if (!sent) {
         await markAgentContextStatus(runId, 'ci-fix', 'failed');
         await unwatchContext(slotId, 'ci-fix');
-        clearInlineFixState(runId, { phase: 'polling' });
-        return { attempted: true, success: false, attempts };
+        // Undelivered nudge burns no attempt: refund the dedup counters and
+        // schedule a fallback poll so the fix retries instead of stalling.
+        const retryAt = new Date(Date.now() + INLINE_FIX_FALLBACK_POLL_MS).toISOString();
+        mutateDedup(runId, (s) => {
+          s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
+          s.totalAttempts = Math.max(0, s.totalAttempts - 1);
+        });
+        clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt });
+        return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
       }
     } catch (err) {
       console.warn(
         `[ci-monitor] run ${runId.slice(0, 8)} — failed to send nudge: ${(err as Error).message}`,
       );
-      await markAgentContextStatus(runId, 'ci-fix', 'failed');
-      await unwatchContext(slotId, 'ci-fix');
       clearInlineFixState(runId, { phase: 'polling' });
-      return { attempted: true, success: false, attempts };
+      return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
     }
+    const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
+      status: 'working',
+      taskFile: writeResult.taskPath,
+      signalFile: taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal),
+      runner,
+      model: run?.metrics.model ?? null,
+      target: { session, window: null, pane: null, target: workerTarget },
+    });
+    if (ciFixContext) await watchContext(slotId, ciFixContext);
+    ciFixContextStarted = true;
     mergeCIWatchOutputPatch(runId, {
       phase: 'waiting_for_worker',
       fixInProgress: true,
@@ -568,18 +573,6 @@ async function attemptInlineCIFix(
       activeTaskFile: writeResult.taskPath,
       fixProgress: writeResult.progress,
     });
-
-    let signalBaseline = '';
-    try {
-      signalBaseline = (
-        await execOnSlot(vars, `cat '${signalPath}' 2>/dev/null || true`)
-      ).stdout.trim();
-    } catch (err) {
-      console.warn(
-        `[ci-monitor] run ${runId.slice(0, 8)} — failed to read CI fix signal baseline: ${(err as Error).message}`,
-      );
-      signalBaseline = '';
-    }
 
     const deadline = Date.now() + INLINE_FIX_TIMEOUT_MS;
     while (Date.now() < deadline && !signal.aborted) {
@@ -606,7 +599,7 @@ async function attemptInlineCIFix(
         const raw = (
           await execOnSlot(vars, `cat '${signalPath}' 2>/dev/null || true`)
         ).stdout.trim();
-        if (raw && raw !== signalBaseline) {
+        if (raw) {
           const ws = JSON.parse(raw) as WorkerSignal;
           if (
             ws.status === 'complete' ||

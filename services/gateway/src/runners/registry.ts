@@ -61,7 +61,7 @@ import type {
   RunnerActivity,
   RunnerObservability,
 } from './observability-types.js';
-import { readPaneStateFromCapture } from './pane-state-script.js';
+import { lineHasAuthBlockerPhrase, readPaneStateFromCapture } from './pane-state-script.js';
 import { probeRunnerHandoffAck } from './prompt-delivery-evidence.js';
 
 /**
@@ -798,12 +798,7 @@ function runnerLineShowsAuthBlocker(line: string): boolean {
   // MCP warnings so an unrelated "MCP failed" line elsewhere in the pane cannot
   // combine with an optional "mcp login" hint into a false runner-auth failure.
   if (/\bmcp\b/.test(line)) return false;
-  return (
-    /\b(login|log in|authenticate|authentication|auth)\b/.test(line) &&
-    /\b(expired|required|failed|please|needed|unauthorized|not authenticated|not logged in)\b/.test(
-      line,
-    )
-  );
+  return lineHasAuthBlockerPhrase(line);
 }
 
 async function writeRunnerLaunchBlockerSnapshot(
