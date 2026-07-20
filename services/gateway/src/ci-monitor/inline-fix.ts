@@ -547,7 +547,13 @@ async function attemptInlineCIFix(
           s.totalAttempts = Math.max(0, s.totalAttempts - 1);
         });
         clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt });
-        return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
+        return {
+          attempted: true,
+          success: false,
+          attempts,
+          durationMs: Date.now() - startedAt,
+          retryScheduled: true,
+        };
       }
     } catch (err) {
       console.warn(

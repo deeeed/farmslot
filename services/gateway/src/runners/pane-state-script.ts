@@ -76,9 +76,9 @@ function detectUsageLimit(pane: string): boolean {
 
 export function lineHasAuthBlockerPhrase(line: string): boolean {
   return (
-    /\bauthentication\s+(expired|required|failed|needed)\b/.test(line) ||
+    /\bauthentication\s+(is\s+)?(expired|required|failed|needed)\b/.test(line) ||
     /\bauth\s+(is\s+)?(required|needed|failed)\b/.test(line) ||
-    /\b(login|log in)\s+(required|needed|failed|to continue)\b/.test(line) ||
+    /\b(login|log in)\s+(is\s+)?(required|needed|failed|to continue)\b/.test(line) ||
     /\b(oauth|api key|token|login|auth(?:entication)?)\s+(has\s+)?expired\b/.test(line) ||
     (/\bsession\s+(has\s+)?expired\b/.test(line) &&
       /\b(login|log in|auth|authenticate|reauthenticate)\b/.test(line)) ||

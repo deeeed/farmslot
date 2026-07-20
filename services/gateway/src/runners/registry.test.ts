@@ -457,6 +457,8 @@ describe('cursor runner', () => {
       { runner: 'claude', text: 'Invalid API key · please run /login' },
       { runner: 'claude', text: 'Login expired. Please re-authenticate.' },
       { runner: 'codex', text: 'Session expired. Run codex login to reauthenticate.' },
+      { runner: 'codex', text: 'Authentication is required to continue.' },
+      { runner: 'cursor', text: 'Login is required before starting a session.' },
     ];
 
     for (const { runner, text } of panes) {

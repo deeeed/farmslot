@@ -33,6 +33,8 @@ export interface InlineCIFix {
   durationMs?: number;
   blocked?: boolean;
   blockedReason?: string;
+  /** Attempt was refunded (e.g. nudge never delivered) — poll again instead of escalating. */
+  retryScheduled?: boolean;
 }
 
 export interface CIWatchPhasePatch {
