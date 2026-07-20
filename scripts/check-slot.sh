@@ -1,7 +1,6 @@
 #!/bin/bash
-# Shim: use `farmslot slot check`. Kept as of 2026-07-15 because the metamask-mobile
-# and metamask-extension pack READMEs still print this path; delete once those packs
-# repoint to the CLI (team-repo PRs).
+# Shim: use `farmslot slot check`. Kept as of 2026-07-15 because some external pack
+# READMEs still print this path; delete once those packs repoint to the CLI.
 # check-slot.sh <slot-id>
 # Delegates to farmslot CLI.
 #

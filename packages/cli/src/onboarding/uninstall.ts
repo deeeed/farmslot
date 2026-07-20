@@ -31,7 +31,7 @@ export interface UninstallOptions {
   homeBackupPath?: string;
   dryRun: boolean;
   /** --purge: remove the entire workspace dir, including files farmslot did not create
-   *  (e.g. the farm pack installer's `.install-logs` / `.metamask-farm-*` markers). Without
+   *  (e.g. a farm pack installer's `.install-logs` / marker files). Without
    *  it, a non-empty workspace root is left in place. */
   purge?: boolean;
 }

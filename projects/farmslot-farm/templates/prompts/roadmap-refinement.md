@@ -55,7 +55,7 @@ Hard boundaries:
 - Do not launch project dev servers, Metro, webpack, browsers, simulators,
   emulators, recipe runners, sandbox validation, package installs, or Farmslot
   slot dispatch.
-- Do not modify MetaMask client repositories or temporary checkout directories.
+- Do not modify external client repositories or temporary checkout directories.
 - Do not create tmux windows or background processes.
 - Do not implement client code. The expected output is refined planning
   markdown that can later be promoted into backlog items.
