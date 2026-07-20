@@ -28,7 +28,7 @@ PR-producing flows use **`pr-description.md`** as the single outcome artifact (i
 | **review-pr**                                     | `artifacts/review.md`           | Primary review output. Also `artifacts/line-comments.json` (may be `[]`).                                                      |
 | **pr-complete**                                   | `artifacts/comments-report.md`  | Comment triage + fixes; interactive handoff may omit worker terminal signal.                                                   |
 | **update-branch**                                 | `artifacts/report.md`           | Conflicts resolved, validation, risk notes.                                                                                    |
-| **no-change** (any flow)                          | `artifacts/no-change-report.md` | Use `./mark no-change --reason "…" --mark-last`.                                                                               |
+| **no-change** (contribution flows)                | `artifacts/no-change-report.md` | Use `./mark no-change --reason "…" --mark-last`. Exception: `self-review` no-change requires `review-feedback.md` instead.     |
 | **ci-fix**, **validate-dep**, **self-review-fix** | `artifacts/report.md`           | Secondary/utility flows — no PR package.                                                                                       |
 
 ### Standalone recipe skills (no Farmslot dispatch)
