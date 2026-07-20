@@ -92,6 +92,12 @@ test('resolveTargetBranch handles canonical PR refs and unique bare numbers', ()
   );
 });
 
+test('candidate rows with an ineligibleReason are never dispatchable', () => {
+  const base = { ...candidates[1]!, ineligibleReason: 'requires isolated iOS simulator resources' };
+  assert.equal(candidateDispatchable(base), false);
+  assert.equal(candidateDispatchable({ ...base, nudgeEligible: true }), false);
+});
+
 test('candidate selectors include nudge-eligible rows as dispatchable', () => {
   assert.equal(candidateDispatchable(candidates[0]!), false);
   assert.equal(candidateDispatchable(candidates[1]!), true);

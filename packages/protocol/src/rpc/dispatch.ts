@@ -109,6 +109,10 @@ export interface DispatchCandidate {
   nudgeEligible?: boolean;
   /** Populated iff `nudgeEligible === true`. */
   nudgeMeta?: DispatchCandidateNudgeMeta;
+  /** Why FIND_SLOT would reject this slot for the current dispatch (branch ownership,
+   * missing companion resources). Present so the wizard can disable the row instead of
+   * advertising a selection that fails later at dispatch validation. */
+  ineligibleReason?: string;
 }
 
 export interface DispatchCandidatesResult {

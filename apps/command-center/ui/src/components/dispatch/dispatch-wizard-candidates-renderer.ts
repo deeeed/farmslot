@@ -144,12 +144,19 @@ function renderCandidateRow(
       ?warning=${candidate.nudgeEligible}
       title=${dispatchable
         ? `Select ${candidate.slotId}${titleSuffix}`
-        : `${candidate.slotId} is ${candidate.lifecycle}; use Queue or choose a free slot`}
+        : candidate.ineligibleReason
+          ? `${candidate.slotId}: ${candidate.ineligibleReason}`
+          : `${candidate.slotId} is ${candidate.lifecycle}; use Queue or choose a free slot`}
       @click=${() => {
         if (dispatchable) ctx.selectSlot(candidate.slotId);
       }}
     >
-      ${candidate.nudgeEligible
+      ${candidate.ineligibleReason
+        ? html`<span slot="badges" class="cand-ineligible" title=${candidate.ineligibleReason}
+            >NOT ELIGIBLE</span
+          >`
+        : nothing}
+      ${candidate.nudgeEligible && !candidate.ineligibleReason
         ? html`<span slot="badges" class="cand-nudge-badge">REUSE WORKER</span>`
         : nothing}
       ${candidate.familyAffinity && !candidate.nudgeEligible
@@ -159,7 +166,7 @@ function renderCandidateRow(
         ? html`<span slot="badges" class="cand-reuse">same task</span>`
         : nothing}
       ${meta ? html`<span slot="summary-extra">${renderNudgeChips(meta)}</span>` : nothing}
-      ${candidate.nudgeEligible
+      ${candidate.nudgeEligible && !candidate.ineligibleReason
         ? html`<span slot="meta">${renderNudgeActions(ctx, candidate, canNudge, intent)}</span>`
         : nothing}
     </slot-choice-row>

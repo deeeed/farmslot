@@ -638,6 +638,31 @@ async function mapWithConcurrency<T>(
 
 // ─── Dispatch Candidates ───
 
+/**
+ * Same validation FIND_SLOT applies at dispatch time, surfaced on FREE candidate rows
+ * so the wizard can disable them up front instead of advertising a pick that fails
+ * after queueing. Nudge rows are excluded: they are busy by definition (the base
+ * validator would reject every one of them) and already pass their own eligibility
+ * pipeline (branch match + companion resources) before getting here. `fleetSlots`
+ * must be the FULL fleet, matching FIND_SLOT — a machine-filtered or disabled
+ * worktree can still own the target branch.
+ */
+export function candidateIneligibilityReason(
+  slot: SlotStatus,
+  fleetSlots: readonly SlotStatus[],
+  options: {
+    isNudgeRow: boolean;
+    targetBranch?: string | null;
+    requiredPrepareProfile?: string | null;
+  },
+): string | null {
+  if (options.isNudgeRow || !isFreeSlot(slot)) return null;
+  return validateSlotForDispatch(slot, fleetSlots, {
+    targetBranch: options.targetBranch,
+    requiredPrepareProfile: options.requiredPrepareProfile,
+  });
+}
+
 export async function dispatchCandidates(
   params: DispatchCandidatesParams,
 ): Promise<DispatchCandidatesResult> {
@@ -736,6 +761,11 @@ export async function dispatchCandidates(
   const candidates = projectSlots
     .map((s) => {
       const nudge = nudgeMetaBySlot.get(s.slot);
+      const ineligibleReason = candidateIneligibilityReason(s, fleet.slots, {
+        isNudgeRow: Boolean(nudge),
+        targetBranch: resolvedTargetBranch,
+        requiredPrepareProfile,
+      });
       return {
         slotId: s.slot,
         score: isFreeSlot(s)
@@ -753,6 +783,7 @@ export async function dispatchCandidates(
         familyAffinity: Boolean(
           familyContext.familyId && s.currentFamilyId === familyContext.familyId,
         ),
+        ...(ineligibleReason ? { ineligibleReason } : {}),
         ...(nudge
           ? {
               nudgeEligible: true,

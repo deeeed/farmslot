@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat: dispatch wizard candidate rows that FIND_SLOT would reject (branch ownership, missing companion resources) render disabled with a NOT ELIGIBLE badge and reason tooltip, are excluded from auto-pick, and suppress nudge/fresh actions (`DispatchCandidate.ineligibleReason`).
+
 - refactor: unified independent-review language (MANUAL-000008) — review timeline, gate summary, ready-workspace modal/shell, dispatch wizard and dispatch-config surfaces label every automated pass **Independent review** (operator-requested passes as _Independent review (requested)_); runner diversity renders as policy metadata (`runner: <id>` / `runner diversity`) via the new `reviewPolicyLabel` helper instead of the retired _External review_ / _Extra review_ kinds. Persisted decision-action ids are unchanged.
 
 - feat: the backlog panel status filter is a multi-select chip set (was single-select), defaulting to the live view — candidate/ready/queued/dispatching/running/failed/needs-attention visible, done/archived opt-in. The selection round-trips through the `backlogStatus` hash param (comma-separated, canonical order; default writes no param; legacy single-status links still parse).
