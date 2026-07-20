@@ -33,13 +33,11 @@ STATUS: pending
 - Touch ONLY flagged files/lines. No drive-by cleanups, renames, reformatting, or new abstractions.
 - Don't apply a change just to silence the reviewer. If the prescription is wrong, write the correct fix and note why in `report.md`.
 - Each iteration shrinks the issue list, not the diff. Scope creep gets rejected.
-- If the real fix needs broader changes, write `status: blocked` in `SELF-REVIEW-FIX-SIGNAL.json` with a one-line reason — don't ship a regression to close the loop.
+- If the real fix needs broader changes, run `{{TASK_DIR}}/mark blocked --reason "..."` with a one-line reason — don't ship a regression to close the loop, and never hand-write the signal file.
 
 ---
 
 ## Checklist
-
-> If the review issues turn out to require no code changes, write `{{TASK_DIR}}/artifacts/no-change-report.md` explaining why before running `{{TASK_DIR}}/mark no-change --reason "..."`.
 
 > If the review issues turn out to require no code changes, write `{{TASK_DIR}}/artifacts/no-change-report.md` explaining why before running `{{TASK_DIR}}/mark no-change --reason "..."`.
 

@@ -302,7 +302,15 @@ function assertArtifactContract(taskDir, contract, terminalCommand) {
     if (terminalCommand) args.push('--terminal', terminalCommand);
     if (opts['skip-learnings']) args.push('--skip-learnings');
   } else {
-    if (!opts['skip-learnings']) args.push('--require-learnings');
+    // No persisted contract file — honor the resolved builtin contract instead of
+    // assuming learnings: reviewer flows (self-review, self-review-fix) require their
+    // feedback/report artifact, not artifacts/learnings.md.
+    const contractRequiresLearnings = contract
+      ? (contract.commands?.[terminalCommand ?? 'complete']?.artifacts ?? []).includes(
+          LEARNINGS_ARTIFACT.split(path.sep).join('/'),
+        )
+      : true;
+    if (!opts['skip-learnings'] && contractRequiresLearnings) args.push('--require-learnings');
     if (fs.existsSync(path.join(taskDir, 'artifacts', 'recipe.json'))) {
       args.push('--require-recipe-coverage-if-recipe', '--require-recipe-quality-if-recipe');
     }

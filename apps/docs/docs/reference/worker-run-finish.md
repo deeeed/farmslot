@@ -111,7 +111,7 @@ Farmslot farm projects can run `yarn quality:worker-templates` in CI to catch te
 
 Every dispatched task gets a `./mark` helper beside `TASK.md`. On `complete` or `no-change`, `./mark` **refuses to write `SIGNAL.json`** until:
 
-- required artifacts exist and are non-empty (at minimum **learnings** + **flow outcome**);
+- required artifacts exist and are non-empty (contribution flows: **learnings** + **flow outcome**; reviewer flows: their **feedback/report** artifact);
 - with `--mark-last`, every checklist item is `[x]`;
 - when `artifacts/recipe.json` exists, recipe coverage / manifest / quality checks run too.
 

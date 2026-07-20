@@ -10,12 +10,12 @@ For the short worker checklist, see [Finish a worker run](worker-run-finish.md).
 
 ## Every terminal run
 
-| Artifact                   | Required                                   | Purpose                                                                                      |
-| -------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `artifacts/learnings.md`   | **Yes** (unless `./mark --skip-learnings`) | Process meta for retrospective and improvement — 3–5 bullets; one bullet if nothing relevant |
-| Flow outcome file          | **Yes** (see table below)                  | What happened: fix summary, review, PR body, merge notes, or no-change investigation         |
-| `SIGNAL.json`              | **Yes**                                    | Written only by `./mark` — never hand-edited                                                 |
-| `CHECKLIST.md` / `TASK.md` | **Yes**                                    | Every box `[x]` when using `--mark-last`                                                     |
+| Artifact                   | Required                                                                                                                                                | Purpose                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `artifacts/learnings.md`   | **Contribution flows** (unless `./mark --skip-learnings`); reviewer flows (self-review, self-review-fix) require their feedback/report artifact instead | Process meta for retrospective and improvement — 3–5 bullets; one bullet if nothing relevant |
+| Flow outcome file          | **Yes** (see table below)                                                                                                                               | What happened: fix summary, review, PR body, merge notes, or no-change investigation         |
+| `SIGNAL.json`              | **Yes**                                                                                                                                                 | Written only by `./mark` — never hand-edited                                                 |
+| `CHECKLIST.md` / `TASK.md` | **Yes**                                                                                                                                                 | Every box `[x]` when using `--mark-last`                                                     |
 
 ## Outcome file by flow
 
