@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix: worker-template lint now fails templates that omit `./mark` entirely when the resolved contract requires a terminal signal — previously such templates were skipped and produced no author-time issue (mark-less templates stay valid for `requireSignal: false` flows such as interactive pr-complete).
+- fix: builtin `self-review` / `self-review-fix` contracts require the reviewer artifacts the templates actually produce (`artifacts/review-feedback.md` / `artifacts/report.md`) instead of `artifacts/learnings.md`, and the runtime flow-report mapping + heading inference cover both flows — unbreaks `yarn quality:worker-templates`, which was failing on main.
 - fix: recognize CI-fix worker headings as the `ci-fix` flow and lint task-dir `mark --checklist ...` terminal commands, so `CI-FIX-SIGNAL.json` uses the intended report contract.
 - build: declare `tsx` as a devDependency — the execution-template tests run through the workspace-scoped `run-tsx-tests.mjs` runner (`yarn exec tsx`), which cannot resolve an undeclared binary on a clean CI install.
 - feat: add shared Markdown execution-template resolver/lint/new (ADR-049) with `farmslot-agent execution-template` CLI.

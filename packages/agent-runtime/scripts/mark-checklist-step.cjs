@@ -21,6 +21,8 @@ const FLOW_REPORT_ARTIFACTS = {
   'pr-complete': ['comments-report.md', 'report.md'],
   'update-branch': ['branch-update-report.md', 'report.md'],
   'ci-fix': ['report.md'],
+  'self-review': ['review-feedback.md', 'report.md'],
+  'self-review-fix': ['report.md'],
 };
 const FALLBACK_REPORT_ARTIFACTS = [
   'report.md',
@@ -250,6 +252,9 @@ function inferFlowType(taskPath) {
     if (label.includes('pr-complete') || label.includes('pr complete')) return 'pr-complete';
     if (label.includes('update-branch') || label.includes('update branch')) return 'update-branch';
     if (label.includes('ci-fix') || label.includes('ci fix')) return 'ci-fix';
+    if (label.includes('self-review fix') || label.includes('self-review-fix'))
+      return 'self-review-fix';
+    if (label.includes('self-review') || label.includes('self review')) return 'self-review';
     if (label.includes('interactive dev')) return 'dev';
     if (/\bdev\b/.test(label) && !label.includes('review')) return 'dev';
   }

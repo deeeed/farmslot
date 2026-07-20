@@ -35,7 +35,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration           | Proposed   | Partial        | Scheduler/graph UI exists; dispatch config parity + E2E polish open          |
 | [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement   | Proposed   | Partial        | Multi-project `targetProjects` + project-aware promotion fan-out             |
 | [042](../adr/042-slot-tracking-branches.md)                | Slot tracking branches             | Accepted   | Shipped        | Polish: fleet-status `@ origin/main` display string; bash release parity doc |
-| [045](../adr/045-worker-terminal-contract.md)              | Worker terminal contract           | Accepted   | Partial        | Author-time lint skips templates that omit `./mark` entirely                 |
+| [045](../adr/045-worker-terminal-contract.md)              | Worker terminal contract           | Accepted   | Shipped        | None tracked; authoring-quality tooling is optional                          |
 | [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel       | Accepted   | In progress    | Experimental read-only transcript mirror on active sessions                  |
 | [048](../adr/048-interactive-operator-packets.md)          | Interactive operator packets       | Accepted   | Partial        | Eval/replay packet response persistence remains open                         |
 | [049](../adr/049-agent-execution-template-selection.md)    | Agent execution template selection | Proposed   | Partial        | Resolver + `list`/`lint`/`new` only; dispatch/render/skills integration open |
@@ -269,16 +269,16 @@ shipped because the human review loop and promotion-to-backlog UX still need clo
 
 ## ADR-045 — Worker Terminal Contract (Accepted)
 
-**Implementation: Partial (runtime enforcement shipped; author-time lint has an omission gap)**
+**Implementation: Shipped**
 
-| ADR requirement                                 | Status  | Evidence / gap                                                                                                                                                                            |
-| ----------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Project-owned `worker_terminal` config          | Shipped | `projects/farmslot-farm/project.json`; task writer emits `inputs/worker-terminal-contract.json`                                                                                           |
-| `./mark` + artifact contract enforcement        | Shipped | `packages/agent-runtime/scripts/mark-checklist-step.cjs` + `check-task-artifact-contract.mjs`                                                                                             |
-| Terminal template lint                          | Partial | `check-worker-template-contract.mjs` skips templates that never mention `./mark` (`templateUsesTerminalMark` gate), so a template omitting the required mark command entirely passes lint |
-| Monitor holds on missing terminal `SIGNAL.json` | Shipped | `requireSignal` hold when the agent exits without a terminal signal                                                                                                                       |
+| ADR requirement                                 | Status  | Evidence / gap                                                                                                           |
+| ----------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Project-owned `worker_terminal` config          | Shipped | `projects/farmslot-farm/project.json`; task writer emits `inputs/worker-terminal-contract.json`                          |
+| `./mark` + artifact contract enforcement        | Shipped | `packages/agent-runtime/scripts/mark-checklist-step.cjs` + `check-task-artifact-contract.mjs`                            |
+| Terminal template lint                          | Shipped | mark-less templates now fail lint when the contract requires a terminal signal; `requireSignal: false` flows stay exempt |
+| Monitor holds on missing terminal `SIGNAL.json` | Shipped | `requireSignal` hold when the agent exits without a terminal signal                                                      |
 
-**Follow-ups:** lint templates that omit `./mark` entirely (close the `templateUsesTerminalMark` skip); authoring-quality tooling (`fs-worker-template-quality`) stays optional, not runtime.
+**Follow-ups:** none tracked; authoring-quality tooling (`fs-worker-template-quality`) stays optional, not runtime.
 
 ## ADR-049 — Agent Execution Template Selection (Proposed)
 
