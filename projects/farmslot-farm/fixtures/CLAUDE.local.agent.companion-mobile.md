@@ -5,7 +5,7 @@ Do **not** boot a simulator, start Metro, or launch the companion app unless thi
 explicitly requires companion runtime proof (recipe, UI, pairing, device behavior).
 
 When companion work **is** in scope, you own isolated device + Metro setup the same way
-MetaMask/Echobridge mobile slots do — via explicit env injection, not interactive prompts
+other mobile farm slots do — via explicit env injection, not interactive prompts
 in non-TTY agent runs.
 
 ## Slot isolation (read from pool + worktree)

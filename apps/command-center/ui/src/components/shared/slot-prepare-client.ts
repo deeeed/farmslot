@@ -10,7 +10,7 @@ import {
   scheduleSlotPrepareSessionClear,
 } from './slot-prepare-tracker.js';
 
-/** Cover metamask-mobile-farm prepare_deps_s (5400s) with headroom. */
+/** Cover the slowest known pack dependency install (~90min) with headroom. */
 export const SLOT_PREPARE_TIMEOUT_MS = 7_200_000;
 
 export interface RunSlotPrepareInput extends SlotPrepareParams {

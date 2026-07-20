@@ -13,7 +13,7 @@ export type ExecutionTemplateLayout = 'flow-tree' | 'worker-flat';
 export type ExecutionRunMode = 'autonomous' | 'interactive' | 'validation';
 
 export interface ExecutionTemplateSource {
-  /** Stable source label for catalogs / shadowing (e.g. project:metamask-mobile-farm). */
+  /** Stable source label for catalogs / shadowing (e.g. project:farmslot-farm). */
   id: string;
   kind: ExecutionTemplateSourceKind;
   /** Absolute directory to scan. */

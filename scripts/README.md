@@ -28,7 +28,7 @@ Most of the decision logic that used to live here has moved to the CLI/gateway (
 | `backup-runs.sh`                   | Cron-safe run-state backup; must not depend on a live gateway.                                                                                                           |
 | `validate-config.sh`               | Pool/project JSON-schema validation usable pre-install and in CI.                                                                                                        |
 | `sync-fixtures.sh`                 | Thin edge driver since PR #325: one `farmslot internal fixture-plan` call + the remote copy (ssh/scp), skip-worktree marking, and directory rsync.                       |
-| `check-slot.sh`                    | Shim → `farmslot slot check`. Kept 2026-07-15: metamask-mobile/extension pack READMEs still print it; delete after those packs repoint (team-repo PRs).                  |
+| `check-slot.sh`                    | Shim → `farmslot slot check`. Kept 2026-07-15: some external pack READMEs still print it; delete after those packs repoint.                                              |
 | `prepare-slot.sh`                  | Shim → `farmslot slot prepare`. Kept 2026-07-15: pack setup scripts/templates and core-farm docs still print it; same repoint condition as `check-slot.sh`.              |
 
 Retired surfaces are CLI-first: slot helpers (`farmslot slot monitor|show|soft-refresh|reopen|auto-refresh`), bug pipeline (`farmslot bug triage|score|grade|validate|batch`, image download folded into `triage`/`batch`), dispatch/PR status (`farmslot run create`, `farmslot pr status|list`), slot picking (`farmslot fleet find-slot`).

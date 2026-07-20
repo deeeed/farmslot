@@ -6,7 +6,7 @@
  *
  * Usage:
  *   node scripts/migrate-task-root.mjs --run <run-id-prefix>
- *   node scripts/migrate-task-root.mjs --all-blocked [--project metamask-mobile-farm]
+ *   node scripts/migrate-task-root.mjs --all-blocked [--project <project-name>]
  *   node scripts/migrate-task-root.mjs --run 199ace83 --dry-run
  */
 
@@ -74,7 +74,9 @@ function resolveRunFile(prefix) {
   }
   if (matches.length === 0) throw new Error(`No run file matching prefix: ${prefix}`);
   if (matches.length > 1) {
-    throw new Error(`Ambiguous run prefix ${prefix}: ${matches.map((m) => path.basename(m)).join(', ')}`);
+    throw new Error(
+      `Ambiguous run prefix ${prefix}: ${matches.map((m) => path.basename(m)).join(', ')}`,
+    );
   }
   return matches[0];
 }
@@ -264,14 +266,28 @@ async function migrateOneRun(runFile, opts) {
     } else {
       await mkdir(destAbs, { recursive: true });
       const top = rsyncMerge(legacyAbs, destAbs, false, ['--ignore-existing']);
-      if (top) console.log(top.split('\n').filter(Boolean).map((l) => `    ${l}`).join('\n'));
+      if (top)
+        console.log(
+          top
+            .split('\n')
+            .filter(Boolean)
+            .map((l) => `    ${l}`)
+            .join('\n'),
+        );
       const legacyArtifacts = path.join(legacyAbs, 'artifacts');
       if (existsSync(legacyArtifacts)) {
         await mkdir(path.join(destAbs, 'artifacts'), { recursive: true });
         const art = rsyncMerge(legacyArtifacts, path.join(destAbs, 'artifacts'), false, [
           '--ignore-existing',
         ]);
-        if (art) console.log(art.split('\n').filter(Boolean).map((l) => `    ${l}`).join('\n'));
+        if (art)
+          console.log(
+            art
+              .split('\n')
+              .filter(Boolean)
+              .map((l) => `    ${l}`)
+              .join('\n'),
+          );
       }
       console.log(`  [ok] slot merge complete`);
       const rewritten = await rewriteTaskMarkdownPaths(
