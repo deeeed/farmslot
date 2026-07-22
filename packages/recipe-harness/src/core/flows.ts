@@ -212,7 +212,7 @@ export async function executeInlineFlowCall({
   }
   const flow = flowCatalog.get(ref);
   if (!flow) throw new Error(`Flow ${ref} is not available from recipe uses or inline flows.`);
-  const params = isRecord(node.params) ? node.params : {};
+  const params = applyParamDefaults(isRecord(node.params) ? node.params : {}, flow.paramsSchema);
   validateParamsSchema(params, flow.paramsSchema, ref);
   const nextCallStack = [...callStack, ref];
   const output = await executeInlineFlow({
@@ -451,6 +451,29 @@ async function executeInlineFlow({
     }
   }
   return { ref: flowRef, status: 'unknown', outputs: flowOutputs };
+}
+
+function applyParamDefaults(
+  params: Record<string, unknown>,
+  schema: unknown,
+): Record<string, unknown> {
+  if (!isRecord(schema) || !isRecord(schema.properties)) return params;
+  const resolved = { ...params };
+  for (const [key, propertySchema] of Object.entries(schema.properties)) {
+    if (
+      !Object.hasOwn(resolved, key) &&
+      isRecord(propertySchema) &&
+      Object.hasOwn(propertySchema, 'default')
+    ) {
+      Object.defineProperty(resolved, key, {
+        value: propertySchema.default,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+  return resolved;
 }
 
 function validateParamsSchema(

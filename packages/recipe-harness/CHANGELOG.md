@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Applied declared flow parameter defaults at execution while preserving explicit caller overrides.
 
 ## 0.8.0 - 2026-07-19
 
