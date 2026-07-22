@@ -4,7 +4,11 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { workspaceForFile } from '../release/lib/workspace-utils.mjs';
-import { unreleasedMeaningfulBullets } from '../release/parse-changelog.mjs';
+import {
+  extractSection,
+  meaningfulBullets,
+  unreleasedMeaningfulBullets,
+} from '../release/parse-changelog.mjs';
 
 const repoRoot = process.cwd();
 const failures = [];
@@ -108,8 +112,8 @@ function checkStructure() {
   }
 }
 
-function readChangelogAtRef(ref, changelogPath) {
-  const result = spawnSync('git', ['show', `${ref}:${changelogPath}`], {
+function readTextAtRef(ref, relativePath) {
+  const result = spawnSync('git', ['show', `${ref}:${relativePath}`], {
     cwd: repoRoot,
     encoding: 'utf8',
   });
@@ -121,11 +125,33 @@ function newUnreleasedBullets(mergeBase, headSha, changelogPath) {
   const headContent =
     headSha === 'HEAD'
       ? readFileSync(path.join(repoRoot, changelogPath), 'utf8')
-      : readChangelogAtRef(headSha, changelogPath);
-  const baseContent = readChangelogAtRef(mergeBase, changelogPath);
+      : readTextAtRef(headSha, changelogPath);
+  const baseContent = readTextAtRef(mergeBase, changelogPath);
   const headBullets = unreleasedMeaningfulBullets(headContent);
   const baseBullets = new Set(unreleasedMeaningfulBullets(baseContent));
   return headBullets.filter((bullet) => !baseBullets.has(bullet));
+}
+
+function releasedVersionCoversPr(mergeBase, headSha, workspace, changelogPath) {
+  const packageJsonPath = `${workspace}/package.json`;
+  const basePackage = JSON.parse(readTextAtRef(mergeBase, packageJsonPath));
+  const headPackage = JSON.parse(
+    headSha === 'HEAD'
+      ? readFileSync(path.join(repoRoot, packageJsonPath), 'utf8')
+      : readTextAtRef(headSha, packageJsonPath),
+  );
+  if (basePackage.version === headPackage.version) return false;
+
+  const headContent =
+    headSha === 'HEAD'
+      ? readFileSync(path.join(repoRoot, changelogPath), 'utf8')
+      : readTextAtRef(headSha, changelogPath);
+  const section = extractSection(
+    headContent,
+    (line) =>
+      line === `## ${headPackage.version}` || line.startsWith(`## ${headPackage.version} -`),
+  );
+  return section ? meaningfulBullets(section.body).length > 0 : false;
 }
 
 function checkPrDiff() {
@@ -175,7 +201,10 @@ function checkPrDiff() {
       continue;
     }
     const bullets = newUnreleasedBullets(mergeBase, headSha, changelogPath);
-    if (bullets.length === 0) {
+    if (
+      bullets.length === 0 &&
+      !releasedVersionCoversPr(mergeBase, headSha, workspace, changelogPath)
+    ) {
       fail(
         `${changelogPath} must add at least one non-placeholder bullet under ## Unreleased for this PR.`,
       );
