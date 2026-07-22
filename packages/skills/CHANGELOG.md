@@ -4,6 +4,7 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
+- Teach recipe authors to start from existing parameterized recipes and compose them node by node before adding new capabilities.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.2.0 - 2026-07-19
