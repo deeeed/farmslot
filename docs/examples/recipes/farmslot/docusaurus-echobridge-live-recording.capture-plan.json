@@ -1,0 +1,52 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Docusaurus EchoBridge live-recording capture plan",
+  "description": "Launch the real EchoBridge app on its configured iOS simulator, install public-safe local auth fixtures, start a real app recorder session, capture simulator video/screenshot proof, and stop the recorder cleanly.",
+  "proofTargets": [
+    {
+      "id": "configured-runtime",
+      "claim": "Farmslot can launch and control the real EchoBridge iOS app through its configured simulator and Metro port."
+    },
+    {
+      "id": "live-recording-behavior",
+      "claim": "The demo is captured from a real EchoBridge recorder session with visible timer, waveform, size, pause/stop controls, and Recipe Protocol artifacts."
+    }
+  ],
+  "workflow": {
+    "entry": "launch-echobridge",
+    "nodes": {
+      "launch-echobridge": {
+        "action": "app.launch",
+        "next": "prepare-public-safe-session",
+        "proves": ["configured-runtime"],
+        "intent": "Launch EchoBridge using configured IOS_SIMULATOR/WATCHER_PORT from pool/project/.env defaults."
+      },
+      "prepare-public-safe-session": {
+        "action": "fixture.apply",
+        "next": "start-live-recording",
+        "intent": "Grant simulator microphone/notification permissions and install public-safe local auth fixtures."
+      },
+      "start-live-recording": {
+        "action": "app.recording.start",
+        "next": "record-live-proof",
+        "proves": ["live-recording-behavior"],
+        "intent": "Start a real EchoBridge recording session through the app bridge and wait for isRecording=true."
+      },
+      "record-live-proof": {
+        "action": "capture.video",
+        "next": "stop-live-recording",
+        "proves": ["live-recording-behavior"],
+        "intent": "Record the iOS simulator while the EchoBridge recorder timer, waveform, and controls are live; capture final screenshot proof."
+      },
+      "stop-live-recording": {
+        "action": "app.recording.stop",
+        "next": "done",
+        "intent": "Stop the recorder after the docs proof media is captured."
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

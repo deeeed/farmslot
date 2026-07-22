@@ -18,7 +18,6 @@ export function createStandardCoreAdapters(
   options: { actions?: Iterable<string> } = {},
 ): ActionAdapter[] {
   const adapters = [
-    defineEndAdapter(),
     defineWaitAdapter(),
     defineCommandAdapter(),
     defineAssertFileAdapter(),
@@ -42,19 +41,6 @@ export function createStandardCoreAdapters(
   if (!options.actions) return bundled;
   const actions = new Set(options.actions);
   return bundled.filter((adapter) => actions.has(adapter.action));
-}
-
-function defineEndAdapter(): ActionAdapter {
-  return {
-    action: 'end',
-    async execute(node) {
-      const rawStatus = node.status ?? 'unknown';
-      if (rawStatus !== 'pass' && rawStatus !== 'fail' && rawStatus !== 'unknown') {
-        throw new Error('end.status must be pass, fail, or unknown.');
-      }
-      return { status: rawStatus };
-    },
-  };
 }
 
 function defineWaitAdapter(): ActionAdapter {
@@ -193,24 +179,14 @@ function defineStateReadAdapter(): ActionAdapter {
 function defineSwitchAdapter(): ActionAdapter {
   return {
     action: 'switch',
-    async execute(node, context) {
-      if (!Array.isArray(node.cases)) {
-        throw new Error('switch.cases must be an array of { when, next } entries.');
-      }
-      for (const [index, rawCase] of node.cases.entries()) {
-        if (!rawCase || typeof rawCase !== 'object' || Array.isArray(rawCase)) {
-          throw new Error(`switch.cases[${index}] must be an object.`);
-        }
-        const switchCase = rawCase as Record<string, unknown>;
-        const next = asString(switchCase.next, `switch.cases[${index}].next`);
-        const predicate = parseAssertionNode(switchCase.when, `switch.cases[${index}].when`);
-        if (evaluateAssertion(context.outputs, predicate)) {
-          return { next, output: { case: index, next } };
-        }
-      }
-      const defaultNext = asOptionalString(node.default, 'switch.default');
-      if (!defaultNext) throw new Error('switch did not match any case and has no default.');
-      return { next: defaultNext, output: { case: 'default', next: defaultNext } };
+    async execute(node) {
+      const value = asString(node.value, 'switch.value');
+      const expected = asString(node.equals, 'switch.equals');
+      const matched = value === expected;
+      return {
+        ...(matched ? { case: 'match' } : {}),
+        output: { matched, value, expected },
+      };
     },
   };
 }

@@ -15,9 +15,9 @@ test('resolvePathWithinRemoteBase preserves ~/ roots for nested targets', () => 
   assert.equal(
     resolvePathWithinRemoteBase(
       '~/repo/tasks/current-task/artifacts/recipe-runs/passing-run',
-      'recipe-flows/subflow.json',
+      'recipe-library/recipes/demo/child.recipe.json',
     ),
-    '~/repo/tasks/current-task/artifacts/recipe-runs/passing-run/recipe-flows/subflow.json',
+    '~/repo/tasks/current-task/artifacts/recipe-runs/passing-run/recipe-library/recipes/demo/child.recipe.json',
   );
 });
 

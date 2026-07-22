@@ -1,9 +1,7 @@
-import { JsonTraceWriter } from '../node/writers.js';
-
-import type { ActionResult, TraceEntry } from './types.js';
+import type { ActionResult, TraceEntry, TraceWriter } from './types.js';
 
 export function recordSyntheticFailure(
-  traceWriter: JsonTraceWriter,
+  traceWriter: TraceWriter,
   nodeId: string,
   error: Error,
   action = 'unknown',
@@ -23,11 +21,14 @@ export function recordSyntheticFailure(
 export function traceNodeMetadata(
   node: Record<string, unknown>,
   result?: ActionResult,
-): Pick<TraceEntry, 'intent' | 'phase' | 'record' | 'artifacts'> {
-  const metadata: Pick<TraceEntry, 'intent' | 'phase' | 'record' | 'artifacts'> = {};
+): Pick<TraceEntry, 'intent' | 'proves' | 'artifacts'> {
+  const metadata: Pick<TraceEntry, 'intent' | 'proves' | 'artifacts'> = {};
   if (typeof node.intent === 'string' && node.intent.trim()) metadata.intent = node.intent;
-  if (typeof node.phase === 'string') metadata.phase = node.phase;
-  if (node.record !== undefined) metadata.record = node.record;
+  if (Array.isArray(node.proves)) {
+    metadata.proves = node.proves.filter(
+      (proofTarget): proofTarget is string => typeof proofTarget === 'string',
+    );
+  }
   if (result?.artifacts?.length) metadata.artifacts = result.artifacts;
   return metadata;
 }

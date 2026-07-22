@@ -4,59 +4,48 @@ title: Write a recipe
 
 # Write a recipe
 
-This page is a starter checklist for turning acceptance criteria into a validation recipe.
+Start from working code instead of recalling the schema.
 
-## Recipe checklist
+```sh
+farmslot-recipe run --list --adapter <adapter> --json
+farmslot-recipe run <closest-recipe> --describe --adapter <adapter> --json
+```
 
-A good recipe should answer:
+Call the closest recipe when its graph already fits. Copy it only when the workflow itself must change, then edit only the nodes required by the claim. Use the project's runner to search its strict action manifest and inspect exact action schemas; action discovery is project-owned.
 
-- What behavior does this prove?
-- What preconditions must be true?
-- Which app/runtime action exercises the behavior?
-- Which assertion proves success?
-- Which screenshot, video, log, or JSON artifact helps a reviewer trust the result?
-- How does the recipe clean up after itself?
-
-## Skeleton
+## Minimal recipe
 
 ```json
 {
-  "schema_version": 1,
-  "title": "Example recipe",
-  "description": "Proves one acceptance criterion with reviewable evidence.",
-  "validate": {
-    "workflow": {
-      "entry": "start",
-      "nodes": {
-        "start": {
-          "action": "command",
-          "command": "echo run project setup",
-          "next": "verify"
-        },
-        "verify": {
-          "action": "assert_json",
-          "target": "./state.json",
-          "assert": { "path": "$.ok", "equals": true },
-          "next": "end"
-        },
-        "end": {
-          "action": "end"
-        }
-      }
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "description": "Prove the selected runtime is ready.",
+  "workflow": {
+    "entry": "status",
+    "nodes": {
+      "status": {
+        "action": "app.status",
+        "intent": "Confirm the selected runtime is ready.",
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
     }
   }
 }
 ```
 
-Project adapters can add richer actions such as `ui.navigate`, `ui.screenshot`, `cdp.evaluate`, or product-specific namespaced actions.
+Required root fields are `$schema`, `description`, and `workflow`. Use `paramsSchema` for reusable inputs, `call` for composition, `proofTargets` for explicit claims, and `workflow.teardown` only when cleanup must be guaranteed.
 
-After supported UI actions, runners may record passive `observations` in
-`trace.json`, including `ui.screen` and bounded `ui.visible.items`. Use these
-items to author the next node from stable handles (`test_id`, selector, label,
-role). Observations are not proof and never control graph transitions; keep
-using `ui.wait_for`, assertions, screenshots, or explicit evidence nodes for
-claims that must pass or fail the recipe.
+Every non-terminal node needs a short human-facing `intent`. UI intent describes the visible outcome; selectors, routes, keys, and action names remain in parameters.
 
-## Full v1 contract
+Action parameters are sibling fields beside `action`, `intent`, and the transition. Only a `call` node uses `params` to pass values into another recipe.
 
-For composed recipes, reusable start-state flows, proof-target mapping, HUD/overlay visual proof, and artifact-package requirements, see [Recipe Protocol v1](../reference/recipe-protocol-v1.md).
+## Validate
+
+```sh
+farmslot-recipe validate ./proof.recipe.json --action-manifest <manifest.json>
+farmslot-recipe run ./proof.recipe.json --action-manifest <manifest.json> --adapter <adapter>
+```
+
+Read the trace and actual evidence. A passing command is not sufficient when the claim is visual or runtime-specific.
+
+See [Recipe Protocol v1](../reference/recipe-protocol-v1.md) for the complete contract.

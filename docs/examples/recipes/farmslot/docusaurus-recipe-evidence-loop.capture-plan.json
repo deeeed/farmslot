@@ -1,0 +1,64 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Docusaurus recipe evidence loop capture plan",
+  "description": "Recipe-owned capture for the Docusaurus recipe evidence demo: render the real summary, trace, manifest, and artifacts produced by the Command Center watch-and-steer capture.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sourceArtifactDir": {
+        "type": "string",
+        "default": ".agent/demo-stage/docusaurus-command-center-parallel/output"
+      },
+      "outputScreenshot": {
+        "type": "string",
+        "default": "screenshots/recipe-evidence-validation-loop.png"
+      },
+      "docsScreenshot": {
+        "type": "string",
+        "default": "apps/docs/static/img/demos/recipe-evidence-validation-loop.png"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "load-source-artifacts",
+    "nodes": {
+      "load-source-artifacts": {
+        "action": "artifact.read",
+        "intent": "Load real summary.json, trace.json, artifact-manifest.json, and recipe.json from a completed capture recipe.",
+        "next": "render-evidence-board"
+      },
+      "render-evidence-board": {
+        "action": "ui.render",
+        "intent": "Render a public-safe evidence board from real artifact data, not mock fixture data.",
+        "next": "verify-safe-view"
+      },
+      "verify-safe-view": {
+        "action": "ui.assert",
+        "intent": "Verify the board shows summary, trace, manifest, artifact list, and no forbidden private labels.",
+        "next": "capture-screenshot"
+      },
+      "capture-screenshot": {
+        "action": "record.screenshot",
+        "intent": "Capture the recipe evidence board as a screenshot because the proof package is static data.",
+        "next": "publish-artifacts"
+      },
+      "publish-artifacts": {
+        "action": "artifact.publish",
+        "intent": "Publish the screenshot, source snapshot, trace, summary, and artifact manifest.",
+        "artifacts": [
+          "screenshots/recipe-evidence-validation-loop.png",
+          "source/summary.json",
+          "source/trace.json",
+          "source/artifact-manifest.json",
+          "source/recipe.json"
+        ],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

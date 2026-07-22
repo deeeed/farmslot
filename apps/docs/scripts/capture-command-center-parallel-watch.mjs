@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,7 +16,7 @@ const repoRoot = resolve(__dirname, '../../..');
 const commandCenterDir = resolve(repoRoot, 'apps/command-center');
 const defaultRecipe = resolve(
   repoRoot,
-  'docs/examples/recipes/farmslot/docusaurus-command-center-parallel-watch.recipe.json',
+  'docs/examples/recipes/farmslot/docusaurus-command-center-parallel-watch.capture-plan.json',
 );
 const docsVideo = resolve(
   repoRoot,
@@ -36,6 +36,7 @@ const copyToDocs = process.argv.includes('--copy-to-docs');
 
 const args = parseArgs(process.argv.slice(2));
 const recipePath = resolve(repoRoot, args.recipe || defaultRecipe);
+const recipeId = basename(recipePath).replace(/\.capture-plan\.json$/u, '');
 const artifactsDir = resolve(
   repoRoot,
   args.artifactsDir || '.agent/demo-stage/docusaurus-command-center-parallel/output',
@@ -675,7 +676,7 @@ function writeOutputs(paths) {
   };
   writeFileSync(
     resolve(artifactsDir, 'trace.json'),
-    JSON.stringify({ version: 1, recipeId: recipe.id, steps: trace }, null, 2),
+    JSON.stringify({ version: 1, recipeId, steps: trace }, null, 2),
   );
   writeFileSync(resolve(artifactsDir, 'artifact-manifest.json'), JSON.stringify(manifest, null, 2));
   writeFileSync(
@@ -683,7 +684,7 @@ function writeOutputs(paths) {
     JSON.stringify(
       {
         status: 'pass',
-        recipeId: recipe.id,
+        recipeId,
         title: recipe.title,
         runIds,
         regeneratedBy: `yarn --cwd apps/docs capture:first-video --artifacts-dir ${relative(repoRoot, artifactsDir)} --copy-to-docs`,

@@ -14,7 +14,7 @@ import type { SlotViewRecipePresenter } from './slot-view-recipe-presenter.js';
 import {
   slotViewDesiredRecipeRunId,
   slotViewSelectedRecipeArtifactPath,
-  slotViewSelectedRecipeFlowPath,
+  slotViewSelectedRecipeDependencyPath,
 } from './slot-view-recipe-view-model.js';
 import { requestedRunFromHash } from './slot-view-url-state.js';
 
@@ -31,10 +31,10 @@ export function resetSlotViewRecipePanelState(view: SlotViewRecipePresenter): vo
   resetSlotViewRecipeLoadTokens(view);
   view._recipeRuns = [];
   view._selectedRecipeRunId = '';
-  view._selectedRecipeFlowPath = '';
-  view._selectedRecipeFlowJson = '';
-  view._selectedRecipeFlowLoading = false;
-  view._selectedRecipeFlowError = '';
+  view._selectedRecipeDependencyPath = '';
+  view._selectedRecipeDependencyJson = '';
+  view._selectedRecipeDependencyLoading = false;
+  view._selectedRecipeDependencyError = '';
   view._selectedRecipeNodeId = '';
   view._recipeEvidenceMode = 'all';
   view._selectedRecipeArtifactPath = null;
@@ -127,7 +127,7 @@ function clearSlotViewRecipeRuns(view: SlotViewRecipePresenter): void {
 }
 
 function resetSlotViewRecipeLoadTokens(view: SlotViewRecipePresenter): void {
-  view._selectedRecipeFlowLoadToken = Symbol('recipe-flow-load');
+  view._selectedRecipeDependencyLoadToken = Symbol('recipe-library-load');
   view._selectedRecipeEvidenceManifestLoadToken = Symbol('recipe-evidence-manifest-load');
   view._selectedRecipeArtifactPreviewLoadToken = Symbol('recipe-artifact-preview-load');
 }
@@ -155,9 +155,9 @@ function applySlotViewRecipeRunsResult(
   const desiredRecipeArtifactPath = requestedRecipeArtifactPath ?? view._selectedRecipeArtifactPath;
   view._recipeEvidenceCache = null;
   const nextHost = createSlotViewRecipeHostEntry(run, view.slotId, selectedRun);
-  view._selectedRecipeFlowPath = slotViewSelectedRecipeFlowPath({
+  view._selectedRecipeDependencyPath = slotViewSelectedRecipeDependencyPath({
     selectedRun,
-    requestedFlow: view._requestedRecipeFlowFromUrl(),
+    requestedDependency: view._requestedRecipeDependencyFromUrl(),
   });
   view._selectedRecipeArtifactPath = slotViewSelectedRecipeArtifactPath({
     desiredRecipeArtifactPath,
@@ -176,7 +176,7 @@ function applySlotViewRecipeRunsResult(
   if (shouldAutoOpen && !view._reviewPanelOpen) {
     view._reviewPanelOpen = true;
   }
-  void view._loadSelectedRecipeFlow(nextHost);
+  void view._loadSelectedRecipeDependency(nextHost);
   void view._loadSelectedRecipeEvidenceManifest(nextHost);
   void view._loadSelectedRecipeArtifactPreview(nextHost);
 }

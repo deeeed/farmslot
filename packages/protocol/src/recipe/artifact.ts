@@ -7,11 +7,13 @@ import {
   isRecord,
   isRelativeArtifactPath,
   type RecipeArtifactPackageInput,
+  type RecipeResolutionDocument,
   type RecipeValidationResult,
   TERMINAL_STATUSES,
 } from './common.js';
+import { digestRecipeDocument, resolvedRecipeArtifactPath } from './digest.js';
 import { validateRecipeDocument } from './document.js';
-import { getRecipeWorkflowNodeIds } from './workflow.js';
+import { getRecipeCallRefs, getRecipeWorkflowNodeIds } from './workflow.js';
 
 export function validateArtifactManifestDocument(
   manifest: unknown,
@@ -308,7 +310,7 @@ export function validateRecipeArtifactPackage(
   if (input.artifactPaths != null) {
     const requiredPaths = ['summary.json', 'trace.json'];
     if (input.manifest != null) requiredPaths.push('artifact-manifest.json');
-    if (input.recipe != null) requiredPaths.push('recipe.json');
+    if (input.recipe != null) requiredPaths.push('recipe.json', 'recipe-resolution.json');
     for (const requiredPath of requiredPaths) {
       if (!artifactPaths.has(requiredPath)) {
         addFinding(
@@ -338,35 +340,296 @@ export function validateRecipeArtifactPackage(
     ctx.findings.push(...manifestResult.findings);
   }
 
-  // A passing run must prove its composition resolves. Either recipe.json is
-  // self-contained (validated in full below), or resolved-recipe.json — the
-  // composed, `uses`-inlined recipe — proves it (validated in full instead, with
-  // recipe.json checked envelope-only since its `call.ref`s are proven there).
-  // A failed run (`runPassed === false`) is not held to this: it already surfaced
-  // its cause (e.g. a flow cycle) in the trace, so recipe.json stays envelope-only
-  // and the composition is not re-validated.
-  const enforceComposition = input.runPassed !== false;
-  const compositionProvenByResolved = enforceComposition && input.resolvedRecipe != null;
+  const resolution =
+    input.recipe != null ? parseRecipeResolution(ctx, input.recipeResolution) : undefined;
+  const resolvedRecipes = input.resolvedRecipes ?? {};
+  const externalRecipeIds = new Set(resolution?.dependencies.map((entry) => entry.ref) ?? []);
 
   if (input.recipe != null) {
     const recipeResult = validateRecipeDocument(input.recipe, {
       requireSchemaRef: input.requireSchemaRef === true,
-      skipFlowCallResolution: !enforceComposition || compositionProvenByResolved,
-      // The `uses` catalogs are not part of the artifact package, so they do not
-      // prove resolution here — only inline `flows` (or resolved-recipe.json) do.
-      externalCatalogsResolvable: false,
+      externalRecipeIds,
     });
     ctx.findings.push(...recipeResult.findings);
   }
 
-  if (compositionProvenByResolved) {
-    const resolvedResult = validateRecipeDocument(input.resolvedRecipe, {
-      requireSchemaRef: input.requireSchemaRef === true,
-    });
-    ctx.findings.push(...resolvedResult.findings);
+  if (resolution && input.recipe != null) {
+    const rootDigest = digestRecipeDocument(input.recipe);
+    if (resolution.root.digest !== rootDigest) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.root_digest_mismatch',
+        'recipe-resolution.json.root.digest',
+        'Root recipe digest does not match recipe.json.',
+      );
+    }
+    const documents = new Map<string, unknown>();
+    const expectedDigests = new Set(resolution.dependencies.map((entry) => entry.digest));
+    for (const digest of Object.keys(resolvedRecipes)) {
+      if (!expectedDigests.has(digest)) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_package.unexpected_resolved_recipe',
+          `resolvedRecipes.${digest}`,
+          'Resolved recipe documents must exactly match recipe-resolution.json dependencies.',
+        );
+      }
+    }
+    for (const dependency of resolution.dependencies) {
+      const document = resolvedRecipes[dependency.digest];
+      if (document == null) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_package.missing_resolved_recipe',
+          dependency.artifact,
+          `Missing resolved recipe document for ${dependency.ref}.`,
+        );
+        continue;
+      }
+      documents.set(dependency.ref, document);
+      if (digestRecipeDocument(document) !== dependency.digest) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_package.resolved_recipe_digest_mismatch',
+          dependency.artifact,
+          `Resolved recipe ${dependency.ref} does not match its recorded digest.`,
+        );
+      }
+      if (input.artifactPaths != null && !artifactPaths.has(dependency.artifact)) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_package.missing_resolved_recipe_file',
+          dependency.artifact,
+          `Recipe artifact package must include ${dependency.artifact}.`,
+        );
+      }
+      const result = validateRecipeDocument(document, {
+        requireSchemaRef: input.requireSchemaRef === true,
+        externalRecipeIds,
+      });
+      ctx.findings.push(...result.findings);
+    }
+    validateResolutionEdges(ctx, input.recipe, resolution, documents);
   }
 
   return finishResult(ctx);
+}
+
+function parseRecipeResolution(
+  ctx: ReturnType<typeof createContext>,
+  value: unknown,
+): RecipeResolutionDocument | undefined {
+  if (!isRecord(value)) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.missing_recipe_resolution',
+      'recipe-resolution.json',
+      'Recipe artifact package must include recipe-resolution.json.',
+    );
+    return undefined;
+  }
+  if (value.schema_version !== 1 || !isRecord(value.root)) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.invalid_recipe_resolution',
+      'recipe-resolution.json',
+      'recipe-resolution.json must declare schema_version 1 and a root object.',
+    );
+    return undefined;
+  }
+  if (!isNonEmptyString(value.root.ref) || !isDigest(value.root.digest)) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.invalid_recipe_resolution_root',
+      'recipe-resolution.json.root',
+      'Recipe resolution root requires a non-empty ref and sha256 digest.',
+    );
+    return undefined;
+  }
+  if (!Array.isArray(value.dependencies) || !Array.isArray(value.edges)) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.invalid_recipe_resolution_graph',
+      'recipe-resolution.json',
+      'Recipe resolution requires dependencies and edges arrays.',
+    );
+    return undefined;
+  }
+  const dependencies: RecipeResolutionDocument['dependencies'] = [];
+  const seenRefs = new Set<string>();
+  for (const [index, entry] of value.dependencies.entries()) {
+    if (
+      !isRecord(entry) ||
+      !isNonEmptyString(entry.ref) ||
+      !isNonEmptyString(entry.source) ||
+      !isNonEmptyString(entry.file) ||
+      !isRelativeArtifactPath(entry.file) ||
+      !isDigest(entry.digest) ||
+      !isRelativeArtifactPath(String(entry.artifact ?? '')) ||
+      (entry.adapter != null && !isNonEmptyString(entry.adapter))
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.invalid_recipe_resolution_dependency',
+        `recipe-resolution.json.dependencies[${index}]`,
+        'Each dependency requires a unique ref, source, relative file, sha256 digest, digest-keyed artifact, and optional adapter.',
+      );
+      continue;
+    }
+    if (seenRefs.has(entry.ref)) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.duplicate_recipe_resolution_ref',
+        `recipe-resolution.json.dependencies[${index}].ref`,
+        `Recipe ${entry.ref} appears more than once in the resolution.`,
+      );
+      continue;
+    }
+    seenRefs.add(entry.ref);
+    const expectedArtifact = resolvedRecipeArtifactPath(entry.digest)!;
+    if (entry.artifact !== expectedArtifact) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.invalid_recipe_resolution_artifact',
+        `recipe-resolution.json.dependencies[${index}].artifact`,
+        `Resolved recipe artifact must be ${expectedArtifact}.`,
+      );
+    }
+    dependencies.push({
+      ref: entry.ref,
+      source: entry.source,
+      file: entry.file,
+      digest: entry.digest,
+      artifact: String(entry.artifact),
+      ...(typeof entry.adapter === 'string' ? { adapter: entry.adapter } : {}),
+    });
+  }
+  const edges: RecipeResolutionDocument['edges'] = [];
+  for (const [index, entry] of value.edges.entries()) {
+    if (!isRecord(entry) || !isNonEmptyString(entry.from) || !isNonEmptyString(entry.to)) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.invalid_recipe_resolution_edge',
+        `recipe-resolution.json.edges[${index}]`,
+        'Each recipe resolution edge requires non-empty from and to refs.',
+      );
+      continue;
+    }
+    edges.push({ from: entry.from, to: entry.to });
+  }
+  return {
+    schema_version: 1,
+    root: { ref: value.root.ref, digest: value.root.digest },
+    dependencies,
+    edges,
+  };
+}
+
+function validateResolutionEdges(
+  ctx: ReturnType<typeof createContext>,
+  root: unknown,
+  resolution: RecipeResolutionDocument,
+  documents: ReadonlyMap<string, unknown>,
+): void {
+  const actual = [
+    ...getRecipeCallRefs(root).map((to) => ({ from: resolution.root.ref, to })),
+    ...[...documents.entries()].flatMap(([from, document]) =>
+      getRecipeCallRefs(document).map((to) => ({ from, to })),
+    ),
+  ];
+  const expectedKeys = resolution.edges.map(edgeKey).sort();
+  const actualKeys = actual.map(edgeKey).sort();
+  if (JSON.stringify(expectedKeys) !== JSON.stringify(actualKeys)) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.recipe_resolution_edge_mismatch',
+      'recipe-resolution.json.edges',
+      'Recipe resolution edges do not match the call refs in the retained recipe documents.',
+    );
+  }
+  const dependencyRefs = new Set(resolution.dependencies.map((entry) => entry.ref));
+  if (dependencyRefs.has(resolution.root.ref)) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.recipe_resolution_root_collision',
+      'recipe-resolution.json.root.ref',
+      'Root recipe ref must not also appear as a dependency.',
+    );
+  }
+  for (const edge of resolution.edges) {
+    if (edge.from !== resolution.root.ref && !dependencyRefs.has(edge.from)) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.invalid_recipe_resolution_source',
+        'recipe-resolution.json.edges',
+        `Recipe resolution edge starts from missing recipe ${edge.from}.`,
+      );
+    }
+    if (!dependencyRefs.has(edge.to)) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.unresolved_recipe_resolution_edge',
+        'recipe-resolution.json.edges',
+        `Recipe resolution edge targets missing dependency ${edge.to}.`,
+      );
+    }
+  }
+  const reachable = new Set<string>();
+  const visit = (ref: string, stack: Set<string>): void => {
+    if (stack.has(ref)) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.recipe_resolution_cycle',
+        'recipe-resolution.json.edges',
+        `Recipe resolution contains a cycle through ${ref}.`,
+      );
+      return;
+    }
+    if (reachable.has(ref)) return;
+    reachable.add(ref);
+    const nextStack = new Set(stack).add(ref);
+    for (const edge of resolution.edges) {
+      if (edge.from === ref) visit(edge.to, nextStack);
+    }
+  };
+  visit(resolution.root.ref, new Set());
+  for (const ref of dependencyRefs) {
+    if (!reachable.has(ref)) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.unreachable_recipe_resolution_dependency',
+        'recipe-resolution.json.dependencies',
+        `Resolved recipe ${ref} is not reachable from the root recipe.`,
+      );
+    }
+  }
+}
+
+function edgeKey(edge: { from: string; to: string }): string {
+  return `${edge.from}\0${edge.to}`;
+}
+
+function isDigest(value: unknown): value is string {
+  return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
 }
 
 export function mergeRecipeValidationResults(

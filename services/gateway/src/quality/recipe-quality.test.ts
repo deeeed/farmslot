@@ -63,11 +63,17 @@ test('loadRecipeQualityEvaluation preserves a valid worker artifact', async () =
   const taskFile = await writeTaskFile(taskDir, '# Task\nWrite artifacts/recipe-quality.json\n');
   await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
   const recipeJson = JSON.stringify({
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Proves the example page can be reached.',
     workflow: {
       entry: 'start',
       nodes: {
-        start: { action: 'navigate', next: 'done' },
-        done: { action: 'assert' },
+        start: {
+          action: 'navigate',
+          intent: 'Open the example page for validation',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
       },
     },
   });
@@ -315,18 +321,24 @@ test('loadRecipeQualityEvaluation warns for review-pr task without recipe artifa
   assert.equal(evaluation.signal.source, 'report');
 });
 
-test('loadRecipeQualityEvaluation derives pass from a structurally valid recipe (no hand-authored artifact)', async () => {
+test('loadRecipeQualityEvaluation derives pass from a valid v1 recipe without a hand-authored artifact', async () => {
   // Gateway is sole producer: with no recipe-quality.json, the verdict comes from
   // the recipe structure — a fully valid recipe earns `pass`/good, not a capped warn.
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-legacy-recipe-json-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Legacy task\n');
   const recipeJson = JSON.stringify({
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Validate the current navigation state.',
     workflow: {
       entry: 'start',
       nodes: {
-        start: { action: 'navigate', next: 'done' },
-        done: { action: 'assert' },
+        start: {
+          action: 'navigate',
+          intent: 'Open the expected application screen.',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
       },
     },
   });
@@ -377,7 +389,7 @@ test('loadRecipeQualityEvaluation does not persist fallback artifact on read', a
   await assert.rejects(readFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), 'utf-8'));
 });
 
-test('loadRecipeQualityEvaluation merges structural warnings into existing worker artifact', async () => {
+test('loadRecipeQualityEvaluation rejects unreachable nodes in an existing worker artifact', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-unreachable-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Task\nWrite artifacts/recipe-quality.json\n');
@@ -418,23 +430,34 @@ test('loadRecipeQualityEvaluation merges structural warnings into existing worke
   const evaluation = await loadRecipeQualityEvaluation({
     run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'fix-bug' }),
     recipeJson: JSON.stringify({
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Reject unreachable validation nodes.',
       workflow: {
         entry: 'start',
         nodes: {
-          start: { action: 'navigate', next: 'done' },
-          done: { action: 'assert' },
-          orphan: { action: 'assert' },
+          start: {
+            action: 'navigate',
+            intent: 'Open the expected application screen.',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+          orphan: {
+            action: 'assert',
+            intent: 'Confirm an unreachable application state.',
+            next: 'orphan-done',
+          },
+          'orphan-done': { action: 'end', status: 'pass' },
         },
       },
     }),
   });
 
-  assert.equal(evaluation.artifact.verdict, 'warn');
-  assert.equal(evaluation.artifact.dimensions.graph_integrity.status, 'warn');
+  assert.equal(evaluation.artifact.verdict, 'fail');
+  assert.equal(evaluation.artifact.dimensions.graph_integrity.status, 'fail');
   assert.match(JSON.stringify(evaluation.artifact.structural_findings), /unreachable/i);
 });
 
-test('loadRecipeQualityEvaluation accepts direct-format entry/nodes recipes', async () => {
+test('loadRecipeQualityEvaluation rejects non-v1 direct-format entry/nodes recipes', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-direct-format-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Legacy task\n');
@@ -450,14 +473,9 @@ test('loadRecipeQualityEvaluation accepts direct-format entry/nodes recipes', as
     }),
   });
 
-  // Gateway is sole producer: a structurally valid recipe earns `pass` from the
-  // structural evaluation even without a hand-authored recipe-quality.json.
-  assert.equal(evaluation.artifact.verdict, 'pass');
-  assert.equal(evaluation.artifact.dimensions.graph_integrity.status, 'pass');
-  assert.doesNotMatch(
-    JSON.stringify(evaluation.artifact.structural_findings),
-    /unknown-recipe-structure/i,
-  );
+  assert.equal(evaluation.artifact.verdict, 'fail');
+  assert.equal(evaluation.artifact.dimensions.graph_integrity.status, 'fail');
+  assert.match(JSON.stringify(evaluation.artifact.structural_findings), /missing_schema/i);
 });
 
 test('loadRecipeQualityEvaluation follows switch default branches when computing reachability', async () => {
@@ -501,17 +519,28 @@ test('loadRecipeQualityEvaluation follows switch default branches when computing
   const evaluation = await loadRecipeQualityEvaluation({
     run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'fix-bug' }),
     recipeJson: JSON.stringify({
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Validate both declared application states.',
       workflow: {
         entry: 'branch',
         nodes: {
           branch: {
             action: 'switch',
-            cases: [{ when: { field: 'vars.foo', operator: 'truthy' }, next: 'case-hit' }],
+            intent: 'Choose the matching application state.',
+            cases: { match: 'case-hit' },
             default: 'default-hit',
           },
-          'case-hit': { action: 'assert', next: 'done' },
-          'default-hit': { action: 'assert', next: 'done' },
-          done: { action: 'end' },
+          'case-hit': {
+            action: 'assert',
+            intent: 'Confirm the matching application state.',
+            next: 'done',
+          },
+          'default-hit': {
+            action: 'assert',
+            intent: 'Confirm the default application state.',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
         },
       },
     }),

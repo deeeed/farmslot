@@ -20,21 +20,21 @@ export {
   STANDARD_UI_ACTIONS,
 } from './adapters/ui.js';
 export {
-  buildResolvedRecipe,
-  composeRecipe,
-  type ComposeRecipeOptions,
-  type ComposeRecipeResult,
+  type ResolvedRecipeDependencies,
+  resolveRecipeDependencies,
+  rootResolutionRef,
+  validateRecipeDependencyParams,
 } from './core/compose.js';
-export type { RecipeLibraryResolution, ResolvedLibraryFlow } from './core/library.js';
+export type { RecipeLibraryResolution, ResolvedLibraryRecipe } from './core/library.js';
 export {
+  applyTaskLocalInvocationTrust,
   defaultRecipeLibrarySources,
   loadRecipeLibraries,
   parseRecipeLibraryPath,
   personalRecipeLibraryRoot,
   resolveRecipeLibrarySources,
 } from './core/library.js';
-export type { PromoteFlowRequest, PromoteFlowResult } from './core/promote.js';
-export { promoteRecipeFlow } from './core/promote.js';
+export { RecipeResolutionError } from './core/resolution-error.js';
 export { createRecipeRunner, defineActionAdapter } from './core/runner.js';
 export {
   buildRecipeExecutionPlan,
@@ -52,3 +52,8 @@ export {
 } from './recording/capture-helper.js';
 export type { CdpVideoRecorderOptions } from './recording/cdp-video-recorder.js';
 export { createCdpVideoRecorder } from './recording/cdp-video-recorder.js';
+export type {
+  RecipeResolutionDependency,
+  RecipeResolutionDocument,
+  RecipeResolutionEdge,
+} from '@farmslot/protocol';

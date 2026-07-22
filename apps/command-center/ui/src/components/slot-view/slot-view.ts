@@ -206,8 +206,8 @@ import {
   getSlotViewHashParam,
   requestedFileFromHash,
   requestedRecipeArtifactFromHash,
+  requestedRecipeDependencyFromHash,
   requestedRecipeEvidenceModeFromHash,
-  requestedRecipeFlowFromHash,
   requestedRecipeNodeFromHash,
   requestedRecipeRunFromHash,
   requestedRecipeViewerModeFromHash,
@@ -318,8 +318,8 @@ export class SlotView extends SlotViewRecipePresenter {
     return requestedRecipeRunFromHash();
   }
 
-  _requestedRecipeFlowFromUrl(): string | null {
-    return requestedRecipeFlowFromHash();
+  _requestedRecipeDependencyFromUrl(): string | null {
+    return requestedRecipeDependencyFromHash();
   }
 
   _requestedRecipeNodeFromUrl(): string | null {

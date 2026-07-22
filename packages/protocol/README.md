@@ -14,7 +14,7 @@ published on the Farmslot docs site:
 
 - [Recipe Protocol v1](https://farmslot.io/docs/reference/recipe-protocol-v1) — canonical recipe schema, action vocabulary, graph rules, artifacts, and quality rules.
 - [Recipe Runner Protocol](https://farmslot.io/docs/reference/recipe-runner-protocol) — runner-facing manifest and artifact guidance.
-- [Recipe Composition Quality](https://farmslot.io/docs/reference/recipe-composition-quality) — how to keep flows concise, reusable, and reviewable.
+- [Recipe Composition Quality](https://farmslot.io/docs/reference/recipe-composition-quality) — how to keep recipes concise, reusable, and reviewable.
 
 If this README conflicts with the public Recipe Protocol v1 reference, the protocol reference wins.
 
@@ -163,8 +163,16 @@ import { validateRecipeArtifactPackage } from '@farmslot/protocol';
 
 const result = validateRecipeArtifactPackage({
   manifest: artifactManifestJson,
-  artifactPaths: ['recipe.json', 'summary.json', 'trace.json', 'artifact-manifest.json'],
+  artifactPaths: [
+    'recipe.json',
+    'recipe-resolution.json',
+    'summary.json',
+    'trace.json',
+    'artifact-manifest.json',
+  ],
   recipe: recipeJson,
+  recipeResolution: recipeResolutionJson,
+  resolvedRecipes: resolvedRecipeDocumentsByDigest,
 });
 ```
 
@@ -174,9 +182,9 @@ These rules keep the public contract small and stable:
 
 1. **Protocol owns vocabulary, not project behavior.** Do not add wallet, Perps,
    checkout, or app-specific actions to the official action list.
-2. **Parameterize before multiplying.** Prefer one configurable action/flow over
+2. **Parameterize before multiplying.** Prefer one configurable action or recipe over
    many near-duplicates.
-3. **Fail closed.** Unknown actions, undeclared preconditions, invalid artifact
+3. **Fail closed.** Unknown actions, undeclared parameters, invalid artifact
    paths, and malformed manifests should produce validation errors, not warnings
    that execution ignores.
 4. **No fabricated proof.** Protocol fields must support real user-visible proof;

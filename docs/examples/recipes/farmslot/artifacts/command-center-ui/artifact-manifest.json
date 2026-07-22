@@ -52,6 +52,12 @@
       "mimeType": "text/plain",
       "proofTarget": "PT-6",
       "covers": ["index-artifacts"]
+    },
+    {
+      "path": "recipe-resolution.json",
+      "type": "json",
+      "label": "Resolved recipe dependency graph",
+      "category": "system"
     }
   ]
 }

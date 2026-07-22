@@ -28,7 +28,10 @@ export function registerValidateCommand(program: Command): void {
     )
     .option('--json', 'Print validation result as JSON')
     .action(async (recipePath: string, options: ValidateCommandOptions) => {
-      const librarySources = await resolveRecipeLibrarySources({ cliEntries: options.library });
+      const librarySources = await resolveRecipeLibrarySources({
+        cliEntries: options.library,
+        recipePath,
+      });
       const result = await validateRecipeCliInput({
         recipePath,
         actionManifestPath: options.actionManifest,

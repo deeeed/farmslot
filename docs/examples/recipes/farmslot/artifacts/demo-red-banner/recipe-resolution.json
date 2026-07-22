@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "root": {
+    "ref": "demo-red-banner",
+    "digest": "sha256:c506641e55806c0f8d9a71952458a985917ba5a8a9862c2aedec41ac9b8cfed8"
+  },
+  "dependencies": [],
+  "edges": []
+}

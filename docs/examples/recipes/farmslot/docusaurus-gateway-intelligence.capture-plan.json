@@ -1,0 +1,47 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Docusaurus Gateway intelligence capture plan",
+  "description": "Open Command Center with a public-safe filter, ask about allowed demo fleet status through gateway intelligence, record the live gateway answer, and emit docs-ready proof artifacts.",
+  "proofTargets": [
+    {
+      "id": "cmdk",
+      "claim": "The operator can open gateway intelligence from Command Center."
+    },
+    {
+      "id": "gateway-answer",
+      "claim": "Gateway intelligence can summarize live allowed demo slot/run state without exposing private project names."
+    }
+  ],
+  "workflow": {
+    "entry": "open-command-center",
+    "nodes": {
+      "open-command-center": {
+        "action": "browser.open",
+        "next": "open-cmd-k",
+        "proves": ["cmdk"],
+        "intent": "Open Command Center with public demo project filters."
+      },
+      "open-cmd-k": {
+        "action": "keyboard.shortcut",
+        "keys": "Meta+K",
+        "next": "ask-status",
+        "intent": "Open the Command Center chat/intelligence drawer."
+      },
+      "ask-status": {
+        "action": "ui.type_submit",
+        "next": "record-proof-window",
+        "proves": ["gateway-answer"],
+        "intent": "Ask for a public-safe summary of allowed demo slots."
+      },
+      "record-proof-window": {
+        "action": "capture.video",
+        "next": "done",
+        "intent": "Record the prompt and live answer."
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

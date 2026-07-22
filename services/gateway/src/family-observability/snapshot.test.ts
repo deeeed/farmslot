@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { buildFamilyObservabilitySnapshotFromRuns } from './snapshot.js';
-import { makeRun, writeArtifact } from './test-fixtures.js';
+import { makeRecipeJson, makeRun, writeArtifact } from './test-fixtures.js';
 
 test('snapshot aggregates family runs, artifacts, and learnings from persisted files', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'family-observability-'));
@@ -18,14 +18,9 @@ test('snapshot aggregates family runs, artifacts, and learnings from persisted f
   await writeArtifact(
     rootDir,
     'artifacts/recipe.json',
-    JSON.stringify({
-      workflow: {
-        entry: 'start',
-        nodes: {
-          start: { action: 'navigate', next: 'done' },
-          done: { action: 'assert' },
-        },
-      },
+    makeRecipeJson({
+      start: { action: 'navigate', intent: 'Open the test target.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
     }),
   );
   await writeArtifact(

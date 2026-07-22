@@ -4,7 +4,11 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
-- Applied declared flow parameter defaults at execution while preserving explicit caller overrides.
+- **BREAKING:** Unify direct and nested execution on parameterized recipes, one ordered recipe index, and one recursive executor; remove the separate reusable graph CLI/runtime.
+- Emit `recipe-resolution.json` plus exact digest-keyed reachable recipes and expose recipe list/describe discovery.
+- Preflight nested parameters, depth, trust, and dependency paths before side effects; resolution failures include stable recovery guidance.
+- Validate composed artifact packages from their retained dependency graph without requiring the source library.
+- Discover an adjacent `recipe-library/` for task-authored recipes.
 
 ## 0.8.0 - 2026-07-19
 

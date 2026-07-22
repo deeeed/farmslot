@@ -11,6 +11,7 @@ import {
   type RecipeQualitySignal,
   type RecipeQualityVerdict,
   type Run,
+  validateRecipeDocument,
 } from '@farmslot/protocol';
 
 const RECIPE_QUALITY_FILENAME = 'recipe-quality.json';
@@ -221,200 +222,71 @@ function evaluateRecipeStructure(
     };
   }
 
+  const validation = validateRecipeDocument(parsed, { skipRecipeCallResolution: true });
   const workflow =
-    parsed?.validate?.workflow ??
-    parsed?.workflow ??
-    (parsed &&
-    typeof parsed === 'object' &&
-    typeof parsed.entry === 'string' &&
-    parsed.nodes &&
-    typeof parsed.nodes === 'object'
-      ? parsed
-      : null);
-  const findings: RecipeQualityArtifact['structural_findings'] = [];
-  const dimensions: RecipeQualityArtifact['dimensions'] = {};
-  const suggestions = new Set<string>();
-  let verdict: RecipeQualityVerdict = 'pass';
-  let proofMode: StructuralRecipeEvaluation['proof_mode'] = 'unknown';
-
-  if (
-    workflow &&
-    typeof workflow === 'object' &&
-    typeof workflow.entry === 'string' &&
-    workflow.nodes &&
-    typeof workflow.nodes === 'object'
-  ) {
-    proofMode = 'mixed';
-    const nodes = workflow.nodes as Record<string, Record<string, unknown>>;
-    if (!nodes[workflow.entry]) {
-      verdict = worstVerdict(verdict, 'fail');
-      findings.push({
-        code: 'missing-entry-node',
-        message: `Workflow entry "${workflow.entry}" is not present in nodes.`,
-        evidence: ['recipe.json'],
-      });
-    }
-
-    const referenced = new Set<string>();
-    for (const [nodeId, node] of Object.entries(nodes)) {
-      if (typeof node.action !== 'string' || node.action.length === 0) {
-        verdict = worstVerdict(verdict, 'fail');
-        findings.push({
-          code: 'missing-node-action',
-          message: `Node "${nodeId}" is missing a string action.`,
-          evidence: ['recipe.json'],
-        });
-      }
-      if (node.action === 'manual') {
-        verdict = worstVerdict(verdict, 'fail');
-        findings.push({
-          code: 'manual-action',
-          message: `Node "${nodeId}" uses manual action, which violates shared recipe-quality rules.`,
-          evidence: ['recipe.json'],
-        });
-        suggestions.add(
-          'Replace manual steps with executable actions or explicit UNTESTABLE rationale.',
-        );
-      }
-      if (typeof node.next === 'string') referenced.add(node.next);
-      if (typeof node.default === 'string') referenced.add(node.default);
-      if (Array.isArray(node.cases)) {
-        for (const entry of node.cases) {
-          if (entry && typeof entry === 'object' && typeof entry.next === 'string')
-            referenced.add(entry.next);
-        }
-      }
-    }
-
-    for (const target of referenced) {
-      if (!nodes[target] && target !== 'end') {
-        verdict = worstVerdict(verdict, 'fail');
-        findings.push({
-          code: 'missing-next-target',
-          message: `Workflow references missing target "${target}".`,
-          evidence: ['recipe.json'],
-        });
-      }
-    }
-
-    const reachable = new Set<string>();
-    const queue = [workflow.entry];
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (!current || reachable.has(current) || !nodes[current]) continue;
-      reachable.add(current);
-      const node = nodes[current];
-      if (typeof node.next === 'string') queue.push(node.next);
-      if (typeof node.default === 'string') queue.push(node.default);
-      if (Array.isArray(node.cases)) {
-        for (const entry of node.cases) {
-          if (entry && typeof entry === 'object' && typeof entry.next === 'string')
-            queue.push(entry.next);
-        }
-      }
-    }
-
-    const unreachable = Object.keys(nodes).filter((nodeId) => !reachable.has(nodeId));
-    if (unreachable.length > 0) {
-      verdict = worstVerdict(verdict, 'warn');
-      findings.push({
-        code: 'unreachable-nodes',
-        message: `Workflow contains unreachable nodes: ${unreachable.join(', ')}`,
-        evidence: ['recipe.json'],
-      });
-      suggestions.add('Remove unreachable nodes or reconnect them from the active workflow graph.');
-    }
-
-    dimensions.graph_integrity = {
-      status: verdict === 'fail' ? 'fail' : unreachable.length > 0 ? 'warn' : 'pass',
-      reason:
-        verdict === 'fail'
-          ? 'Workflow graph has missing entry, missing targets, or invalid node actions.'
-          : unreachable.length > 0
-            ? 'Workflow graph is valid but contains unreachable nodes.'
-            : 'Workflow graph is structurally valid.',
-      evidence: ['recipe.json'],
-    };
-    dimensions.action_contract = {
-      status: findings.some(
-        (finding) => finding.code === 'manual-action' || finding.code === 'missing-node-action',
-      )
-        ? 'fail'
-        : 'pass',
-      reason: findings.some((finding) => finding.code === 'manual-action')
-        ? 'Recipe contains manual or malformed actions.'
-        : 'All graph nodes expose executable action strings.',
-      evidence: ['recipe.json'],
-    };
-  } else if (Array.isArray(parsed?.steps)) {
-    proofMode = 'unknown';
-    const badStep = parsed.steps.find(
-      (step: unknown) =>
-        !step ||
-        typeof step !== 'object' ||
-        typeof (step as Record<string, unknown>).action !== 'string',
-    );
-    if (badStep) {
-      verdict = 'fail';
-      findings.push({
-        code: 'invalid-step-shape',
-        message: 'Legacy step recipe contains an entry without a string action.',
-        evidence: ['recipe.json'],
-      });
-    }
-    dimensions.graph_integrity = {
-      status: verdict === 'fail' ? 'fail' : 'pass',
-      reason:
-        verdict === 'fail'
-          ? 'Legacy step recipe has invalid step shape.'
-          : 'Legacy step recipe has executable actions.',
-      evidence: ['recipe.json'],
-    };
-    dimensions.action_contract = {
-      status: verdict === 'fail' ? 'fail' : 'pass',
-      reason:
-        verdict === 'fail'
-          ? 'At least one step is missing an action.'
-          : 'Legacy step recipe steps declare action strings.',
-      evidence: ['recipe.json'],
-    };
-    if (
-      parsed.steps.some(
-        (step: unknown) =>
-          typeof (step as Record<string, unknown>)?.action === 'string' &&
-          (step as Record<string, unknown>).action === 'manual',
-      )
-    ) {
-      verdict = 'fail';
-      findings.push({
-        code: 'manual-step-action',
-        message: 'Legacy step recipe contains a manual action.',
-        evidence: ['recipe.json'],
-      });
-      suggestions.add('Replace manual steps with executable actions.');
-    }
-  } else {
-    verdict = 'fail';
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>).workflow
+      : null;
+  const nodes =
+    workflow && typeof workflow === 'object' && !Array.isArray(workflow)
+      ? (workflow as Record<string, unknown>).nodes
+      : null;
+  const manualNodes =
+    nodes && typeof nodes === 'object' && !Array.isArray(nodes)
+      ? Object.entries(nodes as Record<string, unknown>).flatMap(([nodeId, node]) =>
+          node &&
+          typeof node === 'object' &&
+          !Array.isArray(node) &&
+          (node as Record<string, unknown>).action === 'manual'
+            ? [nodeId]
+            : [],
+        )
+      : [];
+  const findings: RecipeQualityArtifact['structural_findings'] = validation.findings.map(
+    (finding) => ({
+      code: finding.code,
+      message: finding.message,
+      evidence: [`recipe.json:${finding.path}`],
+    }),
+  );
+  for (const nodeId of manualNodes) {
     findings.push({
-      code: 'unknown-recipe-structure',
-      message: 'recipe.json does not expose a recognized workflow or legacy step structure.',
+      code: 'manual-action',
+      message: `Node "${nodeId}" uses manual action, which violates shared recipe-quality rules.`,
       evidence: ['recipe.json'],
     });
-    dimensions.graph_integrity = {
-      status: 'fail',
-      reason: 'Recipe structure is not recognized by the shared evaluator.',
-      evidence: ['recipe.json'],
-    };
-    suggestions.add(
-      'Write recipe.json as a workflow graph or legacy step list with executable actions.',
-    );
   }
+  const verdict: RecipeQualityVerdict =
+    validation.status === 'invalid' || manualNodes.length > 0 ? 'fail' : 'pass';
+  const suggestions =
+    verdict === 'fail'
+      ? ['Fix the reported Recipe Protocol v1 violations before relying on this evidence.']
+      : [];
+  const dimensions: RecipeQualityArtifact['dimensions'] = {
+    graph_integrity: {
+      status: validation.status === 'valid' ? 'pass' : 'fail',
+      reason:
+        validation.status === 'valid'
+          ? 'Recipe Protocol v1 graph is structurally valid.'
+          : 'Recipe document violates the canonical Recipe Protocol v1 contract.',
+      evidence: ['recipe.json'],
+    },
+    action_contract: {
+      status: manualNodes.length === 0 ? 'pass' : 'fail',
+      reason:
+        manualNodes.length === 0
+          ? 'All graph nodes expose executable action strings.'
+          : 'Recipe contains manual actions.',
+      evidence: ['recipe.json'],
+    },
+  };
+  const proofMode: StructuralRecipeEvaluation['proof_mode'] = nodes ? 'mixed' : 'unknown';
 
   return {
     verdict,
     dimensions,
     structural_findings: findings,
-    suggested_recipe_delta: [...suggestions],
+    suggested_recipe_delta: suggestions,
     proof_mode: proofMode,
   };
 }

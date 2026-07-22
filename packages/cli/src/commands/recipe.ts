@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Command } from 'commander';
@@ -6,7 +6,6 @@ import type { Command } from 'commander';
 import {
   getRecipeActionManifestActionNames,
   isRecord,
-  mergeRecipeValidationResults,
   Methods,
   type RecipeActionManifestDocument,
   type RecipeProjectHookCommandResult,
@@ -14,19 +13,20 @@ import {
   type RecipeProjectHookRunResult,
   type RecipeValidationFinding,
   type RecipeValidationResult,
+  resolvedRecipeArtifactPath,
   validateRecipeArtifactPackage,
-  validateRecipeDocument,
 } from '@farmslot/protocol';
 import {
-  composeRecipe,
+  applyTaskLocalInvocationTrust,
   createRecipeRunner,
   createStandardCoreAdapters,
-  parseRecipeLibraryPath,
-  type RecipeLibrarySource,
+  resolveRecipeLibrarySources,
   resolveRecipeTrustInput,
 } from '@farmslot/recipe-harness';
 import {
+  parseRecipeParamAssignments,
   readRecipeCliJsonFile,
+  readRecipeCliJsonFileWithinRoot,
   resolveRecipeCliPath,
   validateRecipeCliInput,
 } from '@farmslot/recipe-harness/cli/support';
@@ -44,7 +44,6 @@ interface RecipeValidateOptions {
   artifactDir?: string;
   actionManifest?: string;
   librarySource?: string[];
-  emitResolved?: boolean;
 }
 
 interface RecipeArtifactsValidateOptions {
@@ -61,6 +60,8 @@ interface RecipeRunOptions {
   sourceName?: string;
   sourceDigest?: string;
   approvePlan?: string;
+  adapter?: string;
+  librarySource?: string[];
 }
 
 interface RecipeProjectHookOptions {
@@ -83,27 +84,6 @@ function statusLabel(status: RecipeValidationResult['status']): string {
 
 function collectLibrarySource(value: string, previous: string[]): string[] {
   return [...previous, value];
-}
-
-async function emitResolvedRecipeArtifact(
-  recipePath: string,
-  librarySources: RecipeLibrarySource[],
-): Promise<RecipeValidationResult | undefined> {
-  const resolvedRecipePath = resolveRecipeCliPath(recipePath);
-  const recipe = await readRecipeCliJsonFile(recipePath);
-  const { resolved, flowCount } = await composeRecipe(recipe, {
-    projectRoot: process.env.INIT_CWD ?? process.cwd(),
-    recipeDir: path.dirname(resolvedRecipePath),
-    librarySources: librarySources.length > 0 ? librarySources : undefined,
-  });
-  // A recipe that composes no flows is already self-contained; recipe.json is the
-  // full composition, so there is nothing extra to emit or validate.
-  if (flowCount === 0) return undefined;
-  const outputPath = path.join(path.dirname(resolvedRecipePath), 'resolved-recipe.json');
-  await writeFile(outputPath, `${JSON.stringify(resolved, null, 2)}\n`);
-  // Validate the emitted composition in full so the static resolve-check fails when
-  // the composed artifact is not self-contained.
-  return validateRecipeDocument(resolved);
 }
 
 function findingLabel(finding: RecipeValidationFinding): string {
@@ -136,20 +116,7 @@ function addArtifactCheck(
 }
 
 async function readArtifactJson(artifactDir: string, relativePath: string): Promise<unknown> {
-  const filePath = path.join(artifactDir, relativePath);
-  let text: string;
-  try {
-    text = await readFile(filePath, 'utf-8');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to read ${relativePath}: ${message}`);
-  }
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to parse ${relativePath}: ${message}`);
-  }
+  return readRecipeCliJsonFileWithinRoot(artifactDir, relativePath);
 }
 
 async function readArtifactJsonIfPresent(
@@ -172,7 +139,7 @@ async function listRelativeArtifactFiles(root: string): Promise<string[]> {
       const relativePath = path.join(relativeDir, entry.name);
       if (entry.isDirectory()) {
         await visit(relativePath);
-      } else if (entry.isFile()) {
+      } else if (entry.isFile() || entry.isSymbolicLink()) {
         output.push(relativePath.split(path.sep).join('/'));
       }
     }
@@ -295,8 +262,8 @@ export async function validateRecipeArtifactDirectory(
     recipe: artifactPathSet.has('recipe.json')
       ? await readArtifactJsonIfPresent(artifactDir, 'recipe.json')
       : { value: undefined },
-    resolvedRecipe: artifactPathSet.has('resolved-recipe.json')
-      ? await readArtifactJsonIfPresent(artifactDir, 'resolved-recipe.json')
+    recipeResolution: artifactPathSet.has('recipe-resolution.json')
+      ? await readArtifactJsonIfPresent(artifactDir, 'recipe-resolution.json')
       : { value: undefined },
   };
 
@@ -317,11 +284,11 @@ export async function validateRecipeArtifactDirectory(
     );
   }
 
-  // recipe.json and resolved-recipe.json are optional, but a present-but-unreadable
-  // one must fail — never silently skip the recipe/composition validation.
-  for (const optionalPath of ['recipe.json', 'resolved-recipe.json'] as const) {
+  // These files are optional only when the package omits recipe.json. A present but
+  // unreadable file always fails.
+  for (const optionalPath of ['recipe.json', 'recipe-resolution.json'] as const) {
     if (!artifactPathSet.has(optionalPath)) continue;
-    const read = optionalPath === 'recipe.json' ? reads.recipe : reads.resolvedRecipe;
+    const read = optionalPath === 'recipe.json' ? reads.recipe : reads.recipeResolution;
     addArtifactCheck(
       checks,
       `file.${optionalPath}`,
@@ -333,24 +300,28 @@ export async function validateRecipeArtifactDirectory(
   const summary = reads.summary.value;
   const trace = reads.trace.value;
   const manifest = reads.manifest.value;
-  // Default to the package's own recipe.json so composition is proven without an
-  // explicit --recipe; --recipe overrides it for cross-checking a resolved recipe.
+  // Default to the package's own recipe.json; --recipe overrides it for cross-checking.
   const recipe = opts.recipe ? await readRecipeCliJsonFile(opts.recipe) : reads.recipe.value;
-
-  // validateRecipeArtifactPackage validates the recipe document internally
-  // (protocol/recipe/artifact.ts) whenever `recipe` is present, so calling
-  // validateRecipeDocument separately here would double-count every finding. Passing
-  // runPassed lets it validate the composition in full only for a passing run —
-  // matching the runner/gateway — so CLI and gateway verdicts stay in sync.
-  const resolvedRecipe = reads.resolvedRecipe.value;
+  const recipeResolution = reads.recipeResolution.value;
+  const resolvedRecipes: Record<string, unknown> = {};
+  if (isRecord(recipeResolution) && Array.isArray(recipeResolution.dependencies)) {
+    for (const dependency of recipeResolution.dependencies) {
+      if (!isRecord(dependency)) continue;
+      const artifact = resolvedRecipeArtifactPath(dependency.digest);
+      if (!artifact) continue;
+      const read = await readArtifactJsonIfPresent(artifactDir, artifact);
+      if (read.value !== undefined) resolvedRecipes[String(dependency.digest)] = read.value;
+      if (read.error) {
+        addArtifactCheck(checks, `file.${artifact}`, 'fail', read.error);
+      }
+    }
+  }
   const recipeValidation = validateRecipeArtifactPackage({
     recipe,
     manifest,
     artifactPaths,
-    ...(resolvedRecipe !== undefined ? { resolvedRecipe } : {}),
-    // Only a confirmed failure relaxes composition enforcement; unknown/missing status
-    // still requires the composition to be proven.
-    runPassed: !(isRecord(summary) && summary.status === 'fail'),
+    recipeResolution,
+    resolvedRecipes,
   });
 
   const summaryStatus = isRecord(summary) ? summary.status : undefined;
@@ -488,10 +459,6 @@ export function registerRecipeCommand(program: Command): void {
       collectLibrarySource,
       [],
     )
-    .option(
-      '--emit-resolved',
-      'Write resolved-recipe.json (the full composition) next to each recipe',
-    )
     .action(async (recipePaths: string[], opts: RecipeValidateOptions, cmd: Command) => {
       const globals = cmd.optsWithGlobals();
       const output = new OutputContext(Boolean(globals.json));
@@ -502,23 +469,19 @@ export function registerRecipeCommand(program: Command): void {
             '--artifact-dir/--artifact-manifest validate a single recipe package; pass exactly one recipe.',
           );
         }
-        const librarySources = (opts.librarySource ?? []).flatMap((spec) =>
-          parseRecipeLibraryPath(spec),
-        );
-
         const results: Array<{ recipePath: string; result: RecipeValidationResult }> = [];
         for (const recipePath of recipePaths) {
-          let result = await validateRecipeCliInput({
+          const librarySources = await resolveRecipeLibrarySources({
+            cliEntries: opts.librarySource,
+            recipePath: resolveRecipeCliPath(recipePath),
+          });
+          const result = await validateRecipeCliInput({
             recipePath,
             actionManifestPath: opts.actionManifest,
             artifactManifestPath: opts.artifactManifest,
             artifactDir: opts.artifactDir,
             librarySources: librarySources.length > 0 ? librarySources : undefined,
           });
-          if (opts.emitResolved) {
-            const composed = await emitResolvedRecipeArtifact(recipePath, librarySources);
-            if (composed) result = mergeRecipeValidationResults([result, composed]);
-          }
           results.push({ recipePath, result });
         }
 
@@ -665,6 +628,7 @@ export function registerRecipeCommand(program: Command): void {
     .command('run')
     .description('Run a recipe through the reusable Farmslot recipe harness')
     .argument('<recipe>', 'Path to recipe.json')
+    .argument('[params...]', 'Recipe parameters as key=value')
     .requiredOption('--artifacts-dir <path>', 'Directory where the v1 artifact package is written')
     .requiredOption('--action-manifest <path>', 'Runner action manifest for this recipe')
     .option(
@@ -676,50 +640,76 @@ export function registerRecipeCommand(program: Command): void {
     .option('--source-name <name>', 'Human-readable recipe source name')
     .option('--source-digest <digest>', 'Caller-computed source digest')
     .option('--approve-plan <digest>', 'Approve exactly one resolved execution-plan digest')
-    .action(async (recipePath: string, opts: RecipeRunOptions, cmd: Command) => {
-      const globals = cmd.optsWithGlobals();
-      const output = new OutputContext(Boolean(globals.json));
-      const emit = createEmitter(output, cmd);
+    .option('--adapter <name>', 'Active adapter for adapter-specific library recipes')
+    .option(
+      '--library-source <spec>',
+      'Recipe library source (name=path or path, colon-separated); repeatable',
+      collectLibrarySource,
+      [],
+    )
+    .action(
+      async (
+        recipePath: string,
+        paramAssignments: string[],
+        opts: RecipeRunOptions,
+        cmd: Command,
+      ) => {
+        const globals = cmd.optsWithGlobals();
+        const output = new OutputContext(Boolean(globals.json));
+        const emit = createEmitter(output, cmd);
 
-      try {
-        if (!opts.artifactsDir) throw new Error('Missing --artifacts-dir.');
-        if (!opts.actionManifest) throw new Error('Missing --action-manifest.');
-        const actionManifest = await readRecipeCliJsonFile(opts.actionManifest);
-        const runner = createRecipeRunner({
-          actionManifest: actionManifest as RecipeActionManifestDocument,
-          adapters: createStandardCoreAdapters({
-            actions: getRecipeActionManifestActionNames(actionManifest),
-          }),
-          defaultSource: {
-            kind: 'operator',
-            trust: 'trusted',
-            name: '@farmslot/cli',
-          },
-        });
-        const result = await runner.run({
-          recipePath: resolveRecipeCliPath(recipePath),
-          artifactsDir: resolveRecipeCliPath(opts.artifactsDir),
-          projectRoot: opts.projectRoot
-            ? resolveRecipeCliPath(opts.projectRoot)
-            : resolveRecipeCliPath('.'),
-          ...resolveRecipeTrustInput({
+        try {
+          if (!opts.artifactsDir) throw new Error('Missing --artifacts-dir.');
+          if (!opts.actionManifest) throw new Error('Missing --action-manifest.');
+          const actionManifest = await readRecipeCliJsonFile(opts.actionManifest);
+          const runner = createRecipeRunner({
+            actionManifest: actionManifest as RecipeActionManifestDocument,
+            adapters: createStandardCoreAdapters({
+              actions: getRecipeActionManifestActionNames(actionManifest),
+            }),
+            defaultSource: {
+              kind: 'operator',
+              trust: 'trusted',
+              name: '@farmslot/cli',
+            },
+          });
+          const trust = resolveRecipeTrustInput({
             sourceTrust: opts.sourceTrust,
             sourceKind: opts.sourceKind,
             sourceName: opts.sourceName,
             sourceDigest: opts.sourceDigest,
             approvalDigest: opts.approvePlan,
-          }),
-        });
-        if (emit.machine) {
-          emit.ok(result);
-        } else {
-          output.write(
-            `Recipe run: ${runStatusLabel(result.status)}\nArtifacts: ${result.artifactManifestPath}\n`,
+          });
+          const invocationTrust = trust.source?.trust ?? 'trusted';
+          const librarySources = applyTaskLocalInvocationTrust(
+            await resolveRecipeLibrarySources({
+              cliEntries: opts.librarySource,
+              recipePath: resolveRecipeCliPath(recipePath),
+            }),
+            invocationTrust,
           );
+          const result = await runner.run({
+            recipePath: resolveRecipeCliPath(recipePath),
+            artifactsDir: resolveRecipeCliPath(opts.artifactsDir),
+            projectRoot: opts.projectRoot
+              ? resolveRecipeCliPath(opts.projectRoot)
+              : resolveRecipeCliPath('.'),
+            params: parseRecipeParamAssignments(paramAssignments),
+            ...(opts.adapter ? { adapter: opts.adapter } : {}),
+            librarySources,
+            ...trust,
+          });
+          if (emit.machine) {
+            emit.ok(result);
+          } else {
+            output.write(
+              `Recipe run: ${runStatusLabel(result.status)}\nArtifacts: ${result.artifactManifestPath}\n`,
+            );
+          }
+          if (result.status !== 'pass') process.exitCode = 1;
+        } catch (error) {
+          emit.fail(error);
         }
-        if (result.status !== 'pass') process.exitCode = 1;
-      } catch (error) {
-        emit.fail(error);
-      }
-    });
+      },
+    );
 }

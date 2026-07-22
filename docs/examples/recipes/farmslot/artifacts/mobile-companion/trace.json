@@ -37,7 +37,7 @@
     "ok": true,
     "durationMs": 950,
     "artifacts": ["screenshots/mobile-companion-artifacts.svg"],
-    "intent": "Capture the Mobile Companion artifact viewer with the selected recipe-run evidence visible."
+    "intent": "Record the Mobile Companion artifact viewer with the selected recipe-run evidence visible."
   },
   {
     "id": "index-artifacts",

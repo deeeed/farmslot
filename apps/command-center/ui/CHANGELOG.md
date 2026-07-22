@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix: show namespaced runtime evidence when inspecting nodes from a composed recipe dependency.
 - feat: dispatch wizard candidate rows that FIND_SLOT would reject (branch ownership, missing companion resources) render disabled with a NOT ELIGIBLE badge and reason tooltip, are excluded from auto-pick, and suppress nudge/fresh actions (`DispatchCandidate.ineligibleReason`).
 
 - refactor: unified independent-review language (MANUAL-000008) — review timeline, gate summary, ready-workspace modal/shell, dispatch wizard and dispatch-config surfaces label every automated pass **Independent review** (operator-requested passes as _Independent review (requested)_); runner diversity renders as policy metadata (`runner: <id>` / `runner diversity`) via the new `reviewPolicyLabel` helper instead of the retired _External review_ / _Extra review_ kinds. Persisted decision-action ids are unchanged.

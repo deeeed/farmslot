@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **BREAKING:** Task artifact checks require Recipe v1 resolution metadata and exact reachable dependency documents.
+- security: resolved dependency reads use digest-derived paths only.
+- Validate authored recipes separately from their executed `artifacts/recipe-run` package.
+
 - fix: worker-template lint now fails templates that omit `./mark` entirely when the resolved contract requires a terminal signal — previously such templates were skipped and produced no author-time issue (mark-less templates stay valid for `requireSignal: false` flows such as interactive pr-complete).
 - fix: builtin `self-review` / `self-review-fix` contracts require the reviewer artifacts the templates actually produce (`artifacts/review-feedback.md` / `artifacts/report.md`) instead of `artifacts/learnings.md`, and the runtime flow-report mapping + heading inference cover both flows — unbreaks `yarn quality:worker-templates`, which was failing on main.
 - fix: recognize CI-fix worker headings as the `ci-fix` flow and lint task-dir `mark --checklist ...` terminal commands, so `CI-FIX-SIGNAL.json` uses the intended report contract.

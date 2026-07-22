@@ -28,8 +28,11 @@ test('inferArtifactPurpose keeps before/after videos classified as directional v
   assert.equal(inferArtifactPurpose('nested/after.webm'), 'video-after');
 });
 
-test('inferArtifactPurpose classifies bundled recipe flows separately from generic json', () => {
-  assert.equal(inferArtifactPurpose('recipe-flows/subflow.json'), 'recipe-flow');
+test('inferArtifactPurpose classifies bundled recipe dependencies separately from generic json', () => {
+  assert.equal(
+    inferArtifactPurpose('recipe-library/recipes/demo/login.recipe.json'),
+    'recipe-library',
+  );
   assert.equal(inferArtifactPurpose('trace.json'), 'other');
 });
 

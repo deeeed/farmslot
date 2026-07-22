@@ -1,117 +1,67 @@
 # ADR-034: Recipe Protocol v1
 
-**Status:** Accepted
-**Owner:** Arthur / Farmslot
-**Last updated:** 2026-07-04
-**Stale by:** 2026-08-30
-**Relates to:** [ADR-019](019-recipe-graph-visualization.md), [ADR-026](026-self-improvement-recursive-loop.md), [ADR-030](030-replay-provenance-and-reference-evals.md), [Recipe Protocol v1 Spec](../reference/recipe-protocol-v1.md), [Generic Recipe Protocol v1 PRD](../plans/generic-recipe-protocol.md)
+- Status: Accepted
+- Date: 2026-04-29
+- Updated: 2026-07-22
 
 ## Context
 
-Farmslot has converged on recipe-driven validation as the evidence substrate for project work, replay, self-validation, and run-family comparison. Several docs and project implementations already use the `validate.workflow.entry` + `nodes` graph shape, but the architecture has not had one decision that names Recipe Protocol v1 as the shared product-level contract.
-
-ADR-019 accepted recipe graph visualization: Farmslot can render a recipe graph for reviewers. That decision intentionally stayed UI-only. It did not decide the full protocol boundary: graph schema, runner contract, action manifests, flow catalogs, start-state convergence, proof-target mapping, trace, artifact manifests, or proof-window evidence.
-
-This ADR establishes Recipe Protocol v1 as that architecture. The detailed field-level contract lives in [Recipe Protocol v1](../reference/recipe-protocol-v1.md).
+Farmslot needs one deterministic proof contract across backend, browser, mobile, native, and CLI projects. Project-specific scripts alone do not give reviewers a shared graph, trace, trust, or artifact model.
 
 ## Decision
 
-Recipe Protocol v1 is the shared Farmslot contract for executable validation recipes. It standardizes graph orchestration, runner boundaries, action/flow extension, trace, artifact manifests, and evidence phases while preserving the original recipe intent: recipes are directed graphs, not linear scripts. Branching, setup convergence, reusable subflows, assertions, proof media, and teardown all remain part of one graph model and one final trace/artifact package.
+Recipe Protocol v1 defines two public concepts:
 
-The simple default is a flat `validate.workflow.entry` + `nodes` graph. A project can start there. When a recipe needs reusable setup, domain start state, or AC-specific proof boundaries, it uses the same v1 schema with these additive fields:
+1. **Action** — one atomic capability implemented by a runner.
+2. **Recipe** — one parameterized executable graph that can run directly or be called by another recipe.
 
-- `uses` — optional flow catalog references;
-- `proofTargets` — optional AC/proof-target declarations;
-- `startState` — optional named flow call that converges the app/project before proof begins;
-- `call` — the canonical Farmslot action for invoking a named flow from a catalog;
-- `phase` — optional node/flow phase: `setup`, `start_state`, `proof`, `assert`, or `teardown`;
-- `proofTarget` — optional node/artifact mapping to one `proofTargets[].id`;
-- `record` — optional recording/evidence policy: `none`, `trace_only`, `proof_window`, or `failure_only`.
+`workflow` is the recipe's graph field. It is not a separate reusable artifact.
 
-The protocol owns graph execution, flow expansion, validation, nested trace shape, artifact indexing, and generic evidence policy. Project runners own domain flow catalogs. For example, Farmslot defines how to call a start-state flow; the Example App runner defines flows such as `example.wallet.ensure_unlocked` and `example.trade.start_state`.
+The canonical specification is `docs/reference/recipe-protocol-v1.md`; the published JSON Schema is `https://farmslot.io/schemas/recipe-v1.schema.json`.
 
-## D-034-01: Adopt Recipe Protocol v1 as the canonical contract
+## D-034-01: One document and executor
 
-Recipe Protocol v1 is the canonical contract for new Farmslot recipes. `docs/reference/recipe-protocol-v1.md` is the source of truth for schema, validation, trace, artifact package, runner, action manifest, and flow catalog details.
+Root and called recipes use the same schema, validator, parameter resolver, graph executor, observer behavior, HUD path, nested trace, and evidence rules.
 
-The protocol is progressive:
+Every recipe may declare `paramsSchema`. Defaults apply before validation and explicit values win. Direct runs accept `key=value`; nested calls pass `call.params`.
 
-1. flat graph;
-2. graph with `proofTargets`;
-3. graph with setup/teardown phases;
-4. graph with `uses` + `call` flow composition;
-5. graph with `startState` and proof-window evidence.
+## D-034-02: Static composition
 
-## D-034-02: Keep the default easy
+A `call` node references another recipe by a static id. The complete transitive graph resolves before side effects. The runner rejects missing or dynamic refs, duplicate ids, cycles, excessive depth, unsafe source paths, and invalid adapter variants.
 
-Flat recipes remain valid v1 recipes. Flow catalogs are optional. Backend/CLI recipes that only need one `command` and assertions do not need `startState`, `phase`, proof video, or domain flows.
+Direct `run` and nested `call` use the same ordered recipe index. The first source wins and lower-priority matches remain visible as shadows.
 
-When composition is needed, Recipe v1 uses the official `call` action. A `call` node composes another graph into the current graph by invoking a cataloged flow through `ref` and optional `params`:
+## D-034-03: Projects extend through actions and recipes
 
-```json
-{
-  "action": "call",
-  "ref": "example.trade.start_state",
-  "params": { "network": "testnet", "provider": "hyperliquid", "page": "positions" }
-}
-```
+Farmslot owns graph execution, static resolution, trust, trace, and artifact contracts. Projects own namespaced action implementations and libraries of parameterized recipes.
 
-## D-034-03: Project extension uses actions and flow catalogs
+Libraries contain `library.json` plus `recipes/`. Recipe identity derives from the path. Adapter suffixes `.core`, `.extension`, and `.mobile` select variants without changing the id.
 
-Projects extend the protocol through namespaced actions and flow catalogs. Farmslot core must not encode project domains. Domain catalogs should stay small: prefer parameterized actions/flows over duplicate positive/negative, route-specific, or provider-specific variants.
+Prefer parameters over near-duplicate recipes. Add reusable recipes only when they reduce repeated inference or enforce a safety invariant.
 
-An `ensure_*` flow is a recommended convergence contract for reusable setup: it inspects current state, performs only required transitions, and must prove a machine-checkable postcondition before returning success. Domain flows should avoid becoming opaque scripts; they should compose smaller contracts when practical.
+## D-034-04: Exact evidence
 
-## D-034-04: Evidence phases separate setup from proof
+Each run retains:
 
-Setup and start-state work is always visible in `trace.json` and `summary.json`. Proof media defaults to the smallest user-visible interaction that proves the acceptance criterion.
+- the authored root as `recipe.json`;
+- every reachable dependency as `resolved-recipes/<sha256>.recipe.json`;
+- `recipe-resolution.json` with root/dependency digests, selected sources, adapter variants, and call edges;
+- summary, trace, and typed artifact manifest.
 
-Default record policy by phase:
+Artifact validation applies the same Recipe v1 validator to every document and verifies exact digests, edges, reachability, and file presence.
 
-| Phase         | Default `record` | Purpose                      |
-| ------------- | ---------------- | ---------------------------- |
-| `setup`       | `trace_only`     | Deterministic preparation.   |
-| `start_state` | `trace_only`     | Converge to domain baseline. |
-| `proof`       | `proof_window`   | User-visible AC interaction. |
-| `assert`      | `trace_only`     | Settled-state verification.  |
-| `teardown`    | `trace_only`     | Cleanup.                     |
+## D-034-05: Transitive trust
 
-A recipe may override `record` when setup itself is the claim.
+The execution approval binds the root and every reachable recipe digest/source, action implementations, environment, project root, and artifact destination before any side effect. A caller cannot gain capabilities through a dependency.
 
-## D-034-05: Validation is part of the protocol
+## D-034-06: Proof semantics
 
-A v1 validator must reject or warn on unresolved flow refs, missing catalogs, invalid params, recursive/cyclic calls beyond the allowed depth, output namespace collisions, invalid phases/record values, missing proof-target mapping for proof/assert/evidence nodes, missing evidence for visible proof targets, unproven `ensure_*` postconditions, and malformed nested trace/artifact links.
-
-## D-034-06: Runtime helpers are not skills
-
-Protocol-owned quality contracts, including `RecipeQualityArtifact`, live in `@farmslot/protocol` so Gateway, runners, and task-local checks share the same validator. Runtime enforcement for task directories lives in `@farmslot/agent-runtime`: `mark`, `SIGNAL.json`, worker terminal contract resolution, and artifact contract checks.
-
-`@farmslot/skills` remains the instruction and installer package. It may ship compatibility shims for one migration window, but it is not the long-term owner for reusable runtime scripts.
-
-## Implementation status (2026-07-04)
-
-ADR-034 is implemented for the Farmslot monorepo and first-party project paths:
-
-- `@farmslot/protocol` owns recipe, action-manifest, artifact-package, and `RecipeQualityArtifact` validators.
-- `@farmslot/recipe-harness`, `@farmslot/expo-recipe`, and the Command Center runner emit typed `artifact-manifest.json` packages with `summary.json`, `trace.json`, and resolved `recipe.json`.
-- `@farmslot/agent-runtime` owns task-local recipe-quality producer tooling and runtime artifact checks; `@farmslot/skills` remains instructions/installers.
-- Gateway hard-gates `hooks.recipe_run` and live rerun artifacts with `validateRecipeArtifactPackage`, and Command Center/Gateway rendering prefers valid typed manifests with legacy scanning quarantined to invalid/missing-manifest fallback.
-- `projects/farmslot-farm/setup/validate-recipe.sh` routes CLI/web and Companion mobile runs through harness-backed producers using the same `--artifacts-dir` contract, with repo-local conformance tests.
-- `yarn e2e:recipe-protocol` executes the self-validation suite through a real harness run and validates the emitted v1 package; a live `@deeeed/metamask-harness` core-slot artifact package validates against the Farmslot protocol CLI.
-
-External project adoption, richer domain flow catalogs, and replay/corpus use are continuing product work, but they are consumers of Recipe Protocol v1 rather than open ADR-034 implementation requirements.
+Recipes are directed graphs, not linear scripts. Setup, start state, branching, assertions, proof media, and teardown remain in one trace and artifact package. An idempotent `ensure_*` recipe proves convergence with ordinary read/assert nodes.
 
 ## Consequences
 
-- `/recipe-cook` and `/recipe-quality` become authoring/review helpers over the protocol, not the protocol source of truth.
-- Task-local closeout helpers can be reused by skills-only projects through `@farmslot/agent-runtime` without installing Gateway or Command Center.
-- Example App and other project runners can migrate task-specific validation into reusable domain start-state flows and concise AC proof flows.
-- Command Center, eval packages, and replay tooling can reason about proof windows and setup trace consistently.
-- Future protocol changes should update the canonical spec, schema/types, validator, harness behavior, and examples before adding large project-specific flow catalogs.
-
-## Non-goals
-
-- Encoding Example App-specific flows into Farmslot core.
-- Requiring flow catalogs for simple backend/CLI recipes.
-- Requiring visual proof for non-visual jobs.
-- Creating a new replay taxonomy outside ADR-030's result-package model.
+- Agents learn one reusable executable artifact.
+- Teams can share parameterized libraries without growing the base harness indefinitely.
+- Evidence remains reviewable without access to the original library.
+- Project runners stay thin and domain-owned.
+- Simple recipes remain valid without composition or visual evidence.

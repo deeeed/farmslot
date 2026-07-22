@@ -48,6 +48,8 @@ yarn recipe:dry-run
 yarn recipe:run
 ```
 
+Pass typed values with `--param key=value`. A task recipe at `artifacts/recipe.json` can keep task-only dependencies in `artifacts/recipe-library/`; the runner discovers them automatically.
+
 `recipe:dry-run` still runs core/headless commands; it only stubs live UI, CDP,
 and app bridge actions. Command output is sanitized before recipe artifacts are
 written so public Expo config secrets do not leak into `trace.json`.
@@ -110,7 +112,7 @@ For a completely custom overlay, pass `renderHud`.
 1. **Stay thin.** Keep this package to Expo scaffolding and checks; generic execution belongs in `@farmslot/recipe-harness`.
 2. **Keep manifests small and project-supported.** Do not add task-specific or ticket-specific actions.
 3. **Parameterize before multiplying.** Prefer one parameterized domain action over duplicate narrow actions.
-4. **Use UI/HUD actions only for visible proof.** Setup and fixture convergence should stay separate from proof flows.
+4. **Use UI/HUD actions only for visible proof.** Preparation and fixture convergence should stay separate from the measured proof nodes.
 5. **Keep templates versionless.** Protocol versioning belongs in recipe metadata, not in generated path names.
 6. **Run `yarn recipe:doctor` before handing a scaffolded project to Farmslot.**
 

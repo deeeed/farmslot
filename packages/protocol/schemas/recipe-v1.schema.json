@@ -3,33 +3,21 @@
   "$id": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Farmslot Recipe Protocol v1",
   "type": "object",
-  "required": ["schema_version", "validate"],
+  "required": ["$schema", "description", "workflow"],
   "properties": {
     "$schema": {
       "const": "https://farmslot.io/schemas/recipe-v1.schema.json"
     },
-    "schema_version": {
-      "const": 1
-    },
     "title": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "description": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
-    "inputs": {
-      "type": "object"
-    },
-    "uses": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "flows": {
-      "type": "object",
-      "description": "Inline flow definitions keyed by flow id, resolvable by call.ref."
+    "paramsSchema": {
+      "$ref": "#/$defs/paramsSchema"
     },
     "proofTargets": {
       "type": "array",
@@ -37,170 +25,97 @@
         "type": "object",
         "required": ["id", "claim"],
         "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "claim": {
-            "type": "string",
-            "minLength": 1
-          }
+          "id": { "type": "string", "minLength": 1 },
+          "claim": { "type": "string", "minLength": 1 }
         },
-        "additionalProperties": true
+        "additionalProperties": false
       }
     },
-    "startState": {
-      "$ref": "#/$defs/actionNode"
-    },
-    "fail_on_unexpected": {
-      "type": "object"
-    },
-    "validate": {
-      "type": "object",
-      "required": ["workflow"],
-      "properties": {
-        "workflow": {
-          "$ref": "#/$defs/workflow"
-        }
-      },
-      "additionalProperties": true
+    "workflow": {
+      "$ref": "#/$defs/workflow"
     }
   },
-  "additionalProperties": true,
+  "additionalProperties": false,
   "$defs": {
-    "workflow": {
+    "paramsSchema": {
       "type": "object",
-      "required": ["entry", "nodes"],
+      "required": ["type", "additionalProperties"],
       "properties": {
-        "pre_conditions": {
-          "type": "array"
-        },
-        "setup": {
+        "type": { "const": "object" },
+        "additionalProperties": { "const": false },
+        "required": {
           "type": "array",
-          "items": {
-            "$ref": "#/$defs/actionNode"
-          }
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
         },
-        "entry": {
-          "type": "string",
-          "minLength": 1
-        },
-        "nodes": {
+        "properties": {
           "type": "object",
-          "minProperties": 1,
-          "additionalProperties": {
-            "$ref": "#/$defs/workflowNode"
-          }
-        },
-        "teardown": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/actionNode"
-          }
-        },
-        "playback": {
-          "type": "object",
-          "properties": {
-            "mode": {
-              "enum": ["off", "auto", "step"]
-            },
-            "slow_ms": {
-              "type": "number",
-              "minimum": 100,
-              "maximum": 60000
-            }
-          },
-          "additionalProperties": true
+          "propertyNames": { "pattern": "^[A-Za-z0-9_-]+$" },
+          "additionalProperties": { "$ref": "#/$defs/paramSchema" }
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
-    "workflowNode": {
+    "paramSchema": {
       "type": "object",
-      "required": ["action"],
+      "required": ["type"],
       "properties": {
-        "action": {
-          "type": "string",
-          "minLength": 1
-        },
-        "intent": {
-          "type": "string",
-          "minLength": 1
-        },
-        "next": {
-          "type": "string",
-          "minLength": 1
-        },
-        "default": {
-          "type": "string",
-          "minLength": 1
-        },
-        "cases": {
+        "type": {
           "oneOf": [
+            { "enum": ["string", "number", "integer", "boolean", "object", "array"] },
             {
               "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "next": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "additionalProperties": true
-              }
-            },
-            {
-              "type": "object",
-              "additionalProperties": {
-                "type": "string",
-                "minLength": 1
-              }
+              "items": { "enum": ["string", "number", "integer", "boolean", "object", "array"] },
+              "minItems": 1,
+              "uniqueItems": true
             }
           ]
         },
-        "status": {
-          "enum": ["pass", "fail", "unknown"]
+        "description": { "type": "string" },
+        "default": true,
+        "enum": { "type": "array", "minItems": 1, "uniqueItems": true },
+        "additionalProperties": { "type": "boolean" },
+        "required": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
         },
-        "phase": {
-          "enum": ["setup", "start_state", "proof", "assert", "teardown"]
+        "properties": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z0-9_-]+$" },
+          "additionalProperties": { "$ref": "#/$defs/paramSchema" }
         },
-        "proofTarget": {
-          "type": "string",
-          "minLength": 1
-        },
-        "record": {
-          "enum": ["none", "trace_only", "proof_window", "failure_only"]
-        },
-        "observe": {
-          "$ref": "#/$defs/observePolicy"
-        },
-        "expect_observations": {
-          "$ref": "#/$defs/observationExpectation"
-        },
-        "settle": {
-          "type": "boolean"
-        }
+        "items": { "$ref": "#/$defs/paramSchema" }
       },
-      "allOf": [
+      "additionalProperties": false
+    },
+    "proofLinks": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "transition": {
+      "oneOf": [
         {
-          "if": {
-            "properties": {
-              "action": {
-                "const": "end"
-              }
+          "required": ["next"],
+          "properties": {
+            "next": { "type": "string", "minLength": 1 }
+          },
+          "not": { "anyOf": [{ "required": ["cases"] }, { "required": ["default"] }] }
+        },
+        {
+          "required": ["cases", "default"],
+          "properties": {
+            "cases": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": { "type": "string", "minLength": 1 }
             },
-            "required": ["action"]
+            "default": { "type": "string", "minLength": 1 }
           },
-          "then": {
-            "required": ["status"]
-          },
-          "else": {
-            "required": ["intent"]
-          }
+          "not": { "required": ["next"] }
         }
-      ],
-      "additionalProperties": true
+      ]
     },
     "actionNode": {
       "type": "object",
@@ -208,58 +123,65 @@
       "properties": {
         "action": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "not": { "enum": ["call", "end"] }
         },
-        "intent": {
-          "type": "string",
-          "minLength": 1
+        "intent": { "type": "string", "minLength": 1 },
+        "next": { "type": "string", "minLength": 1 },
+        "cases": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "minLength": 1 }
         },
-        "phase": {
-          "enum": ["setup", "start_state", "proof", "assert", "teardown"]
-        },
-        "proofTarget": {
-          "type": "string",
-          "minLength": 1
-        },
-        "record": {
-          "enum": ["none", "trace_only", "proof_window", "failure_only"]
-        },
-        "observe": {
-          "$ref": "#/$defs/observePolicy"
-        },
-        "expect_observations": {
-          "$ref": "#/$defs/observationExpectation"
-        },
-        "settle": {
-          "type": "boolean"
-        }
+        "default": { "type": "string", "minLength": 1 },
+        "proves": { "$ref": "#/$defs/proofLinks" }
       },
+      "allOf": [{ "$ref": "#/$defs/transition" }],
       "additionalProperties": true
     },
-    "observePolicy": {
+    "callNode": {
+      "type": "object",
+      "required": ["action", "intent", "ref", "next"],
+      "properties": {
+        "action": { "const": "call" },
+        "intent": { "type": "string", "minLength": 1 },
+        "ref": { "type": "string", "minLength": 1 },
+        "params": { "type": "object" },
+        "proves": { "$ref": "#/$defs/proofLinks" },
+        "next": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "endNode": {
+      "type": "object",
+      "required": ["action", "status"],
+      "properties": {
+        "action": { "const": "end" },
+        "status": { "enum": ["pass", "fail", "unknown"] }
+      },
+      "additionalProperties": false
+    },
+    "workflowNode": {
       "oneOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "\\S"
-          },
-          "uniqueItems": true
-        }
+        { "$ref": "#/$defs/actionNode" },
+        { "$ref": "#/$defs/callNode" },
+        { "$ref": "#/$defs/endNode" }
       ]
     },
-    "observationExpectation": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "pattern": "\\S"
+    "workflow": {
+      "type": "object",
+      "required": ["entry", "nodes"],
+      "properties": {
+        "entry": { "type": "string", "minLength": 1 },
+        "teardown": { "type": "string", "minLength": 1 },
+        "nodes": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[A-Za-z0-9_-]+$" },
+          "additionalProperties": { "$ref": "#/$defs/workflowNode" }
+        }
       },
-      "uniqueItems": true
+      "additionalProperties": false
     }
   }
 }

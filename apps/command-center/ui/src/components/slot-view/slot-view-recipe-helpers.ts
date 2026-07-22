@@ -75,15 +75,15 @@ export function canShowRecipeExecutionControls(canRerun: boolean): boolean {
 }
 
 export function effectiveRecipeJsonForSelection({
-  selectedRecipeFlowJson,
+  selectedRecipeDependencyJson,
   recipeHostRecipeJson,
   packageRunRecipeJson,
 }: {
-  selectedRecipeFlowJson: string | null | undefined;
+  selectedRecipeDependencyJson: string | null | undefined;
   recipeHostRecipeJson: string | null | undefined;
   packageRunRecipeJson: string | null | undefined;
 }): string | null {
-  if (selectedRecipeFlowJson) return selectedRecipeFlowJson;
+  if (selectedRecipeDependencyJson) return selectedRecipeDependencyJson;
   if (recipeHostRecipeJson) return recipeHostRecipeJson;
   return packageRunRecipeJson ?? null;
 }
@@ -229,10 +229,7 @@ export function parseRecipeWorkflow(
   if (!recipeJson) return null;
   try {
     const parsed = JSON.parse(recipeJson);
-    const workflow =
-      parsed?.validate?.workflow ??
-      parsed?.workflow ??
-      (parsed?.entry && parsed?.nodes ? parsed : null);
+    const workflow = parsed?.workflow;
     if (
       !workflow ||
       typeof workflow.entry !== 'string' ||
@@ -247,11 +244,10 @@ export function parseRecipeWorkflow(
 }
 
 function recipeNodeTargets(node: Record<string, unknown>): string[] {
-  if (node.action === 'switch') {
+  if (node.cases && typeof node.cases === 'object' && !Array.isArray(node.cases)) {
     const targets: string[] = [];
-    const cases = Array.isArray(node.cases) ? node.cases : [];
-    for (const c of cases)
-      if (c && typeof c === 'object' && typeof c.next === 'string') targets.push(c.next);
+    for (const target of Object.values(node.cases))
+      if (typeof target === 'string') targets.push(target);
     if (typeof node.default === 'string') targets.push(node.default);
     return targets;
   }
@@ -383,23 +379,22 @@ function isRecipeRunnerDefinitionArtifact(artifact: ArtifactRef): boolean {
     artifact.purpose === 'recipe-coverage' ||
     artifact.purpose === 'learnings' ||
     artifact.purpose === 'artifact-manifest' ||
-    artifact.purpose === 'evidence-manifest' ||
-    purposeHasPrefix(artifact.purpose, ['recipe-flow'])
+    artifact.purpose === 'evidence-manifest'
   )
     return true;
   if (
     basename === 'recipe.json' ||
+    basename === 'recipe-resolution.json' ||
     basename === 'recipe-quality.json' ||
     basename === 'recipe-coverage.md' ||
     basename === 'learnings.md' ||
     basename === 'artifact-manifest.json' ||
     basename === 'evidence-manifest.json' ||
-    basename === 'workflow.json' ||
-    basename === 'workflow.mmd' ||
+    basename.endsWith('.recipe.json') ||
     basename.startsWith('recipe-issues')
   )
     return true;
-  return artifactPathSegments(normalizedPath).includes('recipe-flows');
+  return normalizedPath.includes('/resolved-recipes/');
 }
 
 function isPublicationOrReviewArtifact(artifact: ArtifactRef): boolean {
@@ -456,14 +451,23 @@ export function filterNodeRecipeEvidenceArtifacts(
   recipeJson: string | null | undefined,
   nodeId: string,
   evidenceManifest: EvidenceManifestStandalone[],
+  allowNamespacedNodeIds = false,
 ): ArtifactRef[] {
   const filenames = deriveEvidenceArtifactCandidates(recipeJson, nodeId);
   const nodeCandidates = [
     ...new Set([nodeId, ...deriveEvidenceNodeCandidates(recipeJson, nodeId)]),
   ];
-  const typedMatches = allArtifacts.filter(
-    (artifact) => typeof artifact.nodeId === 'string' && nodeCandidates.includes(artifact.nodeId),
-  );
+  const typedMatches = allArtifacts.filter((artifact) => {
+    const artifactNodeId = artifact.nodeId;
+    return (
+      typeof artifactNodeId === 'string' &&
+      nodeCandidates.some((candidate) =>
+        allowNamespacedNodeIds
+          ? artifactNodeId.endsWith(`/${candidate}`)
+          : artifactNodeId === candidate,
+      )
+    );
+  });
   if (typedMatches.length > 0) return typedMatches;
   const manifestMatches = evidenceManifest
     .filter(
@@ -501,6 +505,7 @@ export function computeRecipeEvidenceArtifacts({
   evidenceManifest,
   mode,
   usedTypedArtifactManifest,
+  allowNamespacedNodeIds,
 }: {
   artifactManifest: ArtifactRef[];
   recipeJson: string | null | undefined;
@@ -508,6 +513,7 @@ export function computeRecipeEvidenceArtifacts({
   evidenceManifest: EvidenceManifestStandalone[];
   mode: 'all' | 'node';
   usedTypedArtifactManifest?: boolean;
+  allowNamespacedNodeIds?: boolean;
 }): SlotViewRecipeEvidenceResult {
   const reviewable = normalizeRecipeEvidenceArtifacts(artifactManifest).filter((artifact) =>
     isRecipeRuntimeEvidenceArtifact(artifact),
@@ -532,6 +538,7 @@ export function computeRecipeEvidenceArtifacts({
     recipeJson,
     selectedNodeId,
     evidenceManifest,
+    allowNamespacedNodeIds,
   );
   return {
     allArtifacts,

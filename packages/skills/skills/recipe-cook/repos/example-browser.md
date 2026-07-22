@@ -12,7 +12,7 @@ Use this overlay when the target project is a browser or web app and has no more
 Start with:
 
 ```bash
-rg --files | rg 'recipes?/.*\\.json$|flows?/.*\\.json$|validate-recipe\\.(js|mjs|cjs|ts)|validate-flow-schema\\.(js|mjs|cjs|ts)|playwright|cypress|vitest|agentic-toolkit\\.md'
+rg --files | rg 'recipes?/.*\\.json$|validate-recipe\\.(js|mjs|cjs|ts)|playwright|cypress|vitest|agentic-toolkit\\.md'
 ```
 
 Then inspect package scripts for existing validation surfaces:
@@ -37,7 +37,6 @@ Look for:
 Use repo-local commands first. Common shapes include:
 
 ```bash
-node <validate-flow-schema.js> <recipe.json>
 node <validate-recipe.js> --recipe <recipe.json> --dry-run
 npm test -- --runInBand
 ```

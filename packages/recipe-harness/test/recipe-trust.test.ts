@@ -5,13 +5,13 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import type { RecipeActionManifestDocument, RecipeSourceProvenance } from '@farmslot/protocol';
+import { canonicalRecipeJson } from '@farmslot/protocol/recipe';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { writeJsonFile } from '../src/core/json.js';
 import { loadRecipeLibraries } from '../src/core/library.js';
 import { createRecipeRunner } from '../src/core/runner.js';
-import { canonicalRecipeJson } from '../src/core/trust.js';
 import { RecipeTrustError } from '../src/core/trust-error.js';
 import { resolveRecipeTrustInput } from '../src/core/trust-input.js';
 
@@ -21,63 +21,48 @@ const manifest: RecipeActionManifestDocument = {
   runner_protocol_version: 1,
   action_registry_version: 1,
   supported_official_actions: ['command', 'index_artifacts', 'call', 'end'],
+  action_metadata: {
+    command: {
+      description: 'Run a test command.',
+      schema: { type: 'object', additionalProperties: true },
+    },
+    index_artifacts: {
+      description: 'Index test artifacts.',
+      schema: { type: 'object', additionalProperties: true },
+    },
+  },
 };
 
-function recipe(node: Record<string, unknown>): Record<string, unknown> {
+function withOfficialActions(...actions: string[]): RecipeActionManifestDocument {
   return {
-    schema_version: 1,
-    title: 'Trust test',
-    description: 'Exercises recipe execution trust.',
-    validate: {
-      workflow: {
-        entry: 'step',
-        nodes: {
-          step: { intent: 'Exercise the trust policy', ...node, next: 'done' },
-          done: { action: 'end', status: 'pass' },
-        },
-      },
+    ...manifest,
+    supported_official_actions: [...manifest.supported_official_actions, ...actions],
+    action_metadata: {
+      ...manifest.action_metadata,
+      ...Object.fromEntries(
+        actions.map((action) => [
+          action,
+          {
+            description: `Exercise ${action} trust behavior.`,
+            schema: { type: 'object', additionalProperties: true },
+          },
+        ]),
+      ),
     },
   };
 }
 
-function dynamicDispatchFlows(includeLiteralDecoy = false): Record<string, unknown> {
+function recipe(node: Record<string, unknown>): Record<string, unknown> {
+  const terminal = node.action === 'end';
   return {
-    dispatch: {
-      workflow: {
-        entry: 'go',
-        nodes: {
-          go: {
-            action: 'call',
-            intent: 'Resolve a flow from a parameter',
-            ref: '{{params.target}}',
-            next: 'done',
-          },
-          done: { action: 'end', status: 'pass' },
-        },
-      },
-    },
-    ...(includeLiteralDecoy
-      ? {
-          '{{params.target}}': {
-            workflow: {
-              entry: 'done',
-              nodes: { done: { action: 'end', status: 'pass' } },
-            },
-          },
-        }
-      : {}),
-    danger: {
-      workflow: {
-        entry: 'write',
-        nodes: {
-          write: {
-            action: 'command',
-            intent: 'Write an unauthorized host file',
-            cmd: 'touch pwned.txt',
-            next: 'done',
-          },
-          done: { action: 'end', status: 'pass' },
-        },
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    title: 'Trust test',
+    description: 'Exercises recipe execution trust.',
+    workflow: {
+      entry: 'step',
+      nodes: {
+        step: terminal ? node : { intent: 'Exercise the trust policy', ...node, next: 'done' },
+        ...(terminal ? {} : { done: { action: 'end', status: 'pass' } }),
       },
     },
   };
@@ -260,154 +245,73 @@ test('untrusted read-only recipes run while command is denied before side effect
   }
 });
 
-test('flow-ref normalization cannot hide a restricted flow behind a whitespace collision', async () => {
+test('parameter-templated recipe refs are rejected before side effects', async () => {
   const root = await tempRoot();
   try {
     const runner = createRecipeRunner({
       actionManifest: manifest,
       adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      defaultSource: trusted,
     });
-    const document = {
-      schema_version: 1,
-      title: 'Flow collision test',
-      description: 'Proves planning and execution resolve the same flow.',
-      flows: {
-        ' restricted': {
-          workflow: {
-            entry: 'safe',
-            nodes: { safe: { action: 'end', status: 'pass' } },
-          },
-        },
-        restricted: {
-          workflow: {
-            entry: 'exec',
-            nodes: {
-              exec: {
-                intent: 'Attempt a restricted host command',
-                action: 'command',
-                cmd: 'touch escaped.txt',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-      },
-      validate: {
-        workflow: {
-          entry: 'invoke',
-          nodes: {
-            invoke: {
-              intent: 'Invoke the normalized flow reference',
-              action: 'call',
-              ref: ' restricted',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
-          },
-        },
-      },
-    };
-
     await assert.rejects(
       runner.run({
-        recipeDocument: document,
+        recipeDocument: recipe({ action: 'call', ref: '{{params.target}}' }),
+        params: { target: 'danger' },
         artifactsDir: path.join(root, 'artifacts'),
         projectRoot: root,
-        source: untrusted,
       }),
-      /collides with another flow after whitespace normalization/u,
+      /workflow\.dynamic_call_ref/u,
     );
-    assert.equal(await missing(path.join(root, 'escaped.txt')), true);
+    assert.equal(await missing(path.join(root, 'pwned.txt')), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('parameter-templated call refs are rejected before hidden flow side effects', async () => {
+test('library recipes cannot introduce parameter-templated refs after root validation', async () => {
   const root = await tempRoot();
   try {
-    const runner = createRecipeRunner({
-      actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
-    });
-    const artifactsDir = path.join(root, 'artifacts');
-    const document = {
+    const libraryRoot = path.join(root, 'library');
+    await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
       schema_version: 1,
-      title: 'Dynamic flow dispatch',
-      description: 'A dynamic flow ref must not escape the static trust plan.',
-      flows: dynamicDispatchFlows(true),
-      validate: {
-        workflow: {
-          entry: 'dispatch',
-          nodes: {
-            dispatch: {
-              action: 'call',
-              intent: 'Dispatch to the requested flow',
-              ref: 'dispatch',
-              params: { target: 'danger' },
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
+      kind: 'recipe-library',
+      name: 'dynamic-library',
+    });
+    await writeJsonFile(path.join(libraryRoot, 'recipes', 'dispatch.recipe.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Attempts a dynamic nested recipe dispatch.',
+      workflow: {
+        entry: 'dispatch',
+        nodes: {
+          dispatch: {
+            action: 'call',
+            intent: 'Attempt a dynamic nested recipe dispatch.',
+            ref: '{{params.target}}',
+            next: 'done',
           },
+          done: { action: 'end', status: 'pass' },
         },
       },
-    };
-
-    await assert.rejects(
-      runner.run({
-        recipeDocument: document,
-        artifactsDir,
-        projectRoot: root,
-        source: untrusted,
-      }),
-      /workflow\.dynamic_call_ref/,
-    );
-    assert.equal(await missing(path.join(root, 'pwned.txt')), true);
-    assert.equal(await missing(artifactsDir), true);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('catalog flows cannot introduce parameter-templated call refs after validation', async () => {
-  const root = await tempRoot();
-  try {
-    await writeJsonFile(path.join(root, 'flows.json'), {
-      schema_version: 1,
-      kind: 'recipe-flow-catalog',
-      flows: dynamicDispatchFlows(),
     });
     const runner = createRecipeRunner({
       actionManifest: manifest,
       adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      defaultSource: trusted,
     });
-    const artifactsDir = path.join(root, 'artifacts');
-
     await assert.rejects(
       runner.run({
-        recipeDocument: {
-          ...recipe({
-            action: 'call',
-            ref: 'dispatch',
-            params: { target: 'danger' },
-          }),
-          uses: ['flows.json'],
-        },
-        artifactsDir,
+        recipeDocument: recipe({ action: 'call', ref: 'dispatch' }),
+        librarySources: [{ root: libraryRoot, provenance: trusted }],
+        artifactsDir: path.join(root, 'artifacts'),
         projectRoot: root,
-        source: untrusted,
       }),
-      (error: unknown) =>
-        error instanceof RecipeTrustError && error.code === 'RECIPE_SOURCE_INVALID',
+      /workflow\.dynamic_call_ref/u,
     );
-    assert.equal(await missing(path.join(root, 'pwned.txt')), true);
-    assert.equal(await missing(artifactsDir), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test('preflight authorizes the exact plan without actions or artifact writes', async () => {
   const root = await tempRoot();
   try {
@@ -498,7 +402,13 @@ test('approved custom implementations are re-hashed immediately before execution
     let executed = false;
     const customManifest: RecipeActionManifestDocument = {
       ...manifest,
-      custom_actions: [{ name: 'custom.exec', execution_capabilities: ['arbitrary-code'] }],
+      custom_actions: [
+        {
+          name: 'custom.exec',
+          schema: { type: 'object', additionalProperties: false },
+          execution_capabilities: ['arbitrary-code'],
+        },
+      ],
     };
     const runner = createRecipeRunner({
       actionManifest: customManifest,
@@ -518,7 +428,7 @@ test('approved custom implementations are re-hashed immediately before execution
           },
           async execute() {
             executed = true;
-            return { status: 'pass' as const };
+            return { output: {} };
           },
         },
       ],
@@ -633,6 +543,214 @@ test('exact-plan approval is bound to the execution context before side effects'
   }
 });
 
+test('exact-plan approval is bound to effective recipe parameters before side effects', async () => {
+  const root = await tempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+    });
+    const document = recipe({ action: 'command', cmd: '{{params.cmd}}' });
+    document.paramsSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        cmd: { type: 'string', default: 'touch approved-marker.txt' },
+        quiet: { type: 'boolean', default: false },
+      },
+    };
+    const request = {
+      recipeDocument: document,
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      source: untrusted,
+    };
+    const blockedDigest = async (params?: Record<string, unknown>): Promise<string> => {
+      try {
+        await runner.preflight({ ...request, ...(params ? { params } : {}) });
+        assert.fail('expected trust preflight to reject');
+      } catch (error) {
+        assert.ok(error instanceof RecipeTrustError);
+        assert.equal(error.code, 'RECIPE_TRUST_REQUIRED');
+        return error.failure.recipeDigest ?? '';
+      }
+    };
+
+    const approvedDigest = await blockedDigest();
+    assert.equal(
+      await blockedDigest({ cmd: 'touch approved-marker.txt', quiet: false }),
+      approvedDigest,
+    );
+    assert.notEqual(
+      await blockedDigest({ cmd: 'touch changed-marker.txt', quiet: false }),
+      approvedDigest,
+    );
+    assert.notEqual(
+      await blockedDigest({ cmd: 'touch approved-marker.txt', quiet: true }),
+      approvedDigest,
+    );
+
+    await assert.rejects(
+      runner.run({
+        ...request,
+        params: { cmd: 'touch changed-marker.txt', quiet: false },
+        approval: { planDigest: approvedDigest },
+      }),
+      (error: unknown) =>
+        error instanceof RecipeTrustError && error.code === 'RECIPE_APPROVAL_MISMATCH',
+    );
+    assert.equal(await missing(path.join(root, 'approved-marker.txt')), true);
+    assert.equal(await missing(path.join(root, 'changed-marker.txt')), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('approval cannot authorize restricted values derived from mutable runtime outputs', async () => {
+  const root = await tempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+    });
+    const document = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Rejects a command assembled from a prior runtime output.',
+      workflow: {
+        entry: 'produce',
+        nodes: {
+          produce: {
+            action: 'command',
+            intent: 'Produce a runtime command value.',
+            cmd: "printf 'touch changed-marker.txt'",
+            next: 'execute',
+          },
+          execute: {
+            action: 'command',
+            intent: 'Attempt to execute the runtime command value.',
+            cmd: '{{outputs.produce.stdout}}',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    };
+    const request = {
+      recipeDocument: document,
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      source: untrusted,
+    };
+
+    for (const approval of [undefined, { planDigest: 'sha256:reviewed' }]) {
+      await assert.rejects(
+        runner.preflight({ ...request, ...(approval ? { approval } : {}) }),
+        (error: unknown) =>
+          error instanceof RecipeTrustError &&
+          error.code === 'RECIPE_TRUST_REQUIRED' &&
+          error.failure.userAction.includes('replace {{outputs.*}}'),
+      );
+    }
+    assert.equal(await missing(path.join(root, 'changed-marker.txt')), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('exact-plan approval binds parameters forwarded into nested recipes', async () => {
+  const root = await tempRoot();
+  try {
+    const libraryRoot = path.join(root, 'library');
+    const childPath = path.join(libraryRoot, 'recipes', 'task', 'parameterized.recipe.json');
+    await mkdir(path.dirname(childPath), { recursive: true });
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
+      schema_version: 1,
+      kind: 'recipe-library',
+      name: 'parameter-library',
+    });
+    await writeJsonFile(childPath, {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Executes an explicitly forwarded command.',
+      paramsSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          cmd: { type: 'string' },
+          quiet: { type: 'boolean', default: false },
+        },
+        required: ['cmd'],
+      },
+      workflow: {
+        entry: 'exec',
+        nodes: {
+          exec: {
+            action: 'command',
+            intent: 'Execute the forwarded command.',
+            cmd: '{{params.cmd}}',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+    const parent = recipe({
+      action: 'call',
+      ref: 'task.parameterized',
+      params: { cmd: '{{params.cmd}}', quiet: '{{params.quiet}}' },
+    });
+    parent.paramsSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        cmd: { type: 'string', default: 'touch nested-approved.txt' },
+        quiet: { type: 'boolean', default: false },
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+    });
+    const request = {
+      recipeDocument: parent,
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      source: untrusted,
+      librarySources: [{ root: libraryRoot, provenance: trusted }],
+    };
+    const digestFor = async (params: Record<string, unknown>): Promise<string> => {
+      try {
+        await runner.preflight({ ...request, params });
+        assert.fail('expected trust preflight to reject');
+      } catch (error) {
+        assert.ok(error instanceof RecipeTrustError);
+        return error.failure.recipeDigest ?? '';
+      }
+    };
+    const approvedDigest = await digestFor({ cmd: 'touch nested-approved.txt', quiet: false });
+    assert.notEqual(
+      await digestFor({ cmd: 'touch nested-changed.txt', quiet: false }),
+      approvedDigest,
+    );
+    assert.notEqual(
+      await digestFor({ cmd: 'touch nested-approved.txt', quiet: true }),
+      approvedDigest,
+    );
+    await assert.rejects(
+      runner.run({
+        ...request,
+        params: { cmd: 'touch nested-changed.txt', quiet: false },
+        approval: { planDigest: approvedDigest },
+      }),
+      (error: unknown) =>
+        error instanceof RecipeTrustError && error.code === 'RECIPE_APPROVAL_MISMATCH',
+    );
+    assert.equal(await missing(path.join(root, 'nested-approved.txt')), true);
+    assert.equal(await missing(path.join(root, 'nested-changed.txt')), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('explicit execution environments exclude ambient host control variables', async () => {
   const root = await tempRoot();
   const priorAmbient = process.env.FARMSLOT_RECIPE_CONTEXT_TEST;
@@ -707,14 +825,7 @@ test('untrusted recipes cannot trigger UI effects or capture screenshots', async
   try {
     const executed: string[] = [];
     const runner = createRecipeRunner({
-      actionManifest: {
-        ...manifest,
-        supported_official_actions: [
-          ...manifest.supported_official_actions,
-          'ui.press',
-          'ui.screenshot',
-        ],
-      },
+      actionManifest: withOfficialActions('ui.press', 'ui.screenshot'),
       adapters: [
         ...createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
         {
@@ -723,7 +834,7 @@ test('untrusted recipes cannot trigger UI effects or capture screenshots', async
           source: trusted,
           async execute() {
             executed.push('press');
-            return { status: 'pass' };
+            return { output: {} };
           },
         },
         {
@@ -732,7 +843,7 @@ test('untrusted recipes cannot trigger UI effects or capture screenshots', async
           source: trusted,
           async execute() {
             executed.push('screenshot');
-            return { status: 'pass' };
+            return { output: {} };
           },
         },
       ],
@@ -764,7 +875,14 @@ test('custom adapters default to arbitrary code and cannot self-downgrade', asyn
         runner_protocol_version: 1,
         action_registry_version: 1,
         supported_official_actions: ['end'],
-        custom_actions: [{ name: 'example.read', description: 'Claims to read only.' }],
+        custom_actions: [
+          {
+            name: 'example.read',
+            description: 'Claims to read only.',
+            schema: { type: 'object', additionalProperties: false },
+            execution_capabilities: [],
+          },
+        ],
       },
       adapters: [
         ...createStandardCoreAdapters({ actions: ['end'] }),
@@ -779,7 +897,7 @@ test('custom adapters default to arbitrary code and cannot self-downgrade', asyn
           },
           async execute() {
             executed = true;
-            return { status: 'pass' };
+            return { output: {} };
           },
         },
       ],
@@ -814,6 +932,7 @@ test('custom adapter capabilities are unique in public trust failures', async ()
         custom_actions: [
           {
             name: 'example.exec',
+            schema: { type: 'object', additionalProperties: false },
             execution_capabilities: ['arbitrary-code'],
           },
         ],
@@ -828,7 +947,7 @@ test('custom adapter capabilities are unique in public trust failures', async ()
             digest: 'sha256:adapter-v1',
           },
           async execute() {
-            return { status: 'pass' };
+            return { output: {} };
           },
         },
       ],
@@ -851,20 +970,31 @@ test('custom adapter capabilities are unique in public trust failures', async ()
   }
 });
 
-test('official action names do not make caller-provided adapters trusted', async () => {
+test('official action names do not make caller-provided implementations trusted', async () => {
   const root = await tempRoot();
   try {
     const runner = createRecipeRunner({
       actionManifest: {
         runner_protocol_version: 1,
         action_registry_version: 1,
-        supported_official_actions: ['end'],
+        supported_official_actions: ['command', 'end'],
+        action_metadata: {
+          command: {
+            description: 'Run a command.',
+            schema: {
+              type: 'object',
+              properties: { cmd: { type: 'string' } },
+              required: ['cmd'],
+              additionalProperties: false,
+            },
+          },
+        },
       },
       adapters: [
         {
-          action: 'end',
+          action: 'command',
           async execute() {
-            return { status: 'pass' };
+            return { output: {} };
           },
         },
       ],
@@ -872,17 +1002,7 @@ test('official action names do not make caller-provided adapters trusted', async
     });
     await assert.rejects(
       runner.preflight({
-        recipeDocument: {
-          schema_version: 1,
-          title: 'Official adapter trust',
-          description: 'Official names do not confer implementation trust.',
-          validate: {
-            workflow: {
-              entry: 'done',
-              nodes: { done: { action: 'end', status: 'pass' } },
-            },
-          },
-        },
+        recipeDocument: recipe({ action: 'command', cmd: 'true' }),
         artifactsDir: path.join(root, 'artifacts'),
         projectRoot: root,
       }),
@@ -890,49 +1010,6 @@ test('official action names do not make caller-provided adapters trusted', async
     );
   } finally {
     await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('custom precondition checkers require implementation provenance', async () => {
-  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-trust-precondition-'));
-  try {
-    const runner = createRecipeRunner({
-      actionManifest: {
-        ...manifest,
-        pre_conditions: [{ id: 'workspace.ready', description: 'Workspace is ready.' }],
-      },
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
-      defaultSource: trusted,
-      preconditions: [
-        {
-          id: 'workspace.ready',
-          async execute() {
-            return { output: true };
-          },
-        },
-      ],
-    });
-    await assert.rejects(
-      runner.preflight({
-        recipeDocument: {
-          schema_version: 1,
-          title: 'Precondition trust',
-          description: 'Requires provenance for checker code.',
-          validate: {
-            workflow: {
-              pre_conditions: ['workspace.ready'],
-              entry: 'done',
-              nodes: { done: { action: 'end', status: 'pass' } },
-            },
-          },
-        },
-        artifactsDir: path.join(tempRoot, 'artifacts'),
-        projectRoot: tempRoot,
-      }),
-      (error) => error instanceof RecipeTrustError && error.code === 'RECIPE_SOURCE_INVALID',
-    );
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
   }
 });
 
@@ -949,6 +1026,7 @@ test('manifest risk metadata adds restrictions that adapters cannot remove', asy
           {
             name: 'example.mutate',
             description: 'Mutates an external system.',
+            schema: { type: 'object', additionalProperties: false },
             execution_capabilities: ['external-mutation'],
           },
         ],
@@ -961,7 +1039,7 @@ test('manifest risk metadata adds restrictions that adapters cannot remove', asy
           source: trusted,
           async execute() {
             executed = true;
-            return { status: 'pass' };
+            return { output: {} };
           },
         },
       ],
@@ -993,7 +1071,14 @@ test('approval cannot authorize custom implementation code without a digest', as
         runner_protocol_version: 1,
         action_registry_version: 1,
         supported_official_actions: ['end'],
-        custom_actions: [{ name: 'example.exec', description: 'Runs custom code.' }],
+        custom_actions: [
+          {
+            name: 'example.exec',
+            description: 'Runs custom code.',
+            schema: { type: 'object', additionalProperties: false },
+            execution_capabilities: ['arbitrary-code'],
+          },
+        ],
       },
       adapters: [
         ...createStandardCoreAdapters({ actions: ['end'] }),
@@ -1001,7 +1086,7 @@ test('approval cannot authorize custom implementation code without a digest', as
           action: 'example.exec',
           source: { kind: 'custom-adapter', trust: 'untrusted', name: 'task action' },
           async execute() {
-            return { status: 'pass' };
+            return { output: {} };
           },
         },
       ],
@@ -1071,10 +1156,7 @@ test('automatic HUD implementation is included in trust preflight', async () => 
   try {
     let hudExecutions = 0;
     const runner = createRecipeRunner({
-      actionManifest: {
-        ...manifest,
-        supported_official_actions: [...manifest.supported_official_actions, 'app.hud'],
-      },
+      actionManifest: withOfficialActions('app.hud'),
       adapters: [
         ...createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
         {
@@ -1090,7 +1172,7 @@ test('automatic HUD implementation is included in trust preflight', async () => 
           },
           async execute() {
             hudExecutions += 1;
-            return { status: 'pass' };
+            return { output: {} };
           },
         },
       ],
@@ -1126,10 +1208,7 @@ test('untrusted recipes cannot trigger automatic HUD mutations before approval',
   try {
     let hudExecutions = 0;
     const runner = createRecipeRunner({
-      actionManifest: {
-        ...manifest,
-        supported_official_actions: [...manifest.supported_official_actions, 'app.hud'],
-      },
+      actionManifest: withOfficialActions('app.hud'),
       adapters: [
         ...createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
         {
@@ -1137,7 +1216,7 @@ test('untrusted recipes cannot trigger automatic HUD mutations before approval',
           source: trusted,
           async execute() {
             hudExecutions += 1;
-            return { status: 'pass' };
+            return { output: {} };
           },
         },
       ],
@@ -1166,37 +1245,28 @@ test('untrusted recipes cannot trigger automatic HUD mutations before approval',
   }
 });
 
-test('flow provenance is enforced transitively and exact-digest approval detects changes', async () => {
+test('recipe dependency provenance is transitive and approval is digest-bound', async () => {
   const root = await tempRoot();
   try {
     const libraryRoot = path.join(root, 'library');
-    await mkdir(path.join(libraryRoot, 'flows'), { recursive: true });
+    const recipePath = path.join(libraryRoot, 'recipes', 'task', 'exec.recipe.json');
+    await mkdir(path.dirname(recipePath), { recursive: true });
     await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      kind: 'recipe-library',
       schema_version: 1,
+      kind: 'recipe-library',
       name: 'task-library',
     });
-    const catalogPath = path.join(libraryRoot, 'flows', 'task.flows.json');
-    await writeJsonFile(catalogPath, {
-      schema_version: 1,
-      kind: 'recipe-flow-catalog',
-      flows: {
-        'task.exec': {
-          workflow: {
-            entry: 'exec',
-            nodes: {
-              exec: {
-                action: 'command',
-                intent: 'Create the approved marker',
-                cmd: 'touch approved.txt',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-      },
-    });
+    const writeDependency = async (marker: string) =>
+      writeJsonFile(
+        recipePath,
+        recipe({
+          action: 'command',
+          intent: `Create the ${marker} marker.`,
+          cmd: `touch ${marker}.txt`,
+        }),
+      );
+    await writeDependency('approved');
+
     const runner = createRecipeRunner({
       actionManifest: manifest,
       adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
@@ -1212,33 +1282,17 @@ test('flow provenance is enforced transitively and exact-digest approval detects
     await assert.rejects(runner.run(request), (error: unknown) => {
       assert.ok(error instanceof RecipeTrustError);
       digest = error.failure.recipeDigest ?? '';
-      assert.equal(error.failure.blocked?.[0]?.origin.path, undefined);
-      return true;
+      const blocked = error.failure.blocked?.find((node) => node.action === 'command');
+      assert.equal(blocked?.origin.trust, 'untrusted');
+      assert.equal(blocked?.origin.path, undefined);
+      return error.code === 'RECIPE_TRUST_REQUIRED';
     });
+
     const approved = await runner.run({ ...request, approval: { planDigest: digest } });
     assert.equal(approved.status, 'pass');
     assert.equal(await missing(path.join(root, 'approved.txt')), false);
 
-    await writeJsonFile(catalogPath, {
-      schema_version: 1,
-      kind: 'recipe-flow-catalog',
-      flows: {
-        'task.exec': {
-          workflow: {
-            entry: 'exec',
-            nodes: {
-              exec: {
-                action: 'command',
-                intent: 'Create the changed marker',
-                cmd: 'touch changed.txt',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-      },
-    });
+    await writeDependency('changed');
     await assert.rejects(
       runner.run({ ...request, approval: { planDigest: digest } }),
       (error: unknown) =>
@@ -1250,36 +1304,25 @@ test('flow provenance is enforced transitively and exact-digest approval detects
   }
 });
 
-test('untrusted callers cannot launder restricted actions through trusted library flows', async () => {
+test('untrusted callers cannot launder restricted actions through trusted recipes', async () => {
   const root = await tempRoot();
   try {
     const libraryRoot = path.join(root, 'library');
-    await mkdir(path.join(libraryRoot, 'flows'), { recursive: true });
+    const recipePath = path.join(libraryRoot, 'recipes', 'trusted', 'exec.recipe.json');
+    await mkdir(path.dirname(recipePath), { recursive: true });
     await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      kind: 'recipe-library',
       schema_version: 1,
+      kind: 'recipe-library',
       name: 'trusted-library',
     });
-    await writeJsonFile(path.join(libraryRoot, 'flows', 'trusted.flows.json'), {
-      schema_version: 1,
-      kind: 'recipe-flow-catalog',
-      flows: {
-        'trusted.exec': {
-          workflow: {
-            entry: 'exec',
-            nodes: {
-              exec: {
-                action: 'command',
-                intent: 'Create a marker through a trusted flow',
-                cmd: 'touch laundered.txt',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-      },
-    });
+    await writeJsonFile(
+      recipePath,
+      recipe({
+        action: 'command',
+        intent: 'Create a marker through a trusted recipe.',
+        cmd: 'touch laundered.txt',
+      }),
+    );
     const runner = createRecipeRunner({
       actionManifest: manifest,
       adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
@@ -1306,57 +1349,19 @@ test('untrusted callers cannot launder restricted actions through trusted librar
   }
 });
 
-test('uses catalogs cannot escape the project root through symlinks', async () => {
+test('library recipe symlinks cannot escape the library root', async () => {
   const root = await tempRoot();
   const outside = await tempRoot();
   try {
-    await writeJsonFile(path.join(outside, 'outside.flows.json'), {
-      schema_version: 1,
-      kind: 'recipe-flow-catalog',
-      flows: {},
-    });
-    await symlink(path.join(outside, 'outside.flows.json'), path.join(root, 'linked.flows.json'));
-    const runner = createRecipeRunner({
-      actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
-    });
-    const document = recipe({ action: 'end', status: 'pass' });
-    document.uses = ['linked.flows.json'];
-    await assert.rejects(
-      runner.run({
-        recipeDocument: document,
-        artifactsDir: path.join(root, 'artifacts'),
-        projectRoot: root,
-        source: trusted,
-      }),
-      (error: unknown) =>
-        error instanceof RecipeTrustError && error.code === 'RECIPE_SOURCE_INVALID',
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-    await rm(outside, { recursive: true, force: true });
-  }
-});
-
-test('library catalogs cannot escape the library root through symlinks', async () => {
-  const root = await tempRoot();
-  const outside = await tempRoot();
-  try {
-    await mkdir(path.join(root, 'flows'), { recursive: true });
+    await mkdir(path.join(root, 'recipes'), { recursive: true });
     await writeJsonFile(path.join(root, 'library.json'), {
       schema_version: 1,
       kind: 'recipe-library',
       name: 'linked-library',
     });
-    await writeJsonFile(path.join(outside, 'outside.flows.json'), {
-      schema_version: 1,
-      kind: 'recipe-flow-catalog',
-      flows: {},
-    });
-    await symlink(
-      path.join(outside, 'outside.flows.json'),
-      path.join(root, 'flows', 'linked.flows.json'),
-    );
+    const outsideRecipe = path.join(outside, 'outside.recipe.json');
+    await writeJsonFile(outsideRecipe, recipe({ action: 'end', status: 'pass' }));
+    await symlink(outsideRecipe, path.join(root, 'recipes', 'linked.recipe.json'));
     await assert.rejects(
       loadRecipeLibraries([{ root, provenance: trusted }]),
       (error: unknown) =>

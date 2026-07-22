@@ -55,7 +55,7 @@ bash {{recipe_validate_wrapper}} \
   --slot-id {{SLOT}}
 ```
 
-- Author or update `{{TASK_DIR}}/artifacts/recipe.json` so it covers the ticket acceptance criteria, includes `schema_version: 1`, and uses `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"` for new recipes.
+- Author or update `{{TASK_DIR}}/artifacts/recipe.json` so it covers the ticket acceptance criteria and includes the required `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, `description`, and `workflow`.
 - Prefer adapting `{{recipe_example_banner}}` for demo-banner smoke tasks.
 - Run a **fast** recipe after implementation (no video), then a **proof** run for publication:
   ```bash

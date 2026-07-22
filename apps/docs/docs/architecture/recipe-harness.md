@@ -89,4 +89,4 @@ Farmslot also defines itself as a project (`projects/farmslot-farm/project.json`
 
 ## Recipe Protocol v1
 
-The current protocol source of truth is [Recipe Protocol v1](../reference/recipe-protocol-v1.md). Key additions are graph composition through `call`, reusable flow catalogs, `startState`, proof-target mapping, phase-aware recording, typed artifact manifests, and HUD/overlay support for reviewer-visible UI proof.
+The protocol source of truth is [Recipe Protocol v1](../reference/recipe-protocol-v1.md). Recipes compose through `call`, resolve from ordered libraries, and retain exact dependency documents with typed trace and artifact evidence.

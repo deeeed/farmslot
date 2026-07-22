@@ -34,44 +34,52 @@ import {
   selectedRecipeRunRequestId,
 } from './slot-view-recipe-helpers.js';
 import type { SlotViewRecipePresenter } from './slot-view-recipe-presenter.js';
-import { slotViewRecipeRunHelpText } from './slot-view-recipe-view-model.js';
+import {
+  selectedSlotViewRecipeDependencyLabel,
+  slotViewRecipeRunHelpText,
+} from './slot-view-recipe-view-model.js';
 import { requestedRunFromHash } from './slot-view-url-state.js';
 
-export function renderRecipeFlowsList(
+export function renderRecipeDependenciesList(
   view: SlotViewRecipePresenter,
   recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>,
 ) {
   const canRerunRecipeHost = canShowRecipeExecutionControls(
     Boolean(recipeHost?.capabilities.canRerun),
   );
-  return view._recipeFlowArtifacts(recipeHost).length
+  return view._recipeDependencyArtifacts(recipeHost).length
     ? html`
         <div
           style="display:flex; flex-direction:column; gap:4px; margin-bottom:${spacing.sm}; padding:${spacing.sm}; border:1px solid ${colors.bgCardHover}; border-radius:${radii.md}; background:${colors.bgCard};"
         >
-          ${renderCollapsibleSectionHeader('Included flows', view._recipeFlowsCollapsed, () => {
-            view._recipeFlowsCollapsed = !view._recipeFlowsCollapsed;
-          })}
-          ${view._recipeFlowsCollapsed
+          ${renderCollapsibleSectionHeader(
+            'Included recipes',
+            view._recipeDependenciesCollapsed,
+            () => {
+              view._recipeDependenciesCollapsed = !view._recipeDependenciesCollapsed;
+            },
+          )}
+          ${view._recipeDependenciesCollapsed
             ? nothing
             : html`<div style="display:flex; flex-direction:column; gap:6px;">
                 <button
-                  data-testid="slot-recipe-flow-main"
-                  style="text-align:left; border:1px solid ${view._selectedRecipeFlowPath === ''
+                  data-testid="slot-recipe-library-main"
+                  style="text-align:left; border:1px solid ${view._selectedRecipeDependencyPath ===
+                  ''
                     ? colors.accent
-                    : colors.bgCardHover}; border-radius:${radii.md}; background:${view._selectedRecipeFlowPath ===
+                    : colors.bgCardHover}; border-radius:${radii.md}; background:${view._selectedRecipeDependencyPath ===
                   ''
                     ? `${colors.accent}16`
-                    : colors.bgSurface}; box-shadow:${view._selectedRecipeFlowPath === ''
+                    : colors.bgSurface}; box-shadow:${view._selectedRecipeDependencyPath === ''
                     ? `inset 0 0 0 1px ${colors.accent}22`
                     : 'none'}; color:${colors.textPrimary}; padding:${spacing.sm}; cursor:pointer;"
                   @click=${() => {
-                    view._selectedRecipeFlowPath = '';
+                    view._selectedRecipeDependencyPath = '';
                     view._selectedRecipeNodeId = '';
                     view._selectedRecipeArtifactPath = null;
                     view._recipeEvidenceCache = null;
                     view._syncUrlState();
-                    void view._loadSelectedRecipeFlow(recipeHost);
+                    void view._loadSelectedRecipeDependency(recipeHost);
                     void view._loadSelectedRecipeArtifactPreview(recipeHost);
                   }}
                 >
@@ -79,44 +87,43 @@ export function renderRecipeFlowsList(
                     style="display:flex; align-items:center; justify-content:space-between; gap:${spacing.sm};"
                   >
                     <span style="font-size:${fonts.sizeXs}; font-weight:600;">Main recipe</span>
-                    ${view._selectedRecipeFlowPath === ''
+                    ${view._selectedRecipeDependencyPath === ''
                       ? html`<span style="font-size:${fonts.sizeXs}; color:${colors.accent};"
                           >Selected</span
                         >`
                       : nothing}
                   </div>
                 </button>
-                ${view._recipeFlowArtifacts(recipeHost).map(
-                  (artifact: ArtifactRef) => html`
+                ${view._recipeDependencyArtifacts(recipeHost).map((artifact: ArtifactRef) => {
+                  const label = selectedSlotViewRecipeDependencyLabel(recipeHost, artifact.path);
+                  return html`
                     <button
-                      data-testid=${`slot-recipe-flow-${artifact.path.replace(/^artifacts\/recipe-flows\//, '').replace(/[^a-zA-Z0-9_-]+/g, '-')}`}
-                      style="text-align:left; border:1px solid ${view._selectedRecipeFlowPath ===
+                      data-testid=${`slot-recipe-library-${label.replace(/[^a-zA-Z0-9_-]+/g, '-')}`}
+                      style="text-align:left; border:1px solid ${view._selectedRecipeDependencyPath ===
                       artifact.path
                         ? colors.accent
-                        : colors.bgCardHover}; border-radius:${radii.md}; background:${view._selectedRecipeFlowPath ===
+                        : colors.bgCardHover}; border-radius:${radii.md}; background:${view._selectedRecipeDependencyPath ===
                       artifact.path
                         ? `${colors.accent}16`
-                        : colors.bgSurface}; box-shadow:${view._selectedRecipeFlowPath ===
+                        : colors.bgSurface}; box-shadow:${view._selectedRecipeDependencyPath ===
                       artifact.path
                         ? `inset 0 0 0 1px ${colors.accent}22`
                         : 'none'}; color:${colors.textPrimary}; padding:${spacing.sm}; cursor:pointer;"
                       @click=${() => {
-                        view._selectedRecipeFlowPath = artifact.path;
+                        view._selectedRecipeDependencyPath = artifact.path;
                         view._selectedRecipeNodeId = '';
                         view._selectedRecipeArtifactPath = null;
                         view._recipeEvidenceCache = null;
                         view._syncUrlState();
-                        void view._loadSelectedRecipeFlow(recipeHost);
+                        void view._loadSelectedRecipeDependency(recipeHost);
                         void view._loadSelectedRecipeArtifactPreview(recipeHost);
                       }}
                     >
                       <div
                         style="display:flex; align-items:center; justify-content:space-between; gap:${spacing.sm};"
                       >
-                        <span style="font-size:${fonts.sizeXs}; font-weight:600;"
-                          >${artifact.path.replace(/^artifacts\/recipe-flows\//, '')}</span
-                        >
-                        ${view._selectedRecipeFlowPath === artifact.path
+                        <span style="font-size:${fonts.sizeXs}; font-weight:600;">${label}</span>
+                        ${view._selectedRecipeDependencyPath === artifact.path
                           ? html`<span style="font-size:${fonts.sizeXs}; color:${colors.accent};"
                               >Selected</span
                             >`
@@ -128,26 +135,26 @@ export function renderRecipeFlowsList(
                         ${artifact.path}
                       </div>
                     </button>
-                  `,
-                )}
+                  `;
+                })}
               </div>`}
         </div>
-        ${!view._recipeFlowsCollapsed &&
-        view._selectedRecipeFlowArtifact(recipeHost) &&
+        ${!view._recipeDependenciesCollapsed &&
+        view._selectedRecipeDependencyArtifact(recipeHost) &&
         canRerunRecipeHost
           ? html`
-              ${view._selectedRecipeFlowLoading
+              ${view._selectedRecipeDependencyLoading
                 ? html`<div
                     style="font-size:${fonts.sizeXs}; color:${colors.textMuted}; margin-bottom:${spacing.xs};"
                   >
-                    Loading selected flow…
+                    Loading selected recipe…
                   </div>`
                 : nothing}
-              ${view._selectedRecipeFlowError
+              ${view._selectedRecipeDependencyError
                 ? html`<div
                     style="font-size:${fonts.sizeXs}; color:${colors.statusWarn}; margin-bottom:${spacing.xs};"
                   >
-                    Failed to load selected flow: ${view._selectedRecipeFlowError}
+                    Failed to load selected recipe: ${view._selectedRecipeDependencyError}
                   </div>`
                 : nothing}
               <div
@@ -157,24 +164,24 @@ export function renderRecipeFlowsList(
                   class="sv-action-btn primary"
                   @click=${() =>
                     view._startRecipeExecution(
-                      'Selected flow',
-                      view._selectedRecipeFlowArtifact(recipeHost)?.path ?? '',
+                      'Selected recipe',
+                      view._selectedRecipeDependencyArtifact(recipeHost)?.path ?? '',
                     )}
                 >
-                  Run selected flow
+                  Run selected recipe
                 </button>
                 <button
                   class="sv-action-btn"
                   @click=${() =>
                     void view._copyRecipeCommand(
-                      view._selectedRecipeFlowArtifact(recipeHost)?.path ?? '',
+                      view._selectedRecipeDependencyArtifact(recipeHost)?.path ?? '',
                       true,
                     )}
                 >
                   ${view._recipeCommandFeedback === 'copied' ? 'Copied' : 'Copy command'}
                 </button>
                 <span style="font-size:${fonts.sizeXs}; color:${colors.textMuted};"
-                  >Runs the selected bundled flow directly on the warm slot.</span
+                  >Runs the selected dependency recipe directly on the warm slot.</span
                 >
               </div>
             `
@@ -443,8 +450,11 @@ function renderRecipeHostBody(
   selectedRecipeRun: RecipeRunArtifactGroup | null,
   effectiveRecipeJson: string | null,
 ) {
-  const selectedFlowArtifactPath = view._selectedRecipeFlowArtifact(recipeHost)?.path ?? '';
-  const replayLabel = selectedFlowArtifactPath ? 'Replay selected flow' : 'Replay live recipe';
+  const selectedDependencyArtifactPath =
+    view._selectedRecipeDependencyArtifact(recipeHost)?.path ?? '';
+  const replayLabel = selectedDependencyArtifactPath
+    ? 'Replay selected recipe'
+    : 'Replay live recipe';
   const selectedRecipeRunId = selectedRecipeRunRequestId(selectedRecipeRun) ?? '';
   const slotCanAcceptRerun = canSlotAcceptRecipeRerun(view._slot, view._linkedRun);
   const canReplayActiveRecipe = Boolean(
@@ -501,7 +511,7 @@ function renderRecipeHostBody(
         >
         <span
           style="padding:2px 8px; border-radius:${radii.sm}; background:${colors.bgCardHover}; color:${colors.textSecondary}; font-size:${fonts.sizeXs};"
-          >Flow: ${view._selectedRecipeFlowLabel(recipeHost)}</span
+          >Recipe: ${view._selectedRecipeDependencyLabel(recipeHost)}</span
         >
         <span
           style="padding:2px 8px; border-radius:${radii.sm}; background:${colors.bgCardHover}; color:${colors.textSecondary}; font-size:${fonts.sizeXs};"
@@ -533,7 +543,7 @@ function renderRecipeHostBody(
                 id="sv-recipe-runner-controls"
                 runId=${recipeHost.runId}
                 slotId=${view.slotId}
-                recipeArtifactPath=${selectedFlowArtifactPath}
+                recipeArtifactPath=${selectedDependencyArtifactPath}
                 recipeRunId=${selectedRecipeRunId}
                 runLabel=${replayLabel}
                 .playbackSlowMs=${view._recipeRunnerUiOptions.playbackSlowMs}
@@ -567,7 +577,7 @@ function renderRecipeHostBody(
             Failed to load recipe runs: ${view._recipeRunsError}
           </div>`
         : nothing}
-      ${view._renderRecipeRunsList()} ${view._renderRecipeFlowsList(recipeHost)}
+      ${view._renderRecipeRunsList()} ${view._renderRecipeDependenciesList(recipeHost)}
       ${view._recipeJsonFallbackWarning(recipeHost)
         ? html`
             <div

@@ -31,15 +31,10 @@
           },
           "params": {
             "type": "object"
-          },
-          "next": {
-            "type": "string"
           }
         },
-        "required": [
-          "target"
-        ],
-        "additionalProperties": true
+        "required": ["target"],
+        "additionalProperties": false
       },
       "examples": [
         {
@@ -65,10 +60,10 @@
             "type": "string"
           },
           "text_contains": {
-            "type": [
-              "string",
-              "array"
-            ]
+            "type": ["string", "array"],
+            "items": {
+              "type": "string"
+            }
           },
           "visible": {
             "type": "boolean"
@@ -76,11 +71,20 @@
           "timeout_ms": {
             "type": "number"
           },
-          "next": {
+          "target": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          },
+          "expected": {
             "type": "string"
           }
         },
-        "additionalProperties": true
+        "additionalProperties": false
       },
       "examples": [
         {
@@ -104,19 +108,53 @@
             "action": "ui.screenshot",
             "path": "screenshots/perps-market.png",
             "claims": {
-              "must_show": [
-                "ETH",
-                "Perps"
-              ],
-              "must_not_show": [
-                "Error"
-              ]
+              "must_show": ["ETH", "Perps"],
+              "must_not_show": ["Error"]
             },
             "next": "index-artifacts",
             "intent": "Capture a simulator screenshot and attach reviewer claims"
           }
         }
-      ]
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "claims": {
+            "type": "object",
+            "properties": {
+              "must_show": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "must_not_show": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "covers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "app.lifecycle": {
       "description": "Control the React Native app runtime through launch, terminate, background, foreground, reload, reset, or restart.",
@@ -130,7 +168,19 @@
             "intent": "Control the React Native app runtime through launch, terminate, background, foreground, reload, reset, or restart"
           }
         }
-      ]
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "wait_for": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "app.hud": {
       "description": "Show an optional reviewer HUD annotation; normal step progress comes from node intent.",
@@ -142,7 +192,16 @@
             "intent": "Verify the Perps ETH market row is visible"
           }
         }
-      ]
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "clear": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "ui.set_input": {
       "description": "Set text through the real UI input path.",
@@ -155,44 +214,144 @@
             "intent": "Set text through the real UI input path"
           }
         }
-      ]
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ui.press": {
+      "description": "ui.press action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ui.key_press": {
+      "description": "ui.key_press action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "ui.scroll": {
+      "description": "ui.scroll action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "ui.gesture": {
+      "description": "ui.gesture action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "app.trace": {
+      "description": "app.trace action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "state_read": {
+      "description": "state_read action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "save_as": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "assert": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "watch_logs": {
+      "description": "watch_logs action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "index_artifacts": {
+      "description": "index_artifacts action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": ["object", "string"],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "switch": {
+      "description": "Choose a graph branch when one resolved string equals another.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "string" },
+          "equals": { "type": "string" }
+        },
+        "required": ["value", "equals"],
+        "additionalProperties": false
+      },
+      "result_cases": ["match"]
     }
   },
-  "state_refs": [
-    {
-      "ref": "example.mobile.route",
-      "description": "Current React Navigation route.",
-      "schema": {
-        "type": "object"
-      }
-    },
-    {
-      "ref": "example.mobile.wallet_status",
-      "description": "Debug wallet lock/account/network status.",
-      "schema": {
-        "type": "object"
-      }
-    },
-    {
-      "ref": "example.mobile.perps.status",
-      "description": "Perps feature readiness and selected provider status.",
-      "schema": {
-        "type": "object"
-      }
-    }
-  ],
-  "pre_conditions": [
-    {
-      "id": "example.mobile.bridge_ready",
-      "description": "Injected Mobile app control bridge is reachable.",
-      "failure_kind": "setup"
-    },
-    {
-      "id": "example.wallet.fixture_ready",
-      "description": "Debug wallet fixture/profile exists and is safe to use.",
-      "failure_kind": "fixture"
-    }
-  ],
   "custom_actions": [
     {
       "name": "example.wallet.setup",
@@ -203,14 +362,9 @@
         "properties": {
           "fixture": {
             "type": "string"
-          },
-          "next": {
-            "type": "string"
           }
         },
-        "required": [
-          "fixture"
-        ],
+        "required": ["fixture"],
         "additionalProperties": false
       },
       "examples": [
@@ -222,7 +376,8 @@
           }
         }
       ],
-      "safety_notes": "Fixture-only; never use production secrets."
+      "safety_notes": "Fixture-only; never use production secrets.",
+      "execution_capabilities": ["app-mutation"]
     },
     {
       "name": "example.wallet.unlock",
@@ -233,14 +388,9 @@
         "properties": {
           "account": {
             "type": "string"
-          },
-          "next": {
-            "type": "string"
           }
         },
-        "required": [
-          "account"
-        ],
+        "required": ["account"],
         "additionalProperties": false
       },
       "examples": [
@@ -251,12 +401,13 @@
             "next": "open-perps"
           }
         }
-      ]
+      ],
+      "execution_capabilities": ["app-mutation"]
     },
     {
       "name": "example.trade.enter_amount_keypad",
       "owner": "example",
-      "description": "Enter a Perps amount through the product keypad flow when raw text input would bypass product behavior.",
+      "description": "Enter a Perps amount through the product keypad journey when raw text input would bypass product behavior.",
       "schema": {
         "type": "object",
         "properties": {
@@ -265,14 +416,9 @@
           },
           "field": {
             "type": "string"
-          },
-          "next": {
-            "type": "string"
           }
         },
-        "required": [
-          "value"
-        ],
+        "required": ["value"],
         "additionalProperties": false
       },
       "examples": [
@@ -283,7 +429,8 @@
             "next": "review-order"
           }
         }
-      ]
+      ],
+      "execution_capabilities": ["app-mutation"]
     },
     {
       "name": "example.debug.eval",
@@ -300,14 +447,9 @@
           },
           "save_as": {
             "type": "string"
-          },
-          "next": {
-            "type": "string"
           }
         },
-        "required": [
-          "expression"
-        ],
+        "required": ["expression"],
         "additionalProperties": false
       },
       "examples": [
@@ -320,7 +462,8 @@
           }
         }
       ],
-      "safety_notes": "Use state_read refs for proof. This action is debug-only."
+      "safety_notes": "Use state_read refs for proof. This action is debug-only.",
+      "execution_capabilities": ["arbitrary-code"]
     }
   ],
   "native_bindings": [

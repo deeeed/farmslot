@@ -972,7 +972,7 @@ export async function dispatchExecute(
     }
   }
 
-  // We just wrote artifacts/recipe.json + artifacts/recipe-flows/ into the
+  // We just wrote artifacts/recipe.json + artifacts/recipe-library/ into the
   // worker task dir. loadLiveRecipeContextForRun tries the worker-prefix path
   // first via shouldPreferLocalPortableArtifacts, so any UI panel that warmed
   // the cache before dispatch would serve the previous worker-side values for

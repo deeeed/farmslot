@@ -55,8 +55,8 @@ Adopt only the layer you need:
 4. Full Farmslot: add `project.json` hooks, pools, slots, Command Center, and gateway orchestration.
 
 Recipe support is the preferred validation loop for projects that need
-reviewable proof artifacts. Farmslot v1 standardizes a shared `validate.workflow`
-graph envelope plus a typed artifact package, while each project keeps its own
+reviewable proof artifacts. Farmslot v1 standardizes a shared `workflow` graph
+plus a typed artifact package, while each project keeps its own
 runner and action adapters. First-party hooks should be thin routers: choose the
 project-native runner, pass through `{{recipe_path}}`/`{{artifacts_dir}}`, and let
 that harness emit the v1 package rather than teaching Farmslot core project
@@ -66,9 +66,8 @@ A minimal new v1 recipe-enabled project should provide:
 
 1. A `hooks.recipe_run` command in `project.json`.
 2. A runner command that accepts `{{recipe_path}}` and `{{artifacts_dir}}`.
-3. A recipe graph with `schema_version`, `validate.workflow.entry`, and
-   `validate.workflow.nodes`. Top-level `title`/`description` are optional
-   metadata only.
+3. A recipe with `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`,
+   required `description`, `workflow.entry`, and `workflow.nodes`. `title` is optional.
 4. `intent` on every non-terminal executable node: one short HUD/trace line
    for what the agent is doing now.
 5. Project-owned action handling for native tools such as CDP, Playwright,
@@ -77,7 +76,7 @@ A minimal new v1 recipe-enabled project should provide:
    - `summary.json`
    - `trace.json`
    - `artifact-manifest.json`
-   - the resolved `recipe.json` or `workflow.json` when practical
+   - the resolved `recipe.json`
 7. Slow/live playback support for UI-class projects when feasible. Set
    `recipe_run_supports_playback_slow: true` only when the runner can honor the
    appended slow-playback option.
@@ -95,8 +94,7 @@ Example hook:
 
 Keep stricter action validation inside the project runner. Farmslot core should
 validate the shared graph/artifact contract, not project-specific semantics.
-Command Center can append an artifacts directory for legacy hooks that omit it,
-but new v1 project configs should include `{{artifacts_dir}}` explicitly.
+Project configs must include `{{artifacts_dir}}` explicitly.
 
 Validate the generic contract with the Farmslot CLI:
 

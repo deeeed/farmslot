@@ -4,6 +4,9 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- **BREAKING:** Recipe validate/run uses the static recipe dependency graph and exact resolution evidence; direct runs accept typed `key=value` parameters.
+- security: dependency evidence readers derive canonical paths from validated digests.
+
 - security: recipe runs honor inherited source provenance; direct operator runs remain trusted.
 
 - fix: `execution-template` loads `@farmslot/agent-runtime` lazily inside its action handlers — the static import was evaluated at CLI startup, so a missing or stale agent-runtime dist broke EVERY farmslot command; the failure is now scoped to the subcommand with an `AGENT_RUNTIME_UNAVAILABLE` error naming the rebuild.

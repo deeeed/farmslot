@@ -188,13 +188,11 @@ For multi-platform projects, publish a shared domain interface matrix in additio
 
 Use this for domains such as wallet/perps: define the common interface once, then record Mobile and Extension support status per capability. Unsupported capabilities are not callable; they are review/planning signals.
 
-## Flow catalog discoverability
+## Recipe discoverability
 
-Action manifests describe what a runner can do. Flow catalogs describe reusable recipes that a runner/domain publishes on top of those actions. Recipe v1 supports optional `uses` references to flow catalogs so agents can discover domain start states without copying setup into every task recipe.
+Action manifests describe atomic runner capabilities. Recipe libraries publish parameterized graphs that compose those actions. Agents discover recipes with `run --list` and `run <id> --describe`, then inspect the action manifest only when no existing recipe fits.
 
-A flow catalog entry should include id/ref, owner, version, params schema, output schema, required actions/capabilities, default phase/record policy, examples, workflow body, and a machine-checkable postcondition for `ensure_*` flows.
-
-Farmslot owns catalog resolution, `call` execution semantics, validation, nested trace, and artifact mapping. Project runners own domain flow definitions such as `example.trade.start_state`.
+Farmslot owns recipe indexing, `call` execution, validation, nested trace, and artifact mapping. Project and team libraries own domain recipes such as `example.trade.start_state`.
 
 ## Manifest discoverability
 

@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,7 +16,7 @@ const repoRoot = resolve(__dirname, '../../..');
 const commandCenterDir = resolve(repoRoot, 'apps/command-center');
 const defaultRecipe = resolve(
   repoRoot,
-  'docs/examples/recipes/farmslot/docusaurus-gateway-intelligence.recipe.json',
+  'docs/examples/recipes/farmslot/docusaurus-gateway-intelligence.capture-plan.json',
 );
 const docsVideo = resolve(
   repoRoot,
@@ -38,6 +38,7 @@ const captureWindowName = process.env.FARMSLOT_DEMO_WINDOW_NAME || 'Farmslot Gat
 const copyToDocs = process.argv.includes('--copy-to-docs');
 const args = parseArgs(process.argv.slice(2));
 const recipePath = resolve(repoRoot, args.recipe || defaultRecipe);
+const recipeId = basename(recipePath).replace(/\.capture-plan\.json$/u, '');
 const artifactsDir = resolve(
   repoRoot,
   args.artifactsDir || '.agent/demo-stage/docusaurus-gateway-intelligence/output',
@@ -531,7 +532,7 @@ function writeOutputs({ videoPath, posterPath, screenshotPath, verification }) {
   ];
   writeFileSync(
     resolve(artifactsDir, 'trace.json'),
-    JSON.stringify({ version: 1, recipeId: recipe.id, steps: trace }, null, 2),
+    JSON.stringify({ version: 1, recipeId, steps: trace }, null, 2),
   );
   writeFileSync(
     resolve(artifactsDir, 'artifact-manifest.json'),
@@ -542,7 +543,7 @@ function writeOutputs({ videoPath, posterPath, screenshotPath, verification }) {
     JSON.stringify(
       {
         status: 'pass',
-        recipeId: recipe.id,
+        recipeId,
         title: recipe.title,
         regeneratedBy: `yarn --cwd apps/docs capture:gateway-intelligence --artifacts-dir ${relative(repoRoot, artifactsDir)} --copy-to-docs`,
         copiedToDocs: copyToDocs

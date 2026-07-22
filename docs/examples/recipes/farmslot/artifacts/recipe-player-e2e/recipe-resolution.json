@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "root": {
+    "ref": "recipe-player-e2e",
+    "digest": "sha256:45ca67272452c9e2381ab3b245b3621887c91a4bdadd403cd99608921b950e6f"
+  },
+  "dependencies": [],
+  "edges": []
+}

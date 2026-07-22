@@ -1,85 +1,72 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "schema_version": 1,
   "title": "Farmslot live recipe player and output artifacts smoke",
   "description": "Replays a UI-class recipe on a warm slot, watches the stream stay visible, follows runner logs, and inspects newly created artifacts.",
-  "inputs": {
-    "ui_url": "http://localhost:5174",
-    "slot_id": "<slot-id>",
-    "source_recipe": "docs/examples/recipes/ui-live-v1.recipe.json"
-  },
-  "validate": {
-    "workflow": {
-      "pre_conditions": [
-        {
-          "id": "slot.warm.available",
-          "description": "A warm slot is available.",
-          "required": true
-        },
-        {
-          "id": "project.recipe_run.ui_supported",
-          "description": "Project recipe_run hook supports the selected UI recipe.",
-          "required": true
-        },
-        {
-          "id": "stream_panel.visible",
-          "description": "The stream panel is visible.",
-          "required": true
-        }
-      ],
-      "setup": [],
-      "entry": "open-slot-recipe-panel",
-      "nodes": {
-        "open-slot-recipe-panel": {
-          "action": "ui.navigate",
-          "next": "start-live-replay",
-          "target": "#slot/{{slot_id}}?reviewDrawer=recipe",
-          "intent": "Open the slot Recipe panel for a warm slot without placing a modal over the live stream."
-        },
-        "start-live-replay": {
-          "action": "ui.press",
-          "next": "watch-stream-and-logs",
-          "selector": "recipe-runner-controls button",
-          "intent": "Press replay live recipe with the default 2 second visualization delay."
-        },
-        "watch-stream-and-logs": {
-          "action": "ui.wait_for",
-          "next": "open-new-artifacts",
-          "event": "recipe-complete",
-          "timeout_ms": 180000,
-          "intent": "Watch the streaming panel and recipe runner logs until the replay completes or fails."
-        },
-        "open-new-artifacts": {
-          "action": "ui.press",
-          "next": "capture-replay-result",
-          "text": "Open artifacts",
-          "intent": "Open the newly generated attempted-run artifacts from the same Recipe panel."
-        },
-        "capture-replay-result": {
-          "action": "ui.screenshot",
-          "path": "screenshots/live-replay-result.svg",
-          "next": "index-artifacts",
-          "intent": "Capture the live replay result with stream, logs, and generated artifacts visible."
-        },
-        "index-artifacts": {
-          "action": "index_artifacts",
-          "next": "done",
-          "artifacts": [
-            "screenshots/live-replay-result.svg",
-            "reports/replay-session.json",
-            "logs/recipe-player.log"
-          ],
-          "intent": "Publish replay screenshot, runner log, replay report, trace, summary, and resolved recipe."
-        },
-        "done": {
-          "action": "end",
-          "status": "pass"
-        }
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "ui_url": {
+        "type": "string",
+        "default": "http://localhost:5174"
       },
-      "teardown": [],
-      "playback": {
-        "mode": "auto",
-        "slow_ms": 2000
+      "slot_id": {
+        "type": "string",
+        "default": "<slot-id>"
+      },
+      "source_recipe": {
+        "type": "string",
+        "default": "docs/examples/recipes/ui-live-v1.recipe.json"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open-slot-recipe-panel",
+    "nodes": {
+      "open-slot-recipe-panel": {
+        "action": "ui.navigate",
+        "next": "start-live-replay",
+        "target": "#slot/{{params.slot_id}}?reviewDrawer=recipe",
+        "intent": "Open the slot Recipe panel for a warm slot without placing a modal over the live stream."
+      },
+      "start-live-replay": {
+        "action": "ui.press",
+        "next": "watch-stream-and-logs",
+        "selector": "recipe-runner-controls button",
+        "intent": "Start the live recipe replay with the default 2 second visualization delay."
+      },
+      "watch-stream-and-logs": {
+        "action": "ui.wait_for",
+        "next": "open-new-artifacts",
+        "event": "recipe-complete",
+        "timeout_ms": 180000,
+        "intent": "Watch the streaming panel and recipe runner logs until the replay completes or fails."
+      },
+      "open-new-artifacts": {
+        "action": "ui.press",
+        "next": "capture-replay-result",
+        "text": "Open artifacts",
+        "intent": "Open the newly generated attempted-run artifacts from the same Recipe panel."
+      },
+      "capture-replay-result": {
+        "action": "ui.screenshot",
+        "path": "screenshots/live-replay-result.svg",
+        "next": "index-artifacts",
+        "intent": "Record the live replay result with stream, logs, and generated artifacts visible."
+      },
+      "index-artifacts": {
+        "action": "index_artifacts",
+        "next": "done",
+        "artifacts": [
+          "screenshots/live-replay-result.svg",
+          "reports/replay-session.json",
+          "logs/recipe-player.log"
+        ],
+        "intent": "Publish replay screenshot, runner log, replay report, trace, summary, and resolved recipe."
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
       }
     }
   }

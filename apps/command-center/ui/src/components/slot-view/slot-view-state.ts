@@ -165,10 +165,10 @@ export abstract class SlotViewState extends LitElement {
   @state() _slotRecipeView: 'graph' | 'json' = 'graph';
   @state() _recipeRuns: RecipeRunArtifactGroup[] = [];
   @state() _selectedRecipeRunId = '';
-  @state() _selectedRecipeFlowPath = '';
-  @state() _selectedRecipeFlowJson = '';
-  @state() _selectedRecipeFlowLoading = false;
-  @state() _selectedRecipeFlowError = '';
+  @state() _selectedRecipeDependencyPath = '';
+  @state() _selectedRecipeDependencyJson = '';
+  @state() _selectedRecipeDependencyLoading = false;
+  @state() _selectedRecipeDependencyError = '';
   @state() _selectedRecipeEvidenceManifest: EvidenceManifestStandalone[] = [];
   @state() _selectedRecipeNodeId = '';
   @state() _recipeEvidenceMode: 'all' | 'node' = 'all';
@@ -177,7 +177,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _recipeRunsLoading = false;
   @state() _recipeRunsError = '';
   @state() _recipeRunsCollapsed = false;
-  @state() _recipeFlowsCollapsed = false;
+  @state() _recipeDependenciesCollapsed = false;
   @state() _recipeEvidenceCollapsed = false;
   @state() _recipeQualityCollapsed = true;
   @state() _recipeDefinitionCollapsed = false;
@@ -204,7 +204,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _mirrorRefreshing = false;
   @state() _mirrorRefreshFeedback = '';
   @state() _artifactMirrorEpoch = 0;
-  _selectedRecipeFlowLoadToken = Symbol('recipe-flow-load');
+  _selectedRecipeDependencyLoadToken = Symbol('recipe-library-load');
   _selectedRecipeEvidenceManifestLoadToken = Symbol('recipe-evidence-manifest-load');
   _selectedRecipeArtifactPreviewLoadToken = Symbol('recipe-artifact-preview-load');
   _recipeEvidenceCache: {

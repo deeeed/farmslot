@@ -5,27 +5,26 @@ import {
   isRecord,
   type MutableValidationContext,
   OFFICIAL_ACTION_SET,
-  PLAYBACK_MODES,
-  RECIPE_PLAYBACK_SLOW_MS_MAX,
-  RECIPE_PLAYBACK_SLOW_MS_MIN,
   TERMINAL_STATUSES,
 } from './common.js';
 
-interface WorkflowGraph {
+const NODE_ID_PATTERN = /^[A-Za-z0-9_-]+$/u;
+
+export interface WorkflowGraph {
   entry: string;
   nodes: Record<string, Record<string, unknown>>;
-  lifecycleNodes: Record<string, LifecycleWorkflowNode>;
+  teardown?: string;
 }
 
-interface LifecycleWorkflowNode {
+export interface WorkflowActionEntry {
+  nodeId: string;
+  action: string;
   node: Record<string, unknown>;
   path: string;
 }
 
-interface RecipePreconditionGate {
-  id: string;
-  path: string;
-}
+const CORE_NODE_FIELDS = new Set(['action', 'intent', 'next', 'cases', 'default', 'proves']);
+const CALL_NODE_FIELDS = new Set(['action', 'intent', 'ref', 'params', 'proves', 'next']);
 
 const GENERIC_INTENTS = new Set([
   'executing recipe step',
@@ -33,7 +32,6 @@ const GENERIC_INTENTS = new Set([
   'setup',
   'ui',
   'wallet',
-  'perps',
   'test',
   'step',
   'execute',
@@ -58,100 +56,66 @@ const IMPLEMENTATION_INTENTS = new Set([
   'payload',
 ]);
 
-/** Canonical flow identifier used by validation, planning, and execution. */
-export function normalizeRecipeFlowRef(value: string): string {
+const GENERIC_INTENT_PATTERN = /^(?:do|execute|perform|run) .+ (?:for|in) (?:the )?recipe[.!]?$/u;
+
+const UI_MECHANIC_INTENTS: Record<string, RegExp> = {
+  'ui.navigate': /^(?:navigate|route)\b/u,
+  'ui.press': /^(?:click|press|tap)\b/u,
+  'ui.key_press': /^(?:press|type)\b/u,
+  'ui.set_input': /^(?:fill|set|type)\b/u,
+  'ui.scroll': /^(?:bring .* into view|scroll)\b/u,
+  'ui.wait_for': /^wait\b/u,
+  'ui.screenshot': /^(?:capture|take (?:a )?screenshot)\b/u,
+};
+
+const UI_IMPLEMENTATION_TERMS =
+  /\b(?:css|hash|raw (?:app|extension|platform)|route params?|selector|test[_ -]?id)\b/u;
+
+export function normalizeRecipeRef(value: string): string {
   return value.trim();
 }
 
-export function isDynamicRecipeFlowRef(value: string): boolean {
-  return /\{\{params\.[A-Za-z0-9_.-]+\}\}/.test(value);
+export function isDynamicRecipeRef(value: string): boolean {
+  return /\{\{(?:params|outputs)\.[A-Za-z0-9_.-]+\}\}/u.test(value);
 }
 
-function normalizeIntent(value: string): string {
-  return value.trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
-}
-
-function addInvalidIntentFinding(
-  ctx: MutableValidationContext,
-  codePrefix: 'workflow' | 'flow',
-  path: string,
-  message: string,
-): void {
-  addFinding(ctx, 'error', `${codePrefix}.invalid_intent`, path, message);
-}
-
-function validateNodeIntent(
-  ctx: MutableValidationContext,
-  codePrefix: 'workflow' | 'flow',
-  nodeId: string,
-  node: Record<string, unknown>,
-  path: string,
-): void {
-  const intent = node.intent;
-  if (!isNonEmptyString(intent)) {
-    addInvalidIntentFinding(
-      ctx,
-      codePrefix,
-      `${path}.intent`,
-      'Missing required node intent. Add intent as one short HUD/trace sentence describing what the agent is doing now, for example: "Open the Perps market screen".',
-    );
-    return;
-  }
-
-  const normalized = normalizeIntent(intent);
-  const action = isNonEmptyString(node.action) ? node.action : '';
-  const blockedValues = [
-    nodeId,
-    action,
-    node.selector,
-    node.test_id,
-    node.testID,
-    node.id,
-    node.ref,
-  ].filter(isNonEmptyString);
-  const normalizedBlockedValues = new Set(blockedValues.map(normalizeIntent));
-
-  if (
-    GENERIC_INTENTS.has(normalized) ||
-    IMPLEMENTATION_INTENTS.has(normalized) ||
-    OFFICIAL_ACTION_SET.has(intent.trim()) ||
-    normalizedBlockedValues.has(normalized)
-  ) {
-    addInvalidIntentFinding(
-      ctx,
-      codePrefix,
-      `${path}.intent`,
-      'Invalid node intent. Expected one short HUD/trace sentence for what the agent is doing now; do not use generic text, action names, node ids, selectors, test ids, or implementation primitives.',
-    );
-  }
+export function getRecipeActionParams(node: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(node).filter(
+      ([field]) =>
+        !CORE_NODE_FIELDS.has(field) &&
+        !(node.action === 'call' && (field === 'ref' || field === 'params')) &&
+        !(node.action === 'end' && field === 'status'),
+    ),
+  );
 }
 
 export function extractWorkflow(
   ctx: MutableValidationContext,
   recipe: Record<string, unknown>,
 ): WorkflowGraph | null {
-  const validate = recipe.validate;
-  if (!isRecord(validate)) {
-    addFinding(
-      ctx,
-      'error',
-      'recipe.missing_validate',
-      'validate',
-      'Recipe must include validate.',
-    );
-    return null;
-  }
-
-  const workflow = validate.workflow;
+  const workflow = recipe.workflow;
   if (!isRecord(workflow)) {
     addFinding(
       ctx,
       'error',
       'recipe.missing_workflow',
-      'validate.workflow',
-      'Recipe must include validate.workflow.',
+      'workflow',
+      'Recipe must include workflow.',
     );
     return null;
+  }
+
+  for (const field of Object.keys(workflow)) {
+    if (field !== 'entry' && field !== 'nodes' && field !== 'teardown') {
+      addFinding(
+        ctx,
+        'error',
+        'workflow.unsupported_field',
+        `workflow.${field}`,
+        `Recipe Protocol v1 does not support workflow field ${field}.`,
+      );
+    }
   }
 
   const entry = workflow.entry;
@@ -160,8 +124,19 @@ export function extractWorkflow(
       ctx,
       'error',
       'workflow.invalid_entry',
-      'validate.workflow.entry',
-      'validate.workflow.entry must be a non-empty string.',
+      'workflow.entry',
+      'workflow.entry must be a non-empty string.',
+    );
+  }
+
+  const teardown = workflow.teardown;
+  if (teardown != null && !isNonEmptyString(teardown)) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_teardown',
+      'workflow.teardown',
+      'workflow.teardown must be a non-empty node id when present.',
     );
   }
 
@@ -171,870 +146,244 @@ export function extractWorkflow(
       ctx,
       'error',
       'workflow.invalid_nodes',
-      'validate.workflow.nodes',
-      'validate.workflow.nodes must be a non-empty object.',
+      'workflow.nodes',
+      'workflow.nodes must be a non-empty object.',
     );
     return null;
   }
 
   const typedNodes = Object.create(null) as Record<string, Record<string, unknown>>;
   for (const [nodeId, node] of Object.entries(nodes)) {
-    if (!isRecord(node)) {
+    if (!isNonEmptyString(nodeId) || !NODE_ID_PATTERN.test(nodeId) || !isRecord(node)) {
       addFinding(
         ctx,
         'error',
         'workflow.invalid_node',
-        `validate.workflow.nodes.${nodeId}`,
-        `Workflow node ${nodeId} must be an object.`,
+        `workflow.nodes.${nodeId}`,
+        `Workflow node ${nodeId} must be an object whose id contains only letters, numbers, underscores, or hyphens.`,
       );
       continue;
     }
     typedNodes[nodeId] = node;
   }
 
-  const lifecycleNodes = collectLifecycleNodes(ctx, recipe, workflow);
   if (!isNonEmptyString(entry)) return null;
-  return { entry, nodes: typedNodes, lifecycleNodes };
+  return {
+    entry,
+    nodes: typedNodes,
+    ...(isNonEmptyString(teardown) ? { teardown } : {}),
+  };
 }
 
-function collectLifecycleNodes(
-  ctx: MutableValidationContext,
-  recipe: Record<string, unknown>,
-  workflow: Record<string, unknown>,
-): Record<string, LifecycleWorkflowNode> {
-  const lifecycleNodes: Record<string, LifecycleWorkflowNode> = Object.create(null) as Record<
-    string,
-    LifecycleWorkflowNode
-  >;
-  collectLifecycleArray(ctx, workflow.setup, 'validate.workflow.setup', lifecycleNodes);
-  if (recipe.startState != null) {
-    if (isRecord(recipe.startState)) {
-      lifecycleNodes.startState = { node: recipe.startState, path: 'startState' };
-    } else {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.invalid_start_state',
-        'startState',
-        'startState must be an action node object when present.',
-      );
-    }
-  }
-  collectLifecycleArray(ctx, workflow.teardown, 'validate.workflow.teardown', lifecycleNodes);
-  return lifecycleNodes;
+function normalizeIntent(value: string): string {
+  return value.trim().toLowerCase().replace(/[_-]+/gu, ' ').replace(/\s+/gu, ' ');
 }
 
-function collectLifecycleArray(
+function validateNodeIntent(
   ctx: MutableValidationContext,
-  value: unknown,
+  nodeId: string,
+  node: Record<string, unknown>,
   path: string,
-  lifecycleNodes: Record<string, LifecycleWorkflowNode>,
 ): void {
-  if (value == null) return;
-  if (!Array.isArray(value)) {
-    addFinding(ctx, 'error', 'workflow.invalid_lifecycle', path, `${path} must be an array.`);
-    return;
-  }
-  value.forEach((entry, index) => {
-    const nodePath = `${path}[${index}]`;
-    if (!isRecord(entry)) {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.invalid_lifecycle_node',
-        nodePath,
-        `${nodePath} must be an action node object.`,
-      );
-      return;
-    }
-    lifecycleNodes[isNonEmptyString(entry.id) ? entry.id : `${path}:${index}`] = {
-      node: entry,
-      path: nodePath,
-    };
-    if (entry.next != null) {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.lifecycle_has_transition',
-        `${nodePath}.next`,
-        'setup and teardown entries are ordered arrays and must not declare next.',
-      );
-    }
-  });
-}
-
-function collectCaseTargets(
-  node: Record<string, unknown>,
-  path: string,
-  ctx: MutableValidationContext,
-  emitFindings = true,
-): string[] {
-  const cases = node.cases;
-  if (cases == null) return [];
-  if (Array.isArray(cases)) {
-    const targets: string[] = [];
-    cases.forEach((entry, index) => {
-      if (!isRecord(entry)) {
-        if (emitFindings) {
-          addFinding(
-            ctx,
-            'error',
-            'workflow.invalid_case',
-            `${path}.cases[${index}]`,
-            'cases entries must be objects.',
-          );
-        }
-        return;
-      }
-      const target = entry.next;
-      if (target == null) return;
-      if (isNonEmptyString(target)) {
-        targets.push(target);
-      } else {
-        if (emitFindings) {
-          addFinding(
-            ctx,
-            'error',
-            'workflow.invalid_case_target',
-            `${path}.cases[${index}].next`,
-            'cases[].next must be a non-empty string when present.',
-          );
-        }
-      }
-    });
-    return targets;
-  }
-
-  if (isRecord(cases)) {
-    const targets: string[] = [];
-    for (const [caseName, target] of Object.entries(cases)) {
-      if (isNonEmptyString(target)) {
-        targets.push(target);
-      } else {
-        if (emitFindings) {
-          addFinding(
-            ctx,
-            'error',
-            'workflow.invalid_case_target',
-            `${path}.cases.${caseName}`,
-            'case targets must be non-empty strings.',
-          );
-        }
-      }
-    }
-    return targets;
-  }
-
-  if (emitFindings) {
+  const intent = node.intent;
+  if (!isNonEmptyString(intent)) {
     addFinding(
       ctx,
       'error',
-      'workflow.invalid_cases',
-      `${path}.cases`,
-      'cases must be an array or object.',
-    );
-  }
-  return [];
-}
-
-function collectTargets(
-  node: Record<string, unknown>,
-  path: string,
-  ctx: MutableValidationContext,
-  emitFindings = true,
-): string[] {
-  const targets: string[] = [];
-  const next = node.next;
-  const defaultTarget = node.default;
-
-  if (next != null) {
-    if (isNonEmptyString(next)) {
-      targets.push(next);
-    } else {
-      if (emitFindings) {
-        addFinding(
-          ctx,
-          'error',
-          'workflow.invalid_next',
-          `${path}.next`,
-          'next must be a non-empty string.',
-        );
-      }
-    }
-  }
-
-  if (defaultTarget != null) {
-    if (isNonEmptyString(defaultTarget)) {
-      targets.push(defaultTarget);
-    } else {
-      if (emitFindings) {
-        addFinding(
-          ctx,
-          'error',
-          'workflow.invalid_default',
-          `${path}.default`,
-          'default must be a non-empty string.',
-        );
-      }
-    }
-  }
-
-  targets.push(...collectCaseTargets(node, path, ctx, emitFindings));
-  return targets;
-}
-
-function validatePlayback(ctx: MutableValidationContext, workflow: Record<string, unknown>): void {
-  if (workflow.playback == null) return;
-  if (!isRecord(workflow.playback)) {
-    addFinding(
-      ctx,
-      'error',
-      'workflow.invalid_playback',
-      'validate.workflow.playback',
-      'playback must be an object when present.',
+      'workflow.invalid_intent',
+      `${path}.intent`,
+      'Every non-terminal node requires one short human-facing intent sentence for HUD and trace evidence.',
     );
     return;
   }
 
-  const playback = workflow.playback;
+  const normalized = normalizeIntent(intent);
+  const blockedValues = [nodeId, node.action, node.selector, node.test_id, node.testID, node.ref]
+    .filter(isNonEmptyString)
+    .map(normalizeIntent);
+  const uiMechanicPattern = isNonEmptyString(node.action)
+    ? UI_MECHANIC_INTENTS[node.action]
+    : undefined;
   if (
-    playback.mode != null &&
-    (typeof playback.mode !== 'string' || !PLAYBACK_MODES.has(playback.mode))
+    GENERIC_INTENTS.has(normalized) ||
+    GENERIC_INTENT_PATTERN.test(normalized) ||
+    IMPLEMENTATION_INTENTS.has(normalized) ||
+    OFFICIAL_ACTION_SET.has(intent.trim()) ||
+    blockedValues.includes(normalized) ||
+    (uiMechanicPattern?.test(normalized) ?? false) ||
+    (isNonEmptyString(node.action) &&
+      node.action.startsWith('ui.') &&
+      UI_IMPLEMENTATION_TERMS.test(normalized))
   ) {
     addFinding(
       ctx,
       'error',
-      'workflow.invalid_playback_mode',
-      'validate.workflow.playback.mode',
-      'playback.mode must be one of off, auto, or step.',
+      'workflow.invalid_intent',
+      `${path}.intent`,
+      'Intent must explain the human-visible goal, not repeat an action, node id, selector, or generic verb.',
     );
-  }
-
-  if (playback.slow_ms != null) {
-    if (
-      typeof playback.slow_ms !== 'number' ||
-      !Number.isInteger(playback.slow_ms) ||
-      playback.slow_ms < RECIPE_PLAYBACK_SLOW_MS_MIN ||
-      playback.slow_ms > RECIPE_PLAYBACK_SLOW_MS_MAX
-    ) {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.invalid_playback_slow_ms',
-        'validate.workflow.playback.slow_ms',
-        `playback.slow_ms must be an integer from ${RECIPE_PLAYBACK_SLOW_MS_MIN} through ${RECIPE_PLAYBACK_SLOW_MS_MAX}.`,
-      );
-    }
   }
 }
 
-export function validateWorkflowGraph(
+function validateProves(
   ctx: MutableValidationContext,
-  workflow: WorkflowGraph,
-  rawWorkflow: Record<string, unknown>,
+  node: Record<string, unknown>,
+  path: string,
 ): void {
-  if (!hasOwn(workflow.nodes, workflow.entry)) {
+  if (node.proves == null) return;
+  if (
+    !Array.isArray(node.proves) ||
+    node.proves.some((target) => !isNonEmptyString(target)) ||
+    new Set(node.proves).size !== node.proves.length
+  ) {
     addFinding(
       ctx,
       'error',
-      'workflow.missing_entry_node',
-      'validate.workflow.entry',
-      `Entry node ${workflow.entry} does not exist in validate.workflow.nodes.`,
+      'workflow.invalid_proves',
+      `${path}.proves`,
+      'proves must be an array of unique non-empty proof target ids.',
     );
   }
-
-  validatePlayback(ctx, rawWorkflow);
-
-  const reachable = new Set<string>();
-  const queue = hasOwn(workflow.nodes, workflow.entry) ? [workflow.entry] : [];
-  let terminalCount = 0;
-  let reachableTerminalCount = 0;
-
-  const graphNodes = Object.entries(workflow.nodes).map(
-    ([nodeId, node]) => [nodeId, { node, path: `validate.workflow.nodes.${nodeId}` }] as const,
-  );
-  const lifecycleNodes = Object.entries(workflow.lifecycleNodes);
-
-  for (const [nodeId, entry] of [...graphNodes, ...lifecycleNodes]) {
-    const { node, path } = entry;
-    const action = node.action;
-    if (!isNonEmptyString(action)) {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.invalid_action',
-        `${path}.action`,
-        'Node action must be a non-empty string.',
-      );
-      continue;
-    }
-
-    const isLifecycleNode = hasOwn(workflow.lifecycleNodes, nodeId);
-    const targets = isLifecycleNode ? [] : collectTargets(node, path, ctx);
-    if (action === 'end') {
-      terminalCount += 1;
-      if (node.status == null) {
-        addFinding(
-          ctx,
-          'error',
-          'workflow.missing_terminal_status',
-          `${path}.status`,
-          'end nodes must include status.',
-        );
-      } else if (typeof node.status !== 'string' || !TERMINAL_STATUSES.has(node.status)) {
-        addFinding(
-          ctx,
-          'error',
-          'workflow.invalid_terminal_status',
-          `${path}.status`,
-          'end node status must be pass, fail, or unknown.',
-        );
-      }
-      if (targets.length > 0) {
-        addFinding(
-          ctx,
-          'warning',
-          'workflow.terminal_has_targets',
-          path,
-          'end nodes should not define transitions.',
-        );
-      }
-      continue;
-    }
-
-    validateNodeIntent(ctx, 'workflow', nodeId, node, path);
-
-    if (!isLifecycleNode && targets.length === 0) {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.missing_transition',
-        path,
-        'Non-terminal nodes must transition via next, cases, or default.',
-      );
-    }
-
-    for (const target of targets) {
-      if (!hasOwn(workflow.nodes, target)) {
-        addFinding(
-          ctx,
-          'error',
-          'workflow.missing_target',
-          path,
-          `Node ${nodeId} references missing target node ${target}.`,
-        );
-      }
-    }
-  }
-
-  while (queue.length > 0) {
-    const nodeId = queue.shift();
-    if (!nodeId || reachable.has(nodeId)) continue;
-    if (!hasOwn(workflow.nodes, nodeId)) continue;
-    const node = workflow.nodes[nodeId];
-    reachable.add(nodeId);
-    if (node.action === 'end') reachableTerminalCount += 1;
-    for (const target of collectTargets(node, `validate.workflow.nodes.${nodeId}`, ctx, false)) {
-      if (hasOwn(workflow.nodes, target) && !reachable.has(target)) queue.push(target);
-    }
-  }
-
-  if (terminalCount === 0) {
-    addFinding(
-      ctx,
-      'error',
-      'workflow.missing_terminal',
-      'validate.workflow.nodes',
-      'Workflow must include at least one action:end terminal node.',
-    );
-  } else if (hasOwn(workflow.nodes, workflow.entry) && reachableTerminalCount === 0) {
-    addFinding(
-      ctx,
-      'error',
-      'workflow.no_reachable_terminal',
-      'validate.workflow.nodes',
-      'No terminal end node is reachable from the entry node.',
-    );
-  }
-
-  for (const nodeId of Object.keys(workflow.nodes)) {
-    if (!reachable.has(nodeId)) {
-      addFinding(
-        ctx,
-        'warning',
-        'workflow.unreachable_node',
-        `validate.workflow.nodes.${nodeId}`,
-        `Node ${nodeId} is not reachable from the entry node.`,
-      );
-    }
-  }
 }
 
-export function getRecipeWorkflowNodeIds(recipe: unknown): string[] {
-  if (!isRecord(recipe) || !isRecord(recipe.validate) || !isRecord(recipe.validate.workflow))
-    return [];
-  const nodes = recipe.validate.workflow.nodes;
-  if (!isRecord(nodes)) return [];
-  const ids = Object.keys(nodes);
-  if (isRecord(recipe.startState)) ids.push('startState');
-  for (const key of ['setup', 'teardown']) {
-    const lifecycle = recipe.validate.workflow[key];
-    if (!Array.isArray(lifecycle)) continue;
-    lifecycle.forEach((node, index) => {
-      if (isRecord(node)) ids.push(isNonEmptyString(node.id) ? node.id : `${key}:${index}`);
-    });
-  }
-  return ids;
-}
-
-export function getRecipeWorkflowActions(recipe: unknown): string[] {
-  return getRecipeWorkflowActionEntries(recipe).map((entry) => entry.action);
-}
-
-export function getRecipeWorkflowActionEntries(
-  recipe: unknown,
-): Array<{ nodeId: string; action: string; path: string }> {
-  if (!isRecord(recipe) || !isRecord(recipe.validate) || !isRecord(recipe.validate.workflow)) {
-    return [];
-  }
-  const nodes = recipe.validate.workflow.nodes;
-  if (!isRecord(nodes)) return [];
-  const actions: Array<{ nodeId: string; action: string; path: string }> = [];
-  for (const [nodeId, node] of Object.entries(nodes)) {
-    if (!isRecord(node)) continue;
-    if (isNonEmptyString(node.action)) {
-      actions.push({
-        nodeId,
-        action: node.action,
-        path: `validate.workflow.nodes.${nodeId}.action`,
-      });
-    }
-  }
-  if (isRecord(recipe.startState) && isNonEmptyString(recipe.startState.action)) {
-    actions.push({
-      nodeId: 'startState',
-      action: recipe.startState.action,
-      path: 'startState.action',
-    });
-  }
-  for (const key of ['setup', 'teardown']) {
-    const lifecycle = recipe.validate.workflow[key];
-    if (!Array.isArray(lifecycle)) continue;
-    lifecycle.forEach((node, index) => {
-      if (!isRecord(node) || !isNonEmptyString(node.action)) return;
-      actions.push({
-        nodeId: isNonEmptyString(node.id) ? node.id : `${key}:${index}`,
-        action: node.action,
-        path: `validate.workflow.${key}[${index}].action`,
-      });
-    });
-  }
-  if (isRecord(recipe.flows)) {
-    for (const [flowId, flow] of Object.entries(recipe.flows)) {
-      if (!isRecord(flow)) continue;
-      const workflow = isRecord(flow.workflow) ? flow.workflow : flow;
-      if (!isRecord(workflow.nodes)) continue;
-      for (const [nodeId, node] of Object.entries(workflow.nodes)) {
-        if (!isRecord(node) || !isNonEmptyString(node.action)) continue;
-        actions.push({
-          nodeId: `${flowId}/${nodeId}`,
-          action: node.action,
-          path: `flows.${flowId}.workflow.nodes.${nodeId}.action`,
-        });
-      }
-    }
-  }
-  return actions;
-}
-
-export function validateInlineFlows(
+function collectTargets(
   ctx: MutableValidationContext,
-  recipe: Record<string, unknown>,
-): void {
-  const flows = recipe.flows;
-  if (flows == null) return;
-  if (!isRecord(flows)) {
-    addFinding(ctx, 'error', 'flow.invalid_flows', 'flows', 'flows must be an object.');
-    return;
-  }
-
-  const inlineFlowIds = new Set<string>();
-  for (const flowId of Object.keys(flows)) {
-    const normalizedFlowId = normalizeRecipeFlowRef(flowId);
-    if (!normalizedFlowId) {
-      addFinding(ctx, 'error', 'flow.invalid_id', `flows.${flowId}`, 'Flow id must not be empty.');
-    } else if (inlineFlowIds.has(normalizedFlowId)) {
+  node: Record<string, unknown>,
+  path: string,
+  emitFindings = true,
+): string[] {
+  const targets: string[] = [];
+  if (node.next != null) {
+    if (isNonEmptyString(node.next)) targets.push(node.next);
+    else if (emitFindings)
       addFinding(
         ctx,
         'error',
-        'flow.duplicate_id',
-        `flows.${flowId}`,
-        `Flow id ${flowId} collides with another flow after whitespace normalization.`,
+        'workflow.invalid_next',
+        `${path}.next`,
+        'next must be a non-empty node id.',
       );
+  }
+
+  if (node.default != null) {
+    if (isNonEmptyString(node.default)) targets.push(node.default);
+    else if (emitFindings)
+      addFinding(
+        ctx,
+        'error',
+        'workflow.invalid_default',
+        `${path}.default`,
+        'default must be a non-empty node id.',
+      );
+  }
+
+  if (node.cases != null) {
+    if (!isRecord(node.cases) || Object.keys(node.cases).length === 0) {
+      if (emitFindings)
+        addFinding(
+          ctx,
+          'error',
+          'workflow.invalid_cases',
+          `${path}.cases`,
+          'cases must be a non-empty object mapping result cases to node ids.',
+        );
     } else {
-      inlineFlowIds.add(normalizedFlowId);
-    }
-  }
-  const callGraph = new Map<string, string[]>();
-  for (const [flowId, flow] of Object.entries(flows)) {
-    const normalizedFlowId = normalizeRecipeFlowRef(flowId);
-    const flowPath = `flows.${flowId}`;
-    if (!isRecord(flow)) {
-      addFinding(ctx, 'error', 'flow.invalid_flow', flowPath, `Flow ${flowId} must be an object.`);
-      continue;
-    }
-    const workflow = isRecord(flow.workflow) ? flow.workflow : flow;
-    const entry = workflow.entry;
-    const nodes = workflow.nodes;
-    if (!isNonEmptyString(entry)) {
-      addFinding(
-        ctx,
-        'error',
-        'flow.invalid_entry',
-        `${flowPath}.workflow.entry`,
-        `Flow ${flowId} entry must be a non-empty string.`,
-      );
-    }
-    if (!isRecord(nodes) || Object.keys(nodes).length === 0) {
-      addFinding(
-        ctx,
-        'error',
-        'flow.invalid_nodes',
-        `${flowPath}.workflow.nodes`,
-        `Flow ${flowId} nodes must be a non-empty object.`,
-      );
-      continue;
-    }
-    if (isNonEmptyString(entry) && !hasOwn(nodes, entry)) {
-      addFinding(
-        ctx,
-        'error',
-        'flow.missing_entry_node',
-        `${flowPath}.workflow.entry`,
-        `Flow ${flowId} entry node ${entry} does not exist.`,
-      );
-    }
-
-    const callees: string[] = [];
-    const reachable = new Set<string>();
-    const queue = isNonEmptyString(entry) && hasOwn(nodes, entry) ? [entry] : [];
-    let terminalCount = 0;
-    let reachableTerminalCount = 0;
-    for (const [nodeId, node] of Object.entries(nodes)) {
-      const nodePath = `${flowPath}.workflow.nodes.${nodeId}`;
-      if (!isRecord(node)) {
-        addFinding(
-          ctx,
-          'error',
-          'flow.invalid_node',
-          nodePath,
-          `Flow node ${nodeId} must be an object.`,
-        );
-        continue;
-      }
-      if (!isNonEmptyString(node.action)) {
-        addFinding(
-          ctx,
-          'error',
-          'flow.invalid_action',
-          `${nodePath}.action`,
-          'Flow node action must be a non-empty string.',
-        );
-        continue;
-      }
-      if (node.action === 'call' && isNonEmptyString(node.ref)) {
-        const ref = normalizeRecipeFlowRef(node.ref);
-        if (inlineFlowIds.has(ref)) callees.push(ref);
-      }
-      if (node.action !== 'end') {
-        validateNodeIntent(ctx, 'flow', nodeId, node, nodePath);
-        const targets = collectTargets(node, nodePath, ctx);
-        if (targets.length === 0) {
-          addFinding(
-            ctx,
-            'error',
-            'flow.missing_transition',
-            nodePath,
-            'Non-terminal flow nodes must transition via next, cases, or default.',
-          );
-        }
-        for (const target of targets) {
-          if (!hasOwn(nodes, target)) {
+      for (const [caseName, target] of Object.entries(node.cases)) {
+        if (!isNonEmptyString(caseName) || !isNonEmptyString(target)) {
+          if (emitFindings)
             addFinding(
               ctx,
               'error',
-              'flow.missing_target',
-              nodePath,
-              `Flow node ${nodeId} references missing target node ${target}.`,
+              'workflow.invalid_case_target',
+              `${path}.cases.${caseName}`,
+              'Each case must map a non-empty case name to a non-empty node id.',
             );
-          }
+          continue;
         }
-      } else {
-        terminalCount += 1;
-        if (node.status == null) {
-          addFinding(
-            ctx,
-            'error',
-            'flow.missing_terminal_status',
-            `${nodePath}.status`,
-            'Flow end nodes must include status.',
-          );
-        } else if (typeof node.status !== 'string' || !TERMINAL_STATUSES.has(node.status)) {
-          addFinding(
-            ctx,
-            'error',
-            'flow.invalid_terminal_status',
-            `${nodePath}.status`,
-            'Flow end node status must be pass, fail, or unknown.',
-          );
-        }
+        targets.push(target);
       }
     }
-    while (queue.length > 0) {
-      const nodeId = queue.shift();
-      if (!nodeId || reachable.has(nodeId)) continue;
-      const node = nodes[nodeId];
-      if (!isRecord(node)) continue;
-      reachable.add(nodeId);
-      if (node.action === 'end') reachableTerminalCount += 1;
-      for (const target of collectTargets(
-        node,
-        `${flowPath}.workflow.nodes.${nodeId}`,
-        ctx,
-        false,
-      )) {
-        if (hasOwn(nodes, target) && !reachable.has(target)) queue.push(target);
-      }
-    }
-    if (terminalCount === 0) {
-      addFinding(
-        ctx,
-        'error',
-        'flow.missing_terminal',
-        `${flowPath}.workflow.nodes`,
-        `Flow ${flowId} must include at least one action:end terminal node.`,
-      );
-    } else if (isNonEmptyString(entry) && hasOwn(nodes, entry) && reachableTerminalCount === 0) {
-      addFinding(
-        ctx,
-        'error',
-        'flow.no_reachable_terminal',
-        `${flowPath}.workflow.nodes`,
-        `No terminal end node is reachable from flow ${flowId} entry node.`,
-      );
-    }
-    for (const nodeId of Object.keys(nodes)) {
-      if (!reachable.has(nodeId)) {
-        addFinding(
-          ctx,
-          'warning',
-          'flow.unreachable_node',
-          `${flowPath}.workflow.nodes.${nodeId}`,
-          `Flow node ${nodeId} is not reachable from the entry node.`,
-        );
-      }
-    }
-    if (normalizedFlowId) callGraph.set(normalizedFlowId, callees);
   }
-  validateInlineFlowCycles(ctx, callGraph);
+  return targets;
 }
 
-function validateInlineFlowCycles(
+function validateNodeShape(
   ctx: MutableValidationContext,
-  callGraph: ReadonlyMap<string, readonly string[]>,
+  nodeId: string,
+  node: Record<string, unknown>,
 ): void {
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const stack: string[] = [];
-
-  function visit(flowId: string): void {
-    if (visited.has(flowId)) return;
-    if (visiting.has(flowId)) {
-      const cycleStart = stack.indexOf(flowId);
-      const cycle = [...stack.slice(Math.max(cycleStart, 0)), flowId];
-      addFinding(
-        ctx,
-        'error',
-        'flow.call_cycle',
-        `flows.${flowId}`,
-        `Inline flow call cycle detected: ${cycle.join(' -> ')}.`,
-      );
-      return;
-    }
-    visiting.add(flowId);
-    stack.push(flowId);
-    for (const callee of callGraph.get(flowId) ?? []) visit(callee);
-    stack.pop();
-    visiting.delete(flowId);
-    visited.add(flowId);
-  }
-
-  for (const flowId of callGraph.keys()) visit(flowId);
-}
-
-export function validateWorkflowPreconditions(
-  ctx: MutableValidationContext,
-  workflow: Record<string, unknown>,
-): void {
-  const value = workflow.pre_conditions;
-  if (value == null) return;
-  if (!Array.isArray(value)) {
+  const path = `workflow.nodes.${nodeId}`;
+  const action = node.action;
+  if (!isNonEmptyString(action)) {
     addFinding(
       ctx,
       'error',
-      'workflow.invalid_pre_conditions',
-      'validate.workflow.pre_conditions',
-      'validate.workflow.pre_conditions must be an array.',
+      'workflow.invalid_action',
+      `${path}.action`,
+      'Node action must be a non-empty string.',
     );
     return;
   }
-  value.forEach((entry, index) => {
-    const path = `validate.workflow.pre_conditions[${index}]`;
-    if (typeof entry === 'string') {
-      if (!entry.trim()) {
+
+  if (action === 'end') {
+    for (const field of Object.keys(node)) {
+      if (field !== 'action' && field !== 'status') {
         addFinding(
           ctx,
           'error',
-          'workflow.invalid_pre_condition',
-          path,
-          `${path} must be a non-empty string or object with id.`,
+          'workflow.invalid_terminal_field',
+          `${path}.${field}`,
+          `End nodes do not support ${field}.`,
         );
       }
-      return;
     }
-    if (!isRecord(entry)) {
+    if (typeof node.status !== 'string' || !TERMINAL_STATUSES.has(node.status)) {
       addFinding(
         ctx,
         'error',
-        'workflow.invalid_pre_condition',
-        path,
-        `${path} must be a non-empty string or object with id.`,
-      );
-      return;
-    }
-    if (!isNonEmptyString(entry.id)) {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.invalid_pre_condition_id',
-        `${path}.id`,
-        `${path}.id must be a non-empty string.`,
+        'workflow.invalid_terminal_status',
+        `${path}.status`,
+        'end status must be pass, fail, or unknown.',
       );
     }
-    if (entry.description != null && typeof entry.description !== 'string') {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.invalid_pre_condition_description',
-        `${path}.description`,
-        `${path}.description must be a string when present.`,
-      );
-    }
-    if (entry.params != null && !isRecord(entry.params)) {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.invalid_pre_condition_params',
-        `${path}.params`,
-        `${path}.params must be an object when present.`,
-      );
-    }
-    if (entry.required != null && typeof entry.required !== 'boolean') {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.invalid_pre_condition_required',
-        `${path}.required`,
-        `${path}.required must be a boolean when present.`,
-      );
-    }
-  });
-}
-
-export function getRecipeWorkflowPreconditionEntries(recipe: unknown): RecipePreconditionGate[] {
-  if (!isRecord(recipe) || !isRecord(recipe.validate) || !isRecord(recipe.validate.workflow)) {
-    return [];
+    return;
   }
-  const entries = recipe.validate.workflow.pre_conditions;
-  if (!Array.isArray(entries)) return [];
-  return entries.flatMap((entry, index): RecipePreconditionGate[] => {
-    const path = `validate.workflow.pre_conditions[${index}]`;
-    if (typeof entry === 'string' && entry.trim()) return [{ id: entry.trim(), path }];
-    if (isRecord(entry) && isNonEmptyString(entry.id)) {
-      return [{ id: entry.id, path: `${path}.id` }];
-    }
-    return [];
-  });
-}
 
-export function validateFlowCalls(
-  ctx: MutableValidationContext,
-  recipe: Record<string, unknown>,
-  workflow: WorkflowGraph,
-  options?: {
-    externalFlowIds?: ReadonlySet<string>;
-    /** Skip `call.ref` resolution (unresolved_call_ref) only; shape checks still run. */
-    skipResolution?: boolean;
-    /**
-     * Whether a declared `uses` catalog counts as resolving `call.ref`s. True at
-     * authoring/run time (catalogs are loaded). False at artifact-package validation,
-     * where the catalogs are not in the package, so only inline `flows` (or a proven
-     * resolved-recipe.json) count.
-     */
-    externalCatalogsResolvable?: boolean;
-  },
-): void {
-  const inlineFlows = isRecord(recipe.flows)
-    ? new Set(Object.keys(recipe.flows).map(normalizeRecipeFlowRef))
-    : new Set<string>();
-  const externalCatalogsResolvable = options?.externalCatalogsResolvable !== false;
-  const hasExternalCatalogs =
-    externalCatalogsResolvable && Array.isArray(recipe.uses) && recipe.uses.length > 0;
-  const externalFlowIds = options?.externalFlowIds;
-  const entries = [
-    ...Object.entries(workflow.nodes).map(
-      ([nodeId, node]) => [nodeId, node, `validate.workflow.nodes.${nodeId}`] as const,
-    ),
-    ...Object.entries(workflow.lifecycleNodes).map(
-      ([nodeId, entry]) => [nodeId, entry.node, entry.path] as const,
-    ),
-    ...getInlineFlowNodeEntries(recipe),
-  ];
-  for (const [_nodeId, node, path] of entries) {
-    if (node.action !== 'call') continue;
+  validateNodeIntent(ctx, nodeId, node, path);
+  validateProves(ctx, node, path);
+  const hasNext = hasOwn(node, 'next');
+  const hasCases = hasOwn(node, 'cases');
+  const hasDefault = hasOwn(node, 'default');
+  if (hasNext === hasCases || hasDefault !== hasCases) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_transition_shape',
+      path,
+      'A non-terminal node must declare exactly next, or cases together with default.',
+    );
+  }
+  collectTargets(ctx, node, path);
+
+  if (action === 'call') {
+    for (const field of Object.keys(node)) {
+      if (!CALL_NODE_FIELDS.has(field)) {
+        addFinding(
+          ctx,
+          'error',
+          'workflow.invalid_call_field',
+          `${path}.${field}`,
+          `Call nodes do not support ${field}.`,
+        );
+      }
+    }
     if (!isNonEmptyString(node.ref)) {
       addFinding(
         ctx,
         'error',
         'workflow.invalid_call_ref',
         `${path}.ref`,
-        'call.ref must be a non-empty string.',
-      );
-      continue;
-    }
-    if (isDynamicRecipeFlowRef(node.ref)) {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.dynamic_call_ref',
-        `${path}.ref`,
-        'call.ref must be static; parameter templates are not allowed in flow identifiers.',
-      );
-      continue;
-    }
-    const ref = normalizeRecipeFlowRef(node.ref);
-    if (
-      options?.skipResolution !== true &&
-      !hasExternalCatalogs &&
-      !inlineFlows.has(ref) &&
-      !externalFlowIds?.has(ref)
-    ) {
-      addFinding(
-        ctx,
-        'error',
-        'workflow.unresolved_call_ref',
-        `${path}.ref`,
-        `Flow ${node.ref} is not declared in recipe.flows and no uses catalogs are present.`,
+        'call.ref must be a non-empty recipe id.',
       );
     }
     if (node.params != null && !isRecord(node.params)) {
@@ -1043,25 +392,184 @@ export function validateFlowCalls(
         'error',
         'workflow.invalid_call_params',
         `${path}.params`,
-        'call.params must be an object when present.',
+        'call.params must be an object.',
       );
     }
   }
 }
 
-function getInlineFlowNodeEntries(
-  recipe: Record<string, unknown>,
-): Array<readonly [string, Record<string, unknown>, string]> {
-  if (!isRecord(recipe.flows)) return [];
-  const entries: Array<readonly [string, Record<string, unknown>, string]> = [];
-  for (const [flowId, flow] of Object.entries(recipe.flows)) {
-    if (!isRecord(flow)) continue;
-    const workflow = isRecord(flow.workflow) ? flow.workflow : flow;
-    if (!isRecord(workflow.nodes)) continue;
-    for (const [nodeId, node] of Object.entries(workflow.nodes)) {
-      if (!isRecord(node)) continue;
-      entries.push([`${flowId}/${nodeId}`, node, `flows.${flowId}.workflow.nodes.${nodeId}`]);
+function walkSubgraph(
+  ctx: MutableValidationContext,
+  graph: WorkflowGraph,
+  root: string,
+  label: 'entry' | 'teardown',
+): Set<string> {
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  let terminalReachable = false;
+
+  const visit = (nodeId: string): void => {
+    if (visiting.has(nodeId)) {
+      addFinding(
+        ctx,
+        'error',
+        'workflow.cycle',
+        `workflow.nodes.${nodeId}`,
+        `The ${label} graph contains a cycle at ${nodeId}; bounded repetition belongs inside an action.`,
+      );
+      return;
+    }
+    if (visited.has(nodeId)) return;
+    const node = graph.nodes[nodeId];
+    if (!node) return;
+    visiting.add(nodeId);
+    visited.add(nodeId);
+    if (node.action === 'end') terminalReachable = true;
+    else {
+      for (const target of collectTargets(ctx, node, `workflow.nodes.${nodeId}`, false))
+        visit(target);
+    }
+    visiting.delete(nodeId);
+  };
+
+  visit(root);
+  if (!terminalReachable) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.no_reachable_terminal',
+      `workflow.${label}`,
+      `No action:end node is reachable from workflow.${label}.`,
+    );
+  }
+  return visited;
+}
+
+export function validateWorkflowGraph(
+  ctx: MutableValidationContext,
+  workflow: WorkflowGraph,
+): void {
+  if (!hasOwn(workflow.nodes, workflow.entry)) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.missing_entry_node',
+      'workflow.entry',
+      `Entry node ${workflow.entry} does not exist in workflow.nodes.`,
+    );
+  }
+  if (workflow.teardown && !hasOwn(workflow.nodes, workflow.teardown)) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.missing_teardown_node',
+      'workflow.teardown',
+      `Teardown node ${workflow.teardown} does not exist in workflow.nodes.`,
+    );
+  }
+
+  for (const [nodeId, node] of Object.entries(workflow.nodes)) {
+    validateNodeShape(ctx, nodeId, node);
+    for (const target of collectTargets(ctx, node, `workflow.nodes.${nodeId}`, false)) {
+      if (!hasOwn(workflow.nodes, target)) {
+        addFinding(
+          ctx,
+          'error',
+          'workflow.missing_target',
+          `workflow.nodes.${nodeId}`,
+          `Node ${nodeId} references missing target ${target}.`,
+        );
+      }
     }
   }
-  return entries;
+
+  const main = hasOwn(workflow.nodes, workflow.entry)
+    ? walkSubgraph(ctx, workflow, workflow.entry, 'entry')
+    : new Set<string>();
+  const teardown =
+    workflow.teardown && hasOwn(workflow.nodes, workflow.teardown)
+      ? walkSubgraph(ctx, workflow, workflow.teardown, 'teardown')
+      : new Set<string>();
+
+  for (const nodeId of teardown) {
+    if (main.has(nodeId)) {
+      addFinding(
+        ctx,
+        'error',
+        'workflow.overlapping_teardown',
+        `workflow.nodes.${nodeId}`,
+        'Entry and teardown subgraphs must be disjoint so cleanup runs exactly once.',
+      );
+    }
+  }
+  for (const nodeId of Object.keys(workflow.nodes)) {
+    if (!main.has(nodeId) && !teardown.has(nodeId)) {
+      addFinding(
+        ctx,
+        'error',
+        'workflow.unreachable_node',
+        `workflow.nodes.${nodeId}`,
+        `Node ${nodeId} is unreachable from workflow.entry or workflow.teardown.`,
+      );
+    }
+  }
+}
+
+export function getRecipeWorkflowNodeIds(recipe: unknown): string[] {
+  if (!isRecord(recipe) || !isRecord(recipe.workflow) || !isRecord(recipe.workflow.nodes))
+    return [];
+  return Object.keys(recipe.workflow.nodes);
+}
+
+export function getRecipeCallRefs(recipe: unknown): string[] {
+  return getRecipeWorkflowActionEntries(recipe).flatMap(({ node }) =>
+    node.action === 'call' && isNonEmptyString(node.ref) ? [normalizeRecipeRef(node.ref)] : [],
+  );
+}
+
+export function getRecipeWorkflowActions(recipe: unknown): string[] {
+  return getRecipeWorkflowActionEntries(recipe).map(({ action }) => action);
+}
+
+export function getRecipeWorkflowActionEntries(recipe: unknown): WorkflowActionEntry[] {
+  if (!isRecord(recipe) || !isRecord(recipe.workflow) || !isRecord(recipe.workflow.nodes))
+    return [];
+  return Object.entries(recipe.workflow.nodes).flatMap(([nodeId, node]): WorkflowActionEntry[] => {
+    if (!isRecord(node) || !isNonEmptyString(node.action)) return [];
+    return [{ nodeId, action: node.action, node, path: `workflow.nodes.${nodeId}` }];
+  });
+}
+
+export function validateRecipeCalls(
+  ctx: MutableValidationContext,
+  workflow: WorkflowGraph,
+  options?: {
+    externalRecipeIds?: ReadonlySet<string>;
+    skipResolution?: boolean;
+  },
+): void {
+  for (const [nodeId, node] of Object.entries(workflow.nodes)) {
+    if (node.action !== 'call' || !isNonEmptyString(node.ref)) continue;
+    const path = `workflow.nodes.${nodeId}.ref`;
+    if (isDynamicRecipeRef(node.ref)) {
+      addFinding(
+        ctx,
+        'error',
+        'workflow.dynamic_call_ref',
+        path,
+        'call.ref must be static so dependencies can be resolved and trusted before execution.',
+      );
+      continue;
+    }
+    const ref = normalizeRecipeRef(node.ref);
+    if (options?.skipResolution !== true && !options?.externalRecipeIds?.has(ref)) {
+      addFinding(
+        ctx,
+        'error',
+        'workflow.unresolved_call_ref',
+        path,
+        `Recipe ${ref} is not available from the resolved recipe library.`,
+      );
+    }
+  }
 }

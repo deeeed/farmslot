@@ -1,105 +1,99 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "schema_version": 1,
   "title": "Example Mobile App Perps market proof",
   "description": "Example v1 Mobile recipe using official ui/app actions plus Example App custom wallet actions.",
-  "inputs": {
-    "market": {
-      "type": "string",
-      "default": "ETH"
-    }
-  },
-  "validate": {
-    "workflow": {
-      "pre_conditions": [
-        {
-          "id": "example.mobile.bridge_ready",
-          "description": "Injected Mobile app control bridge is reachable.",
-          "required": true
-        },
-        {
-          "id": "example.wallet.fixture_ready",
-          "description": "Debug wallet fixture is available.",
-          "required": true
-        }
-      ],
-      "setup": [
-        {
-          "action": "app.hud",
-          "intent": "Prepare the wallet and open the Perps market proof"
-        }
-      ],
-      "entry": "unlock-wallet",
-      "nodes": {
-        "unlock-wallet": {
-          "action": "example.wallet.unlock",
-          "account": "primary",
-          "next": "open-perps",
-          "intent": "Unlock the primary wallet account before opening Perps"
-        },
-        "open-perps": {
-          "action": "ui.navigate",
-          "target": "PerpsMarkets",
-          "params": {
-            "market": "{{market}}"
-          },
-          "next": "wait-market",
-          "intent": "Open the Perps markets screen for {{market}}"
-        },
-        "wait-market": {
-          "action": "ui.wait_for",
-          "test_id": "perps-market-row-{{market}}",
-          "visible": true,
-          "timeout_ms": 10000,
-          "next": "read-route",
-          "intent": "Wait for the {{market}} Perps market row to become visible"
-        },
-        "read-route": {
-          "action": "state_read",
-          "ref": "example.mobile.route",
-          "save_as": "route_state",
-          "assert": {
-            "path": "$.name",
-            "operator": "eq",
-            "value": "PerpsMarkets"
-          },
-          "next": "capture-proof",
-          "intent": "Confirm the app route is the Perps markets screen"
-        },
-        "capture-proof": {
-          "action": "ui.screenshot",
-          "path": "screenshots/mobile-perps-market.png",
-          "claims": {
-            "must_show": ["{{market}}", "Perps"],
-            "must_not_show": ["Error"]
-          },
-          "proofTarget": "AC-1",
-          "covers": ["perps-market-visible"],
-          "next": "index-artifacts",
-          "intent": "Capture the visible {{market}} Perps market row for review"
-        },
-        "index-artifacts": {
-          "action": "index_artifacts",
-          "artifacts": ["screenshots/mobile-perps-market.png", "reports/mobile-state.json"],
-          "next": "done",
-          "intent": "Publish the index artifacts evidence for review"
-        },
-        "done": {
-          "action": "end",
-          "status": "pass"
-        }
-      },
-      "teardown": [
-        {
-          "action": "app.hud",
-          "clear": true,
-          "intent": "Clear the reviewer HUD after the Perps proof run"
-        }
-      ],
-      "playback": {
-        "mode": "auto",
-        "slow_ms": 2000
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "market": {
+        "type": "string",
+        "default": "ETH"
       }
     }
+  },
+  "proofTargets": [
+    {
+      "id": "AC-1",
+      "claim": "Capture the visible {{params.market}} Perps market row for review"
+    }
+  ],
+  "workflow": {
+    "entry": "setup-1",
+    "nodes": {
+      "unlock-wallet": {
+        "action": "example.wallet.unlock",
+        "account": "primary",
+        "next": "open-perps",
+        "intent": "Unlock the primary wallet account before opening Perps"
+      },
+      "open-perps": {
+        "action": "ui.navigate",
+        "target": "PerpsMarkets",
+        "params": {
+          "market": "{{params.market}}"
+        },
+        "next": "wait-market",
+        "intent": "Open the Perps markets screen for {{params.market}}"
+      },
+      "wait-market": {
+        "action": "ui.wait_for",
+        "test_id": "perps-market-row-{{params.market}}",
+        "visible": true,
+        "timeout_ms": 10000,
+        "next": "read-route",
+        "intent": "Confirm the {{params.market}} Perps market row is visible"
+      },
+      "read-route": {
+        "action": "state_read",
+        "ref": "example.mobile.route",
+        "save_as": "route_state",
+        "assert": {
+          "path": "$.name",
+          "operator": "eq",
+          "value": "PerpsMarkets"
+        },
+        "next": "capture-proof",
+        "intent": "Confirm the app route is the Perps markets screen"
+      },
+      "capture-proof": {
+        "action": "ui.screenshot",
+        "path": "screenshots/mobile-perps-market.png",
+        "claims": {
+          "must_show": ["{{params.market}}", "Perps"],
+          "must_not_show": ["Error"]
+        },
+        "covers": ["perps-market-visible"],
+        "next": "index-artifacts",
+        "intent": "Record the visible {{params.market}} Perps market row for review",
+        "proves": ["AC-1"]
+      },
+      "index-artifacts": {
+        "action": "index_artifacts",
+        "artifacts": ["screenshots/mobile-perps-market.png", "reports/mobile-state.json"],
+        "next": "done",
+        "intent": "Publish the index artifacts evidence for review"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "setup-1": {
+        "action": "app.hud",
+        "intent": "Prepare the wallet and open the Perps market proof",
+        "next": "unlock-wallet"
+      },
+      "teardown-done": {
+        "action": "end",
+        "status": "pass"
+      },
+      "teardown-1": {
+        "action": "app.hud",
+        "clear": true,
+        "intent": "Clear the reviewer HUD after the Perps proof run",
+        "next": "teardown-done"
+      }
+    },
+    "teardown": "teardown-1"
   }
 }

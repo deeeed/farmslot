@@ -36,7 +36,7 @@
     "setup": "cd apps/companion && yarn install",
     "recipe_action_manifest": "cat {{farmslot_dir}}/docs/examples/recipes/farmslot-v1.action-manifest.json",
     "recipe_doctor": "FARMSLOT_SLOT_REPO={{repo}} node {{primary_repo}}/apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{cdp_port}} --gateway-port {{port}} --slot-id {{slot_id}} --project-root {{repo}} --json",
-    "recipe_run": "bash {{primary_repo}}/projects/farmslot-farm/setup/validate-recipe.sh --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --runtime-dir {{runtime_dir}} --platform {{platform}} --cdp-port {{cdp_port}} --gateway-port {{port}} --metro-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}} --slot-id {{slot_id}}"
+    "recipe_run": "bash {{primary_repo}}/projects/farmslot-farm/setup/validate-recipe.sh --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --runtime-dir {{runtime_dir}} --platform {{platform}} --cdp-port {{cdp_port}} --gateway-port {{port}} --metro-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}} --slot-id {{slot_id}} --run-id={{run_id}} --recipe-run-id={{recipe_run_id}}"
   },
   "prepare": {
     "default": "sandbox",

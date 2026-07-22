@@ -1,0 +1,95 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Docusaurus Command Center parallel watch-and-steer capture plan",
+  "description": "Recipe-owned capture for the first public-safe Docusaurus demo video: Command Center monitoring allowed real Farmslot runs in parallel while the operator steers visible terminals.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "allowedProjects": {
+        "type": "array",
+        "default": ["farmslot-farm", "audiolab-farm", "echobridge-farm"],
+        "items": {
+          "type": "string"
+        }
+      },
+      "primarySlots": {
+        "type": "array",
+        "default": ["farmslot-demo-ready-1", "farmslot-demo-watch-1"],
+        "items": {
+          "type": "string"
+        }
+      },
+      "futureSlots": {
+        "type": "array",
+        "default": ["audiolab-demo-ios-1", "echobridge-demo-ios-1"],
+        "items": {
+          "type": "string"
+        }
+      },
+      "demoIssues": {
+        "type": "array",
+        "default": [
+          "https://github.com/deeeed/farmslot/issues/28",
+          "https://github.com/deeeed/audiolab/issues/414"
+        ],
+        "items": {
+          "type": "string"
+        }
+      },
+      "outputVideo": {
+        "type": "string",
+        "default": "videos/command-center-parallel-watch.mp4"
+      },
+      "outputPoster": {
+        "type": "string",
+        "default": "posters/command-center-parallel-watch.png"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "prepare-stage",
+    "nodes": {
+      "prepare-stage": {
+        "action": "demo.stage.apply",
+        "intent": "Stage or select public-safe Farmslot demo runs for Command Center capture.",
+        "next": "open-command-center"
+      },
+      "open-command-center": {
+        "action": "ui.navigate",
+        "intent": "Open Command Center with the allowed-project filter applied.",
+        "next": "verify-safe-view"
+      },
+      "verify-safe-view": {
+        "action": "ui.assert",
+        "intent": "Verify multiple allowed terminal panes are visible and forbidden private labels are absent.",
+        "next": "record-proof-window"
+      },
+      "record-proof-window": {
+        "action": "record.video",
+        "intent": "Record the short Command Center proof window while steer-demo-panes sends visible terminal input.",
+        "next": "steer-demo-panes"
+      },
+      "steer-demo-panes": {
+        "action": "terminal.send",
+        "intent": "While recording, send safe visible terminal commands and an operator prompt to show live steering.",
+        "next": "publish-artifacts"
+      },
+      "publish-artifacts": {
+        "action": "artifact.publish",
+        "intent": "Publish the MP4, poster, pre/post screenshots, trace, summary, and artifact manifest.",
+        "artifacts": [
+          "videos/command-center-parallel-watch.mp4",
+          "posters/command-center-parallel-watch.png",
+          "screenshots/command-center-parallel-watch.png",
+          "screenshots/command-center-parallel-watch-after-steer.png"
+        ],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

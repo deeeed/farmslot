@@ -404,19 +404,28 @@ test('buildFollowUpScopeContractSection includes required scope verdicts', () =>
   assert.match(section, /family-scope\.json/);
 });
 
-test('materializeInheritedContext inherits recipe-flows directory alongside recipe.json', async () => {
-  // Regression for the family-chain subflow inheritance gap fixed 2026-04-30. A pr-complete
-  // follow-up that resolves recipe.json from a parent fix-bug must also inherit the parent's
-  // bundled subflows under artifacts/recipe-flows/, otherwise the recipe-runner fails at the
-  // first `bundle/<name>` ref. Documented in ROADMAP-next §3.
-  const baseDir = await mkdtemp(path.join(os.tmpdir(), 'family-context-flows-'));
+test('materializeInheritedContext inherits a task recipe library alongside recipe.json', async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), 'family-context-recipe-library-'));
   const parentTaskDir = path.join(baseDir, 'parent');
   const currentTaskDir = path.join(baseDir, 'current');
 
   await writeTaskArtifact(parentTaskDir, 'TASK.md', '# Parent task');
   await writeTaskArtifact(parentTaskDir, 'artifacts/recipe.json', '{"id":"orchestrator"}');
-  await writeTaskArtifact(parentTaskDir, 'artifacts/recipe-flows/ac1.json', '{"id":"ac1"}');
-  await writeTaskArtifact(parentTaskDir, 'artifacts/recipe-flows/ac2.json', '{"id":"ac2"}');
+  await writeTaskArtifact(
+    parentTaskDir,
+    'artifacts/recipe-library/library.json',
+    '{"kind":"recipe-library","name":"task"}',
+  );
+  await writeTaskArtifact(
+    parentTaskDir,
+    'artifacts/recipe-library/recipes/ac/ac1.recipe.json',
+    '{"id":"ac1"}',
+  );
+  await writeTaskArtifact(
+    parentTaskDir,
+    'artifacts/recipe-library/recipes/ac/ac2.recipe.json',
+    '{"id":"ac2"}',
+  );
 
   const parent = makeRun({
     id: 'parent-fixbug',
@@ -437,19 +446,19 @@ test('materializeInheritedContext inherits recipe-flows directory alongside reci
   });
 
   const manifest = await materializeInheritedContext(current, currentTaskDir, [parent, current]);
-  const flowsEntry = manifest?.inheritedArtifacts.find(
-    (entry) => entry.artifact === 'recipe-flows',
+  const libraryEntry = manifest?.inheritedArtifacts.find(
+    (entry) => entry.artifact === 'recipe-library',
   );
-  assert.equal(flowsEntry?.status, 'resolved');
-  assert.equal(flowsEntry?.resolutionTier, 'parent-run-artifact');
+  assert.equal(libraryEntry?.status, 'resolved');
+  assert.equal(libraryEntry?.resolutionTier, 'parent-run-artifact');
 
   // Inherited dir present
   const ac1Inherited = await readFile(
-    path.join(currentTaskDir, 'inputs/inherited/recipe-flows/ac1.json'),
+    path.join(currentTaskDir, 'inputs/inherited/recipe-library/recipes/ac/ac1.recipe.json'),
     'utf-8',
   );
   const ac2Inherited = await readFile(
-    path.join(currentTaskDir, 'inputs/inherited/recipe-flows/ac2.json'),
+    path.join(currentTaskDir, 'inputs/inherited/recipe-library/recipes/ac/ac2.recipe.json'),
     'utf-8',
   );
   assert.equal(ac1Inherited, '{"id":"ac1"}');
@@ -457,11 +466,11 @@ test('materializeInheritedContext inherits recipe-flows directory alongside reci
 
   // Seeded into artifacts/ alongside recipe.json — the recipe-runner reads from artifacts/.
   const ac1Seeded = await readFile(
-    path.join(currentTaskDir, 'artifacts/recipe-flows/ac1.json'),
+    path.join(currentTaskDir, 'artifacts/recipe-library/recipes/ac/ac1.recipe.json'),
     'utf-8',
   );
   const ac2Seeded = await readFile(
-    path.join(currentTaskDir, 'artifacts/recipe-flows/ac2.json'),
+    path.join(currentTaskDir, 'artifacts/recipe-library/recipes/ac/ac2.recipe.json'),
     'utf-8',
   );
   assert.equal(ac1Seeded, '{"id":"ac1"}');
@@ -475,6 +484,29 @@ test('materializeInheritedContext carries inherited evidence package as latest-v
 
   await writeTaskArtifact(parentTaskDir, 'TASK.md', '# Parent task');
   await writeTaskArtifact(parentTaskDir, 'artifacts/recipe.json', '{"id":"recipe"}');
+  await writeTaskArtifact(
+    parentTaskDir,
+    'artifacts/recipe-resolution.json',
+    JSON.stringify({
+      schema_version: 1,
+      root: { ref: 'root', digest: `sha256:${'a'.repeat(64)}` },
+      dependencies: [
+        {
+          ref: 'wallet.ready',
+          source: 'team',
+          file: 'recipes/wallet/ready.recipe.json',
+          digest: `sha256:${'b'.repeat(64)}`,
+          artifact: `resolved-recipes/${'b'.repeat(64)}.recipe.json`,
+        },
+      ],
+      edges: [{ from: 'root', to: 'wallet.ready' }],
+    }),
+  );
+  await writeTaskArtifact(
+    parentTaskDir,
+    `artifacts/resolved-recipes/${'b'.repeat(64)}.recipe.json`,
+    '{"id":"wallet.ready"}',
+  );
   await writeTaskArtifact(parentTaskDir, 'artifacts/recipe-quality.json', '{"version":1}');
   await writeTaskArtifact(parentTaskDir, 'artifacts/report.md', '# Report');
   await writeTaskArtifact(
@@ -540,18 +572,23 @@ test('materializeInheritedContext carries inherited evidence package as latest-v
   assert.equal(await readFile(path.join(packageRoot, 'after-ac1.png'), 'utf-8'), 'after');
   assert.equal(await readFile(path.join(packageRoot, 'evidence/proof.png'), 'utf-8'), 'proof');
   assert.equal(await readFile(path.join(packageRoot, 'after.mp4'), 'utf-8'), 'video');
+  assert.equal(
+    await readFile(
+      path.join(packageRoot, `resolved-recipes/${'b'.repeat(64)}.recipe.json`),
+      'utf-8',
+    ),
+    '{"id":"wallet.ready"}',
+  );
 });
 
-test('materializeInheritedContext records recipe-flows missing when parent has none', async () => {
-  // Empty / absent recipe-flows dir on the parent must NOT resolve — an empty dir is a real
-  // signal ("parent produced no subflows") and inheriting it would mask that upstream gap.
-  const baseDir = await mkdtemp(path.join(os.tmpdir(), 'family-context-flows-empty-'));
+test('materializeInheritedContext records an empty recipe library as missing', async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), 'family-context-library-empty-'));
   const parentTaskDir = path.join(baseDir, 'parent');
   const currentTaskDir = path.join(baseDir, 'current');
 
   await writeTaskArtifact(parentTaskDir, 'TASK.md', '# Parent');
   await writeTaskArtifact(parentTaskDir, 'artifacts/recipe.json', '{"id":"r"}');
-  await mkdir(path.join(parentTaskDir, 'artifacts/recipe-flows'), { recursive: true });
+  await mkdir(path.join(parentTaskDir, 'artifacts/recipe-library'), { recursive: true });
 
   const parent = makeRun({
     id: 'parent-empty-flows',
@@ -571,10 +608,10 @@ test('materializeInheritedContext records recipe-flows missing when parent has n
   });
 
   const manifest = await materializeInheritedContext(current, currentTaskDir, [parent, current]);
-  const flowsEntry = manifest?.inheritedArtifacts.find(
-    (entry) => entry.artifact === 'recipe-flows',
+  const libraryEntry = manifest?.inheritedArtifacts.find(
+    (entry) => entry.artifact === 'recipe-library',
   );
-  assert.equal(flowsEntry?.status, 'missing');
+  assert.equal(libraryEntry?.status, 'missing');
 });
 
 test('getFamilyRecoveryLedger derives replay attempts from family runs at read time', async (t) => {

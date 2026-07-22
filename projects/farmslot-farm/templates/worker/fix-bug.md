@@ -48,7 +48,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
 - [ ] **2. Update status** — set `STATUS: working` in this file, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Read the bug description** — understand the reported issue, affected area, and expected behavior.
-- [ ] **4. Reproduce** — for Command Center UI bugs, write `{{TASK_DIR}}/artifacts/recipe.json` from acceptance criteria with `schema_version: 1` and recommended `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, then run it against current code (must fail before the fix). Read `{{recipe_quality_path}}` first.
+- [ ] **4. Reproduce** — for Command Center UI bugs, write `{{TASK_DIR}}/artifacts/recipe.json` from acceptance criteria using the required `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, `description`, and `workflow`, then run it against current code (must fail before the fix). Read `{{recipe_quality_path}}` first.
   ```bash
   cd {{REPO}}
   bash apps/command-center/scripts/debug-chrome.sh

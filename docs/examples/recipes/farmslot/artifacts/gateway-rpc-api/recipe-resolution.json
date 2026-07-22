@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "root": {
+    "ref": "gateway-rpc-api",
+    "digest": "sha256:1c6509a86008bdd785c2bf740b7efc418fa490229c6441ce82313a6cc536c03c"
+  },
+  "dependencies": [],
+  "edges": []
+}

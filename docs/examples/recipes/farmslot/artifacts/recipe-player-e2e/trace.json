@@ -13,7 +13,7 @@
     "ok": true,
     "durationMs": 575,
     "artifacts": [],
-    "intent": "Press replay live recipe with the default 2 second visualization delay."
+    "intent": "Start the live recipe replay with the default 2 second visualization delay."
   },
   {
     "id": "watch-stream-and-logs",
@@ -37,7 +37,7 @@
     "ok": true,
     "durationMs": 950,
     "artifacts": ["screenshots/live-replay-result.svg"],
-    "intent": "Capture the live replay result with stream, logs, and generated artifacts visible."
+    "intent": "Record the live replay result with stream, logs, and generated artifacts visible."
   },
   {
     "id": "index-artifacts",

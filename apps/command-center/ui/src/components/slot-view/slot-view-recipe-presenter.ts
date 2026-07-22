@@ -29,12 +29,12 @@ import {
 } from './slot-view-recipe-lightbox-model.js';
 import {
   loadSelectedSlotViewRecipeArtifactPreview,
+  loadSelectedSlotViewRecipeDependency,
   loadSelectedSlotViewRecipeEvidenceManifest,
-  loadSelectedSlotViewRecipeFlow,
 } from './slot-view-recipe-load-effects.js';
 import {
+  renderRecipeDependenciesList,
   renderRecipeEvidenceSection,
-  renderRecipeFlowsList,
   renderSlotRecipePanel,
 } from './slot-view-recipe-renderers.js';
 import {
@@ -45,9 +45,10 @@ import {
 import { renderRecipeRunsList } from './slot-view-recipe-run-list-renderers.js';
 import {
   selectedSlotViewRecipeArtifact,
-  selectedSlotViewRecipeFlowArtifact,
+  selectedSlotViewRecipeDependencyArtifact,
+  selectedSlotViewRecipeDependencyLabel,
   slotViewRecipeArtifactUrl,
-  slotViewRecipeFlowArtifacts,
+  slotViewRecipeDependencyArtifacts,
   slotViewRecipeJsonFallbackWarning,
   slotViewRecipeNodeEvidenceState,
 } from './slot-view-recipe-view-model.js';
@@ -60,7 +61,7 @@ export abstract class SlotViewRecipePresenter extends SlotViewState {
   abstract _onResizeStart(type: 'review', event: MouseEvent): void;
   abstract _requestedRecipeRunFromUrl(): string | null;
   abstract _requestedRecipeArtifactFromUrl(): string | null;
-  abstract _requestedRecipeFlowFromUrl(): string | null;
+  abstract _requestedRecipeDependencyFromUrl(): string | null;
 
   _selectedRecipeRun(): RecipeRunArtifactGroup | null {
     return selectedRecipeRun(this._recipeRuns, this._selectedRecipeRunId);
@@ -74,14 +75,10 @@ export abstract class SlotViewRecipePresenter extends SlotViewState {
     return slotViewReadyGateDecision(this._linkedRun);
   }
 
-  _selectedRecipeFlowLabel(recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>): string {
-    const selectedFlow = selectedSlotViewRecipeFlowArtifact(
-      recipeHost,
-      this._selectedRecipeFlowPath,
-    );
-    return selectedFlow
-      ? selectedFlow.path.replace(/^artifacts\/recipe-flows\//, '')
-      : 'Main recipe';
+  _selectedRecipeDependencyLabel(
+    recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>,
+  ): string {
+    return selectedSlotViewRecipeDependencyLabel(recipeHost, this._selectedRecipeDependencyPath);
   }
 
   _selectedRecipeArtifactLabel(): string {
@@ -89,12 +86,12 @@ export abstract class SlotViewRecipePresenter extends SlotViewState {
     return this._selectedRecipeArtifactPath.replace(/^artifacts\//, '');
   }
 
-  _recipeFlowArtifacts(recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>) {
-    return slotViewRecipeFlowArtifacts(recipeHost);
+  _recipeDependencyArtifacts(recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>) {
+    return slotViewRecipeDependencyArtifacts(recipeHost);
   }
 
-  _selectedRecipeFlowArtifact(recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>) {
-    return selectedSlotViewRecipeFlowArtifact(recipeHost, this._selectedRecipeFlowPath);
+  _selectedRecipeDependencyArtifact(recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>) {
+    return selectedSlotViewRecipeDependencyArtifact(recipeHost, this._selectedRecipeDependencyPath);
   }
 
   _effectiveRecipeJson(
@@ -102,7 +99,7 @@ export abstract class SlotViewRecipePresenter extends SlotViewState {
   ): string | null {
     const packageRun = this._recipeRuns.find((group) => group.groupKind === 'current-artifacts');
     return effectiveRecipeJsonForSelection({
-      selectedRecipeFlowJson: this._selectedRecipeFlowJson,
+      selectedRecipeDependencyJson: this._selectedRecipeDependencyJson,
       recipeHostRecipeJson: recipeHost?.recipeJson,
       packageRunRecipeJson: packageRun?.recipeJson,
     });
@@ -120,8 +117,10 @@ export abstract class SlotViewRecipePresenter extends SlotViewState {
     });
   }
 
-  async _loadSelectedRecipeFlow(recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>) {
-    return loadSelectedSlotViewRecipeFlow(this, recipeHost);
+  async _loadSelectedRecipeDependency(
+    recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>,
+  ) {
+    return loadSelectedSlotViewRecipeDependency(this, recipeHost);
   }
 
   _artifactUrl(
@@ -179,6 +178,7 @@ export abstract class SlotViewRecipePresenter extends SlotViewState {
       evidenceManifest,
       mode: this._recipeEvidenceMode,
       usedTypedArtifactManifest,
+      allowNamespacedNodeIds: this._selectedRecipeDependencyPath !== '',
     });
     this._recipeEvidenceCache = {
       artifactManifest,
@@ -291,8 +291,8 @@ export abstract class SlotViewRecipePresenter extends SlotViewState {
     return renderRecipeRunsList(this);
   }
 
-  _renderRecipeFlowsList(recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>) {
-    return renderRecipeFlowsList(this, recipeHost);
+  _renderRecipeDependenciesList(recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>) {
+    return renderRecipeDependenciesList(this, recipeHost);
   }
 
   _renderRecipeEvidenceSection(recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>) {

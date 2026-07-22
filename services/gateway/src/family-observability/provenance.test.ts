@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { generateFamilyReport } from './report.js';
 import { buildFamilyObservabilitySnapshotFromRuns } from './snapshot.js';
-import { makeRun, writeArtifact } from './test-fixtures.js';
+import { makeRecipeJson, makeRun, writeArtifact } from './test-fixtures.js';
 
 test('snapshot prefers family-level recipe quality from the strongest available signal and keeps a family-first summary', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'family-observability-strength-'));
@@ -17,14 +17,9 @@ test('snapshot prefers family-level recipe quality from the strongest available 
   await writeArtifact(
     rootDir,
     'artifacts/recipe.json',
-    JSON.stringify({
-      workflow: {
-        entry: 'start',
-        nodes: {
-          start: { action: 'navigate', next: 'done' },
-          done: { action: 'assert' },
-        },
-      },
+    makeRecipeJson({
+      start: { action: 'navigate', intent: 'Open the test target.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
     }),
   );
   await writeArtifact(
@@ -64,14 +59,9 @@ test('snapshot prefers family-level recipe quality from the strongest available 
   await writeArtifact(
     followUpDir,
     'artifacts/recipe.json',
-    JSON.stringify({
-      workflow: {
-        entry: 'start',
-        nodes: {
-          start: { action: 'navigate', next: 'done' },
-          done: { action: 'assert' },
-        },
-      },
+    makeRecipeJson({
+      start: { action: 'navigate', intent: 'Open the test target.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
     }),
   );
   await writeArtifact(followUpDir, 'artifacts/report.md', 'Latest tiny follow-up');
@@ -117,14 +107,9 @@ test('snapshot recovers a missing family recipe from a unique historical run wit
   await writeArtifact(
     historicalDir,
     'artifacts/recipe.json',
-    JSON.stringify({
-      workflow: {
-        entry: 'start',
-        nodes: {
-          start: { action: 'navigate', next: 'done' },
-          done: { action: 'assert' },
-        },
-      },
+    makeRecipeJson({
+      start: { action: 'navigate', intent: 'Open the test target.', next: 'done' },
+      done: { action: 'end', status: 'pass' },
     }),
   );
   await writeArtifact(
@@ -300,9 +285,7 @@ test('family artifact footprint dedupes recovered provenance across missing fami
   await writeArtifact(
     historicalDir,
     'artifacts/recipe.json',
-    JSON.stringify({
-      workflow: { entry: 'start', nodes: { start: { action: 'assert' } } },
-    }),
+    makeRecipeJson({ start: { action: 'end', status: 'pass' } }),
   );
   await writeArtifact(historicalDir, 'artifacts/after.png', 'png');
 

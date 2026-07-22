@@ -9,8 +9,6 @@ export {
   isRecord,
   OFFICIAL_RECIPE_ACTIONS,
   type OfficialActionName,
-  RECIPE_PLAYBACK_SLOW_MS_MAX,
-  RECIPE_PLAYBACK_SLOW_MS_MIN,
   RECIPE_PROTOCOL_SCHEMA_URL,
   RECIPE_PROTOCOL_SCHEMA_URLS,
   RECIPE_PROTOCOL_SCHEMA_VERSION,
@@ -20,12 +18,12 @@ export {
   type RecipeActionName,
   type RecipeArtifactPackageInput,
   type RecipeCustomActionDeclaration,
-  type RecipeNamedDeclaration,
   type RecipeNativeBindingDeclaration,
   type RecipeObserverDeclaration,
-  type RecipePreconditionDeclaration,
+  type RecipeResolutionDependency,
+  type RecipeResolutionDocument,
+  type RecipeResolutionEdge,
   type RecipeRuntimeCapabilityDeclaration,
-  type RecipeStateRefDeclaration,
   type RecipeValidationFinding,
   type RecipeValidationResult,
   type RecipeValidationSeverity,
@@ -33,15 +31,22 @@ export {
   type UiObserverRef,
 } from './common.js';
 export { recipeProtocolSchemaUrlForVersion } from './common.js';
+export { canonicalRecipeJson, digestRecipeDocument, resolvedRecipeArtifactPath } from './digest.js';
 export {
   type RecipeDocumentValidationOptions,
   validateRecipeDocument,
   validateRecipeWithManifest,
+  validateResolvedRecipeActionNode,
 } from './document.js';
 export {
   getRecipeActionManifestActionNames,
   validateRecipeActionManifestDocument,
 } from './manifest.js';
+export {
+  applyRecipeParamDefaults,
+  validateRecipeParams,
+  validateRecipeParamsSchema,
+} from './params.js';
 export {
   DEFAULT_UNTRUSTED_RECIPE_BLOCKED_CAPABILITIES,
   officialRecipeActionCapabilities,
@@ -56,8 +61,9 @@ export {
   type RecipeTrustFailure,
 } from './trust.js';
 export {
+  getRecipeCallRefs,
   getRecipeWorkflowActions,
   getRecipeWorkflowNodeIds,
-  isDynamicRecipeFlowRef,
-  normalizeRecipeFlowRef,
+  isDynamicRecipeRef,
+  normalizeRecipeRef,
 } from './workflow.js';

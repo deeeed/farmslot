@@ -783,14 +783,14 @@ function extractProofTargets(
     );
     return undefined;
   }
-  const raw = (parsed as { proof_targets?: unknown })?.proof_targets;
+  const raw = (parsed as { proofTargets?: unknown })?.proofTargets;
   if (!Array.isArray(raw)) return undefined;
   const result: { id: string; target: string }[] = [];
   for (const entry of raw) {
     if (!entry || typeof entry !== 'object') continue;
     const rec = entry as Record<string, unknown>;
     const id = typeof rec.id === 'string' ? rec.id : null;
-    const target = typeof rec.target === 'string' ? rec.target : null;
+    const target = typeof rec.claim === 'string' ? rec.claim : null;
     if (!id || !target) continue;
     result.push({ id, target });
   }

@@ -47,7 +47,9 @@ export function inferTypedArtifactPurpose(type: string, relativePath: string): s
 
 export function inferArtifactPurpose(relativePath: string): string {
   const filename = path.basename(relativePath);
-  if (relativePath.startsWith('recipe-flows/') && filename.endsWith('.json')) return 'recipe-flow';
+  if (relativePath.startsWith('recipe-library/recipes/') && filename.endsWith('.recipe.json')) {
+    return 'recipe-library';
+  }
   const exactPurpose = EXACT_ARTIFACT_PURPOSES.get(filename);
   if (exactPurpose) return exactPurpose;
   if (/\.(png|jpg|jpeg|gif)$/i.test(filename)) {

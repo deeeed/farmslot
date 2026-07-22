@@ -1,0 +1,61 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Docusaurus project-type validation matrix capture plan",
+  "description": "Recipe-owned generation for a clearly labeled architecture diagram showing how public-safe project-type validation evidence flows through Farmslot surfaces instead of standalone app screenshots.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "allowedProjects": {
+        "type": "array",
+        "default": ["farmslot-farm", "audiolab-farm", "echobridge-farm"],
+        "items": {
+          "type": "string"
+        }
+      },
+      "outputDiagram": {
+        "type": "string",
+        "default": "diagrams/project-type-validation-matrix.svg"
+      },
+      "docsDiagram": {
+        "type": "string",
+        "default": "apps/docs/static/img/demos/project-type-validation-matrix.svg"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "read-validation-scope",
+    "nodes": {
+      "read-validation-scope": {
+        "action": "artifact.read",
+        "intent": "Use the public-safe Farmslot, AudioLab, EchoBridge, and Companion validation lanes from the demo media plan.",
+        "next": "render-labeled-diagram"
+      },
+      "render-labeled-diagram": {
+        "action": "diagram.render",
+        "intent": "Render a simplified SVG that is explicitly labeled as an architecture diagram, not a product screenshot.",
+        "next": "verify-public-safety"
+      },
+      "verify-public-safety": {
+        "action": "artifact.assert",
+        "intent": "Verify the diagram contains only allowed public-safe aliases and no private project labels, paths, tokens, wallet data, or notifications.",
+        "next": "publish-artifacts"
+      },
+      "publish-artifacts": {
+        "action": "artifact.publish",
+        "intent": "Publish the SVG diagram plus summary, trace, and artifact manifest.",
+        "artifacts": [
+          "diagrams/project-type-validation-matrix.svg",
+          "summary.json",
+          "trace.json",
+          "artifact-manifest.json"
+        ],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

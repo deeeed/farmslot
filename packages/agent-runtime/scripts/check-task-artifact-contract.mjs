@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -8,10 +8,10 @@ const { expandedArtifactsForCommand } = require('./worker-terminal-contract.cjs'
 
 let sharedRecipeQualityValidator = null;
 let sharedRecipeDocumentValidator = null;
-// Mirror @farmslot/protocol recipeProtocolSchemaUrlForVersion: only v1 is a
-// supported schema_version, so do not synthesize URLs for other versions.
-let sharedRecipeSchemaUrlForVersion = (version) =>
-  version === 1 ? 'https://farmslot.io/schemas/recipe-v1.schema.json' : null;
+let sharedRecipeArtifactPackageValidator = null;
+let sharedResolvedRecipeArtifactPath = null;
+// Keep the source-checkout fallback pinned to the canonical Recipe v1 schema.
+const RECIPE_SCHEMA_URL = 'https://farmslot.io/schemas/recipe-v1.schema.json';
 try {
   ({ isRecipeQualityArtifact: sharedRecipeQualityValidator } =
     await import('@farmslot/protocol/contracts/recipes'));
@@ -25,9 +25,8 @@ try {
 try {
   const recipeProtocol = await import('@farmslot/protocol/recipe');
   sharedRecipeDocumentValidator = recipeProtocol.validateRecipeDocument;
-  if (typeof recipeProtocol.recipeProtocolSchemaUrlForVersion === 'function') {
-    sharedRecipeSchemaUrlForVersion = recipeProtocol.recipeProtocolSchemaUrlForVersion;
-  }
+  sharedRecipeArtifactPackageValidator = recipeProtocol.validateRecipeArtifactPackage;
+  sharedResolvedRecipeArtifactPath = recipeProtocol.resolvedRecipeArtifactPath;
 } catch (error) {
   // Compatibility fail-safe: source checkouts can run before @farmslot/protocol
   // has emitted dist/. In that degraded state, do not bypass recipe checks;
@@ -85,15 +84,34 @@ const allowedOmitKeys = new Set(['file', 'reason']);
 
 function fileExists(rel) {
   try {
-    return statSync(path.join(taskDir, rel)).isFile();
-  } catch {
+    return statSync(resolveTaskArtifactPath(rel)).isFile();
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
     return false;
   }
 }
 
 function readText(rel) {
-  const p = path.join(taskDir, rel);
-  return existsSync(p) ? readFileSync(p, 'utf8') : null;
+  try {
+    return readFileSync(resolveTaskArtifactPath(rel), 'utf8');
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    return null;
+  }
+}
+
+function isMissingPathError(error) {
+  return error && typeof error === 'object' && error.code === 'ENOENT';
+}
+
+function resolveTaskArtifactPath(rel) {
+  const root = realpathSync(taskDir);
+  const candidate = realpathSync(path.resolve(taskDir, rel));
+  const relative = path.relative(root, candidate);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`${rel} resolves outside the task directory`);
+  }
+  return candidate;
 }
 
 function isRecord(value) {
@@ -246,47 +264,97 @@ function validateRecipeQualityArtifact() {
 }
 
 function validateRecipeDocumentArtifact() {
-  // Mirror the artifact-package contract (protocol/recipe/artifact.ts): a failed run
-  // keeps recipe.json envelope-only and does not re-validate the composition, so a
-  // graceful failure (e.g. a flow cycle) is not rejected here.
-  const summaryText = readText('artifacts/summary.json');
-  let runFailed = false;
-  if (summaryText) {
-    try {
-      runFailed = JSON.parse(summaryText)?.status === 'fail';
-    } catch {
-      // A malformed summary is another check's concern; without a confirmed failure
-      // status, enforce the stricter (passing-run) validation as the safe default.
-      runFailed = false;
+  const authoredRecipe = readJsonArtifact('artifacts/recipe.json', 'recipe.json');
+  if (authoredRecipe === undefined) return;
+  validateRecipeDocumentValue(authoredRecipe, 'recipe.json', { skipRecipeCallResolution: true });
+
+  const packageRoot = 'artifacts/recipe-run';
+  const recipe = readJsonArtifact(`${packageRoot}/recipe.json`, 'recipe-run/recipe.json');
+  if (recipe === undefined) {
+    issues.push('artifacts/recipe-run/recipe.json is missing');
+    return;
+  }
+  if (canonicalJson(authoredRecipe) !== canonicalJson(recipe)) {
+    issues.push('artifacts/recipe-run/recipe.json does not match artifacts/recipe.json');
+  }
+  const manifest = readJsonArtifact(
+    `${packageRoot}/artifact-manifest.json`,
+    'recipe-run/artifact-manifest.json',
+  );
+  const recipeResolution = readJsonArtifact(
+    `${packageRoot}/recipe-resolution.json`,
+    'recipe-run/recipe-resolution.json',
+  );
+  const resolvedRecipes = {};
+  if (isRecord(recipeResolution) && Array.isArray(recipeResolution.dependencies)) {
+    for (const dependency of recipeResolution.dependencies) {
+      if (!isRecord(dependency)) continue;
+      const artifact = resolvedRecipeArtifactPath(dependency.digest);
+      if (!artifact) continue;
+      const document = readJsonArtifact(`${packageRoot}/${artifact}`, `recipe-run/${artifact}`);
+      if (document !== undefined) resolvedRecipes[String(dependency.digest)] = document;
     }
   }
-  if (runFailed) {
-    validateRecipeDocumentArtifactAt('artifacts/recipe.json', 'recipe.json', {
-      skipFlowCallResolution: true,
+  if (sharedRecipeArtifactPackageValidator) {
+    const result = sharedRecipeArtifactPackageValidator({
+      recipe,
+      manifest,
+      recipeResolution,
+      resolvedRecipes,
+      artifactPaths: listArtifactPaths(path.join(taskDir, packageRoot)),
     });
+    for (const finding of result.findings) {
+      if (finding.severity === 'error') {
+        issues.push(`${finding.code} ${finding.path}: ${finding.message}`);
+      }
+    }
     return;
   }
-  // Passing/unknown run: the composition must be proven — recipe.json's call.refs are
-  // proven either by resolved-recipe.json (validated in full, so recipe.json is
-  // envelope-only) or by recipe.json being self-contained (validated in full).
-  const hasResolvedRecipe = fileExists('artifacts/resolved-recipe.json');
-  validateRecipeDocumentArtifactAt('artifacts/recipe.json', 'recipe.json', {
-    skipFlowCallResolution: hasResolvedRecipe,
-    externalCatalogsResolvable: false,
-  });
-  validateRecipeDocumentArtifactAt('artifacts/resolved-recipe.json', 'resolved-recipe.json', {});
+  if (manifest === undefined) issues.push('artifact-manifest.json is missing');
+  if (recipeResolution === undefined) issues.push('recipe-resolution.json is missing');
+  const externalRecipeIds = new Set(
+    isRecord(recipeResolution) && Array.isArray(recipeResolution.dependencies)
+      ? recipeResolution.dependencies
+          .filter(isRecord)
+          .map((dependency) => dependency.ref)
+          .filter((ref) => typeof ref === 'string')
+      : [],
+  );
+  validateRecipeDocumentValue(recipe, 'recipe.json', { externalRecipeIds });
+  for (const [digest, document] of Object.entries(resolvedRecipes)) {
+    validateRecipeDocumentValue(document, `resolved recipe ${digest}`, { externalRecipeIds });
+  }
 }
 
-function validateRecipeDocumentArtifactAt(relPath, label, options) {
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isRecord(value)) {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function resolvedRecipeArtifactPath(digest) {
+  if (sharedResolvedRecipeArtifactPath) return sharedResolvedRecipeArtifactPath(digest);
+  if (typeof digest !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(digest)) return undefined;
+  return `resolved-recipes/${digest.slice('sha256:'.length)}.recipe.json`;
+}
+
+function readJsonArtifact(relPath, label) {
   const text = readText(relPath);
-  if (!text) return;
-  let recipe;
+  if (!text) return undefined;
   try {
-    recipe = JSON.parse(text);
+    return JSON.parse(text);
   } catch (error) {
     issues.push(`${label}: invalid JSON: ${error.message}`);
-    return;
+    return undefined;
   }
+}
+
+function validateRecipeDocumentValue(recipe, label, options) {
   if (sharedRecipeDocumentValidator) {
     const result = sharedRecipeDocumentValidator(recipe, options);
     for (const finding of result.findings) {
@@ -300,26 +368,59 @@ function validateRecipeDocumentArtifactAt(relPath, label, options) {
     issues.push(`${label}: expected object`);
     return;
   }
-  if (recipe.schema_version !== 1) {
-    issues.push(`${label}: schema_version must equal 1`);
+  const allowedRootFields = new Set([
+    '$schema',
+    'title',
+    'description',
+    'paramsSchema',
+    'proofTargets',
+    'workflow',
+  ]);
+  for (const field of Object.keys(recipe)) {
+    if (!allowedRootFields.has(field))
+      issues.push(`${label}: unsupported top-level field ${field}`);
   }
-  const expectedSchemaUrl = sharedRecipeSchemaUrlForVersion(recipe.schema_version);
-  if (recipe.$schema != null && recipe.$schema !== expectedSchemaUrl) {
-    issues.push(
-      `${label}: $schema must match schema_version (${expectedSchemaUrl ?? 'unknown schema_version'})`,
-    );
+  if (recipe.$schema !== RECIPE_SCHEMA_URL) {
+    issues.push(`${label}: $schema must equal ${RECIPE_SCHEMA_URL}`);
   }
-  if (!isRecord(recipe.validate) || !isRecord(recipe.validate.workflow)) {
-    issues.push(`${label}: validate.workflow is required`);
+  if (typeof recipe.description !== 'string' || !recipe.description.trim()) {
+    issues.push(`${label}: description must be a non-empty string`);
+  }
+  if (!isRecord(recipe.workflow)) {
+    issues.push(`${label}: workflow is required`);
     return;
   }
-  const workflow = recipe.validate.workflow;
+  const workflow = recipe.workflow;
   if (typeof workflow.entry !== 'string' || !workflow.entry.trim()) {
-    issues.push(`${label}: validate.workflow.entry must be a non-empty string`);
+    issues.push(`${label}: workflow.entry must be a non-empty string`);
   }
   if (!isRecord(workflow.nodes) || Object.keys(workflow.nodes).length === 0) {
-    issues.push(`${label}: validate.workflow.nodes must be a non-empty object`);
+    issues.push(`${label}: workflow.nodes must be a non-empty object`);
+    return;
   }
+  for (const [nodeId, node] of Object.entries(workflow.nodes)) {
+    if (!isRecord(node) || typeof node.action !== 'string' || !node.action.trim()) {
+      issues.push(`${label}: workflow.nodes.${nodeId}.action must be a non-empty string`);
+      continue;
+    }
+    if (node.action !== 'end' && (typeof node.intent !== 'string' || !node.intent.trim())) {
+      issues.push(`${label}: workflow.nodes.${nodeId}.intent must be a non-empty string`);
+    }
+  }
+}
+
+function listArtifactPaths(root) {
+  if (!existsSync(root)) return [];
+  const paths = [];
+  const visit = (dir, prefix) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) visit(path.join(dir, entry.name), relative);
+      else if (entry.isFile()) paths.push(relative);
+    }
+  };
+  visit(root, '');
+  return paths.sort();
 }
 
 function parseManifest() {

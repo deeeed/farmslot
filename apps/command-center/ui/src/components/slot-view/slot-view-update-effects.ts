@@ -66,7 +66,7 @@ export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unkno
       changed.has('_activeResourceId') ||
       changed.has('_resourcePanelOpen') ||
       changed.has('_selectedRecipeRunId') ||
-      changed.has('_selectedRecipeFlowPath') ||
+      changed.has('_selectedRecipeDependencyPath') ||
       changed.has('_selectedRecipeNodeId') ||
       changed.has('_selectedRecipeArtifactPath') ||
       changed.has('_recipeLightboxOpen') ||

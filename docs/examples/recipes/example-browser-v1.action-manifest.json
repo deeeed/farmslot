@@ -26,7 +26,13 @@
     "cdp.target": {
       "description": "Select extension, notification, dapp, or background CDP targets.",
       "schema": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "examples": [
         {
@@ -43,7 +49,22 @@
     "ui.navigate": {
       "description": "Navigate by extension route/hash, dapp URL, or selected CDP target page.",
       "schema": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "properties": {
+              "market": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
       },
       "examples": [
         {
@@ -59,7 +80,40 @@
     "ui.wait_for": {
       "description": "Wait for DOM selector, text, target role, or extension screen state.",
       "schema": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "text_contains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "test_id": {
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          },
+          "event": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "examples": [
         {
@@ -77,7 +131,19 @@
     "cdp.network": {
       "description": "Observe/probe network and fetch activity through CDP, including request/response/failure JSONL capture.",
       "schema": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "capture": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "examples": [
         {
@@ -94,7 +160,19 @@
     "cdp.trace": {
       "description": "Start or stop CDP tracing/profiling capture.",
       "schema": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "examples": [
         {
@@ -119,37 +197,190 @@
             "intent": "Set text through the real UI input path"
           }
         }
-      ]
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ui.press": {
+      "description": "ui.press action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ui.key_press": {
+      "description": "ui.key_press action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "ui.scroll": {
+      "description": "ui.scroll action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "ui.screenshot": {
+      "description": "ui.screenshot action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "claims": {
+            "type": "object",
+            "properties": {
+              "must_show": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "must_not_show": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "covers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "cdp.storage": {
+      "description": "cdp.storage action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "cdp.emulation": {
+      "description": "cdp.emulation action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "cdp.metrics": {
+      "description": "cdp.metrics action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "state_read": {
+      "description": "state_read action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "save_as": {
+            "type": "string"
+          },
+          "assert": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "watch_logs": {
+      "description": "watch_logs action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "index_artifacts": {
+      "description": "index_artifacts action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": ["object", "string"],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "switch": {
+      "description": "Choose a graph branch when one resolved string equals another.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "string" },
+          "equals": { "type": "string" }
+        },
+        "required": ["value", "equals"],
+        "additionalProperties": false
+      },
+      "result_cases": ["match"]
     }
   },
-  "state_refs": [
-    {
-      "ref": "example.browser.route",
-      "description": "Current extension hash/route.",
-      "schema": {
-        "type": "object"
-      }
-    },
-    {
-      "ref": "example.browser.wallet_status",
-      "description": "Wallet lock/account/network status from safe extension state refs.",
-      "schema": {
-        "type": "object"
-      }
-    }
-  ],
-  "pre_conditions": [
-    {
-      "id": "example.browser.cdp_ready",
-      "description": "Approved CDP target set is reachable.",
-      "failure_kind": "setup"
-    },
-    {
-      "id": "example.browser.profile_isolated",
-      "description": "Isolated extension browser profile is active.",
-      "failure_kind": "environment"
-    }
-  ],
   "custom_actions": [
     {
       "name": "example.wallet.unlock",
@@ -159,9 +390,6 @@
         "type": "object",
         "properties": {
           "account": {
-            "type": "string"
-          },
-          "next": {
             "type": "string"
           }
         },
@@ -176,7 +404,8 @@
             "next": "open-perps"
           }
         }
-      ]
+      ],
+      "execution_capabilities": ["app-mutation"]
     },
     {
       "name": "example.wallet.select_network",
@@ -190,9 +419,6 @@
           },
           "chainId": {
             "type": "string"
-          },
-          "next": {
-            "type": "string"
           }
         },
         "additionalProperties": false
@@ -205,7 +431,8 @@
             "next": "open-perps"
           }
         }
-      ]
+      ],
+      "execution_capabilities": ["app-mutation"]
     },
     {
       "name": "example.debug.eval",
@@ -221,9 +448,6 @@
             "type": "string"
           },
           "save_as": {
-            "type": "string"
-          },
-          "next": {
             "type": "string"
           }
         },
@@ -241,7 +465,8 @@
           }
         }
       ],
-      "safety_notes": "Use cdp.*, ui.*, or state_read refs for proof. This action is debug-only."
+      "safety_notes": "Use cdp.*, ui.*, or state_read refs for proof. This action is debug-only.",
+      "execution_capabilities": ["arbitrary-code"]
     }
   ],
   "native_bindings": [

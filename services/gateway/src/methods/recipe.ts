@@ -21,6 +21,7 @@ import {
   type RecipeProjectHookValidationResult,
   type RecipeRerunParams,
   type RecipeValidationResult,
+  resolvedRecipeArtifactPath,
   type ScriptActionResult,
   validateRecipeActionManifestDocument,
   validateRecipeArtifactPackage,
@@ -40,12 +41,14 @@ import {
 } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { expandHook, expandTemplate } from '../core/hooks.js';
+import { isPathInside } from '../core/path.js';
 import {
   isShellHomePath,
   normalizeRemotePath,
   resolvePathWithinRemoteBase,
   shellExpressionForRemotePath,
 } from '../core/remote-paths.js';
+import { slotRealpath } from '../core/slot-io.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import {
@@ -178,7 +181,8 @@ interface RecipeRunArtifactPackageOutputInput {
   manifest?: unknown;
   recipe?: unknown;
   recipeArtifactPresent?: boolean;
-  resolvedRecipe?: unknown;
+  recipeResolution?: unknown;
+  resolvedRecipes?: Record<string, unknown>;
   readErrors?: Record<string, string>;
 }
 
@@ -268,15 +272,13 @@ export function validateRecipeRunArtifactPackageOutput(
     );
   }
 
-  // resolved-recipe.json is optional; a present-but-unreadable one must fail rather
-  // than silently skip the full-composition validation below.
-  const resolvedRecipeReadError = readErrors['resolved-recipe.json'];
-  if (resolvedRecipeReadError && resolvedRecipeReadError !== RECIPE_ARTIFACT_MISSING_ERROR) {
+  const recipeResolutionReadError = readErrors['recipe-resolution.json'];
+  if (recipeResolutionReadError && recipeResolutionReadError !== RECIPE_ARTIFACT_MISSING_ERROR) {
     addHookValidationCheck(
       checks,
-      'recipe_run.artifact.resolved-recipe.json',
+      'recipe_run.artifact.recipe-resolution.json',
       'fail',
-      `resolved-recipe.json could not be read as JSON: ${resolvedRecipeReadError}`,
+      `recipe-resolution.json could not be read as JSON: ${recipeResolutionReadError}`,
     );
   }
 
@@ -289,15 +291,10 @@ export function validateRecipeRunArtifactPackageOutput(
     `artifact-manifest.json runStatus must match summary.json status (summary=${summaryStatus ?? 'missing'}, manifest=${typeof manifestStatus === 'string' ? manifestStatus : 'missing'}).`,
   );
 
-  // For a passing run the composition must be proven — recipe.json is validated in
-  // full unless resolved-recipe.json proves it; a failed run stays envelope-only so a
-  // graceful failure (e.g. a flow cycle) is not turned into an ingestion rejection.
   const recipe = validateRecipeArtifactPackage({
     recipe: input.recipeArtifactPresent ? input.recipe : undefined,
-    ...(input.resolvedRecipe != null ? { resolvedRecipe: input.resolvedRecipe } : {}),
-    // Only a confirmed failure relaxes composition enforcement; unknown/missing status
-    // still requires the composition to be proven, so it cannot slip through.
-    runPassed: summaryStatus !== 'fail',
+    recipeResolution: input.recipeResolution,
+    resolvedRecipes: input.resolvedRecipes,
     manifest: input.manifest,
     artifactPaths: input.artifactListError ? undefined : input.artifactPaths,
   });
@@ -380,8 +377,21 @@ const DEFAULT_RECIPE_JSON_MAX_BUFFER_BYTES = 1024 * 1024;
 async function readSlotJsonIfPresent(
   slotVars: SlotVars,
   filePath: string,
+  artifactRoot: string,
   maxBuffer = DEFAULT_RECIPE_JSON_MAX_BUFFER_BYTES,
 ): Promise<{ value?: unknown; error?: string }> {
+  try {
+    const [rootReal, fileReal] = await Promise.all([
+      slotRealpath(slotVars, artifactRoot),
+      slotRealpath(slotVars, filePath),
+    ]);
+    if (!isPathInside(rootReal, fileReal)) {
+      return { error: `${filePath} resolves outside recipe artifact root ${artifactRoot}` };
+    }
+    filePath = fileReal;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
   const script = `file=${shellExpressionForRemotePath(filePath)}; if [ ! -f "$file" ]; then echo ${RECIPE_ARTIFACT_MISSING_SENTINEL}; exit 0; fi; cat "$file"`;
   let text: string;
   try {
@@ -410,21 +420,50 @@ async function validateRecipeRunArtifactsOnSlot(
 ): Promise<RecipeProjectHookValidationResult> {
   const artifactList = await listSlotRecipeArtifactFiles(slotVars, artifactRoot);
   const recipeArtifactPresent = artifactList.paths.includes('recipe.json');
-  const resolvedRecipePresent = artifactList.paths.includes('resolved-recipe.json');
+  const recipeResolutionPresent = artifactList.paths.includes('recipe-resolution.json');
   const emptyRead = Promise.resolve({ value: undefined } as { value?: unknown; error?: string });
-  const [summary, manifest, recipe, resolvedRecipe] = await Promise.all([
-    readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'summary.json')),
-    readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'artifact-manifest.json')),
+  const [summary, manifest, recipe, recipeResolution] = await Promise.all([
+    readSlotJsonIfPresent(
+      slotVars,
+      joinRemoteArtifactPath(artifactRoot, 'summary.json'),
+      artifactRoot,
+    ),
+    readSlotJsonIfPresent(
+      slotVars,
+      joinRemoteArtifactPath(artifactRoot, 'artifact-manifest.json'),
+      artifactRoot,
+    ),
     recipeArtifactPresent
-      ? readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'recipe.json'))
-      : emptyRead,
-    resolvedRecipePresent
       ? readSlotJsonIfPresent(
           slotVars,
-          joinRemoteArtifactPath(artifactRoot, 'resolved-recipe.json'),
+          joinRemoteArtifactPath(artifactRoot, 'recipe.json'),
+          artifactRoot,
+        )
+      : emptyRead,
+    recipeResolutionPresent
+      ? readSlotJsonIfPresent(
+          slotVars,
+          joinRemoteArtifactPath(artifactRoot, 'recipe-resolution.json'),
+          artifactRoot,
         )
       : emptyRead,
   ]);
+  const resolvedRecipes: Record<string, unknown> = {};
+  const dependencyReadErrors: Record<string, string> = {};
+  if (isRecord(recipeResolution.value) && Array.isArray(recipeResolution.value.dependencies)) {
+    await Promise.all(
+      recipeResolution.value.dependencies.map(async (dependency) => {
+        if (!isRecord(dependency)) return;
+        const artifact = resolvedRecipeArtifactPath(dependency.digest);
+        if (!artifact) return;
+        const dependencyPath = resolvePathWithinRemoteBase(artifactRoot, artifact);
+        if (!dependencyPath) return;
+        const read = await readSlotJsonIfPresent(slotVars, dependencyPath, artifactRoot);
+        if (read.value !== undefined) resolvedRecipes[String(dependency.digest)] = read.value;
+        if (read.error) dependencyReadErrors[artifact] = read.error;
+      }),
+    );
+  }
   return validateRecipeRunArtifactPackageOutput({
     artifactPaths: artifactList.paths,
     artifactListError: artifactList.error,
@@ -432,12 +471,14 @@ async function validateRecipeRunArtifactsOnSlot(
     manifest: manifest.value,
     recipe: recipe.value,
     recipeArtifactPresent,
-    resolvedRecipe: resolvedRecipe.value,
+    recipeResolution: recipeResolution.value,
+    resolvedRecipes,
     readErrors: {
       ...(summary.error ? { 'summary.json': summary.error } : {}),
       ...(manifest.error ? { 'artifact-manifest.json': manifest.error } : {}),
       ...(recipe.error ? { 'recipe.json': recipe.error } : {}),
-      ...(resolvedRecipe.error ? { 'resolved-recipe.json': resolvedRecipe.error } : {}),
+      ...(recipeResolution.error ? { 'recipe-resolution.json': recipeResolution.error } : {}),
+      ...dependencyReadErrors,
     },
   });
 }
@@ -536,9 +577,13 @@ export function expandRecipeRunHookTemplate(
   projectVars: ProjectVars,
   recipePath: string,
   artifactsDir: string,
+  runtime: { runId?: string; recipeRunId?: string } = {},
 ): string {
   validateRecipeRunHookTemplate(template);
-  return expandTemplate(template, slotVars, projectVars)
+  return expandTemplate(template, slotVars, projectVars, {
+    run_id: runtime.runId ?? '',
+    recipe_run_id: runtime.recipeRunId ?? '',
+  })
     .replaceAll('{{recipe_path}}', recipePath)
     .replaceAll('{{artifacts_dir}}', artifactsDir);
 }
@@ -710,7 +755,7 @@ export async function assertSlotHealthForRecipeRerun(
 
 /**
  * Resolve a recipe artifact path on the SLOT filesystem (not orchestrator).
- * Defaults to artifacts/recipe.json but can also target bundled task-local subflows.
+ * Defaults to artifacts/recipe.json but can also target task-local library recipes.
  */
 function resolveWorkerTaskDir(
   run: { taskFile: string | null; project: string },
@@ -963,6 +1008,7 @@ async function buildRecipeExecutionCommand(
     projectVars,
     shellExpressionForRemotePath(slotRecipePath),
     shellExpressionForRemotePath(slotRecipeRunArtifactsDir),
+    { runId: run.id, recipeRunId: artifactRunId },
   );
   recipeCmd = appendRecipePlaybackOptions(
     recipeCmd,

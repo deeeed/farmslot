@@ -23,22 +23,17 @@ export function buildHudNode(
   const flow = hudFlow(event.action, event.node);
   const text = hudText(event.action, status, event.node);
   const detail = normalizeHudSecondary(hudDetail(event.node), text, flow);
-  const phase =
-    typeof event.node.phase === 'string' && event.node.phase.trim()
-      ? event.node.phase
-      : lifecyclePhase(status);
   return {
     action: 'app.hud',
     title,
     status,
     node_id: event.nodeId,
-    phase,
+    phase: lifecyclePhase(status),
     flow: flow || undefined,
     detail,
     text,
     action_name: event.action,
-    proofTarget: event.node.proofTarget,
-    record: event.node.record,
+    proves: event.node.proves,
     intent: text,
     error: event.error ? hudErrorSummary(event.error) : undefined,
     display: isRecord(event.node.display) ? event.node.display : hudDisplay(options),

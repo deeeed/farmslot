@@ -61,6 +61,8 @@ test('farmslot-farm recipe_run hook declares the Recipe v1 gateway contract', as
     '--cdp-port {{cdp_port}}',
     '--gateway-port {{port}}',
     '--slot-id {{slot_id}}',
+    '--run-id={{run_id}}',
+    '--recipe-run-id={{recipe_run_id}}',
   ]) {
     assert.ok(hook.includes(required), `hook should include ${required}`);
   }
@@ -87,6 +89,8 @@ test('farmslot-farm cli recipe route targets the Command Center harness with a t
       '7777',
       '--slot-id',
       'macwork-ff-1',
+      '--run-id=run-123',
+      '--recipe-run-id=manual-1',
       '--slow',
       '2000',
       '--record-video=full-run',
@@ -99,11 +103,11 @@ test('farmslot-farm cli recipe route targets the Command Center harness with a t
     assert.match(output, /--action-manifest /);
     assert.match(output, /docs\/examples\/recipes\/farmslot-v1\.action-manifest\.json/);
     assert.match(output, /--project-root /);
-    assert.match(output, /--input=farmslot_dir=/);
-    assert.match(output, /--input=primary_repo=/);
     assert.match(output, /--cdp-port 9323/);
     assert.match(output, /--gateway-port 7777/);
     assert.match(output, /--slot-id macwork-ff-1/);
+    assert.match(output, /--run-id run-123/);
+    assert.match(output, /--recipe-run-id manual-1/);
     assert.match(output, /--slow 2000/);
     assert.match(output, /--record-video=full-run/);
     assert.match(output, /--record-max-fps 15/);

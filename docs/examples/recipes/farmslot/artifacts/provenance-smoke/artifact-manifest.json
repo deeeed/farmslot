@@ -26,6 +26,12 @@
       "type": "recipe",
       "label": "Resolved recipe",
       "mimeType": "application/json"
+    },
+    {
+      "path": "recipe-resolution.json",
+      "type": "json",
+      "label": "Resolved recipe dependency graph",
+      "category": "system"
     }
   ]
 }

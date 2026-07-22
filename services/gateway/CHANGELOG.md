@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- **BREAKING:** Recipe ingestion, task inheritance, and PR-body extraction now use recipe libraries plus exact `recipe-resolution.json` dependency evidence.
+- security: remote dependency evidence reads stay within the run artifact root.
+
 - feat(gateway): `dispatch.candidates` rows carry `ineligibleReason` when FIND_SLOT dispatch validation (branch ownership, companion resources) would reject the slot, so the wizard disables the row instead of advertising a selection that fails after queueing.
 
 - fix(gateway): harden inline CI-fix dispatch so deferred runner nudges do not create phantom CI-fix contexts (an undelivered nudge refunds the attempt and schedules a retry poll), and prevent Codex shell launch text from being misclassified as an auth blocker.

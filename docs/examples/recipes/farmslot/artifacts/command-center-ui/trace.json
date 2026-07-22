@@ -29,7 +29,7 @@
     "ok": true,
     "durationMs": 825,
     "artifacts": [],
-    "intent": "Verify the recipe graph renders validate.workflow nodes from the selected run package."
+    "intent": "Verify the recipe graph renders workflow nodes from the selected run package."
   },
   {
     "id": "open-ready-workspace-dev-harness",
@@ -69,7 +69,7 @@
     "ok": true,
     "durationMs": 1450,
     "artifacts": ["screenshots/command-center-recipe-workspace.svg"],
-    "intent": "Capture the Command Center recipe workspace with replay controls, graph, and artifacts visible."
+    "intent": "Record the Command Center recipe workspace with replay controls, graph, and artifacts visible."
   },
   {
     "id": "index-artifacts",
