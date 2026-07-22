@@ -1447,6 +1447,85 @@ test('runs catalog flow calls with params and postconditions', async () => {
   }
 });
 
+test('applies catalog flow parameter defaults and preserves explicit overrides', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    await writeJsonFile(path.join(tempRoot, 'flows.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      schema_version: 1,
+      kind: 'recipe-flow-catalog',
+      flows: {
+        'example.write-default': {
+          paramsSchema: {
+            type: 'object',
+            required: ['text', 'file', '__proto__'],
+            properties: {
+              text: { type: 'string', default: 'default-value' },
+              file: { type: 'string', default: 'default.txt' },
+              ['__proto__']: { type: 'string', default: 'safe-default' },
+            },
+          },
+          workflow: {
+            entry: 'write',
+            nodes: {
+              write: {
+                action: 'command',
+                intent: 'Write resolved flow parameters to disk',
+                cmd: "node -e \"require('fs').writeFileSync('{{params.file}}','{{params.text}}')\"",
+                next: 'done',
+              },
+              done: { action: 'end', status: 'pass' },
+            },
+          },
+        },
+      },
+    });
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    await writeJsonFile(recipePath, {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      schema_version: 1,
+      title: 'Catalog defaults recipe',
+      description: 'Exercises default and explicitly overridden flow parameters.',
+      uses: ['flows.json'],
+      validate: {
+        workflow: {
+          entry: 'call-defaults',
+          nodes: {
+            'call-defaults': {
+              action: 'call',
+              intent: 'Run the flow with its defaults',
+              ref: 'example.write-default',
+              next: 'call-overrides',
+            },
+            'call-overrides': {
+              action: 'call',
+              intent: 'Override both flow defaults',
+              ref: 'example.write-default',
+              params: { text: 'explicit-value', file: 'explicit.txt' },
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    });
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const result = await runner.run({
+      recipePath,
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+    });
+    assert.equal(result.status, 'pass');
+    assert.equal(await readFile(path.join(tempRoot, 'default.txt'), 'utf-8'), 'default-value');
+    assert.equal(await readFile(path.join(tempRoot, 'explicit.txt'), 'utf-8'), 'explicit-value');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('runs nested catalog flow calls and rejects flow call cycles', async () => {
   const tempRoot = await createTempRoot();
   try {
