@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.9.0 - 2026-07-22
+
 - **BREAKING:** Unify direct and nested execution on parameterized recipes, one ordered recipe index, and one recursive executor; remove the separate reusable graph CLI/runtime.
 - Emit `recipe-resolution.json` plus exact digest-keyed reachable recipes and expose recipe list/describe discovery.
 - Preflight nested parameters, depth, trust, and dependency paths before side effects; resolution failures include stable recovery guidance.

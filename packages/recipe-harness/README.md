@@ -4,6 +4,7 @@ Generic Recipe Protocol v1 runner. It executes parameterized recipe graphs throu
 
 Canonical references:
 
+- [Recipe harness architecture](https://farmslot.io/docs/architecture/recipe-harness)
 - [Recipe Protocol v1](https://farmslot.io/docs/reference/recipe-protocol-v1)
 - [Recipe Runner Protocol](https://farmslot.io/docs/reference/recipe-runner-protocol)
 - [Recipe composition quality](https://farmslot.io/docs/reference/recipe-composition-quality)

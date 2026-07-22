@@ -2,12 +2,12 @@
 
 ## Unreleased
 
+## 0.11.0 - 2026-07-22
+
 - **BREAKING:** Recipe v1 now exposes only actions and parameterized composable recipes. Root `paramsSchema`, static recipe calls, and exact digest-keyed dependency evidence replace the separate reusable graph type.
 - Validate nested defaults/schema keywords and derive dependency artifact paths from canonical digests.
 
 - feat: `DispatchCandidate.ineligibleReason` — optional dispatch-validation failure reason for candidate rows.
-
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.10.0 - 2026-07-19
 
