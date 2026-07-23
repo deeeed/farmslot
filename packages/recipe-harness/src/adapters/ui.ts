@@ -25,8 +25,6 @@ export const STANDARD_UI_ACTIONS = [
 export type StandardUiAction = (typeof STANDARD_UI_ACTIONS)[number];
 
 export interface UiTransportControl {
-  status?: ActionResult['status'];
-  next?: string;
   case?: string;
   artifacts?: ActionResult['artifacts'];
 }
@@ -87,8 +85,6 @@ export function createStandardUiAdapters(
 export function normalizeUiTransportResult(result: unknown): ActionResult {
   if (isUiTransportResult(result)) {
     return {
-      status: result.control?.status,
-      next: result.control?.next,
       case: result.control?.case,
       artifacts: result.control?.artifacts,
       output: result.output,

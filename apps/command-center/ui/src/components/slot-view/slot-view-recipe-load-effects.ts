@@ -9,32 +9,32 @@ import {
 } from './slot-view-recipe-helpers.js';
 import type { SlotViewRecipePresenter } from './slot-view-recipe-presenter.js';
 
-export async function loadSelectedSlotViewRecipeFlow(
+export async function loadSelectedSlotViewRecipeDependency(
   view: SlotViewRecipePresenter,
   recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>,
 ): Promise<void> {
-  const loadToken = Symbol('recipe-flow-load');
-  view._selectedRecipeFlowLoadToken = loadToken;
-  const selectedFlow = view._selectedRecipeFlowArtifact(recipeHost);
-  if (!selectedFlow) {
-    if (loadToken !== view._selectedRecipeFlowLoadToken) return;
-    view._selectedRecipeFlowJson = '';
-    view._selectedRecipeFlowError = '';
-    view._selectedRecipeFlowLoading = false;
+  const loadToken = Symbol('recipe-library-load');
+  view._selectedRecipeDependencyLoadToken = loadToken;
+  const selectedDependency = view._selectedRecipeDependencyArtifact(recipeHost);
+  if (!selectedDependency) {
+    if (loadToken !== view._selectedRecipeDependencyLoadToken) return;
+    view._selectedRecipeDependencyJson = '';
+    view._selectedRecipeDependencyError = '';
+    view._selectedRecipeDependencyLoading = false;
     return;
   }
-  view._selectedRecipeFlowLoading = true;
-  view._selectedRecipeFlowError = '';
+  view._selectedRecipeDependencyLoading = true;
+  view._selectedRecipeDependencyError = '';
   try {
-    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, selectedFlow.path));
-    if (loadToken !== view._selectedRecipeFlowLoadToken) return;
+    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, selectedDependency.path));
+    if (loadToken !== view._selectedRecipeDependencyLoadToken) return;
     if (!response.ok) throw new Error(`${response.status}`);
-    const recipeFlowJson = await response.text();
-    if (loadToken !== view._selectedRecipeFlowLoadToken) return;
-    view._selectedRecipeFlowJson = recipeFlowJson;
+    const recipeDependencyJson = await response.text();
+    if (loadToken !== view._selectedRecipeDependencyLoadToken) return;
+    view._selectedRecipeDependencyJson = recipeDependencyJson;
     if (
       view._selectedRecipeNodeId &&
-      !recipeNodeExists(view._selectedRecipeFlowJson, view._selectedRecipeNodeId)
+      !recipeNodeExists(view._selectedRecipeDependencyJson, view._selectedRecipeNodeId)
     ) {
       view._selectedRecipeNodeId = '';
       view._recipeEvidenceMode = 'all';
@@ -42,11 +42,12 @@ export async function loadSelectedSlotViewRecipeFlow(
       view._recipeEvidenceCache = null;
     }
   } catch (error) {
-    if (loadToken !== view._selectedRecipeFlowLoadToken) return;
-    view._selectedRecipeFlowJson = '';
-    view._selectedRecipeFlowError = error instanceof Error ? error.message : String(error);
+    if (loadToken !== view._selectedRecipeDependencyLoadToken) return;
+    view._selectedRecipeDependencyJson = '';
+    view._selectedRecipeDependencyError = error instanceof Error ? error.message : String(error);
   } finally {
-    if (loadToken === view._selectedRecipeFlowLoadToken) view._selectedRecipeFlowLoading = false;
+    if (loadToken === view._selectedRecipeDependencyLoadToken)
+      view._selectedRecipeDependencyLoading = false;
   }
 }
 

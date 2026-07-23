@@ -1,6 +1,5 @@
 // recipe-graph.ts — SVG recipe workflow visualization component.
-// Renders validate.workflow recipe DAGs with action labels, save_as badges,
-// and pass/fail terminal coloring. Single-lane layout (all nodes: worker).
+// Renders Recipe Protocol v1 DAGs with action labels and terminal status coloring.
 
 import {
   css,
@@ -184,6 +183,7 @@ function computeLayout(graph: FlowGraph): GraphLayout {
 function terminalColor(node: FlowGraphNode): string {
   if (node.annotation === 'PASS') return C_PASS;
   if (node.annotation === 'FAIL') return C_FAIL;
+  if (node.annotation === 'UNKNOWN') return C_DECISION;
   if (node.annotation === 'ENTRY') return C_ENTRY;
   return C_PASS;
 }
@@ -412,11 +412,8 @@ export class RecipeGraph extends LitElement {
     const fill = isSel ? `${C_STEP}20` : `${C_STEP}0a`;
     const stroke = isSel ? C_STEP : `${C_STEP}44`;
 
-    // Parse annotation: "action" or "action → save_as"
     const ann = node.annotation || '';
-    const arrowIdx = ann.indexOf(' → ');
-    const actionLbl = arrowIdx >= 0 ? ann.slice(0, arrowIdx) : ann;
-    const saveAs = arrowIdx >= 0 ? ann.slice(arrowIdx + 3) : '';
+    const actionLbl = ann;
     const mainY = actionLbl ? 13 : ln.h / 2;
 
     return svg`
@@ -434,18 +431,6 @@ export class RecipeGraph extends LitElement {
           <text class="rg-ann" x="${ln.w / 2}" y="29"
                 text-anchor="middle" dominant-baseline="central"
                 fill="${C_STEP}cc">${actionLbl}</text>
-        `
-            : nothing
-        }
-        ${
-          saveAs
-            ? svg`
-          <rect x="${ln.w - 32}" y="2" width="30" height="11" rx="3"
-                fill="${colors.statusWarn}33"/>
-          <text x="${ln.w - 17}" y="7.5" text-anchor="middle" dominant-baseline="central"
-                class="rg-badge-txt" fill="${colors.statusWarn}">
-            ${saveAs.length > 9 ? `${saveAs.slice(0, 8)}.` : saveAs}
-          </text>
         `
             : nothing
         }

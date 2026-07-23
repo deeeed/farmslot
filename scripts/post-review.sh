@@ -203,22 +203,9 @@ import json, sys
 try:
     data = json.load(sys.stdin)
     steps = None
-    if isinstance(data, list):
-        steps = data
-    elif 'steps' in data:
-        steps = data['steps']
-    elif 'recipe' in data:
-        steps = data['recipe']
-    elif 'validate' in data and isinstance(data['validate'], dict):
-        v = data['validate']
-        # Modern shape: validate.workflow.nodes (map)
-        if 'workflow' in v and isinstance(v['workflow'], dict) and isinstance(v['workflow'].get('nodes'), dict):
-            steps = list(v['workflow']['nodes'].values())
-        else:
-            for key in ('runtime', 'visual', 'static'):
-                if key in v and isinstance(v[key], dict) and 'steps' in v[key]:
-                    steps = v[key]['steps']
-                    break
+    workflow = data.get('workflow') if isinstance(data, dict) else None
+    if isinstance(workflow, dict) and isinstance(workflow.get('nodes'), dict):
+        steps = list(workflow['nodes'].values())
     if isinstance(steps, list):
         total = len(steps)
         passed = sum(1 for s in steps if isinstance(s, dict) and s.get('status','').lower() in ('pass','passed','done','complete'))

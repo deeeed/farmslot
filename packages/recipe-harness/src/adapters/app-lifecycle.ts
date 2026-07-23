@@ -184,6 +184,23 @@ function androidLifecycleCalls(
   if (command === 'terminate') {
     return [{ file: adb, args: [...serialArgs, 'shell', 'am', 'force-stop', target.appId] }];
   }
+  if (command === 'foreground') {
+    return [
+      {
+        file: adb,
+        args: [
+          ...serialArgs,
+          'shell',
+          'monkey',
+          '-p',
+          target.appId,
+          '-c',
+          'android.intent.category.LAUNCHER',
+          '1',
+        ],
+      },
+    ];
+  }
   if (target.launchUrl) {
     const calls: AppLifecycleCall[] = [];
     if (target.metroPort !== undefined && target.metroPort !== '') {
@@ -243,6 +260,9 @@ function iosSimulatorLifecycleCalls(
         ignoreFailureWhenOutputIncludes: ['not running'],
       },
     ];
+  }
+  if (command === 'foreground') {
+    return [{ file: 'xcrun', args: ['simctl', 'launch', device, target.appId] }];
   }
   if (target.launchUrl) {
     return [{ file: 'xcrun', args: ['simctl', 'openurl', device, target.launchUrl] }];

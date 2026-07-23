@@ -1,0 +1,68 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Docusaurus Companion mobile supervision capture plan",
+  "description": "Launch the real Farmslot Companion app on its configured iOS simulator, connect it to a public-safe local fixture gateway, capture visible run supervision from the real app, and emit docs-ready proof artifacts without regenerating store screenshots.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "app": {
+        "type": "string",
+        "default": "apps/companion"
+      },
+      "simulator": {
+        "type": "string",
+        "default": "fs-2"
+      },
+      "metroPort": {
+        "type": "string",
+        "default": "7677"
+      },
+      "fixtureGateway": {
+        "type": "string",
+        "default": "auto-detected LAN ws://<host>:7777/ws"
+      },
+      "docsScreenshot": {
+        "type": "string",
+        "default": "apps/docs/static/img/demos/companion-mobile-supervision.png"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "start-fixture-gateway",
+    "nodes": {
+      "start-fixture-gateway": {
+        "action": "fixture.gateway.start",
+        "intent": "Serve public-safe fleet, run, decision, artifact, and terminal metadata through the real Companion websocket client path.",
+        "next": "launch-companion"
+      },
+      "launch-companion": {
+        "action": "app.launch",
+        "intent": "Launch the real Companion development build with EXPO_PUBLIC_GATEWAY_URL pointing at the fixture gateway and the configured iOS simulator.",
+        "next": "wait-for-supervision-ui"
+      },
+      "wait-for-supervision-ui": {
+        "action": "gateway.assert_requests",
+        "intent": "Confirm Companion requested fleet.status and run.list from the fixture gateway before capture.",
+        "next": "record-supervision"
+      },
+      "record-supervision": {
+        "action": "capture.simulator",
+        "intent": "Record the configured simulator and capture a final screenshot showing Companion supervising active runs, evidence, recipe, diff, slot, and terminal actions.",
+        "artifacts": [
+          "videos/companion-mobile-supervision.mp4",
+          "posters/companion-mobile-supervision.png",
+          "screenshots/companion-mobile-supervision.png",
+          "summary.json",
+          "trace.json",
+          "artifact-manifest.json"
+        ],
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -101,7 +101,7 @@ const result = validateRecipeDocument({
 
 const runMethod: string = RunMethods.get;
 const maybeRun: Run | undefined = undefined;
-const adapters: ActionAdapter[] = createStandardCoreAdapters({ actions: ['end'] });
+const adapters: ActionAdapter[] = createStandardCoreAdapters({ actions: ['wait'] });
 
 void result;
 void runMethod;
@@ -132,7 +132,7 @@ import { FARMSLOT_SKILL_NAMES } from '@farmslot/skills';
 if (validateRecipeDocument({}).status !== 'invalid') throw new Error('recipe validator smoke failed');
 if (RunMethods.get !== 'run.get') throw new Error('run RPC smoke failed');
 if (!COMMAND_CENTER_SURFACES.length) throw new Error('surface registry smoke failed');
-if (!createStandardCoreAdapters({ actions: ['end'] }).length) throw new Error('harness root smoke failed');
+if (!createStandardCoreAdapters({ actions: ['wait'] }).length) throw new Error('harness root smoke failed');
 if (typeof runRecipeHarnessCli !== 'function') throw new Error('harness cli smoke failed');
 if (dataTestId('x') !== '[data-testid="x"]') throw new Error('harness cdp smoke failed');
 if (!FARMSLOT_SKILL_NAMES.includes('recipe-cook')) throw new Error('skills import smoke failed');

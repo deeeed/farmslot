@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.7.5`
+Protocol version: `0.10.0`
 
 ## WebSocket frame shape
 
@@ -54,6 +54,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `auth.connect`                       | auth         | bounded-write | —      | —      | Auth Connect gateway method.                       |
 | `backlog.archive`                    | backlog      | bounded-write | —      | —      | Backlog Archive gateway method.                    |
 | `backlog.autoDispatchTick`           | backlog      | bounded-write | —      | —      | Backlog AutoDispatchTick gateway method.           |
+| `backlog.closeShipped`               | backlog      | bounded-write | —      | —      | Backlog CloseShipped gateway method.               |
 | `backlog.create`                     | backlog      | bounded-write | —      | —      | Backlog Create gateway method.                     |
 | `backlog.delete`                     | backlog      | high-impact   | —      | —      | Backlog Delete gateway method.                     |
 | `backlog.dequeue`                    | backlog      | bounded-write | —      | —      | Backlog Dequeue gateway method.                    |
@@ -234,15 +235,20 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `search.query`                       | search       | bounded-write | —      | —      | Search Query gateway method.                       |
 | `slot.action.list`                   | slot         | read-only     | —      | —      | Slot Action List gateway method.                   |
 | `slot.action.run`                    | slot         | bounded-write | —      | —      | Slot Action Run gateway method.                    |
+| `slot.autoRefresh`                   | slot         | bounded-write | —      | —      | Slot AutoRefresh gateway method.                   |
 | `slot.check`                         | slot         | bounded-write | —      | —      | Slot Check gateway method.                         |
 | `slot.cleanup`                       | slot         | bounded-write | —      | —      | Slot Cleanup gateway method.                       |
 | `slot.fixtureRefresh`                | slot         | bounded-write | —      | —      | Slot FixtureRefresh gateway method.                |
+| `slot.monitor`                       | slot         | bounded-write | —      | —      | Slot Monitor gateway method.                       |
 | `slot.openEditor`                    | slot         | bounded-write | —      | —      | Slot OpenEditor gateway method.                    |
 | `slot.prepare`                       | slot         | lifecycle     | —      | —      | Slot Prepare gateway method.                       |
 | `slot.prepareStatus`                 | slot         | lifecycle     | —      | —      | Slot PrepareStatus gateway method.                 |
 | `slot.recycle`                       | slot         | lifecycle     | —      | —      | Slot Recycle gateway method.                       |
 | `slot.refresh`                       | slot         | bounded-write | —      | —      | Slot Refresh gateway method.                       |
 | `slot.release`                       | slot         | lifecycle     | —      | —      | Slot Release gateway method.                       |
+| `slot.reopen`                        | slot         | bounded-write | —      | —      | Slot Reopen gateway method.                        |
+| `slot.show`                          | slot         | bounded-write | —      | —      | Slot Show gateway method.                          |
+| `slot.softRefresh`                   | slot         | bounded-write | —      | —      | Slot SoftRefresh gateway method.                   |
 | `stream.snapshot`                    | stream       | bounded-write | —      | —      | Stream Snapshot gateway method.                    |
 | `stream.subscribe`                   | stream       | bounded-write | —      | —      | Stream Subscribe gateway method.                   |
 | `stream.unsubscribe`                 | stream       | bounded-write | —      | —      | Stream Unsubscribe gateway method.                 |
@@ -269,6 +275,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `tmux.split`                         | tmux         | bounded-write | —      | —      | Tmux Split gateway method.                         |
 | `tmux.synchronizePanes`              | tmux         | bounded-write | —      | —      | Tmux SynchronizePanes gateway method.              |
 | `tmux.worker.list`                   | tmux         | read-only     | —      | —      | Tmux Worker List gateway method.                   |
+| `tmux.worker.restore`                | tmux         | bounded-write | —      | —      | Tmux Worker Restore gateway method.                |
 | `tmux.zoomPane`                      | tmux         | bounded-write | —      | —      | Tmux ZoomPane gateway method.                      |
 | `workGraph.activate`                 | workGraph    | bounded-write | —      | —      | WorkGraph Activate gateway method.                 |
 | `workGraph.addEdge`                  | workGraph    | bounded-write | —      | —      | WorkGraph AddEdge gateway method.                  |

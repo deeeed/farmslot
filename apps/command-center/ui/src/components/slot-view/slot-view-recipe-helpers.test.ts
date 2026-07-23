@@ -17,10 +17,12 @@ import {
 } from './slot-view-recipe-helpers.js';
 
 const recipeJson = JSON.stringify({
-  entry: 'start',
-  nodes: {
-    start: { filename: 'start-shot', next: 'finish' },
-    finish: { filename: 'finish-shot' },
+  workflow: {
+    entry: 'start',
+    nodes: {
+      start: { filename: 'start-shot', next: 'finish' },
+      finish: { filename: 'finish-shot' },
+    },
   },
 });
 
@@ -30,16 +32,18 @@ test('deriveEvidenceArtifactCandidates only returns filenames for the selected n
 
 test('deriveEvidenceArtifactCandidates falls forward to nearest downstream screenshot node for action steps', () => {
   const recipe = JSON.stringify({
-    entry: 'ac1-nav-back',
-    nodes: {
-      'ac1-nav-back': { action: 'press', next: 'ac1-wait-home' },
-      'ac1-wait-home': { action: 'wait_for', next: 'ac1-screenshot-after-return' },
-      'ac1-screenshot-after-return': {
-        action: 'screenshot',
-        filename: 'draft-ac1-after-return.png',
-        next: 'done',
+    workflow: {
+      entry: 'ac1-nav-back',
+      nodes: {
+        'ac1-nav-back': { action: 'press', next: 'ac1-wait-home' },
+        'ac1-wait-home': { action: 'wait_for', next: 'ac1-screenshot-after-return' },
+        'ac1-screenshot-after-return': {
+          action: 'screenshot',
+          filename: 'draft-ac1-after-return.png',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
       },
-      done: { action: 'end', status: 'pass' },
     },
   });
 
@@ -140,6 +144,40 @@ test('computeRecipeEvidenceArtifacts prefers typed artifact manifest metadata ov
   assert.equal(result.usedTypedManifest, true);
   assert.equal(result.usedCuratedManifest, false);
   assert.equal(result.hiddenDiagnosticCount, 0);
+});
+
+test('computeRecipeEvidenceArtifacts matches namespaced runtime evidence for a selected dependency', () => {
+  const result = computeRecipeEvidenceArtifacts({
+    artifactManifest: [
+      {
+        path: 'artifacts/child-proof.png',
+        purpose: 'screenshot',
+        type: 'screenshot',
+        nodeId: 'call-child/capture',
+      },
+      {
+        path: 'artifacts/root-proof.png',
+        purpose: 'screenshot',
+        type: 'screenshot',
+        nodeId: 'capture',
+      },
+    ],
+    recipeJson: JSON.stringify({
+      workflow: {
+        entry: 'capture',
+        nodes: { capture: { action: 'ui.screenshot', filename: 'child-proof.png' } },
+      },
+    }),
+    selectedNodeId: 'capture',
+    evidenceManifest: [],
+    mode: 'node',
+    allowNamespacedNodeIds: true,
+  });
+
+  assert.deepEqual(
+    result.effectiveArtifacts.map((artifact) => artifact.path),
+    ['artifacts/child-proof.png'],
+  );
 });
 
 test('computeRecipeEvidenceArtifacts keeps generated runner screenshots visible', () => {
@@ -309,13 +347,13 @@ test('computeRecipeEvidenceArtifacts keeps selected-run evidence separate from r
   const result = computeRecipeEvidenceArtifacts({
     artifactManifest: [
       { path: 'artifacts/recipe.json', purpose: 'recipe' },
-      { path: 'artifacts/recipe-flows/ac1.json', purpose: 'recipe-flow' },
+      { path: 'artifacts/recipe-resolution.json', purpose: 'other' },
+      { path: 'artifacts/resolved-recipes/abc.recipe.json', purpose: 'other' },
+      { path: 'artifacts/recipe-library/recipes/demo/ac1.recipe.json', purpose: 'recipe-library' },
       { path: 'artifacts/recipe-quality.json', purpose: 'recipe-quality' },
       { path: 'artifacts/recipe-issues-review.md', purpose: 'other' },
       { path: 'artifacts/artifact-manifest.json', purpose: 'artifact-manifest' },
       { path: 'artifacts/evidence-manifest.json', purpose: 'evidence-manifest' },
-      { path: 'artifacts/workflow.json', purpose: 'other' },
-      { path: 'artifacts/workflow.mmd', purpose: 'other' },
       { path: 'artifacts/pr-description.md', purpose: 'pr-description' },
       { path: 'artifacts/pr-package.md', purpose: 'pr-package-md' },
       { path: 'artifacts/review-loop-1/review.md', purpose: 'review' },
@@ -381,16 +419,18 @@ test('computeRecipeEvidenceArtifacts maps action nodes to trace-backed downstrea
       { path: 'artifacts/evidence/evidence-ac2-eth-still-15m.png', purpose: 'screenshot' },
     ],
     recipeJson: JSON.stringify({
-      entry: 'ac1-nav-back',
-      nodes: {
-        'ac1-nav-back': { action: 'press', next: 'ac1-wait-home' },
-        'ac1-wait-home': { action: 'wait_for', next: 'ac1-screenshot-after-return' },
-        'ac1-screenshot-after-return': {
-          action: 'screenshot',
-          filename: 'draft-ac1-after-return.png',
-          next: 'done',
+      workflow: {
+        entry: 'ac1-nav-back',
+        nodes: {
+          'ac1-nav-back': { action: 'press', next: 'ac1-wait-home' },
+          'ac1-wait-home': { action: 'wait_for', next: 'ac1-screenshot-after-return' },
+          'ac1-screenshot-after-return': {
+            action: 'screenshot',
+            filename: 'draft-ac1-after-return.png',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
         },
-        done: { action: 'end', status: 'pass' },
       },
     }),
     selectedNodeId: 'ac1-nav-back',
@@ -418,16 +458,18 @@ test('computeRecipeEvidenceArtifacts maps node mode by typed artifact nodeId bef
       { path: 'artifacts/legacy-proof.png', purpose: 'screenshot' },
     ],
     recipeJson: JSON.stringify({
-      entry: 'ac1-nav-back',
-      nodes: {
-        'ac1-nav-back': { action: 'press', next: 'ac1-wait-home' },
-        'ac1-wait-home': { action: 'wait_for', next: 'ac1-screenshot-after-return' },
-        'ac1-screenshot-after-return': {
-          action: 'screenshot',
-          filename: 'legacy-proof.png',
-          next: 'done',
+      workflow: {
+        entry: 'ac1-nav-back',
+        nodes: {
+          'ac1-nav-back': { action: 'press', next: 'ac1-wait-home' },
+          'ac1-wait-home': { action: 'wait_for', next: 'ac1-screenshot-after-return' },
+          'ac1-screenshot-after-return': {
+            action: 'screenshot',
+            filename: 'legacy-proof.png',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
         },
-        done: { action: 'end', status: 'pass' },
       },
     }),
     selectedNodeId: 'ac1-nav-back',
@@ -503,7 +545,7 @@ test('computeRecipeEvidenceArtifacts does not pull ac10/ac11 manifest entries in
 
 test('effectiveRecipeJsonForSelection falls back to the package recipe when promoted evidence lacks its own recipe', () => {
   const result = effectiveRecipeJsonForSelection({
-    selectedRecipeFlowJson: '',
+    selectedRecipeDependencyJson: '',
     recipeHostRecipeJson: null,
     packageRunRecipeJson: '{"entry":"bundle"}',
   });
@@ -516,13 +558,13 @@ test('buildRecipeActionRequestParams includes recipeRunId for promoted/live sele
     buildRecipeActionRequestParams({
       runId: 'run-1',
       slotId: 'slot-1',
-      recipeArtifactPath: 'artifacts/recipe-flows/subflow.json',
+      recipeArtifactPath: 'artifacts/recipe-library/recipes/demo/child.recipe.json',
       selectedRun: { id: 'promoted-run', groupKind: 'latest-valid' },
     }),
     {
       runId: 'run-1',
       slotId: 'slot-1',
-      recipeArtifactPath: 'artifacts/recipe-flows/subflow.json',
+      recipeArtifactPath: 'artifacts/recipe-library/recipes/demo/child.recipe.json',
       recipeRunId: 'promoted-run',
     },
   );

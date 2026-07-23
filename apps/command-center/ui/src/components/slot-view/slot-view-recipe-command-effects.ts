@@ -79,7 +79,7 @@ export function handleSlotViewRecipeExecutionComplete(
   view._selectedRecipeNodeId = '';
   view._recipeEvidenceMode = 'all';
   view._selectedRecipeArtifactPath = null;
-  view._selectedRecipeFlowPath = '';
+  view._selectedRecipeDependencyPath = '';
   view._recipeEvidenceCache = null;
   view._reviewDrawerMode = 'recipe';
   view._dismissedReviewDrawerKey = '';

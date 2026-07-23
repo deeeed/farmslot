@@ -1,8 +1,7 @@
-import { createHash } from 'node:crypto';
-
 import {
   DEFAULT_UNTRUSTED_RECIPE_BLOCKED_CAPABILITIES,
-  normalizeRecipeFlowRef,
+  digestRecipeDocument,
+  normalizeRecipeRef,
   OFFICIAL_RECIPE_ACTIONS,
   officialRecipeActionCapabilities,
   type RecipeActionCatalogEntry,
@@ -13,15 +12,13 @@ import {
   type RecipeSourceProvenance,
 } from '@farmslot/protocol';
 
-import type { InlineFlow } from './flows.js';
-import type { WorkflowGraph } from './graph.js';
+import { extractWorkflowGraph } from './graph.js';
+import { isRecord } from './json.js';
+import type { ResolvedLibraryRecipe } from './library.js';
+import { resolveRecipeParams, resolveRecipeValue } from './parameters.js';
+import { RecipeResolutionError } from './resolution-error.js';
 import { invalidRecipeSource, RecipeTrustError } from './trust-error.js';
-import type {
-  ActionAdapter,
-  PreconditionChecker,
-  RecipeHudOptions,
-  RecipeRunRequest,
-} from './types.js';
+import type { ActionAdapter, RecipeHudOptions, RecipeRunRequest } from './types.js';
 
 const officialActions = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
 const bundledSource: RecipeSourceProvenance = {
@@ -59,11 +56,10 @@ export function recipeSourceForRequest(
 
 export function buildRecipeExecutionPlan({
   recipe,
+  params,
   source,
-  graph,
-  flows,
+  recipes,
   adapters,
-  preconditions,
   actionManifest,
   projectRoot,
   artifactsDir,
@@ -71,12 +67,11 @@ export function buildRecipeExecutionPlan({
   hud,
   recordVideo,
 }: {
-  recipe: unknown;
+  recipe: Record<string, unknown>;
+  params: Record<string, unknown>;
   source: RecipeSourceProvenance;
-  graph: WorkflowGraph;
-  flows: ReadonlyMap<string, InlineFlow>;
+  recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
   adapters: ReadonlyMap<string, ActionAdapter>;
-  preconditions: ReadonlyMap<string, PreconditionChecker>;
   actionManifest: RecipeActionManifestDocument;
   projectRoot: string;
   artifactsDir: string;
@@ -86,7 +81,6 @@ export function buildRecipeExecutionPlan({
 }): RecipeExecutionPlan {
   const nodes: RecipePlanNode[] = [];
   const digestNodes: Array<{ plan: RecipePlanNode; node: Record<string, unknown> }> = [];
-  const visitedFlows = new Set<string>();
 
   const addNode = (
     nodeId: string,
@@ -108,52 +102,58 @@ export function buildRecipeExecutionPlan({
       action: node.action,
       capabilities,
       origin,
+      ...(containsRecipeOutputTemplate(node) ? { runtimeOutputDependent: true } : {}),
       ...(invocationOrigin ? { invocationOrigin } : {}),
       ...(adapterOrigin ? { adapterOrigin } : {}),
     };
     nodes.push(planNode);
     digestNodes.push({ plan: planNode, node });
-    if (node.action === 'call' && typeof node.ref === 'string') {
-      visitFlow(
-        normalizeRecipeFlowRef(node.ref),
+  };
+
+  const visitRecipe = (
+    activeRecipe: Record<string, unknown>,
+    activeParams: Record<string, unknown>,
+    origin: RecipeSourceProvenance,
+    invocationOrigin: RecipeSourceProvenance | undefined,
+    prefix: string,
+  ): void => {
+    const activeGraph = extractWorkflowGraph(activeRecipe);
+    for (const [nodeId, rawNode] of Object.entries(activeGraph.nodes)) {
+      const resolvedNode = resolveRecipeValue(rawNode, activeParams);
+      if (!isRecord(resolvedNode)) {
+        throw new RecipeResolutionError(
+          'RECIPE_PARAMS_INVALID',
+          `Recipe node ${prefix}${nodeId} did not resolve to an object.`,
+          `inspect parameter templates used by ${prefix}${nodeId}`,
+        );
+      }
+      const planNodeId = `${prefix}${nodeId}`;
+      addNode(planNodeId, resolvedNode, origin, invocationOrigin);
+      if (resolvedNode.action !== 'call' || typeof resolvedNode.ref !== 'string') continue;
+      const ref = normalizeRecipeRef(resolvedNode.ref);
+      const dependency = recipes.get(ref);
+      if (!dependency) {
+        throw new RecipeResolutionError(
+          'RECIPE_REFERENCE_NOT_FOUND',
+          `Recipe ${ref} is not available from configured libraries.`,
+          `add ${ref} to a configured recipe library or correct call.ref`,
+        );
+      }
+      const childInput = isRecord(resolvedNode.params) ? resolvedNode.params : {};
+      const childParams = resolveRecipeParams(ref, dependency.document, childInput, {
+        allowTemplates: true,
+      });
+      visitRecipe(
+        dependency.document,
+        childParams,
+        dependency.provenance,
         effectiveInvocationOrigin(origin, invocationOrigin),
+        `${planNodeId}/`,
       );
     }
   };
 
-  const visitFlow = (ref: string, invocationOrigin: RecipeSourceProvenance): void => {
-    const visitKey = `${ref}:${digestValue(invocationOrigin)}`;
-    if (visitedFlows.has(visitKey)) return;
-    visitedFlows.add(visitKey);
-    const flow = flows.get(ref);
-    if (!flow) return;
-    const origin = flow.origin ?? source;
-    for (const [nodeId, node] of Object.entries(flow.nodes)) {
-      addNode(`${ref}/${nodeId}`, node, origin, invocationOrigin);
-    }
-  };
-
-  for (const [nodeId, node] of Object.entries(graph.nodes)) addNode(nodeId, node, source);
-  for (const gate of graph.preconditions) {
-    const checker = preconditions.get(gate.id);
-    const origin = checker
-      ? (checker.source ?? {
-          kind: 'custom-adapter' as const,
-          trust: 'unknown' as const,
-          name: `precondition:${gate.id}`,
-        })
-      : bundledSource;
-    const capabilities = checker ? (checker.capabilities ?? ['arbitrary-code']) : [];
-    const planNode: RecipePlanNode = {
-      nodeId: `pre_conditions:${gate.id}`,
-      action: `precondition:${gate.id}`,
-      capabilities,
-      origin: source,
-      adapterOrigin: origin,
-    };
-    nodes.push(planNode);
-    digestNodes.push({ plan: planNode, node: { ...gate } });
-  }
+  visitRecipe(recipe, params, source, undefined, '');
 
   if (hud !== false && hud?.enabled !== false && adapters.has('app.hud')) {
     addNode('run:hud', { action: 'app.hud', automatic: true, options: hud ?? {} }, source);
@@ -171,7 +171,7 @@ export function buildRecipeExecutionPlan({
     digestNodes.push({ plan: planNode, node: { recordVideo } });
   }
 
-  const executionContextDigest = digestValue({ projectRoot, artifactsDir, env });
+  const executionContextDigest = digestValue({ projectRoot, artifactsDir, env, params });
   const planBody = { schemaVersion: 1 as const, executionContextDigest, source, nodes };
   return {
     ...planBody,
@@ -208,6 +208,20 @@ export function enforceRecipeExecutionPlan(
     );
   });
   if (blocked.length === 0) return;
+  const runtimeDependent = blocked.filter((node) => node.runtimeOutputDependent);
+  if (runtimeDependent.length > 0) {
+    throw new RecipeTrustError({
+      code: 'RECIPE_TRUST_REQUIRED',
+      message:
+        'Untrusted restricted recipe nodes cannot derive executable values from runtime outputs.',
+      userAction:
+        'replace {{outputs.*}} executable values with reviewed recipe parameters, or move the behavior into a trusted recipe',
+      reason: 'blocked-capability',
+      recipeDigest: plan.digest,
+      trust: plan.source.trust,
+      blocked: runtimeDependent.map(redactPlanNodeProvenance),
+    });
+  }
   if (request.approval?.planDigest === plan.digest) return;
   const publicBlocked = blocked.map(redactPlanNodeProvenance);
   if (request.approval) {
@@ -233,7 +247,7 @@ export function enforceRecipeExecutionPlan(
 }
 
 export async function verifyExecutableSource(
-  executable: Pick<ActionAdapter | PreconditionChecker, 'source' | 'resolveSourceDigest'>,
+  executable: Pick<ActionAdapter, 'source' | 'resolveSourceDigest'>,
   label: string,
 ): Promise<void> {
   if (!executable.resolveSourceDigest) return;
@@ -323,7 +337,7 @@ function adapterSource(
   action: string,
   adapter: ActionAdapter | undefined,
 ): RecipeSourceProvenance | undefined {
-  if (action === 'call') return bundledSource;
+  if (action === 'call' || action === 'end') return bundledSource;
   if (adapter?.source) return adapter.source;
   return {
     kind: 'custom-adapter',
@@ -333,16 +347,12 @@ function adapterSource(
 }
 
 function digestValue(value: unknown): string {
-  return `sha256:${createHash('sha256').update(canonicalRecipeJson(value)).digest('hex')}`;
+  return digestRecipeDocument(value);
 }
 
-export function canonicalRecipeJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalRecipeJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
-    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalRecipeJson(entry)}`).join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
+function containsRecipeOutputTemplate(value: unknown): boolean {
+  if (typeof value === 'string') return value.includes('{{outputs.');
+  if (Array.isArray(value)) return value.some(containsRecipeOutputTemplate);
+  if (!isRecord(value)) return false;
+  return Object.values(value).some(containsRecipeOutputTemplate);
 }

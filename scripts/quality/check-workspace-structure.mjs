@@ -101,7 +101,9 @@ function checkMovedServiceReferences() {
   const stalePaths = ['packages/' + 'gateway', 'packages/' + 'node'];
   for (const relativePath of trackedFiles()) {
     if (!isTextLike(relativePath)) continue;
-    const content = readFileSync(path.join(repoRoot, relativePath), 'utf8');
+    const absolutePath = path.join(repoRoot, relativePath);
+    if (!existsSync(absolutePath)) continue;
+    const content = readFileSync(absolutePath, 'utf8');
     for (const stalePath of stalePaths) {
       if (content.includes(stalePath)) {
         fail(`${relativePath} contains stale moved service path ${stalePath}.`);

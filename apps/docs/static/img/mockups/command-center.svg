@@ -25,7 +25,7 @@
     <text x="894" y="292" fill="#a7d9cc" font-size="15">awaiting human gate</text>
     <rect x="310" y="354" width="390" height="250" rx="18" fill="#0d1d19" stroke="#245c4e"/>
     <text x="334" y="394" fill="#6ee7c8" font-size="18" font-weight="700">Terminal stream</text>
-    <text x="334" y="438" fill="#d9fff6" font-size="16">$ run recipe validate.workflow</text>
+    <text x="334" y="438" fill="#d9fff6" font-size="16">$ farmslot recipe run</text>
     <text x="334" y="470" fill="#8bbcaf" font-size="15">✓ setup</text>
     <text x="334" y="500" fill="#8bbcaf" font-size="15">✓ navigate</text>
     <text x="334" y="530" fill="#8bbcaf" font-size="15">→ capture evidence</text>

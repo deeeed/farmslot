@@ -22,7 +22,7 @@ Paste or summarize:
 - PR body
 - linked ticket ACs / expected behavior
 - investigation findings
-- existing recipe / flow / eval refs
+- existing action / recipe / eval refs
 
 ## Acceptance Criteria
 
@@ -88,11 +88,11 @@ It must include:
 ## Checklist
 
 - [ ] **1. Fill the task block** — set `TARGET_REPO`, `SOURCE_KIND`, `SOURCE_REF`, `ARTIFACT_DIR`, `VALIDATION_MODE`, `STATUS: working`.
-- [ ] **2. Gather the real source of truth** — PR/ticket/investigation text plus existing flows/evals in the target repo.
+- [ ] **2. Gather the real source of truth** — PR/ticket/investigation text plus existing user journeys, recipes, and evals in the target repo.
 - [ ] **3. Enumerate acceptance criteria** — write a numbered canonical list under `## Acceptance Criteria`.
 - [ ] **4. Extract proof targets** — split the work into the smallest executable claims.
 - [ ] **5. Decide proof mode** — choose `state`, `visual`, or `mixed` for every target and justify every `mixed`.
-- [ ] **6. Discover reuse** — list existing `flow` / `eval_ref` / canonical recipe surfaces before writing new graph steps.
+- [ ] **6. Discover reuse** — list existing actions, recipes, and eval refs before writing new graph steps.
 - [ ] **7. Draft the recipe** — write `artifacts/recipe.json` and, when supported, `artifacts/recipe-cook.json`.
 - [ ] **8. Run schema validation** — if the repo provides a schema validator, run it and record the command + output under `## Validation Evidence`.
 - [ ] **9. Run runner dry-run validation** — if the repo provides a runner, run at least a dry-run and record the command + output.

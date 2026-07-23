@@ -35,6 +35,6 @@ export async function bindRunToSlot(
   step('bind', `Bound run ${params.bindRunId.slice(0, 8)} to ${params.slotId}`);
   if (boundRun) {
     const synced = await pushRunRecipeToSlot(boundRun, vars);
-    step('bind', `Synced ${synced} recipe workflow file(s) to slot`);
+    step('bind', `Synced ${synced} recipe file(s) to slot`);
   }
 }

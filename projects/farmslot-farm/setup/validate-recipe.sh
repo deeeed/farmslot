@@ -30,6 +30,8 @@ RECORD_VIDEO=0
 TASK_DIR=""
 SYNC_EVIDENCE=0
 SLOT_ID_VALUE="${SLOT_ID:-${FARMSLOT_SLOT_ID:-}}"
+RUN_ID_VALUE=""
+RECIPE_RUN_ID_VALUE=""
 DRY_RUN=0
 
 value_from_equals() {
@@ -109,6 +111,10 @@ while [[ "$#" -gt 0 ]]; do
       SLOT_ID_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
     --slot-id=*)
       SLOT_ID_VALUE="$(value_from_equals "$1")"; shift ;;
+    --run-id=*)
+      RUN_ID_VALUE="${1#*=}"; shift ;;
+    --recipe-run-id=*)
+      RECIPE_RUN_ID_VALUE="${1#*=}"; shift ;;
     --slow)
       SLOW_MS="$(require_value "$1" "${2:-}")"; shift 2 ;;
     --slow=*)
@@ -179,8 +185,6 @@ case "${PLATFORM_VALUE}" in
       --artifacts-dir "${ARTIFACTS_DIR}"
       --action-manifest "${MANIFEST_PATH}"
       --project-root "${REPO_ROOT}"
-      --input=farmslot_dir="${PRIMARY_REPO}"
-      --input=primary_repo="${PRIMARY_REPO}"
       --cdp-port "${CDP_PORT_VALUE}"
     )
     if [[ -n "${GATEWAY_PORT_VALUE}" ]]; then
@@ -188,6 +192,12 @@ case "${PLATFORM_VALUE}" in
     fi
     if [[ -n "${SLOT_ID_VALUE}" ]]; then
       ARGS+=(--slot-id "${SLOT_ID_VALUE}")
+    fi
+    if [[ -n "${RUN_ID_VALUE}" ]]; then
+      ARGS+=(--run-id "${RUN_ID_VALUE}")
+    fi
+    if [[ -n "${RECIPE_RUN_ID_VALUE}" ]]; then
+      ARGS+=(--recipe-run-id "${RECIPE_RUN_ID_VALUE}")
     fi
     if [[ -n "${SLOW_MS}" ]]; then
       ARGS+=(--slow "${SLOW_MS}")

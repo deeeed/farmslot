@@ -2,7 +2,11 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { RecipeVideoRecordingOptions } from '@farmslot/recipe-harness';
-import { parsePositiveInteger, parseRecordingTarget } from '@farmslot/recipe-harness/cli/support';
+import {
+  parsePositiveInteger,
+  parseRecipeParamAssignments,
+  parseRecordingTarget,
+} from '@farmslot/recipe-harness/cli/support';
 
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { printDoctorResult, runExpoRecipeDoctor } from './doctor.js';
@@ -24,6 +28,7 @@ interface ParsedCliOptions extends ExpoRecipeRunOptions {
   recordWindowName?: string;
   recordWindowId?: string;
   recordPid?: string;
+  paramAssignments?: string[];
 }
 
 export async function runExpoRecipeCli(argv: string[]): Promise<void> {
@@ -87,7 +92,7 @@ function parseRecipeCommand(args: string[]): { recipePath: string; options: Pars
 }
 
 function parseOptions(args: string[]): ParsedCliOptions {
-  const options: ParsedCliOptions = {};
+  const options: ParsedCliOptions = { paramAssignments: [] };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--dry-run') options.dryRun = true;
@@ -103,6 +108,10 @@ function parseOptions(args: string[]): ParsedCliOptions {
       options.artifactsDir = requiredValue(args, (index += 1), arg);
     else if (arg.startsWith('--artifacts-dir='))
       options.artifactsDir = arg.slice('--artifacts-dir='.length);
+    else if (arg === '--param')
+      options.paramAssignments?.push(requiredValue(args, (index += 1), arg));
+    else if (arg.startsWith('--param='))
+      options.paramAssignments?.push(arg.slice('--param='.length));
     else if (arg === '--record-video') options.recordVideoMode = 'full-run';
     else if (arg.startsWith('--record-video=')) {
       options.recordVideoMode = arg.slice('--record-video='.length);
@@ -131,6 +140,7 @@ function parseOptions(args: string[]): ParsedCliOptions {
     else throw new Error(`Unknown option: ${arg}`);
   }
   if (options.recordVideoMode) options.recordVideo = parseRecordVideoOptions(options);
+  options.params = parseRecipeParamAssignments(options.paramAssignments ?? []);
   return options;
 }
 
@@ -181,6 +191,6 @@ function printRunResult(result: Awaited<ReturnType<typeof runExpoRecipeDocument>
 
 function printUsage(): void {
   console.log(
-    `Farmslot Expo Recipe\n\nUsage:\n  farmslot-expo-recipe init [--project-root <dir>] [--force] [--with-bridge]\n  farmslot-expo-recipe manifest [--project-root <dir>] [--manifest <path>]\n  farmslot-expo-recipe doctor [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-expo-recipe validate [recipe] [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-expo-recipe run [recipe] [--project-root <dir>] [--manifest <path>] [--artifacts-dir <dir>] [--dry-run] [--json] [--record-video[=full-run]] [--record-pid <pid>|--record-window-id <id>|--record-app-name <name> --record-window-name <title>]\n`,
+    `Farmslot Expo Recipe\n\nUsage:\n  farmslot-expo-recipe init [--project-root <dir>] [--force] [--with-bridge]\n  farmslot-expo-recipe manifest [--project-root <dir>] [--manifest <path>]\n  farmslot-expo-recipe doctor [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-expo-recipe validate [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-expo-recipe run [recipe] [--param key=value] [--project-root <dir>] [--manifest <path>] [--artifacts-dir <dir>] [--dry-run] [--json] [--record-video[=full-run]] [--record-pid <pid>|--record-window-id <id>|--record-app-name <name> --record-window-name <title>]\n`,
   );
 }

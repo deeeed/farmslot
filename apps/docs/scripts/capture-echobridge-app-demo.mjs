@@ -9,7 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -21,7 +21,7 @@ const echobridgeRepo =
 const appRoot = resolve(echobridgeRepo, 'apps/echobridge');
 const defaultRecipe = resolve(
   repoRoot,
-  'docs/examples/recipes/farmslot/docusaurus-echobridge-live-recording.recipe.json',
+  'docs/examples/recipes/farmslot/docusaurus-echobridge-live-recording.capture-plan.json',
 );
 const docsVideo = resolve(
   repoRoot,
@@ -541,7 +541,7 @@ function writeOutputs({ videoPath, posterPath, screenshotPath, visibleChars, liv
 }
 
 function recipeId() {
-  return JSON.parse(readFileSync(recipePath, 'utf8')).id;
+  return basename(recipePath).replace(/\.capture-plan\.json$/u, '');
 }
 
 function portListening(port) {

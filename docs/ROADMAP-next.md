@@ -1,7 +1,7 @@
 # Farmslot Near-Term Roadmap
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-07-20 (through PR #361: recipe source trust model; July window also shipped the operator CLI dual-mode TUI closeout #307-#318, the reliability backlog drain #326-#352, slot lifecycle ownership #353, ADR-032 Phase 3A/3B pane-regex retirement #344/#345, and recipe-harness reusable flows / 0.7.0 #355/#358)
+**Last updated:** 2026-07-22 (Recipe Protocol v1 uses actions plus parameterized composable recipes.)
 **Stale by:** 2026-09-10
 
 This is the canonical near-term execution roadmap for Farmslot after the dispatch comparison, bugfix local-first publication gate, eval replay cockpit, deterministic auto-recovery, flexible interactive dev work, shared dispatch queue/eval caps, worker-template selection, backlog intake, and dev publication gating. Use it with [ROADMAP.md](ROADMAP.md), [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md), [DOCS-GOVERNANCE.md](DOCS-GOVERNANCE.md), [PRD-product.md](PRD-product.md), and the canonical chunk PRDs.
@@ -112,16 +112,16 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 **Shipped:**
 
 - canonical spec and ADR-034 decision;
-- `@farmslot/protocol` validators and `@farmslot/recipe-harness` graph runtime (composition, `startState`, typed manifest writers);
+- `@farmslot/protocol` validators and `@farmslot/recipe-harness` graph runtime (composition, parameter defaults, guaranteed teardown, typed manifest writers);
 - `farmslot recipe validate` and Farmslot self-validation **fixtures** under `docs/examples/recipes/farmslot/`;
 - example v1 recipes and action manifests for browser/mobile/backend paths;
 - typed `artifact-manifest.json` emission on first-party harness-backed runs, with Gateway package validation for `hooks.recipe_run` and live reruns;
 - manifest-first artifact rendering with filename inference limited to invalid/missing-manifest fallback;
 - conformance-checked `farmslot-farm` CLI/web + Companion mobile recipe hook routes;
 - `yarn e2e:recipe-protocol` local harness execution and live `@deeeed/metamask-harness` core-slot package validation.
-- published canonical `recipe-v1.schema.json` with an enforced `recipe.$schema` URL contract, and the self-contained `resolved-recipe.json` composition artifact (runner-emitted + `recipe validate --emit-resolved`) validated in full at ingestion and in CI, with multi-recipe (`recipes/*.recipe.json`) static resolve-check.
+- published canonical `recipe-v1.schema.json`, parameterized composable recipes, static dependency resolution, and exact digest-keyed dependency evidence validated at ingestion and in CI.
 
-**Remaining work:** external project-pack adoption, richer domain flow catalogs, and replay/corpus use of the stable v1 evidence contract. These are downstream consumers, not ADR-034 rollout blockers.
+**Remaining work:** external project-pack adoption, focused domain recipe libraries, and replay/corpus use of the stable v1 evidence contract. These are downstream consumers, not ADR-034 rollout blockers.
 
 ### 3. Active Follow-Up — `@farmslot/skills` recipe-first adoption kit
 
@@ -138,7 +138,7 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 - support install targets for Claude, Codex, Cursor, and generic `.agents/skills` folders;
 - keep the first-run flow recipe-only and project-local;
 - document the adoption ladder: skills only → generic `recipe` front-controller → project runner → project recipe layer → Farmslot project integration → full framework;
-- plan a thin generic `recipe` CLI front-controller that discovers project recipe config, renders actions/flows/artifacts, and delegates `doctor`, `status`, `launch`, `refresh`, `record`, and `run` to platform/project adapters;
+- plan a thin generic `recipe` CLI front-controller that discovers project recipe config, renders actions/recipes/artifacts, and delegates `doctor`, `status`, `launch`, `refresh`, `record`, and `run` to platform/project adapters;
 - the dynamic agent execution template selector from [ADR-049](adr/049-agent-execution-template-selection.md): the resolver (Markdown templates with optional frontmatter) and `list`/`lint`/`new` tools **shipped in PR #347** (MANUAL-000012); gateway dispatch consumption of the shared resolver, render/skills integration, and migration remain open, and the ADR stays Proposed until those land or it is revised;
 - avoid private/project-specific assumptions so domain packs such as domain-specific skills can layer on top instead of forking the generic recipe concepts.
 
@@ -229,7 +229,7 @@ These were previously future-looking backlog items, but the codebase now shows t
 - **Slot lifecycle ownership protocol (MANUAL-000045)** shipped in PR #353 — `slot_epoch` claim counter with CAS'd teardowns, two-phase nudge handoff reservations, ownership-aware terminal cleanup, and coalesced per-slot release.
 - **Shared Markdown execution-template selection (ADR-049) — partial.** PR #347 (MANUAL-000012) shipped the resolver and `list`/`lint`/`new` CLI tools; gateway dispatch consumption, render/skills integration, and migration remain open (ADR stays `Status: Proposed`). See [reference/adr-implementation-status.md](reference/adr-implementation-status.md).
 - **Recipe source trust model** shipped in PR #361 (2026-07-20) — source trust enforced before recipe execution, approvals bound to execution context, dynamic flow dispatch rejected, trust failure paths redacted, explicit execution environments supported.
-- **Recipe-harness reusable flows + 0.7.0 release** shipped in PRs #355/#358, with template-placeholder hard-fail (#359) and skills capability-discovery authoring guidance (#360).
+- **Recipe-harness composition foundation** shipped in PRs #355/#358, with template-placeholder hard-fail (#359) and skills capability-discovery authoring guidance (#360); Recipe Protocol v1 now exposes only actions and composable recipes.
 
 - **Worker terminal contract (ADR-045)** — **shipped on `main`** (ADR Accepted): project-owned `worker_terminal` in `project.json`; task writer emits `inputs/worker-terminal-contract.json`; `./mark` + `check-task-artifact-contract.mjs` enforce required artifacts; `check-worker-template-contract.mjs` lints terminal templates, including failing mark-less templates whenever the resolved contract requires a terminal signal; monitor holds when `requireSignal` and agent exits without terminal `SIGNAL.json`. Reference config in `farmslot-farm`. **Optional authoring tool (not runtime):** `fs-worker-template-quality` skill + [worker-template-quality](https://farmslot.io/docs/reference/worker-template-quality) reference for deterministic lint + heuristic template review. **Verification:** `node scripts/quality/worker-terminal-contract.test.cjs`, `yarn quality:worker-templates`, mark + gateway tests green.
 

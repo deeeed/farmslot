@@ -10,9 +10,21 @@ import {
   RECIPE_PROTOCOL_SCHEMA_VERSION,
   type RecipeValidationResult,
 } from './common.js';
+import { validateRecipeParams, validateRecipeParamsSchema } from './params.js';
 import { RECIPE_EXECUTION_CAPABILITIES } from './trust.js';
+import { getRecipeActionParams } from './workflow.js';
 
 const recipeExecutionCapabilitySet = new Set<string>(RECIPE_EXECUTION_CAPABILITIES);
+const ACTION_MANIFEST_FIELDS = new Set([
+  'runner_protocol_version',
+  'action_registry_version',
+  'supported_official_actions',
+  'action_metadata',
+  'custom_actions',
+  'native_bindings',
+  'capabilities',
+  'observers',
+]);
 
 export function getRecipeActionManifestActionNames(manifest: unknown): string[] {
   if (!isRecord(manifest)) return [];
@@ -35,6 +47,7 @@ function validateActionCatalogEntry(
   entry: unknown,
   path: string,
   expectedAction?: string,
+  schemaRequired = true,
 ): void {
   if (!isRecord(entry)) {
     addFinding(
@@ -66,7 +79,17 @@ function validateActionCatalogEntry(
     }
   }
 
-  if (entry.schema != null && !isRecord(entry.schema)) {
+  if (entry.schema == null) {
+    if (schemaRequired) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.missing_schema',
+        `${path}.schema`,
+        `${path}.schema is required so action parameters can be validated before execution.`,
+      );
+    }
+  } else if (!isRecord(entry.schema)) {
     addFinding(
       ctx,
       'error',
@@ -74,6 +97,31 @@ function validateActionCatalogEntry(
       `${path}.schema`,
       `${path}.schema must be a JSON Schema object when present.`,
     );
+  } else {
+    const schemaResult = validateRecipeParamsSchema(entry.schema, { requireClosedRoot: false });
+    ctx.findings.push(
+      ...schemaResult.findings.map((finding) => ({
+        ...finding,
+        path: `${path}.schema${finding.path === 'paramsSchema' ? '' : finding.path.replace(/^paramsSchema/u, '')}`,
+      })),
+    );
+  }
+
+  if (entry.result_cases != null) {
+    if (
+      !Array.isArray(entry.result_cases) ||
+      entry.result_cases.length === 0 ||
+      entry.result_cases.some((value) => !isNonEmptyString(value)) ||
+      new Set(entry.result_cases).size !== entry.result_cases.length
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.invalid_result_cases',
+        `${path}.result_cases`,
+        `${path}.result_cases must be a non-empty array of unique case names.`,
+      );
+    }
   }
 
   if (entry.execution_capabilities != null) {
@@ -160,6 +208,17 @@ function validateActionCatalogEntry(
         `Example action ${example.node.action} must match declared action ${expectedAction}.`,
       );
     }
+    if (isRecord(entry.schema)) {
+      const paramsResult = validateRecipeParams(getRecipeActionParams(example.node), entry.schema, {
+        allowTemplates: true,
+      });
+      ctx.findings.push(
+        ...paramsResult.findings.map((finding) => ({
+          ...finding,
+          path: `${examplePath}.node${finding.path === 'params' ? '' : finding.path.replace(/^params/u, '')}`,
+        })),
+      );
+    }
   });
 }
 
@@ -174,6 +233,18 @@ export function validateRecipeActionManifestDocument(manifest: unknown): RecipeV
       'Recipe action manifest must be a JSON object.',
     );
     return finishResult(ctx);
+  }
+
+  for (const field of Object.keys(manifest)) {
+    if (!ACTION_MANIFEST_FIELDS.has(field)) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.unsupported_field',
+        field,
+        `Recipe action manifests do not support ${field}.`,
+      );
+    }
   }
 
   if (manifest.runner_protocol_version !== RECIPE_PROTOCOL_SCHEMA_VERSION) {
@@ -273,6 +344,15 @@ export function validateRecipeActionManifestDocument(manifest: unknown): RecipeV
             `${path}.name must be a non-empty string.`,
           );
         } else {
+          if (!/^[a-z0-9]+(?:[._-][a-z0-9]+)+$/u.test(action.name)) {
+            addFinding(
+              ctx,
+              'error',
+              'action_manifest.custom_action_not_namespaced',
+              `${path}.name`,
+              `${action.name} must be a lowercase namespaced action such as wallet.unlock.`,
+            );
+          }
           if (OFFICIAL_ACTION_SET.has(action.name)) {
             addFinding(
               ctx,
@@ -299,6 +379,15 @@ export function validateRecipeActionManifestDocument(manifest: unknown): RecipeV
           path,
           isNonEmptyString(action.name) ? action.name : undefined,
         );
+        if (!Object.hasOwn(action, 'execution_capabilities')) {
+          addFinding(
+            ctx,
+            'error',
+            'action_manifest.missing_execution_capabilities',
+            `${path}.execution_capabilities`,
+            'Custom actions must explicitly declare execution_capabilities, including an empty array for read-only actions.',
+          );
+        }
       });
     }
   }
@@ -313,93 +402,46 @@ export function validateRecipeActionManifestDocument(manifest: unknown): RecipeV
         'action_metadata must be an object when present.',
       );
     } else {
+      const declaredOfficialActions = new Set(
+        Array.isArray(officialActions)
+          ? officialActions.filter((action): action is string => isNonEmptyString(action))
+          : [],
+      );
       for (const [action, metadata] of Object.entries(manifest.action_metadata)) {
-        if (!declaredActions.has(action)) {
+        if (!declaredOfficialActions.has(action)) {
           addFinding(
             ctx,
             'error',
             'action_manifest.metadata_for_undeclared_action',
             `action_metadata.${action}`,
-            `Metadata action ${action} is not declared by the manifest.`,
+            `action_metadata may describe only supported_official_actions; declare ${action} once in custom_actions instead.`,
           );
         }
-        validateActionCatalogEntry(ctx, metadata, `action_metadata.${action}`, action);
-      }
-    }
-  }
-
-  for (const { field, nameField } of [
-    { field: 'custom_assertion_operators', nameField: 'name' },
-    { field: 'state_refs', nameField: 'name' },
-  ]) {
-    const declarations = manifest[field];
-    if (declarations == null) continue;
-    if (!Array.isArray(declarations)) {
-      addFinding(
-        ctx,
-        'error',
-        'action_manifest.invalid_declaration_array',
-        field,
-        `${field} must be an array when present.`,
-      );
-      continue;
-    }
-    declarations.forEach((entry, index) => {
-      const path = `${field}[${index}]`;
-      if (!isRecord(entry) || !isNonEmptyString(entry[nameField])) {
-        addFinding(
+        validateActionCatalogEntry(
           ctx,
-          'error',
-          'action_manifest.invalid_declaration',
-          path,
-          `${path}.${nameField} must be a non-empty string.`,
+          metadata,
+          `action_metadata.${action}`,
+          action,
+          action !== 'call' && action !== 'end',
         );
       }
-    });
+    }
   }
 
-  const preConditions = manifest.pre_conditions;
-  if (preConditions != null) {
-    if (!Array.isArray(preConditions)) {
+  for (const action of declaredActions) {
+    if (action === 'call' || action === 'end') continue;
+    const isCustom = Array.isArray(customActions)
+      ? customActions.some((entry) => isRecord(entry) && entry.name === action)
+      : false;
+    if (isCustom) continue;
+    if (!isRecord(manifest.action_metadata) || !isRecord(manifest.action_metadata[action])) {
       addFinding(
         ctx,
         'error',
-        'action_manifest.invalid_pre_conditions',
-        'pre_conditions',
-        'pre_conditions must be an array when present.',
+        'action_manifest.missing_action_metadata',
+        `action_metadata.${action}`,
+        `Official action ${action} must declare metadata and a parameter schema.`,
       );
-    } else {
-      preConditions.forEach((entry, index) => {
-        const path = `pre_conditions[${index}]`;
-        if (!isRecord(entry)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_pre_condition',
-            path,
-            `${path} must be an object.`,
-          );
-          return;
-        }
-        if (!isNonEmptyString(entry.id)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_pre_condition_id',
-            `${path}.id`,
-            `${path}.id must be a non-empty string.`,
-          );
-        }
-        if (!isNonEmptyString(entry.description)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_pre_condition_description',
-            `${path}.description`,
-            `${path}.description must be a non-empty string.`,
-          );
-        }
-      });
     }
   }
 
@@ -634,11 +676,4 @@ export function validateRecipeActionManifestDocument(manifest: unknown): RecipeV
   }
 
   return finishResult(ctx);
-}
-
-export function getRecipeActionManifestPreconditionIds(manifest: unknown): string[] {
-  if (!isRecord(manifest) || !Array.isArray(manifest.pre_conditions)) return [];
-  return manifest.pre_conditions.flatMap((entry): string[] =>
-    isRecord(entry) && isNonEmptyString(entry.id) ? [entry.id] : [],
-  );
 }

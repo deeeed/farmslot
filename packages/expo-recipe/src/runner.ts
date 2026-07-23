@@ -2,17 +2,25 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  digestRecipeDocument,
   getRecipeActionManifestActionNames,
+  isRecord,
   type RecipeActionManifestDocument,
 } from '@farmslot/protocol';
 import {
+  applyTaskLocalInvocationTrust,
   createCaptureHelperVideoRecorder,
   createRecipeRunner,
   createStandardUiAdapters,
+  loadRecipeLibraries,
+  type RecipeLibrarySource,
   type RecipeVideoRecordingOptions,
   type RecordingTarget,
   type RecordingTargetProvider,
+  resolveRecipeDependencies,
+  resolveRecipeLibrarySources,
   resolveRecipeTrustInput,
+  rootResolutionRef,
   type UiActionTransport,
   type VideoRecorder,
 } from '@farmslot/recipe-harness';
@@ -45,18 +53,23 @@ export interface ExpoRecipeRunOptions {
   recordVideo?: boolean | RecipeVideoRecordingOptions;
   metroHost?: string;
   metroPort?: number;
+  params?: Record<string, unknown>;
 }
 
-export function validateExpoRecipeDocument(
+export async function validateExpoRecipeDocument(
   recipePath: string = DEFAULT_EXPO_RECIPE_PATH,
   options: ExpoRecipeRunOptions = {},
 ) {
   const projectRoot = path.resolve(options.projectRoot ?? process.cwd());
+  const recipeAbsolutePath = resolveRecipeCliPath(recipePath, projectRoot);
+  const librarySources = await resolveRecipeLibrarySources({ recipePath: recipeAbsolutePath });
   return validateRecipeCliInput({
-    recipePath,
+    recipePath: recipeAbsolutePath,
     actionManifestPath: options.manifestPath ?? DEFAULT_EXPO_RECIPE_MANIFEST_PATH,
     baseDir: projectRoot,
     artifactDir: options.artifactsDir,
+    ...(librarySources.length ? { librarySources } : {}),
+    ...(options.params ? { params: options.params } : {}),
   });
 }
 
@@ -77,6 +90,15 @@ export async function runExpoRecipeDocument(
 
   const manifest = (await readJsonFile(manifestPath)) as RecipeActionManifestDocument;
   const actions = getRecipeActionManifestActionNames(manifest);
+  const trust = resolveRecipeTrustInput();
+  const invocationTrust = trust.source?.trust ?? 'trusted';
+  const librarySources: RecipeLibrarySource[] = applyTaskLocalInvocationTrust(
+    await resolveRecipeLibrarySources({ recipePath: recipeAbsolutePath }),
+    invocationTrust,
+  );
+  if (!options.dryRun) {
+    await assertNativeRecipeContext(recipeAbsolutePath, librarySources, process.env);
+  }
   const transport = createExpoUiTransport(options);
   const adapters = [
     ...createRedactingCoreAdapters(actions),
@@ -112,15 +134,65 @@ export async function runExpoRecipeDocument(
       recipePath: recipeAbsolutePath,
       artifactsDir,
       projectRoot,
+      ...(librarySources.length ? { librarySources } : {}),
+      ...(options.params ? { params: options.params } : {}),
       env: {
         FARMSLOT_RECIPE_ARTIFACTS_DIR: artifactsDir,
       },
       recordVideo: options.recordVideo,
-      ...resolveRecipeTrustInput(),
+      ...trust,
     });
   } finally {
     await closeUiTransportQuietly(transport);
   }
+}
+
+async function assertNativeRecipeContext(
+  recipePath: string,
+  librarySources: RecipeLibrarySource[],
+  env: Record<string, string | undefined>,
+): Promise<void> {
+  const root = await readJsonFile(recipePath);
+  if (!isRecord(root)) return;
+  const libraries = await loadRecipeLibraries(librarySources);
+  const digest = digestRecipeDocument(root);
+  const dependencies = resolveRecipeDependencies({
+    rootRef: rootResolutionRef(digest),
+    root,
+    rootSource: { kind: 'operator', trust: 'trusted', path: recipePath, digest },
+    recipes: libraries.recipes,
+  });
+  const documents = [root, ...[...dependencies.recipes.values()].map((entry) => entry.document)];
+  if (!documents.some(recipeUsesNativeUi)) return;
+
+  const platform = normalizeNativePlatform(env.PLATFORM);
+  if (!platform) {
+    throw new Error(
+      'Native recipe actions require PLATFORM=ios or android from the assigned slot.',
+    );
+  }
+  const device =
+    platform === 'ios'
+      ? (env.IOS_SIMULATOR ?? env.SIMULATOR)
+      : (env.ADB_SERIAL ?? env.ANDROID_SERIAL ?? env.ANDROID_DEVICE);
+  if (!device) {
+    throw new Error(
+      platform === 'ios'
+        ? 'Native iOS recipe actions require IOS_SIMULATOR or SIMULATOR from the assigned slot.'
+        : 'Native Android recipe actions require ADB_SERIAL from the assigned slot.',
+    );
+  }
+  if (!env.FARMSLOT_RECIPE_APP_ID) {
+    throw new Error('Native recipe actions require FARMSLOT_RECIPE_APP_ID for the target app.');
+  }
+}
+
+function recipeUsesNativeUi(recipe: Record<string, unknown>): boolean {
+  const workflow = isRecord(recipe.workflow) ? recipe.workflow : {};
+  const nodes = isRecord(workflow.nodes) ? Object.values(workflow.nodes) : [];
+  return nodes.some(
+    (node) => isRecord(node) && typeof node.action === 'string' && isNativeUiAction(node.action),
+  );
 }
 
 export async function closeUiTransportQuietly(transport: {

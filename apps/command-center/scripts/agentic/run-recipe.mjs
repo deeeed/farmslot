@@ -11,6 +11,8 @@
  *     [--ui-url <url>] \
  *     [--gateway-port <port>] \
  *     [--slot-id <id>] \
+ *     [--run-id <id>] \
+ *     [--recipe-run-id <id>] \
  *     [--slow <ms>] \
  *     [--record-video=full-run] \
  *     [--json]
@@ -21,15 +23,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
 import {
+  applyTaskLocalInvocationTrust,
   createCaptureHelperVideoRecorder,
   createCdpVideoRecorder,
   createRecipeRunner,
+  resolveRecipeLibrarySources,
   resolveRecipeTrustInput,
 } from '@farmslot/recipe-harness';
 import { createStandardCoreAdapters } from '@farmslot/recipe-harness/adapters/core';
 import { createStandardUiAdapters } from '@farmslot/recipe-harness/adapters/ui';
+import { parseRecipeParamAssignments } from '@farmslot/recipe-harness/cli/support';
 import {
   CdpWebPage,
   createCdpWebUiTransport,
@@ -51,12 +55,6 @@ export function resolveCommandCenterRecipeTrust(env = process.env) {
   return resolveRecipeTrustInput({}, env);
 }
 
-const COMMAND_CENTER_PRECONDITION_SOURCE = Object.freeze({
-  kind: 'bundled',
-  trust: 'trusted',
-  name: '@farmslot/command-center/preconditions',
-});
-
 function die(message, code = 1) {
   console.error(message);
   process.exit(code);
@@ -72,6 +70,8 @@ function parseArgs(argv) {
     uiUrl: process.env.FARMSLOT_UI_URL ?? '',
     gatewayPort: process.env.GATEWAY_PORT ?? '',
     slotId: process.env.FARMSLOT_SLOT_ID ?? '',
+    runId: process.env.FARMSLOT_RUN_ID ?? '',
+    recipeRunId: process.env.FARMSLOT_RECIPE_RUN_ID ?? '',
     slowMs: 0,
     recordVideo: false,
     recordMaxFps: 15,
@@ -80,7 +80,7 @@ function parseArgs(argv) {
     recordWindowName: process.env.FARMSLOT_RECORD_WINDOW_NAME ?? '',
     recordPid: 0,
     json: false,
-    inputs: {},
+    paramAssignments: [],
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -141,6 +141,22 @@ function parseArgs(argv) {
       options.slotId = arg.slice('--slot-id='.length);
       continue;
     }
+    if (arg === '--run-id') {
+      options.runId = argv[++i] ?? '';
+      continue;
+    }
+    if (arg.startsWith('--run-id=')) {
+      options.runId = arg.slice('--run-id='.length);
+      continue;
+    }
+    if (arg === '--recipe-run-id') {
+      options.recipeRunId = argv[++i] ?? '';
+      continue;
+    }
+    if (arg.startsWith('--recipe-run-id=')) {
+      options.recipeRunId = arg.slice('--recipe-run-id='.length);
+      continue;
+    }
     if (arg === '--slow') {
       options.slowMs = Number(argv[++i]);
       continue;
@@ -198,15 +214,11 @@ function parseArgs(argv) {
       continue;
     }
     if (arg.startsWith('--input=')) {
-      const pair = arg.slice('--input='.length);
-      const idx = pair.indexOf('=');
-      if (idx > 0) options.inputs[pair.slice(0, idx)] = pair.slice(idx + 1);
+      options.paramAssignments.push(arg.slice('--input='.length));
       continue;
     }
     if (arg === '--input') {
-      const pair = argv[++i] ?? '';
-      const idx = pair.indexOf('=');
-      if (idx > 0) options.inputs[pair.slice(0, idx)] = pair.slice(idx + 1);
+      options.paramAssignments.push(argv[++i] ?? '');
       continue;
     }
     if (arg.startsWith('-')) die(`Unknown option: ${arg}`);
@@ -243,24 +255,61 @@ async function resolveUiUrl(projectRoot, explicit) {
   return 'http://localhost:5174';
 }
 
-function substituteTemplateString(value, inputs) {
-  return value.replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (_, key) => {
-    if (inputs[key] !== undefined && inputs[key] !== null) return String(inputs[key]);
-    return `{{${key}}}`;
-  });
+export function commandCenterRecipeParams(recipe, runtimeParams, explicitParams = {}) {
+  const properties = recipe?.paramsSchema?.properties;
+  const declared =
+    properties && typeof properties === 'object' && !Array.isArray(properties)
+      ? new Set(Object.keys(properties))
+      : new Set();
+  return {
+    ...Object.fromEntries(Object.entries(runtimeParams).filter(([key]) => declared.has(key))),
+    ...explicitParams,
+  };
 }
 
-function substituteDeep(value, inputs) {
-  if (typeof value === 'string') return substituteTemplateString(value, inputs);
-  if (Array.isArray(value)) return value.map((entry) => substituteDeep(entry, inputs));
-  if (value && typeof value === 'object') {
-    const next = {};
-    for (const [key, entry] of Object.entries(value)) {
-      next[key] = substituteDeep(entry, inputs);
-    }
-    return next;
-  }
-  return value;
+export function commandCenterActionManifest(manifest, implementedActions) {
+  const supportedOfficialActions = Array.isArray(manifest?.supported_official_actions)
+    ? manifest.supported_official_actions.filter((action) => implementedActions.has(action))
+    : [];
+  const customActions = Array.isArray(manifest?.custom_actions)
+    ? manifest.custom_actions.filter(
+        (entry) => entry && typeof entry === 'object' && implementedActions.has(entry.name),
+      )
+    : [];
+  const declared = new Set([
+    ...supportedOfficialActions,
+    ...customActions.map((entry) => entry.name),
+  ]);
+  const actionMetadata =
+    manifest?.action_metadata && typeof manifest.action_metadata === 'object'
+      ? Object.fromEntries(
+          Object.entries(manifest.action_metadata).filter(([action]) =>
+            supportedOfficialActions.includes(action),
+          ),
+        )
+      : undefined;
+  const nativeBindings = Array.isArray(manifest?.native_bindings)
+    ? manifest.native_bindings.filter((entry) => declared.has(entry?.action))
+    : undefined;
+  const observers = Array.isArray(manifest?.observers)
+    ? manifest.observers.map((observer) => ({
+        ...observer,
+        ...(Array.isArray(observer?.default_for)
+          ? { default_for: observer.default_for.filter((action) => declared.has(action)) }
+          : {}),
+      }))
+    : undefined;
+
+  return {
+    runner_protocol_version: manifest?.runner_protocol_version,
+    action_registry_version: manifest?.action_registry_version,
+    supported_official_actions: supportedOfficialActions,
+    ...(actionMetadata ? { action_metadata: actionMetadata } : {}),
+    ...(customActions.length ? { custom_actions: customActions } : {}),
+    ...(nativeBindings ? { native_bindings: nativeBindings } : {}),
+    ...(Array.isArray(manifest?.capabilities) ? { capabilities: manifest.capabilities } : {}),
+    ...(observers ? { observers } : {}),
+  };
 }
 
 function hashFromNavigateTarget(target) {
@@ -277,55 +326,6 @@ function normalizeNavigateUrl(target, uiBaseUrl) {
   if (target.startsWith('#')) return `${base}/${target}`;
   if (target.startsWith('/')) return `${base}${target}`;
   return `${base}/#${target.replace(/^#/, '')}`;
-}
-
-async function fetchOk(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
-  return response.ok;
-}
-
-export function buildPreconditions({ uiUrl, gatewayPort, cdpPort }) {
-  return [
-    {
-      id: 'command_center.dev_server.ready',
-      capabilities: [],
-      source: COMMAND_CENTER_PRECONDITION_SOURCE,
-      async execute() {
-        const ok = await fetchOk(`${uiUrl}/`);
-        return {
-          ok,
-          error: ok ? undefined : `UI not reachable at ${uiUrl}`,
-        };
-      },
-    },
-    {
-      id: 'gateway.reachable',
-      capabilities: [],
-      source: COMMAND_CENTER_PRECONDITION_SOURCE,
-      async execute() {
-        if (!gatewayPort) return { ok: true };
-        const ok = await fetchOk(`http://127.0.0.1:${gatewayPort}/health`);
-        return {
-          ok,
-          error: ok ? undefined : `Gateway not healthy on :${gatewayPort}`,
-        };
-      },
-    },
-    {
-      id: 'runtime.browser.open',
-      capabilities: [],
-      source: COMMAND_CENTER_PRECONDITION_SOURCE,
-      async execute() {
-        try {
-          await listCdpTargets('127.0.0.1', cdpPort);
-          return { ok: true };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return { ok: false, error: message };
-        }
-      },
-    },
-  ];
 }
 
 function wrapTransportWithSlow(transport, slowMs) {
@@ -601,24 +601,31 @@ async function main() {
     (path.isAbsolute(options.actionManifest)
       ? path.resolve(path.dirname(options.actionManifest), '../../..')
       : path.resolve(options.projectRoot));
-  const inputs = {
-    ...((recipeRaw.inputs && typeof recipeRaw.inputs === 'object' && recipeRaw.inputs) || {}),
+  const runtimeParams = {
     ui_url: uiUrl,
-    cdp_port: String(options.cdpPort),
+    cdp_port: options.cdpPort,
     repo: options.projectRoot,
     farmslot_dir: farmslotDir,
     primary_repo: farmslotDir,
-    ...options.inputs,
   };
   if (options.gatewayPort) {
-    inputs.gateway_port = options.gatewayPort;
-    inputs.gateway_url = `ws://127.0.0.1:${options.gatewayPort}/ws`;
+    runtimeParams.gateway_port = options.gatewayPort;
+    runtimeParams.gateway_url = `ws://127.0.0.1:${options.gatewayPort}/ws`;
   }
   if (options.slotId) {
-    inputs.slot_id = options.slotId;
+    runtimeParams.slot_id = options.slotId;
   }
-
-  const recipeDocument = substituteDeep(recipeRaw, inputs);
+  if (options.runId) {
+    runtimeParams.run_id = options.runId;
+  }
+  if (options.recipeRunId) {
+    runtimeParams.recipe_run_id = options.recipeRunId;
+  }
+  const params = commandCenterRecipeParams(
+    recipeRaw,
+    runtimeParams,
+    parseRecipeParamAssignments(options.paramAssignments),
+  );
   const artifactsDir = path.resolve(options.artifactsDir);
 
   const coreActions = [
@@ -650,17 +657,7 @@ async function main() {
     'app.trace',
   ];
   const implementedActions = new Set([...coreActions, ...uiActions]);
-  const filteredManifest = {
-    ...manifest,
-    supported_official_actions: getRecipeActionManifestActionNames(manifest).filter((action) =>
-      implementedActions.has(action),
-    ),
-    pre_conditions: (manifest.pre_conditions ?? []).filter((entry) =>
-      ['command_center.dev_server.ready', 'gateway.reachable', 'runtime.browser.open'].includes(
-        entry.id,
-      ),
-    ),
-  };
+  const filteredManifest = commandCenterActionManifest(manifest, implementedActions);
 
   const gatewayToken = await resolveGatewayToken(options.projectRoot);
   let preferredHash = '';
@@ -701,6 +698,11 @@ async function main() {
 
   const hudEnabled = filteredManifest.supported_official_actions.includes('app.hud');
   const trust = resolveCommandCenterRecipeTrust();
+  const invocationTrust = trust.source?.trust ?? COMMAND_CENTER_RECIPE_SOURCE.trust;
+  const librarySources = applyTaskLocalInvocationTrust(
+    await resolveRecipeLibrarySources({ recipePath }),
+    invocationTrust,
+  );
   const runner = createRecipeRunner({
     actionManifest: filteredManifest,
     defaultSource: COMMAND_CENTER_RECIPE_SOURCE,
@@ -724,11 +726,6 @@ async function main() {
           },
         }
       : undefined,
-    preconditions: buildPreconditions({
-      uiUrl,
-      gatewayPort: options.gatewayPort,
-      cdpPort: options.cdpPort,
-    }),
     logger: console,
     recording: {
       videoRecorder:
@@ -749,8 +746,10 @@ async function main() {
 
   const result = await runner.run({
     ...trust,
-    recipeDocument,
+    recipeDocument: recipeRaw,
     recipePath,
+    params,
+    ...(librarySources.length ? { librarySources } : {}),
     artifactsDir,
     projectRoot: options.projectRoot,
     recordVideo: options.recordVideo

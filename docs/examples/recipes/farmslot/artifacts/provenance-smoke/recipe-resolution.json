@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "root": {
+    "ref": "provenance-smoke",
+    "digest": "sha256:816ae04b6de97f0655cf0240521836176308d32d1d9a8b368e4c18b5c7dc4354"
+  },
+  "dependencies": [],
+  "edges": []
+}

@@ -10,8 +10,8 @@ import {
   isSlotViewHashForSlot,
   requestedFileFromHash,
   requestedRecipeArtifactFromHash,
+  requestedRecipeDependencyFromHash,
   requestedRecipeEvidenceModeFromHash,
-  requestedRecipeFlowFromHash,
   requestedRecipeNodeFromHash,
   requestedRecipeRunFromHash,
   requestedRecipeViewerModeFromHash,
@@ -63,7 +63,7 @@ export function syncSlotViewUrlState(view: SlotView): void {
     file: fileForUrl,
     resource: view._resourcePanelOpen ? (resourceForUrl ?? '') : '',
     recipeRun: view._selectedRecipeRunId,
-    recipeFlow: view._selectedRecipeFlowPath,
+    recipeDependency: view._selectedRecipeDependencyPath,
     recipeNode: view._selectedRecipeNodeId,
     recipeEvidenceMode: view._recipeEvidenceMode,
     recipeArtifact: view._selectedRecipeArtifactPath,
@@ -100,7 +100,7 @@ export async function restoreSlotViewFileFromUrl(view: SlotView): Promise<void> 
 export function restoreSlotViewResourceFromUrl(view: SlotView): void {
   const resourceId = requestedResourceFromHash();
   view._selectedRecipeRunId = requestedRecipeRunFromHash() ?? view._selectedRecipeRunId;
-  view._selectedRecipeFlowPath = requestedRecipeFlowFromHash() ?? '';
+  view._selectedRecipeDependencyPath = requestedRecipeDependencyFromHash() ?? '';
   view._selectedRecipeNodeId = requestedRecipeNodeFromHash() ?? '';
   view._selectedRecipeArtifactPath = requestedRecipeArtifactFromHash();
   view._recipeEvidenceMode = view._selectedRecipeNodeId

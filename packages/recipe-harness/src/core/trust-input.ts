@@ -20,7 +20,6 @@ const sourceKindValues = new Set([
   'operator',
   'task',
   'recipe-file',
-  'uses-catalog',
   'library',
   'custom-adapter',
 ]);

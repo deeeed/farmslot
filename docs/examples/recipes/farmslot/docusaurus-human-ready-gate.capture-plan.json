@@ -1,0 +1,45 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Command Center human ready gate capture plan",
+  "description": "Reproducibly captures a public-safe Command Center ready gate from the real UI, backed by a gateway-compatible fixture and public-safety assertions.",
+  "workflow": {
+    "entry": "prepare-fixture",
+    "nodes": {
+      "prepare-fixture": {
+        "action": "fixture.gateway.start",
+        "intent": "Make a sanitized ready-gate run available to Command Center",
+        "next": "open-command-center"
+      },
+      "open-command-center": {
+        "action": "ui.navigate",
+        "intent": "Show the real slot workspace at its human approval gate",
+        "url": "http://localhost:5188/#slot/demo-ready-slot?runId=demo-ready-run-1&tab=pr-preview&reviewDrawer=primary",
+        "next": "verify-public-safe-gate"
+      },
+      "verify-public-safe-gate": {
+        "action": "ui.assert",
+        "intent": "Keep approval actions, proof artifacts, and public-safe labels visible together",
+        "mustContain": [
+          "Pre-publication cockpit",
+          "Approve Publish",
+          "Independent Review",
+          "Evidence",
+          "Quality",
+          "Recipe",
+          "docs/real-demo-media"
+        ],
+        "next": "capture-screenshot"
+      },
+      "capture-screenshot": {
+        "action": "record.screenshot",
+        "intent": "Preserve the complete ready gate for public review",
+        "output": "screenshots/command-center-human-ready-gate.png",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const repoRoot = process.cwd();
@@ -80,7 +80,9 @@ function checkImport(relativePath, specifier) {
 
 for (const relativePath of trackedFiles()) {
   if (!isSourceFile(relativePath) || isIgnored(relativePath)) continue;
-  const source = readFileSync(path.join(repoRoot, relativePath), 'utf8');
+  const absolutePath = path.join(repoRoot, relativePath);
+  if (!existsSync(absolutePath)) continue;
+  const source = readFileSync(absolutePath, 'utf8');
   for (const match of source.matchAll(importPattern)) {
     checkImport(relativePath, match[1] ?? match[2] ?? match[3] ?? match[4]);
   }

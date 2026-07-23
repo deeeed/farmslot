@@ -17,29 +17,214 @@
   ],
   "action_metadata": {
     "command": {
-      "description": "Run a project-local command during setup, diagnostics, or headless proof. Prefer UI actions only when the recipe must prove visible interaction."
+      "description": "Run a project-local command during setup, diagnostics, or headless proof. Prefer UI actions only when the recipe must prove visible interaction.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "cmd": {
+            "type": "string"
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "save_as": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "app.status": {
-      "description": "Query the dev-only Farmslot Expo bridge to confirm the app is reachable."
+      "description": "Query the dev-only Farmslot Expo bridge to confirm the app is reachable.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "timeout_ms": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "app.hud": {
-      "description": "Display one concise human intent line from the current recipe node."
+      "description": "Display one concise human intent line from the current recipe node.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "clear": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "app.trace": {
-      "description": "Emit a lightweight bridge trace event for recipe timeline observability."
+      "description": "Emit a lightweight bridge trace event for recipe timeline observability.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
     },
     "ui.press": {
-      "description": "Press a native accessibility target on the assigned simulator or device."
+      "description": "Press a native accessibility target on the assigned simulator or device.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "ui.set_input": {
-      "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets."
+      "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "ui.scroll": {
-      "description": "Scroll the assigned native simulator or device and wait for stability."
+      "description": "Scroll the assigned native simulator or device and wait for stability.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
     },
-    "ui.wait_for": { "description": "Wait for native accessibility content and UI stability." },
+    "ui.wait_for": {
+      "description": "Wait for native accessibility content and UI stability.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "text_contains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "test_id": {
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          },
+          "event": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "ui.screenshot": {
-      "description": "Capture the assigned native simulator or device into the artifact package."
+      "description": "Capture the assigned native simulator or device into the artifact package.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "claims": {
+            "type": "object",
+            "properties": {
+              "must_show": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "must_not_show": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "covers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "assert_output": {
+      "description": "assert_output action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          },
+          "contains": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "wait": {
+      "description": "Pause briefly for asynchronous setup work. Keep waits short and prefer deterministic assertions.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "duration_ms": {
+            "type": "integer"
+          }
+        },
+        "required": ["duration_ms"],
+        "additionalProperties": false
+      }
     }
   },
   "capabilities": [

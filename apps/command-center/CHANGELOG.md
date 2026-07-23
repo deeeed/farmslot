@@ -4,7 +4,9 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- fix: propagate recipe source trust into Command Center execution and preconditions.
+- feat: run composable Recipe v1 documents with strict manifests, typed parameters, and library dependency resolution.
+- fix: pass only recipe-declared runtime context from Farmslot hooks.
+- fix: resolve adjacent task recipe libraries and propagate invocation trust into their dependencies.
 - fix: defer artifact creation and Chrome capture preparation until after recipe trust preflight.
 
 - chore: type-escape baseline pruned — `fleet/state.ts` no longer contains `as any` casts (RawSlot honest optionality).

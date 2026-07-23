@@ -22,7 +22,7 @@ import {
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { createStandardUiAdapters, type UiActionTransport } from '../src/adapters/ui.js';
 import { runRecipeHarnessCli } from '../src/cli/index.js';
-import { validateRecipeCliInput } from '../src/cli/support.js';
+import { parseRecipeParamAssignments, validateRecipeCliInput } from '../src/cli/support.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
 import { writeFileWithinRoot } from '../src/core/path.js';
 import { cleanupAbortedRunVideoRecording } from '../src/core/recording-cleanup.js';
@@ -39,7 +39,25 @@ import {
   type ReactNativeBridgeCommand,
 } from '../src/runtime/react-native-bridge.js';
 
-const coreActionManifest: RecipeActionManifestDocument = {
+function withTestSchemas(manifest: RecipeActionManifestDocument): RecipeActionManifestDocument {
+  return {
+    ...manifest,
+    action_metadata: Object.fromEntries(
+      manifest.supported_official_actions
+        .filter((action) => action !== 'call' && action !== 'end')
+        .map((action) => [
+          action,
+          manifest.action_metadata?.[action] ?? {
+            description: `Test ${action}.`,
+            schema: { type: 'object', additionalProperties: true },
+            ...(action === 'switch' ? { result_cases: ['match'] } : {}),
+          },
+        ]),
+    ),
+  };
+}
+
+const coreActionManifest: RecipeActionManifestDocument = withTestSchemas({
   runner_protocol_version: 1,
   action_registry_version: 1,
   supported_official_actions: [
@@ -57,11 +75,12 @@ const coreActionManifest: RecipeActionManifestDocument = {
     'switch',
     'manual',
   ],
-};
+});
 
 function createRecipeRunner(options: Parameters<typeof createRawRecipeRunner>[0]) {
   return createRawRecipeRunner({
     ...options,
+    actionManifest: withTestSchemas(options.actionManifest),
     adapters: options.adapters.map((adapter) => ({
       ...adapter,
       source: adapter.source ?? {
@@ -108,6 +127,34 @@ async function listRelativeFiles(root: string): Promise<string[]> {
   return output.sort();
 }
 
+function recipeDocument(
+  nodes: Record<string, Record<string, unknown>>,
+  options: {
+    entry?: string;
+    teardown?: string;
+    description?: string;
+    paramsSchema?: Record<string, unknown>;
+  } = {},
+): Record<string, unknown> {
+  return {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: options.description ?? 'Exercises the Recipe v1 runtime contract.',
+    ...(options.paramsSchema ? { paramsSchema: options.paramsSchema } : {}),
+    workflow: {
+      entry: options.entry ?? Object.keys(nodes)[0],
+      nodes,
+      ...(options.teardown ? { teardown: options.teardown } : {}),
+    },
+  };
+}
+
+test('CLI parameter parsing preserves prototype-sensitive keys for loud schema validation', () => {
+  const params = parseRecipeParamAssignments(['__proto__={"polluted":true}']);
+  assert.deepEqual(Object.keys(params), ['__proto__']);
+  assert.equal(Object.hasOwn(params, '__proto__'), true);
+  assert.equal(Object.getPrototypeOf(params), Object.prototype);
+});
+
 async function captureConsoleLog(callback: () => Promise<void>): Promise<string> {
   const originalLog = console.log;
   const lines: string[] = [];
@@ -125,50 +172,47 @@ async function captureConsoleLog(callback: () => Promise<void>): Promise<string>
 function createSmokeRecipe(): unknown {
   return {
     $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-    schema_version: 1,
     title: 'Recipe harness smoke',
     description: 'Runs a command, asserts outputs, and publishes artifacts.',
-    validate: {
-      workflow: {
-        entry: 'run-smoke',
-        nodes: {
-          'run-smoke': {
-            action: 'command',
-            intent: 'Run the smoke command and create report artifacts',
-            cmd: "node -e \"const fs=require('fs'); fs.mkdirSync('reports',{recursive:true}); fs.mkdirSync('logs',{recursive:true}); fs.writeFileSync('reports/api-smoke.json', JSON.stringify({failed:0,message:'ok'})); fs.writeFileSync('logs/api-smoke.log','ok log'); console.log('SMOKE_OK')\"",
-            next: 'assert-report',
-          },
-          'assert-report': {
-            action: 'assert_json',
-            intent: 'Verify the smoke report has no failed checks',
-            path: 'reports/api-smoke.json',
-            assert: { path: '$.failed', operator: 'eq', value: 0 },
-            next: 'assert-output',
-          },
-          'assert-output': {
-            action: 'assert_output',
-            intent: 'Confirm the smoke command printed its success marker',
-            source: 'run-smoke',
-            stream: 'stdout',
-            contains: 'SMOKE_OK',
-            next: 'index-artifacts',
-          },
-          'index-artifacts': {
-            action: 'index_artifacts',
-            intent: 'Publish the smoke report and log artifacts for review',
-            artifacts: [
-              {
-                path: 'reports/api-smoke.json',
-                type: 'json',
-                proofTarget: 'api smoke',
-                covers: ['report'],
-              },
-              { path: 'logs/api-smoke.log', type: 'log', category: 'debug' },
-            ],
-            next: 'done',
-          },
-          done: { action: 'end', status: 'pass' },
+    workflow: {
+      entry: 'run-smoke',
+      nodes: {
+        'run-smoke': {
+          action: 'command',
+          intent: 'Run the smoke command and create report artifacts',
+          cmd: "node -e \"const fs=require('fs'); fs.mkdirSync('reports',{recursive:true}); fs.mkdirSync('logs',{recursive:true}); fs.writeFileSync('reports/api-smoke.json', JSON.stringify({failed:0,message:'ok'})); fs.writeFileSync('logs/api-smoke.log','ok log'); console.log('SMOKE_OK')\"",
+          next: 'assert-report',
         },
+        'assert-report': {
+          action: 'assert_json',
+          intent: 'Verify the smoke report has no failed checks',
+          path: 'reports/api-smoke.json',
+          assert: { path: '$.failed', operator: 'eq', value: 0 },
+          next: 'assert-output',
+        },
+        'assert-output': {
+          action: 'assert_output',
+          intent: 'Confirm the smoke command printed its success marker',
+          source: 'run-smoke',
+          stream: 'stdout',
+          contains: 'SMOKE_OK',
+          next: 'index-artifacts',
+        },
+        'index-artifacts': {
+          action: 'index_artifacts',
+          intent: 'Publish the smoke report and log artifacts for review',
+          artifacts: [
+            {
+              path: 'reports/api-smoke.json',
+              type: 'json',
+              proofTarget: 'api smoke',
+              covers: ['report'],
+            },
+            { path: 'logs/api-smoke.log', type: 'log', category: 'debug' },
+          ],
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
       },
     },
   };
@@ -176,16 +220,14 @@ function createSmokeRecipe(): unknown {
 
 function createSingleActionRecipe(node: Record<string, unknown>): unknown {
   return {
-    schema_version: 1,
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
     title: 'Single action security check',
     description: 'Exercises one adapter through the real runner.',
-    validate: {
-      workflow: {
-        entry: 'check',
-        nodes: {
-          check: { ...node, intent: 'Exercise the selected adapter', next: 'done' },
-          done: { action: 'end', status: 'pass' },
-        },
+    workflow: {
+      entry: 'check',
+      nodes: {
+        check: { ...node, intent: 'Exercise the selected adapter', next: 'done' },
+        done: { action: 'end', status: 'pass' },
       },
     },
   };
@@ -208,6 +250,7 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
     assert.equal(result.status, 'pass');
     for (const requiredPath of [
       'recipe.json',
+      'recipe-resolution.json',
       'summary.json',
       'trace.json',
       'artifact-manifest.json',
@@ -219,6 +262,7 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
     const summary = await readJsonFile(path.join(artifactsDir, 'summary.json'));
     const trace = await readJsonFile(path.join(artifactsDir, 'trace.json'));
     const manifest = await readJsonFile(path.join(artifactsDir, 'artifact-manifest.json'));
+    const recipeResolution = await readJsonFile(path.join(artifactsDir, 'recipe-resolution.json'));
     assert.equal(
       (manifest as { artifacts?: Array<{ type?: string }> }).artifacts?.some(
         (artifact) => artifact.type === 'video',
@@ -237,6 +281,7 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
     const packageResult = validateRecipeArtifactPackage({
       recipe,
       manifest,
+      recipeResolution,
       artifactPaths: await listRelativeFiles(artifactsDir),
     });
     assert.equal(packageResult.status, 'valid', JSON.stringify(packageResult.findings));
@@ -363,28 +408,25 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
 
     const failRecipe = {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
       title: 'stale watch_logs proof',
       description: 'Pre-run stale markers must not satisfy watch_logs.',
-      validate: {
-        workflow: {
-          entry: 'append',
-          nodes: {
-            append: {
-              action: 'command',
-              intent: 'Append a fresh marker without rewriting the old log.',
-              cmd: "node -e \"require('fs').appendFileSync('logs/app.log','FRESH_MARKER\\n')\"",
-              next: 'watch',
-            },
-            watch: {
-              action: 'watch_logs',
-              intent: 'Check stale markers do not satisfy run-scoped log matching.',
-              path: 'logs/app.log',
-              contains: 'STALE_MARKER',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
+      workflow: {
+        entry: 'append',
+        nodes: {
+          append: {
+            action: 'command',
+            intent: 'Append a fresh marker without rewriting the old log.',
+            cmd: "node -e \"require('fs').appendFileSync('logs/app.log','FRESH_MARKER\\n')\"",
+            next: 'watch',
           },
+          watch: {
+            action: 'watch_logs',
+            intent: 'Check stale markers do not satisfy run-scoped log matching.',
+            path: 'logs/app.log',
+            contains: 'STALE_MARKER',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
         },
       },
     };
@@ -397,28 +439,25 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
 
     const passRecipe = {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
       title: 'fresh watch_logs proof',
       description: 'Run-scoped watch_logs sees lines emitted during this run.',
-      validate: {
-        workflow: {
-          entry: 'append',
-          nodes: {
-            append: {
-              action: 'command',
-              intent: 'Append a run-scoped marker to the log.',
-              cmd: "node -e \"require('fs').appendFileSync('logs/app.log','RUN_SCOPED_MARKER\\n')\"",
-              next: 'watch',
-            },
-            watch: {
-              action: 'watch_logs',
-              intent: 'Check the marker emitted during this run.',
-              path: 'logs/app.log',
-              contains: 'RUN_SCOPED_MARKER',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
+      workflow: {
+        entry: 'append',
+        nodes: {
+          append: {
+            action: 'command',
+            intent: 'Append a run-scoped marker to the log.',
+            cmd: "node -e \"require('fs').appendFileSync('logs/app.log','RUN_SCOPED_MARKER\\n')\"",
+            next: 'watch',
           },
+          watch: {
+            action: 'watch_logs',
+            intent: 'Check the marker emitted during this run.',
+            path: 'logs/app.log',
+            contains: 'RUN_SCOPED_MARKER',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
         },
       },
     };
@@ -431,23 +470,20 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
 
     const fileScopeRecipe = {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
       title: 'file scoped watch_logs proof',
       description: 'Recipes can explicitly scan the whole file when needed.',
-      validate: {
-        workflow: {
-          entry: 'watch',
-          nodes: {
-            watch: {
-              action: 'watch_logs',
-              intent: 'Check whole-file matching remains opt-in.',
-              path: 'logs/app.log',
-              contains: 'STALE_MARKER',
-              scope: 'file',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
+      workflow: {
+        entry: 'watch',
+        nodes: {
+          watch: {
+            action: 'watch_logs',
+            intent: 'Check whole-file matching remains opt-in.',
+            path: 'logs/app.log',
+            contains: 'STALE_MARKER',
+            scope: 'file',
+            next: 'done',
           },
+          done: { action: 'end', status: 'pass' },
         },
       },
     };
@@ -458,63 +494,66 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
     });
     assert.equal(fileScopeResult.status, 'pass');
 
-    const flowRecipe = {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    const libraryRoot = path.join(tempRoot, 'watch-library');
+    await mkdir(path.join(libraryRoot, 'recipes', 'local'), { recursive: true });
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
       schema_version: 1,
-      title: 'flow scoped watch_logs proof',
-      description: 'Run-scoped watch_logs also applies inside called flows.',
-      flows: {
-        'local.watch-stale': {
-          entry: 'watch',
-          nodes: {
-            watch: {
-              action: 'watch_logs',
-              intent: 'Check stale markers do not satisfy run-scoped log matching in flows.',
-              path: 'logs/app.log',
-              contains: 'STALE_MARKER',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
+      kind: 'recipe-library',
+      name: 'watch-library',
+    });
+    await writeJsonFile(path.join(libraryRoot, 'recipes', 'local', 'watch-stale.recipe.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Checks that called recipes share the run-scoped log baseline.',
+      workflow: {
+        entry: 'watch',
+        nodes: {
+          watch: {
+            action: 'watch_logs',
+            intent: 'Check stale markers do not satisfy run-scoped log matching in recipes.',
+            path: 'logs/app.log',
+            contains: 'STALE_MARKER',
+            next: 'done',
           },
+          done: { action: 'end', status: 'pass' },
         },
       },
-      validate: {
-        workflow: {
-          entry: 'append',
-          nodes: {
-            append: {
-              action: 'command',
-              intent: 'Append a fresh marker before calling the flow.',
-              cmd: "node -e \"require('fs').appendFileSync('logs/app.log','FLOW_FRESH_MARKER\\n')\"",
-              next: 'call-flow',
-            },
-            'call-flow': {
-              action: 'call',
-              intent: 'Run a flow whose watch_logs node must use the run baseline.',
-              ref: 'local.watch-stale',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
+    });
+    const nestedRecipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      title: 'Nested recipe scoped watch_logs proof',
+      description: 'Run-scoped watch_logs also applies inside called recipes.',
+      workflow: {
+        entry: 'append',
+        nodes: {
+          append: {
+            action: 'command',
+            intent: 'Append a fresh marker before calling the recipe.',
+            cmd: "node -e \"require('fs').appendFileSync('logs/app.log','FLOW_FRESH_MARKER\\n')\"",
+            next: 'call-recipe',
           },
+          'call-recipe': {
+            action: 'call',
+            intent: 'Run a recipe whose watch_logs node must use the run baseline.',
+            ref: 'local.watch-stale',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
         },
       },
     };
-    const flowResult = await runner.run({
-      recipeDocument: flowRecipe,
-      artifactsDir: path.join(tempRoot, 'artifacts-flow'),
+    const nestedResult = await runner.run({
+      recipeDocument: nestedRecipe,
+      librarySources: [
+        {
+          name: 'watch-library',
+          root: libraryRoot,
+          provenance: { kind: 'library', trust: 'trusted', name: 'watch-library' },
+        },
+      ],
+      artifactsDir: path.join(tempRoot, 'artifacts-nested'),
       projectRoot: tempRoot,
     });
-    assert.equal(flowResult.status, 'fail');
-
-    // An inline-only recipe is already self-contained (its flows live in recipe.json
-    // and are validated by validateInlineFlows), so no separate resolved-recipe.json
-    // is emitted — that artifact is reserved for `uses`/library composition.
-    assert.ok(
-      !(await listRelativeFiles(path.join(tempRoot, 'artifacts-flow'))).includes(
-        'resolved-recipe.json',
-      ),
-      'inline-only recipe should not emit resolved-recipe.json',
-    );
+    assert.equal(nestedResult.status, 'fail');
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -1036,47 +1075,37 @@ test('writes runner provenance into strict v1 runtime artifacts when configured'
   }
 });
 
-test('executes setup startState teardown lifecycle nodes and validates their actions', async () => {
+test('executes preparation, proof, and teardown through one explicit graph', async () => {
   const tempRoot = await createTempRoot();
   try {
     const recipe = {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      title: 'Lifecycle recipe',
-      description: 'Exercises v1 lifecycle execution.',
-      startState: {
-        action: 'command',
-        intent: 'Record that startState ran after setup',
-        cmd: "node -e \"require('fs').appendFileSync('order.txt','startState\\n')\"",
-      },
-      validate: {
-        workflow: {
-          setup: [
-            {
-              id: 'setup-command',
-              action: 'command',
-              intent: 'Write the lifecycle setup marker before validation',
-              cmd: "node -e \"require('fs').writeFileSync('order.txt','setup\\n')\"",
-            },
-          ],
-          entry: 'proof',
-          nodes: {
-            proof: {
-              action: 'command',
-              intent: 'Record that the main lifecycle proof step ran',
-              cmd: "node -e \"require('fs').appendFileSync('order.txt','proof\\n')\"",
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
+      title: 'Explicit lifecycle recipe',
+      description: 'Expresses preparation and proof in one graph with guaranteed teardown.',
+      workflow: {
+        entry: 'prepare',
+        teardown: 'restore',
+        nodes: {
+          prepare: {
+            action: 'command',
+            intent: 'Prepare deterministic state before evaluating the claim.',
+            cmd: "node -e \"require('fs').writeFileSync('order.txt','prepare\\n')\"",
+            next: 'proof',
           },
-          teardown: [
-            {
-              id: 'teardown-command',
-              action: 'command',
-              intent: 'Record that teardown ran after the main workflow',
-              cmd: "node -e \"require('fs').appendFileSync('order.txt','teardown\\n')\"",
-            },
-          ],
+          proof: {
+            action: 'command',
+            intent: 'Capture the runtime evidence for the claim.',
+            cmd: "node -e \"require('fs').appendFileSync('order.txt','proof\\n')\"",
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+          restore: {
+            action: 'command',
+            intent: 'Restore the environment after evidence collection.',
+            cmd: "node -e \"require('fs').appendFileSync('order.txt','teardown\\n')\"",
+            next: 'restored',
+          },
+          restored: { action: 'end', status: 'pass' },
         },
       },
     };
@@ -1092,115 +1121,135 @@ test('executes setup startState teardown lifecycle nodes and validates their act
     assert.equal(result.status, 'pass');
     assert.equal(
       await readFile(path.join(tempRoot, 'order.txt'), 'utf-8'),
-      'setup\nstartState\nproof\nteardown\n',
+      'prepare\nproof\nteardown\n',
     );
     const trace = await readJsonFile(result.tracePath);
     assert.deepEqual(
       (trace as Array<{ nodeId: string }>).map((entry) => entry.nodeId),
-      ['setup-command', 'startState', 'proof', 'done', 'teardown-command', 'teardown:end'],
+      ['prepare', 'proof', 'done', 'restore', 'restored'],
     );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
 
-test('executes manifest-declared preconditions before lifecycle nodes', async () => {
+test('runs teardown after a main graph action fails', async () => {
   const tempRoot = await createTempRoot();
   try {
-    const manifest: RecipeActionManifestDocument = {
-      ...coreActionManifest,
-      pre_conditions: [
-        { id: 'workspace.ready', description: 'Workspace is ready.' },
-        { id: 'fixture.named', description: 'Fixture name is provided.' },
-      ],
-    };
     const recipe = {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      title: 'Precondition recipe',
-      description: 'Checks preconditions before setup.',
-      validate: {
-        workflow: {
-          pre_conditions: ['workspace.ready', { id: 'fixture.named', params: { name: 'dev7' } }],
-          setup: [
-            {
-              id: 'setup-command',
-              action: 'command',
-              intent: 'Write setup proof after preconditions pass',
-              cmd: "node -e \"require('fs').writeFileSync('setup.txt','setup')\"",
-            },
-          ],
-          entry: 'done',
-          nodes: { done: { action: 'end', status: 'pass' } },
+      description: 'Guarantees cleanup even when evidence collection fails.',
+      workflow: {
+        entry: 'fail-proof',
+        teardown: 'cleanup',
+        nodes: {
+          'fail-proof': {
+            action: 'command',
+            intent: 'Exercise the failing proof path.',
+            cmd: 'node -e "process.exit(7)"',
+            next: 'unexpected',
+          },
+          unexpected: { action: 'end', status: 'pass' },
+          cleanup: {
+            action: 'command',
+            intent: 'Record that cleanup still completed.',
+            cmd: "node -e \"require('fs').writeFileSync('cleanup.txt','done')\"",
+            next: 'clean',
+          },
+          clean: { action: 'end', status: 'pass' },
         },
       },
     };
     const runner = createRecipeRunner({
-      actionManifest: manifest,
+      actionManifest: coreActionManifest,
       adapters: createStandardCoreAdapters(),
-      preconditions: [
-        {
-          id: 'workspace.ready',
-          source: { kind: 'bundled', trust: 'trusted', name: 'recipe harness test' },
-          async execute() {
-            return { output: { ready: true } };
-          },
-        },
-        {
-          id: 'fixture.named',
-          source: { kind: 'bundled', trust: 'trusted', name: 'recipe harness test' },
-          async execute(gate) {
-            return { ok: gate.params?.name === 'dev7', output: { checkedName: gate.params?.name } };
-          },
-        },
-      ],
     });
     const result = await runner.run({
       recipeDocument: recipe,
       artifactsDir: path.join(tempRoot, 'artifacts'),
       projectRoot: tempRoot,
     });
-    assert.equal(result.status, 'pass');
-    assert.equal(await readFile(path.join(tempRoot, 'setup.txt'), 'utf-8'), 'setup');
-    const trace = await readJsonFile(result.tracePath);
+    assert.equal(result.status, 'fail');
+    assert.equal(await readFile(path.join(tempRoot, 'cleanup.txt'), 'utf-8'), 'done');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('runs teardown when an output reference cannot be resolved', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const result = await runner.run({
+      recipeDocument: recipeDocument(
+        {
+          consume: {
+            action: 'command',
+            intent: 'Use the value produced by the missing step.',
+            cmd: '{{outputs.missing.cmd}}',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+          cleanup: {
+            action: 'command',
+            intent: 'Record that cleanup still completed.',
+            cmd: "node -e \"require('fs').writeFileSync('cleanup.txt','done')\"",
+            next: 'clean',
+          },
+          clean: { action: 'end', status: 'pass' },
+        },
+        { teardown: 'cleanup' },
+      ),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+    });
+    assert.equal(result.status, 'fail');
+    assert.equal(await readFile(path.join(tempRoot, 'cleanup.txt'), 'utf-8'), 'done');
+    const trace = (await readJsonFile(result.tracePath)) as Array<{
+      nodeId: string;
+      ok: boolean;
+      error?: string;
+    }>;
+    assert.match(trace[0]?.error ?? '', /output missing\.cmd is not defined/u);
     assert.deepEqual(
-      (trace as Array<{ nodeId: string }>).slice(0, 3).map((entry) => entry.nodeId),
-      ['pre_conditions:workspace.ready', 'pre_conditions:fixture.named', 'setup-command'],
+      trace.map(({ nodeId, ok }) => ({ nodeId, ok })),
+      [
+        { nodeId: 'consume', ok: false },
+        { nodeId: 'cleanup', ok: true },
+        { nodeId: 'clean', ok: true },
+      ],
     );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
 
-test('fails preconditions with no registered checker instead of silently skipping them', async () => {
+test('a teardown failure cannot be masked by a passing main graph', async () => {
   const tempRoot = await createTempRoot();
   try {
     const runner = createRecipeRunner({
-      actionManifest: {
-        ...coreActionManifest,
-        pre_conditions: [{ id: 'workspace.ready', description: 'Workspace is ready.' }],
-      },
+      actionManifest: coreActionManifest,
       adapters: createStandardCoreAdapters(),
     });
     const result = await runner.run({
       recipeDocument: {
         $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-        schema_version: 1,
-        title: 'Missing precondition checker',
-        description: 'Preconditions must fail closed.',
-        validate: {
-          workflow: {
-            pre_conditions: ['workspace.ready'],
-            setup: [
-              {
-                id: 'setup-command',
-                action: 'command',
-                intent: 'Prepare the command that must not run without preconditions',
-                cmd: "node -e \"require('fs').writeFileSync('should-not-run.txt','bad')\"",
-              },
-            ],
-            entry: 'done',
-            nodes: { done: { action: 'end', status: 'pass' } },
+        description: 'Reports teardown failure as the final recipe result.',
+        workflow: {
+          entry: 'done',
+          teardown: 'fail-cleanup',
+          nodes: {
+            done: { action: 'end', status: 'pass' },
+            'fail-cleanup': {
+              action: 'command',
+              intent: 'Exercise teardown failure precedence.',
+              cmd: 'node -e "process.exit(9)"',
+              next: 'clean',
+            },
+            clean: { action: 'end', status: 'pass' },
           },
         },
       },
@@ -1208,589 +1257,724 @@ test('fails preconditions with no registered checker instead of silently skippin
       projectRoot: tempRoot,
     });
     assert.equal(result.status, 'fail');
-    assert.ok(!(await readdir(tempRoot)).includes('should-not-run.txt'));
-    const trace = await readJsonFile(result.tracePath);
-    assert.match((trace as Array<{ error?: string }>)[0]?.error ?? '', /has no checker registered/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
 
-test('runs inline flow composition through call nodes', async () => {
+test('external recipe roots can call a library recipe with the same filename ref', async () => {
   const tempRoot = await createTempRoot();
   try {
-    const recipe = {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    const libraryRoot = path.join(tempRoot, 'library');
+    await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
       schema_version: 1,
-      title: 'Inline call recipe',
-      description: 'Executes a reusable inline flow.',
-      flows: {
-        'example.write-file': {
-          entry: 'write',
-          nodes: {
-            write: {
-              action: 'command',
-              intent: 'Write the inline flow output file',
-              cmd: "node -e \"require('fs').writeFileSync('flow.txt','ok')\"",
-              next: 'assert-write',
-            },
-            'assert-write': {
-              action: 'assert_exit_code',
-              intent: 'Confirm the inline flow write command exited successfully',
-              source: 'write',
-              expected: 0,
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
-          },
-        },
-      },
-      validate: {
-        workflow: {
-          entry: 'call-flow',
-          nodes: {
-            'call-flow': {
-              action: 'call',
-              intent: 'Run the reusable inline file-writing flow',
-              ref: 'example.write-file',
-              next: 'assert-flow-output',
-            },
-            'assert-flow-output': {
-              action: 'assert_file',
-              intent: 'Verify the inline flow produced the expected file',
-              path: 'flow.txt',
-              contains: 'ok',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
-          },
-        },
-      },
-    };
-    const runner = createRecipeRunner({
-      actionManifest: coreActionManifest,
-      adapters: createStandardCoreAdapters(),
+      kind: 'recipe-library',
+      name: 'collision-library',
     });
-    const result = await runner.run({
-      recipeDocument: recipe,
-      artifactsDir: path.join(tempRoot, 'artifacts'),
-      projectRoot: tempRoot,
-    });
-    assert.equal(result.status, 'pass');
-    const trace = await readJsonFile(result.tracePath);
-    assert.ok(
-      (trace as Array<{ nodeId: string }>).some((entry) => entry.nodeId === 'call-flow/write'),
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes', 'smoke.recipe.json'),
+      recipeDocument({ done: { action: 'end', status: 'pass' } }),
     );
-    assert.ok(
-      (trace as Array<{ nodeId: string }>).some(
-        (entry) => entry.nodeId === 'call-flow/assert-write',
-      ),
+    const recipePath = path.join(tempRoot, 'smoke.recipe.json');
+    await writeJsonFile(
+      recipePath,
+      recipeDocument({
+        call: {
+          action: 'call',
+          intent: 'Run the library smoke recipe.',
+          ref: 'smoke',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
     );
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
-});
-
-test('keeps child flow intent as the only default HUD line', async () => {
-  const tempRoot = await createTempRoot();
-  try {
-    const hudPayloads: Record<string, unknown>[] = [];
-    const hudAdapter = defineActionAdapter({
-      action: 'app.hud',
-      async execute(node) {
-        hudPayloads.push(node);
-        return { output: { ok: true } };
-      },
-    });
-    const runner = createRecipeRunner({
-      actionManifest: {
-        ...coreActionManifest,
-        supported_official_actions: [...coreActionManifest.supported_official_actions, 'app.hud'],
-      },
-      adapters: [...createStandardCoreAdapters(), hudAdapter],
-    });
-
-    const result = await runner.run({
-      recipeDocument: {
-        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-        schema_version: 1,
-        flows: {
-          'example.child-hud': {
-            entry: 'write-proof',
-            nodes: {
-              'write-proof': {
-                action: 'command',
-                intent: 'Write the child flow proof file',
-                cmd: "node -e \"require('fs').writeFileSync('subflow.txt','ok')\"",
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-        validate: {
-          workflow: {
-            entry: 'call-flow',
-            nodes: {
-              'call-flow': {
-                action: 'call',
-                intent: 'Run the parent flow for HUD context',
-                ref: 'example.child-hud',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-      },
-      artifactsDir: path.join(tempRoot, 'artifacts'),
-      projectRoot: tempRoot,
-    });
-
-    assert.equal(result.status, 'pass');
-    const childHud = hudPayloads.find(
-      (payload) => payload.node_id === 'call-flow/write-proof' && payload.status === 'running',
-    );
-    assert.equal(childHud?.text, 'Write the child flow proof file');
-    assert.equal(childHud?.sub_intent, undefined);
-    assert.equal(
-      (childHud?.display as Record<string, unknown> | undefined)?.showSubflow,
-      undefined,
-    );
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
-});
-
-test('runs catalog flow calls with params and postconditions', async () => {
-  const tempRoot = await createTempRoot();
-  try {
-    await writeJsonFile(path.join(tempRoot, 'flows.json'), {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      kind: 'recipe-flow-catalog',
-      flows: {
-        'example.write-param': {
-          paramsSchema: {
-            type: 'object',
-            required: ['text'],
-            properties: { text: { type: 'string' } },
-          },
-          postcondition: { path: '$.outputs.write.exitCode', operator: 'eq', value: 0 },
-          workflow: {
-            entry: 'write',
-            nodes: {
-              write: {
-                action: 'command',
-                intent: 'Write the catalog flow parameter to disk',
-                cmd: "node -e \"require('fs').writeFileSync('catalog.txt','{{params.text}}')\"",
-                next: 'skip-when-false',
-              },
-              'skip-when-false': {
-                action: 'command',
-                intent: 'Exercise the catalog flow conditional skip path',
-                cmd: "node -e \"require('fs').writeFileSync('should-not-run.txt','bad')\"",
-                when: { path: '$.params.runSkippedNode', operator: 'eq', value: true },
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-      },
-    });
-    const recipe = {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      title: 'Catalog call recipe',
-      description: 'Executes a reusable catalog flow.',
-      uses: ['flows.json'],
-      validate: {
-        workflow: {
-          entry: 'call-flow',
-          nodes: {
-            'call-flow': {
-              action: 'call',
-              intent: 'Run the catalog flow with recipe parameters',
-              ref: 'example.write-param',
-              params: { text: 'catalog-ok' },
-              next: 'assert-flow-output',
-            },
-            'assert-flow-output': {
-              action: 'assert_file',
-              intent: 'Verify the catalog flow wrote the expected output',
-              path: 'catalog.txt',
-              contains: 'catalog-ok',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
-          },
-        },
-      },
-    };
-    const recipePath = path.join(tempRoot, 'recipe.json');
-    await writeJsonFile(recipePath, recipe);
+    const artifactsDir = path.join(tempRoot, 'artifacts');
     const runner = createRecipeRunner({
       actionManifest: coreActionManifest,
       adapters: createStandardCoreAdapters(),
     });
     const result = await runner.run({
       recipePath,
-      artifactsDir: path.join(tempRoot, 'artifacts'),
+      librarySources: [
+        {
+          name: 'collision-library',
+          root: libraryRoot,
+          provenance: { kind: 'library', trust: 'trusted', name: 'collision-library' },
+        },
+      ],
+      artifactsDir,
       projectRoot: tempRoot,
     });
     assert.equal(result.status, 'pass');
-    assert.equal(await readFile(path.join(tempRoot, 'catalog.txt'), 'utf-8'), 'catalog-ok');
-    assert.ok(!(await readdir(tempRoot)).includes('should-not-run.txt'));
+    const resolution = (await readJsonFile(path.join(artifactsDir, 'recipe-resolution.json'))) as {
+      root?: { ref?: string };
+      edges?: Array<{ from?: string; to?: string }>;
+    };
+    assert.match(resolution.root?.ref ?? '', /^\$root:sha256:[a-f0-9]{64}$/u);
+    assert.equal(resolution.edges?.[0]?.to, 'smoke');
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
 
-test('applies catalog flow parameter defaults and preserves explicit overrides', async () => {
+test('runs nested parameterized recipes with defaults and explicit falsy overrides', async () => {
   const tempRoot = await createTempRoot();
   try {
-    await writeJsonFile(path.join(tempRoot, 'flows.json'), {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    const libraryRoot = path.join(tempRoot, 'library');
+    await mkdir(path.join(libraryRoot, 'recipes', 'example'), { recursive: true });
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
       schema_version: 1,
-      kind: 'recipe-flow-catalog',
-      flows: {
-        'example.write-default': {
+      kind: 'recipe-library',
+      name: 'test-library',
+    });
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes', 'example', 'write.recipe.json'),
+      recipeDocument(
+        {
+          write: {
+            action: 'command',
+            intent: 'Write the resolved recipe parameters.',
+            cmd: "printf '%s:%s' '{{params.text}}' '{{params.enabled}}' > '{{params.path}}'",
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+        {
           paramsSchema: {
             type: 'object',
-            required: ['text', 'file', '__proto__'],
+            additionalProperties: false,
             properties: {
-              text: { type: 'string', default: 'default-value' },
-              file: { type: 'string', default: 'default.txt' },
-              ['__proto__']: { type: 'string', default: 'safe-default' },
-            },
-          },
-          workflow: {
-            entry: 'write',
-            nodes: {
-              write: {
-                action: 'command',
-                intent: 'Write resolved flow parameters to disk',
-                cmd: "node -e \"require('fs').writeFileSync('{{params.file}}','{{params.text}}')\"",
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
+              path: { type: 'string', default: 'default.txt' },
+              text: { type: 'string', default: 'hello' },
+              enabled: { type: 'boolean', default: true },
             },
           },
         },
-      },
-    });
-    const recipePath = path.join(tempRoot, 'recipe.json');
-    await writeJsonFile(recipePath, {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      title: 'Catalog defaults recipe',
-      description: 'Exercises default and explicitly overridden flow parameters.',
-      uses: ['flows.json'],
-      validate: {
-        workflow: {
-          entry: 'call-defaults',
-          nodes: {
-            'call-defaults': {
-              action: 'call',
-              intent: 'Run the flow with its defaults',
-              ref: 'example.write-default',
-              next: 'call-overrides',
-            },
-            'call-overrides': {
-              action: 'call',
-              intent: 'Override both flow defaults',
-              ref: 'example.write-default',
-              params: { text: 'explicit-value', file: 'explicit.txt' },
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
-          },
+      ),
+    );
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes', 'example', 'parent.recipe.json'),
+      recipeDocument({
+        'call-default': {
+          action: 'call',
+          intent: 'Run the child recipe with defaults.',
+          ref: 'example.write',
+          next: 'call-overrides',
         },
-      },
-    });
+        'call-overrides': {
+          action: 'call',
+          intent: 'Run the child recipe with explicit falsy values.',
+          ref: 'example.write',
+          params: { path: 'override.txt', text: '', enabled: false },
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
+    );
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes', 'unrelated.recipe.json'),
+      recipeDocument({
+        unused: {
+          action: 'another-platform.action',
+          intent: 'Remain available to another runner without blocking this recipe.',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
+    );
+
     const runner = createRecipeRunner({
       actionManifest: coreActionManifest,
       adapters: createStandardCoreAdapters(),
     });
+    const artifactsDir = path.join(tempRoot, 'artifacts');
     const result = await runner.run({
-      recipePath,
+      recipeDocument: recipeDocument({
+        'call-parent': {
+          action: 'call',
+          intent: 'Run the composed parent recipe.',
+          ref: 'example.parent',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
+      librarySources: [
+        {
+          name: 'test-library',
+          root: libraryRoot,
+          provenance: {
+            kind: 'library',
+            trust: 'trusted',
+            name: 'test-library',
+          },
+        },
+      ],
+      artifactsDir,
+      projectRoot: tempRoot,
+    });
+
+    assert.equal(result.status, 'pass');
+    assert.equal(await readFile(path.join(tempRoot, 'default.txt'), 'utf-8'), 'hello:true');
+    assert.equal(await readFile(path.join(tempRoot, 'override.txt'), 'utf-8'), ':false');
+    const trace = (await readJsonFile(result.tracePath)) as Array<{
+      nodeId?: string;
+      recipe?: { ref?: string; digest?: string; source?: string; file?: string };
+    }>;
+    assert.ok(trace.some((entry) => entry.nodeId === 'call-parent/call-default/write'));
+    assert.ok(trace.some((entry) => entry.nodeId === 'call-parent/call-overrides/write'));
+    assert.deepEqual(trace.find((entry) => entry.nodeId === 'call-parent')?.recipe, {
+      ref: 'example.parent',
+      digest: trace.find((entry) => entry.nodeId === 'call-parent')?.recipe?.digest,
+      source: 'test-library',
+      file: 'recipes/example/parent.recipe.json',
+    });
+    assert.match(
+      trace.find((entry) => entry.nodeId === 'call-parent')?.recipe?.digest ?? '',
+      /^sha256:[a-f0-9]{64}$/u,
+    );
+    const resolution = (await readJsonFile(path.join(artifactsDir, 'recipe-resolution.json'))) as {
+      dependencies?: unknown[];
+      edges?: unknown[];
+    };
+    assert.equal(resolution.dependencies?.length, 2);
+    assert.equal(resolution.edges?.length, 3);
+    assert.equal(
+      (await listRelativeFiles(artifactsDir)).filter((entry) =>
+        entry.startsWith('resolved-recipes/'),
+      ).length,
+      2,
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('preserves typed parent outputs across recipe call parameters', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    await mkdir(path.join(libraryRoot, 'recipes', 'example'), { recursive: true });
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
+      schema_version: 1,
+      kind: 'recipe-library',
+      name: 'typed-output-library',
+    });
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes', 'example', 'consume.recipe.json'),
+      recipeDocument(
+        {
+          consume: {
+            action: 'demo.consume',
+            intent: 'Use the count produced by the parent recipe.',
+            count: '{{params.count}}',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+        {
+          paramsSchema: {
+            type: 'object',
+            properties: { count: { type: 'integer' } },
+            required: ['count'],
+            additionalProperties: false,
+          },
+        },
+      ),
+    );
+    const actionManifest: RecipeActionManifestDocument = {
+      runner_protocol_version: 1,
+      action_registry_version: 1,
+      supported_official_actions: ['call', 'end'],
+      custom_actions: [
+        {
+          name: 'demo.produce',
+          description: 'Produce a typed count.',
+          schema: { type: 'object', additionalProperties: false },
+          execution_capabilities: [],
+        },
+        {
+          name: 'demo.consume',
+          description: 'Consume a typed count.',
+          schema: {
+            type: 'object',
+            properties: { count: { type: 'integer' } },
+            required: ['count'],
+            additionalProperties: false,
+          },
+          execution_capabilities: [],
+        },
+      ],
+    };
+    let consumed: unknown;
+    const runner = createRecipeRunner({
+      actionManifest,
+      adapters: [
+        defineActionAdapter({
+          action: 'demo.produce',
+          async execute() {
+            return { output: { count: 7 } };
+          },
+        }),
+        defineActionAdapter({
+          action: 'demo.consume',
+          async execute(node) {
+            consumed = node.count;
+            return { output: { count: node.count } };
+          },
+        }),
+      ],
+    });
+    const document = recipeDocument({
+      produce: {
+        action: 'demo.produce',
+        intent: 'Produce the count needed by the child recipe.',
+        next: 'consume',
+      },
+      consume: {
+        action: 'call',
+        intent: 'Reuse the typed count consumer.',
+        ref: 'example.consume',
+        params: { count: '{{outputs.produce.count}}' },
+        next: 'done',
+      },
+      done: { action: 'end', status: 'pass' },
+    });
+    const request = {
+      recipeDocument: document,
+      librarySources: [
+        {
+          name: 'typed-output-library',
+          root: libraryRoot,
+          provenance: {
+            kind: 'library' as const,
+            trust: 'trusted' as const,
+            name: 'typed-output-library',
+          },
+        },
+      ],
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+    };
+    await runner.preflight(request);
+    const result = await runner.run(request);
+    assert.equal(result.status, 'pass');
+    assert.equal(consumed, 7);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects action values whose resolved output violates the manifest schema', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    let consumed = false;
+    const actionManifest: RecipeActionManifestDocument = {
+      runner_protocol_version: 1,
+      action_registry_version: 1,
+      supported_official_actions: ['end'],
+      custom_actions: [
+        {
+          name: 'demo.produce',
+          schema: { type: 'object', additionalProperties: false },
+          execution_capabilities: [],
+        },
+        {
+          name: 'demo.consume',
+          schema: {
+            type: 'object',
+            properties: { count: { type: 'integer' } },
+            required: ['count'],
+            additionalProperties: false,
+          },
+          execution_capabilities: [],
+        },
+      ],
+    };
+    const runner = createRecipeRunner({
+      actionManifest,
+      adapters: [
+        defineActionAdapter({
+          action: 'demo.produce',
+          async execute() {
+            return { output: { count: 'seven' } };
+          },
+        }),
+        defineActionAdapter({
+          action: 'demo.consume',
+          async execute() {
+            consumed = true;
+            return {};
+          },
+        }),
+      ],
+    });
+    const result = await runner.run({
+      recipeDocument: recipeDocument({
+        produce: {
+          action: 'demo.produce',
+          intent: 'Produce a value for the next step.',
+          next: 'consume',
+        },
+        consume: {
+          action: 'demo.consume',
+          intent: 'Use the produced count.',
+          count: '{{outputs.produce.count}}',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
       artifactsDir: path.join(tempRoot, 'artifacts'),
       projectRoot: tempRoot,
     });
-    assert.equal(result.status, 'pass');
-    assert.equal(await readFile(path.join(tempRoot, 'default.txt'), 'utf-8'), 'default-value');
-    assert.equal(await readFile(path.join(tempRoot, 'explicit.txt'), 'utf-8'), 'explicit-value');
+    assert.equal(result.status, 'fail');
+    assert.equal(consumed, false);
+    const trace = (await readJsonFile(result.tracePath)) as Array<{ error?: string }>;
+    assert.match(trace.at(-1)?.error ?? '', /invalid_param_value_type/u);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
 
-test('runs nested catalog flow calls and rejects flow call cycles', async () => {
+test('rejects invalid nested call parameters during preflight', async () => {
   const tempRoot = await createTempRoot();
   try {
-    await writeJsonFile(path.join(tempRoot, 'flows.json'), {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    const libraryRoot = path.join(tempRoot, 'library');
+    await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
       schema_version: 1,
-      kind: 'recipe-flow-catalog',
-      flows: {
-        'example.parent': {
-          workflow: {
-            entry: 'call-child',
-            nodes: {
-              'call-child': {
-                action: 'call',
-                intent: 'Call the child catalog flow from the parent flow',
-                ref: 'example.child',
-                params: { text: 'nested-ok' },
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
+      kind: 'recipe-library',
+      name: 'typed-library',
+    });
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes', 'child.recipe.json'),
+      recipeDocument(
+        {
+          done: { action: 'end', status: 'pass' },
         },
-        'example.child': {
+        {
           paramsSchema: {
             type: 'object',
-            required: ['text'],
-            properties: { text: { type: 'string' } },
-          },
-          workflow: {
-            entry: 'write',
-            nodes: {
-              write: {
-                action: 'command',
-                intent: 'Write the nested catalog flow output file',
-                cmd: "node -e \"require('fs').writeFileSync('nested.txt','{{params.text}}')\"",
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
+            properties: { count: { type: 'integer' } },
+            required: ['count'],
+            additionalProperties: false,
           },
         },
-        'example.cycle-a': {
-          workflow: {
-            entry: 'call-b',
-            nodes: {
-              'call-b': {
-                action: 'call',
-                intent: 'Call cycle-b to exercise catalog cycle detection',
-                ref: 'example.cycle-b',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-        'example.cycle-b': {
-          workflow: {
-            entry: 'call-a',
-            nodes: {
-              'call-a': {
-                action: 'call',
-                intent: 'Call cycle-a to exercise catalog cycle detection',
-                ref: 'example.cycle-a',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-      },
-    });
-    const runner = createRecipeRunner({
-      actionManifest: coreActionManifest,
-      adapters: createStandardCoreAdapters(),
-    });
-    const passResult = await runner.run({
-      recipeDocument: {
-        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-        schema_version: 1,
-        title: 'Nested catalog call recipe',
-        description: 'Executes flow calls inside flow catalogs.',
-        uses: ['flows.json'],
-        validate: {
-          workflow: {
-            entry: 'call-parent',
-            nodes: {
-              'call-parent': {
-                action: 'call',
-                intent: 'Run the parent catalog flow and wait for completion',
-                ref: 'example.parent',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-      },
-      artifactsDir: path.join(tempRoot, 'artifacts-pass'),
-      projectRoot: tempRoot,
-    });
-    assert.equal(passResult.status, 'pass');
-    assert.equal(await readFile(path.join(tempRoot, 'nested.txt'), 'utf-8'), 'nested-ok');
-    const trace = await readJsonFile(passResult.tracePath);
-    assert.ok(
-      (trace as Array<{ nodeId: string }>).some(
-        (entry) => entry.nodeId === 'call-parent/call-child/write',
       ),
     );
-
-    const failResult = await runner.run({
-      recipeDocument: {
-        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-        schema_version: 1,
-        title: 'Cycle catalog call recipe',
-        description: 'Fails recursive flow calls.',
-        uses: ['flows.json'],
-        validate: {
-          workflow: {
-            entry: 'call-cycle',
-            nodes: {
-              'call-cycle': {
-                action: 'call',
-                intent: 'Run the cyclic catalog flow to capture the failure trace',
-                ref: 'example.cycle-a',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-      },
-      artifactsDir: path.join(tempRoot, 'artifacts-fail'),
-      projectRoot: tempRoot,
-    });
-    assert.equal(failResult.status, 'fail');
-    const failTrace = await readJsonFile(failResult.tracePath);
-    assert.ok(
-      (failTrace as Array<{ error?: string }>).some((entry) =>
-        /Flow call cycle detected/.test(entry.error ?? ''),
-      ),
-    );
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
-});
-
-test('fails catalog flow calls with invalid params or postconditions', async () => {
-  const tempRoot = await createTempRoot();
-  try {
-    await writeJsonFile(path.join(tempRoot, 'flows.json'), {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      kind: 'recipe-flow-catalog',
-      flows: {
-        'example.needs-param': {
-          paramsSchema: { type: 'object', required: ['text'] },
-          workflow: {
-            entry: 'done',
-            nodes: { done: { action: 'end', status: 'pass' } },
-          },
-        },
-        'example.bad-postcondition': {
-          postcondition: { path: '$.outputs.done.status', operator: 'eq', value: 'missing' },
-          workflow: {
-            entry: 'done',
-            nodes: { done: { action: 'end', status: 'pass' } },
-          },
-        },
-      },
-    });
-    const runner = createRecipeRunner({
-      actionManifest: coreActionManifest,
-      adapters: createStandardCoreAdapters(),
-    });
-    const baseRecipe = {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      title: 'Catalog call failure',
-      description: 'Fails invalid catalog calls.',
-      uses: ['flows.json'],
-      validate: {
-        workflow: {
-          entry: 'call-flow',
-          nodes: {
-            'call-flow': {
-              action: 'call',
-              intent: 'Run the parameterized catalog flow without required params',
-              ref: 'example.needs-param',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
-          },
-        },
-      },
-    };
-
-    const invalidParams = await runner.run({
-      recipeDocument: baseRecipe,
-      artifactsDir: path.join(tempRoot, 'invalid-params'),
-      projectRoot: tempRoot,
-    });
-    assert.equal(invalidParams.status, 'fail');
-
-    const failedPostcondition = await runner.run({
-      recipeDocument: {
-        ...baseRecipe,
-        validate: {
-          workflow: {
-            entry: 'call-flow',
-            nodes: {
-              'call-flow': {
-                action: 'call',
-                intent: 'Run the catalog flow with an invalid postcondition',
-                ref: 'example.bad-postcondition',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
-            },
-          },
-        },
-      },
-      artifactsDir: path.join(tempRoot, 'bad-postcondition'),
-      projectRoot: tempRoot,
-    });
-    assert.equal(failedPostcondition.status, 'fail');
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
-});
-
-test('rejects lifecycle nodes that declare graph transitions', async () => {
-  const tempRoot = await createTempRoot();
-  try {
     const runner = createRecipeRunner({
       actionManifest: coreActionManifest,
       adapters: createStandardCoreAdapters(),
     });
     await assert.rejects(
-      runner.run({
-        recipeDocument: {
-          $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-          schema_version: 1,
-          title: 'Invalid lifecycle',
-          description: 'Lifecycle arrays are ordered and cannot declare next.',
-          validate: {
-            workflow: {
-              setup: [
-                {
-                  action: 'wait',
-                  intent: 'Wait during lifecycle setup to trigger transition validation',
-                  ms: 1,
-                  next: 'done',
-                },
-              ],
-              entry: 'done',
-              nodes: { done: { action: 'end', status: 'pass' } },
-            },
+      runner.preflight({
+        recipeDocument: recipeDocument({
+          child: {
+            action: 'call',
+            intent: 'Reuse the typed child recipe.',
+            ref: 'child',
+            params: { count: 'seven' },
+            next: 'done',
           },
-        },
+          done: { action: 'end', status: 'pass' },
+        }),
+        librarySources: [{ root: libraryRoot }],
         artifactsDir: path.join(tempRoot, 'artifacts'),
         projectRoot: tempRoot,
       }),
-      /must not declare next/,
+      (error: unknown) =>
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'RECIPE_PARAMS_INVALID' &&
+        /params\.count/u.test(error.message),
     );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects recipe call cycles before running actions', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
+      schema_version: 1,
+      kind: 'recipe-library',
+      name: 'cycle-library',
+    });
+    for (const [ref, target] of [
+      ['a', 'b'],
+      ['b', 'a'],
+    ]) {
+      await writeJsonFile(
+        path.join(libraryRoot, 'recipes', `${ref}.recipe.json`),
+        recipeDocument({
+          call: {
+            action: 'call',
+            intent: `Call recipe ${target}.`,
+            ref: target,
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        }),
+      );
+    }
+    let actionRuns = 0;
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters().map((adapter) =>
+        adapter.action === 'wait'
+          ? {
+              ...adapter,
+              async execute(node, context) {
+                actionRuns += 1;
+                return adapter.execute(node, context);
+              },
+            }
+          : adapter,
+      ),
+    });
+    await assert.rejects(
+      runner.preflight({
+        recipeDocument: recipeDocument({
+          call: {
+            action: 'call',
+            intent: 'Enter the cyclic dependency graph.',
+            ref: 'a',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        }),
+        librarySources: [
+          {
+            name: 'cycle-library',
+            root: libraryRoot,
+            provenance: { kind: 'library', trust: 'trusted', name: 'cycle-library' },
+          },
+        ],
+        artifactsDir: path.join(tempRoot, 'artifacts'),
+        projectRoot: tempRoot,
+      }),
+      /cycle detected/u,
+    );
+    assert.equal(actionRuns, 0);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects depth overflow and invalid nested parameters before side effects', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
+      schema_version: 1,
+      kind: 'recipe-library',
+      name: 'preflight-library',
+    });
+    for (let level = 1; level <= 8; level += 1) {
+      await writeJsonFile(
+        path.join(libraryRoot, 'recipes', `level-${level}.recipe.json`),
+        recipeDocument(
+          level === 8
+            ? { done: { action: 'end', status: 'pass' } }
+            : {
+                call: {
+                  action: 'call',
+                  intent: `Call recipe level ${level + 1}.`,
+                  ref: `level-${level + 1}`,
+                  next: 'done',
+                },
+                done: { action: 'end', status: 'pass' },
+              },
+        ),
+      );
+    }
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes', 'required.recipe.json'),
+      recipeDocument(
+        { done: { action: 'end', status: 'pass' } },
+        {
+          paramsSchema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['value'],
+            properties: { value: { type: 'string' } },
+          },
+        },
+      ),
+    );
+
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const source = {
+      name: 'preflight-library',
+      root: libraryRoot,
+      provenance: { kind: 'library' as const, trust: 'trusted' as const },
+    };
+    const rootCalling = (ref: string, beforeCall = false) =>
+      recipeDocument(
+        {
+          ...(beforeCall
+            ? {
+                write: {
+                  action: 'command',
+                  intent: 'Create a marker only after composition preflight succeeds.',
+                  cmd: 'touch should-not-run.txt',
+                  next: 'call',
+                },
+              }
+            : {}),
+          call: { action: 'call', intent: `Call ${ref}.`, ref, next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+        { entry: beforeCall ? 'write' : 'call' },
+      );
+
+    await runner.preflight({
+      recipeDocument: rootCalling('level-2'),
+      librarySources: [source],
+      artifactsDir: path.join(tempRoot, 'accepted-artifacts'),
+      projectRoot: tempRoot,
+    });
+    await assert.rejects(
+      runner.run({
+        recipeDocument: rootCalling('level-1', true),
+        librarySources: [source],
+        artifactsDir: path.join(tempRoot, 'depth-artifacts'),
+        projectRoot: tempRoot,
+      }),
+      (error: unknown) =>
+        error instanceof Error && 'code' in error && error.code === 'RECIPE_CALL_DEPTH_EXCEEDED',
+    );
+    await assert.rejects(
+      runner.run({
+        recipeDocument: rootCalling('required', true),
+        librarySources: [source],
+        artifactsDir: path.join(tempRoot, 'params-artifacts'),
+        projectRoot: tempRoot,
+      }),
+      (error: unknown) =>
+        error instanceof Error && 'code' in error && error.code === 'RECIPE_PARAMS_INVALID',
+    );
+    assert.ok(!(await readdir(tempRoot)).includes('should-not-run.txt'));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('routes from declared result cases and ignores adapter-owned status or destinations', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const actionManifest: RecipeActionManifestDocument = {
+      ...coreActionManifest,
+      custom_actions: [
+        {
+          name: 'example.route',
+          description: 'Return a semantic result case.',
+          schema: { type: 'object', additionalProperties: false },
+          result_cases: ['match'],
+          execution_capabilities: [],
+        },
+      ],
+    };
+    const runner = createRecipeRunner({
+      actionManifest,
+      adapters: [
+        ...createStandardCoreAdapters(),
+        defineActionAdapter({
+          action: 'example.route',
+          source: { kind: 'bundled', trust: 'trusted', name: 'recipe harness test' },
+          async execute() {
+            return { case: 'match', status: 'fail', next: 'wrong' } as never;
+          },
+        }),
+      ],
+    });
+    const result = await runner.run({
+      recipeDocument: recipeDocument({
+        route: {
+          action: 'example.route',
+          intent: 'Select the path from the observed semantic case.',
+          cases: { match: 'right' },
+          default: 'wrong',
+        },
+        right: { action: 'end', status: 'pass' },
+        wrong: { action: 'end', status: 'fail' },
+      }),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+    });
+    assert.equal(result.status, 'pass');
+    const trace = (await readJsonFile(result.tracePath)) as Array<{ nodeId?: string }>;
+    assert.deepEqual(
+      trace.map((entry) => entry.nodeId),
+      ['route', 'right'],
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('switch routes on resolved string parameters without exposing runtime internals', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const result = await runner.run({
+      recipeDocument: recipeDocument(
+        {
+          choose: {
+            action: 'switch',
+            value: '{{params.mode}}',
+            equals: 'background_resume',
+            intent: 'Choose the requested lifecycle preparation path.',
+            cases: { match: 'background' },
+            default: 'warm',
+          },
+          background: { action: 'end', status: 'pass' },
+          warm: { action: 'end', status: 'fail' },
+        },
+        {
+          paramsSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              mode: {
+                type: 'string',
+                enum: ['warm', 'background_resume'],
+                default: 'warm',
+              },
+            },
+          },
+        },
+      ),
+      params: { mode: 'background_resume' },
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+    });
+    assert.equal(result.status, 'pass');
+    const trace = (await readJsonFile(result.tracePath)) as Array<{
+      nodeId?: string;
+      case?: string;
+      output?: unknown;
+    }>;
+    assert.deepEqual(
+      trace.map((entry) => entry.nodeId),
+      ['choose', 'background'],
+    );
+    assert.equal(trace[0]?.case, 'match');
+    assert.deepEqual(trace[0]?.output, {
+      matched: true,
+      value: 'background_resume',
+      expected: 'background_resume',
+    });
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -1805,37 +1989,26 @@ test('supports the documented v1 assertion operators', async () => {
       tags: ['red', 'blue'],
       nested: { ok: true },
     });
-    const recipe = {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      title: 'Assertion operators',
-      description: 'Exercises v1 assertion operators.',
-      validate: {
-        workflow: {
-          entry: 'assert-subject',
-          nodes: {
-            'assert-subject': {
-              action: 'assert_json',
-              intent: 'Verify the subject JSON satisfies all documented assertion operators',
-              path: 'subject.json',
-              assert: {
-                all: [
-                  { path: '$.count', operator: 'gte', value: 3 },
-                  { path: '$.count', operator: 'lte', value: 3 },
-                  { path: '$.name', operator: 'matches', value: '^alp' },
-                  { path: '$.tags', operator: 'contains', value: 'red' },
-                  { path: '$.tags', operator: 'length_eq', value: 2 },
-                  { path: '$.nested', operator: 'deep_eq', value: { ok: true } },
-                  { path: '$.missing', operator: 'falsy' },
-                ],
-              },
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
-          },
+    const recipe = recipeDocument({
+      'assert-subject': {
+        action: 'assert_json',
+        intent: 'Verify the subject JSON satisfies all documented assertion operators.',
+        path: 'subject.json',
+        assert: {
+          all: [
+            { path: '$.count', operator: 'gte', value: 3 },
+            { path: '$.count', operator: 'lte', value: 3 },
+            { path: '$.name', operator: 'matches', value: '^alp' },
+            { path: '$.tags', operator: 'contains', value: 'red' },
+            { path: '$.tags', operator: 'length_eq', value: 2 },
+            { path: '$.nested', operator: 'deep_eq', value: { ok: true } },
+            { path: '$.missing', operator: 'falsy' },
+          ],
         },
+        next: 'done',
       },
-    };
+      done: { action: 'end', status: 'pass' },
+    });
     const runner = createRecipeRunner({
       actionManifest: coreActionManifest,
       adapters: createStandardCoreAdapters(),
@@ -1852,12 +2025,6 @@ test('supports the documented v1 assertion operators', async () => {
 });
 
 test('fails fast for missing manifest declarations and missing adapter implementations', () => {
-  const endAdapter = defineActionAdapter({
-    action: 'end',
-    async execute() {
-      return { status: 'pass' };
-    },
-  });
   const echoAdapter = defineActionAdapter({
     action: 'example.echo',
     async execute(node) {
@@ -1868,49 +2035,49 @@ test('fails fast for missing manifest declarations and missing adapter implement
     runner_protocol_version: 1,
     action_registry_version: 1,
     supported_official_actions: ['end'],
-    custom_actions: [{ name: 'example.echo', description: 'Echo a test message.' }],
+    custom_actions: [
+      {
+        name: 'example.echo',
+        description: 'Echo a test message.',
+        schema: {
+          type: 'object',
+          properties: { message: { type: 'string' } },
+          additionalProperties: false,
+        },
+        execution_capabilities: [],
+      },
+    ],
   };
 
   assert.throws(
     () =>
       createRecipeRunner({
         actionManifest: { ...customManifest, custom_actions: [] },
-        adapters: [endAdapter, echoAdapter],
+        adapters: [echoAdapter],
       }),
     /not declared/,
   );
   assert.throws(
-    () => createRecipeRunner({ actionManifest: customManifest, adapters: [endAdapter] }),
+    () => createRecipeRunner({ actionManifest: customManifest, adapters: [] }),
     /no registered adapter/,
   );
   assert.doesNotThrow(() =>
-    createRecipeRunner({ actionManifest: customManifest, adapters: [endAdapter, echoAdapter] }),
+    createRecipeRunner({ actionManifest: customManifest, adapters: [echoAdapter] }),
   );
 });
 
 test('writes failure trace and summary with a non-pass result', async () => {
   const tempRoot = await createTempRoot();
   try {
-    const recipe = {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      title: 'Failing recipe',
-      description: 'Demonstrates failure artifacts.',
-      validate: {
-        workflow: {
-          entry: 'run',
-          nodes: {
-            run: {
-              action: 'command',
-              intent: 'Run a command that exits non-zero to prove failure artifacts',
-              cmd: 'node -e "process.exit(7)"',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
-          },
-        },
+    const recipe = recipeDocument({
+      run: {
+        action: 'command',
+        intent: 'Run a command that exits non-zero to prove failure artifacts.',
+        cmd: 'node -e "process.exit(7)"',
+        next: 'done',
       },
-    };
+      done: { action: 'end', status: 'pass' },
+    });
     const runner = createRecipeRunner({
       actionManifest: coreActionManifest,
       adapters: createStandardCoreAdapters(),
@@ -1975,6 +2142,175 @@ test('runs and validates recipes through the harness CLI entrypoint', async () =
   }
 });
 
+test('validates composed artifact packages from their retained dependency graph', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'recipe-library');
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    const manifestPath = path.join(tempRoot, 'action-manifest.json');
+    const artifactsDir = path.join(tempRoot, 'artifacts');
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
+      kind: 'recipe-library',
+      schema_version: 1,
+      name: 'team',
+    });
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes/team/nested.recipe.json'),
+      recipeDocument(
+        { done: { action: 'end', status: 'pass' } },
+        { description: 'Provides a retained nested dependency.' },
+      ),
+    );
+    await writeJsonFile(
+      recipePath,
+      recipeDocument({
+        nested: {
+          action: 'call',
+          ref: 'team.nested',
+          intent: 'Run the retained dependency.',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
+    );
+    await writeJsonFile(manifestPath, coreActionManifest);
+
+    await runRecipeHarnessCli([
+      'run',
+      recipePath,
+      '--artifacts-dir',
+      artifactsDir,
+      '--action-manifest',
+      manifestPath,
+      '--project-root',
+      tempRoot,
+      '--json',
+    ]);
+
+    const result = await validateRecipeCliInput({
+      recipePath,
+      actionManifestPath: manifestPath,
+      artifactDir: artifactsDir,
+      baseDir: tempRoot,
+    });
+    assert.equal(result.status, 'valid');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('CLI discovers, describes, and runs a parameterized library recipe by id', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    const shadowLibraryRoot = path.join(tempRoot, 'shadow-library');
+    const recipePath = path.join(libraryRoot, 'recipes/demo/check.recipe.json');
+    const manifestPath = path.join(tempRoot, 'action-manifest.json');
+    const artifactsDir = path.join(tempRoot, 'artifacts');
+    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
+      kind: 'recipe-library',
+      name: 'team',
+    });
+    await writeJsonFile(recipePath, {
+      ...recipeDocument(
+        {
+          check: {
+            action: 'wait',
+            ms: '{{params.delay}}',
+            intent: 'Check the explicit recipe parameter.',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+        {
+          description: 'Proves direct library execution and parameter overrides.',
+          paramsSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              delay: {
+                type: 'integer',
+                default: 1,
+                description: 'Wait duration in milliseconds',
+              },
+            },
+          },
+        },
+      ),
+      title: 'Parameterized check',
+    });
+    await writeJsonFile(path.join(shadowLibraryRoot, 'library.json'), {
+      kind: 'recipe-library',
+      name: 'personal',
+    });
+    await writeJsonFile(
+      path.join(shadowLibraryRoot, 'recipes/demo/check.recipe.json'),
+      await readJsonFile(recipePath),
+    );
+    await writeJsonFile(manifestPath, coreActionManifest);
+
+    const listOutput = await captureConsoleLog(() =>
+      runRecipeHarnessCli([
+        'run',
+        '--list',
+        '--library',
+        `team=${libraryRoot}`,
+        '--library',
+        `personal=${shadowLibraryRoot}`,
+        '--json',
+      ]),
+    );
+    assert.match(listOutput, /"ref": "demo\.check"/);
+    assert.match(listOutput, /"default": 1/);
+    assert.match(listOutput, /"shadows": \[\s*"personal"\s*\]/);
+
+    const humanListOutput = await captureConsoleLog(() =>
+      runRecipeHarnessCli([
+        'run',
+        '--list',
+        '--library',
+        `team=${libraryRoot}`,
+        '--library',
+        `personal=${shadowLibraryRoot}`,
+      ]),
+    );
+    assert.match(humanListOutput, /demo\.check.*\(shadows: personal\)/);
+
+    const describeOutput = await captureConsoleLog(() =>
+      runRecipeHarnessCli([
+        'run',
+        'demo.check',
+        '--describe',
+        '--library',
+        `team=${libraryRoot}`,
+        '--json',
+      ]),
+    );
+    assert.match(describeOutput, /"title": "Parameterized check"/);
+    assert.match(describeOutput, /"name": "delay"/);
+
+    const runOutput = await captureConsoleLog(() =>
+      runRecipeHarnessCli([
+        'run',
+        'demo.check',
+        'delay=0',
+        '--library',
+        `team=${libraryRoot}`,
+        '--artifacts-dir',
+        artifactsDir,
+        '--action-manifest',
+        manifestPath,
+        '--project-root',
+        tempRoot,
+        '--json',
+      ]),
+    );
+    assert.match(runOutput, /"status": "pass"/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('CLI rejects proof-window video mode until focused clips are implemented', async () => {
   const tempRoot = await createTempRoot();
   try {
@@ -2019,20 +2355,10 @@ test('CLI rejects proof-window video mode until focused clips are implemented', 
 test('reports missing artifact manifests as validation findings instead of file errors', async () => {
   const tempRoot = await createTempRoot();
   try {
-    const recipe = {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      title: 'Missing manifest validation smoke',
-      description: 'Exercises optional artifact-manifest validation.',
-      validate: {
-        workflow: {
-          entry: 'done',
-          nodes: {
-            done: { action: 'end', status: 'pass' },
-          },
-        },
-      },
-    };
+    const recipe = recipeDocument(
+      { done: { action: 'end', status: 'pass' } },
+      { description: 'Exercises optional artifact-manifest validation.' },
+    );
     const artifactsDir = path.join(tempRoot, 'artifacts');
     await writeJsonFile(path.join(tempRoot, 'recipe.json'), recipe);
     await writeJsonFile(path.join(artifactsDir, 'recipe.json'), recipe);
@@ -2070,31 +2396,26 @@ test('runs official UI adapters through a runner-provided transport', async () =
       },
     };
     const recipe = {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      title: 'UI adapter smoke',
-      description: 'Exercises official ui/app adapters through a project transport.',
-      validate: {
-        workflow: {
-          entry: 'press-buy',
-          nodes: {
-            'press-buy': {
-              action: 'ui.press',
-              intent: 'Press the buy button in the UI adapter smoke recipe',
-              note: 'Artifact note that must not become HUD text',
-              selector: '[data-testid="buy"]',
-              next: 'show-hud',
-            },
-            'show-hud': {
-              action: 'app.hud',
-              intent: 'Show the buy flow annotation in the HUD',
-              text: 'Buying',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
+      ...recipeDocument(
+        {
+          'press-buy': {
+            action: 'ui.press',
+            intent: 'Open the purchase path for the selected asset.',
+            note: 'Artifact note that must not become HUD text',
+            selector: '[data-testid="buy"]',
+            next: 'show-hud',
           },
+          'show-hud': {
+            action: 'app.hud',
+            intent: 'Explain that the purchase path is ready for review.',
+            text: 'Buying',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
         },
-      },
+        { description: 'Exercises official ui/app adapters through a project transport.' },
+      ),
+      title: 'UI adapter smoke',
     };
     const runner = createRecipeRunner({
       actionManifest: manifest,
@@ -2116,11 +2437,9 @@ test('runs official UI adapters through a runner-provided transport', async () =
       'press-buy:ui.press',
       'press-buy:app.hud',
       'show-hud:app.hud',
-      'done:app.hud',
-      'done:app.hud',
       'recipe-complete:app.hud',
     ]);
-    assert.equal(hudPayloads[0]?.text, 'Press the buy button in the UI adapter smoke recipe');
+    assert.equal(hudPayloads[0]?.text, 'Open the purchase path for the selected asset.');
     assert.notEqual(hudPayloads[0]?.text, 'Artifact note that must not become HUD text');
     const trace = await readJsonFile(result.tracePath);
     assert.equal((trace as Array<{ output?: { action?: string } }>)[0]?.output?.action, 'ui.press');
@@ -2163,32 +2482,27 @@ test('maps React Native bridge transport commands without project-specific ui re
       },
     });
     const recipe = {
-      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
-      title: 'React Native bridge smoke',
-      description: 'Exercises official ui/app actions through the RN bridge contract.',
-      validate: {
-        workflow: {
-          entry: 'scroll-list',
-          nodes: {
-            'scroll-list': {
-              action: 'ui.scroll',
-              intent: 'Scroll the asset list until the target rows are visible',
-              detail: 'Using the React Native bridge scroll primitive',
-              test_id: 'AssetList',
-              delta_y: 800,
-              next: 'hud',
-            },
-            hud: {
-              action: 'app.hud',
-              intent: 'Show that the asset list scroll completed',
-              text: 'Scrolled assets',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
+      ...recipeDocument(
+        {
+          'scroll-list': {
+            action: 'ui.scroll',
+            intent: 'Make the target asset rows visible for review.',
+            detail: 'Using the React Native bridge scroll primitive',
+            test_id: 'AssetList',
+            delta_y: 800,
+            next: 'hud',
           },
+          hud: {
+            action: 'app.hud',
+            intent: 'Explain that the target asset rows are ready for review.',
+            text: 'Scrolled assets',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
         },
-      },
+        { description: 'Exercises official ui/app actions through the RN bridge contract.' },
+      ),
+      title: 'React Native bridge smoke',
     };
     const runner = createRecipeRunner({
       actionManifest: manifest,
@@ -2207,14 +2521,11 @@ test('maps React Native bridge transport commands without project-specific ui re
     assert.equal(result.status, 'pass');
     assert.deepEqual(
       commands.map((command) => command.command),
-      ['hud', 'scroll', 'observeUi', 'hud', 'hud', 'hud', 'hud', 'hud'],
+      ['hud', 'scroll', 'observeUi', 'hud', 'hud', 'hud'],
     );
     assert.equal(commands[1]?.payload.test_id, 'AssetList');
     assert.deepEqual(commands[2]?.payload.refs, ['ui.screen', 'ui.visible']);
-    assert.equal(
-      commands[3]?.payload.text,
-      'Scroll the asset list until the target rows are visible',
-    );
+    assert.equal(commands[3]?.payload.text, 'Make the target asset rows visible for review.');
     assert.equal(commands[3]?.payload.detail, 'Using the React Native bridge scroll primitive');
     assert.equal(commands[4]?.payload.text, 'Scrolled assets');
   } finally {
@@ -2271,6 +2582,42 @@ test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () =
       deltaY: undefined,
     },
   ]);
+});
+
+test('maps typed numeric recipe parameters to CDP input text', async () => {
+  const values: string[] = [];
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      const page = {
+        async setInput(_selector: string, value: string) {
+          values.push(value);
+          return { value };
+        },
+        async waitForDomSettled() {},
+      };
+      return callback(page as never);
+    },
+  });
+
+  await transport.execute(
+    'ui.set_input',
+    { selector: '[data-testid="limit-price-input"] input', value: 2000 },
+    {
+      nodeId: 'set-limit-price',
+      recipe: {},
+      projectRoot: '/tmp/project',
+      artifactsDir: '/tmp/artifacts',
+      env: {},
+      outputs: new Map(),
+      getOutput: () => undefined,
+      resolveProjectPath: (relativePath) => relativePath,
+      resolveArtifactPath: (relativePath) => relativePath,
+      registerArtifact() {},
+      logger: console,
+    },
+  );
+
+  assert.deepEqual(values, ['2000']);
 });
 
 test('CDP observations and selectors traverse open shadow roots', async () => {

@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:http';
-import { dirname, relative, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { WebSocketServer } from 'ws';
@@ -20,7 +20,7 @@ const commandCenterDir = resolve(repoRoot, 'apps/command-center');
 const uiDir = resolve(commandCenterDir, 'ui');
 const defaultRecipe = resolve(
   repoRoot,
-  'docs/examples/recipes/farmslot/docusaurus-human-ready-gate.recipe.json',
+  'docs/examples/recipes/farmslot/docusaurus-human-ready-gate.capture-plan.json',
 );
 const docsScreenshot = resolve(
   repoRoot,
@@ -38,6 +38,7 @@ const targetUrl = `${uiUrl}${targetHash}`;
 const copyToDocs = process.argv.includes('--copy-to-docs');
 const args = parseArgs(process.argv.slice(2));
 const recipePath = resolve(repoRoot, args.recipe || defaultRecipe);
+const recipeId = basename(recipePath).replace(/\.capture-plan\.json$/u, '');
 const artifactsDir = resolve(
   repoRoot,
   args.artifactsDir || '.agent/demo-stage/docusaurus-human-ready-gate/output',
@@ -674,7 +675,7 @@ function rpcPayload(method, params) {
           { path: 'apps/docs/src/pages/index.js', status: 'M' },
           { path: 'apps/docs/docs/products/command-center.md', status: 'M' },
           {
-            path: 'docs/examples/recipes/farmslot/docusaurus-human-ready-gate.recipe.json',
+            path: 'docs/examples/recipes/farmslot/docusaurus-human-ready-gate.capture-plan.json',
             status: 'A',
           },
         ],
@@ -690,7 +691,7 @@ function rpcPayload(method, params) {
             deletions: 4,
           },
           {
-            path: 'docs/examples/recipes/farmslot/docusaurus-human-ready-gate.recipe.json',
+            path: 'docs/examples/recipes/farmslot/docusaurus-human-ready-gate.capture-plan.json',
             status: 'A',
             additions: 18,
             deletions: 0,
@@ -1000,7 +1001,7 @@ function writeOutputs({ recipe, screenshotPath, verification }) {
   ];
   writeFileSync(
     resolve(artifactsDir, 'trace.json'),
-    JSON.stringify({ version: 1, recipeId: recipe.id, steps: trace }, null, 2),
+    JSON.stringify({ version: 1, recipeId, steps: trace }, null, 2),
   );
   writeFileSync(
     resolve(artifactsDir, 'artifact-manifest.json'),
@@ -1011,7 +1012,7 @@ function writeOutputs({ recipe, screenshotPath, verification }) {
     JSON.stringify(
       {
         status: 'pass',
-        recipeId: recipe.id,
+        recipeId,
         title: recipe.title,
         regeneratedBy: `yarn --cwd apps/docs capture:human-ready-gate --artifacts-dir ${relative(repoRoot, artifactsDir)} --copy-to-docs`,
         copiedToDocs: copyToDocs ? { screenshot: relative(repoRoot, docsScreenshot) } : null,

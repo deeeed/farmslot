@@ -10,6 +10,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  realpath,
   writeFile as fsWriteFile,
 } from 'node:fs/promises';
 import path from 'node:path';
@@ -91,6 +92,14 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
     path: filePath,
   })) as { content: string };
   return result.content;
+}
+
+export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise<string> {
+  if (local(ctx)) return realpath(filePath);
+  const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.realpath', {
+    path: filePath,
+  })) as { path: string };
+  return result.path;
 }
 
 // ─── slotFileExists ───

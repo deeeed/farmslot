@@ -15,7 +15,6 @@ export type RecipeSourceKind =
   | 'operator'
   | 'task'
   | 'recipe-file'
-  | 'uses-catalog'
   | 'library'
   | 'custom-adapter';
 
@@ -33,15 +32,17 @@ export interface RecipePlanNode {
   capabilities: RecipeExecutionCapability[];
   /** Where the node definition came from. */
   origin: RecipeSourceProvenance;
-  /** Trust carried by the recipe/flow call chain that reached this node. */
+  /** Trust carried by the recipe call chain that reached this node. */
   invocationOrigin?: RecipeSourceProvenance;
   adapterOrigin?: RecipeSourceProvenance;
+  /** The executable node still contains a value derived from a prior runtime output. */
+  runtimeOutputDependent?: boolean;
 }
 
 export interface RecipeExecutionPlan {
   schemaVersion: 1;
   digest: string;
-  /** Binds approval to the project, artifact destination, and effective run environment without exposing their values. */
+  /** Binds approval to the project, artifact destination, effective parameters, and run environment without exposing their values. */
   executionContextDigest: string;
   source: RecipeSourceProvenance;
   nodes: RecipePlanNode[];

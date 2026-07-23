@@ -2,7 +2,7 @@
 //
 // When a follow-up flow (typically pr-complete) has no recipe inheritable
 // through the family chain, this module scans the PR body for an embedded
-// `## Validation Recipe` block + subflow JSON files and materializes them as
+// `## Validation Recipe` block + dependency recipe files and materializes them as
 // the run's local recipe artifacts. Strictly LLM-driven (no regex parsers) so
 // it survives format drift across PR templates.
 //
@@ -16,8 +16,8 @@
 // Current shipped enforcement (don't oversell — describe what actually
 // runs):
 //   1. `materializeExtractedRecipe` writes the candidate recipe ONLY under
-//      `inputs/inherited/recipe.json` (+ subflows under
-//      `inputs/inherited/recipe-flows/`). It never seeds
+//      `inputs/inherited/recipe.json` (+ a library under
+//      `inputs/inherited/recipe-library/`). It never seeds
 //      `artifacts/recipe.json`, so the recipe runner (validate-recipe.js)
 //      cannot resolve and execute the staged content by default.
 //   2. `materializeExtractedRecipe` writes a sidecar
@@ -52,7 +52,7 @@ import { callLLM, type LLMCallResult } from '../llm/index.js';
 
 export interface ExtractedRecipeBundle {
   recipe: unknown;
-  flows: Record<string, unknown>;
+  recipes: Record<string, unknown>;
 }
 
 export type PRBodyRecipeReason =
@@ -82,25 +82,25 @@ const EMPTY_USAGE: StepLLMUsage = {
 
 const SYSTEM_PROMPT = `You analyze GitHub PR descriptions and extract embedded validation recipes.
 
-A "validation recipe" is a JSON object describing automated UI/integration test steps. Some PRs inline them in a "Validation Recipe" (or similar) section as fenced JSON code blocks. PRs may also inline subflow JSON files referenced from the main recipe.
+A "validation recipe" is a JSON object describing automated UI/integration test steps. Some PRs inline them in a "Validation Recipe" (or similar) section as fenced JSON code blocks. PRs may also inline reusable Recipe v1 dependency documents referenced from the main recipe.
 
 Your task:
 - Locate the recipe JSON block (label/<summary>/filename hint mentions "recipe.json", "artifacts/recipe.json", or "Validation Recipe").
-- Locate any subflow JSON blocks (label/<summary> mentions "recipe-flows/<name>.json").
+- Locate dependency recipe blocks (label/<summary> mentions "recipe-library/recipes/<path>.recipe.json").
 - Return their JSON content. Preserve the full structure — workflow nodes, steps, schema metadata, etc. Do not paraphrase descriptions; do not summarize.
 - If a section only describes a recipe in prose without an inline JSON block, return found=false.
 
-Subflow keys must be the basename (no directory) ending in ".json".
+Recipe keys must be relative paths under recipes/ ending in ".recipe.json".
 
 Respond with ONLY a single JSON object, no markdown, no fences, no commentary, no <thinking> blocks, no preamble. Your entire response must be parseable by JSON.parse.
 
 {
   "found": true | false,
   "recipe": <recipe JSON> | null,
-  "flows": { "<basename>.json": <flow JSON>, ... }
+  "recipes": { "<path>.recipe.json": <recipe JSON>, ... }
 }
 
-If no embedded recipe is present: {"found": false, "recipe": null, "flows": {}}`;
+If no embedded recipe is present: {"found": false, "recipe": null, "recipes": {}}`;
 
 // Hard ceiling. PRs that approach this size are exceptional and the recipe
 // almost certainly doesn't fit anyway. Bail with a clear reason rather than
@@ -147,7 +147,7 @@ export async function extractRecipeFromPRBody(
       userPrompt: `PR description:\n\n${body}`,
       provider,
       model,
-      // Recipes + subflows for a multi-AC PR routinely exceed 10k output
+      // Root and dependency recipes for a multi-AC PR routinely exceed 10k output
       // tokens. Default LLM caps would truncate mid-JSON and the parser
       // would reject the partial response.
       maxTokens: 32_000,
@@ -180,7 +180,7 @@ export async function extractRecipeFromPRBody(
     };
   }
 
-  let parsed: { found?: boolean; recipe?: unknown; flows?: Record<string, unknown> };
+  let parsed: { found?: boolean; recipe?: unknown; recipes?: Record<string, unknown> };
   try {
     parsed = JSON.parse(candidate);
   } catch (err) {
@@ -204,30 +204,30 @@ export async function extractRecipeFromPRBody(
   // If the provider explicitly signaled max-tokens truncation, reject the
   // candidate even when the JSON happens to be syntactically balanced —
   // for a multi-AC PR bundle the model can close earlier braces "in time"
-  // and emit a parseable object that's missing later subflows or has a
-  // partial last subflow. We'd rather surface parse-truncated and let the
+  // and emit a parseable object that's missing later dependencies or has a
+  // partial last recipe. We'd rather surface parse-truncated and let the
   // worker fall through to its smoke fallback than stage an incomplete
   // recipe that looks complete.
   if (stopReason === 'length') {
     if (process.env.DEBUG_PR_BODY_RECIPE) {
       console.warn(
-        `[pr-body-recipe] rejecting balanced-but-truncated extraction (stopReason=length, flows=${parsed.flows ? Object.keys(parsed.flows).length : 0})`,
+        `[pr-body-recipe] rejecting balanced-but-truncated extraction (stopReason=length, recipes=${parsed.recipes ? Object.keys(parsed.recipes).length : 0})`,
       );
     }
     return { bundle: null, reason: 'parse-truncated', usage: result.usage, stopReason };
   }
 
-  const flows: Record<string, unknown> = {};
-  if (parsed.flows && typeof parsed.flows === 'object') {
-    for (const [rawName, value] of Object.entries(parsed.flows)) {
+  const recipes: Record<string, unknown> = {};
+  if (parsed.recipes && typeof parsed.recipes === 'object') {
+    for (const [rawName, value] of Object.entries(parsed.recipes)) {
       if (!value || typeof value !== 'object') continue;
-      const safeName = sanitizeFlowFilename(rawName);
-      if (safeName) flows[safeName] = value;
+      const safeName = sanitizeRecipePath(rawName);
+      if (safeName) recipes[safeName] = value;
     }
   }
 
   return {
-    bundle: { recipe: parsed.recipe, flows },
+    bundle: { recipe: parsed.recipe, recipes },
     reason: 'extracted',
     usage: result.usage,
     stopReason,
@@ -275,7 +275,7 @@ export function extractTrailingJsonObject(text: string): string | null {
 }
 
 /**
- * Stage the extracted recipe + subflows under the run's task directory at
+ * Stage the extracted root and dependency recipes under the run's task directory at
  * `inputs/inherited/` ONLY. We deliberately do NOT seed
  * `artifacts/recipe.json` because the recipe runner (validate-recipe.js)
  * resolves recipes from the artifacts dir without consulting
@@ -291,7 +291,11 @@ export function extractTrailingJsonObject(text: string): string | null {
 export async function materializeExtractedRecipe(
   bundle: ExtractedRecipeBundle,
   taskAbsDir: string,
-): Promise<{ inheritedRecipePath: string; inheritedFlowFiles: string[]; provenancePath: string }> {
+): Promise<{
+  inheritedRecipePath: string;
+  inheritedRecipeFiles: string[];
+  provenancePath: string;
+}> {
   const recipeJson = JSON.stringify(bundle.recipe, null, 2);
 
   const inheritedDir = path.join(taskAbsDir, 'inputs', 'inherited');
@@ -314,25 +318,36 @@ export async function materializeExtractedRecipe(
     'utf-8',
   );
 
-  const flowNames = Object.keys(bundle.flows);
-  if (flowNames.length === 0)
-    return { inheritedRecipePath, inheritedFlowFiles: [], provenancePath };
+  const recipeNames = Object.keys(bundle.recipes);
+  if (recipeNames.length === 0)
+    return { inheritedRecipePath, inheritedRecipeFiles: [], provenancePath };
 
-  const inheritedFlowsDir = path.join(inheritedDir, 'recipe-flows');
-  await mkdir(inheritedFlowsDir, { recursive: true });
-  const inheritedFlowFiles: string[] = [];
-  for (const name of flowNames) {
-    const flowJson = JSON.stringify(bundle.flows[name], null, 2);
-    const inheritedPath = path.join(inheritedFlowsDir, name);
-    await writeFile(inheritedPath, flowJson, 'utf-8');
-    inheritedFlowFiles.push(inheritedPath);
+  const inheritedLibraryDir = path.join(inheritedDir, 'recipe-library');
+  await mkdir(inheritedLibraryDir, { recursive: true });
+  await writeFile(
+    path.join(inheritedLibraryDir, 'library.json'),
+    `${JSON.stringify({ kind: 'recipe-library', name: 'pr-body' }, null, 2)}\n`,
+    'utf-8',
+  );
+  const inheritedRecipeFiles: string[] = [];
+  for (const name of recipeNames) {
+    const recipeJson = JSON.stringify(bundle.recipes[name], null, 2);
+    const inheritedPath = path.join(inheritedLibraryDir, 'recipes', name);
+    await mkdir(path.dirname(inheritedPath), { recursive: true });
+    await writeFile(inheritedPath, recipeJson, 'utf-8');
+    inheritedRecipeFiles.push(inheritedPath);
   }
-  return { inheritedRecipePath, inheritedFlowFiles, provenancePath };
+  return { inheritedRecipePath, inheritedRecipeFiles, provenancePath };
 }
 
-export function sanitizeFlowFilename(raw: string): string | null {
-  const base = path.basename(raw).trim();
-  if (!base) return null;
-  if (!/^[A-Za-z0-9._-]+$/.test(base)) return null;
-  return base.endsWith('.json') ? base : `${base}.json`;
+export function sanitizeRecipePath(raw: string): string | null {
+  const normalized = raw
+    .trim()
+    .replaceAll('\\', '/')
+    .replace(/^.*?recipes\//, '');
+  if (!normalized || path.posix.isAbsolute(normalized)) return null;
+  const segments = normalized.split('/');
+  if (segments.some((segment) => !/^[A-Za-z0-9._-]+$/.test(segment))) return null;
+  if (segments.some((segment) => segment === '.' || segment === '..')) return null;
+  return normalized.endsWith('.recipe.json') ? normalized : `${normalized}.recipe.json`;
 }

@@ -34,15 +34,14 @@ export function slotViewDesiredRecipeRunId(input: {
   ]);
 }
 
-export function slotViewSelectedRecipeFlowPath(input: {
+export function slotViewSelectedRecipeDependencyPath(input: {
   selectedRun: Pick<RecipeRunArtifactGroup, 'artifactManifest'> | null;
-  requestedFlow: string | null;
+  requestedDependency: string | null;
 }): string {
-  const flows =
-    input.selectedRun?.artifactManifest?.filter((artifact) => artifact.purpose === 'recipe-flow') ??
-    [];
-  return input.requestedFlow && flows.some((artifact) => artifact.path === input.requestedFlow)
-    ? input.requestedFlow
+  const dependencies = input.selectedRun?.artifactManifest?.filter(isResolvedRecipeArtifact) ?? [];
+  return input.requestedDependency &&
+    dependencies.some((artifact) => artifact.path === input.requestedDependency)
+    ? input.requestedDependency
     : '';
 }
 
@@ -111,30 +110,37 @@ export function slotViewRecipeRunSourceDetail(
   return 'Source: worker bundle';
 }
 
-export function slotViewRecipeFlowArtifacts(recipeHost: SlotViewRecipeHostLike | null) {
+export function slotViewRecipeDependencyArtifacts(recipeHost: SlotViewRecipeHostLike | null) {
+  return recipeHost?.artifactManifest?.filter(isResolvedRecipeArtifact) ?? [];
+}
+
+function isResolvedRecipeArtifact(artifact: ArtifactRef): boolean {
   return (
-    recipeHost?.artifactManifest?.filter(
-      (artifact) =>
-        artifact.purpose === 'recipe-flow' && artifact.path.startsWith('artifacts/recipe-flows/'),
-    ) ?? []
+    artifact.purpose === 'recipe' &&
+    /(?:^|\/)resolved-recipes\/[a-f0-9]{64}\.recipe\.json$/u.test(artifact.path)
   );
 }
 
-export function selectedSlotViewRecipeFlowArtifact(
+export function selectedSlotViewRecipeDependencyArtifact(
   recipeHost: SlotViewRecipeHostLike | null,
-  selectedRecipeFlowPath: string,
+  selectedRecipeDependencyPath: string,
 ) {
-  const flows = slotViewRecipeFlowArtifacts(recipeHost);
-  if (flows.length === 0) return null;
-  return flows.find((artifact) => artifact.path === selectedRecipeFlowPath) ?? null;
+  const dependencies = slotViewRecipeDependencyArtifacts(recipeHost);
+  if (dependencies.length === 0) return null;
+  return dependencies.find((artifact) => artifact.path === selectedRecipeDependencyPath) ?? null;
 }
 
-export function selectedSlotViewRecipeFlowLabel(
+export function selectedSlotViewRecipeDependencyLabel(
   recipeHost: SlotViewRecipeHostLike | null,
-  selectedRecipeFlowPath: string,
+  selectedRecipeDependencyPath: string,
 ): string {
-  const selectedFlow = selectedSlotViewRecipeFlowArtifact(recipeHost, selectedRecipeFlowPath);
-  return selectedFlow ? selectedFlow.path.replace(/^artifacts\/recipe-flows\//, '') : 'Main recipe';
+  const selectedDependency = selectedSlotViewRecipeDependencyArtifact(
+    recipeHost,
+    selectedRecipeDependencyPath,
+  );
+  return selectedDependency
+    ? selectedDependency.label || selectedDependency.path.split('/').at(-1) || 'Resolved recipe'
+    : 'Main recipe';
 }
 
 export function selectedSlotViewRecipeArtifactLabel(

@@ -7,8 +7,6 @@ export const RECIPE_PROTOCOL_SCHEMA_URL = 'https://farmslot.io/schemas/recipe-v1
 export const RECIPE_PROTOCOL_SCHEMA_URLS = {
   [RECIPE_PROTOCOL_SCHEMA_VERSION]: RECIPE_PROTOCOL_SCHEMA_URL,
 } as const;
-export const RECIPE_PLAYBACK_SLOW_MS_MIN = 100;
-export const RECIPE_PLAYBACK_SLOW_MS_MAX = 60_000;
 
 export const OFFICIAL_RECIPE_ACTIONS = [
   'command',
@@ -58,6 +56,8 @@ export interface RecipeActionCatalogExample {
 export interface RecipeActionCatalogEntry {
   description?: string;
   schema?: Record<string, unknown>;
+  /** Finite control cases this action may return. The recipe owns their destinations. */
+  result_cases?: string[];
   examples?: RecipeActionCatalogExample[];
   /** Security-relevant effects. Discovery metadata only; runtime adapters may add but never remove capabilities. */
   execution_capabilities?: RecipeExecutionCapability[];
@@ -70,24 +70,6 @@ export interface RecipeActionCatalogEntry {
 export interface RecipeCustomActionDeclaration extends RecipeActionCatalogEntry {
   name: string;
   owner?: string;
-}
-
-export interface RecipeNamedDeclaration {
-  name: string;
-  description?: string;
-  schema?: Record<string, unknown>;
-}
-
-export interface RecipeStateRefDeclaration {
-  name: string;
-  description?: string;
-  schema?: Record<string, unknown>;
-}
-
-export interface RecipePreconditionDeclaration {
-  id: string;
-  description: string;
-  failure_kind?: string;
 }
 
 export interface RecipeNativeBindingDeclaration {
@@ -119,15 +101,11 @@ export interface RecipeActionManifestDocument {
   supported_official_actions: OfficialActionName[];
   action_metadata?: Partial<Record<OfficialActionName, RecipeActionCatalogEntry>>;
   custom_actions?: RecipeCustomActionDeclaration[];
-  custom_assertion_operators?: RecipeNamedDeclaration[];
-  state_refs?: RecipeStateRefDeclaration[];
-  pre_conditions?: RecipePreconditionDeclaration[];
   native_bindings?: RecipeNativeBindingDeclaration[];
   capabilities?: RecipeRuntimeCapabilityDeclaration[];
   observers?: RecipeObserverDeclaration[];
 }
 
-export const PLAYBACK_MODES = new Set(['off', 'auto', 'step']);
 export const TERMINAL_STATUSES = new Set(['pass', 'fail', 'unknown']);
 export const ARTIFACT_TYPES = new Set<string>(RECIPE_ARTIFACT_TYPES);
 export const OFFICIAL_ACTION_SET = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
@@ -156,22 +134,32 @@ export interface RecipeArtifactPackageInput {
   manifest?: unknown;
   artifactPaths?: readonly string[];
   recipe?: unknown;
-  /**
-   * The fully-composed recipe (`resolved-recipe.json`): the authored recipe with
-   * every referenced flow inlined under `flows`. For a passing run it is validated
-   * in full — including `call.ref` resolution — proving the composition is complete
-   * and self-contained, and `recipe` is then checked envelope-only.
-   */
-  resolvedRecipe?: unknown;
-  /**
-   * Whether the run passed. Defaults to `true` (enforce composition). When `true`,
-   * the composition must be proven: either `recipe` is self-contained (validated in
-   * full) or `resolvedRecipe` proves it. When `false`, the run already failed and
-   * surfaced its cause, so `recipe` is envelope-only and `resolvedRecipe` is not
-   * re-validated — a graceful failure is not turned into a rejection.
-   */
-  runPassed?: boolean;
+  /** Exact reachable dependency documents keyed by their sha256 digest. */
+  resolvedRecipes?: Record<string, unknown>;
+  /** Static dependency graph and provenance emitted as recipe-resolution.json. */
+  recipeResolution?: unknown;
   requireSchemaRef?: boolean;
+}
+
+export interface RecipeResolutionDependency {
+  ref: string;
+  source: string;
+  file: string;
+  digest: string;
+  artifact: string;
+  adapter?: string;
+}
+
+export interface RecipeResolutionEdge {
+  from: string;
+  to: string;
+}
+
+export interface RecipeResolutionDocument {
+  schema_version: 1;
+  root: { ref: string; digest: string };
+  dependencies: RecipeResolutionDependency[];
+  edges: RecipeResolutionEdge[];
 }
 
 export interface MutableValidationContext {

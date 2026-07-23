@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Expo configuration smoke",
   "description": "Verifies the Expo project can run a Farmslot Recipe Protocol v1 artifact-producing configuration check.",
   "proofTargets": [
@@ -8,33 +8,31 @@
       "claim": "The Expo project can execute a Farmslot recipe runner and expose public config without secrets."
     }
   ],
-  "validate": {
-    "workflow": {
-      "entry": "expo-config",
-      "nodes": {
-        "expo-config": {
-          "action": "command",
-          "description": "Read Expo public config through the project package manager.",
-          "intent": "Read Expo public config to confirm the companion app scaffold is runnable.",
-          "cmd": "yarn expo config --type public --json",
-          "timeout_ms": 120000,
-          "next": "assert-config",
-          "proofTarget": "expo-config"
-        },
-        "assert-config": {
-          "action": "assert_output",
-          "description": "Confirm Expo config contains a slug field.",
-          "intent": "Confirm Expo public config exposes a slug for recipe smoke.",
-          "source": "expo-config",
-          "stream": "stdout",
-          "contains": "\"slug\"",
-          "next": "done",
-          "proofTarget": "expo-config"
-        },
-        "done": {
-          "action": "end",
-          "status": "pass"
-        }
+  "workflow": {
+    "entry": "expo-config",
+    "nodes": {
+      "expo-config": {
+        "action": "command",
+        "description": "Read Expo public config through the project package manager.",
+        "intent": "Read Expo public config to confirm the companion app scaffold is runnable.",
+        "cmd": "yarn expo config --type public --json",
+        "timeout_ms": 120000,
+        "next": "assert-config",
+        "proves": ["expo-config"]
+      },
+      "assert-config": {
+        "action": "assert_output",
+        "description": "Confirm Expo config contains a slug field.",
+        "intent": "Confirm Expo public config exposes a slug for recipe smoke.",
+        "source": "expo-config",
+        "stream": "stdout",
+        "contains": "\"slug\"",
+        "next": "done",
+        "proves": ["expo-config"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
       }
     }
   }

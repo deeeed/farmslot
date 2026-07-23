@@ -1,56 +1,46 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "schema_version": 1,
   "title": "Companion native settings proof",
   "description": "Proves a recipe can drive and observe the Companion on the simulator assigned to its Farmslot slot.",
-  "validate": {
-    "workflow": {
-      "setup": [],
-      "entry": "establish-settings",
-      "nodes": {
-        "establish-settings": {
-          "action": "ui.press",
-          "test_id": "companion-tab-settings",
-          "expect_observations": ["ui.screen", "ui.visible"],
-          "intent": "Establish Companion settings as the starting screen.",
-          "next": "open-review"
-        },
-        "open-review": {
-          "action": "ui.press",
-          "test_id": "companion-tab-review",
-          "observe": false,
-          "expect_observations": [],
-          "intent": "Open Companion review on the assigned simulator.",
-          "next": "open-settings"
-        },
-        "open-settings": {
-          "action": "ui.press",
-          "test_id": "companion-tab-settings",
-          "expect_observations": ["ui.screen", "ui.visible"],
-          "intent": "Open Companion settings on the assigned simulator.",
-          "next": "confirm-settings"
-        },
-        "confirm-settings": {
-          "action": "ui.wait_for",
-          "text_contains": ["Gateway Connection"],
-          "timeout_ms": 20000,
-          "expect_observations": ["ui.screen", "ui.visible"],
-          "intent": "Confirm the native settings content is visible.",
-          "next": "capture-settings"
-        },
-        "capture-settings": {
-          "action": "ui.screenshot",
-          "path": "screenshots/companion-settings.png",
-          "label": "Companion settings on the assigned simulator",
-          "intent": "Capture the validated Companion settings screen.",
-          "next": "done"
-        },
-        "done": {
-          "action": "end",
-          "status": "pass"
-        }
+  "workflow": {
+    "entry": "establish-settings",
+    "nodes": {
+      "establish-settings": {
+        "action": "ui.press",
+        "test_id": "companion-tab-settings",
+        "intent": "Establish Companion settings as the starting screen.",
+        "next": "open-review"
       },
-      "teardown": []
+      "open-review": {
+        "action": "ui.press",
+        "test_id": "companion-tab-review",
+        "intent": "Open Companion review on the assigned simulator.",
+        "next": "open-settings"
+      },
+      "open-settings": {
+        "action": "ui.press",
+        "test_id": "companion-tab-settings",
+        "intent": "Open Companion settings on the assigned simulator.",
+        "next": "confirm-settings"
+      },
+      "confirm-settings": {
+        "action": "ui.wait_for",
+        "text_contains": ["Gateway Connection"],
+        "timeout_ms": 20000,
+        "intent": "Confirm the native settings content is visible.",
+        "next": "capture-settings"
+      },
+      "capture-settings": {
+        "action": "ui.screenshot",
+        "path": "screenshots/companion-settings.png",
+        "label": "Companion settings on the assigned simulator",
+        "intent": "Record the validated Companion settings screen for review.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
     }
   }
 }

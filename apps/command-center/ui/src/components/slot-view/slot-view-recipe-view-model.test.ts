@@ -8,11 +8,11 @@ import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import {
   selectedSlotViewRecipeArtifact,
   selectedSlotViewRecipeArtifactLabel,
-  selectedSlotViewRecipeFlowArtifact,
-  selectedSlotViewRecipeFlowLabel,
+  selectedSlotViewRecipeDependencyArtifact,
+  selectedSlotViewRecipeDependencyLabel,
   slotViewDesiredRecipeRunId,
   slotViewRecipeArtifactUrl,
-  slotViewRecipeFlowArtifacts,
+  slotViewRecipeDependencyArtifacts,
   slotViewRecipeJsonFallbackWarning,
   slotViewRecipeNodeEvidenceState,
   slotViewRecipeRunHelpText,
@@ -21,7 +21,7 @@ import {
   slotViewRecipeRunSourceDetail,
   slotViewRecipeRunStatusLabel,
   slotViewSelectedRecipeArtifactPath,
-  slotViewSelectedRecipeFlowPath,
+  slotViewSelectedRecipeDependencyPath,
 } from './slot-view-recipe-view-model.js';
 
 function recipeRun(
@@ -110,26 +110,36 @@ test('slot view recipe view model resolves recipe run id precedence once', () =>
   );
 });
 
-test('slot view recipe view model derives flow and artifact selections', () => {
+test('slot view recipe view model derives dependency and artifact selections', () => {
   const host = {
     artifactManifest: [
-      { path: 'artifacts/recipe-flows/login.json', purpose: 'recipe-flow' },
+      {
+        path: `artifacts/resolved-recipes/${'a'.repeat(64)}.recipe.json`,
+        purpose: 'recipe',
+        label: 'demo.login',
+      },
       { path: 'artifacts/evidence/after.png', purpose: 'screenshot' },
     ],
   };
   assert.deepEqual(
-    slotViewRecipeFlowArtifacts(host).map((artifact) => artifact.path),
-    ['artifacts/recipe-flows/login.json'],
+    slotViewRecipeDependencyArtifacts(host).map((artifact) => artifact.path),
+    [`artifacts/resolved-recipes/${'a'.repeat(64)}.recipe.json`],
   );
   assert.equal(
-    selectedSlotViewRecipeFlowArtifact(host, 'artifacts/recipe-flows/login.json')?.path,
-    'artifacts/recipe-flows/login.json',
+    selectedSlotViewRecipeDependencyArtifact(
+      host,
+      `artifacts/resolved-recipes/${'a'.repeat(64)}.recipe.json`,
+    )?.path,
+    `artifacts/resolved-recipes/${'a'.repeat(64)}.recipe.json`,
   );
   assert.equal(
-    selectedSlotViewRecipeFlowLabel(host, 'artifacts/recipe-flows/login.json'),
-    'login.json',
+    selectedSlotViewRecipeDependencyLabel(
+      host,
+      `artifacts/resolved-recipes/${'a'.repeat(64)}.recipe.json`,
+    ),
+    'demo.login',
   );
-  assert.equal(selectedSlotViewRecipeFlowLabel(host, ''), 'Main recipe');
+  assert.equal(selectedSlotViewRecipeDependencyLabel(host, ''), 'Main recipe');
   assert.equal(
     selectedSlotViewRecipeArtifactLabel('artifacts/evidence/after.png'),
     'evidence/after.png',
@@ -145,21 +155,26 @@ test('slot view recipe view model derives flow and artifact selections', () => {
     'artifacts/b.png',
   );
   const selectedRun = recipeRun({
-    id: 'with-flow',
+    id: 'with-dependency',
     groupKind: 'live-run',
-    artifactManifest: [{ path: 'artifacts/recipe-flows/login.json', purpose: 'recipe-flow' }],
+    artifactManifest: [
+      {
+        path: `artifacts/resolved-recipes/${'b'.repeat(64)}.recipe.json`,
+        purpose: 'recipe',
+      },
+    ],
   });
   assert.equal(
-    slotViewSelectedRecipeFlowPath({
+    slotViewSelectedRecipeDependencyPath({
       selectedRun,
-      requestedFlow: 'artifacts/recipe-flows/login.json',
+      requestedDependency: `artifacts/resolved-recipes/${'b'.repeat(64)}.recipe.json`,
     }),
-    'artifacts/recipe-flows/login.json',
+    `artifacts/resolved-recipes/${'b'.repeat(64)}.recipe.json`,
   );
   assert.equal(
-    slotViewSelectedRecipeFlowPath({
+    slotViewSelectedRecipeDependencyPath({
       selectedRun,
-      requestedFlow: 'artifacts/recipe-flows/missing.json',
+      requestedDependency: `artifacts/resolved-recipes/${'c'.repeat(64)}.recipe.json`,
     }),
     '',
   );
@@ -251,7 +266,9 @@ test('slot view recipe view model derives node evidence state', () => {
     slotViewRecipeNodeEvidenceState({
       mode: 'node',
       selectedNodeId: 'start',
-      recipeJson: JSON.stringify({ entry: 'start', nodes: { start: {} } }),
+      recipeJson: JSON.stringify({
+        workflow: { entry: 'start', nodes: { start: {} } },
+      }),
       evidenceArtifacts: [],
     }),
     { mode: 'node', nodeExists: true, hasEvidence: false },

@@ -8,17 +8,20 @@ import {
   extractTrailingJsonObject,
   materializeExtractedRecipe,
   PR_BODY_PROVENANCE,
-  sanitizeFlowFilename,
+  sanitizeRecipePath,
 } from './pr-body-recipe.js';
 
-test('sanitizeFlowFilename strips paths and rejects unsafe names', () => {
-  assert.equal(sanitizeFlowFilename('ac1-size-autofocus.json'), 'ac1-size-autofocus.json');
-  assert.equal(sanitizeFlowFilename('ac1-size-autofocus'), 'ac1-size-autofocus.json');
-  assert.equal(sanitizeFlowFilename('artifacts/recipe-flows/ac7.json'), 'ac7.json');
-  assert.equal(sanitizeFlowFilename('../etc/passwd'), 'passwd.json');
-  assert.equal(sanitizeFlowFilename('bad name with spaces.json'), null);
-  assert.equal(sanitizeFlowFilename(''), null);
-  assert.equal(sanitizeFlowFilename('   '), null);
+test('sanitizeRecipePath preserves namespaces and rejects unsafe paths', () => {
+  assert.equal(sanitizeRecipePath('perps/ac1.recipe.json'), 'perps/ac1.recipe.json');
+  assert.equal(sanitizeRecipePath('perps/ac1'), 'perps/ac1.recipe.json');
+  assert.equal(
+    sanitizeRecipePath('artifacts/recipe-library/recipes/perps/ac7.recipe.json'),
+    'perps/ac7.recipe.json',
+  );
+  assert.equal(sanitizeRecipePath('../etc/passwd'), null);
+  assert.equal(sanitizeRecipePath('bad name with spaces.json'), null);
+  assert.equal(sanitizeRecipePath(''), null);
+  assert.equal(sanitizeRecipePath('   '), null);
 });
 
 test('extractTrailingJsonObject finds the last balanced object', () => {
@@ -47,7 +50,7 @@ test('extractTrailingJsonObject avoids the multi-object greedy-match pitfall', (
   // "{...thinking...} {...real...}" as a single span and JSON.parse would
   // throw. We need to land on the LAST balanced object.
   const haystack =
-    '<thinking>\n{\n  "a": 1\n}\n</thinking>\n{"found": true, "recipe": {"v": 1}, "flows": {}}';
+    '<thinking>\n{\n  "a": 1\n}\n</thinking>\n{"found": true, "recipe": {"v": 1}, "recipes": {}}';
   const got = extractTrailingJsonObject(haystack);
   assert.ok(got, 'should extract a balanced object');
   const parsed = JSON.parse(got!);
@@ -84,27 +87,29 @@ test('extractTrailingJsonObject is unaffected by JSON unicode escapes for braces
   }
 });
 
-test('materializeExtractedRecipe stages recipe + flows under inputs/inherited only — never seeds artifacts/', async () => {
+test('materializeExtractedRecipe stages root and dependency recipes without seeding artifacts', async () => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'pr-body-recipe-'));
   const bundle = {
     recipe: { version: 1, steps: [{ kind: 'noop' }] },
-    flows: {
-      'ac1.json': { name: 'ac1', steps: [] },
-      'ac2.json': { name: 'ac2', steps: [{ kind: 'click' }] },
+    recipes: {
+      'demo/ac1.recipe.json': { schema_version: 1 },
+      'demo/ac2.recipe.json': { schema_version: 1 },
     },
   };
 
-  const { inheritedRecipePath, inheritedFlowFiles, provenancePath } =
+  const { inheritedRecipePath, inheritedRecipeFiles, provenancePath } =
     await materializeExtractedRecipe(bundle, taskDir);
 
   assert.equal(inheritedRecipePath, path.join(taskDir, 'inputs', 'inherited', 'recipe.json'));
   assert.equal(provenancePath, path.join(taskDir, 'inputs', 'inherited', 'recipe-source.json'));
-  assert.equal(inheritedFlowFiles.length, 2);
+  assert.equal(inheritedRecipeFiles.length, 2);
 
-  // Recipe + flows live under inputs/inherited only.
+  // Recipe + library live under inputs/inherited only.
   assert.deepEqual(JSON.parse(await readFile(inheritedRecipePath, 'utf-8')), bundle.recipe);
-  const inheritedFlows = await readdir(path.join(taskDir, 'inputs', 'inherited', 'recipe-flows'));
-  assert.deepEqual(inheritedFlows.sort(), ['ac1.json', 'ac2.json']);
+  const inheritedRecipes = await readdir(
+    path.join(taskDir, 'inputs', 'inherited', 'recipe-library', 'recipes', 'demo'),
+  );
+  assert.deepEqual(inheritedRecipes.sort(), ['ac1.recipe.json', 'ac2.recipe.json']);
 
   // P1 contract: nothing under artifacts/. Worker's provenance gate is
   // responsible for copying after the trust check passes.
@@ -117,10 +122,10 @@ test('materializeExtractedRecipe stages recipe + flows under inputs/inherited on
   assert.equal(provenance.source, PR_BODY_PROVENANCE);
 });
 
-test('materializeExtractedRecipe handles empty flow set', async () => {
+test('materializeExtractedRecipe handles no dependency recipes', async () => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'pr-body-recipe-empty-'));
-  const result = await materializeExtractedRecipe({ recipe: { ok: true }, flows: {} }, taskDir);
-  assert.equal(result.inheritedFlowFiles.length, 0);
+  const result = await materializeExtractedRecipe({ recipe: { ok: true }, recipes: {} }, taskDir);
+  assert.equal(result.inheritedRecipeFiles.length, 0);
 
   // Nothing under artifacts/ (P1 contract).
   await assert.rejects(

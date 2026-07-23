@@ -1,49 +1,45 @@
-import type { Dirent } from 'node:fs';
 import { readdir, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import type { RecipeSourceProvenance } from '@farmslot/protocol';
+import {
+  digestRecipeDocument,
+  type RecipeSourceProvenance,
+  validateRecipeDocument,
+} from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-import { type InlineFlow, readCatalogFlows } from './flows.js';
 import { isRecord, readJsonFile } from './json.js';
 import { isPathWithin } from './path.js';
+import { RecipeResolutionError } from './resolution-error.js';
 import { invalidRecipeSource } from './trust-error.js';
 import type { LoadedRecipeLibrarySource, RecipeLibrarySource, RecipeLogger } from './types.js';
 
 const LIBRARY_MANIFEST_FILE = 'library.json';
-const LIBRARY_FLOWS_DIR = 'flows';
-const LIBRARY_FLOW_CATALOG_SUFFIX = '.flows.json';
-const LAST_VERIFIED_WARN_AFTER_DAYS = 30;
+const LIBRARY_RECIPES_DIR = 'recipes';
+const RECIPE_FILE_SUFFIX = '.recipe.json';
+const RECIPE_ADAPTER_SUFFIXES = new Set(['core', 'extension', 'mobile']);
 
-/**
- * Structural stand-in for `NodeJS.ProcessEnv` so the public API typechecks for
- * consumers without `@types/node`.
- */
 export type RecipeLibraryEnv = Record<string, string | undefined>;
 
-export interface ResolvedLibraryFlow {
+export interface ResolvedLibraryRecipe {
   ref: string;
-  flow: InlineFlow;
-  raw: Record<string, unknown>;
+  document: Record<string, unknown>;
   source: string;
-  /** Catalog file path relative to the library root. */
+  /** Recipe file path relative to the library root. */
   file: string;
+  path: string;
+  adapter?: string;
+  provenance: RecipeSourceProvenance;
   /** Source names that also declare this ref at lower precedence. */
   shadows: string[];
-  lastVerified?: string;
 }
 
 export interface RecipeLibraryResolution {
   sources: LoadedRecipeLibrarySource[];
-  flows: ReadonlyMap<string, ResolvedLibraryFlow>;
+  recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
 }
 
-/**
- * Parse a `RECIPE_LIBRARY_PATH`-style value: ordered, colon-separated
- * `name=path` or bare-path entries. Order is precedence (first wins).
- */
 export function parseRecipeLibraryPath(value: string): RecipeLibrarySource[] {
   return value
     .split(':')
@@ -61,18 +57,10 @@ export function parseRecipeLibraryPath(value: string): RecipeLibrarySource[] {
     });
 }
 
-/**
- * The personal library location: `<farmslot home>/recipe-library`
- * (FARMSLOT_HOME env, default ~/.farmslot). The directory may not exist yet.
- */
 export function personalRecipeLibraryRoot(env: RecipeLibraryEnv = process.env): string {
   return path.join(farmslotHome(env), 'recipe-library');
 }
 
-/**
- * Default sources when nothing is configured: the personal library when it
- * exists.
- */
 export async function defaultRecipeLibrarySources(
   env: RecipeLibraryEnv = process.env,
 ): Promise<RecipeLibrarySource[]> {
@@ -88,35 +76,66 @@ export async function defaultRecipeLibrarySources(
   return [{ name: 'personal', root: personalRoot }];
 }
 
-/**
- * Resolve the ordered library sources for a run: explicit entries (CLI flags
- * first, then RECIPE_LIBRARY_PATH) replace the defaults entirely so a run's
- * precedence is always fully spelled out by whoever configured it.
- */
 export async function resolveRecipeLibrarySources(options?: {
   cliEntries?: string[];
   env?: RecipeLibraryEnv;
+  recipePath?: string;
 }): Promise<RecipeLibrarySource[]> {
   const env = options?.env ?? process.env;
   const explicit = [
     ...(options?.cliEntries ?? []).flatMap((entry) => parseRecipeLibraryPath(entry)),
     ...(env.RECIPE_LIBRARY_PATH ? parseRecipeLibraryPath(env.RECIPE_LIBRARY_PATH) : []),
   ];
-  if (explicit.length > 0) return explicit;
-  return defaultRecipeLibrarySources(env);
+  const configured = explicit.length > 0 ? explicit : await defaultRecipeLibrarySources(env);
+  if (!options?.recipePath) return configured;
+
+  const recipeDir = path.dirname(path.resolve(options.recipePath));
+  const taskDir =
+    path.basename(recipeDir) === 'resolved-recipes' ? path.dirname(recipeDir) : recipeDir;
+  const taskRoot = path.join(taskDir, 'recipe-library');
+  try {
+    await readFile(path.join(taskRoot, LIBRARY_MANIFEST_FILE), 'utf-8');
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return configured;
+    }
+    throw error;
+  }
+  if (configured.some((source) => path.resolve(source.root) === taskRoot)) return configured;
+  return [
+    {
+      name: 'task-local',
+      root: taskRoot,
+      provenance: { kind: 'task', trust: 'unknown', name: 'task-local' },
+    },
+    ...configured,
+  ];
+}
+
+export function applyTaskLocalInvocationTrust(
+  sources: readonly RecipeLibrarySource[],
+  invocationTrust: RecipeSourceProvenance['trust'],
+): RecipeLibrarySource[] {
+  return sources.map((source) =>
+    source.name === 'task-local'
+      ? {
+          ...source,
+          provenance: { ...source.provenance, kind: 'task', trust: invocationTrust },
+        }
+      : source,
+  );
 }
 
 /**
- * Load and merge ordered library sources into one flow resolution. Shadowing
- * across sources is recorded and logged; duplicate refs within one source are
- * an error, matching recipe-local catalog behavior.
+ * Load ordered library sources into one recipe index. The first source wins;
+ * within one source an exact adapter variant wins over the generic recipe.
  */
 export async function loadRecipeLibraries(
   sources: readonly RecipeLibrarySource[],
-  logger?: RecipeLogger,
+  options?: { adapter?: string; logger?: RecipeLogger },
 ): Promise<RecipeLibraryResolution> {
   const loadedSources: LoadedRecipeLibrarySource[] = [];
-  const flows = new Map<string, ResolvedLibraryFlow>();
+  const recipes = new Map<string, ResolvedLibraryRecipe>();
   const seenNames = new Set<string>();
 
   for (const source of sources) {
@@ -124,142 +143,130 @@ export async function loadRecipeLibraries(
     const rootReal = await realpath(root);
     const manifest = await readLibraryManifest(root);
     const name = source.name ?? manifest.name ?? path.basename(root);
-    const provenance: RecipeSourceProvenance = source.provenance ?? {
+    const sourceProvenance: RecipeSourceProvenance = source.provenance ?? {
       kind: 'library',
       trust: 'unknown',
       name,
       path: root,
     };
     if (seenNames.has(name)) {
-      throw new Error(`Recipe library source ${name} is configured more than once.`);
+      throw new RecipeResolutionError(
+        'RECIPE_LIBRARY_DUPLICATE_SOURCE',
+        `Recipe library source ${name} is configured more than once.`,
+        `remove one ${name} library source from the configured search path`,
+      );
     }
     seenNames.add(name);
 
-    const sourceFlows = new Map<string, ResolvedLibraryFlow>();
-    for (const file of await listFlowCatalogFiles(root)) {
-      const catalogPath = path.join(root, LIBRARY_FLOWS_DIR, file);
-      const catalogReal = await realpath(catalogPath);
-      if (!isPathWithin(rootReal, catalogReal)) {
+    const selected = new Map<string, ResolvedLibraryRecipe>();
+    for (const relativeFile of await listRecipeFiles(root)) {
+      const identity = recipeIdentity(relativeFile, options?.adapter);
+      if (!identity) continue;
+      const absolutePath = path.join(root, LIBRARY_RECIPES_DIR, relativeFile);
+      const fileReal = await realpath(absolutePath);
+      if (!isPathWithin(rootReal, fileReal)) {
         throw invalidRecipeSource(
-          `Library catalog ${path.join(LIBRARY_FLOWS_DIR, file)} resolves outside its library root.`,
-          'move the catalog inside the library root or remove the escaping symlink',
+          `Library recipe ${path.join(LIBRARY_RECIPES_DIR, relativeFile)} resolves outside its library root.`,
+          'move the recipe inside the library root or remove the escaping symlink',
         );
       }
-      const catalog = await readJsonFile(catalogReal);
-      assertFlowCatalogKind(catalog, catalogReal);
-      for (const entry of readCatalogFlows(catalog, catalogReal)) {
-        if (sourceFlows.has(entry.ref)) {
-          throw new Error(`Flow ${entry.ref} is declared more than once in library ${name}.`);
-        }
-        sourceFlows.set(entry.ref, {
-          ref: entry.ref,
-          flow: { ...entry.flow, origin: { ...provenance, path: catalogReal } },
-          raw: entry.raw,
-          source: name,
-          file: path.join(LIBRARY_FLOWS_DIR, file),
-          shadows: [],
-          ...(lastVerifiedDate(entry.raw) ? { lastVerified: lastVerifiedDate(entry.raw) } : {}),
-        });
+      const document = await readJsonFile(fileReal);
+      if (!isRecord(document)) throw new Error(`${fileReal} must contain a recipe object.`);
+      const validation = validateRecipeDocument(document, { skipRecipeCallResolution: true });
+      if (validation.status === 'invalid') {
+        throw new RecipeResolutionError(
+          'RECIPE_LIBRARY_RECIPE_INVALID',
+          `Library recipe ${fileReal} is invalid: ${validation.findings
+            .map((finding) => `${finding.code} ${finding.path}`)
+            .join(', ')}.`,
+          `fix ${fileReal} so it validates as Recipe v1`,
+        );
+      }
+      const previous = selected.get(identity.ref);
+      if (previous && previous.adapter === identity.adapter) {
+        throw new RecipeResolutionError(
+          'RECIPE_LIBRARY_DUPLICATE_RECIPE',
+          `Recipe ${identity.ref} is declared more than once in library ${name}.`,
+          `keep one ${identity.ref} recipe per adapter in library ${name}`,
+        );
+      }
+      if (previous && previous.adapter && !identity.adapter) continue;
+      const digest = digestRecipeDocument(document);
+      selected.set(identity.ref, {
+        ref: identity.ref,
+        document,
+        source: name,
+        file: path.join(LIBRARY_RECIPES_DIR, relativeFile).split(path.sep).join('/'),
+        path: fileReal,
+        ...(identity.adapter ? { adapter: identity.adapter } : {}),
+        provenance: { ...sourceProvenance, path: fileReal, digest },
+        shadows: [],
+      });
+    }
+    loadedSources.push({ name, root, recipeCount: selected.size, provenance: sourceProvenance });
+
+    for (const [ref, resolved] of selected) {
+      const winner = recipes.get(ref);
+      if (winner) winner.shadows.push(name);
+      else recipes.set(ref, resolved);
+    }
+  }
+
+  const resolution = { sources: loadedSources, recipes };
+  if (options?.logger) logResolution(options.logger, resolution);
+  return resolution;
+}
+
+export async function listRecipeFiles(root: string): Promise<string[]> {
+  const recipesRoot = path.join(root, LIBRARY_RECIPES_DIR);
+  const files: string[] = [];
+  async function visit(relativeDir: string): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(path.join(recipesRoot, relativeDir), { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT' && relativeDir === '') return;
+      throw error;
+    }
+    for (const entry of entries) {
+      const relativePath = path.join(relativeDir, entry.name);
+      if (entry.isDirectory()) await visit(relativePath);
+      else if (
+        (entry.isFile() || entry.isSymbolicLink()) &&
+        entry.name.endsWith(RECIPE_FILE_SUFFIX)
+      ) {
+        files.push(relativePath);
       }
     }
-    loadedSources.push({ name, root, flowCount: sourceFlows.size, provenance });
-
-    for (const [ref, resolved] of sourceFlows) {
-      const winner = flows.get(ref);
-      if (winner) {
-        winner.shadows.push(name);
-      } else {
-        flows.set(ref, resolved);
-      }
-    }
   }
-
-  if (logger) logResolution(logger, { sources: loadedSources, flows });
-  return { sources: loadedSources, flows };
+  await visit('');
+  return files.sort();
 }
 
-export interface EffectiveFlowCatalog {
-  catalog: ReadonlyMap<string, InlineFlow>;
-  /** Recipe-local declarations that overrode a library-provided ref. */
-  overrides: Array<{ ref: string; source: string }>;
-}
-
-/**
- * Merge recipe-local flows over library flows. Recipe-local declarations
- * (inline `flows` and explicit `uses` catalogs) always win — the recipe author
- * spelled them out — and any library refs they override are returned (and
- * logged) so runs can report them even for programmatic consumers without a
- * logger. Library flow lookups are recorded into `usedLibraryFlows` so runs
- * can report exactly which library flows produced the proof.
- */
-export function createEffectiveFlowCatalog(
-  recipeFlows: ReadonlyMap<string, InlineFlow>,
-  resolution: RecipeLibraryResolution | undefined,
-  usedLibraryFlows: Map<string, ResolvedLibraryFlow>,
-  logger?: RecipeLogger,
-): EffectiveFlowCatalog {
-  if (!resolution || resolution.flows.size === 0) {
-    return { catalog: recipeFlows, overrides: [] };
-  }
-  const fromLibrary = new Map<string, ResolvedLibraryFlow>();
-  const merged = new TrackingFlowCatalog(fromLibrary, usedLibraryFlows);
-  const overrides: Array<{ ref: string; source: string }> = [];
-  for (const [ref, resolved] of resolution.flows) {
-    merged.set(ref, resolved.flow);
-    fromLibrary.set(ref, resolved);
-  }
-  for (const [ref, flow] of recipeFlows) {
-    const overridden = fromLibrary.get(ref);
-    if (overridden) {
-      fromLibrary.delete(ref);
-      overrides.push({ ref, source: overridden.source });
-      logger?.warn(
-        `Flow ${ref} is declared by the recipe and overrides the ${overridden.source} library declaration.`,
-      );
-    }
-    merged.set(ref, flow);
-  }
-  return { catalog: merged, overrides };
-}
-
-class TrackingFlowCatalog extends Map<string, InlineFlow> {
-  readonly #fromLibrary: ReadonlyMap<string, ResolvedLibraryFlow>;
-  readonly #used: Map<string, ResolvedLibraryFlow>;
-
-  constructor(
-    fromLibrary: ReadonlyMap<string, ResolvedLibraryFlow>,
-    used: Map<string, ResolvedLibraryFlow>,
-  ) {
-    super();
-    this.#fromLibrary = fromLibrary;
-    this.#used = used;
-  }
-
-  override get(ref: string): InlineFlow | undefined {
-    const flow = super.get(ref);
-    if (flow) {
-      const resolved = this.#fromLibrary.get(ref);
-      if (resolved) this.#used.set(ref, resolved);
-    }
-    return flow;
-  }
+function recipeIdentity(
+  relativeFile: string,
+  adapter: string | undefined,
+): { ref: string; adapter?: string } | undefined {
+  const portable = relativeFile.split(path.sep).join('/');
+  if (!portable.endsWith(RECIPE_FILE_SUFFIX)) return undefined;
+  const base = portable.slice(0, -RECIPE_FILE_SUFFIX.length);
+  const suffix = base.slice(base.lastIndexOf('.') + 1);
+  const declaredAdapter = RECIPE_ADAPTER_SUFFIXES.has(suffix) ? suffix : undefined;
+  if (declaredAdapter && declaredAdapter !== adapter) return undefined;
+  const idPath = declaredAdapter ? base.slice(0, -(declaredAdapter.length + 1)) : base;
+  const ref = idPath.replaceAll('/', '.').trim();
+  return ref ? { ref, ...(declaredAdapter ? { adapter: declaredAdapter } : {}) } : undefined;
 }
 
 function logResolution(logger: RecipeLogger, resolution: RecipeLibraryResolution): void {
   const summary = resolution.sources
-    .map((source) => `${source.name}=${source.root} (${source.flowCount} flows)`)
+    .map((source) => `${source.name}=${source.root} (${source.recipeCount} recipes)`)
     .join(', ');
   logger.info(`Recipe libraries: ${summary || 'none'}`);
-  for (const flow of resolution.flows.values()) {
-    if (flow.shadows.length > 0) {
+  for (const recipe of resolution.recipes.values()) {
+    if (recipe.shadows.length > 0) {
       logger.warn(
-        `Flow ${flow.ref} resolves from ${flow.source} and shadows ${flow.shadows.join(', ')}.`,
-      );
-    }
-    const staleDays = daysSince(flow.lastVerified);
-    if (staleDays != null && staleDays > LAST_VERIFIED_WARN_AFTER_DAYS) {
-      logger.warn(
-        `Flow ${flow.ref} (${flow.source}) was last verified ${staleDays} days ago; re-verify before trusting it as proof setup.`,
+        `Recipe ${recipe.ref} resolves from ${recipe.source} and shadows ${recipe.shadows.join(', ')}.`,
       );
     }
   }
@@ -282,46 +289,6 @@ async function readLibraryManifest(root: string): Promise<{ name?: string }> {
   return { ...(typeof manifest.name === 'string' && manifest.name ? { name: manifest.name } : {}) };
 }
 
-/** Catalog file names (relative to `<root>/flows/`) of a library, sorted. */
-export async function listFlowCatalogFiles(root: string): Promise<string[]> {
-  let entries: Dirent[];
-  try {
-    entries = await readdir(path.join(root, LIBRARY_FLOWS_DIR), { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
-    throw error;
-  }
-  return entries
-    .filter(
-      (entry) =>
-        (entry.isFile() || entry.isSymbolicLink()) &&
-        entry.name.endsWith(LIBRARY_FLOW_CATALOG_SUFFIX),
-    )
-    .map((entry) => entry.name)
-    .sort();
-}
-
-function assertFlowCatalogKind(catalog: unknown, catalogPath: string): void {
-  if (!isRecord(catalog) || catalog.kind !== 'recipe-flow-catalog') {
-    throw new Error(`${catalogPath} must declare kind "recipe-flow-catalog".`);
-  }
-}
-
-function lastVerifiedDate(raw: Record<string, unknown>): string | undefined {
-  const provenance = raw.provenance;
-  if (!isRecord(provenance)) return undefined;
-  const lastVerified = provenance.lastVerified;
-  if (isRecord(lastVerified) && typeof lastVerified.date === 'string') return lastVerified.date;
-  return undefined;
-}
-
-function daysSince(date: string | undefined): number | undefined {
-  if (!date) return undefined;
-  const timestamp = Date.parse(date);
-  if (Number.isNaN(timestamp)) return undefined;
-  return Math.floor((Date.now() - timestamp) / (24 * 60 * 60 * 1000));
-}
-
-function expandTilde(p: string): string {
-  return p === '~' || p.startsWith('~/') ? path.join(homedir(), p.slice(1)) : p;
+function expandTilde(value: string): string {
+  return value === '~' || value.startsWith('~/') ? path.join(homedir(), value.slice(1)) : value;
 }

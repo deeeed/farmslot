@@ -32,7 +32,25 @@
             "intent": "Navigate Command Center, Mobile Companion, or browser surfaces by route/hash/URL"
           }
         }
-      ]
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "properties": {
+              "market": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "ui.wait_for": {
       "description": "Wait for selector, text, event, or UI state in Farmslot review surfaces.",
@@ -47,7 +65,43 @@
             "intent": "Wait for selector, text, event, or UI state in Farmslot review surfaces"
           }
         }
-      ]
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "text_contains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "test_id": {
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          },
+          "event": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "ui.set_input": {
       "description": "Set text through the real UI input path for Farmslot UI fixture surfaces.",
@@ -65,13 +119,10 @@
           },
           "value": {
             "type": "string"
-          },
-          "next": {
-            "type": "string"
           }
         },
         "required": ["value"],
-        "additionalProperties": true
+        "additionalProperties": false
       },
       "examples": [
         {
@@ -87,7 +138,11 @@
       ]
     },
     "ui.scroll": {
-      "description": "Scroll the assigned browser, simulator, or device and wait for UI stability."
+      "description": "Scroll the assigned browser, simulator, or device and wait for UI stability.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
     },
     "app.hud": {
       "description": "Reviewer proof HUD injected into the Command Center browser session during recipe playback and video capture. Automatic running/pass/fail updates come from the harness lifecycle; use explicit app.hud nodes only for extra annotations.",
@@ -100,13 +155,252 @@
             "next": "wait-for-panel"
           }
         }
-      ]
+      ],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "clear": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["running", "pass", "fail"]
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "app.status": {
-      "description": "Read the current Command Center browser location and document title via CDP."
+      "description": "Read the current Command Center browser location and document title via CDP.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "timeout_ms": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "app.lifecycle": {
-      "description": "Reload or navigate back in the Command Center browser session during recipe proof."
+      "description": "Reload or navigate back in the Command Center browser session during recipe proof.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "wait_for": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "command": {
+      "description": "command action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "cmd": {
+            "type": "string"
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "save_as": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "assert_json": {
+      "description": "assert_json action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "assert": {
+            "type": "object",
+            "properties": {
+              "operator": {
+                "type": "string"
+              },
+              "value": {
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "assert_output": {
+      "description": "assert_output action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          },
+          "contains": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "state_read": {
+      "description": "state_read action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "save_as": {
+            "type": "string"
+          },
+          "assert": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "watch_logs": {
+      "description": "watch_logs action.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "index_artifacts": {
+      "description": "index_artifacts action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": ["object", "string"],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ui.press": {
+      "description": "ui.press action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ui.screenshot": {
+      "description": "ui.screenshot action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "claims": {
+            "type": "object",
+            "properties": {
+              "must_show": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "must_not_show": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "covers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "cdp.target": {
+      "description": "cdp.target action.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "observers": [
@@ -123,73 +417,6 @@
       "default_for": ["ui.navigate", "ui.press", "ui.set_input", "ui.wait_for"],
       "cost": "cheap",
       "redaction": "labels-only"
-    }
-  ],
-  "pre_conditions": [
-    {
-      "id": "service.listening",
-      "description": "Configured service is listening.",
-      "failure_kind": "environment"
-    },
-    {
-      "id": "runtime.browser.open",
-      "description": "Browser session is open.",
-      "failure_kind": "setup"
-    },
-    {
-      "id": "fixture.user.signed_in",
-      "description": "Test user is signed in.",
-      "failure_kind": "fixture"
-    },
-    {
-      "id": "command_center.dev_server.ready",
-      "description": "Command Center dev server is ready.",
-      "failure_kind": "environment"
-    },
-    {
-      "id": "gateway.recipe_run_artifacts.available",
-      "description": "Gateway has recipe-run artifacts available.",
-      "failure_kind": "fixture"
-    },
-    {
-      "id": "repo.farmslot.ready",
-      "description": "Farmslot repo dependencies are installed.",
-      "failure_kind": "environment"
-    },
-    {
-      "id": "gateway.reachable",
-      "description": "Gateway is reachable.",
-      "failure_kind": "environment"
-    },
-    {
-      "id": "mobile_companion.dev_build.installed",
-      "description": "Mobile Companion dev build is installed.",
-      "failure_kind": "setup"
-    },
-    {
-      "id": "gateway.configured",
-      "description": "Gateway URL is configured.",
-      "failure_kind": "setup"
-    },
-    {
-      "id": "mobile_companion.artifacts.reachable",
-      "description": "Run artifacts are reachable from the device or simulator.",
-      "failure_kind": "environment"
-    },
-    {
-      "id": "slot.warm.available",
-      "description": "A warm Farmslot slot is available.",
-      "failure_kind": "environment"
-    },
-    {
-      "id": "project.recipe_run.ui_supported",
-      "description": "Project recipe_run hook supports UI recipe replay.",
-      "failure_kind": "setup"
-    },
-    {
-      "id": "stream_panel.visible",
-      "description": "The stream panel is visible.",
-      "failure_kind": "setup"
     }
   ],
   "native_bindings": [

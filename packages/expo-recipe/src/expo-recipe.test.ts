@@ -193,31 +193,28 @@ test('redacts sensitive command output before writing trace artifacts', async ()
     await installExpoRecipeScaffold({ projectRoot: root });
     await writeJson(path.join(root, DEFAULT_EXPO_RECIPE_PATH), {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
       title: 'Redaction smoke',
       description: 'Verifies sensitive command output does not land in trace artifacts.',
-      validate: {
-        workflow: {
-          entry: 'emit-config',
-          nodes: {
-            'emit-config': {
-              action: 'command',
-              intent: 'Emit an Expo-style config payload with sensitive values',
-              cmd: `node -e "process.stdout.write(JSON.stringify({ slug: 'example', extra: { gatewayAuthToken: 'secret-token', credential: 'json-secret' } })); process.stderr.write('token=plain-secret authKey: hidden-secret')"`,
-              next: 'assert-config',
-            },
-            'assert-config': {
-              action: 'assert_output',
-              intent: 'Confirm the emitted config still contains its public slug',
-              source: 'emit-config',
-              stream: 'stdout',
-              contains: '"slug"',
-              next: 'done',
-            },
-            done: {
-              action: 'end',
-              status: 'pass',
-            },
+      workflow: {
+        entry: 'emit-config',
+        nodes: {
+          'emit-config': {
+            action: 'command',
+            intent: 'Emit an Expo-style config payload with sensitive values',
+            cmd: `node -e "process.stdout.write(JSON.stringify({ slug: 'example', extra: { gatewayAuthToken: 'secret-token', credential: 'json-secret' } })); process.stderr.write('token=plain-secret authKey: hidden-secret')"`,
+            next: 'assert-config',
+          },
+          'assert-config': {
+            action: 'assert_output',
+            intent: 'Confirm the emitted config still contains its public slug',
+            source: 'emit-config',
+            stream: 'stdout',
+            contains: '"slug"',
+            next: 'done',
+          },
+          done: {
+            action: 'end',
+            status: 'pass',
           },
         },
       },
@@ -253,21 +250,18 @@ test('inherited untrusted provenance blocks Expo recipe actions before side effe
     await installExpoRecipeScaffold({ projectRoot: root });
     await writeJson(path.join(root, DEFAULT_EXPO_RECIPE_PATH), {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
-      schema_version: 1,
       title: 'Trust boundary',
       description: 'Verifies inherited task provenance reaches the Expo wrapper.',
-      validate: {
-        workflow: {
-          entry: 'command',
-          nodes: {
-            command: {
-              action: 'command',
-              intent: 'Attempt a restricted host action',
-              cmd: 'touch blocked.txt',
-              next: 'done',
-            },
-            done: { action: 'end', status: 'pass' },
+      workflow: {
+        entry: 'command',
+        nodes: {
+          command: {
+            action: 'command',
+            intent: 'Attempt a restricted host action',
+            cmd: 'touch blocked.txt',
+            next: 'done',
           },
+          done: { action: 'end', status: 'pass' },
         },
       },
     });
@@ -292,6 +286,182 @@ test('inherited untrusted provenance blocks Expo recipe actions before side effe
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('runs composed recipes from the configured library', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-library-'));
+  const libraryRoot = path.join(root, 'library');
+  const previousLibraryPath = process.env.RECIPE_LIBRARY_PATH;
+  try {
+    await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
+    await installExpoRecipeScaffold({ projectRoot: root });
+    await writeJson(path.join(libraryRoot, 'library.json'), {
+      schema_version: 1,
+      kind: 'recipe-library',
+      name: 'test-library',
+    });
+    await writeJson(path.join(libraryRoot, 'recipes', 'shared', 'wait-ready.recipe.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Provides a reusable composed recipe boundary.',
+      workflow: {
+        entry: 'done',
+        nodes: {
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+    await writeJson(path.join(root, DEFAULT_EXPO_RECIPE_PATH), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Delegates proof setup to a configured library recipe.',
+      workflow: {
+        entry: 'reuse',
+        nodes: {
+          reuse: {
+            action: 'call',
+            intent: 'Reuse the shared readiness boundary.',
+            ref: 'shared.wait-ready',
+            params: {},
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+    process.env.RECIPE_LIBRARY_PATH = `test=${libraryRoot}`;
+
+    const result = await runExpoRecipeDocument(DEFAULT_EXPO_RECIPE_PATH, {
+      projectRoot: root,
+      artifactsDir: path.join(root, 'artifacts'),
+    });
+    const trace = await readFile(path.join(root, 'artifacts', 'trace.json'), 'utf8');
+    assert.equal(result.status, 'pass', trace);
+    assert.match(
+      await readFile(path.join(root, 'artifacts', 'recipe-resolution.json'), 'utf8'),
+      /shared\.wait-ready/u,
+    );
+  } finally {
+    if (previousLibraryPath === undefined) delete process.env.RECIPE_LIBRARY_PATH;
+    else process.env.RECIPE_LIBRARY_PATH = previousLibraryPath;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('CLI passes typed root params and resolves the adjacent task recipe library', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-task-recipe-'));
+  try {
+    await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
+    await installExpoRecipeScaffold({ projectRoot: root });
+    const taskDir = path.join(root, 'artifacts');
+    const libraryRoot = path.join(taskDir, 'recipe-library');
+    await writeJson(path.join(libraryRoot, 'library.json'), {
+      schema_version: 1,
+      kind: 'recipe-library',
+      name: 'task-local',
+    });
+    await writeJson(path.join(libraryRoot, 'recipes', 'task', 'write.recipe.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Writes the caller-provided marker.',
+      paramsSchema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['marker'],
+        properties: { marker: { type: 'string' } },
+      },
+      workflow: {
+        entry: 'write',
+        nodes: {
+          write: {
+            action: 'command',
+            intent: 'Write the requested proof marker.',
+            cmd: 'touch {{params.marker}}',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+    await writeJson(path.join(taskDir, 'recipe.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Calls the task-local proof recipe.',
+      paramsSchema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['marker'],
+        properties: { marker: { type: 'string' } },
+      },
+      workflow: {
+        entry: 'reuse',
+        nodes: {
+          reuse: {
+            action: 'call',
+            intent: 'Reuse the task-local proof boundary.',
+            ref: 'task.write',
+            params: { marker: '{{params.marker}}' },
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+
+    await runExpoRecipeCli([
+      'run',
+      'artifacts/recipe.json',
+      '--project-root',
+      root,
+      '--artifacts-dir',
+      'artifacts/run',
+      '--param',
+      'marker=task-local-proof.txt',
+    ]);
+
+    assert.equal(await readFile(path.join(root, 'task-local-proof.txt'), 'utf8'), '');
+    assert.match(
+      await readFile(path.join(root, 'artifacts/run/recipe-resolution.json'), 'utf8'),
+      /task\.write/u,
+    );
+
+    await writeJson(path.join(libraryRoot, 'recipes', 'task', 'write.recipe.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Uses native UI through a composed task recipe.',
+      paramsSchema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['marker'],
+        properties: { marker: { type: 'string' } },
+      },
+      workflow: {
+        entry: 'press',
+        nodes: {
+          press: {
+            action: 'ui.press',
+            intent: 'Open the requested control.',
+            selector: '{{params.marker}}',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+    const previousPlatform = process.env.PLATFORM;
+    delete process.env.PLATFORM;
+    try {
+      await assert.rejects(
+        () =>
+          runExpoRecipeDocument('artifacts/recipe.json', {
+            projectRoot: root,
+            artifactsDir: 'artifacts/native-run',
+            params: { marker: '#control' },
+          }),
+        /Native recipe actions require PLATFORM=ios or android/u,
+      );
+    } finally {
+      if (previousPlatform === undefined) delete process.env.PLATFORM;
+      else process.env.PLATFORM = previousPlatform;
+    }
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

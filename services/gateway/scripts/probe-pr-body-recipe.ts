@@ -65,22 +65,22 @@ async function main() {
     process.exit(0);
   }
 
-  const flowNames = Object.keys(result.bundle.flows);
+  const recipeNames = Object.keys(result.bundle.recipes);
   console.log(
-    `[probe] extracted recipe + ${flowNames.length} flows: ${flowNames.join(', ') || '(none)'}`,
+    `[probe] extracted recipe + ${recipeNames.length} dependencies: ${recipeNames.join(', ') || '(none)'}`,
   );
 
-  const { inheritedRecipePath, inheritedFlowFiles, provenancePath } =
+  const { inheritedRecipePath, inheritedRecipeFiles, provenancePath } =
     await materializeExtractedRecipe(result.bundle, outDir);
   console.log(`[probe] wrote ${inheritedRecipePath}  (staged — untrusted, gated)`);
   console.log(`[probe] wrote ${provenancePath}  (provenance marker)`);
-  for (const f of inheritedFlowFiles) console.log(`[probe] wrote ${f}`);
+  for (const f of inheritedRecipeFiles) console.log(`[probe] wrote ${f}`);
   console.log('[probe] done. Recipe is staged for review only — NOT seeded into artifacts/.');
   console.log('[probe] Inspect with:');
   console.log(`  jq . ${inheritedRecipePath}`);
   console.log(`  jq . ${provenancePath}`);
-  if (existsSync(path.join(outDir, 'inputs', 'inherited', 'recipe-flows'))) {
-    console.log(`  ls ${outDir}/inputs/inherited/recipe-flows`);
+  if (existsSync(path.join(outDir, 'inputs', 'inherited', 'recipe-library'))) {
+    console.log(`  find ${outDir}/inputs/inherited/recipe-library -type f`);
   }
 }
 

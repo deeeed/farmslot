@@ -118,6 +118,7 @@ projects/farmslot-farm/.task/
 
 # Git worktrees checked out inside the repo (never repo source)
 .worktrees/
+.claude/
 .omx/
 **/.omx/
 **/.omc/

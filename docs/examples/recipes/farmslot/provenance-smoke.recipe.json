@@ -1,17 +1,13 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "schema_version": 1,
   "title": "Provenance smoke fixture",
   "description": "Minimal Recipe v1 artifact package used to validate runner provenance gates.",
-  "validate": {
-    "workflow": {
-      "entry": "done",
-      "nodes": {
-        "done": {
-          "action": "end",
-          "intent": "Complete the provenance fixture.",
-          "status": "pass"
-        }
+  "workflow": {
+    "entry": "done",
+    "nodes": {
+      "done": {
+        "action": "end",
+        "status": "pass"
       }
     }
   }

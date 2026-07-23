@@ -101,7 +101,7 @@ Completion requires:
 - Do not emit canonical success output if every target is unresolved
 - Do not prefer screenshots when state proof is enough
 - Do not skip screenshots when the claim is visual or review-sensitive
-- Do not rebuild known flows as raw steps when `call` exists
+- Do not rebuild known recipes as raw steps when `call` exists
 - Do not stop after printing a recipe or JSON payload if writable artifacts and validation surfaces still exist
 - Do not leave the copied `TASK.md` as the untouched template
 - Do not write `SIGNAL.json` with `complete/success` when a required validation failed or when a required proof target remains `UNRESOLVED`
@@ -112,11 +112,11 @@ Completion requires:
 
 | Pitfall                                                            | Correct Pattern                                                                                      |
 | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| Treating cooking as deterministic templating                       | Treat it as LLM synthesis constrained by repo flows/evals and honest proof                           |
+| Treating cooking as deterministic templating                       | Treat it as LLM synthesis constrained by repo journeys/recipes/evals and honest proof                |
 | Using the whole PR description as one target                       | Extract small executable proof targets                                                               |
 | Defaulting every UI claim to screenshots only                      | choose `visual` or `mixed` deliberately                                                              |
 | Defaulting every non-visual claim to a screenshot anyway           | prefer state/log/trace proof                                                                         |
-| Rewriting long repeated setup chains                               | reuse `call` flows                                                                                   |
+| Rewriting long repeated setup chains                               | reuse parameterized recipes through `call`                                                           |
 | Forcing a canonical recipe when the claim is unresolved            | stop or emit only resolved targets with explicit gaps                                                |
 | Treating interactive farmslot execution like chat-only drafting    | keep driving the workspace until artifacts + validation evidence exist                               |
 | Writing recipe artifacts but forgetting the copied `TASK.md`       | rewrite the task file and update `STATUS` / evidence sections before stopping                        |
@@ -127,7 +127,7 @@ Completion requires:
 Stop and report instead of forcing a recipe when:
 
 - target text is still too ambiguous to map honestly
-- repo has no viable flow/eval/native interaction path for the claim
+- repo has no viable recipe/eval/native interaction path for the claim
 - current runner context is missing and the missing context changes what should be proven
 - the repo has no validation runner and you already recorded `validation unavailable`
 

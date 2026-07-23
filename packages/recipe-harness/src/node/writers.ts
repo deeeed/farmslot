@@ -1,4 +1,8 @@
-import type { RecipeArtifactManifestEntry } from '@farmslot/protocol';
+import {
+  type RecipeArtifactManifestEntry,
+  type RecipeResolutionDocument,
+  resolvedRecipeArtifactPath,
+} from '@farmslot/protocol';
 
 import { writeFileWithinRoot } from '../core/path.js';
 import type {
@@ -30,25 +34,29 @@ export class JsonArtifactWriter implements ArtifactWriter {
     return recipePath;
   }
 
-  /**
-   * Writes the fully-composed recipe: the authored recipe with every reachable
-   * flow (inline + `uses` catalogs + resolved library flows, transitively)
-   * inlined under `flows`. This artifact is self-contained, so its `call.ref`s
-   * resolve without the recipe library and it validates as a complete recipe.
-   */
-  async writeResolvedRecipe(recipe: unknown): Promise<string> {
-    const resolvedPath = await writeJsonWithinRoot(
-      this.#artifactsDir,
-      'resolved-recipe.json',
-      recipe,
-    );
+  async copyResolvedRecipe(digest: string, recipe: unknown): Promise<string> {
+    const relativePath = resolvedRecipeArtifactPath(digest);
+    if (!relativePath) throw new Error(`Invalid resolved recipe digest ${digest}.`);
+    const resolvedPath = await writeJsonWithinRoot(this.#artifactsDir, relativePath, recipe);
     this.register({
-      path: 'resolved-recipe.json',
+      path: relativePath,
       type: 'recipe',
-      label: 'Resolved recipe (full composition)',
+      label: 'Resolved recipe dependency',
       category: 'system',
     });
     return resolvedPath;
+  }
+
+  async writeRecipeResolution(resolution: RecipeResolutionDocument): Promise<string> {
+    const relativePath = 'recipe-resolution.json';
+    const resolutionPath = await writeJsonWithinRoot(this.#artifactsDir, relativePath, resolution);
+    this.register({
+      path: relativePath,
+      type: 'json',
+      label: 'Resolved recipe dependency graph',
+      category: 'system',
+    });
+    return resolutionPath;
   }
 
   register(entry: RecipeArtifactManifestEntry): void {

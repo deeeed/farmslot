@@ -3,50 +3,77 @@ import {
   createContext,
   finishResult,
   hasOwn,
+  isNonEmptyString,
   isRecord,
   RECIPE_PROTOCOL_SCHEMA_URL,
-  RECIPE_PROTOCOL_SCHEMA_VERSION,
-  recipeProtocolSchemaUrlForVersion,
+  type RecipeValidationFinding,
   type RecipeValidationResult,
+  requireStringField,
   validateOptionalStringField,
 } from './common.js';
 import {
   getRecipeActionManifestActionNames,
-  getRecipeActionManifestPreconditionIds,
   validateRecipeActionManifestDocument,
 } from './manifest.js';
+import { validateRecipeParams, validateRecipeParamsSchema } from './params.js';
 import {
   extractWorkflow,
+  getRecipeActionParams,
   getRecipeWorkflowActionEntries,
-  getRecipeWorkflowPreconditionEntries,
-  validateFlowCalls,
-  validateInlineFlows,
+  validateRecipeCalls,
   validateWorkflowGraph,
-  validateWorkflowPreconditions,
 } from './workflow.js';
 
+const RECIPE_FIELDS = new Set([
+  '$schema',
+  'title',
+  'description',
+  'paramsSchema',
+  'proofTargets',
+  'workflow',
+]);
+
 export interface RecipeDocumentValidationOptions {
-  /**
-   * Flow ids resolvable outside the recipe document (e.g. from configured
-   * recipe library sources). `call.ref` values found here are not reported as
-   * unresolved even when the recipe has no `uses` catalogs or inline flows.
-   */
-  externalFlowIds?: ReadonlySet<string>;
-  /** Require the canonical published JSON Schema URL at recipe.$schema. */
+  externalRecipeIds?: ReadonlySet<string>;
+  /** Retained for callers; Recipe v1 always requires the canonical schema ref. */
   requireSchemaRef?: boolean;
-  /**
-   * Skip `call.ref` resolution (unresolved_call_ref) against inline flows / uses
-   * catalogs / external library flows. Call-shape checks (invalid ref/params) still
-   * run. Set when a produced resolved-recipe.json already proves resolution.
-   */
-  skipFlowCallResolution?: boolean;
-  /**
-   * Whether a declared `uses` catalog counts as resolving `call.ref`s. Defaults to
-   * true (authoring/run time, where catalogs are loaded). Set false at
-   * artifact-package validation, where the catalogs are not in the package, so a
-   * `uses`-only recipe is not self-contained.
-   */
-  externalCatalogsResolvable?: boolean;
+  skipRecipeCallResolution?: boolean;
+}
+
+export function validateResolvedRecipeActionNode(
+  node: unknown,
+  manifest: unknown,
+): RecipeValidationResult {
+  const ctx = createContext();
+  if (!isRecord(node) || !isNonEmptyString(node.action)) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.invalid_action_node',
+      'node',
+      'Resolved action node is invalid.',
+    );
+    return finishResult(ctx);
+  }
+  if (node.action === 'call' || node.action === 'end') return finishResult(ctx);
+  const contract = manifestActionContracts(manifest).get(node.action);
+  if (!contract?.schema) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.action_schema_missing',
+      'node.action',
+      `Action ${node.action} must declare a parameter schema in the runner manifest.`,
+    );
+    return finishResult(ctx);
+  }
+  ctx.findings.push(...validateRecipeParams(getRecipeActionParams(node), contract.schema).findings);
+  return finishResult(ctx);
+}
+
+interface ManifestActionContract {
+  schema?: Record<string, unknown>;
+  resultCases?: string[];
 }
 
 export function validateRecipeWithManifest(
@@ -55,119 +82,67 @@ export function validateRecipeWithManifest(
   options?: RecipeDocumentValidationOptions,
 ): RecipeValidationResult {
   const ctx = createContext();
-  const recipeResult = validateRecipeDocument(recipe, options);
-  const manifestResult = validateRecipeActionManifestDocument(manifest);
-  ctx.findings.push(...recipeResult.findings, ...manifestResult.findings);
+  ctx.findings.push(...validateRecipeDocument(recipe, options).findings);
+  ctx.findings.push(...validateRecipeActionManifestDocument(manifest).findings);
 
   const declaredActions = new Set(getRecipeActionManifestActionNames(manifest));
-  if (declaredActions.size > 0) {
-    const actions = getRecipeWorkflowActionEntries(recipe);
-    actions.forEach(({ action, path }) => {
-      if (!declaredActions.has(action)) {
-        addFinding(
-          ctx,
-          'error',
-          'recipe.action_not_declared_by_manifest',
-          path,
-          `Recipe action ${action} is not declared by the runner action manifest.`,
-        );
-      }
-    });
-  }
-
-  const declaredObservers = new Set<string>();
-  if (isRecord(manifest) && Array.isArray(manifest.observers)) {
-    for (const observer of manifest.observers) {
-      if (isRecord(observer) && typeof observer.ref === 'string') {
-        declaredObservers.add(observer.ref);
-      }
-    }
-  }
-  for (const entry of collectObservationPolicies(recipe)) {
-    if (!Array.isArray(entry.policy)) continue;
-    entry.policy.forEach((ref, index) => {
-      if (typeof ref === 'string' && !declaredObservers.has(ref)) {
-        addFinding(
-          ctx,
-          'error',
-          'recipe.observer_not_declared_by_manifest',
-          `${entry.path}[${index}]`,
-          `Recipe observer ${ref} is not declared by the runner action manifest.`,
-        );
-      }
-    });
-  }
-
-  const declaredPreconditions = new Set(getRecipeActionManifestPreconditionIds(manifest));
-  for (const gate of getRecipeWorkflowPreconditionEntries(recipe)) {
-    if (!declaredPreconditions.has(gate.id)) {
+  const contracts = manifestActionContracts(manifest);
+  for (const { action, node, path } of getRecipeWorkflowActionEntries(recipe)) {
+    if (action === 'end' || action === 'call') continue;
+    if (!declaredActions.has(action)) {
       addFinding(
         ctx,
         'error',
-        'recipe.precondition_not_declared_by_manifest',
-        gate.path,
-        `Recipe precondition ${gate.id} is not declared by the runner action manifest.`,
+        'recipe.action_not_declared_by_manifest',
+        `${path}.action`,
+        `Recipe action ${action} is not declared by the runner action manifest.`,
       );
+      continue;
+    }
+
+    const contract = contracts.get(action);
+    if (!contract?.schema) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.action_schema_missing',
+        `${path}.action`,
+        `Action ${action} must declare a parameter schema in the runner manifest.`,
+      );
+    } else {
+      const paramsResult = validateRecipeParams(getRecipeActionParams(node), contract.schema, {
+        allowTemplates: true,
+      });
+      ctx.findings.push(...paramsResult.findings.map((finding) => rebaseFinding(finding, path)));
+    }
+
+    if (isRecord(node.cases)) {
+      if (!contract?.resultCases?.length) {
+        addFinding(
+          ctx,
+          'error',
+          'recipe.action_cases_not_declared',
+          `${path}.cases`,
+          `Action ${action} uses result cases but its manifest declares none.`,
+        );
+      } else {
+        const allowed = new Set(contract.resultCases);
+        for (const caseName of Object.keys(node.cases)) {
+          if (!allowed.has(caseName)) {
+            addFinding(
+              ctx,
+              'error',
+              'recipe.action_case_not_declared',
+              `${path}.cases.${caseName}`,
+              `Case ${caseName} is not declared by action ${action}.`,
+            );
+          }
+        }
+      }
     }
   }
 
   return finishResult(ctx);
-}
-
-interface ObservationPolicyEntry {
-  path: string;
-  policy: unknown;
-  field: 'observe' | 'expect_observations';
-  node: Record<string, unknown>;
-}
-
-function collectObservationPolicies(recipe: unknown): ObservationPolicyEntry[] {
-  if (!isRecord(recipe)) return [];
-  const entries = collectNodeObservationPolicies(recipe.startState, 'startState');
-  const validate = isRecord(recipe.validate) ? recipe.validate : undefined;
-  entries.push(...collectWorkflowObservationPolicies(validate?.workflow, 'validate.workflow'));
-  if (isRecord(recipe.flows)) {
-    for (const [ref, flow] of Object.entries(recipe.flows)) {
-      if (!isRecord(flow)) continue;
-      entries.push(
-        ...collectWorkflowObservationPolicies(
-          isRecord(flow.workflow) ? flow.workflow : flow,
-          `flows.${ref}${isRecord(flow.workflow) ? '.workflow' : ''}`,
-        ),
-      );
-    }
-  }
-  return entries;
-}
-
-function collectWorkflowObservationPolicies(
-  value: unknown,
-  path: string,
-): ObservationPolicyEntry[] {
-  if (!isRecord(value)) return [];
-  const entries: ObservationPolicyEntry[] = [];
-  if (isRecord(value.nodes)) {
-    for (const [nodeId, node] of Object.entries(value.nodes)) {
-      entries.push(...collectNodeObservationPolicies(node, `${path}.nodes.${nodeId}`));
-    }
-  }
-  for (const lifecycle of ['setup', 'teardown'] as const) {
-    if (!Array.isArray(value[lifecycle])) continue;
-    value[lifecycle].forEach((node, index) => {
-      entries.push(...collectNodeObservationPolicies(node, `${path}.${lifecycle}[${index}]`));
-    });
-  }
-  return entries;
-}
-
-function collectNodeObservationPolicies(value: unknown, path: string): ObservationPolicyEntry[] {
-  if (!isRecord(value) || typeof value.action !== 'string') return [];
-  const entries: ObservationPolicyEntry[] = [];
-  for (const field of ['observe', 'expect_observations'] as const) {
-    if (hasOwn(value, field))
-      entries.push({ path: `${path}.${field}`, policy: value[field], field, node: value });
-  }
-  return entries;
 }
 
 export function validateRecipeDocument(
@@ -186,107 +161,185 @@ export function validateRecipeDocument(
     return finishResult(ctx);
   }
 
-  const schemaVersion = recipe.schema_version;
-  const schemaVersionIsV1 = schemaVersion === RECIPE_PROTOCOL_SCHEMA_VERSION;
-  const expectedSchemaRef =
-    recipeProtocolSchemaUrlForVersion(schemaVersion) ?? RECIPE_PROTOCOL_SCHEMA_URL;
-  const schemaRef = recipe.$schema;
-  if (options?.requireSchemaRef === true && schemaRef == null) {
+  for (const field of Object.keys(recipe)) {
+    if (!RECIPE_FIELDS.has(field)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.unsupported_field',
+        field,
+        `Recipe Protocol v1 does not support top-level field ${field}.`,
+      );
+    }
+  }
+
+  if (!hasOwn(recipe, '$schema')) {
     addFinding(
       ctx,
       'error',
       'recipe.missing_schema_ref',
       '$schema',
-      `Recipe must set $schema to ${expectedSchemaRef}.`,
+      `Recipe must set $schema to ${RECIPE_PROTOCOL_SCHEMA_URL}.`,
     );
-  } else if (schemaRef != null && schemaRef !== expectedSchemaRef) {
+  } else if (recipe.$schema !== RECIPE_PROTOCOL_SCHEMA_URL) {
     addFinding(
       ctx,
       'error',
       'recipe.unsupported_schema_ref',
       '$schema',
-      `Unsupported $schema ${JSON.stringify(schemaRef)} for schema_version ${JSON.stringify(schemaVersion)}; expected ${expectedSchemaRef}.`,
+      `Recipe $schema must equal ${RECIPE_PROTOCOL_SCHEMA_URL}.`,
     );
   }
 
-  if (!hasOwn(recipe, 'schema_version')) {
-    addFinding(
-      ctx,
-      'error',
-      'recipe.missing_schema_version',
-      'schema_version',
-      `Recipe must set schema_version: ${RECIPE_PROTOCOL_SCHEMA_VERSION}.`,
-    );
-  } else if (!schemaVersionIsV1) {
-    addFinding(
-      ctx,
-      'error',
-      'recipe.unsupported_schema_version',
-      'schema_version',
-      `Unsupported schema_version ${JSON.stringify(schemaVersion)}; supported value is ${RECIPE_PROTOCOL_SCHEMA_VERSION}.`,
-    );
-  }
-
+  requireStringField(ctx, recipe, 'description', 'description');
   validateOptionalStringField(ctx, recipe, 'title', 'title');
-  validateOptionalStringField(ctx, recipe, 'description', 'description');
-
-  const validate = recipe.validate;
-  const rawWorkflow = isRecord(validate) && isRecord(validate.workflow) ? validate.workflow : null;
-  const workflow = extractWorkflow(ctx, recipe);
-  if (workflow && rawWorkflow) {
-    validateWorkflowPreconditions(ctx, rawWorkflow);
-    validateWorkflowGraph(ctx, workflow, rawWorkflow);
-    // Always run flow-call validation for call-shape checks; skipResolution gates
-    // only unresolved_call_ref (proven elsewhere), and externalCatalogsResolvable
-    // controls whether a declared `uses` catalog counts as resolving refs.
-    validateFlowCalls(ctx, recipe, workflow, {
-      ...(options?.externalFlowIds ? { externalFlowIds: options.externalFlowIds } : {}),
-      skipResolution: options?.skipFlowCallResolution === true,
-      externalCatalogsResolvable: options?.externalCatalogsResolvable !== false,
-    });
+  if (hasOwn(recipe, 'paramsSchema')) {
+    ctx.findings.push(...validateRecipeParamsSchema(recipe.paramsSchema).findings);
   }
-  validateInlineFlows(ctx, recipe);
-  for (const entry of collectObservationPolicies(recipe)) {
-    const valid =
-      entry.field === 'observe'
-        ? typeof entry.policy === 'boolean' || validObserverRefArray(entry.policy)
-        : validObserverRefArray(entry.policy);
-    if (!valid) {
-      addFinding(
-        ctx,
-        'error',
-        entry.field === 'observe'
-          ? 'recipe.invalid_observe_policy'
-          : 'recipe.invalid_observation_expectation',
-        entry.path,
-        entry.field === 'observe'
-          ? 'observe must be a boolean or an array of unique non-empty observer refs.'
-          : 'expect_observations must be an array of unique non-empty observer refs.',
-      );
-    }
-    if (
-      entry.field === 'expect_observations' &&
-      Array.isArray(entry.policy) &&
-      entry.policy.length > 0 &&
-      entry.node.observe === false
-    ) {
-      addFinding(
-        ctx,
-        'error',
-        'recipe.contradictory_observation_expectation',
-        entry.path,
-        'expect_observations must be empty when observe is false; the node can never record observations.',
-      );
-    }
+
+  const proofTargetIds = validateProofTargets(ctx, recipe.proofTargets);
+  const workflow = extractWorkflow(ctx, recipe);
+  if (workflow) {
+    validateWorkflowGraph(ctx, workflow);
+    validateRecipeCalls(ctx, workflow, {
+      ...(options?.externalRecipeIds ? { externalRecipeIds: options.externalRecipeIds } : {}),
+      skipResolution: options?.skipRecipeCallResolution === true,
+    });
+    validateProofLinks(ctx, workflow.nodes, proofTargetIds);
   }
 
   return finishResult(ctx);
 }
 
-function validObserverRefArray(value: unknown): boolean {
-  return (
-    Array.isArray(value) &&
-    value.every((ref) => typeof ref === 'string' && ref.trim() !== '') &&
-    new Set(value).size === value.length
-  );
+function validateProofTargets(ctx: ReturnType<typeof createContext>, value: unknown): Set<string> {
+  const ids = new Set<string>();
+  if (value == null) return ids;
+  if (!Array.isArray(value)) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.invalid_proof_targets',
+      'proofTargets',
+      'proofTargets must be an array.',
+    );
+    return ids;
+  }
+  value.forEach((target, index) => {
+    const path = `proofTargets[${index}]`;
+    if (!isRecord(target)) {
+      addFinding(ctx, 'error', 'recipe.invalid_proof_target', path, `${path} must be an object.`);
+      return;
+    }
+    for (const field of Object.keys(target)) {
+      if (field !== 'id' && field !== 'claim') {
+        addFinding(
+          ctx,
+          'error',
+          'recipe.unsupported_proof_target_field',
+          `${path}.${field}`,
+          `Proof targets do not support ${field}.`,
+        );
+      }
+    }
+    if (!isNonEmptyString(target.id)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.invalid_proof_target_id',
+        `${path}.id`,
+        'Proof target id must be a non-empty string.',
+      );
+    } else if (ids.has(target.id)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.duplicate_proof_target',
+        `${path}.id`,
+        `Proof target ${target.id} is duplicated.`,
+      );
+    } else {
+      ids.add(target.id);
+    }
+    if (!isNonEmptyString(target.claim)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.invalid_proof_target_claim',
+        `${path}.claim`,
+        'Proof target claim must be a non-empty string.',
+      );
+    }
+  });
+  return ids;
+}
+
+function validateProofLinks(
+  ctx: ReturnType<typeof createContext>,
+  nodes: Record<string, Record<string, unknown>>,
+  declared: Set<string>,
+): void {
+  const covered = new Set<string>();
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    if (!Array.isArray(node.proves)) continue;
+    node.proves.forEach((target, index) => {
+      if (!isNonEmptyString(target)) return;
+      if (!declared.has(target)) {
+        addFinding(
+          ctx,
+          'error',
+          'recipe.undeclared_proof_target',
+          `workflow.nodes.${nodeId}.proves[${index}]`,
+          `Proof target ${target} is not declared by recipe.proofTargets.`,
+        );
+      }
+      covered.add(target);
+    });
+  }
+  for (const target of declared) {
+    if (!covered.has(target)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.uncovered_proof_target',
+        'proofTargets',
+        `Proof target ${target} is not covered by any workflow node.`,
+      );
+    }
+  }
+}
+
+function manifestActionContracts(manifest: unknown): Map<string, ManifestActionContract> {
+  const contracts = new Map<string, ManifestActionContract>();
+  if (!isRecord(manifest)) return contracts;
+  if (isRecord(manifest.action_metadata)) {
+    for (const [name, entry] of Object.entries(manifest.action_metadata)) {
+      if (!isRecord(entry)) continue;
+      contracts.set(name, actionContract(entry));
+    }
+  }
+  if (Array.isArray(manifest.custom_actions)) {
+    for (const entry of manifest.custom_actions) {
+      if (isRecord(entry) && isNonEmptyString(entry.name)) {
+        contracts.set(entry.name, actionContract(entry));
+      }
+    }
+  }
+  return contracts;
+}
+
+function actionContract(entry: Record<string, unknown>): ManifestActionContract {
+  return {
+    ...(isRecord(entry.schema) ? { schema: entry.schema } : {}),
+    ...(Array.isArray(entry.result_cases)
+      ? { resultCases: entry.result_cases.filter(isNonEmptyString) }
+      : {}),
+  };
+}
+
+function rebaseFinding(
+  finding: RecipeValidationFinding,
+  nodePath: string,
+): RecipeValidationFinding {
+  const suffix = finding.path === 'params' ? '' : finding.path.replace(/^params\.?/u, '.');
+  return { ...finding, path: `${nodePath}${suffix}` };
 }

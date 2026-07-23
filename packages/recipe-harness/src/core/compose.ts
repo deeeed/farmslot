@@ -1,182 +1,159 @@
-import { normalizeRecipeFlowRef, type RecipeSourceProvenance } from '@farmslot/protocol';
-
-import { collectFlows, type InlineFlow } from './flows.js';
-import { isRecord } from './json.js';
 import {
-  createEffectiveFlowCatalog,
-  loadRecipeLibraries,
-  type ResolvedLibraryFlow,
-} from './library.js';
-import type { RecipeLibrarySource, RecipeLogger } from './types.js';
+  normalizeRecipeRef,
+  type RecipeResolutionDocument,
+  type RecipeResolutionEdge,
+  type RecipeSourceProvenance,
+  resolvedRecipeArtifactPath,
+} from '@farmslot/protocol';
 
-/** Locate a flow definition's node map, tolerating both `{entry,nodes}` and `{workflow:{...}}`. */
-function flowNodes(flow: unknown): Record<string, unknown> | undefined {
-  if (!isRecord(flow)) return undefined;
-  const workflow = isRecord(flow.workflow) ? flow.workflow : flow;
-  return isRecord(workflow.nodes) ? (workflow.nodes as Record<string, unknown>) : undefined;
+import { DEFAULT_MAX_RECIPE_CALL_DEPTH } from './execution.js';
+import { extractWorkflowGraph } from './graph.js';
+import { isRecord } from './json.js';
+import type { ResolvedLibraryRecipe } from './library.js';
+import { resolveRecipeParams, resolveRecipeValue } from './parameters.js';
+import { RecipeResolutionError } from './resolution-error.js';
+
+export interface ResolvedRecipeDependencies {
+  recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
+  edges: RecipeResolutionEdge[];
+  document: RecipeResolutionDocument;
 }
 
-/**
- * Every `call.ref` on any node in a node map. This mirrors `validateFlowCalls`,
- * which checks all nodes of every inline flow (not just graph-reachable ones), so
- * the resolved recipe must inline every referenced flow to be self-contained.
- */
-function callRefsInNodes(nodes: Record<string, unknown> | undefined): string[] {
-  if (!nodes) return [];
+export function rootResolutionRef(digest: string): string {
+  return `$root:${digest}`;
+}
+
+/** Validate every static call boundary after parent defaults and parameters are applied. */
+export function validateRecipeDependencyParams(options: {
+  root: Record<string, unknown>;
+  params: Record<string, unknown>;
+  recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
+}): void {
+  const visit = (document: Record<string, unknown>, params: Record<string, unknown>): void => {
+    for (const rawNode of Object.values(extractWorkflowGraph(document).nodes)) {
+      if (rawNode.action !== 'call' || typeof rawNode.ref !== 'string') continue;
+      const ref = normalizeRecipeRef(rawNode.ref);
+      const dependency = options.recipes.get(ref);
+      if (!dependency) continue;
+      const node = resolveRecipeValue(rawNode, params);
+      const childParams = resolveRecipeParams(
+        ref,
+        dependency.document,
+        isRecord(node) && isRecord(node.params) ? node.params : {},
+        { allowTemplates: true },
+      );
+      visit(dependency.document, childParams);
+    }
+  };
+  visit(options.root, options.params);
+}
+
+/** Resolve the exact static recipe call DAG before any side effect. */
+export function resolveRecipeDependencies(options: {
+  rootRef: string;
+  root: Record<string, unknown>;
+  rootSource: RecipeSourceProvenance;
+  recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
+  maxDepth?: number;
+}): ResolvedRecipeDependencies {
+  const maxDepth = options.maxDepth ?? DEFAULT_MAX_RECIPE_CALL_DEPTH;
+  const resolved = new Map<string, ResolvedLibraryRecipe>();
+  const edges: RecipeResolutionEdge[] = [];
+  const visiting: string[] = [];
+  const visited = new Set<string>();
+
+  const visit = (from: string, document: Record<string, unknown>, depth: number): void => {
+    if (depth >= maxDepth) {
+      throw new RecipeResolutionError(
+        'RECIPE_CALL_DEPTH_EXCEEDED',
+        `Recipe call depth exceeded maximum ${maxDepth}.`,
+        `reduce nested recipe calls below ${maxDepth}`,
+      );
+    }
+    for (const ref of callRefs(document)) {
+      edges.push({ from, to: ref });
+      const cycleStart = visiting.indexOf(ref);
+      if (cycleStart >= 0 || ref === options.rootRef) {
+        const cycle = [...visiting.slice(Math.max(cycleStart, 0)), ref];
+        throw new RecipeResolutionError(
+          'RECIPE_CALL_CYCLE',
+          `Recipe call cycle detected: ${cycle.join(' -> ')}.`,
+          'remove one call edge so the recipe dependency graph is acyclic',
+        );
+      }
+      const dependency = options.recipes.get(ref);
+      if (!dependency) {
+        throw new RecipeResolutionError(
+          'RECIPE_REFERENCE_NOT_FOUND',
+          `Recipe ${ref} is not available from configured libraries.`,
+          `add ${ref} to a configured recipe library or correct call.ref`,
+        );
+      }
+      resolved.set(ref, dependency);
+      if (visited.has(ref)) continue;
+      visiting.push(ref);
+      visit(ref, dependency.document, depth + 1);
+      visiting.pop();
+      visited.add(ref);
+    }
+  };
+
+  visiting.push(options.rootRef);
+  visit(options.rootRef, options.root, 0);
+  visiting.pop();
+
+  const rootDigest = options.rootSource.digest;
+  if (!rootDigest) {
+    throw new RecipeResolutionError(
+      'RECIPE_RESOLUTION_DIGEST_MISSING',
+      'Resolved root recipe source is missing its content digest.',
+      'reload the root recipe through the runner so its digest is computed',
+    );
+  }
+  const dependencies = [...resolved.values()]
+    .sort((left, right) => compareStrings(left.ref, right.ref))
+    .map((recipe) => {
+      const digest = recipe.provenance.digest;
+      if (!digest) {
+        throw new RecipeResolutionError(
+          'RECIPE_RESOLUTION_DIGEST_MISSING',
+          `Resolved recipe ${recipe.ref} is missing its content digest.`,
+          `reload ${recipe.ref} through the library resolver so its digest is computed`,
+        );
+      }
+      return {
+        ref: recipe.ref,
+        source: recipe.source,
+        file: recipe.file,
+        digest,
+        artifact: resolvedRecipeArtifactPath(digest)!,
+        ...(recipe.adapter ? { adapter: recipe.adapter } : {}),
+      };
+    });
+  return {
+    recipes: resolved,
+    edges,
+    document: {
+      schema_version: 1,
+      root: { ref: options.rootRef, digest: rootDigest },
+      dependencies,
+      edges: [...edges].sort((left, right) =>
+        compareStrings(`${left.from}:${left.to}`, `${right.from}:${right.to}`),
+      ),
+    },
+  };
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function callRefs(recipe: Record<string, unknown>): string[] {
   const refs: string[] = [];
-  for (const node of Object.values(nodes)) {
-    if (
-      isRecord(node) &&
-      node.action === 'call' &&
-      typeof node.ref === 'string' &&
-      node.ref.trim()
-    ) {
-      refs.push(normalizeRecipeFlowRef(node.ref));
+  for (const node of Object.values(extractWorkflowGraph(recipe).nodes)) {
+    if (node.action === 'call' && typeof node.ref === 'string' && node.ref.trim()) {
+      refs.push(normalizeRecipeRef(node.ref));
     }
   }
   return refs;
-}
-
-/** Lifecycle arrays (setup/teardown) always execute, so every `call` in them counts. */
-function callRefsInLifecycle(list: unknown): string[] {
-  if (!Array.isArray(list)) return [];
-  const refs: string[] = [];
-  for (const node of list) {
-    if (
-      isRecord(node) &&
-      node.action === 'call' &&
-      typeof node.ref === 'string' &&
-      node.ref.trim()
-    ) {
-      refs.push(normalizeRecipeFlowRef(node.ref));
-    }
-  }
-  return refs;
-}
-
-/**
- * Computes the flow ids the resolved recipe must inline: every flow referenced by
- * any node of the recipe's workflow, its setup/teardown lifecycle, or `startState`,
- * then transitively every flow referenced by any node of those flows. Matches
- * `validateFlowCalls`' all-nodes check, so the result is exactly the set required
- * for the resolved recipe to be self-contained — never the whole library, and never
- * an unreferenced authored inline flow.
- */
-function collectRequiredFlowRefs(
-  recipe: Record<string, unknown>,
-  flowCatalog: ReadonlyMap<string, InlineFlow>,
-): Set<string> {
-  const seeds: string[] = [];
-  const validate = isRecord(recipe.validate) ? recipe.validate : undefined;
-  const workflow = validate && isRecord(validate.workflow) ? validate.workflow : undefined;
-  if (workflow) {
-    seeds.push(...callRefsInNodes(isRecord(workflow.nodes) ? workflow.nodes : undefined));
-    seeds.push(...callRefsInLifecycle(workflow.setup));
-    seeds.push(...callRefsInLifecycle(workflow.teardown));
-  }
-  if (
-    isRecord(recipe.startState) &&
-    recipe.startState.action === 'call' &&
-    typeof recipe.startState.ref === 'string'
-  ) {
-    seeds.push(normalizeRecipeFlowRef(recipe.startState.ref));
-  }
-
-  const required = new Set<string>();
-  const queue = [...seeds];
-  while (queue.length > 0) {
-    const ref = queue.shift() as string;
-    if (required.has(ref)) continue;
-    required.add(ref);
-    for (const child of callRefsInNodes(flowNodes(flowCatalog.get(ref)))) {
-      if (!required.has(child)) queue.push(child);
-    }
-  }
-  return required;
-}
-
-/**
- * Inlines the flows the recipe requires into `flows`, yielding a self-contained
- * recipe whose `call.ref`s resolve without the recipe library. Only referenced
- * flows are inlined (not the whole catalog, and not unreferenced authored inline
- * flows), and `uses` is dropped so `validateFlowCalls` verifies every ref is
- * present inline rather than short-circuiting on the external catalog. Returns the
- * recipe unchanged (same reference) when nothing external was composed — recipe.json
- * is already the full composition.
- */
-export function buildResolvedRecipe(
-  recipe: unknown,
-  flowCatalog: ReadonlyMap<string, InlineFlow>,
-): unknown {
-  if (!isRecord(recipe) || flowCatalog.size === 0) return recipe;
-  const refs = collectRequiredFlowRefs(recipe, flowCatalog);
-
-  const flows: Record<string, unknown> = {};
-  for (const ref of refs) {
-    const flow = flowCatalog.get(ref);
-    if (flow) flows[ref] = flow;
-  }
-  if (Object.keys(flows).length === 0) return recipe;
-
-  // Emit only when `uses`/library composition contributed — either a reached flow
-  // is not an authored inline flow, or the recipe declared `uses` (now inlined and
-  // dropped). Otherwise recipe.json is already self-contained.
-  const authoredFlowKeys = new Set(isRecord(recipe.flows) ? Object.keys(recipe.flows) : []);
-  const hasUses = Array.isArray(recipe.uses) && recipe.uses.length > 0;
-  const composedExternal = Object.keys(flows).some((ref) => !authoredFlowKeys.has(ref));
-  if (!composedExternal && !hasUses) return recipe;
-
-  const { uses: _uses, ...rest } = recipe;
-  void _uses;
-  return { ...rest, flows };
-}
-
-export interface ComposeRecipeOptions {
-  projectRoot: string;
-  recipeDir: string;
-  /** Library sources whose flows count as resolvable, mirroring run resolution. */
-  librarySources?: RecipeLibrarySource[];
-  logger?: RecipeLogger;
-  recipeSource?: RecipeSourceProvenance;
-}
-
-export interface ComposeRecipeResult {
-  /** The self-contained recipe with every reachable flow inlined under `flows`. */
-  resolved: unknown;
-  /** Flows inlined into the resolved recipe; 0 means nothing external was composed. */
-  flowCount: number;
-}
-
-/**
- * Resolves a recipe's full flow composition — inline `flows`, `uses` catalogs,
- * and configured library sources, transitively — and returns the fully-composed,
- * self-contained recipe. Shared by the runner (executed path) and the CLI/CI
- * static resolve-check so both derive the same `resolved-recipe.json`.
- */
-export async function composeRecipe(
-  recipe: unknown,
-  options: ComposeRecipeOptions,
-): Promise<ComposeRecipeResult> {
-  const recipeLocalFlows = await collectFlows(recipe, {
-    projectRoot: options.projectRoot,
-    recipeDir: options.recipeDir,
-    recipeSource: options.recipeSource,
-  });
-  const resolution =
-    options.librarySources && options.librarySources.length > 0
-      ? await loadRecipeLibraries(options.librarySources, options.logger)
-      : undefined;
-  const usedLibraryFlows = new Map<string, ResolvedLibraryFlow>();
-  const { catalog } = createEffectiveFlowCatalog(
-    recipeLocalFlows,
-    resolution,
-    usedLibraryFlows,
-    options.logger,
-  );
-  const resolved = buildResolvedRecipe(recipe, catalog);
-  const flowCount =
-    resolved !== recipe && isRecord(resolved) && isRecord(resolved.flows)
-      ? Object.keys(resolved.flows).length
-      : 0;
-  return { resolved, flowCount };
 }

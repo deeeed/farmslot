@@ -16,7 +16,7 @@ Use the local recipe runtime when one exists, or recommend the smallest install 
 
 1. Find the project-owned recipe command first.
 2. If no command exists, check for `@farmslot/recipe-harness` or an app-specific harness package.
-3. Before authoring, inspect declared actions and reusable flows. Prefer project discovery commands. For generic flow discovery, run `farmslot-recipe flows list` and `farmslot-recipe flows describe <ref>`. If no action discovery command exists, read only the relevant project manifest entries and examples.
+3. Before authoring, inspect the closest recipes with `farmslot-recipe run --list` and `farmslot-recipe run <id> --describe`, then inspect declared actions only if no recipe fits. Prefer project discovery commands; otherwise read only the relevant manifest entries and examples.
 4. Run dry-run or schema validation before live execution when available.
 5. Record artifact paths and validation output.
 6. If no runner exists, stop with a concrete install recommendation.
@@ -25,7 +25,7 @@ Use the local recipe runtime when one exists, or recommend the smallest install 
 
 - Do not invent runner commands.
 - Do not require Farmslot Gateway, pool files, slots, Command Center, or Companion for first use.
-- Do not bypass project fixtures or user-flow validation by directly mutating app state.
+- Do not bypass project fixtures or user-journey validation by directly mutating app state.
 
 ## Output
 

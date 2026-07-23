@@ -28,7 +28,7 @@ type FamilyArtifactKey =
   | 'report'
   | 'learnings'
   | 'recipe'
-  | 'recipe-flows'
+  | 'recipe-library'
   | 'recipe-quality'
   | 'recipe-coverage'
   | 'evidence-package';
@@ -36,8 +36,7 @@ type FamilyArtifactKey =
 interface FamilyArtifactSpec {
   key: FamilyArtifactKey;
   label: string;
-  /** Default 'file'. 'directory' walks the source dir and copies each immediate-child file —
-   * needed for `recipe-flows/` where the bundle filenames vary per recipe. */
+  /** Default 'file'. Directories are copied recursively. */
   kind?: 'file' | 'directory';
   sourceRelativePath: string;
   materializedRelativePath: string;
@@ -107,16 +106,12 @@ const FAMILY_ARTIFACT_SPECS: readonly FamilyArtifactSpec[] = [
     seedCurrentRelativePath: 'artifacts/recipe.json',
   },
   {
-    key: 'recipe-flows',
-    label: 'Recipe subflow bundle',
+    key: 'recipe-library',
+    label: 'Task recipe library',
     kind: 'directory',
-    // The recipe runner resolves `bundle/<name>` against `<artifactsDir>/recipe-flows/<name>.json`
-    // (see the project-configured recipe_dir catalog). Without inheriting this dir, every follow-up flow
-    // (pr-complete, review-pr) on a multi-AC recipe fails at the first `call: bundle/<name>`
-    // node despite the orchestrator recipe having been inherited successfully.
-    sourceRelativePath: 'artifacts/recipe-flows',
-    materializedRelativePath: 'inputs/inherited/recipe-flows',
-    seedCurrentRelativePath: 'artifacts/recipe-flows',
+    sourceRelativePath: 'artifacts/recipe-library',
+    materializedRelativePath: 'inputs/inherited/recipe-library',
+    seedCurrentRelativePath: 'artifacts/recipe-library',
   },
   {
     key: 'recipe-quality',
@@ -134,6 +129,8 @@ const FAMILY_ARTIFACT_SPECS: readonly FamilyArtifactSpec[] = [
 
 const RECIPE_PACKAGE_STATIC_FILES = [
   'recipe.json',
+  'recipe-resolution.json',
+  'artifact-manifest.json',
   'recipe-quality.json',
   'recipe-coverage.md',
   'report.md',
@@ -141,8 +138,6 @@ const RECIPE_PACKAGE_STATIC_FILES = [
   'evidence-manifest.json',
   'summary.json',
   'trace.json',
-  'workflow.json',
-  'workflow.mmd',
   'console-errors.json',
   'console-warnings.json',
   'runtime-exceptions.json',
@@ -164,9 +159,7 @@ async function pathExists(filePath: string): Promise<boolean> {
 /**
  * Existence semantics that match the artifact's kind. A file artifact "exists" when the
  * single path is reachable; a directory artifact "exists" only when the dir holds at least
- * one regular file. Treating an empty `recipe-flows/` dir as "exists" would resolve an
- * inheritance attempt against a parent that produced no subflows, masking the real
- * upstream failure.
+ * one regular file. Empty recipe libraries do not count as inherited context.
  */
 async function artifactSourceExists(
   sourcePath: string,
@@ -184,9 +177,8 @@ async function artifactSourceExists(
 
 /**
  * Copy an artifact source to a destination, respecting kind. Directories use `fs.cp` with
- * `recursive: true` so nested subdirectories are preserved — recipe-flows is flat today but
- * the resolver allows `bundle/<sub>/<name>` paths and a flat-only walk would silently drop
- * any future nested structure. Overwrite semantics match copyFile's default — a stale
+ * `recursive: true` so nested recipe namespaces are preserved. Overwrite semantics match
+ * copyFile's default — a stale
  * destination never shadows a refreshed source.
  */
 async function copyArtifactSource(
@@ -251,6 +243,17 @@ function extractEvidenceManifestPackagePaths(raw: string): string[] {
       if (key === 'note' || key === 'preferred') continue;
       collectEvidenceManifestPath(value, paths);
     }
+  }
+  return [...paths].sort();
+}
+
+function extractRecipeResolutionPackagePaths(raw: string): string[] {
+  const parsed = JSON.parse(raw) as { dependencies?: unknown };
+  if (!Array.isArray(parsed.dependencies)) return [];
+  const paths = new Set<string>();
+  for (const entry of parsed.dependencies) {
+    if (!entry || typeof entry !== 'object') continue;
+    collectEvidenceManifestPath((entry as { artifact?: unknown }).artifact, paths);
   }
   return [...paths].sort();
 }
@@ -451,6 +454,10 @@ async function materializeInheritedEvidencePackage(
     const sourceArtifactsRoot = path.dirname(candidate.sourcePath);
     const manifestRaw = await readFile(candidate.sourcePath, 'utf-8');
     const referencedPaths = extractEvidenceManifestPackagePaths(manifestRaw);
+    const resolutionPath = path.join(sourceArtifactsRoot, 'recipe-resolution.json');
+    const resolvedRecipePaths = (await pathExists(resolutionPath))
+      ? extractRecipeResolutionPackagePaths(await readFile(resolutionPath, 'utf-8'))
+      : [];
     const packageRunId = inheritedPackageRunId(candidate.sourceRunId);
     const packageRelativeRoot = `recipe-runs/${packageRunId}`;
     const packageRoot = path.join(taskAbsDir, 'artifacts', packageRelativeRoot);
@@ -464,6 +471,9 @@ async function materializeInheritedEvidencePackage(
     }
     for (const referencedPath of referencedPaths) {
       await copyIfExists(sourceArtifactsRoot, packageRoot, referencedPath);
+    }
+    for (const resolvedRecipePath of resolvedRecipePaths) {
+      await copyIfExists(sourceArtifactsRoot, packageRoot, resolvedRecipePath);
     }
 
     await writeFile(
@@ -598,7 +608,7 @@ export async function materializeInheritedContext(
   );
 
   // Drop the live-recipe-context caches now that we've seeded fresh
-  // artifacts/recipe.json + artifacts/recipe-flows/ for this child run.
+  // artifacts/recipe.json + artifacts/recipe-library/ for this child run.
   // Without this, a UI panel opening for this run mid-WRITE_TASK would
   // serve any earlier-cached values (parent's or empty negatives) for up
   // to 5s after the seed, defeating the whole inheritance flow.

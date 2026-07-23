@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 
+import { digestRecipeDocument } from '@farmslot/protocol';
+
 import { getOrchestratorTaskRoot, type RawProjectJson } from '../core/config.js';
 
 import {
@@ -74,10 +76,10 @@ test('validateRecipeRunHookTemplate requires explicit Recipe v1 input and output
   );
 });
 
-test('expandRecipeRunHookTemplate expands slot variables and shell-safe recipe paths', () => {
+test('expandRecipeRunHookTemplate expands slot, run, and shell-safe recipe paths', () => {
   assert.equal(
     expandRecipeRunHookTemplate(
-      'cd {{repo}} && node runner.js --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --cdp-port {{cdp_port}} --slot {{slot_id}} --runtime {{runtime_dir}} --platform {{platform}} --simulator "{{simulator}}" --adb {{adb_serial}}',
+      'cd {{repo}} && node runner.js --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --cdp-port {{cdp_port}} --slot {{slot_id}} --runtime {{runtime_dir}} --platform {{platform}} --simulator "{{simulator}}" --adb {{adb_serial}} --run {{run_id}} --recipe-run {{recipe_run_id}}',
       createSlotVars(),
       {
         projectName: 'demo-project',
@@ -91,8 +93,9 @@ test('expandRecipeRunHookTemplate expands slot variables and shell-safe recipe p
       },
       "'/repo/.task/run/recipe.json'",
       "'/repo/.task/run/artifacts/recipe-runs/manual-1'",
+      { runId: 'run-123', recipeRunId: 'manual-1' },
     ),
-    "cd /repo && node runner.js --recipe '/repo/.task/run/recipe.json' --artifacts-dir '/repo/.task/run/artifacts/recipe-runs/manual-1' --cdp-port 9222 --slot runner-browser-1 --runtime .agent --platform chrome-extension --simulator \"iPhone 16\" --adb emulator-5554",
+    "cd /repo && node runner.js --recipe '/repo/.task/run/recipe.json' --artifacts-dir '/repo/.task/run/artifacts/recipe-runs/manual-1' --cdp-port 9222 --slot runner-browser-1 --runtime .agent --platform chrome-extension --simulator \"iPhone 16\" --adb emulator-5554 --run run-123 --recipe-run manual-1",
   );
 });
 
@@ -208,12 +211,11 @@ test('validateRecipeProjectHookOutput validates action manifest and doctor JSON 
 
 test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest package', () => {
   const recipe = {
-    schema_version: 1,
-    validate: {
-      workflow: {
-        entry: 'done',
-        nodes: { done: { action: 'end', status: 'pass' } },
-      },
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Complete the artifact package proof.',
+    workflow: {
+      entry: 'done',
+      nodes: { done: { action: 'end', status: 'pass' } },
     },
   };
   const summary = { status: 'pass', passed: 1, failed: 0, total: 1 };
@@ -226,11 +228,24 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
       { path: 'trace.json', type: 'trace' },
     ],
   };
+  const recipeResolution = {
+    schema_version: 1,
+    root: { ref: '$root', digest: digestRecipeDocument(recipe) },
+    dependencies: [],
+    edges: [],
+  };
 
   const valid = validateRecipeRunArtifactPackageOutput({
-    artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
+    artifactPaths: [
+      'artifact-manifest.json',
+      'recipe.json',
+      'recipe-resolution.json',
+      'summary.json',
+      'trace.json',
+    ],
     recipe,
     recipeArtifactPresent: true,
+    recipeResolution,
     summary,
     manifest,
   });
@@ -253,6 +268,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     artifactPaths: [],
     recipe,
     recipeArtifactPresent: true,
+    recipeResolution,
     summary,
     manifest,
     artifactListError: 'find maxBuffer exceeded',
@@ -270,9 +286,16 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   assert.equal(listFailure.recipe?.status, 'valid');
 
   const statusMismatch = validateRecipeRunArtifactPackageOutput({
-    artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
+    artifactPaths: [
+      'artifact-manifest.json',
+      'recipe.json',
+      'recipe-resolution.json',
+      'summary.json',
+      'trace.json',
+    ],
     recipe,
     recipeArtifactPresent: true,
+    recipeResolution,
     summary: { ...summary, status: 'fail' },
     manifest,
   });
@@ -284,9 +307,10 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   );
 
   const missingManifest = validateRecipeRunArtifactPackageOutput({
-    artifactPaths: ['recipe.json', 'summary.json', 'trace.json'],
+    artifactPaths: ['recipe.json', 'recipe-resolution.json', 'summary.json', 'trace.json'],
     recipe,
     recipeArtifactPresent: true,
+    recipeResolution,
     summary,
     manifest: undefined,
     readErrors: { 'artifact-manifest.json': 'file missing' },
@@ -308,9 +332,16 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   );
 
   const malformedManifest = validateRecipeRunArtifactPackageOutput({
-    artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
+    artifactPaths: [
+      'artifact-manifest.json',
+      'recipe.json',
+      'recipe-resolution.json',
+      'summary.json',
+      'trace.json',
+    ],
     recipe,
     recipeArtifactPresent: true,
+    recipeResolution,
     summary,
     manifest: undefined,
     readErrors: { 'artifact-manifest.json': 'Unexpected token' },
@@ -348,9 +379,16 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   );
 
   const staleManifest = validateRecipeRunArtifactPackageOutput({
-    artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
+    artifactPaths: [
+      'artifact-manifest.json',
+      'recipe.json',
+      'recipe-resolution.json',
+      'summary.json',
+      'trace.json',
+    ],
     recipe,
     recipeArtifactPresent: true,
+    recipeResolution,
     summary,
     manifest: { ...manifest, artifacts: [{ path: 'missing.png', type: 'screenshot' }] },
   });
@@ -367,49 +405,56 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   );
 });
 
-test('validateRecipeRunArtifactPackageOutput validates resolved-recipe.json only for passing runs', () => {
+test('validateRecipeRunArtifactPackageOutput requires exact recipe dependency evidence', () => {
   const recipe = {
-    schema_version: 1,
-    uses: ['flows.json'],
-    validate: {
-      workflow: {
-        entry: 'call-x',
-        nodes: {
-          'call-x': {
-            action: 'call',
-            intent: 'Call an external flow',
-            ref: 'missing.flow',
-            next: 'done',
-          },
-          done: { action: 'end', status: 'pass' },
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Run the reusable child proof.',
+    workflow: {
+      entry: 'call-x',
+      nodes: {
+        'call-x': {
+          action: 'call',
+          intent: 'Run the reusable child proof.',
+          ref: 'example.child',
+          next: 'done',
         },
+        done: { action: 'end', status: 'pass' },
       },
     },
   };
-  // A resolved recipe that is NOT self-contained (unresolved call, no inline flows).
-  const resolvedRecipe = {
-    schema_version: 1,
-    validate: {
-      workflow: {
-        entry: 'call-x',
-        nodes: {
-          'call-x': {
-            action: 'call',
-            intent: 'Call an external flow',
-            ref: 'missing.flow',
-            next: 'done',
-          },
-          done: { action: 'end', status: 'pass' },
-        },
+  const child = {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+    description: 'Complete the child proof.',
+    workflow: {
+      entry: 'done',
+      nodes: {
+        done: { action: 'end', status: 'pass' },
       },
     },
+  };
+  const childDigest = digestRecipeDocument(child);
+  const childArtifact = `resolved-recipes/${childDigest.slice('sha256:'.length)}.recipe.json`;
+  const recipeResolution = {
+    schema_version: 1,
+    root: { ref: '$root', digest: digestRecipeDocument(recipe) },
+    dependencies: [
+      {
+        ref: 'example.child',
+        source: 'test',
+        file: 'recipes/example/child.recipe.json',
+        digest: childDigest,
+        artifact: childArtifact,
+      },
+    ],
+    edges: [{ from: '$root', to: 'example.child' }],
   };
   const manifest = {
     version: 1,
     runStatus: 'pass',
     artifacts: [
       { path: 'recipe.json', type: 'recipe' },
-      { path: 'resolved-recipe.json', type: 'recipe' },
+      { path: 'recipe-resolution.json', type: 'json' },
+      { path: childArtifact, type: 'recipe' },
       { path: 'summary.json', type: 'summary' },
       { path: 'trace.json', type: 'trace' },
     ],
@@ -417,52 +462,50 @@ test('validateRecipeRunArtifactPackageOutput validates resolved-recipe.json only
   const artifactPaths = [
     'artifact-manifest.json',
     'recipe.json',
-    'resolved-recipe.json',
+    'recipe-resolution.json',
+    childArtifact,
     'summary.json',
     'trace.json',
   ];
 
-  // Passing run: resolved-recipe.json is validated in full, so its unresolved call fails.
-  const passing = validateRecipeRunArtifactPackageOutput({
+  const valid = validateRecipeRunArtifactPackageOutput({
     artifactPaths,
     recipe,
     recipeArtifactPresent: true,
-    resolvedRecipe,
+    recipeResolution,
+    resolvedRecipes: { [childDigest]: child },
     summary: { status: 'pass', passed: 1, failed: 0, total: 1 },
     manifest,
   });
-  assert.equal(passing.status, 'fail');
-  assert.ok(
-    passing.recipe?.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
-  );
+  assert.equal(valid.status, 'pass', JSON.stringify(valid.recipe?.findings));
 
-  // Failed run: the resolved recipe is NOT re-validated, so its composition issue does
-  // not turn a gracefully-failed run into an ingestion rejection.
-  const failed = validateRecipeRunArtifactPackageOutput({
+  const missingDependency = validateRecipeRunArtifactPackageOutput({
     artifactPaths,
     recipe,
     recipeArtifactPresent: true,
-    resolvedRecipe,
+    recipeResolution,
+    resolvedRecipes: {},
     summary: { status: 'fail', passed: 0, failed: 1, total: 1 },
     manifest: { ...manifest, runStatus: 'fail' },
   });
   assert.ok(
-    !failed.recipe?.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
+    missingDependency.recipe?.findings.some(
+      (finding) => finding.code === 'artifact_package.missing_resolved_recipe',
+    ),
   );
 
-  // A present-but-unreadable resolved-recipe.json always fails, regardless of run status.
   const unreadable = validateRecipeRunArtifactPackageOutput({
     artifactPaths,
     recipe,
     recipeArtifactPresent: true,
-    resolvedRecipe: undefined,
+    recipeResolution: undefined,
     summary: { status: 'pass', passed: 1, failed: 0, total: 1 },
     manifest,
-    readErrors: { 'resolved-recipe.json': 'Unexpected token' },
+    readErrors: { 'recipe-resolution.json': 'Unexpected token' },
   });
   assert.equal(unreadable.status, 'fail');
   assert.ok(
-    unreadable.checks.some((check) => check.id === 'recipe_run.artifact.resolved-recipe.json'),
+    unreadable.checks.some((check) => check.id === 'recipe_run.artifact.recipe-resolution.json'),
   );
 });
 
@@ -470,8 +513,8 @@ test('resolveSlotRecipePath keeps bundled recipe paths within the current task d
   const recipeArtifactRoot = '/repo/tasks/current-task';
 
   assert.equal(
-    resolveSlotRecipePath(recipeArtifactRoot, 'recipe-flows/subflow.json'),
-    '/repo/tasks/current-task/recipe-flows/subflow.json',
+    resolveSlotRecipePath(recipeArtifactRoot, 'recipe-library/recipes/demo/child.recipe.json'),
+    '/repo/tasks/current-task/recipe-library/recipes/demo/child.recipe.json',
   );
 });
 
@@ -497,9 +540,9 @@ test('resolveSlotRecipePath strips the artifacts prefix when targeting a selecte
   assert.equal(
     resolveSlotRecipePath(
       '/repo/tasks/current-task/artifacts/recipe-runs/passing-run',
-      'artifacts/recipe-flows/subflow.json',
+      'artifacts/recipe-library/recipes/demo/child.recipe.json',
     ),
-    '/repo/tasks/current-task/artifacts/recipe-runs/passing-run/recipe-flows/subflow.json',
+    '/repo/tasks/current-task/artifacts/recipe-runs/passing-run/recipe-library/recipes/demo/child.recipe.json',
   );
 });
 
@@ -507,9 +550,9 @@ test('resolveSlotRecipePath preserves remote ~/... roots when targeting selected
   assert.equal(
     resolveSlotRecipePath(
       '~/repo/tasks/current-task/artifacts/recipe-runs/passing-run',
-      'artifacts/recipe-flows/subflow.json',
+      'artifacts/recipe-library/recipes/demo/child.recipe.json',
     ),
-    '~/repo/tasks/current-task/artifacts/recipe-runs/passing-run/recipe-flows/subflow.json',
+    '~/repo/tasks/current-task/artifacts/recipe-runs/passing-run/recipe-library/recipes/demo/child.recipe.json',
   );
 });
 

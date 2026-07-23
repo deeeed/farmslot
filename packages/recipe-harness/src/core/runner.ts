@@ -17,36 +17,28 @@ import {
   manifestTarget,
 } from '../recording/capture-helper.js';
 
-import { buildResolvedRecipe } from './compose.js';
-import { collectFlows, executeInlineFlowCall, type InlineFlow } from './flows.js';
 import {
-  extractWorkflowGraph,
-  normalizePreconditionResult,
-  resolveNextNode,
-  type WorkflowGraph,
-} from './graph.js';
+  type ResolvedRecipeDependencies,
+  resolveRecipeDependencies,
+  rootResolutionRef,
+  validateRecipeDependencyParams,
+} from './compose.js';
+import { executeRecipe } from './execution.js';
+import { extractWorkflowGraph, type WorkflowGraph } from './graph.js';
 import { buildHudNode } from './hud.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import {
-  createEffectiveFlowCatalog,
   loadRecipeLibraries,
   type RecipeLibraryResolution,
-  type ResolvedLibraryFlow,
+  type ResolvedLibraryRecipe,
 } from './library.js';
-import {
-  declaredObserverRefsFromManifest,
-  defaultObserverRefsFromManifest,
-  finalizeNodeObservations,
-  resolveObserveRefs,
-  runPassiveObservers,
-} from './passive-observations.js';
-import { copyFileWithinRoots, statFileWithinRoot, writeFileWithinRoot } from './path.js';
-import { evaluateNodeGate } from './predicates.js';
+import { resolveRecipeParams } from './parameters.js';
+import { defaultObserverRefsFromManifest } from './passive-observations.js';
+import { copyFileWithinRoots, statFileWithinRoot } from './path.js';
 import {
   cleanupAbortedRunVideoRecording,
   removePartialRunVideoOutput,
 } from './recording-cleanup.js';
-import { recordSyntheticFailure, traceNodeMetadata } from './trace.js';
 import {
   buildRecipeExecutionPlan,
   enforceRecipeExecutionPlan,
@@ -58,9 +50,8 @@ import type {
   ActionAdapter,
   ActiveVideoRecording,
   CreateRecipeRunnerOptions,
-  PreconditionChecker,
-  RecipeFlowResolutionSummary,
   RecipeHudOptions,
+  RecipeLibrarySummary,
   RecipeLogger,
   RecipeRecordingOptions,
   RecipeRunner,
@@ -74,8 +65,7 @@ import type {
 import { assertManifestIsValid, assertRecipeMatchesManifest } from './validation.js';
 
 const HARNESS_VERSION = '0.1.0';
-const RUNNER_BUILT_IN_ACTIONS = new Set(['call']);
-const DEFAULT_MAX_FLOW_CALL_DEPTH = 8;
+const RUNNER_BUILT_IN_ACTIONS = new Set(['call', 'end']);
 const noopLogger: RecipeLogger = {
   info() {},
   warn() {},
@@ -86,14 +76,15 @@ interface ResolvedRecipeRun {
   projectRoot: string;
   artifactsDir: string;
   sourceRecipePath?: string;
-  recipe: unknown;
+  recipe: Record<string, unknown>;
+  rootRef: string;
+  params: Record<string, unknown>;
   recipeSource: ReturnType<typeof recipeSourceForRequest>;
   env: Record<string, string | undefined>;
   libraryResolution?: RecipeLibraryResolution;
   graph: WorkflowGraph;
-  usedLibraryFlows: Map<string, ResolvedLibraryFlow>;
-  flowCatalog: ReadonlyMap<string, InlineFlow>;
-  flowOverrides: RecipeFlowResolutionSummary['overrides'];
+  recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
+  dependencyResolution: ResolvedRecipeDependencies;
   executionPlan: RecipeExecutionPlan;
 }
 
@@ -106,21 +97,6 @@ export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRu
   assertManifestIsValid(options.actionManifest);
   const declaredActions = new Set(getRecipeActionManifestActionNames(options.actionManifest));
   const adapterMap = new Map<string, ActionAdapter>();
-  const preconditionMap = new Map<string, PreconditionChecker>();
-  const declaredPreconditions = new Set(
-    (options.actionManifest.pre_conditions ?? []).map((entry) => entry.id),
-  );
-
-  for (const checker of options.preconditions ?? []) {
-    if (!checker.id.trim()) throw new Error('Precondition checker id must be a non-empty string.');
-    if (!declaredPreconditions.has(checker.id)) {
-      throw new Error(`Precondition checker ${checker.id} is not declared by the action manifest.`);
-    }
-    if (preconditionMap.has(checker.id)) {
-      throw new Error(`Precondition checker ${checker.id} is registered more than once.`);
-    }
-    preconditionMap.set(checker.id, checker);
-  }
 
   for (const adapter of options.adapters) {
     if (!adapter.action.trim())
@@ -143,7 +119,6 @@ export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRu
   return new DefaultRecipeRunner(
     options.actionManifest,
     adapterMap,
-    preconditionMap,
     options.logger ?? noopLogger,
     options.hud,
     options.runner,
@@ -162,17 +137,19 @@ function collectWatchLogPaths(paths: Set<string>, nodes: Record<string, unknown>
 
 async function collectRunFileOffsets({
   graph,
-  flows,
+  recipes,
   projectRoot,
 }: {
   graph: WorkflowGraph;
-  flows: ReadonlyMap<string, InlineFlow>;
+  recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
   projectRoot: string;
 }): Promise<Map<string, number>> {
   const offsets = new Map<string, number>();
   const paths = new Set<string>();
   collectWatchLogPaths(paths, graph.nodes);
-  for (const flow of flows.values()) collectWatchLogPaths(paths, flow.nodes);
+  for (const recipe of recipes.values()) {
+    collectWatchLogPaths(paths, extractWorkflowGraph(recipe.document).nodes);
+  }
   for (const relativePath of paths) {
     try {
       const info = await statFileWithinRoot(projectRoot, relativePath);
@@ -192,10 +169,8 @@ function isNodeFileMissingError(error: unknown): boolean {
 class DefaultRecipeRunner implements RecipeRunner {
   readonly #actionManifest: RecipeActionManifestDocument;
   readonly #adapters: ReadonlyMap<string, ActionAdapter>;
-  readonly #preconditions: ReadonlyMap<string, PreconditionChecker>;
   readonly #logger: RecipeLogger;
   readonly #defaultObserverRefs;
-  readonly #declaredObserverRefs;
   readonly #hud: RecipeHudOptions | false | undefined;
   readonly #runnerProvenance: CreateRecipeRunnerOptions['runner'];
   readonly #recording: RecipeRecordingOptions | undefined;
@@ -205,7 +180,6 @@ class DefaultRecipeRunner implements RecipeRunner {
   constructor(
     actionManifest: RecipeActionManifestDocument,
     adapters: ReadonlyMap<string, ActionAdapter>,
-    preconditions: ReadonlyMap<string, PreconditionChecker>,
     logger: RecipeLogger,
     hud: RecipeHudOptions | false | undefined,
     runnerProvenance: CreateRecipeRunnerOptions['runner'],
@@ -215,10 +189,8 @@ class DefaultRecipeRunner implements RecipeRunner {
   ) {
     this.#actionManifest = actionManifest;
     this.#adapters = adapters;
-    this.#preconditions = preconditions;
     this.#logger = logger;
     this.#defaultObserverRefs = defaultObserverRefsFromManifest(actionManifest);
-    this.#declaredObserverRefs = declaredObserverRefsFromManifest(actionManifest);
     this.#hud = hud;
     this.#runnerProvenance = runnerProvenance;
     this.#recording = recording;
@@ -248,6 +220,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     }
     const sourceRecipePath = request.recipePath ? path.resolve(request.recipePath) : undefined;
     const recipe = request.recipeDocument ?? (await readJsonFile(sourceRecipePath!));
+    if (!isRecord(recipe)) throw new Error('Recipe document must be an object.');
     const recipeSource = recipeSourceForRequest(
       request,
       recipe,
@@ -256,33 +229,37 @@ class DefaultRecipeRunner implements RecipeRunner {
     );
     const libraryResolution: RecipeLibraryResolution | undefined =
       request.librarySources && request.librarySources.length > 0
-        ? await loadRecipeLibraries(request.librarySources, this.#logger)
+        ? await loadRecipeLibraries(request.librarySources, {
+            adapter: request.adapter,
+            logger: this.#logger,
+          })
         : undefined;
-    assertRecipeMatchesManifest(
-      recipe,
-      this.#actionManifest,
-      libraryResolution ? { externalFlowIds: new Set(libraryResolution.flows.keys()) } : undefined,
-    );
+    const recipes = libraryResolution?.recipes ?? new Map<string, ResolvedLibraryRecipe>();
+    const externalRecipeIds = new Set(recipes.keys());
+    assertRecipeMatchesManifest(recipe, this.#actionManifest, { externalRecipeIds });
     const graph = extractWorkflowGraph(recipe);
-    const recipeLocalFlows = await collectFlows(recipe, {
-      projectRoot,
-      recipeDir: sourceRecipePath ? path.dirname(sourceRecipePath) : projectRoot,
-      recipeSource,
+    const rootRef = rootRecipeRef(sourceRecipePath, recipes, recipeSource.digest!);
+    const dependencyResolution = resolveRecipeDependencies({
+      rootRef,
+      root: recipe,
+      rootSource: recipeSource,
+      recipes,
     });
-    const usedLibraryFlows = new Map<string, ResolvedLibraryFlow>();
-    const { catalog: flowCatalog, overrides: flowOverrides } = createEffectiveFlowCatalog(
-      recipeLocalFlows,
-      libraryResolution,
-      usedLibraryFlows,
-      this.#logger,
-    );
+    for (const resolved of dependencyResolution.recipes.values()) {
+      assertRecipeMatchesManifest(resolved.document, this.#actionManifest, { externalRecipeIds });
+    }
+    const params = resolveRecipeParams(rootRef, recipe, request.params ?? {});
+    validateRecipeDependencyParams({
+      root: recipe,
+      params,
+      recipes: dependencyResolution.recipes,
+    });
     const executionPlan = buildRecipeExecutionPlan({
       recipe,
+      params,
       source: recipeSource,
-      graph,
-      flows: flowCatalog,
+      recipes: dependencyResolution.recipes,
       adapters: this.#adapters,
-      preconditions: this.#preconditions,
       actionManifest: this.#actionManifest,
       projectRoot,
       artifactsDir,
@@ -295,13 +272,14 @@ class DefaultRecipeRunner implements RecipeRunner {
       artifactsDir,
       sourceRecipePath,
       recipe,
+      rootRef,
+      params,
       recipeSource,
       env,
       libraryResolution,
       graph,
-      usedLibraryFlows,
-      flowCatalog,
-      flowOverrides,
+      recipes: dependencyResolution.recipes,
+      dependencyResolution,
       executionPlan,
     };
   }
@@ -311,12 +289,13 @@ class DefaultRecipeRunner implements RecipeRunner {
       projectRoot,
       artifactsDir,
       recipe,
+      rootRef,
+      params,
       env,
       libraryResolution,
       graph,
-      usedLibraryFlows,
-      flowCatalog,
-      flowOverrides,
+      recipes,
+      dependencyResolution,
       executionPlan,
     } = await this.#resolveRequest(request);
     enforceRecipeExecutionPlan(executionPlan, request, this.#blockedCapabilities);
@@ -324,33 +303,24 @@ class DefaultRecipeRunner implements RecipeRunner {
     await mkdir(artifactsDir, { recursive: true });
     const runFileOffsets = await collectRunFileOffsets({
       graph,
-      flows: flowCatalog,
+      recipes,
       projectRoot,
     });
 
     const artifactWriter = new JsonArtifactWriter(artifactsDir);
     const traceWriter = new JsonTraceWriter(artifactsDir, this.#runnerProvenance);
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
-    const outputs = new Map<string, unknown>();
+    let outputs: ReadonlyMap<string, unknown> = new Map();
     const recipePath = await artifactWriter.copyRecipe(recipe);
-    // Emit the fully-composed recipe when `uses`/library composition adds flows the
-    // authored recipe.json does not already inline. buildResolvedRecipe inlines only
-    // the reachable flows (never the whole library) and drops `uses`, so the result
-    // is self-contained; it returns the same reference when there is nothing to add.
-    const resolvedRecipe = buildResolvedRecipe(recipe, flowCatalog);
-    if (resolvedRecipe !== recipe) {
-      await artifactWriter.writeResolvedRecipe(resolvedRecipe);
+    for (const dependency of dependencyResolution.recipes.values()) {
+      await artifactWriter.copyResolvedRecipe(dependency.provenance.digest!, dependency.document);
     }
+    await artifactWriter.writeRecipeResolution(dependencyResolution.document);
     let status: RecipeRunStatus = 'unknown';
-    let currentNodeId: string | undefined = graph.entry;
-    let mainStatus: RecipeRunStatus = 'unknown';
-    let runningTeardown = false;
-    const visited = new Set<string>();
-    let transitionCount = 0;
-    const maxTransitions = Object.keys(graph.nodes).length * 3;
     const videoOptions = normalizeVideoRecordingOptions(request.recordVideo);
     const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
     let runRecording: RunVideoRecording | undefined;
+    let canExecute = true;
     if (videoRecorder) {
       try {
         runRecording = await this.#startRunVideoRecording({
@@ -374,227 +344,42 @@ class DefaultRecipeRunner implements RecipeRunner {
         });
         this.#logger.error(`record.video start failed: ${message}`);
         status = 'fail';
-        currentNodeId = undefined;
+        canExecute = false;
       }
     }
 
     try {
-      if (currentNodeId) {
-        const preconditionStatus = await this.#runPreconditions({
-          graph,
+      if (canExecute) {
+        const execution = await executeRecipe({
+          ref: rootRef,
           recipe,
-          projectRoot,
-          artifactsDir,
-          env,
-          outputs,
-          artifactWriter,
+          params,
+          recipes,
+          actionManifest: this.#actionManifest,
+          adapters: this.#adapters,
           traceWriter,
-          runFileOffsets,
+          logger: this.#logger,
+          defaultObserverRefs: this.#defaultObserverRefs,
+          createContext: (nodeId, activeRecipe, activeOutputs, getOutput) =>
+            this.#createExecutionContext({
+              nodeId,
+              recipe: activeRecipe,
+              projectRoot,
+              artifactsDir,
+              env,
+              outputs: activeOutputs,
+              getOutput,
+              artifactWriter,
+              runFileOffsets,
+            }),
+          registerArtifacts: (artifacts) => {
+            for (const artifact of artifacts) artifactWriter.register(artifact);
+          },
+          publishHudProgress: (hudStatus, event) =>
+            this.#publishHudProgressOrRecord(traceWriter, hudStatus, event),
         });
-        if (preconditionStatus === 'fail') {
-          status = 'fail';
-          currentNodeId = undefined;
-        }
-      }
-
-      while (currentNodeId) {
-        const activeNodeId = currentNodeId;
-        transitionCount += 1;
-        if (transitionCount > maxTransitions) {
-          const error = new Error('Recipe graph exceeded its maximum transition count.');
-          recordSyntheticFailure(traceWriter, activeNodeId, error);
-          status = 'fail';
-          break;
-        }
-        visited.add(activeNodeId);
-        const node = graph.nodes[activeNodeId];
-        if (!node) {
-          const error = new Error(`Recipe node ${activeNodeId} does not exist.`);
-          recordSyntheticFailure(traceWriter, activeNodeId, error);
-          status = 'fail';
-          break;
-        }
-        const action = String(node.action);
-        const adapter = action === 'call' ? undefined : this.#adapters.get(action);
-        if (action !== 'call' && !adapter) {
-          const error = new Error(`No adapter registered for action ${action}.`);
-          recordSyntheticFailure(traceWriter, activeNodeId, error, action);
-          status = 'fail';
-          break;
-        }
-
-        const nodeStartedAt = new Date();
-        const context = this.#createExecutionContext({
-          nodeId: activeNodeId,
-          recipe,
-          projectRoot,
-          artifactsDir,
-          env,
-          outputs,
-          artifactWriter,
-          runFileOffsets,
-        });
-        try {
-          const gate = evaluateNodeGate(node, context.outputs);
-          if (!gate.run) {
-            const next = resolveNextNode(node, {});
-            traceWriter.record({
-              nodeId: activeNodeId,
-              action,
-              ...traceNodeMetadata(node),
-              startedAt: nodeStartedAt.toISOString(),
-              endedAt: new Date().toISOString(),
-              durationMs: Date.now() - nodeStartedAt.getTime(),
-              ok: true,
-              next,
-              output: { skipped: true, reason: gate.reason },
-            });
-            currentNodeId = next;
-            continue;
-          }
-          const hudStarted = await this.#publishHudProgressOrRecord(traceWriter, 'running', {
-            nodeId: activeNodeId,
-            action,
-            node,
-            recipe,
-            index: transitionCount,
-            total: Object.keys(graph.nodes).length,
-            context,
-          });
-          if (!hudStarted) {
-            status = 'fail';
-            break;
-          }
-          let result;
-          if (action === 'call') {
-            result = await executeInlineFlowCall({
-              callNodeId: activeNodeId,
-              node,
-              context,
-              flowCatalog,
-              adapters: this.#adapters,
-              traceWriter,
-              callStack: [],
-              maxCallDepth: DEFAULT_MAX_FLOW_CALL_DEPTH,
-              logger: this.#logger,
-              defaultObserverRefs: this.#defaultObserverRefs,
-              declaredObserverRefs: this.#declaredObserverRefs,
-              publishHudProgress: (hudStatus, flowEvent) =>
-                this.#publishHudProgressOrRecord(traceWriter, hudStatus, {
-                  ...flowEvent,
-                  recipe,
-                }),
-            });
-          } else {
-            await verifyExecutableSource(adapter!, `Action ${action}`);
-            result = await adapter!.execute(node, context);
-          }
-          const observeRefs = resolveObserveRefs(
-            action,
-            node,
-            this.#defaultObserverRefs,
-            this.#declaredObserverRefs,
-          );
-          const observationResult =
-            action !== 'call' && (result.status == null || result.status === 'pass')
-              ? await runPassiveObservers({
-                  action,
-                  node,
-                  adapter: adapter!,
-                  context,
-                  logger: this.#logger,
-                  refs: observeRefs,
-                })
-              : {};
-          if (result.output !== undefined) outputs.set(activeNodeId, result.output);
-          for (const artifact of result.artifacts ?? []) artifactWriter.register(artifact);
-          const next = resolveNextNode(node, result);
-          const { observations, observationWarnings } = finalizeNodeObservations({
-            nodeId: activeNodeId,
-            node,
-            result,
-            observationResult,
-            observeRefs,
-          });
-          traceWriter.record({
-            nodeId: activeNodeId,
-            action,
-            ...traceNodeMetadata(node, result),
-            startedAt: nodeStartedAt.toISOString(),
-            endedAt: new Date().toISOString(),
-            durationMs: Date.now() - nodeStartedAt.getTime(),
-            ok: true,
-            next,
-            status: result.status,
-            case: result.case,
-            output: result.output,
-            ...(observations ? { observations } : {}),
-            ...(observationWarnings.length ? { observationWarnings } : {}),
-          });
-          const hudCompleted = await this.#publishHudProgressOrRecord(
-            traceWriter,
-            result.status === 'fail' ? 'fail' : 'pass',
-            {
-              nodeId: activeNodeId,
-              action,
-              node,
-              recipe,
-              index: transitionCount,
-              total: Object.keys(graph.nodes).length,
-              context,
-            },
-          );
-          if (!hudCompleted) {
-            status = 'fail';
-            break;
-          }
-          if (result.status) {
-            if (runningTeardown) {
-              status = mainStatus === 'fail' ? 'fail' : result.status;
-              break;
-            }
-            mainStatus = result.status;
-            if (graph.teardownEntry) {
-              runningTeardown = true;
-              currentNodeId = graph.teardownEntry;
-              continue;
-            }
-            status = result.status;
-            break;
-          }
-          currentNodeId = next;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          traceWriter.record({
-            nodeId: activeNodeId,
-            action,
-            ...traceNodeMetadata(node),
-            startedAt: nodeStartedAt.toISOString(),
-            endedAt: new Date().toISOString(),
-            durationMs: Date.now() - nodeStartedAt.getTime(),
-            ok: false,
-            error: message,
-          });
-          this.#logger.error(message);
-          await this.#publishHudProgressOrRecord(traceWriter, 'fail', {
-            nodeId: activeNodeId,
-            action,
-            node,
-            recipe,
-            index: transitionCount,
-            total: Object.keys(graph.nodes).length,
-            context,
-            error: message,
-          });
-          status = 'fail';
-          if (!runningTeardown && graph.teardownEntry) {
-            mainStatus = 'fail';
-            runningTeardown = true;
-            currentNodeId = graph.teardownEntry;
-            continue;
-          }
-          break;
-        }
+        status = execution.status;
+        outputs = execution.outputs;
       }
 
       artifactWriter.register({
@@ -609,42 +394,6 @@ class DefaultRecipeRunner implements RecipeRunner {
         label: 'Execution trace',
         category: 'system',
       });
-      // Any resolution activity — a library flow used, a recipe-local override,
-      // or cross-source shadowing — gets the artifact, so an all-overridden run
-      // still leaves reviewable evidence of what the library would have provided.
-      const shadowedFlows = libraryResolution ? collectShadowedFlows(libraryResolution) : [];
-      if (
-        libraryResolution &&
-        (usedLibraryFlows.size > 0 || flowOverrides.length > 0 || shadowedFlows.length > 0)
-      ) {
-        await writeFileWithinRoot(
-          artifactsDir,
-          'resolved-flows.json',
-          `${JSON.stringify(
-            {
-              schema_version: 1,
-              kind: 'recipe-resolved-flows',
-              sources: libraryResolution.sources,
-              overrides: flowOverrides,
-              shadowed: shadowedFlows,
-              flows: Object.fromEntries(
-                [...usedLibraryFlows.values()].map((flow) => [
-                  flow.ref,
-                  { source: flow.source, file: flow.file, definition: flow.raw },
-                ]),
-              ),
-            },
-            null,
-            2,
-          )}\n`,
-        );
-        artifactWriter.register({
-          path: 'resolved-flows.json',
-          type: 'json',
-          label: 'Library flow resolution for this run',
-          category: 'system',
-        });
-      }
       if (status === 'pass') {
         const runHudStartedAt = new Date();
         try {
@@ -719,13 +468,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       },
       ...(this.#runnerProvenance ? { runner: this.#runnerProvenance } : {}),
       ...(libraryResolution
-        ? {
-            flowResolution: buildFlowResolutionSummary(
-              libraryResolution,
-              usedLibraryFlows,
-              flowOverrides,
-            ),
-          }
+        ? { recipeLibraries: buildRecipeLibrarySummary(libraryResolution) }
         : {}),
     };
     const summaryPath = await summaryWriter.write(summary);
@@ -733,13 +476,13 @@ class DefaultRecipeRunner implements RecipeRunner {
 
     const packageValidation = validateRecipeArtifactPackage({
       recipe,
-      // Hand the composed recipe and the run outcome to the validator: it validates
-      // the composition in full only for a passing run (parity with gateway/CLI), and
-      // leaves a gracefully-failed run's composition unchecked.
-      ...(resolvedRecipe !== recipe ? { resolvedRecipe } : {}),
-      // Only a confirmed failure relaxes composition enforcement; an unknown/incomplete
-      // status still requires the composition to be proven.
-      runPassed: status !== 'fail',
+      resolvedRecipes: Object.fromEntries(
+        [...dependencyResolution.recipes.values()].map((entry) => [
+          entry.provenance.digest!,
+          entry.document,
+        ]),
+      ),
+      recipeResolution: dependencyResolution.document,
       manifest: {
         version: 1,
         runStatus: status,
@@ -751,6 +494,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         'summary.json',
         'trace.json',
         'artifact-manifest.json',
+        'recipe-resolution.json',
         ...artifactWriter.list().map((entry) => entry.path),
       ],
     });
@@ -765,86 +509,6 @@ class DefaultRecipeRunner implements RecipeRunner {
     return { status, summaryPath, tracePath, artifactManifestPath, recipePath };
   }
 
-  async #runPreconditions({
-    graph,
-    recipe,
-    projectRoot,
-    artifactsDir,
-    env,
-    outputs,
-    artifactWriter,
-    traceWriter,
-    runFileOffsets,
-  }: {
-    graph: WorkflowGraph;
-    recipe: unknown;
-    projectRoot: string;
-    artifactsDir: string;
-    env: Record<string, string | undefined>;
-    outputs: Map<string, unknown>;
-    artifactWriter: JsonArtifactWriter;
-    traceWriter: JsonTraceWriter;
-    runFileOffsets: ReadonlyMap<string, number>;
-  }): Promise<'pass' | 'fail'> {
-    for (const gate of graph.preconditions) {
-      const nodeId = `pre_conditions:${gate.id}`;
-      const checker = this.#preconditions.get(gate.id);
-      if (!checker) {
-        recordSyntheticFailure(
-          traceWriter,
-          nodeId,
-          new Error(
-            `Precondition ${gate.id} is declared by the recipe but has no checker registered.`,
-          ),
-          'pre_condition',
-        );
-        return 'fail';
-      }
-      const startedAt = new Date();
-      const context = this.#createExecutionContext({
-        nodeId,
-        recipe,
-        projectRoot,
-        artifactsDir,
-        env,
-        outputs,
-        artifactWriter,
-        runFileOffsets,
-      });
-      try {
-        await verifyExecutableSource(checker, `Precondition ${gate.id}`);
-        const rawResult = await checker.execute(gate, context);
-        const result = normalizePreconditionResult(rawResult);
-        if (result.output !== undefined) outputs.set(nodeId, result.output);
-        if (result.ok === false) {
-          throw new Error(result.error ?? `Precondition ${gate.id} failed.`);
-        }
-        traceWriter.record({
-          nodeId,
-          action: 'pre_condition',
-          startedAt: startedAt.toISOString(),
-          endedAt: new Date().toISOString(),
-          durationMs: Date.now() - startedAt.getTime(),
-          ok: true,
-          output: result.output,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        traceWriter.record({
-          nodeId,
-          action: 'pre_condition',
-          startedAt: startedAt.toISOString(),
-          endedAt: new Date().toISOString(),
-          durationMs: Date.now() - startedAt.getTime(),
-          ok: false,
-          error: message,
-        });
-        return 'fail';
-      }
-    }
-    return 'pass';
-  }
-
   #createExecutionContext({
     nodeId,
     recipe,
@@ -852,6 +516,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     artifactsDir,
     env,
     outputs,
+    getOutput,
     artifactWriter,
     runFileOffsets,
   }: {
@@ -860,7 +525,8 @@ class DefaultRecipeRunner implements RecipeRunner {
     projectRoot: string;
     artifactsDir: string;
     env: Record<string, string | undefined>;
-    outputs: Map<string, unknown>;
+    outputs: ReadonlyMap<string, unknown>;
+    getOutput: (nodeId: string) => unknown;
     artifactWriter: JsonArtifactWriter;
     runFileOffsets: ReadonlyMap<string, number>;
   }): Parameters<ActionAdapter['execute']>[1] {
@@ -871,10 +537,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       artifactsDir,
       env,
       outputs,
-      getOutput(nodeId: string) {
-        if (!outputs.has(nodeId)) throw new Error(`No output recorded for node ${nodeId}.`);
-        return outputs.get(nodeId);
-      },
+      getOutput,
       resolveProjectPath(relativePath: string) {
         return path.join(projectRoot, normalizeRelativePath(relativePath));
       },
@@ -1134,36 +797,40 @@ interface RunVideoRecording {
   artifactsDir: string;
 }
 
-function buildFlowResolutionSummary(
-  resolution: RecipeLibraryResolution,
-  usedLibraryFlows: ReadonlyMap<string, ResolvedLibraryFlow>,
-  overrides: RecipeFlowResolutionSummary['overrides'],
-): RecipeFlowResolutionSummary {
+function buildRecipeLibrarySummary(resolution: RecipeLibraryResolution): RecipeLibrarySummary {
   return {
     sources: resolution.sources,
-    used: [...usedLibraryFlows.values()].map((flow) => ({
-      ref: flow.ref,
-      source: flow.source,
-      file: flow.file,
-      ...(flow.shadows.length > 0 ? { shadows: flow.shadows } : {}),
-      ...(flow.lastVerified ? { lastVerified: flow.lastVerified } : {}),
-    })),
-    overrides,
-    shadowed: collectShadowedFlows(resolution),
+    shadowed: collectShadowedRecipes(resolution),
   };
 }
 
-function collectShadowedFlows(
+function collectShadowedRecipes(
   resolution: RecipeLibraryResolution,
-): RecipeFlowResolutionSummary['shadowed'] {
-  return [...resolution.flows.values()]
-    .filter((flow) => flow.shadows.length > 0)
-    .map((flow) => ({
-      ref: flow.ref,
-      source: flow.source,
-      file: flow.file,
-      shadows: flow.shadows,
+): RecipeLibrarySummary['shadowed'] {
+  return [...resolution.recipes.values()]
+    .filter((recipe) => recipe.shadows.length > 0)
+    .map((recipe) => ({
+      ref: recipe.ref,
+      source: recipe.source,
+      file: recipe.file,
+      shadows: recipe.shadows,
     }));
+}
+
+function rootRecipeRef(
+  sourceRecipePath: string | undefined,
+  recipes: ReadonlyMap<string, ResolvedLibraryRecipe>,
+  digest: string,
+): string {
+  if (sourceRecipePath) {
+    const resolvedPath = path.resolve(sourceRecipePath);
+    const match = [...recipes.values()].find(
+      (recipe) => path.resolve(recipe.path) === resolvedPath,
+    );
+    if (match) return match.ref;
+    return rootResolutionRef(digest);
+  }
+  return rootResolutionRef(digest);
 }
 
 function normalizeVideoRecordingOptions(

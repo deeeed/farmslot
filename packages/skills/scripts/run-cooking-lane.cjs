@@ -222,9 +222,7 @@ function resolveRepoLocalContext({ startDir, repoName }) {
   const repoRoot = findUp(startDir, (candidate) => {
     if (!fs.existsSync(path.join(candidate, '.git'))) return false;
     if (repoName === 'example-browser') {
-      return (
-        findFilesByBasename(candidate, ['validate-recipe.js', 'validate-flow-schema.js']).length > 0
-      );
+      return findFilesByBasename(candidate, ['validate-recipe.js']).length > 0;
     }
     if (repoName === 'example-mobile') {
       return findFilesByBasename(candidate, ['validate-recipe.sh']).length > 0;
@@ -661,17 +659,11 @@ function discoverValidationSteps({ repoName, repoRoot, recipePath, artifactsDir,
   }
 
   if (repoName === 'example-browser') {
-    const schemaValidator = findFilesByBasename(repoRoot, ['validate-flow-schema.js'])[0];
     const recipeValidator = findFilesByBasename(repoRoot, ['validate-recipe.js'])[0];
-    if (!schemaValidator || !recipeValidator) {
+    if (!recipeValidator) {
       return [];
     }
     const steps = [
-      {
-        name: 'schema_validation',
-        command: ['node', schemaValidator, recipePath],
-        cwd: repoRoot,
-      },
       {
         name: 'dry_run',
         command: ['node', recipeValidator, '--recipe', recipePath, '--dry-run'],

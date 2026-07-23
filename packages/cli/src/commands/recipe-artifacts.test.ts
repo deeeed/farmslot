@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import { digestRecipeDocument } from '@farmslot/protocol';
+import { parseRecipeParamAssignments } from '@farmslot/recipe-harness/cli/support';
 
 import { validateRecipeArtifactDirectory } from './recipe.js';
 
@@ -12,16 +16,16 @@ const runner = {
   git_ref: 'test',
 };
 
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+
 const recipe = {
-  schema_version: 1,
+  $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
   title: 'Artifact validator fixture',
   description: 'Minimal artifact validator fixture.',
-  validate: {
-    workflow: {
-      entry: 'done',
-      nodes: {
-        done: { action: 'end', intent: 'Complete fixture.', status: 'pass' },
-      },
+  workflow: {
+    entry: 'done',
+    nodes: {
+      done: { action: 'end', status: 'pass' },
     },
   },
 };
@@ -36,6 +40,15 @@ const traceEntry = {
   status: 'pass',
 };
 
+test('parseRecipeParamAssignments keeps strings and parses JSON scalar values', () => {
+  assert.deepEqual(
+    parseRecipeParamAssignments(['market=ETH', 'enabled=false', 'count=0', 'label=']),
+    { market: 'ETH', enabled: false, count: 0, label: '' },
+  );
+  assert.throws(() => parseRecipeParamAssignments(['market=ETH', 'market=BTC']), /more than once/);
+  assert.throws(() => parseRecipeParamAssignments(['market']), /key=value/);
+});
+
 async function writeJson(filePath: string, value: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
 }
@@ -46,6 +59,12 @@ async function createArtifactPackage(
 ): Promise<string> {
   const artifactDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-artifacts-'));
   await writeJson(path.join(artifactDir, 'recipe.json'), recipe);
+  await writeJson(path.join(artifactDir, 'recipe-resolution.json'), {
+    schema_version: 1,
+    root: { ref: '$root', digest: digestRecipeDocument(recipe) },
+    dependencies: [],
+    edges: [],
+  });
   await writeJson(path.join(artifactDir, 'summary.json'), {
     status: 'pass',
     startedAt: '2026-05-30T15:00:00Z',
@@ -68,6 +87,16 @@ async function createArtifactPackage(
   });
   return artifactDir;
 }
+
+test('committed documentation artifact packages validate', async () => {
+  const artifactsRoot = path.join(repoRoot, 'docs', 'examples', 'recipes', 'farmslot', 'artifacts');
+  for (const entry of await readdir(artifactsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const artifactDir = path.join(artifactsRoot, entry.name);
+    const result = await validateRecipeArtifactDirectory(artifactDir, {});
+    assert.equal(result.status, 'pass', `${entry.name}: ${JSON.stringify(result.recipe.findings)}`);
+  }
+});
 
 test('validateRecipeArtifactDirectory requires matching runner provenance locations', async () => {
   const artifactDir = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
@@ -175,6 +204,98 @@ test('validateRecipeArtifactDirectory rejects manifest artifacts that are not pr
     result.recipe.findings.some(
       (finding) =>
         finding.code === 'artifact_manifest.missing_file' && finding.severity === 'error',
+    ),
+  );
+});
+
+test('dependency artifact reads are derived from the digest, not an untrusted path', async () => {
+  const artifactDir = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+  const child = { ...recipe, title: 'Resolved child' };
+  const digest = digestRecipeDocument(child);
+  const escapedName = `outside-${path.basename(artifactDir)}.json`;
+  await writeFile(path.join(artifactDir, '..', escapedName), 'outside sentinel', 'utf-8');
+  await writeJson(path.join(artifactDir, 'recipe-resolution.json'), {
+    schema_version: 1,
+    root: { ref: '$root', digest: digestRecipeDocument(recipe) },
+    dependencies: [
+      {
+        ref: 'child',
+        source: 'test',
+        file: 'recipes/child.recipe.json',
+        digest,
+        artifact: `../${escapedName}`,
+      },
+    ],
+    edges: [{ from: '$root', to: 'child' }],
+  });
+
+  const result = await validateRecipeArtifactDirectory(artifactDir, {});
+  assert.equal(result.status, 'fail');
+  assert.ok(
+    result.checks.some(
+      (check) => check.id === `file.resolved-recipes/${digest.slice('sha256:'.length)}.recipe.json`,
+    ),
+  );
+  assert.ok(!result.checks.some((check) => check.id.includes('..')));
+});
+
+test('artifact validation rejects file and directory symlink escapes', async () => {
+  const artifactDir = await createArtifactPackage({ metadata: { runner }, entries: [traceEntry] });
+  const outsideDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-artifacts-outside-'));
+  const outsideSummary = path.join(outsideDir, 'summary.json');
+  await writeJson(outsideSummary, { status: 'pass' });
+  await rm(path.join(artifactDir, 'summary.json'));
+  await symlink(outsideSummary, path.join(artifactDir, 'summary.json'));
+
+  const fileEscape = await validateRecipeArtifactDirectory(artifactDir, {});
+  assert.equal(fileEscape.status, 'fail');
+  assert.ok(
+    fileEscape.checks.some(
+      (check) =>
+        check.id === 'file.summary.json' &&
+        check.status === 'fail' &&
+        check.message.includes('resolves outside its root'),
+    ),
+  );
+
+  const dependencyDir = await createArtifactPackage({
+    metadata: { runner },
+    entries: [traceEntry],
+  });
+  const child = { ...recipe, title: 'Symlinked child' };
+  const digest = digestRecipeDocument(child);
+  await writeJson(path.join(dependencyDir, 'recipe-resolution.json'), {
+    schema_version: 1,
+    root: { ref: '$root', digest: digestRecipeDocument(recipe) },
+    dependencies: [
+      {
+        ref: 'child',
+        source: 'test',
+        file: 'recipes/child.recipe.json',
+        digest,
+        artifact: `resolved-recipes/${digest.slice('sha256:'.length)}.recipe.json`,
+      },
+    ],
+    edges: [{ from: '$root', to: 'child' }],
+  });
+  await mkdir(path.join(outsideDir, 'resolved-recipes'), { recursive: true });
+  await writeJson(
+    path.join(outsideDir, 'resolved-recipes', `${digest.slice('sha256:'.length)}.recipe.json`),
+    child,
+  );
+  await symlink(
+    path.join(outsideDir, 'resolved-recipes'),
+    path.join(dependencyDir, 'resolved-recipes'),
+  );
+
+  const directoryEscape = await validateRecipeArtifactDirectory(dependencyDir, {});
+  assert.equal(directoryEscape.status, 'fail');
+  assert.ok(
+    directoryEscape.checks.some(
+      (check) =>
+        check.id === `file.resolved-recipes/${digest.slice('sha256:'.length)}.recipe.json` &&
+        check.status === 'fail' &&
+        check.message.includes('resolves outside its root'),
     ),
   );
 });

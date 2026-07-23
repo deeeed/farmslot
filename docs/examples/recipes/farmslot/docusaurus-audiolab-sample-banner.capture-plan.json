@@ -1,0 +1,54 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Docusaurus AudioLab sample-load capture plan",
+  "description": "Launch the AudioLab playground on its configured iOS simulator, apply the reversible issue #414 debug-banner fixture, prove the banner is absent before Load Sample, press load-sample-button, prove the exact banner appears, and emit docs-ready proof artifacts.",
+  "proofTargets": [
+    {
+      "id": "configured-runtime",
+      "claim": "Farmslot can launch and control the real AudioLab playground app through its configured simulator and Metro port."
+    },
+    {
+      "id": "sample-load-behavior",
+      "claim": "The app interaction is driven through the real Import screen and load-sample-button, then validated with visible screenshot/video evidence."
+    }
+  ],
+  "workflow": {
+    "entry": "prepare-demo-fixture",
+    "nodes": {
+      "prepare-demo-fixture": {
+        "action": "fixture.apply",
+        "next": "launch-audiolab",
+        "intent": "Apply and later restore the local AudioLab issue #414 debug-banner fixture."
+      },
+      "launch-audiolab": {
+        "action": "app.launch",
+        "next": "assert-banner-absent",
+        "proves": ["configured-runtime"],
+        "intent": "Launch AudioLab playground with WATCHER_PORT and IOS_SIMULATOR read from project config/.env."
+      },
+      "assert-banner-absent": {
+        "action": "ui.assert_text_absent",
+        "text": "FARMSLOT DEMO: SAMPLE AUDIO LOADED",
+        "next": "record-sample-load",
+        "intent": "Open the Import screen and verify the demo banner is absent before sample audio loads."
+      },
+      "record-sample-load": {
+        "action": "capture.video",
+        "next": "assert-banner-present",
+        "proves": ["sample-load-behavior"],
+        "intent": "Record the iOS simulator while the recipe presses load-sample-button and waits for the banner."
+      },
+      "assert-banner-present": {
+        "action": "ui.assert_text_present",
+        "text": "FARMSLOT DEMO: SAMPLE AUDIO LOADED",
+        "next": "done",
+        "proves": ["sample-load-behavior"],
+        "intent": "Verify the exact demo banner text is present after sample audio loads and capture final screenshot proof."
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

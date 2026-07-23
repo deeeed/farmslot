@@ -2,7 +2,6 @@ import { pathToFileURL } from 'node:url';
 
 import { Command } from 'commander';
 
-import { registerFlowsCommand } from './flows-command.js';
 import { registerRunCommand } from './run-command.js';
 import { registerValidateCommand } from './validate-command.js';
 
@@ -21,8 +20,6 @@ export function createRecipeHarnessProgram(options: RecipeHarnessCliOptions = {}
 
   registerValidateCommand(program);
   registerRunCommand(program);
-  registerFlowsCommand(program);
-
   return program;
 }
 

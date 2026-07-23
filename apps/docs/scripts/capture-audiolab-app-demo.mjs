@@ -9,7 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -21,7 +21,7 @@ const appRoot = resolve(audiolabRepo, 'apps/playground');
 const importScreenPath = resolve(appRoot, 'src/app/(tabs)/import.tsx');
 const defaultRecipe = resolve(
   repoRoot,
-  'docs/examples/recipes/farmslot/docusaurus-audiolab-sample-banner.recipe.json',
+  'docs/examples/recipes/farmslot/docusaurus-audiolab-sample-banner.capture-plan.json',
 );
 const docsVideo = resolve(repoRoot, 'apps/docs/static/videos/demos/audiolab-sample-banner-ios.mp4');
 const docsPoster = resolve(repoRoot, 'apps/docs/static/img/demos/audiolab-sample-banner-ios.png');
@@ -457,7 +457,7 @@ function writeOutputs({ videoPath, posterPath, screenshotPath, visibleChars }) {
 }
 
 function recipeId() {
-  return JSON.parse(readFileSync(recipePath, 'utf8')).id;
+  return basename(recipePath).replace(/\.capture-plan\.json$/u, '');
 }
 
 function waitFor(predicate, timeoutMs, label) {

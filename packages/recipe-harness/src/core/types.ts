@@ -4,13 +4,13 @@ import type {
   RecipeExecutionApproval,
   RecipeExecutionCapability,
   RecipeExecutionPlan,
+  RecipeResolutionDocument,
   RecipeSourceProvenance,
   UiObserverRef,
 } from '@farmslot/protocol';
 
 export type RecipeRunStatus = 'pass' | 'fail' | 'unknown';
 export type RecipeVideoRecordingMode = 'off' | 'full-run';
-export type RecipeRecordPolicy = 'none' | 'trace_only' | 'proof_window' | 'failure_only';
 
 export interface RecipeRunRequest {
   recipePath?: string;
@@ -25,14 +25,18 @@ export interface RecipeRunRequest {
   source?: RecipeSourceProvenance;
   /** Out-of-band approval bound to the fully resolved execution-plan digest. */
   approval?: RecipeExecutionApproval;
-  /** Ordered recipe library sources; the first source declaring a flow ref wins. */
+  /** Root recipe parameters. Defaults from paramsSchema are applied first. */
+  params?: Record<string, unknown>;
+  /** Active adapter used to select adapter-specific recipe files. */
+  adapter?: string;
+  /** Ordered recipe library sources; the first source declaring a recipe ref wins. */
   librarySources?: RecipeLibrarySource[];
 }
 
 export interface RecipeLibrarySource {
   /** Source name used in resolution output. Defaults to library.json name, then the directory basename. */
   name?: string;
-  /** Library root directory containing library.json and flows/. */
+  /** Library root directory containing library.json and recipes/. */
   root: string;
   /** Trust comes from caller configuration, never from library.json. */
   provenance?: RecipeSourceProvenance;
@@ -41,27 +45,11 @@ export interface RecipeLibrarySource {
 export interface LoadedRecipeLibrarySource {
   name: string;
   root: string;
-  flowCount: number;
+  recipeCount: number;
   provenance: RecipeSourceProvenance;
 }
 
-export interface RecipeFlowResolutionEntry {
-  ref: string;
-  source: string;
-  /** Catalog file path relative to the library root. */
-  file: string;
-  /** Source names that also declare this ref at lower precedence. */
-  shadows?: string[];
-  lastVerified?: string;
-}
-
-export interface RecipeFlowOverrideEntry {
-  ref: string;
-  /** Library source whose declaration the recipe-local flow overrode. */
-  source: string;
-}
-
-export interface RecipeFlowShadowEntry {
+export interface RecipeShadowEntry {
   ref: string;
   /** Winning source. */
   source: string;
@@ -71,13 +59,10 @@ export interface RecipeFlowShadowEntry {
   shadows: string[];
 }
 
-export interface RecipeFlowResolutionSummary {
+export interface RecipeLibrarySummary {
   sources: LoadedRecipeLibrarySource[];
-  used: RecipeFlowResolutionEntry[];
-  /** Recipe-local declarations that overrode a library-provided ref. */
-  overrides: RecipeFlowOverrideEntry[];
   /** Every cross-source shadowing in the resolution, used or not. */
-  shadowed: RecipeFlowShadowEntry[];
+  shadowed: RecipeShadowEntry[];
 }
 
 export interface RecipeRunResult {
@@ -112,7 +97,6 @@ export interface CreateRecipeRunnerOptions {
   adapters: ActionAdapter[];
   /** Caller-owned default provenance. Omit to fail closed with unknown trust. */
   defaultSource?: RecipeSourceProvenance;
-  preconditions?: PreconditionChecker[];
   logger?: RecipeLogger;
   hud?: RecipeHudOptions | false;
   runner?: RecipeRunnerProvenance;
@@ -159,7 +143,7 @@ export interface VideoRecorderStartRequest {
   maxFps?: number;
   maxSize?: number;
   nodeId: string;
-  record: RecipeRecordPolicy | 'full_run';
+  record: 'full_run';
 }
 
 export interface ActiveVideoRecording {
@@ -204,8 +188,6 @@ export interface RecipeHudDisplayOptions {
 }
 
 export interface ActionResult {
-  status?: RecipeRunStatus;
-  next?: string;
   case?: string;
   output?: unknown;
   artifacts?: RecipeArtifactManifestEntry[];
@@ -254,33 +236,18 @@ export interface RecipeObservationResult {
   warnings?: RecipeObservationWarning[];
 }
 
-export interface RecipePreconditionGate {
-  id: string;
-  description?: string;
-  params?: Record<string, unknown>;
-  required?: boolean;
-}
-
-export interface PreconditionResult {
-  ok?: boolean;
-  output?: unknown;
-  failureKind?: string;
-  error?: string;
-}
-
-export interface PreconditionChecker {
-  id: string;
-  capabilities?: RecipeExecutionCapability[];
-  source?: RecipeSourceProvenance;
-  resolveSourceDigest?: () => Promise<string>;
-  execute(
-    gate: RecipePreconditionGate,
-    context: ActionExecutionContext,
-  ): Promise<PreconditionResult | boolean | undefined>;
+export interface RecipeCallTrace {
+  ref: string;
+  digest: string;
+  source: string;
+  file: string;
+  adapter?: string;
 }
 
 export interface ArtifactWriter {
   copyRecipe(recipe: unknown): Promise<string>;
+  copyResolvedRecipe(digest: string, recipe: unknown): Promise<string>;
+  writeRecipeResolution(resolution: RecipeResolutionDocument): Promise<string>;
   register(entry: RecipeArtifactManifestEntry): void;
   list(): RecipeArtifactManifestEntry[];
   write(status: RecipeRunStatus, runner?: RecipeRunnerProvenance): Promise<string>;
@@ -289,9 +256,9 @@ export interface ArtifactWriter {
 export interface TraceEntry {
   nodeId: string;
   action: string;
+  recipe?: RecipeCallTrace;
   intent?: string;
-  phase?: string;
-  record?: unknown;
+  proves?: string[];
   startedAt: string;
   endedAt: string;
   durationMs: number;
@@ -328,7 +295,7 @@ export interface SummaryDocument {
   };
   runner?: RecipeRunnerProvenance;
   /** Present when recipe library sources were configured for the run. */
-  flowResolution?: RecipeFlowResolutionSummary;
+  recipeLibraries?: RecipeLibrarySummary;
 }
 
 export interface SummaryWriter {

@@ -807,7 +807,7 @@ export async function writeTaskFile(
       vars.COMMENT_SUMMARY = `_Pre-fetch failed (${(err as Error).message}). Worker MUST fetch comments in step 4._`;
     }
 
-    // Last-resort: extract recipe + subflows from the PR body via LLM. Only
+    // Last-resort: extract root and dependency recipes from the PR body via LLM. Only
     // runs when family inheritance produced no recipe — covers human-authored
     // PRs where farmslot has no fix-bug/dev ancestor in the family chain.
     // Skip when the worker template doesn't reference {{RECIPE_SOURCE}} —
@@ -817,7 +817,7 @@ export async function writeTaskFile(
     if (vars.HAS_RECIPE === 'no' && vars.PR_BODY && template.includes('{{RECIPE_SOURCE}}')) {
       emit('substep', {
         name: 'pr-body-recipe-llm',
-        detail: 'Extracting recipe + sub-flows from PR body (LLM)',
+        detail: 'Extracting root + dependency recipes from PR body (LLM)',
       });
       try {
         const extraction = await extractRecipeFromPRBody(vars.PR_BODY);
@@ -832,7 +832,7 @@ export async function writeTaskFile(
           // 10's recipe path).
           vars.RECIPE_SOURCE = 'pr-body-llm';
           console.log(
-            `[task-writer] pr-body recipe staged for ${run.ticketOrPr} (untrusted, gated): 1 recipe + ${Object.keys(extraction.bundle.flows).length} flows at inputs/inherited/`,
+            `[task-writer] pr-body recipe staged for ${run.ticketOrPr} (untrusted, gated): 1 root + ${Object.keys(extraction.bundle.recipes).length} dependencies at inputs/inherited/`,
           );
         } else {
           // Surface the reason so operators can distinguish "model truncated"

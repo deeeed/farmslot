@@ -552,7 +552,7 @@ export function createCdpWebUiTransport(
               page,
               page.setInput(
                 asString(selectorForUiInput(node), 'ui.set_input.selector'),
-                asString(node.value ?? node.text, 'ui.set_input.value'),
+                asInputText(node.value ?? node.text, 'ui.set_input.value'),
               ),
               node,
             );
@@ -605,6 +605,11 @@ export function createCdpWebUiTransport(
       return withCdpWebPage(options, input, async (page) => page.observe(refs));
     },
   };
+}
+
+function asInputText(value: unknown, label: string): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return asString(value, label);
 }
 
 async function executeSettledCdpAction<T>(
@@ -821,9 +826,6 @@ async function renderCdpHud(
   const flow = asOptionalString(node.flow, 'app.hud.flow') ?? '';
   const action =
     asOptionalString(node.action_name ?? node.recipe_action, 'app.hud.action_name') ?? '';
-  const proofTarget =
-    asOptionalString(node.proofTarget ?? node.proof_target, 'app.hud.proofTarget') ?? '';
-  const record = asOptionalString(node.record, 'app.hud.record') ?? '';
   const text = asOptionalString(node.intent ?? node.text, 'app.hud.text') ?? context.nodeId;
   const rawDetail = asOptionalString(node.detail, 'app.hud.detail') ?? '';
   const detail = rawDetail && rawDetail !== text && rawDetail !== flow ? rawDetail : '';
@@ -841,7 +843,7 @@ async function renderCdpHud(
   const total = typeof progress.total === 'number' ? progress.total : undefined;
   return page.evaluate(
     `(() => {
-      const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, proofTarget, record, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines })};
+      const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines })};
       const id = 'farmslot-recipe-hud';
       let el = document.getElementById(id);
       if (!el) {

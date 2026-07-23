@@ -57,21 +57,19 @@ test('recipe run blocks an untrusted command until the exact plan is approved', 
     writeFileSync(
       recipePath,
       JSON.stringify({
-        schema_version: 1,
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
         title: 'CLI trust round trip',
         description: 'Proves exact-plan approval before host execution.',
-        validate: {
-          workflow: {
-            entry: 'write',
-            nodes: {
-              write: {
-                action: 'command',
-                intent: 'Write the exact-plan approval marker',
-                cmd: 'touch approved.txt',
-                next: 'done',
-              },
-              done: { action: 'end', status: 'pass' },
+        workflow: {
+          entry: 'write',
+          nodes: {
+            write: {
+              action: 'command',
+              intent: 'Write the exact-plan approval marker',
+              cmd: 'touch approved.txt',
+              next: 'done',
             },
+            done: { action: 'end', status: 'pass' },
           },
         },
       }),
@@ -82,6 +80,17 @@ test('recipe run blocks an untrusted command until the exact plan is approved', 
         runner_protocol_version: 1,
         action_registry_version: 1,
         supported_official_actions: ['command', 'end'],
+        action_metadata: {
+          command: {
+            description: 'Run a command.',
+            schema: {
+              type: 'object',
+              properties: { cmd: { type: 'string' } },
+              required: ['cmd'],
+              additionalProperties: false,
+            },
+          },
+        },
       }),
     );
 

@@ -67,11 +67,6 @@ function testCookingLaneWithValidation() {
   const validatorDir = path.join(repoRoot, 'fixtures', 'agentic', 'recipes');
   mkdirSync(validatorDir, { recursive: true });
   writeFileSync(
-    path.join(validatorDir, 'validate-flow-schema.js'),
-    ['#!/usr/bin/env node', "console.log('schema ok');"].join('\n'),
-    'utf8',
-  );
-  writeFileSync(
     path.join(validatorDir, 'validate-recipe.js'),
     [
       '#!/usr/bin/env node',
@@ -144,7 +139,6 @@ function testCookingLaneWithValidation() {
     task,
     new RegExp(`ARTIFACT_DIR: ${outputDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/artifacts`),
   );
-  assert.match(task, /schema_validation/);
   assert.match(task, /dry_run/);
   assert.match(task, /live_run/);
   assert.doesNotMatch(task, /RECIPE_COOK_VALIDATION_PENDING/);
@@ -153,7 +147,6 @@ function testCookingLaneWithValidation() {
     readFileSync(path.join(outputDir, 'artifacts', 'recipe-cook-learning.json'), 'utf8'),
   );
   assert.equal(learning.target_repo, 'example-browser');
-  assert.equal(learning.validation_results.schema_validation.exit_code, 0);
   assert.equal(learning.validation_results.dry_run.exit_code, 0);
   assert.equal(learning.validation_results.live_run.exit_code, 0);
 
@@ -312,8 +305,7 @@ function testCookingLanePreservesFailedStatus() {
   mkdirSync(path.join(repoRoot, '.git'), { recursive: true });
   const validatorDir = path.join(repoRoot, 'fixtures', 'agentic', 'recipes');
   mkdirSync(validatorDir, { recursive: true });
-  writeFileSync(path.join(validatorDir, 'validate-flow-schema.js'), 'process.exit(1)\n', 'utf8');
-  writeFileSync(path.join(validatorDir, 'validate-recipe.js'), 'process.exit(0)\n', 'utf8');
+  writeFileSync(path.join(validatorDir, 'validate-recipe.js'), 'process.exit(1)\n', 'utf8');
 
   const runnerPath = path.join(root, 'runner.js');
   writeFileSync(
@@ -672,11 +664,6 @@ function testRepoLocalAutoResolution() {
   );
   const validatorDir = path.join(repoRoot, 'temp', 'agentic', 'recipes');
   mkdirSync(validatorDir, { recursive: true });
-  writeFileSync(
-    path.join(validatorDir, 'validate-flow-schema.js'),
-    "console.log('schema ok');\n",
-    'utf8',
-  );
   writeFileSync(
     path.join(validatorDir, 'validate-recipe.js'),
     ["console.log(process.argv.includes('--dry-run') ? 'dry' : 'live');"].join('\n'),

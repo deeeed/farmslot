@@ -1,7 +1,15 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Run } from '@farmslot/protocol';
+import { RECIPE_PROTOCOL_SCHEMA_URL, type Run } from '@farmslot/protocol';
+
+export function makeRecipeJson(nodes: Record<string, unknown>, entry = 'start'): string {
+  return JSON.stringify({
+    $schema: RECIPE_PROTOCOL_SCHEMA_URL,
+    description: 'Gateway observability test recipe.',
+    workflow: { entry, nodes },
+  });
+}
 
 export function makeRun(overrides: Partial<Run> = {}): Run {
   return {

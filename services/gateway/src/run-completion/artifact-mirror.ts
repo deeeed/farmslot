@@ -37,7 +37,7 @@ import {
 import { type EvidenceManifest, evidenceManifestArtifactPaths } from './evidence-manifest.js';
 import { readEvidenceManifest } from './publication-artifacts.js';
 
-// Push ONLY the executable recipe workflows (recipe.json + recipe-flows/) from
+// Push only executable recipe inputs (recipe.json + recipe-library/) from
 // the gateway-owned mirror to a slot's worker task dir, so a run loaded onto
 // the slot (slot-side run loader / activate) can be replayed there. Evidence
 // (screenshots/videos) is intentionally NOT synced — only what execution needs,
@@ -57,9 +57,7 @@ export async function pushRunRecipeToSlot(
     getOrchestratorTaskRoot(run.project, pv?.projectJson ?? null),
   );
   if (taskRelDir === null) return 0;
-  const taskDirName = pv
-    ? resolveProjectTaskDirName(pv.projectJson)
-    : DEFAULT_TASK_DIR;
+  const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
   const localArtifactsDir = path.join(path.dirname(run.taskFile), 'artifacts');
   const workerArtifactsDir = path.join(vars.remoteRepo, taskDirName, taskRelDir, 'artifacts');
 
@@ -67,7 +65,12 @@ export async function pushRunRecipeToSlot(
   // even when the slot has never run this task (no temp/tasks/.../artifacts/ yet).
   const files: Array<{ path: string; content: string }> = [];
   const localRecipe = path.join(localArtifactsDir, 'recipe.json');
-  const inheritedRecipe = path.join(path.dirname(run.taskFile), 'inputs', 'inherited', 'recipe.json');
+  const inheritedRecipe = path.join(
+    path.dirname(run.taskFile),
+    'inputs',
+    'inherited',
+    'recipe.json',
+  );
   if (existsSync(localRecipe)) {
     files.push({ path: 'recipe.json', content: (await readFile(localRecipe)).toString('base64') });
   } else if (existsSync(inheritedRecipe)) {
@@ -76,25 +79,36 @@ export async function pushRunRecipeToSlot(
       content: (await readFile(inheritedRecipe)).toString('base64'),
     });
   }
-  const localFlowsDir = path.join(localArtifactsDir, 'recipe-flows');
-  if (existsSync(localFlowsDir)) {
-    // recipe-flows/ is a flat directory of *.json flow files today; nested
-    // subdirectories (none currently produced) are intentionally skipped.
-    for (const name of await readdir(localFlowsDir)) {
-      const full = path.join(localFlowsDir, name);
-      if (!(await lstat(full)).isFile()) continue;
-      files.push({
-        path: path.join('recipe-flows', name),
-        content: (await readFile(full)).toString('base64'),
-      });
-    }
+  const localLibraryDir = path.join(localArtifactsDir, 'recipe-library');
+  if (existsSync(localLibraryDir)) {
+    await collectRecipeLibraryFiles(localLibraryDir, '', files);
   }
   if (files.length === 0) return 0;
   await slotWriteFiles(vars, workerArtifactsDir, files);
   console.log(
-    `[run-completion] synced recipe workflows (${files.length} file(s)) to ${vars.slotId} for run ${run.id.slice(0, 8)}`,
+    `[run-completion] synced recipe inputs (${files.length} file(s)) to ${vars.slotId} for run ${run.id.slice(0, 8)}`,
   );
   return files.length;
+}
+
+async function collectRecipeLibraryFiles(
+  root: string,
+  relativeDir: string,
+  files: Array<{ path: string; content: string }>,
+): Promise<void> {
+  for (const entry of await readdir(path.join(root, relativeDir))) {
+    const relativePath = path.join(relativeDir, entry);
+    const fullPath = path.join(root, relativePath);
+    const info = await lstat(fullPath);
+    if (info.isDirectory()) {
+      await collectRecipeLibraryFiles(root, relativePath, files);
+    } else if (info.isFile()) {
+      files.push({
+        path: path.join('recipe-library', relativePath),
+        content: (await readFile(fullPath)).toString('base64'),
+      });
+    }
+  }
 }
 
 export function shouldClearLocalRecipeRunCache(
@@ -175,9 +189,7 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   );
   if (taskRelDir === null) return 0;
 
-  const taskDirName = pv
-    ? resolveProjectTaskDirName(pv.projectJson)
-    : DEFAULT_TASK_DIR;
+  const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
   const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
   const workerArtifactsDir = path.join(workerTaskDir, 'artifacts');
   const localArtifactsDir = path.join(taskDir, 'artifacts');

@@ -10,7 +10,7 @@ export interface SlotViewUrlState {
   file?: string;
   resource?: string;
   recipeRun?: string;
-  recipeFlow?: string;
+  recipeDependency?: string;
   recipeNode?: string;
   recipeEvidenceMode?: RecipeEvidenceMode;
   recipeArtifact?: string | null;
@@ -32,7 +32,7 @@ export function slotViewHash(state: SlotViewUrlState): string {
   if (state.file) params.set('file', state.file);
   if (state.resource) params.set('resource', state.resource);
   if (state.recipeRun) params.set('recipeRun', state.recipeRun);
-  if (state.recipeFlow) params.set('recipeFlow', state.recipeFlow);
+  if (state.recipeDependency) params.set('recipeDependency', state.recipeDependency);
   if (state.recipeNode) params.set('recipeNode', state.recipeNode);
   if (state.recipeNode && state.recipeEvidenceMode)
     params.set('recipeEvidenceMode', state.recipeEvidenceMode);
@@ -74,8 +74,8 @@ export function requestedRecipeRunFromHash(hash?: string): string | null {
   return getSlotViewHashParam('recipeRun', hash);
 }
 
-export function requestedRecipeFlowFromHash(hash?: string): string | null {
-  return getSlotViewHashParam('recipeFlow', hash);
+export function requestedRecipeDependencyFromHash(hash?: string): string | null {
+  return getSlotViewHashParam('recipeDependency', hash);
 }
 
 export function requestedRecipeNodeFromHash(hash?: string): string | null {

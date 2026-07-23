@@ -45,7 +45,7 @@ export function renderRecipeRunsList(view: SlotViewRecipePresenter) {
                         view._selectedRecipeNodeId = '';
                         view._recipeEvidenceMode = 'all';
                         view._selectedRecipeArtifactPath = null;
-                        view._selectedRecipeFlowPath = '';
+                        view._selectedRecipeDependencyPath = '';
                         view._recipeEvidenceCache = null;
                         view._syncUrlState();
                         const nextHost = createSlotViewRecipeHostEntry(
@@ -53,7 +53,7 @@ export function renderRecipeRunsList(view: SlotViewRecipePresenter) {
                           view.slotId,
                           view._selectedRecipeRun(),
                         );
-                        void view._loadSelectedRecipeFlow(nextHost);
+                        void view._loadSelectedRecipeDependency(nextHost);
                         void view._loadSelectedRecipeEvidenceManifest(nextHost);
                         void view._loadSelectedRecipeArtifactPreview(nextHost);
                       }}

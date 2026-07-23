@@ -9,6 +9,7 @@ import {
 } from '../packages/recipe-harness/src/index.ts';
 import {
   getRecipeActionManifestActionNames,
+  isRecord,
   mergeRecipeValidationResults,
   validateRecipeArtifactPackage,
   validateRecipeWithManifest,
@@ -76,6 +77,25 @@ async function listRelativeFiles(root: string, prefix = ''): Promise<string[]> {
   return files.sort();
 }
 
+async function readRecipeResolutionBundle(artifactDir: string) {
+  const recipeResolution = await readJson(path.join(artifactDir, 'recipe-resolution.json'));
+  const resolvedRecipes: Record<string, unknown> = {};
+  if (isRecord(recipeResolution) && Array.isArray(recipeResolution.dependencies)) {
+    for (const dependency of recipeResolution.dependencies) {
+      if (
+        isRecord(dependency) &&
+        typeof dependency.digest === 'string' &&
+        typeof dependency.artifact === 'string'
+      ) {
+        resolvedRecipes[dependency.digest] = await readJson(
+          path.join(artifactDir, dependency.artifact),
+        );
+      }
+    }
+  }
+  return { recipeResolution, resolvedRecipes };
+}
+
 function formatFinding(finding: RecipeValidationFinding): string {
   return `${finding.severity} ${finding.code} ${finding.path}: ${finding.message}`;
 }
@@ -92,10 +112,11 @@ async function validateSelfValidationFixtures() {
     const artifactDir = path.join(suiteRoot, entry.artifactDir);
     const recipe = await readJson(recipePath);
     const manifest = await readJson(path.join(artifactDir, 'artifact-manifest.json'));
+    const resolution = await readRecipeResolutionBundle(artifactDir);
     const artifactPaths = await listRelativeFiles(artifactDir);
     const result = mergeRecipeValidationResults([
       validateRecipeWithManifest(recipe, actionManifest),
-      validateRecipeArtifactPackage({ recipe, manifest, artifactPaths }),
+      validateRecipeArtifactPackage({ recipe, manifest, artifactPaths, ...resolution }),
     ]);
     entries.push({
       id: entry.id,
@@ -143,51 +164,39 @@ function shellQuote(value: string): string {
 
 function buildRuntimeRecipe(reportRel: string, logRel: string) {
   return {
-    schema_version: 1,
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
     title: 'Farmslot Recipe Protocol v1 local self-validation',
     description:
       'Executes the repo-local self-validation suite through the real recipe harness and validates the emitted Recipe v1 artifact package.',
-    validate: {
-      workflow: {
-        entry: 'validate-fixtures',
-        nodes: {
-          'validate-fixtures': {
-            action: 'command',
-            cmd: `yarn exec tsx scripts/e2e-recipe-protocol-self-validation.mts --fixture-check --report ${shellQuote(reportRel)} --log ${shellQuote(logRel)}`,
-            timeout_ms: 120_000,
-            next: 'assert-report',
-            intent:
-              'Run the self-validation fixture contract checks and write machine-readable report artifacts.',
-          },
-          'assert-report': {
-            action: 'assert_json',
-            path: reportRel,
-            assert: { path: '$.status', operator: 'eq', value: 'pass' },
-            next: 'index-artifacts',
-            intent:
-              'Assert the fixture contract report passed before publishing it as recipe evidence.',
-          },
-          'index-artifacts': {
-            action: 'index_artifacts',
-            artifacts: [
-              {
-                path: reportRel,
-                type: 'report',
-                label: 'Self-validation fixture contract report',
-                category: 'system',
-              },
-              {
-                path: logRel,
-                type: 'log',
-                label: 'Self-validation fixture contract log',
-                category: 'system',
-              },
-            ],
-            next: 'done',
-            intent: 'Publish the self-validation report and log into the typed artifact manifest.',
-          },
-          done: { action: 'end', status: 'pass' },
+    workflow: {
+      entry: 'validate-fixtures',
+      nodes: {
+        'validate-fixtures': {
+          action: 'command',
+          cmd: `yarn exec tsx scripts/e2e-recipe-protocol-self-validation.mts --fixture-check --report ${shellQuote(reportRel)} --log ${shellQuote(logRel)}`,
+          timeout_ms: 120_000,
+          next: 'index-artifacts',
+          intent:
+            'Produce a machine-readable report for every checked-in Recipe v1 fixture package',
         },
+        'index-artifacts': {
+          action: 'index_artifacts',
+          artifacts: [
+            {
+              path: reportRel,
+              type: 'report',
+              label: 'Self-validation fixture contract report',
+            },
+            {
+              path: logRel,
+              type: 'log',
+              label: 'Self-validation fixture contract log',
+            },
+          ],
+          next: 'done',
+          intent: 'Keep the validation report and log together for reviewer inspection',
+        },
+        done: { action: 'end', status: 'pass' },
       },
     },
   };
@@ -219,10 +228,11 @@ async function runSelfValidation(args: ParsedArgs): Promise<void> {
   const logRel = path.relative(repoRoot, path.join(sourceRoot, 'logs/onboarding-validation.log'));
   const recipeDocument = buildRuntimeRecipe(reportRel, logRel);
   const actionManifest = await readJson(actionManifestPath);
-  const runtimeActions = ['command', 'assert_json', 'index_artifacts', 'end'];
+  const runtimeActions = ['command', 'index_artifacts', 'end'];
   const runtimeActionSet = new Set(runtimeActions);
   const runtimeManifest = {
-    ...(actionManifest as Record<string, unknown>),
+    runner_protocol_version: (actionManifest as Record<string, unknown>).runner_protocol_version,
+    action_registry_version: (actionManifest as Record<string, unknown>).action_registry_version,
     supported_official_actions: runtimeActions,
     action_metadata: Object.fromEntries(
       Object.entries(
@@ -236,7 +246,6 @@ async function runSelfValidation(args: ParsedArgs): Promise<void> {
     ).filter(
       (binding) => typeof binding.action === 'string' && runtimeActionSet.has(binding.action),
     ),
-    pre_conditions: [],
   };
   const runner = createRecipeRunner({
     actionManifest: runtimeManifest as never,
@@ -251,13 +260,24 @@ async function runSelfValidation(args: ParsedArgs): Promise<void> {
     logger: console,
   });
 
-  const result = await runner.run({ recipeDocument, artifactsDir, projectRoot: repoRoot });
+  const result = await runner.run({
+    recipeDocument,
+    artifactsDir,
+    projectRoot: repoRoot,
+    source: {
+      kind: 'operator',
+      trust: 'trusted',
+      name: 'Farmslot Recipe Protocol self-validation',
+    },
+  });
   const manifest = await readJson(path.join(artifactsDir, 'artifact-manifest.json'));
+  const resolution = await readRecipeResolutionBundle(artifactsDir);
   const artifactPaths = await listRelativeFiles(artifactsDir);
   const validation = validateRecipeArtifactPackage({
     recipe: recipeDocument,
     manifest,
     artifactPaths,
+    ...resolution,
   });
   const payload = {
     schemaVersion: 1,

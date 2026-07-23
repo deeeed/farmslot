@@ -1,68 +1,54 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
-  "schema_version": 1,
   "title": "Live UI checkout review",
   "description": "Drives a UI checkout path slowly enough for the streaming panel and records reviewer-visible screenshots.",
-  "inputs": {
-    "base_url": "http://localhost:5174"
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "base_url": {
+        "type": "string",
+        "default": "http://localhost:5174"
+      }
+    }
   },
-  "validate": {
-    "workflow": {
-      "pre_conditions": [
-        {
-          "id": "runtime.browser.open",
-          "description": "Browser session is open.",
-          "required": true
-        },
-        {
-          "id": "fixture.user.signed_in",
-          "description": "Test user is signed in.",
-          "required": true
-        }
-      ],
-      "setup": [],
-      "entry": "open-checkout",
-      "nodes": {
-        "open-checkout": {
-          "action": "ui.navigate",
-          "next": "fill-shipping",
-          "target": "{{base_url}}/#/checkout",
-          "intent": "Open the checkout page in the browser"
-        },
-        "fill-shipping": {
-          "action": "ui.set_input",
-          "next": "submit-order",
-          "test_id": "shipping-address",
-          "value": "1 Recipe Protocol Way",
-          "intent": "Fill the required shipping details"
-        },
-        "submit-order": {
-          "action": "ui.press",
-          "next": "wait-confirmation",
-          "test_id": "submit-order",
-          "intent": "Submit the order from the checkout form"
-        },
-        "wait-confirmation": {
-          "action": "ui.wait_for",
-          "next": "capture-confirmation",
-          "text": "Order confirmed",
-          "intent": "Wait for the confirmation screen"
-        },
-        "capture-confirmation": {
-          "action": "ui.screenshot",
-          "path": "screenshots/checkout-confirmation.png",
-          "next": "done",
-          "intent": "Capture the confirmation screen for mobile and web reviewers"
-        },
-        "done": {
-          "action": "end",
-          "status": "pass"
-        }
+  "workflow": {
+    "entry": "open-checkout",
+    "nodes": {
+      "open-checkout": {
+        "action": "ui.navigate",
+        "next": "fill-shipping",
+        "target": "{{params.base_url}}/#/checkout",
+        "intent": "Open the checkout page in the browser"
       },
-      "teardown": [],
-      "playback": {
-        "mode": "auto",
-        "slow_ms": 2000
+      "fill-shipping": {
+        "action": "ui.set_input",
+        "next": "submit-order",
+        "test_id": "shipping-address",
+        "value": "1 Recipe Protocol Way",
+        "intent": "Provide the shipping details required to place the order"
+      },
+      "submit-order": {
+        "action": "ui.press",
+        "next": "wait-confirmation",
+        "test_id": "submit-order",
+        "intent": "Submit the order from the checkout form"
+      },
+      "wait-confirmation": {
+        "action": "ui.wait_for",
+        "next": "capture-confirmation",
+        "text": "Order confirmed",
+        "intent": "Confirm the order was accepted"
+      },
+      "capture-confirmation": {
+        "action": "ui.screenshot",
+        "path": "screenshots/checkout-confirmation.png",
+        "next": "done",
+        "intent": "Record the successful order confirmation for mobile and web reviewers"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
       }
     }
   }
