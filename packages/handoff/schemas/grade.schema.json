@@ -18,7 +18,7 @@
     },
     "graded_by": {
       "type": "string",
-      "description": "Grader identifier (pseudonymous engineer key is fine)."
+      "description": "Grader identifier (a pseudonymous key is fine)."
     },
     "graded_at": { "type": "string", "format": "date-time" },
     "proof_target_verdicts": {

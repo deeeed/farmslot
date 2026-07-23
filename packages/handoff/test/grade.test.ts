@@ -40,7 +40,6 @@ function scenario(grade?: unknown): { ctx: HandoffContext; input: LearningPackag
         packageId: '20260713T120000Z-fleet-dev-proj-123-a1b2c3d4',
         project: 'demo-farm',
         domain: '',
-        engineer: 'eng-1',
         run: { startedAt: '2026-07-13T11:00:00Z', flow: 'dev', outcome: 'success' },
         task: { title: 'Do the thing', sourceKind: 'text', ticket: 'PROJ-123' },
       },

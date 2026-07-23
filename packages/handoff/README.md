@@ -13,13 +13,13 @@ override-resolution engine, and the task-io/pr-publish boundary helpers.
 
 ## Close out a completed local task
 
-Create `$FARMSLOT_HOME/handoff/learning.config.json` (or
+Local staging needs no setup. To configure sharing, create
+`$FARMSLOT_HOME/handoff/learning.config.json` (or
 `~/.farmslot/handoff/learning.config.json`):
 
 ```json
 {
   "schemaVersion": 1,
-  "engineer": "stable-id",
   "destination": "~/dev/experimental-agentic-learnings"
 }
 ```
@@ -33,14 +33,19 @@ handoff closeout temp/tasks/recipe-cook/<task>
 
 # Only after a new explicit human approval:
 handoff closeout temp/tasks/recipe-cook/<task> \
-  --share --approved-by <identifier>
+  --share
 ```
 
 The task must already contain `SIGNAL.json`, `inputs/handoff.json`,
-the signal's canonical report, and `artifacts/learnings.md`. The approved share
+the signal's canonical report, and `artifacts/learnings.md`. The explicit share
 uses the exact staged bytes; it never rebuilds from changed task files. Closeout
 is post-run and best-effort: it never changes the task verdict. A scrub-floor
 hit quarantines only sanitized audit files and cannot be shared.
+
+Fleet callers pass the active farm's config with
+`--config <farm-root>/handoff/learning.config.json`. Farms may share one
+destination, where project/domain indexes keep packages distinct, or use
+separate destinations. The caller selects the farm; Handoff has no routing map.
 
 The package is tool-chain-agnostic: no Jira, GitHub, or wallet vocabulary appears
 in the harness defaults or assembler logic. Tool-chain specifics that legitimately

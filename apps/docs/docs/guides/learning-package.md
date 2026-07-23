@@ -11,13 +11,13 @@ change.
 
 ## Configure once
 
-Create `$FARMSLOT_HOME/handoff/learning.config.json` (default:
+Local staging needs no setup. To configure sharing, create
+`$FARMSLOT_HOME/handoff/learning.config.json` (default:
 `~/.farmslot/handoff/learning.config.json`):
 
 ```json
 {
   "schemaVersion": 1,
-  "engineer": "stable-id",
   "destination": "~/dev/experimental-agentic-learnings"
 }
 ```
@@ -40,9 +40,14 @@ the shared repository.
 Only after a human explicitly approves that package:
 
 ```bash
-handoff closeout <task-dir> --share --approved-by <identifier>
+handoff closeout <task-dir> --share
 ```
 
 Every share requires fresh approval and writes the exact staged bytes, not a
 rebuild from changed task files. Secret detection blocks sharing and keeps only
 a sanitized local audit. Closeout failure never changes the task verdict.
+
+Fleet callers pass the active farm's config with
+`--config <farm-root>/handoff/learning.config.json`. Farms may share one
+destination, where project/domain indexes keep packages distinct, or use
+separate destinations. The caller selects the farm; Handoff has no routing map.

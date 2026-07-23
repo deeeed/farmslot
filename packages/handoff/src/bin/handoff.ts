@@ -7,14 +7,13 @@ interface CliOptions {
   configPath?: string;
   metadataPath?: string;
   share: boolean;
-  approvedBy?: string;
   json: boolean;
 }
 
 function usage(): string {
   return `Usage:
   handoff closeout <task-dir> [--config <file>] [--metadata <file>] [--json]
-  handoff closeout <task-dir> --share --approved-by <identifier> [--config <file>] [--json]
+  handoff closeout <task-dir> --share [--config <file>] [--json]
 
 closeout stages a scrubbed Learning Package locally. --share writes only after
 explicit per-call human approval.`;
@@ -33,13 +32,12 @@ function parseArgs(argv: string[]): CliOptions {
       options.json = true;
       continue;
     }
-    if (arg === '--config' || arg === '--metadata' || arg === '--approved-by') {
+    if (arg === '--config' || arg === '--metadata') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value.\n${usage()}`);
       index += 1;
       if (arg === '--config') options.configPath = value;
       if (arg === '--metadata') options.metadataPath = value;
-      if (arg === '--approved-by') options.approvedBy = value;
       continue;
     }
     if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}\n${usage()}`);
@@ -64,8 +62,7 @@ function printHuman(result: ReturnType<typeof closeoutLearningPackage>): void {
       `Learning package staged: ${result.packageDir}\n` +
         `Destination path: ${result.wouldWritePath}\n` +
         'No remote write occurred.\n' +
-        'Next: ask the human whether to share it, then rerun with ' +
-        '--share --approved-by <identifier>.\n',
+        'Next: after explicit human approval, rerun with --share.\n',
     );
     return;
   }
@@ -100,7 +97,6 @@ function main(): void {
       ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
       ...(options.metadataPath === undefined ? {} : { metadataPath: options.metadataPath }),
       share: options.share,
-      ...(options.approvedBy === undefined ? {} : { approvedBy: options.approvedBy }),
     });
     if (options.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     else printHuman(result);

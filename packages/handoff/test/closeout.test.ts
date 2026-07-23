@@ -120,7 +120,6 @@ function scenario(
     `${JSON.stringify(
       {
         schemaVersion: 1,
-        engineer: 'eng-1',
         ...(options.destination === undefined ? {} : { destination: options.destination }),
       },
       null,
@@ -240,17 +239,17 @@ test('closeout quarantines a floor secret and cannot share it', () => {
   assert.doesNotMatch(taskText, /abandon ability able about above absent/u);
 });
 
-test('sharing requires explicit approval after staging', () => {
+test('sharing requires a previously staged package', () => {
   const destination = destinationRepo();
   const { taskDir, configPath } = scenario({ destination });
   assert.throws(
     () => closeoutLearningPackage({ taskDir, configPath, share: true }),
-    /explicit per-call human approval/u,
+    /no valid staged package exists/u,
   );
   assert.equal(existsSync(path.join(destination, 'packages')), false);
 });
 
-test('approved share writes once and identical retry is idempotent', () => {
+test('explicit share writes once and identical retry is idempotent', () => {
   const destination = destinationRepo();
   const { taskDir, configPath } = scenario({ destination });
   closeoutLearningPackage({ taskDir, configPath });
@@ -258,8 +257,6 @@ test('approved share writes once and identical retry is idempotent', () => {
     taskDir,
     configPath,
     share: true,
-    approvedBy: 'eng-1',
-    now: () => new Date('2026-07-20T22:00:00Z'),
   });
   assert.equal(first.status, 'written');
   if (first.status !== 'written') return;
@@ -271,13 +268,12 @@ test('approved share writes once and identical retry is idempotent', () => {
     taskDir,
     configPath,
     share: true,
-    approvedBy: 'eng-1',
   });
   assert.equal(retry.status, 'already-shared');
   assert.equal(git(destination, ['log', '--format=%s']).split('\n').length, 2);
 });
 
-test('idempotent approved retry pushes a commit after the first push failed', () => {
+test('idempotent explicit-share retry pushes a commit after the first push failed', () => {
   const remote = mkdtempSync(path.join(os.tmpdir(), 'handoff-closeout-remote-'));
   git(remote, ['init', '--bare', '-q']);
   const destination = destinationRepo();
@@ -291,7 +287,6 @@ test('idempotent approved retry pushes a commit after the first push failed', ()
     taskDir,
     configPath,
     share: true,
-    approvedBy: 'eng-1',
   });
   assert.equal(first.status, 'written');
   if (first.status !== 'written') return;
@@ -303,7 +298,6 @@ test('idempotent approved retry pushes a commit after the first push failed', ()
     taskDir,
     configPath,
     share: true,
-    approvedBy: 'eng-1',
   });
   assert.equal(retry.status, 'already-shared');
   if (retry.status !== 'already-shared') return;
@@ -312,7 +306,7 @@ test('idempotent approved retry pushes a commit after the first push failed', ()
   assert.equal(git(remote, ['rev-parse', 'HEAD']), git(destination, ['rev-parse', 'HEAD']));
 });
 
-test('approval publishes the inspected staged bytes, not later task edits', () => {
+test('explicit share publishes the inspected staged bytes, not later task edits', () => {
   const destination = destinationRepo();
   const { taskDir, configPath } = scenario({ destination });
   const staged = closeoutLearningPackage({ taskDir, configPath });
@@ -322,7 +316,6 @@ test('approval publishes the inspected staged bytes, not later task edits', () =
     taskDir,
     configPath,
     share: true,
-    approvedBy: 'eng-1',
   });
   assert.equal(written.status, 'written');
   if (written.status !== 'written') return;
@@ -340,7 +333,6 @@ test('same package id with newly staged content refuses append-only divergence',
     taskDir,
     configPath,
     share: true,
-    approvedBy: 'eng-1',
   });
   const commitsBefore = git(destination, ['rev-list', '--count', 'HEAD']);
   writeFileSync(path.join(taskDir, 'artifacts/report.md'), '# Report\n\nDifferent proof.\n');
@@ -351,7 +343,6 @@ test('same package id with newly staged content refuses append-only divergence',
         taskDir,
         configPath,
         share: true,
-        approvedBy: 'eng-1',
       }),
     /not the identical, fully committed and indexed transaction/u,
   );
@@ -375,7 +366,6 @@ test('copied package without a committed index transaction is not already shared
         taskDir,
         configPath,
         share: true,
-        approvedBy: 'eng-1',
       }),
     /not the identical, fully committed and indexed transaction/u,
   );
@@ -389,7 +379,6 @@ test('ignored untracked indexes cannot masquerade as an already-shared transacti
     taskDir,
     configPath,
     share: true,
-    approvedBy: 'eng-1',
   });
   git(destination, ['rm', '-q', '--cached', '-r', 'indexes']);
   writeFileSync(path.join(destination, '.gitignore'), 'indexes/\n');
@@ -403,7 +392,6 @@ test('ignored untracked indexes cannot masquerade as an already-shared transacti
         taskDir,
         configPath,
         share: true,
-        approvedBy: 'eng-1',
       }),
     /not the identical, fully committed and indexed transaction/u,
   );
@@ -417,9 +405,8 @@ test('malformed committed index data fails with closeout recovery guidance', () 
     taskDir,
     configPath,
     share: true,
-    approvedBy: 'eng-1',
   });
-  const indexFile = path.join(destination, 'indexes/by-engineer/eng-1.jsonl');
+  const indexFile = path.join(destination, 'indexes/by-project/metamask-mobile.jsonl');
   appendFileSync(indexFile, '{not-json}\n');
   git(destination, ['add', indexFile]);
   git(destination, ['commit', '-q', '-m', 'test: corrupt an index']);
@@ -429,7 +416,6 @@ test('malformed committed index data fails with closeout recovery guidance', () 
         taskDir,
         configPath,
         share: true,
-        approvedBy: 'eng-1',
       }),
     /Nothing was overwritten\. Next: inspect the destination package and indexes/u,
   );
@@ -443,7 +429,6 @@ test('idempotent share reasserts the secret floor before returning success', () 
     taskDir,
     configPath,
     share: true,
-    approvedBy: 'eng-1',
   });
   assert.equal(first.status, 'written');
   if (first.status !== 'written') return;
@@ -467,7 +452,6 @@ test('idempotent share reasserts the secret floor before returning success', () 
         taskDir,
         configPath,
         share: true,
-        approvedBy: 'eng-1',
       }),
     /existing package report\.md carries 1 secret/u,
   );
@@ -611,13 +595,16 @@ test('task-local staging cannot escape through a pre-existing .handoff symlink',
   assert.deepEqual(readdirSync(outside), []);
 });
 
-test('missing config has an exact setup action', () => {
-  const { taskDir } = scenario();
+test('missing config still stages locally', () => {
+  const { taskDir, metadata } = scenario();
   const configPath = path.join(taskDir, 'missing', 'learning.config.json');
-  assert.throws(
-    () => closeoutLearningPackage({ taskDir, configPath }),
-    /create it as \{"schemaVersion":1,"engineer":"<stable-id>"/u,
-  );
+  const result = closeoutLearningPackage({ taskDir, configPath });
+  assert.equal(result.status, 'staged');
+  if (result.status !== 'staged') return;
+  const manifest = JSON.parse(
+    readFileSync(path.join(result.packageDir, 'manifest.json'), 'utf8'),
+  ) as { packageId?: string };
+  assert.equal(manifest.packageId, deriveCloseoutPackageId(metadata));
 });
 
 test('relative destination resolves from the config directory', () => {
@@ -627,20 +614,41 @@ test('relative destination resolves from the config directory', () => {
   const relativeDestination = path.relative(configDir, destination);
   writeFileSync(
     configPath,
-    `${JSON.stringify(
-      { schemaVersion: 1, engineer: 'eng-1', destination: relativeDestination },
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify({ schemaVersion: 1, destination: relativeDestination }, null, 2)}\n`,
   );
   closeoutLearningPackage({ taskDir, configPath });
   const result = closeoutLearningPackage({
     taskDir,
     configPath,
     share: true,
-    approvedBy: 'eng-1',
   });
   assert.equal(result.status, 'written');
+});
+
+test('explicit farm configs isolate their destination repositories', () => {
+  const firstDestination = destinationRepo();
+  const secondDestination = destinationRepo();
+  const { taskDir, configPath } = scenario({ destination: firstDestination });
+  const secondConfigPath = path.join(path.dirname(configPath), 'second-farm.json');
+  writeFileSync(
+    secondConfigPath,
+    `${JSON.stringify({ schemaVersion: 1, destination: secondDestination }, null, 2)}\n`,
+  );
+
+  closeoutLearningPackage({ taskDir, configPath });
+  const first = closeoutLearningPackage({ taskDir, configPath, share: true });
+  const second = closeoutLearningPackage({
+    taskDir,
+    configPath: secondConfigPath,
+    share: true,
+  });
+
+  assert.equal(first.status, 'written');
+  assert.equal(second.status, 'written');
+  if (first.status !== 'written' || second.status !== 'written') return;
+  assert.notEqual(first.destinationPath, second.destinationPath);
+  assert.ok(existsSync(first.destinationPath));
+  assert.ok(existsSync(second.destinationPath));
 });
 
 test('--json parse errors use the stable error envelope', () => {

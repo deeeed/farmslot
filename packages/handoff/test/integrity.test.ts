@@ -50,7 +50,6 @@ function scenario(learnings?: string): { ctx: HandoffContext; input: LearningPac
         packageId: '20260713T130000Z-fleet-dev-proj-123-a1b2c3d4',
         project: 'demo-farm',
         domain: '',
-        engineer: 'eng-1',
         run: { startedAt: '2026-07-13T12:00:00Z', flow: 'dev', outcome: 'success' },
         task: { title: 'Do the thing', sourceKind: 'text', ticket: 'PROJ-123' },
       },
@@ -63,8 +62,6 @@ function scenario(learnings?: string): { ctx: HandoffContext; input: LearningPac
 
 const CONSENT = {
   humanApproval: true,
-  approvedBy: 'eng-1',
-  grantedAt: '2026-07-13T13:00:00Z',
 } as const;
 
 test('a file tampered after assembly fails validation and refuses the write', () => {
@@ -276,7 +273,7 @@ test('a rollback that cannot restore the destination throws a distinct partial-s
   const destination = initDestinationRepo();
   // An empty DIRECTORY at an index-file path: invisible to git status (clean
   // tree), fails appendFileSync mid-write, and fails truncateSync in rollback.
-  mkdirSync(path.join(destination, 'indexes/by-engineer/eng-1.jsonl'), { recursive: true });
+  mkdirSync(path.join(destination, 'indexes/by-project/demo-farm.jsonl'), { recursive: true });
 
   assert.throws(
     () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
@@ -599,7 +596,7 @@ test('quarantine manifest never carries a mnemonic split across schema-valid fix
   input.surface = 'abandon-ability-able';
   input.runRecord.project = 'about-above-absent';
   input.runRecord.domain = 'absorb-abstract';
-  input.runRecord.engineer = 'absurd-abuse';
+  input.runRecord.run.flow = 'absurd-abuse';
   const result = assembleLearningPackage(input, ctx);
   assert.equal(result.status, 'blocked');
   if (result.status !== 'blocked') return;
@@ -676,7 +673,7 @@ test('the fully-degraded quarantine manifest still validates against the manifes
   input.surface = 'abandon-ability-able';
   input.runRecord.project = 'about-above-absent';
   input.runRecord.domain = 'absorb-abstract';
-  input.runRecord.engineer = 'absurd-abuse';
+  input.runRecord.run.flow = 'absurd-abuse';
   const result = assembleLearningPackage(input, ctx);
   assert.equal(result.status, 'blocked');
   if (result.status !== 'blocked') return;

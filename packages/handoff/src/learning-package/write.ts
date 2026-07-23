@@ -26,7 +26,6 @@ import { normalizeTicket } from '../spec/task-key.js';
 const ELIGIBLE_SCAN_EXTENSIONS = new Set(['.md', '.json', '.jsonl', '.txt', '.diff', '.patch']);
 import type { GradeSemantic, HumanGrade, IndexRow, Manifest } from '../spec/types.js';
 import { SCHEMA_VERSION } from '../spec/version.js';
-import { isValidDateTime } from '../validate/json-schema.js';
 import { validateLearningPackage } from '../validate/validate-package.js';
 
 import { assertContained, assertSafePathSegment } from './safe-path.js';
@@ -39,10 +38,6 @@ import { assertContained, assertSafePathSegment } from './safe-path.js';
 export interface WriteConsent {
   /** Literal `true` - the type refuses a computed/possibly-false value. */
   humanApproval: true;
-  /** Who approved (pseudonymous engineer key is fine). */
-  approvedBy: string;
-  /** When the approval was granted (ISO date-time). */
-  grantedAt: string;
 }
 
 export interface WriteLearningPackageOptions {
@@ -142,15 +137,14 @@ function walkEntries(dir: string, base = dir): { files: string[]; irregular: str
 /**
  * Manifest fields the schemas leave as unconstrained strings but that this
  * writer uses as filesystem path segments. Each is validated before ANY path is
- * computed (dry-run included) so a path-shaped value (e.g. `engineer: "../x"`)
- * can never place IO outside the destination repo.
+ * computed (dry-run included) so a path-shaped value can never place IO
+ * outside the destination repo.
  */
 function assertSafeManifestSegments(manifest: Manifest): void {
   assertSafePathSegment(manifest.packageId, 'manifest.packageId');
   assertSafePathSegment(manifest.taskKey, 'manifest.taskKey');
   assertSafePathSegment(manifest.surface, 'manifest.surface');
   assertSafePathSegment(manifest.project, 'manifest.project');
-  assertSafePathSegment(manifest.engineer, 'manifest.engineer');
   assertSafePathSegment(manifest.run.flow, 'manifest.run.flow');
   if (manifest.domain !== '') assertSafePathSegment(manifest.domain, 'manifest.domain');
   // The ticket is hyphen-normalized before becoming a filename (matching the
@@ -210,7 +204,6 @@ function buildIndexRow(
     surface: manifest.surface,
     project: manifest.project,
     domain: manifest.domain,
-    engineer: manifest.engineer,
     flow: manifest.run.flow,
     ...(manifest.task.ticket ? { ticket: manifest.task.ticket } : {}),
     outcome: manifest.run.outcome,
@@ -227,7 +220,6 @@ function buildIndexRow(
 /** The index files (repo-relative) one package appends its row to. */
 function indexFilesFor(manifest: Manifest): string[] {
   const files = [
-    `indexes/by-engineer/${manifest.engineer}.jsonl`,
     `indexes/by-project/${manifest.project}.jsonl`,
     `indexes/by-flow/${manifest.run.flow}.jsonl`,
     `indexes/by-task/${manifest.taskKey}.jsonl`,
@@ -428,32 +420,12 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
     return { status: 'dry-run', wouldWritePath: packagePath, indexRows: [row], pushed: false };
   }
 
-  // All three consent fields are runtime-required: untyped callers can omit
-  // what the type system would demand, and an approval without WHO and WHEN is
-  // not an audit-grade approval.
   if (options.consent?.humanApproval !== true) {
     throw new Error(
       'writeLearningPackage: a real write requires per-call human approval ' +
-        '(consent: { humanApproval: true, approvedBy, grantedAt }). Approval is never ' +
-        'sticky and never read from a file. Next: get an explicit approval, or use ' +
-        'dryRun: true to preview without writing.',
-    );
-  }
-  if (typeof options.consent.approvedBy !== 'string' || options.consent.approvedBy.trim() === '') {
-    throw new Error(
-      'writeLearningPackage: consent.approvedBy is missing or empty - the approval must ' +
-        'name who granted it (a pseudonymous engineer key is fine). Next: pass the ' +
-        "approver's identifier with the consent.",
-    );
-  }
-  if (
-    typeof options.consent.grantedAt !== 'string' ||
-    !isValidDateTime(options.consent.grantedAt)
-  ) {
-    throw new Error(
-      `writeLearningPackage: consent.grantedAt '${String(options.consent.grantedAt)}' is ` +
-        'missing or not a valid ISO date-time - the approval must record when it was ' +
-        'granted. Next: stamp the grant time (e.g. new Date().toISOString()).',
+        '(consent: { humanApproval: true }). Approval is never sticky or read from a file. ' +
+        'Git records the publishing identity and timestamp. Next: get explicit approval, ' +
+        'or use dryRun: true to preview without writing.',
     );
   }
 

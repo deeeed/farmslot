@@ -136,7 +136,6 @@ function manifestBase(
     project: input.runRecord.project,
     ...(input.runRecord.repo ? { repo: input.runRecord.repo } : {}),
     domain: input.runRecord.domain,
-    engineer: input.runRecord.engineer,
     run: input.runRecord.run,
     task,
     ...(input.runRecord.extensions ? { extensions: input.runRecord.extensions } : {}),
@@ -289,7 +288,6 @@ function writeQuarantine(
       surface: safeBase.surface,
       project: safeBase.project,
       domain: safeBase.domain,
-      engineer: safeBase.engineer,
       run: {
         startedAt: safeBase.run.startedAt,
         flow: safeBase.run.flow,
@@ -299,7 +297,7 @@ function writeQuarantine(
     };
     // The preserved fixed fields are rescanned too: schema-valid segments can
     // still compose a phrase across values (hyphenated wordlist segments in
-    // surface/project/domain/engineer/flow/taskKey). On a residual hit the
+    // surface/project/domain/flow/taskKey). On a residual hit the
     // audit manifest goes fully generic - only timestamps and closed enums
     // remain, which cannot compose a word run.
     const fallbackJoined = collectStringValues(safeBase).join(' ');
@@ -322,7 +320,6 @@ function writeQuarantine(
         surface: 'redacted',
         project: 'redacted',
         domain: 'redacted',
-        engineer: 'redacted',
         run: {
           startedAt: safeBase.run.startedAt,
           flow: 'redacted',
@@ -334,9 +331,8 @@ function writeQuarantine(
   }
 
   // Final schema-valid coercion: any patterned identity field that redaction
-  // turned into a non-conforming marker (e.g. `engineer` held a token and
-  // became `[REDACTED:...]`) is replaced with a conforming placeholder, so the
-  // quarantine manifest always validates against the manifest schema.
+  // turned into a non-conforming marker is replaced with a conforming
+  // placeholder, so the quarantine manifest always validates.
   const safeSeg = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
   const taskKeyForm = /^(?:[a-z0-9]+(?:-[a-z0-9]+)*|task-[a-f0-9]{16})$/;
   safeBase = {
@@ -351,7 +347,6 @@ function writeQuarantine(
     surface: safeSeg.test(safeBase.surface) ? safeBase.surface : 'redacted',
     project: safeSeg.test(safeBase.project) ? safeBase.project : 'redacted',
     domain: safeBase.domain === '' || safeSeg.test(safeBase.domain) ? safeBase.domain : 'redacted',
-    engineer: safeSeg.test(safeBase.engineer) ? safeBase.engineer : 'redacted',
     run: {
       ...safeBase.run,
       flow: safeSeg.test(safeBase.run.flow) ? safeBase.run.flow : 'redacted',
@@ -396,7 +391,6 @@ export function assembleLearningPackage(
   assertSafePathSegment(input.runRecord.packageId, 'runRecord.packageId');
   assertSafePathSegment(input.surface, 'surface');
   assertSafePathSegment(input.runRecord.project, 'runRecord.project');
-  assertSafePathSegment(input.runRecord.engineer, 'runRecord.engineer');
   assertSafePathSegment(input.runRecord.run.flow, 'runRecord.run.flow');
   if (input.runRecord.domain !== '') {
     assertSafePathSegment(input.runRecord.domain, 'runRecord.domain');

@@ -52,7 +52,6 @@ function scenario(): { ctx: HandoffContext; input: LearningPackageInput } {
         packageId: '20260713T120000Z-fleet-dev-proj-123-a1b2c3d4',
         project: 'demo-farm',
         domain: 'payments',
-        engineer: 'eng-1',
         run: { startedAt: '2026-07-13T11:00:00Z', flow: 'dev', outcome: 'success' },
         task: { title: 'Do the thing', sourceKind: 'text', ticket: 'PROJ-123' },
       },
@@ -78,13 +77,10 @@ function packageWithManifestField(mutate: (manifest: Manifest) => void): string 
 
 const CONSENT = {
   humanApproval: true,
-  approvedBy: 'eng-1',
-  grantedAt: '2026-07-13T12:00:00Z',
 } as const;
 
 test('a path-shaped manifest field refuses the write - nothing lands outside the destination', () => {
   const cases: { label: string; mutate: (m: Manifest) => void }[] = [
-    { label: 'engineer', mutate: (m) => (m.engineer = '../../escape') },
     { label: 'surface', mutate: (m) => (m.surface = '../outside') },
     { label: 'project', mutate: (m) => (m.project = 'a/b') },
     { label: 'domain', mutate: (m) => (m.domain = '..') },
@@ -176,7 +172,7 @@ test('a symlinked ancestor in the destination cannot redirect the write outside 
       writeLearningPackage({
         packageDir: result.packageDir,
         destination,
-        consent: { humanApproval: true, approvedBy: 'eng-1', grantedAt: '2026-07-13T12:00:00Z' },
+        consent: { humanApproval: true },
       }),
     /escapes its root/,
   );
@@ -206,7 +202,7 @@ test('a path-shaped ticket is hyphen-normalized into a safe index filename, neve
   const write = writeLearningPackage({
     packageDir,
     destination,
-    consent: { humanApproval: true, approvedBy: 'eng-1', grantedAt: '2026-07-13T12:00:00Z' },
+    consent: { humanApproval: true },
   });
   assert.equal(write.status, 'written');
   // Normalization strips the separators: the row lands under 'tick'.
