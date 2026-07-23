@@ -49,6 +49,7 @@ import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
 
 import { slotPrepare } from './prepare.js';
+import { closeDevServerLogTailWindow } from './prepare-devserver-log.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
 import { applySelectedApp, type EventEmitter } from './shared.js';
 import {
@@ -251,6 +252,10 @@ async function slotReleaseImpl(
   // COMPLETE entirely (see holdSlotForPublicationGate) and tears down via
   // killSlotAgents at FINALIZE. preserveAgents is for partial release call sites only.
   if (!preserveAgents) {
+    // Close the passive log reader first. If it were the only non-agent
+    // window, killing role windows first would leave it as tmux's last window;
+    // closing it afterward would destroy the slot session.
+    await closeDevServerLogTailWindow(vars);
     step('agent', 'Killing agent...');
     await killAllAgentWindows(vars);
     await killAgentInSession(vars);
@@ -526,6 +531,9 @@ async function slotReleaseImpl(
 /** Tear down role windows and runner processes without running a full slot release. */
 export async function killSlotAgents(slotId: string): Promise<void> {
   const vars = await loadSlotVars(slotId);
+  // Preserve the replacement-window invariant in killAllAgentWindows: remove
+  // the passive tail before it counts as the session's final non-agent window.
+  await closeDevServerLogTailWindow(vars);
   await killAllAgentWindows(vars);
   await killAgentInSession(vars);
 }

@@ -63,6 +63,7 @@ import {
   prepareSilenceNotice,
   runPrepareCommand,
 } from './prepare-command.js';
+import { openDevServerLogTailWindow, resolveDevServerLogPath } from './prepare-devserver-log.js';
 import {
   buildDepsSentinelWriteCommand,
   checkPrepareRequirement,
@@ -1265,6 +1266,17 @@ async function slotPrepareInner(
     }
     const phaseSuffix = currentPreflightPhase ? ` after ${currentPreflightPhase}` : '';
     step('preflight', `Preflight completed${phaseSuffix} (log: ${preflightLogPath})`);
+
+    // Open a dedicated tmux window that live-tails the project's dev-server log,
+    // so operators attached to the slot session (or the Command Center slot
+    // terminal) get streaming dev-server feedback without hand-typing a tail.
+    // Profiles that skip preflight and projects without health.dev_server_log
+    // intentionally skip this window.
+    const devServerLogPath = resolveDevServerLogPath(projectJson, vars, projectVars);
+    if (devServerLogPath) {
+      const tail = await openDevServerLogTailWindow(vars, session, devServerLogPath);
+      step('preflight', tail.detail);
+    }
   }
 
   // 6. Verify health

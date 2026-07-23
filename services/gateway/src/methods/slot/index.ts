@@ -35,6 +35,14 @@ export {
   shouldEmitPreparePollWarning,
   shouldPreservePrepareWindowOnSuccess,
 } from './prepare-command.js';
+export {
+  buildCloseDevServerLogTailWindowCommand,
+  buildDevServerLogTailWindowCommand,
+  closeDevServerLogTailWindow,
+  DEVSERVER_LOG_WINDOW_NAME,
+  openDevServerLogTailWindow,
+  resolveDevServerLogPath,
+} from './prepare-devserver-log.js';
 export { reconcileStalePrepareLocks } from './prepare-sentinel.js';
 export { slotPrepareStatus } from './prepare-status.js';
 export { slotRecycle } from './recycle.js';
