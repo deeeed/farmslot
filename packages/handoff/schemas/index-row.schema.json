@@ -13,7 +13,6 @@
     "surface",
     "project",
     "domain",
-    "engineer",
     "flow",
     "outcome",
     "startedAt"
@@ -50,11 +49,6 @@
       "type": "string",
       "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*)?$",
       "description": "Safe-segment shape or empty (writer additionally enforces path containment): no separators, no '..', no leading dot."
-    },
-    "engineer": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-      "description": "Safe-segment shape (writer additionally enforces path containment): no separators, no '..', no leading dot."
     },
     "flow": {
       "type": "string",

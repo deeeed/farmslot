@@ -56,7 +56,6 @@ function assembled(learnings?: string): { result: AssembleResult; ctx: HandoffCo
       packageId: '20260703T154211Z-fleet-dev-proj-123-a1b2c3d4',
       project: 'demo-farm',
       domain: 'payments',
-      engineer: 'eng-1',
       run: {
         startedAt: '2026-07-03T15:42:11Z',
         finishedAt: '2026-07-03T16:00:00Z',
@@ -74,8 +73,6 @@ function assembled(learnings?: string): { result: AssembleResult; ctx: HandoffCo
 
 const CONSENT = {
   humanApproval: true,
-  approvedBy: 'eng-1',
-  grantedAt: '2026-07-13T10:00:00Z',
 } as const;
 
 test('dryRun computes the would-write path and index rows with no destination IO', () => {
@@ -135,7 +132,6 @@ test('write is append-only: package copy + one row per index file, committed; re
 
   // One identical row per index dimension, including the by-task family index.
   const indexFiles = [
-    'indexes/by-engineer/eng-1.jsonl',
     'indexes/by-project/demo-farm.jsonl',
     'indexes/by-domain/payments.jsonl',
     'indexes/by-flow/dev.jsonl',
@@ -390,7 +386,7 @@ test('a linked git worktree is a valid destination (.git is a file, not a dir)',
   }
 });
 
-test('runtime consent validation names each missing field for untyped callers', () => {
+test('runtime consent validation rejects missing or false approval for untyped callers', () => {
   const { result } = assembled();
   assert.equal(result.status, 'ok');
   if (result.status !== 'ok') return;
@@ -403,16 +399,8 @@ test('runtime consent validation names each missing field for untyped callers', 
     });
   };
 
-  assert.throws(() => attempt({ humanApproval: true, grantedAt: CONSENT.grantedAt }), /approvedBy/);
-  assert.throws(
-    () => attempt({ humanApproval: true, approvedBy: '   ', grantedAt: CONSENT.grantedAt }),
-    /approvedBy/,
-  );
-  assert.throws(() => attempt({ humanApproval: true, approvedBy: 'eng-1' }), /grantedAt/);
-  assert.throws(
-    () => attempt({ humanApproval: true, approvedBy: 'eng-1', grantedAt: 'yesterday' }),
-    /grantedAt/,
-  );
+  assert.throws(() => attempt({}), /per-call human approval/);
+  assert.throws(() => attempt({ humanApproval: false }), /per-call human approval/);
   assert.equal(existsSync(path.join(destination, 'packages')), false);
 
   // The complete consent still writes.

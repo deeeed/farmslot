@@ -48,7 +48,6 @@ function scenario(learnings?: string): { ctx: HandoffContext; input: LearningPac
         packageId: '20260703T154211Z-fleet-dev-proj-123-a1b2c3d4',
         project: 'demo-farm',
         domain: '',
-        engineer: 'eng-1',
         run: { startedAt: '2026-07-03T15:42:11Z', flow: 'dev', outcome: 'success' },
         task: { title: 'Do the thing', sourceKind: 'text', ticket: 'PROJ-123' },
       },

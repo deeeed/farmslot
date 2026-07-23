@@ -54,7 +54,6 @@ export interface Manifest {
   project: string;
   repo?: string;
   domain: string;
-  engineer: string;
   run: ManifestRun;
   task: ManifestTask;
   files: Record<string, ManifestFileRecord>;
@@ -211,7 +210,6 @@ export interface IndexRow {
   surface: string;
   project: string;
   domain: string;
-  engineer: string;
   flow: string;
   ticket?: string;
   outcome: RunOutcome;

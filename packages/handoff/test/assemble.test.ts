@@ -44,7 +44,6 @@ function scenario(overrides: { learnings?: string; report?: string } = {}): Scen
       packageId: '20260703T154211Z-fleet-dev-proj-123-a1b2c3d4',
       project: 'demo-farm',
       domain: '',
-      engineer: 'eng-1',
       run: { startedAt: '2026-07-03T15:42:11Z', flow: 'dev', outcome: 'success' },
       task: { title: 'Do the thing', sourceKind: 'jira', ticket: 'PROJ-123' },
       source: { title: 'Do the thing', description: 'thing', ticket: 'PROJ-123' },

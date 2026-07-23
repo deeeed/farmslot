@@ -29,7 +29,6 @@ const SIGNAL_RELATIVE_PATH = 'SIGNAL.json';
 
 export interface LearningConfig {
   schemaVersion: 1;
-  engineer: string;
   destination?: string;
 }
 
@@ -64,8 +63,6 @@ export interface CloseoutOptions {
   configPath?: string;
   metadataPath?: string;
   share?: boolean;
-  approvedBy?: string;
-  now?: () => Date;
 }
 
 export type CloseoutResult =
@@ -157,17 +154,11 @@ function portableRepoIdentity(value: string): string | undefined {
 }
 
 function parseConfig(file: string): LearningConfig {
-  if (!existsSync(file)) {
-    throw new Error(
-      `learning config not found at ${file}. ` +
-        'Next: create it as {"schemaVersion":1,"engineer":"<stable-id>","destination":"<local-git-clone>"}; destination is optional until sharing.',
-    );
-  }
+  if (!existsSync(file)) return { schemaVersion: 1 };
   const value = readJson(file, 'learning config');
   requireSchemaVersion(value.schemaVersion, 'learning config');
   return {
     schemaVersion: 1,
-    engineer: requireString(value.engineer, 'learning config.engineer'),
     ...(value.destination === undefined
       ? {}
       : { destination: requireString(value.destination, 'learning config.destination') }),
@@ -421,12 +412,6 @@ export function closeoutLearningPackage(options: CloseoutOptions): CloseoutResul
           'Next: add the local clone path before sharing.',
       );
     }
-    if (!options.approvedBy?.trim()) {
-      throw new Error(
-        'sharing requires explicit per-call human approval. ' +
-          'Next: ask the human, then rerun with --share --approved-by <identifier>.',
-      );
-    }
     if (!existsSync(stagedPackage) || !validateLearningPackage(stagedPackage).valid) {
       throw new Error(
         `no valid staged package exists at ${stagedPackage}. ` +
@@ -456,8 +441,6 @@ export function closeoutLearningPackage(options: CloseoutOptions): CloseoutResul
       ifExists: 'return-identical',
       consent: {
         humanApproval: true,
-        approvedBy: options.approvedBy.trim(),
-        grantedAt: (options.now ?? (() => new Date()))().toISOString(),
       },
     });
     if (written.status === 'already-written') {
@@ -499,7 +482,6 @@ export function closeoutLearningPackage(options: CloseoutOptions): CloseoutResul
       project: metadata.project,
       ...(metadata.repo === undefined ? {} : { repo: metadata.repo }),
       domain: metadata.domain,
-      engineer: config.engineer,
       run: {
         startedAt: metadata.startedAt,
         finishedAt,
@@ -515,7 +497,7 @@ export function closeoutLearningPackage(options: CloseoutOptions): CloseoutResul
       runRecord,
       templateProvenance: [
         resolutionFor(metadataPath, 'handoff.metadata'),
-        resolutionFor(configPath, 'learning.config'),
+        ...(existsSync(configPath) ? [resolutionFor(configPath, 'learning.config')] : []),
       ],
       taskDoc: { taskMd: taskDocument },
       artifacts: { artifactsDir: normalizedArtifacts },

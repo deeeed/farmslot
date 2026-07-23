@@ -40,7 +40,6 @@ export interface RunMeta {
   repo?: string;
   /** Domain/team tier key; empty string when none. */
   domain: string;
-  engineer: string;
   run: ManifestRun;
   task: ManifestTask;
   /** Normalized source fields for source.json (work-only, per spec section 3.2).

@@ -11,7 +11,6 @@
     "surface",
     "project",
     "domain",
-    "engineer",
     "run",
     "task",
     "files",
@@ -52,11 +51,6 @@
       "type": "string",
       "description": "Domain/team tier key. Empty string if none. Safe-segment shape or empty (writer additionally enforces path containment): no separators, no '..', no leading dot.",
       "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*)?$"
-    },
-    "engineer": {
-      "type": "string",
-      "description": "Stable engineer key chosen by the producer. SHOULD be a pseudonymous handle-free identifier (see spec section 3.2 PII floor). Keys the by-engineer index. Safe-segment shape (writer additionally enforces path containment): no separators, no '..', no leading dot.",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
     "run": {
       "type": "object",

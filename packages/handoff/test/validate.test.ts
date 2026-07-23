@@ -93,7 +93,6 @@ function buildValidPackage(
     surface: 'fleet',
     project: 'demo-farm',
     domain: '',
-    engineer: 'eng-1',
     run: { startedAt: '2026-07-03T15:42:11Z', flow: 'dev', outcome: 'success' },
     task: { title: 'x', sourceKind: 'text' },
     files,
