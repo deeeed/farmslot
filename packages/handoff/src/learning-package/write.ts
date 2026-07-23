@@ -55,12 +55,14 @@ export interface WriteLearningPackageOptions {
   consent?: WriteConsent;
   /** Compute the would-write path + index rows with NO git or destination IO. */
   dryRun?: boolean;
+  /** Allow an identical, fully committed/indexed package to return idempotently. */
+  ifExists?: 'error' | 'return-identical';
 }
 
 /**
- * Discriminated write result. `dry-run` performs no git IO; `written` is an
- * append-only package copy + index rows committed to the destination repo,
- * pushed when the repo has a remote.
+ * Discriminated write result. `dry-run` performs no git IO; `written` is a new
+ * append-only transaction; `already-written` is an identical complete
+ * transaction accepted under the destination lock.
  */
 export type WriteResult =
   | {
@@ -70,6 +72,13 @@ export type WriteResult =
       pushed: boolean;
       /** Set iff a push was attempted and failed (commit is local and retriable);
        * absent when pushed or when the destination has no remote. */
+      pushError?: string;
+    }
+  | {
+      status: 'already-written';
+      destinationPath: string;
+      commitSha: string;
+      pushed: boolean;
       pushError?: string;
     }
   | { status: 'dry-run'; wouldWritePath: string; indexRows: IndexRow[]; pushed: false };
@@ -94,6 +103,16 @@ function resolveGitDir(destination: string): string {
 
 function git(repo: string, args: string[]): string {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+}
+
+function pushDestination(destination: string): { pushed: boolean; pushError?: string } {
+  if (git(destination, ['remote']) === '') return { pushed: false };
+  try {
+    git(destination, ['push']);
+    return { pushed: true };
+  } catch (error) {
+    return { pushed: false, pushError: (error as Error).message };
+  }
 }
 
 /**
@@ -247,6 +266,91 @@ function acquireWriteLock(lockPath: string, destination: string): number {
   }
 }
 
+function packagesAreByteIdentical(source: string, destination: string): boolean {
+  const sourceEntries = walkEntries(source);
+  const destinationEntries = walkEntries(destination);
+  if (sourceEntries.irregular.length > 0 || destinationEntries.irregular.length > 0) return false;
+  const sourceFiles = [...sourceEntries.files].sort();
+  const destinationFiles = [...destinationEntries.files].sort();
+  if (JSON.stringify(sourceFiles) !== JSON.stringify(destinationFiles)) return false;
+  return sourceFiles.every((relative) =>
+    readFileSync(path.join(source, relative)).equals(
+      readFileSync(path.join(destination, relative)),
+    ),
+  );
+}
+
+function fileMatchesHead(destination: string, relative: string, absolute: string): boolean {
+  try {
+    execFileSync('git', ['-C', destination, 'ls-files', '--error-unmatch', '--', relative], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return readFileSync(absolute).equals(
+      execFileSync('git', ['-C', destination, 'show', `HEAD:${relative}`], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function assertPackageFloorClear(packageDir: string, manifest: Manifest, context: string): void {
+  for (const relative of ['manifest.json', ...Object.keys(manifest.files)]) {
+    if (!ELIGIBLE_SCAN_EXTENSIONS.has(path.extname(relative).toLowerCase())) continue;
+    const hits = scanForFloorSecrets(readFileSync(path.join(packageDir, relative), 'utf8'));
+    if (hits.length > 0) {
+      throw new Error(
+        `writeLearningPackage: ${context} ${relative} carries ${hits.length} secret(s) ` +
+          `(kinds: ${[...new Set(hits.map((hit) => hit.kind))].join(', ')}) that the scrub ` +
+          'gate would have blocked - refusing to share unscrubbed content. Next: re-assemble ' +
+          'with assembleLearningPackage; never hand-edit a staged package.',
+      );
+    }
+  }
+}
+
+function existingTransactionCommit(
+  destination: string,
+  packageDir: string,
+  packagePath: string,
+  indexFiles: string[],
+  row: IndexRow,
+  manifest: Manifest,
+): string | undefined {
+  if (!validateLearningPackage(packageDir).valid) return undefined;
+  for (const relative of ['manifest.json', ...Object.keys(manifest.files)]) {
+    const repoRelative = `${packagePath}/${relative}`;
+    if (!fileMatchesHead(destination, repoRelative, path.join(packageDir, relative))) {
+      return undefined;
+    }
+  }
+  for (const indexFile of indexFiles) {
+    const absolute = path.join(destination, indexFile);
+    if (!existsSync(absolute) || !fileMatchesHead(destination, indexFile, absolute)) {
+      return undefined;
+    }
+    let matches: IndexRow[];
+    try {
+      matches = readFileSync(absolute, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as IndexRow)
+        .filter(
+          (candidate) =>
+            candidate.packageId === row.packageId && candidate.packagePath === row.packagePath,
+        );
+    } catch {
+      return undefined;
+    }
+    if (matches.length !== 1 || JSON.stringify(matches[0]) !== JSON.stringify(row)) {
+      return undefined;
+    }
+  }
+  const commitSha = git(destination, ['log', '-1', '--format=%H', '--', packagePath]);
+  return commitSha || undefined;
+}
+
 /**
  * Write one assembled learning package to the learnings repo (spec section 5 of
  * the API design): append-only package copy + one JSONL row per index file,
@@ -377,19 +481,6 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
       );
     }
 
-    const destPackageDir = assertContained(
-      options.destination,
-      path.join(options.destination, packagePath),
-      'package destination',
-    );
-    if (existsSync(destPackageDir)) {
-      throw new Error(
-        `writeLearningPackage: ${packagePath} already exists in the destination - the ` +
-          'learnings repo is append-only and packages are never rewritten. Next: a re-run ' +
-          'of the same work is a NEW package (new run-slug); re-assemble instead of re-writing.',
-      );
-    }
-
     // Record index-file sizes so a mid-write failure can truncate the appends
     // back out (best-effort rollback; the clean-tree precondition makes it exact).
     const indexFiles = indexFilesFor(manifest).map((indexFile) => {
@@ -400,6 +491,47 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
       );
       return { indexFile, abs, priorBytes: existsSync(abs) ? statSync(abs).size : -1 };
     });
+
+    const destPackageDir = assertContained(
+      options.destination,
+      path.join(options.destination, packagePath),
+      'package destination',
+    );
+    if (existsSync(destPackageDir)) {
+      if (options.ifExists === 'return-identical') {
+        const commitSha = existingTransactionCommit(
+          options.destination,
+          destPackageDir,
+          packagePath,
+          indexFiles.map(({ indexFile }) => indexFile),
+          row,
+          manifest,
+        );
+        if (
+          commitSha !== undefined &&
+          packagesAreByteIdentical(options.packageDir, destPackageDir)
+        ) {
+          assertPackageFloorClear(destPackageDir, manifest, 'existing package');
+          const push = pushDestination(options.destination);
+          return {
+            status: 'already-written',
+            destinationPath: destPackageDir,
+            commitSha,
+            ...push,
+          };
+        }
+        throw new Error(
+          `writeLearningPackage: ${packagePath} exists but is not the identical, fully ` +
+            'committed and indexed transaction. Nothing was overwritten. Next: inspect the ' +
+            'destination package and indexes before retrying.',
+        );
+      }
+      throw new Error(
+        `writeLearningPackage: ${packagePath} already exists in the destination - the ` +
+          'learnings repo is append-only and packages are never rewritten. Next: a re-run ' +
+          'of the same work is a NEW package (new run-slug); re-assemble instead of re-writing.',
+      );
+    }
 
     // TOCTOU-safe snapshot: copy the inventoried files into a PRIVATE staging
     // dir, validate THAT exact snapshot, and publish only from it. The source
@@ -447,20 +579,7 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
     // so write is a full re-assertion of the scrub gate, not a trust of the
     // manifest's claim. Packages are small text bundles; scanning all of them
     // is cheap and the simplest sound option.
-    for (const rel of ['manifest.json', ...Object.keys(manifest.files)]) {
-      if (!ELIGIBLE_SCAN_EXTENSIONS.has(path.extname(rel).toLowerCase())) continue;
-      const content = readFileSync(path.join(snapshotDir, rel), 'utf8');
-      const hits = scanForFloorSecrets(content);
-      if (hits.length > 0) {
-        throw new Error(
-          `writeLearningPackage: ${rel} carries ${hits.length} secret(s) ` +
-            `(kinds: ${[...new Set(hits.map((h) => h.kind))].join(', ')}) that the scrub gate ` +
-            'would have blocked - refusing to share unscrubbed content. Next: re-assemble ' +
-            'with assembleLearningPackage (which scrubs and blocks); never hand-edit a ' +
-            'staged package.',
-        );
-      }
-    }
+    assertPackageFloorClear(snapshotDir, manifest, 'snapshot');
 
     // Remove now-empty ancestor dirs the failed write created, up to the repo root.
     const removeEmptyParents = (from: string): void => {
@@ -542,26 +661,13 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
       );
     }
 
-    let pushed = false;
-    let pushError: string | undefined;
-    if (git(options.destination, ['remote']) !== '') {
-      try {
-        git(options.destination, ['push']);
-        pushed = true;
-      } catch (error) {
-        // Push failure is non-fatal: the commit is local and retriable. The share
-        // itself succeeded append-only; the caller may sync later. The reason is
-        // surfaced so callers never mistake a failed push for a missing remote.
-        pushError = (error as Error).message;
-      }
-    }
+    const push = pushDestination(options.destination);
 
     return {
       status: 'written',
       destinationPath: destPackageDir,
       commitSha,
-      pushed,
-      ...(pushError !== undefined ? { pushError } : {}),
+      ...push,
     };
   } finally {
     if (stagingDir !== undefined) rmSync(stagingDir, { recursive: true, force: true });

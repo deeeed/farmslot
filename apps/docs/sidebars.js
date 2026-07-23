@@ -66,6 +66,7 @@ const sidebars = {
         'guides/headless-recipe',
         'guides/customize-worker-prompts',
         'guides/write-a-recipe',
+        'guides/learning-package',
       ],
     },
     {

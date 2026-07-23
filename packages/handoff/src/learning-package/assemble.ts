@@ -573,6 +573,9 @@ export function assembleLearningPackage(
   ];
   const report: ScrubReport = {
     ...outcome.report,
+    // A package is a deterministic snapshot of one run. Restaging unchanged
+    // run inputs must not change bytes merely because the scrub happened later.
+    scannedAt: input.runRecord.run.finishedAt ?? input.runRecord.run.startedAt,
     status: blockedRecords.length > 0 ? 'blocked' : 'pass',
     blocked: blockedRecords,
   };

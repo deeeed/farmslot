@@ -8,6 +8,14 @@
  * code, are the authority: any producer whose output validates is conformant.
  */
 export {
+  closeoutLearningPackage,
+  type CloseoutMetadata,
+  type CloseoutOptions,
+  type CloseoutResult,
+  deriveCloseoutPackageId,
+  type LearningConfig,
+} from './closeout/index.js';
+export {
   type ArtifactPaths,
   assembleLearningPackage,
   type AssembleResult,
