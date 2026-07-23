@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-07-01T09:16:41.362Z",
+  "recordedAt": "2026-07-18T06:32:21.568Z",
   "host": "macwork",
   "scenario": "hook-smoke",
   "runner": "claude",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-LYJUFh",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-TSIIgk",
   "slotId": "runner-validate-macwork-claude",
-  "session": "runner-validate-claude-hook-smoke-91929",
+  "session": "runner-validate-claude-hook-smoke-9221",
   "launchMode": "claude-print",
   "registeredExpected": [
     "SessionStart",
@@ -36,45 +36,45 @@
   "newRows": [
     {
       "schemaVersion": 1,
-      "observedAt": 1782897392687,
-      "timestamp": 1782897392687,
+      "observedAt": 1784356330054,
+      "timestamp": 1784356330054,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
-      "session_id": "cd570e98-a6a7-4c11-a293-75c247c96d18",
-      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-LYJUFh/cd570e98-a6a7-4c11-a293-75c247c96d18.jsonl",
-      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-LYJUFh",
-      "tmuxPane": "%44",
+      "session_id": "21923ee1-9831-4440-978e-3982b6562154",
+      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-TSIIgk/21923ee1-9831-4440-978e-3982b6562154.jsonl",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-TSIIgk",
+      "tmuxPane": "%6",
       "slotId": "runner-validate-macwork-claude",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782897392820,
-      "timestamp": 1782897392820,
+      "observedAt": 1784356330384,
+      "timestamp": 1784356330384,
       "hook_event_name": "UserPromptSubmit",
       "event": "UserPromptSubmit",
-      "session_id": "cd570e98-a6a7-4c11-a293-75c247c96d18",
-      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-LYJUFh/cd570e98-a6a7-4c11-a293-75c247c96d18.jsonl",
-      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-LYJUFh",
+      "session_id": "21923ee1-9831-4440-978e-3982b6562154",
+      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-TSIIgk/21923ee1-9831-4440-978e-3982b6562154.jsonl",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-TSIIgk",
       "permission_mode": "bypassPermissions",
-      "tmuxPane": "%44",
+      "tmuxPane": "%6",
       "slotId": "runner-validate-macwork-claude",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782897394759,
-      "timestamp": 1782897394759,
+      "observedAt": 1784356334754,
+      "timestamp": 1784356334754,
       "hook_event_name": "Stop",
       "event": "Stop",
-      "session_id": "cd570e98-a6a7-4c11-a293-75c247c96d18",
-      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-LYJUFh/cd570e98-a6a7-4c11-a293-75c247c96d18.jsonl",
-      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-LYJUFh",
+      "session_id": "21923ee1-9831-4440-978e-3982b6562154",
+      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-TSIIgk/21923ee1-9831-4440-978e-3982b6562154.jsonl",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-TSIIgk",
       "permission_mode": "bypassPermissions",
       "effort": {
         "level": "high"
       },
-      "tmuxPane": "%44",
+      "tmuxPane": "%6",
       "slotId": "runner-validate-macwork-claude",
       "runner": "claude"
     }
@@ -88,5 +88,5 @@
   "unknownEvents": [],
   "pass": true,
   "error": null,
-  "paneTail": "bash-5.3$ bash .tmux-driver-launch.sh\n\n\nTMUX_HOOK_OK\nbash-5.3$\nbash-5.3$\nbash-5.3$"
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.YQMnuC/launch-9f8fa9b593269102.sh\n\n\n\nTMUX_HOOK_OK\n\nbash-5.3$\nbash-5.3$\nbash-5.3$\nbash-5.3$\nbash-5.3$"
 }

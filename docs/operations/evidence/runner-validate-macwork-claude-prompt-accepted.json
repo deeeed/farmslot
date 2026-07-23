@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-18T06:32:35.478Z",
+  "host": "macwork",
+  "scenario": "prompt-accepted",
+  "runner": "claude",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-SSx9Wl",
+  "slotId": "runner-validate-macwork-claude",
+  "session": "runner-validate-claude-prompt-accepted-12309",
+  "digest": "ba978966dfe24946",
+  "hookDigest": "ba978966dfe24946",
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.Er5nuQ/launch-18821a2090afbc45.sh\n\n\nTMUX_HOOK_OK\nbash-5.3$\nbash-5.3$\nbash-5.3$"
+}
