@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.9.1 - 2026-07-23
+
 - Preserve the current Mobile route when foregrounding an app instead of reopening its launch URL.
 - Accept finite numeric values in `ui.set_input` by converting them to decimal text.
 
