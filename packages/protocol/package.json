@@ -4,6 +4,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "dependencies": {
+    "@noble/hashes": "1.4.0"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

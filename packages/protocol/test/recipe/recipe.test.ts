@@ -82,6 +82,39 @@ test('publishes one identical Recipe v1 schema', async () => {
   assert.equal(docs, packaged);
 });
 
+test('recipe digests and structured parameter equality stay canonical', () => {
+  assert.equal(
+    digestRecipeDocument({ b: 2, a: 1 }),
+    'sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777',
+  );
+
+  const schema = {
+    type: 'object',
+    properties: {
+      selection: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          mode: { type: 'string' },
+        },
+        additionalProperties: false,
+        enum: [{ id: 'example', mode: 'active' }],
+        default: { mode: 'active', id: 'example' },
+      },
+    },
+    additionalProperties: false,
+  };
+  assert.equal(validateRecipeParamsSchema(schema).status, 'valid');
+  assert.equal(
+    validateRecipeParams({ selection: { mode: 'active', id: 'example' } }, schema).status,
+    'valid',
+  );
+
+  const duplicateEnum = structuredClone(schema);
+  duplicateEnum.properties.selection.enum.push({ mode: 'active', id: 'example' });
+  assert.equal(validateRecipeParamsSchema(duplicateEnum).status, 'invalid');
+});
+
 test('canonical schema leaves action parameter names to the action manifest', async () => {
   const schema = (await readJson('packages/protocol/schemas/recipe-v1.schema.json')) as Record<
     string,
