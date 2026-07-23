@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.11.1 - 2026-07-23
+
 - Fix browser consumers by replacing Node-only recipe digest and parameter helpers.
 
 ## 0.11.0 - 2026-07-22
