@@ -4504,6 +4504,8 @@ __metadata:
     prettier: "npm:^3.8.3"
     tsx: "npm:^4.19.0"
     typescript: "npm:^5.6.0"
+  bin:
+    handoff: dist/bin/handoff.js
   languageName: unknown
   linkType: soft
 

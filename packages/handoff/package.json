@@ -4,9 +4,7 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": {
-    "handoff": "dist/bin/handoff.js"
-  },
+  "bin": "dist/bin/handoff.js",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
