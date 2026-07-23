@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document zero-config local learning staging and explicit per-farm sharing configuration.
 - Document secure, approval-gated sharing of portable run learnings.
 - Add editor help to every field in the hosted Recipe v1 JSON Schema.
 - Document parameterized, composable Recipe v1 authoring, discovery, execution, and the removal of the separate flow surface.
