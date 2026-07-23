@@ -82,6 +82,46 @@ test('publishes one identical Recipe v1 schema', async () => {
   assert.equal(docs, packaged);
 });
 
+test('describes every Recipe v1 property for editor help', async () => {
+  const schema = (await readJson('packages/protocol/schemas/recipe-v1.schema.json')) as Record<
+    string,
+    unknown
+  >;
+  const missing: string[] = [];
+
+  const visit = (value: unknown, pathPrefix: string): void => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const node = value as Record<string, unknown>;
+    if (node.properties && typeof node.properties === 'object') {
+      for (const [name, property] of Object.entries(node.properties as Record<string, unknown>)) {
+        const propertyNode = property as Record<string, unknown>;
+        const propertyPath = pathPrefix ? `${pathPrefix}.${name}` : name;
+        if (
+          typeof propertyNode.description !== 'string' ||
+          propertyNode.description.trim().length === 0
+        ) {
+          missing.push(propertyPath);
+        }
+        visit(propertyNode, propertyPath);
+      }
+    }
+    if (node.$defs && typeof node.$defs === 'object') {
+      for (const [name, definition] of Object.entries(node.$defs as Record<string, unknown>)) {
+        visit(definition, `$defs.${name}`);
+      }
+    }
+    for (const keyword of ['allOf', 'anyOf', 'oneOf']) {
+      const variants = node[keyword];
+      if (!Array.isArray(variants)) continue;
+      variants.forEach((variant, index) => visit(variant, `${pathPrefix}.${keyword}[${index}]`));
+    }
+    visit(node.items, `${pathPrefix}[]`);
+  };
+
+  visit(schema, '');
+  assert.deepEqual(missing, []);
+});
+
 test('recipe digests and structured parameter equality stay canonical', () => {
   assert.equal(
     digestRecipeDocument({ b: 2, a: 1 }),

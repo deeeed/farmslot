@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Describe every Recipe v1 field for editor hover and completion help.
+
 ## 0.11.1 - 2026-07-23
 
 - Fix browser consumers by replacing Node-only recipe digest and parameter helpers.
