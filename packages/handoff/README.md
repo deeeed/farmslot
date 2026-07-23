@@ -11,6 +11,37 @@ dependency. This package provides the matching TypeScript types, the reference
 validator, the fail-closed scrubber, the assemble/write pair, the one
 override-resolution engine, and the task-io/pr-publish boundary helpers.
 
+## Close out a completed local task
+
+Create `$FARMSLOT_HOME/handoff/learning.config.json` (or
+`~/.farmslot/handoff/learning.config.json`):
+
+```json
+{
+  "schemaVersion": 1,
+  "engineer": "stable-id",
+  "destination": "~/dev/experimental-agentic-learnings"
+}
+```
+
+`destination` is optional until sharing. A relative destination resolves from
+the config directory.
+
+```bash
+# Assemble, scrub, validate, and stage locally. No remote write.
+handoff closeout temp/tasks/recipe-cook/<task>
+
+# Only after a new explicit human approval:
+handoff closeout temp/tasks/recipe-cook/<task> \
+  --share --approved-by <identifier>
+```
+
+The task must already contain `SIGNAL.json`, `inputs/handoff.json`,
+the signal's canonical report, and `artifacts/learnings.md`. The approved share
+uses the exact staged bytes; it never rebuilds from changed task files. Closeout
+is post-run and best-effort: it never changes the task verdict. A scrub-floor
+hit quarantines only sanitized audit files and cannot be shared.
+
 The package is tool-chain-agnostic: no Jira, GitHub, or wallet vocabulary appears
 in the harness defaults or assembler logic. Tool-chain specifics that legitimately
 belong in the format (for example, `sourceKind: "jira"` or `"github-pr"` fields
@@ -80,6 +111,8 @@ yarn add @farmslot/handoff
 | `src/task-io/`                     | Source normalization (`extractTaskDocument`) and task-doc rendering (`renderTaskMarkdown`).             |
 | `src/pr-publish/`                  | PR body/evidence composition (`buildPrPackage`) and the consent-guarded publish entry point.            |
 | `src/spec/task-key.ts`             | `deriveTaskKey` — the cross-attempt task-family key (ticket-normalized or content-hashed).              |
+| `src/closeout/`                    | `closeoutLearningPackage` — completed-task adapter over the existing assemble/scrub/write APIs.         |
+| `src/bin/handoff.ts`               | `handoff closeout` — local stage plus explicit approval-gated share.                                    |
 | `templates/task-default.md`        | The shipped default task template (the `default` tier of the resolution chain).                         |
 | `schemas/grade.schema.json`        | Optional `grade.json` (human verdict, copied verbatim post-scrub); `hasGrade`/`gradeSemantic` in rows.  |
 
@@ -100,6 +133,7 @@ and `test/fixtures/`.
 | `renderTaskMarkdown`             | Render the task doc from the resolved template chain.                           |
 | `buildPrPackage`                 | Compose PR description + evidence block (pure/local, writes nothing).           |
 | `publishPrEvidence`              | Consent-guarded publish; `dryRun` upload plan (transport stubbed in v1).        |
+| `closeoutLearningPackage`        | Stage or explicitly share one completed task's Learning Package.                |
 | `scrubFiles`                     | Run the fail-closed scrub gate over candidate files (UNION-only extension).     |
 | `scanForFloorSecrets`            | Positive-identification secret scan of a text string.                           |
 | `loadSchema` / `loadAllSchemas`  | Load the shipped spec schema assets.                                            |

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Add `handoff closeout`: deterministic local capture for completed tasks, with scrub/validation, idempotent append-only sharing, and explicit per-write approval.
 - Make write a FULL scrub-gate re-assertion, not a trust of the manifest's claim: writeLearningPackage now floor-scans EVERY eligible text file (markdown + JSON, same allowlist as assemble) in the validated snapshot through the same unescape pipeline before publishing. A package tampered post-assemble (secret added to a text file, its manifest hash updated to match, scrubbing.status left "pass") is refused with a teaching error naming the file - schema+hash validation alone can no longer let unscrubbed content through.
 - Remove the unused `ArtifactPaths.evidenceManifest` input (dead surface - never consumed; evidence-manifest selection is not wired into the fleet-layout assembler).
 - Strip the trailing blank line from the pinned gitleaks ruleset fixture so `git diff --check` is clean; the reproducibility gate is unaffected (rule parsing ignores trailing whitespace).

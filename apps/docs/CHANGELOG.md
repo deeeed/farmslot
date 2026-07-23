@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document secure, approval-gated sharing of portable run learnings.
 - Add editor help to every field in the hosted Recipe v1 JSON Schema.
 - Document parameterized, composable Recipe v1 authoring, discovery, execution, and the removal of the separate flow surface.
 - docs: worker-template-quality, worker-artifacts-by-flow, and worker-run-finish state the reviewer-flow exception — self-review/self-review-fix require their feedback/report artifact instead of `learnings.md`, and self-review no-change requires `review-feedback.md`.
