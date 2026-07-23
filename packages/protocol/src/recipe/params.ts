@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
-
 import {
   addFinding,
   createContext,
@@ -9,6 +7,7 @@ import {
   type MutableValidationContext,
   type RecipeValidationResult,
 } from './common.js';
+import { canonicalRecipeJson } from './digest.js';
 
 const PARAM_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array']);
 const REFERENCE_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/u;
@@ -231,7 +230,7 @@ function validatePropertySchema(
         } else {
           validateNestedStructuredValue(ctx, value, schema, `${path}.enum[${index}]`);
         }
-        if (enumValues.slice(0, index).some((entry) => isDeepStrictEqual(entry, value))) {
+        if (enumValues.slice(0, index).some((entry) => recipeValuesEqual(entry, value))) {
           addFinding(
             ctx,
             'error',
@@ -254,7 +253,7 @@ function validatePropertySchema(
       );
     } else if (
       Array.isArray(schema.enum) &&
-      !schema.enum.some((entry) => isDeepStrictEqual(entry, schema.default))
+      !schema.enum.some((entry) => recipeValuesEqual(entry, schema.default))
     ) {
       addFinding(
         ctx,
@@ -408,7 +407,7 @@ function validateParamValue(
     );
     return;
   }
-  if (Array.isArray(schema.enum) && !schema.enum.some((entry) => isDeepStrictEqual(entry, value))) {
+  if (Array.isArray(schema.enum) && !schema.enum.some((entry) => recipeValuesEqual(entry, value))) {
     addFinding(
       ctx,
       'error',
@@ -475,4 +474,8 @@ function defineOwn(target: Record<string, unknown>, key: string, value: unknown)
     configurable: true,
     writable: true,
   });
+}
+
+function recipeValuesEqual(left: unknown, right: unknown): boolean {
+  return canonicalRecipeJson(left) === canonicalRecipeJson(right);
 }

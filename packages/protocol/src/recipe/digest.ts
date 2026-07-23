@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex } from '@noble/hashes/utils';
 
 import { isRecord } from './common.js';
 
@@ -17,7 +18,7 @@ export function canonicalRecipeJson(value: unknown): string {
 }
 
 export function digestRecipeDocument(value: unknown): string {
-  return `sha256:${createHash('sha256').update(canonicalRecipeJson(value)).digest('hex')}`;
+  return `sha256:${bytesToHex(sha256(new TextEncoder().encode(canonicalRecipeJson(value))))}`;
 }
 
 /** Return the only valid artifact path for an exact resolved Recipe v1 digest. */

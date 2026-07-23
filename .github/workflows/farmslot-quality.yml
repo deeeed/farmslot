@@ -76,11 +76,15 @@ jobs:
               - 'packages/theme/**'
             docs:
               - '.github/workflows/farmslot-quality.yml'
+              - '.github/workflows/docs-site.yml'
               - '.github/workflows/docs-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - 'apps/command-center/**'
               - 'apps/docs/**'
+              - 'packages/cli/**'
               - 'packages/protocol/**'
+              - 'scripts/build-hosted-command-center.mjs'
               - 'services/gateway/**'
             cli:
               - '.github/workflows/farmslot-quality.yml'
@@ -329,6 +333,9 @@ jobs:
       - name: Docs quality
         working-directory: apps/docs
         run: yarn quality
+
+      - name: Hosted Pages bundle
+        run: yarn cc:build:pages
 
   cli:
     name: CLI package quality
