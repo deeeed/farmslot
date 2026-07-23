@@ -4,6 +4,9 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Preserve the current Mobile route when foregrounding an app instead of reopening its launch URL.
+- Accept finite numeric values in `ui.set_input` by converting them to decimal text.
+
 ## 0.9.0 - 2026-07-22
 
 - **BREAKING:** Unify direct and nested execution on parameterized recipes, one ordered recipe index, and one recursive executor; remove the separate reusable graph CLI/runtime.

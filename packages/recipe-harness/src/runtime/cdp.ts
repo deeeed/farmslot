@@ -552,7 +552,7 @@ export function createCdpWebUiTransport(
               page,
               page.setInput(
                 asString(selectorForUiInput(node), 'ui.set_input.selector'),
-                asString(node.value ?? node.text, 'ui.set_input.value'),
+                asInputText(node.value ?? node.text, 'ui.set_input.value'),
               ),
               node,
             );
@@ -605,6 +605,11 @@ export function createCdpWebUiTransport(
       return withCdpWebPage(options, input, async (page) => page.observe(refs));
     },
   };
+}
+
+function asInputText(value: unknown, label: string): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return asString(value, label);
 }
 
 async function executeSettledCdpAction<T>(

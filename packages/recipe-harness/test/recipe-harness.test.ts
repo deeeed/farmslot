@@ -2584,6 +2584,42 @@ test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () =
   ]);
 });
 
+test('maps typed numeric recipe parameters to CDP input text', async () => {
+  const values: string[] = [];
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      const page = {
+        async setInput(_selector: string, value: string) {
+          values.push(value);
+          return { value };
+        },
+        async waitForDomSettled() {},
+      };
+      return callback(page as never);
+    },
+  });
+
+  await transport.execute(
+    'ui.set_input',
+    { selector: '[data-testid="limit-price-input"] input', value: 2000 },
+    {
+      nodeId: 'set-limit-price',
+      recipe: {},
+      projectRoot: '/tmp/project',
+      artifactsDir: '/tmp/artifacts',
+      env: {},
+      outputs: new Map(),
+      getOutput: () => undefined,
+      resolveProjectPath: (relativePath) => relativePath,
+      resolveArtifactPath: (relativePath) => relativePath,
+      registerArtifact() {},
+      logger: console,
+    },
+  );
+
+  assert.deepEqual(values, ['2000']);
+});
+
 test('CDP observations and selectors traverse open shadow roots', async () => {
   const expressions: string[] = [];
   const page = new CdpWebPage({

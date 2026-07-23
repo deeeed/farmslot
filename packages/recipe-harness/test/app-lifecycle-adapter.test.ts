@@ -77,7 +77,7 @@ test('app.lifecycle launches Android with an Expo deep link when provided', asyn
     },
   });
 
-  await adapter.execute({ command: 'foreground' }, context());
+  await adapter.execute({ command: 'launch' }, context());
 
   assert.deepEqual(calls, [
     {
@@ -148,7 +148,7 @@ test('app.lifecycle validates timing knobs before side effects', async () => {
   assert.deepEqual(calls, []);
 });
 
-test('app.lifecycle runs prelaunch calls before foreground launch calls', async () => {
+test('app.lifecycle foregrounds Android without reopening its launch URL', async () => {
   const calls: Array<{ file: string; args: string[] }> = [];
   const adapter = createAppLifecycleAdapter({
     targetProvider: {
@@ -182,22 +182,46 @@ test('app.lifecycle runs prelaunch calls before foreground launch calls', async 
     { file: 'curl', args: ['-fsS', '-o', '/dev/null', 'http://localhost:8063/index.bundle'] },
     {
       file: 'adb',
-      args: ['-s', 'serial-1', 'reverse', 'tcp:8063', 'tcp:8063'],
-    },
-    {
-      file: 'adb',
       args: [
         '-s',
         'serial-1',
         'shell',
-        'am',
-        'start',
-        '-a',
-        'android.intent.action.VIEW',
-        '-d',
-        'expo-example://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8063',
+        'monkey',
+        '-p',
+        'com.example.app',
+        '-c',
+        'android.intent.category.LAUNCHER',
+        '1',
       ],
     },
+  ]);
+});
+
+test('app.lifecycle foregrounds iOS without reopening its launch URL', async () => {
+  const calls: Array<{ file: string; args: string[] }> = [];
+  const adapter = createAppLifecycleAdapter({
+    targetProvider: {
+      resolveTarget() {
+        return {
+          platform: 'ios-simulator',
+          deviceId: 'SIM-UDID',
+          appId: 'io.example.App',
+          launchUrl: 'expo-example://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8063',
+        };
+      },
+    },
+    commandRunner: {
+      async execFile(file, args) {
+        calls.push({ file, args });
+        return {};
+      },
+    },
+  });
+
+  await adapter.execute({ command: 'foreground' }, context());
+
+  assert.deepEqual(calls, [
+    { file: 'xcrun', args: ['simctl', 'launch', 'SIM-UDID', 'io.example.App'] },
   ]);
 });
 
