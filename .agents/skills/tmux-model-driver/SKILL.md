@@ -66,7 +66,7 @@ Runner-specific submit keys (same contract as `runnerBufferedInstructionSubmitKe
 - **Cursor:** `C-m`
 - **Codex while busy:** `Tab` when pane shows `tab to queue message`
 
-After submit, **do not trust `send-and-verify.sh` alone**. Re-capture the pane and look for runner-specific progress markers.
+The helper makes one literal send and one runner-specific submit attempt. Afterward, re-capture the pane and confirm the runner-specific progress marker. `unverified` means it saw neither a consumed prompt nor new runner progress; do not append or resend the payload.
 
 ## Context Reset Guard
 
@@ -137,7 +137,7 @@ Important:
 - exact `pane_current_command=claude` is a strong signal
 - text-only prompt/status hints are weak fallback evidence, not the source of truth
 - multiline compose can sit in the bordered input box without submitting; `C-m` is unreliable — use named `Enter`
-- `send-and-verify.sh` may return `submitted` while the prompt is still buffered; always re-capture
+- `send-and-verify.sh` returns `input_buffered`, `pending_input`, or `unverified` unless it sees progress added after the payload; never append the payload on those results
 
 Rules:
 

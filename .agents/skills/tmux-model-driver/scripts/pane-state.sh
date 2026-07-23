@@ -53,11 +53,17 @@ def classify_state(current_command: str, tail: str, last_line: str):
         reasons.append("exact pane_current_command indicates shell")
         return state, confidence, reasons
 
-    if current_command == "claude":
-        return "claude", "high", ["exact pane_current_command=claude"]
+    if current_command in {"claude", "claude_exe"}:
+        return "claude", "high", [f"exact pane_current_command={current_command}"]
 
     if current_command == "codex":
         return "codex", "high", ["exact pane_current_command=codex"]
+
+    codex_hints = bool(
+        re.search(r"(?:^|\n)\s*›\s|\bgpt-[\w.-]+\s+(?:low|medium|high|max)\b|\bWorking \(", tail)
+    )
+    if current_command == "node" and codex_hints:
+        return "codex", "medium", ["pane_current_command=node with Codex-style tail hints"]
 
     if current_command == "grok":
         return "grok", "high", ["exact pane_current_command=grok"]
@@ -161,7 +167,10 @@ def detect_launch_blocker(tail: str, runner: str):
 def classify_phase(tail: str, launch_blocker):
     if launch_blocker:
         return "launch-blocker", ["runner launch blocker visible in pane tail"]
-    if re.search(r"still waiting for first runner output|Baked for|Shimmying|Proofing|Thinking|Unfurling", tail):
+    if re.search(
+        r"still waiting for first runner output|Baked for|Shimmying|Proofing|Thinking|Unfurling|Drizzling|Cooking|Pollinating|Effecting|Working \(|[✢✶✽✻·]\s+[A-Za-z][A-Za-z -]*…\s+\(",
+        tail,
+    ):
         return "busy", ["busy phrase present in pane tail"]
     return "idle", []
 

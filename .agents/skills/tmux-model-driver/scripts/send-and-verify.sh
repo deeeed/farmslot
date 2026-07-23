@@ -13,7 +13,8 @@ capture_lines="${4:--15}"
 payload="$(cat)"
 
 skill_dir="$(cd "$(dirname "$0")/.." && pwd)"
-before_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id")"
+pane_state_script="${TMUX_MODEL_DRIVER_PANE_STATE_SCRIPT:-$skill_dir/scripts/pane-state.sh}"
+before_json="$("$pane_state_script" "$pane_id")"
 before_state="$(python3 - <<'PY' "$before_json"
 import json, sys
 print(json.loads(sys.argv[1])["state"])
@@ -39,36 +40,63 @@ submit_key_for_pane() {
 
 classify_verification() {
   local payload="$1"
-  local after_json="$2"
-  python3 - <<'PY' "$payload" "$after_json"
+  local action="$2"
+  local before_json="$3"
+  local after_json="$4"
+  python3 - <<'PY' "$payload" "$action" "$before_json" "$after_json"
 import json, re, sys
 payload = sys.argv[1].strip()
-after = json.loads(sys.argv[2])
+action = sys.argv[2]
+before = json.loads(sys.argv[3])
+after = json.loads(sys.argv[4])
+before_tail = before.get("tail") or ""
 last_line = (after.get("last_line") or "").strip()
 tail = after.get("tail") or ""
-progress = re.search(
-    r"Cooking|Pollinating|Effecting|Unfurling|Baked for|Working \(|⏺\s|Reading \d+ files?",
-    tail,
-)
-if progress:
+model_actions = {"claude", "codex", "grok", "cursor"}
+patterns = {
+    "claude": r"Cooking|Pollinating|Effecting|Unfurling|Baked for|⏺\s|Reading \d+ files?|[✢✶✽✻·]\s+[A-Za-z][A-Za-z -]*…\s+\(",
+    "codex": r"Working \(|• (?:Ran|Explored|Running|Reading|Called|Searched)|Running (?:PreToolUse|UserPromptSubmit) hook",
+    "grok": r"Thinking|Working \(|Reading \d+ files?",
+    "cursor": r"Thinking|Working \(|Generating|Reading \d+ files?",
+}
+progress_pattern = patterns.get(action, r"Working \(")
+
+if (
+    action in model_actions
+    and re.match(r"^/(?:exit|quit)\b", payload)
+    and before.get("state") == action
+    and after.get("state") == "shell"
+):
     print("submitted")
-elif "ctrl+g to edit in Nvim" in last_line or (
-    payload and "ctrl+g to edit in Nvim" in tail and payload in tail
-):
-    print("input_buffered")
-elif payload and payload in last_line:
-    print("pending_input")
-elif (
-    payload
-    and payload in tail
-    and after.get("state") in {"claude", "codex", "grok", "cursor"}
-    and (last_line == "❯" or "❯" in tail.split(payload)[-1][:80])
-):
-    print("likely_pending_input")
 elif after.get("phase") == "launch-blocker":
     print("launch_blocker")
+elif action == "shell":
+    delivered = (payload and payload in tail) or tail != before_tail or (
+        after.get("state") != before.get("state")
+    )
+    print("submitted" if delivered else "unverified")
+elif payload and payload in tail:
+    after_payload = tail.rsplit(payload, 1)[-1]
+    if re.search(progress_pattern, after_payload) or (
+        action == "claude" and re.search(r"(?:^|\n)\s*❯\s*$", after_payload)
+    ):
+        print("submitted")
+    elif "ctrl+g to edit in Nvim" in last_line or "ctrl+g to edit in Nvim" in after_payload:
+        print("input_buffered")
+    elif payload in last_line:
+        print("pending_input")
+    else:
+        print("input_buffered")
+elif action in model_actions:
+    before_progress = len(re.findall(progress_pattern, before_tail))
+    after_progress = len(re.findall(progress_pattern, tail))
+    phase_started = after.get("phase") == "busy" and before.get("phase") != "busy"
+    if phase_started or after_progress > before_progress:
+        print("submitted")
+    else:
+        print("unverified")
 else:
-    print("submitted")
+    print("unverified")
 PY
 }
 
@@ -76,19 +104,23 @@ if [ "$action_kind" = "shell" ] && [ "$before_state" != "shell" ]; then
   verification="shell_launch_blocked"
 else
   tmux send-keys -t "$pane_id" -l "$payload"
-  verification="pending_input"
-  for attempt in 1 2 3 4 5; do
-    after_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id")"
-    tail="$(python3 - <<'PY' "$after_json"
+  after_json="$("$pane_state_script" "$pane_id")"
+  tail="$(python3 - <<'PY' "$after_json"
 import json, sys
 print(json.loads(sys.argv[1]).get("tail") or "")
 PY
 )"
-    submit_key="$(submit_key_for_pane "$action_kind" "$tail")"
-    tmux send-keys -t "$pane_id" "$submit_key"
+  submit_key="$(submit_key_for_pane "$action_kind" "$tail")"
+  tmux send-keys -t "$pane_id" "$submit_key"
+  verification="unverified"
+  attempts=1
+  case "$action_kind" in
+    claude | codex | grok | cursor) attempts=3 ;;
+  esac
+  for _ in $(seq 1 "$attempts"); do
     sleep 1
-    after_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id")"
-    verification="$(classify_verification "$payload" "$after_json")"
+    after_json="$("$pane_state_script" "$pane_id")"
+    verification="$(classify_verification "$payload" "$action_kind" "$before_json" "$after_json")"
     if [ "$verification" = "submitted" ] || [ "$verification" = "launch_blocker" ]; then
       break
     fi

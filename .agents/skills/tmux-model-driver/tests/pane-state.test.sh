@@ -30,6 +30,45 @@ claude_json="$(
 printf '%s\n' "$claude_json" | grep -q '"state": "claude"'
 printf '%s\n' "$claude_json" | grep -q '"confidence": "high"'
 
+claude_exe_json="$(
+  TMUX_PANE_STATE_CURRENT_COMMAND="claude_exe" \
+  TMUX_PANE_STATE_CURRENT_PATH="/tmp" \
+  TMUX_PANE_STATE_SESSION_NAME="demo" \
+  TMUX_PANE_STATE_PANE_TITLE="claude" \
+  TMUX_PANE_STATE_PANE_PID="124" \
+  TMUX_PANE_STATE_TAIL_CAPTURE=$'✶ Drizzling…\n❯ ' \
+  TMUX_PANE_STATE_LAST_LINE='❯ ' \
+  "$SCRIPT" "%2a"
+)"
+printf '%s\n' "$claude_exe_json" | grep -q '"state": "claude"'
+printf '%s\n' "$claude_exe_json" | grep -q '"confidence": "high"'
+printf '%s\n' "$claude_exe_json" | grep -q '"phase": "busy"'
+
+codex_node_json="$(
+  TMUX_PANE_STATE_CURRENT_COMMAND="node" \
+  TMUX_PANE_STATE_CURRENT_PATH="/tmp" \
+  TMUX_PANE_STATE_SESSION_NAME="demo" \
+  TMUX_PANE_STATE_PANE_TITLE="codex" \
+  TMUX_PANE_STATE_PANE_PID="124" \
+  TMUX_PANE_STATE_TAIL_CAPTURE=$'› Summarize recent commits\n\n  gpt-5.6-sol high fast · /tmp' \
+  TMUX_PANE_STATE_LAST_LINE='gpt-5.6-sol high fast · /tmp' \
+  "$SCRIPT" "%2b"
+)"
+printf '%s\n' "$codex_node_json" | grep -q '"state": "codex"'
+printf '%s\n' "$codex_node_json" | grep -q '"confidence": "medium"'
+
+generic_node_json="$(
+  TMUX_PANE_STATE_CURRENT_COMMAND="node" \
+  TMUX_PANE_STATE_CURRENT_PATH="/tmp" \
+  TMUX_PANE_STATE_SESSION_NAME="demo" \
+  TMUX_PANE_STATE_PANE_TITLE="server" \
+  TMUX_PANE_STATE_PANE_PID="124" \
+  TMUX_PANE_STATE_TAIL_CAPTURE=$'server listening on port 3000' \
+  TMUX_PANE_STATE_LAST_LINE='server listening on port 3000' \
+  "$SCRIPT" "%2c"
+)"
+printf '%s\n' "$generic_node_json" | grep -q '"state": "unknown"'
+
 fallback_json="$(
   TMUX_PANE_STATE_CURRENT_COMMAND="" \
   TMUX_PANE_STATE_CURRENT_PATH="" \
