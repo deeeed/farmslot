@@ -2,37 +2,52 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Farmslot Recipe Protocol v1",
+  "description": "A parameterized, composable workflow that executes actions or other recipes and records explicit proof claims.",
   "type": "object",
   "required": ["$schema", "description", "workflow"],
   "properties": {
     "$schema": {
-      "const": "https://farmslot.io/schemas/recipe-v1.schema.json"
+      "const": "https://farmslot.io/schemas/recipe-v1.schema.json",
+      "description": "Canonical Recipe Protocol v1 schema URL used by editors and validators."
     },
     "title": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "Short human-readable recipe name."
     },
     "description": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "What the recipe does and the outcome it is designed to prove."
     },
     "paramsSchema": {
-      "$ref": "#/$defs/paramsSchema"
+      "$ref": "#/$defs/paramsSchema",
+      "description": "Optional JSON Schema for caller-supplied recipe parameters."
     },
     "proofTargets": {
       "type": "array",
+      "description": "Claims this recipe can prove; workflow nodes link to them through proves.",
       "items": {
         "type": "object",
         "required": ["id", "claim"],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "claim": { "type": "string", "minLength": 1 }
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable identifier referenced by workflow node proves entries."
+          },
+          "claim": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable statement that successful linked nodes establish."
+          }
         },
         "additionalProperties": false
       }
     },
     "workflow": {
-      "$ref": "#/$defs/workflow"
+      "$ref": "#/$defs/workflow",
+      "description": "Executable graph containing the entry node, optional teardown node, and named nodes."
     }
   },
   "additionalProperties": false,
@@ -41,15 +56,23 @@
       "type": "object",
       "required": ["type", "additionalProperties"],
       "properties": {
-        "type": { "const": "object" },
-        "additionalProperties": { "const": false },
+        "type": {
+          "const": "object",
+          "description": "Recipe parameters are always supplied as one object."
+        },
+        "additionalProperties": {
+          "const": false,
+          "description": "Reject caller parameters that the recipe does not declare."
+        },
         "required": {
           "type": "array",
+          "description": "Parameter names callers must provide when no default satisfies them.",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
         "properties": {
           "type": "object",
+          "description": "Named parameter definitions available to callers and call nodes.",
           "propertyNames": { "pattern": "^[A-Za-z0-9_-]+$" },
           "additionalProperties": { "$ref": "#/$defs/paramSchema" }
         }
@@ -61,6 +84,7 @@
       "required": ["type"],
       "properties": {
         "type": {
+          "description": "Allowed JSON value type or types for this parameter.",
           "oneOf": [
             { "enum": ["string", "number", "integer", "boolean", "object", "array"] },
             {
@@ -71,21 +95,39 @@
             }
           ]
         },
-        "description": { "type": "string" },
-        "default": true,
-        "enum": { "type": "array", "minItems": 1, "uniqueItems": true },
-        "additionalProperties": { "type": "boolean" },
+        "description": {
+          "type": "string",
+          "description": "Human-readable parameter help shown by recipe discovery and editors."
+        },
+        "default": {
+          "description": "Value used when the caller omits this parameter."
+        },
+        "enum": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Exact values accepted for this parameter."
+        },
+        "additionalProperties": {
+          "type": "boolean",
+          "description": "Whether an object parameter may contain undeclared keys."
+        },
         "required": {
           "type": "array",
+          "description": "Required keys within an object parameter.",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
         "properties": {
           "type": "object",
+          "description": "Named child schemas for an object parameter.",
           "propertyNames": { "pattern": "^[A-Za-z0-9_-]+$" },
           "additionalProperties": { "$ref": "#/$defs/paramSchema" }
         },
-        "items": { "$ref": "#/$defs/paramSchema" }
+        "items": {
+          "$ref": "#/$defs/paramSchema",
+          "description": "Schema applied to each item of an array parameter."
+        }
       },
       "additionalProperties": false
     },
@@ -99,7 +141,11 @@
         {
           "required": ["next"],
           "properties": {
-            "next": { "type": "string", "minLength": 1 }
+            "next": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Node id to execute after this node succeeds."
+            }
           },
           "not": { "anyOf": [{ "required": ["cases"] }, { "required": ["default"] }] }
         },
@@ -109,9 +155,14 @@
             "cases": {
               "type": "object",
               "minProperties": 1,
-              "additionalProperties": { "type": "string", "minLength": 1 }
+              "additionalProperties": { "type": "string", "minLength": 1 },
+              "description": "Maps an action result case to the next node id."
             },
-            "default": { "type": "string", "minLength": 1 }
+            "default": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Node id used when no declared result case matches."
+            }
           },
           "not": { "required": ["next"] }
         }
@@ -124,17 +175,34 @@
         "action": {
           "type": "string",
           "minLength": 1,
-          "not": { "enum": ["call", "end"] }
+          "not": { "enum": ["call", "end"] },
+          "description": "Registered action name to execute; action-specific fields are declared by its manifest."
         },
-        "intent": { "type": "string", "minLength": 1 },
-        "next": { "type": "string", "minLength": 1 },
+        "intent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Concise human-facing reason for performing this step."
+        },
+        "next": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Node id to execute after this node succeeds."
+        },
         "cases": {
           "type": "object",
           "minProperties": 1,
-          "additionalProperties": { "type": "string", "minLength": 1 }
+          "additionalProperties": { "type": "string", "minLength": 1 },
+          "description": "Maps an action result case to the next node id."
         },
-        "default": { "type": "string", "minLength": 1 },
-        "proves": { "$ref": "#/$defs/proofLinks" }
+        "default": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Node id used when no declared result case matches."
+        },
+        "proves": {
+          "$ref": "#/$defs/proofLinks",
+          "description": "Proof target ids established by successful execution of this node."
+        }
       },
       "allOf": [{ "$ref": "#/$defs/transition" }],
       "additionalProperties": true
@@ -143,12 +211,33 @@
       "type": "object",
       "required": ["action", "intent", "ref", "next"],
       "properties": {
-        "action": { "const": "call" },
-        "intent": { "type": "string", "minLength": 1 },
-        "ref": { "type": "string", "minLength": 1 },
-        "params": { "type": "object" },
-        "proves": { "$ref": "#/$defs/proofLinks" },
-        "next": { "type": "string", "minLength": 1 }
+        "action": {
+          "const": "call",
+          "description": "Selects recipe composition instead of an action adapter."
+        },
+        "intent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Concise human-facing reason for invoking the referenced recipe."
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Static recipe id resolved from configured recipe libraries."
+        },
+        "params": {
+          "type": "object",
+          "description": "Parameters passed to the referenced recipe; values may use supported parameter templates."
+        },
+        "proves": {
+          "$ref": "#/$defs/proofLinks",
+          "description": "Proof target ids established by successful completion of the called recipe."
+        },
+        "next": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Node id to execute after the called recipe succeeds."
+        }
       },
       "additionalProperties": false
     },
@@ -156,8 +245,14 @@
       "type": "object",
       "required": ["action", "status"],
       "properties": {
-        "action": { "const": "end" },
-        "status": { "enum": ["pass", "fail", "unknown"] }
+        "action": {
+          "const": "end",
+          "description": "Terminates the current recipe."
+        },
+        "status": {
+          "enum": ["pass", "fail", "unknown"],
+          "description": "Terminal recipe verdict returned by this path."
+        }
       },
       "additionalProperties": false
     },
@@ -172,13 +267,22 @@
       "type": "object",
       "required": ["entry", "nodes"],
       "properties": {
-        "entry": { "type": "string", "minLength": 1 },
-        "teardown": { "type": "string", "minLength": 1 },
+        "entry": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Node id where normal recipe execution starts."
+        },
+        "teardown": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional node id executed once after the main graph exits to restore deterministic state."
+        },
         "nodes": {
           "type": "object",
           "minProperties": 1,
           "propertyNames": { "pattern": "^[A-Za-z0-9_-]+$" },
-          "additionalProperties": { "$ref": "#/$defs/workflowNode" }
+          "additionalProperties": { "$ref": "#/$defs/workflowNode" },
+          "description": "Named action, recipe-call, and terminal nodes in the executable graph."
         }
       },
       "additionalProperties": false
