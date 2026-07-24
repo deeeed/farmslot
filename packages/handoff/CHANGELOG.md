@@ -4,6 +4,8 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-24
+
 - Allow approved closeout sharing to receive a local destination directly, without a config file.
 
 ## 0.2.0 - 2026-07-23
