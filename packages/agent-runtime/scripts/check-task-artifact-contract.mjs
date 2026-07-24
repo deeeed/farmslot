@@ -39,14 +39,14 @@ try {
   }
 }
 let recipeProtocol = null;
-try {
-  recipeProtocol = await import('@farmslot/protocol/recipe');
-} catch (error) {
-  if (!isMissingWorkspaceProtocolBuild(error, 'dist/recipe/index.js')) throw error;
-  // Source checkouts can run before @farmslot/protocol has emitted dist/.
-  // Keep strict local validation until the shared validator is available.
-  if (process.env.FARMSLOT_DEBUG_AGENT_RUNTIME) {
-    console.warn(`[agent-runtime] using local Recipe v1 fallback: ${error.message}`);
+if (process.env.FARMSLOT_TEST_DISABLE_RECIPE_PROTOCOL !== '1') {
+  try {
+    recipeProtocol = await import('@farmslot/protocol/recipe');
+  } catch (error) {
+    if (!isMissingWorkspaceProtocolBuild(error, 'dist/recipe/index.js')) throw error;
+    if (process.env.FARMSLOT_DEBUG_AGENT_RUNTIME) {
+      console.warn(`[agent-runtime] shared Recipe v1 validator unavailable: ${error.message}`);
+    }
   }
 }
 if (recipeProtocol) {
@@ -340,35 +340,24 @@ function validateRecipeDocumentArtifact() {
       if (document !== undefined) resolvedRecipes[String(dependency.digest)] = document;
     }
   }
-  if (sharedRecipeArtifactPackageValidator) {
-    const result = sharedRecipeArtifactPackageValidator({
-      recipe,
-      manifest,
-      trace,
-      recipeResolution,
-      resolvedRecipes,
-      artifactPaths: listArtifactPaths(path.join(taskDir, packageRoot)),
-    });
-    for (const finding of result.findings) {
-      if (finding.severity === 'error') {
-        issues.push(`${finding.code} ${finding.path}: ${finding.message}`);
-      }
-    }
+  if (!sharedRecipeArtifactPackageValidator) {
+    issues.push(
+      'recipe-run package validation requires built @farmslot/protocol; build the protocol package and retry',
+    );
     return;
   }
-  if (manifest === undefined) issues.push('artifact-manifest.json is missing');
-  if (recipeResolution === undefined) issues.push('recipe-resolution.json is missing');
-  const externalRecipeIds = new Set(
-    isRecord(recipeResolution) && Array.isArray(recipeResolution.dependencies)
-      ? recipeResolution.dependencies
-          .filter(isRecord)
-          .map((dependency) => dependency.ref)
-          .filter((ref) => typeof ref === 'string')
-      : [],
-  );
-  validateRecipeDocumentValue(recipe, 'recipe.json', { externalRecipeIds });
-  for (const [digest, document] of Object.entries(resolvedRecipes)) {
-    validateRecipeDocumentValue(document, `resolved recipe ${digest}`, { externalRecipeIds });
+  const result = sharedRecipeArtifactPackageValidator({
+    recipe,
+    manifest,
+    trace,
+    recipeResolution,
+    resolvedRecipes,
+    artifactPaths: listArtifactPaths(path.join(taskDir, packageRoot)),
+  });
+  for (const finding of result.findings) {
+    if (finding.severity === 'error') {
+      issues.push(`${finding.code} ${finding.path}: ${finding.message}`);
+    }
   }
 }
 

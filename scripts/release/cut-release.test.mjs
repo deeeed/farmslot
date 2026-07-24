@@ -6,6 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { buildProposal } from './curate-changelog.mjs';
+import { resolveReleaseGroup } from './release-groups.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -20,6 +21,16 @@ test('buildProposal includes every hosted-cc workspace', () => {
   ]) {
     assert.ok(proposal.workspaces[dir], `missing ${dir}`);
   }
+});
+
+test('npm release group preserves package dependency order', () => {
+  assert.deepEqual(resolveReleaseGroup('npm').workspaces, [
+    'packages/protocol',
+    'packages/agent-runtime',
+    'packages/recipe-harness',
+    'packages/expo-recipe',
+    'packages/skills',
+  ]);
 });
 
 test('cut-release rejects proposal workspaces outside release group', () => {

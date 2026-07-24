@@ -22,6 +22,7 @@ export const RELEASE_GROUPS = [
     label: 'Published npm packages',
     workspaces: [
       'packages/protocol',
+      'packages/agent-runtime',
       'packages/recipe-harness',
       'packages/expo-recipe',
       'packages/skills',

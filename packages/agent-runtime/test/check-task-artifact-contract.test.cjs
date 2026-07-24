@@ -93,6 +93,13 @@ result = spawnSync(process.execPath, [checker, taskDir, '--require-recipe-qualit
 });
 assert.equal(result.status, 0, result.stderr);
 
+result = spawnSync(process.execPath, [checker, taskDir, '--require-recipe-quality-if-recipe'], {
+  encoding: 'utf8',
+  env: { ...process.env, FARMSLOT_TEST_DISABLE_RECIPE_PROTOCOL: '1' },
+});
+assert.equal(result.status, 1);
+assert.match(result.stderr, /requires built @farmslot\/protocol/);
+
 taskDir = makeTaskDir('farmslot-agent-artifact-symlink-');
 const outsideDir = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-artifact-outside-'));
 const childRecipe = {

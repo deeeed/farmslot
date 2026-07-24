@@ -8,6 +8,7 @@ ready for review, but the packages remain private until final publish approval. 
 | Package                    | Purpose                                                             | Public docs                                             |
 | -------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
 | `@farmslot/protocol`       | Recipe/gateway/node protocol types and validators.                  | <https://farmslot.io/docs/reference/recipe-protocol-v1> |
+| `@farmslot/agent-runtime`  | Task lifecycle, artifact checks, and execution-template utilities.  | <https://farmslot.io/docs/reference/agent-runtime>      |
 | `@farmslot/recipe-harness` | Reusable Recipe Protocol v1 runner, adapters, and artifact writers. | <https://farmslot.io/docs/architecture/recipe-harness>  |
 | `@farmslot/expo-recipe`    | Expo/React Native recipe scaffold and validation helper.            | <https://farmslot.io/docs/guides/expo-recipe>           |
 | `@farmslot/skills`         | Recipe-first adoption skills, CLI installer, and cooking utilities. | `packages/skills/README.md`                             |
@@ -63,8 +64,10 @@ See [release-process.md](release-process.md) for the full workflow and What's Ne
 Publish Recipe Protocol packages in dependency order:
 
 1. `@farmslot/protocol`
-2. `@farmslot/recipe-harness`
-3. `@farmslot/expo-recipe`
+2. `@farmslot/agent-runtime`
+3. `@farmslot/recipe-harness`
+4. `@farmslot/expo-recipe`
+5. `@farmslot/skills`
 
 ## Publish command
 
@@ -76,8 +79,8 @@ checks only.
 ## Build/export strategy
 
 The packages now publish from `dist/` rather than TypeScript source.
-`@farmslot/protocol`, `@farmslot/recipe-harness`, and `@farmslot/skills` build
-JavaScript and declaration files before pack, and
+`@farmslot/protocol`, `@farmslot/agent-runtime`, `@farmslot/recipe-harness`,
+and `@farmslot/skills` build JavaScript and declaration files before pack, and
 `scripts/quality/check-farmslot-package-readiness.mjs` verifies required packed
 files plus built import contracts. The
 `@farmslot/recipe-harness` CLI bin imports `../dist/cli.js`, so local workspace
