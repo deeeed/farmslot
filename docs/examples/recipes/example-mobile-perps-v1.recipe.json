@@ -41,20 +41,8 @@
         "test_id": "perps-market-row-{{params.market}}",
         "visible": true,
         "timeout_ms": 10000,
-        "next": "read-route",
-        "intent": "Confirm the {{params.market}} Perps market row is visible"
-      },
-      "read-route": {
-        "action": "state_read",
-        "ref": "example.mobile.route",
-        "save_as": "route_state",
-        "assert": {
-          "path": "$.name",
-          "operator": "eq",
-          "value": "PerpsMarkets"
-        },
         "next": "capture-proof",
-        "intent": "Confirm the app route is the Perps markets screen"
+        "intent": "Confirm the {{params.market}} Perps market row is visible"
       },
       "capture-proof": {
         "action": "ui.screenshot",
@@ -70,7 +58,7 @@
       },
       "index-artifacts": {
         "action": "index_artifacts",
-        "artifacts": ["screenshots/mobile-perps-market.png", "reports/mobile-state.json"],
+        "artifacts": ["screenshots/mobile-perps-market.png"],
         "next": "done",
         "intent": "Publish the index artifacts evidence for review"
       },

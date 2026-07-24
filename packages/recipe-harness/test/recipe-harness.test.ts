@@ -173,6 +173,8 @@ test('tracked core action manifests match the bundled adapter contract', async (
   const repoRoot = path.resolve(import.meta.dirname, '../../..');
   const manifestPaths = [
     'apps/companion/scripts/agentic/recipe/action-manifest.json',
+    'docs/examples/recipes/example-browser-v1.action-manifest.json',
+    'docs/examples/recipes/example-mobile-v1.action-manifest.json',
     'docs/examples/recipes/farmslot-v1.action-manifest.json',
     'packages/expo-recipe/templates/scripts/agentic/recipe/action-manifest.json',
     'packages/expo-recipe/templates/scripts/agentic/recipe/action-manifest.with-bridge.json',
@@ -228,6 +230,13 @@ test('tracked core action manifests match the bundled adapter contract', async (
       {
         properties: ['duration_ms'],
         required: ['duration_ms'],
+      },
+    ],
+    [
+      'switch',
+      {
+        properties: ['equals', 'value'],
+        required: ['value', 'equals'],
       },
     ],
   ]);
