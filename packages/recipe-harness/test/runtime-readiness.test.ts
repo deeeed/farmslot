@@ -6,7 +6,12 @@ import path from 'node:path';
 import { test } from 'node:test';
 import vm from 'node:vm';
 
-import { CdpSession, probeCdpCompositorInteractivity } from '../src/runtime/cdp.js';
+import {
+  CdpSession,
+  jsonGet,
+  probeCdpCompositorInteractivity,
+  retryJsonGet,
+} from '../src/runtime/cdp.js';
 import type { RuntimeDecisionReport } from '../src/runtime/decision-types.js';
 import {
   depsCheck,
@@ -112,6 +117,51 @@ test('CDP session connection timeout rejects a stalled WebSocket upgrade', async
     assert.match(termination, /^(?:end|close|error)$/u);
   } finally {
     upgradedSocket?.destroy();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test('CDP JSON discovery timeout aborts a stalled HTTP response', async () => {
+  const server = createServer(() => undefined);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const url = `http://127.0.0.1:${address.port}/json/list`;
+
+  try {
+    await assert.rejects(
+      jsonGet(url, { timeoutMs: 100 }),
+      new RegExp(`GET ${url} timed out after 100ms\\.`),
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test('CDP JSON retry does not sleep beyond its total deadline', async () => {
+  const server = createServer(() => undefined);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const url = `http://127.0.0.1:${address.port}/json/list`;
+  const startedAt = Date.now();
+
+  try {
+    await assert.rejects(
+      retryJsonGet(url, { timeoutMs: 100, intervalMs: 1_000 }),
+      /did not succeed within 100ms/u,
+    );
+    assert(
+      Date.now() - startedAt < 300,
+      'retryJsonGet should not sleep its retry interval after the total deadline',
+    );
+  } finally {
+    server.closeAllConnections();
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
