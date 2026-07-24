@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document direct learning destination overrides.
 - Document zero-config local learning staging and explicit per-farm sharing configuration.
 - Document secure, approval-gated sharing of portable run learnings.
 - Add editor help to every field in the hosted Recipe v1 JSON Schema.

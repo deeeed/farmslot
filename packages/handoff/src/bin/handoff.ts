@@ -5,6 +5,7 @@ import { closeoutLearningPackage } from '../closeout/index.js';
 interface CliOptions {
   taskDir?: string;
   configPath?: string;
+  destination?: string;
   metadataPath?: string;
   share: boolean;
   json: boolean;
@@ -12,8 +13,8 @@ interface CliOptions {
 
 function usage(): string {
   return `Usage:
-  handoff closeout <task-dir> [--config <file>] [--metadata <file>] [--json]
-  handoff closeout <task-dir> --share [--config <file>] [--json]
+  handoff closeout <task-dir> [--config <file>] [--destination <dir>] [--metadata <file>] [--json]
+  handoff closeout <task-dir> --share [--config <file>] [--destination <dir>] [--json]
 
 closeout stages a scrubbed Learning Package locally. --share writes only after
 explicit per-call human approval.`;
@@ -32,11 +33,12 @@ function parseArgs(argv: string[]): CliOptions {
       options.json = true;
       continue;
     }
-    if (arg === '--config' || arg === '--metadata') {
+    if (arg === '--config' || arg === '--destination' || arg === '--metadata') {
       const value = argv[index + 1];
       if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value.\n${usage()}`);
       index += 1;
       if (arg === '--config') options.configPath = value;
+      if (arg === '--destination') options.destination = value;
       if (arg === '--metadata') options.metadataPath = value;
       continue;
     }
@@ -95,6 +97,7 @@ function main(): void {
     const result = closeoutLearningPackage({
       taskDir: options.taskDir!,
       ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+      ...(options.destination === undefined ? {} : { destination: options.destination }),
       ...(options.metadataPath === undefined ? {} : { metadataPath: options.metadataPath }),
       share: options.share,
     });
