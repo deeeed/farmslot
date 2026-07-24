@@ -46,19 +46,20 @@ import {
 
 ## Public API map
 
-| Import path                                        | Use for                                                                                                  |
-| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `@farmslot/protocol`                               | Root import for common recipe validators, constants, shared contracts, RPC names, and transport helpers. |
-| `@farmslot/protocol/contracts`                     | Shared domain data contracts.                                                                            |
-| `@farmslot/protocol/contracts/runs`                | Run, run-family, evidence, and publication contracts.                                                    |
-| `@farmslot/protocol/contracts/slots`               | Slot and slot-adjacent contracts.                                                                        |
-| `@farmslot/protocol/rpc`                           | Gateway RPC method registry and typed method maps.                                                       |
-| `@farmslot/protocol/rpc/run`                       | Run RPC params/results and run method names.                                                             |
-| `@farmslot/protocol/recipe`                        | Recipe Protocol v1 validation, action vocabulary, schema URL mapping, and manifest helpers.              |
-| `@farmslot/protocol/schemas/recipe-v1.schema.json` | Published JSON Schema for Recipe Protocol v1.                                                            |
-| `@farmslot/protocol/recipes/step-io`               | Runner recipe artifact reference contracts.                                                              |
-| `@farmslot/protocol/surfaces/command-center`       | Command Center client surface registry used to build safe chat context.                                  |
-| `@farmslot/protocol/transport/events`              | Gateway event contracts.                                                                                 |
+| Import path                                                 | Use for                                                                                                  |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `@farmslot/protocol`                                        | Root import for common recipe validators, constants, shared contracts, RPC names, and transport helpers. |
+| `@farmslot/protocol/contracts`                              | Shared domain data contracts.                                                                            |
+| `@farmslot/protocol/contracts/runs`                         | Run, run-family, evidence, and publication contracts.                                                    |
+| `@farmslot/protocol/contracts/slots`                        | Slot and slot-adjacent contracts.                                                                        |
+| `@farmslot/protocol/rpc`                                    | Gateway RPC method registry and typed method maps.                                                       |
+| `@farmslot/protocol/rpc/run`                                | Run RPC params/results and run method names.                                                             |
+| `@farmslot/protocol/recipe`                                 | Recipe Protocol v1 validation, action vocabulary, schema URL mapping, and manifest helpers.              |
+| `@farmslot/protocol/schemas/recipe-v1.schema.json`          | Published JSON Schema for Recipe Protocol v1.                                                            |
+| `@farmslot/protocol/schemas/action-manifest-v1.schema.json` | Published JSON Schema for Action Manifest v1.                                                            |
+| `@farmslot/protocol/recipes/step-io`                        | Runner recipe artifact reference contracts.                                                              |
+| `@farmslot/protocol/surfaces/command-center`                | Command Center client surface registry used to build safe chat context.                                  |
+| `@farmslot/protocol/transport/events`                       | Gateway event contracts.                                                                                 |
 
 Public subpaths are explicit and extensionless. There are no `types`, `methods`,
 or `recipe-compat` package aliases.

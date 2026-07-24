@@ -169,6 +169,69 @@ const coreActionManifest: RecipeActionManifestDocument = testManifest([
   'manual',
 ]);
 
+test('tracked core action manifests match the bundled adapter contract', async () => {
+  const repoRoot = path.resolve(import.meta.dirname, '../../..');
+  const manifestPaths = [
+    'apps/companion/scripts/agentic/recipe/action-manifest.json',
+    'docs/examples/recipes/farmslot-v1.action-manifest.json',
+    'packages/expo-recipe/templates/scripts/agentic/recipe/action-manifest.json',
+    'packages/expo-recipe/templates/scripts/agentic/recipe/action-manifest.with-bridge.json',
+  ];
+  const adapters = new Map(
+    createStandardCoreAdapters().map((adapter) => [adapter.action, adapter] as const),
+  );
+  const commandAdapter = adapters.get('command');
+  const assertOutputAdapter = adapters.get('assert_output');
+  assert.ok(commandAdapter);
+  assert.ok(assertOutputAdapter);
+  const projectRoot = await createTempRoot();
+  const outputs = new Map<string, unknown>([
+    ['command', { exitCode: 0, stdout: 'ready\n', stderr: '' }],
+  ]);
+
+  try {
+    for (const relativePath of manifestPaths) {
+      const manifest = JSON.parse(
+        await readFile(path.join(repoRoot, relativePath), 'utf-8'),
+      ) as RecipeActionManifestDocument;
+      const command = manifest.actions.command;
+      const assertOutput = manifest.actions.assert_output;
+      assert.deepEqual(
+        Object.keys(command.schema?.properties as Record<string, unknown>).sort(),
+        ['allow_failure', 'cmd', 'cwd', 'timeout_ms'],
+        relativePath,
+      );
+      assert.deepEqual(command.schema?.required, ['cmd'], relativePath);
+      assert.deepEqual(
+        Object.keys(assertOutput.schema?.properties as Record<string, unknown>).sort(),
+        ['assert', 'contains', 'match', 'source', 'stream'],
+        relativePath,
+      );
+      assert.deepEqual(assertOutput.schema?.required, ['source'], relativePath);
+
+      const context = {
+        nodeId: 'example',
+        recipe: {},
+        projectRoot,
+        artifactsDir: path.join(projectRoot, 'artifacts'),
+        env: {},
+        outputs,
+        getOutput: (nodeId: string) => outputs.get(nodeId),
+        resolveProjectPath: (relativePath: string) => path.join(projectRoot, relativePath),
+        resolveArtifactPath: (relativePath: string) =>
+          path.join(projectRoot, 'artifacts', relativePath),
+        getRunFileOffset: () => undefined,
+        registerArtifact: () => undefined,
+        logger: { info() {}, warn() {}, error() {} },
+      };
+      await commandAdapter.execute(command.examples[0], context);
+      await assertOutputAdapter.execute(assertOutput.examples[0], context);
+    }
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
 function createRecipeRunner(options: Parameters<typeof createRawRecipeRunner>[0]) {
   return createRawRecipeRunner({
     ...options,

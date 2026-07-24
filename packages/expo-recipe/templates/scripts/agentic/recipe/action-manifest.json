@@ -6,9 +6,6 @@
       "schema": {
         "type": "object",
         "properties": {
-          "description": {
-            "type": "string"
-          },
           "cmd": {
             "type": "string"
           },
@@ -18,10 +15,11 @@
           "cwd": {
             "type": "string"
           },
-          "save_as": {
-            "type": "string"
+          "allow_failure": {
+            "type": "boolean"
           }
         },
+        "required": ["cmd"],
         "additionalProperties": false
       },
       "examples": [
@@ -38,9 +36,6 @@
       "schema": {
         "type": "object",
         "properties": {
-          "description": {
-            "type": "string"
-          },
           "source": {
             "type": "string"
           },
@@ -49,14 +44,23 @@
           },
           "contains": {
             "type": "string"
+          },
+          "match": {
+            "type": "string"
+          },
+          "assert": {
+            "type": "object",
+            "additionalProperties": true
           }
         },
+        "required": ["source"],
         "additionalProperties": false
       },
       "examples": [
         {
           "action": "assert_output",
           "intent": "Confirm the recorded output satisfies the requested condition.",
+          "source": "command",
           "contains": "ready",
           "next": "done"
         }

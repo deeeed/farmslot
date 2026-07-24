@@ -13,7 +13,6 @@
     "nodes": {
       "expo-config": {
         "action": "command",
-        "description": "Read Expo public config through the project package manager.",
         "intent": "Read Expo public config to confirm the companion app scaffold is runnable.",
         "cmd": "yarn expo config --type public --json",
         "timeout_ms": 120000,
@@ -22,7 +21,6 @@
       },
       "assert-config": {
         "action": "assert_output",
-        "description": "Confirm Expo config contains a slug field.",
         "intent": "Confirm Expo public config exposes a slug for recipe smoke.",
         "source": "expo-config",
         "stream": "stdout",
