@@ -276,18 +276,38 @@
                 },
                 "label": {
                   "type": "string"
+                },
+                "nodeId": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "proofTarget": {
+                  "type": "string"
+                },
+                "covers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "additionalProperties": false
             }
           }
         },
+        "required": ["artifacts"],
         "additionalProperties": false
       },
       "examples": [
         {
           "action": "index_artifacts",
           "intent": "Preserve generated evidence in the review package.",
+          "artifacts": ["reports/example.json"],
           "next": "done"
         }
       ]

@@ -238,20 +238,10 @@
           },
           "assert": {
             "type": "object",
-            "properties": {
-              "operator": {
-                "type": "string"
-              },
-              "value": {
-                "type": "integer"
-              },
-              "path": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
+            "additionalProperties": true
           }
         },
+        "required": ["path", "assert"],
         "additionalProperties": false
       },
       "examples": [
@@ -259,6 +249,11 @@
           "action": "assert_json",
           "intent": "Confirm the recorded data satisfies the requested condition.",
           "path": "artifacts/example.json",
+          "assert": {
+            "path": "$.status",
+            "operator": "eq",
+            "value": "ready"
+          },
           "next": "done"
         }
       ]
@@ -303,31 +298,22 @@
       "schema": {
         "type": "object",
         "properties": {
-          "save_as": {
+          "source": {
             "type": "string"
           },
-          "assert": {
-            "type": "object",
-            "properties": {
-              "path": {
-                "type": "string"
-              },
-              "operator": {
-                "type": "string"
-              },
-              "value": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
+          "path": {
+            "type": "string"
           }
         },
+        "required": ["source"],
         "additionalProperties": false
       },
       "examples": [
         {
           "action": "state_read",
           "intent": "Record the requested application state for proof.",
+          "source": "command",
+          "path": "$.stdout",
           "next": "done"
         }
       ]
@@ -336,12 +322,28 @@
       "description": "watch_logs action.",
       "schema": {
         "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "contains": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["run", "file"]
+          }
+        },
+        "required": ["path"],
         "additionalProperties": false
       },
       "examples": [
         {
           "action": "watch_logs",
           "intent": "Observe the runtime behavior needed for this proof.",
+          "path": "logs/example.log",
+          "contains": "ready",
+          "scope": "file",
           "next": "done"
         }
       ]
@@ -364,18 +366,38 @@
                 },
                 "label": {
                   "type": "string"
+                },
+                "nodeId": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "proofTarget": {
+                  "type": "string"
+                },
+                "covers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "additionalProperties": false
             }
           }
         },
+        "required": ["artifacts"],
         "additionalProperties": false
       },
       "examples": [
         {
           "action": "index_artifacts",
           "intent": "Preserve generated evidence in the review package.",
+          "artifacts": ["reports/example.json"],
           "next": "done"
         }
       ]

@@ -180,40 +180,84 @@ test('tracked core action manifests match the bundled adapter contract', async (
   const adapters = new Map(
     createStandardCoreAdapters().map((adapter) => [adapter.action, adapter] as const),
   );
-  const commandAdapter = adapters.get('command');
-  const assertOutputAdapter = adapters.get('assert_output');
-  assert.ok(commandAdapter);
-  assert.ok(assertOutputAdapter);
+  const expectedSchema = new Map<string, { properties: string[]; required: string[] }>([
+    [
+      'command',
+      {
+        properties: ['allow_failure', 'cmd', 'cwd', 'timeout_ms'],
+        required: ['cmd'],
+      },
+    ],
+    [
+      'assert_json',
+      {
+        properties: ['assert', 'path'],
+        required: ['path', 'assert'],
+      },
+    ],
+    [
+      'assert_output',
+      {
+        properties: ['assert', 'contains', 'match', 'source', 'stream'],
+        required: ['source'],
+      },
+    ],
+    [
+      'state_read',
+      {
+        properties: ['path', 'source'],
+        required: ['source'],
+      },
+    ],
+    [
+      'watch_logs',
+      {
+        properties: ['contains', 'path', 'scope'],
+        required: ['path'],
+      },
+    ],
+    [
+      'index_artifacts',
+      {
+        properties: ['artifacts'],
+        required: ['artifacts'],
+      },
+    ],
+    [
+      'wait',
+      {
+        properties: ['duration_ms'],
+        required: ['duration_ms'],
+      },
+    ],
+  ]);
   const projectRoot = await createTempRoot();
+  const artifactsDir = path.join(projectRoot, 'run-artifacts');
   const outputs = new Map<string, unknown>([
     ['command', { exitCode: 0, stdout: 'ready\n', stderr: '' }],
   ]);
 
   try {
+    await mkdir(path.join(projectRoot, 'artifacts'), { recursive: true });
+    await mkdir(path.join(projectRoot, 'logs'), { recursive: true });
+    await mkdir(path.join(projectRoot, 'reports'), { recursive: true });
+    await mkdir(artifactsDir, { recursive: true });
+    await writeFile(
+      path.join(projectRoot, 'artifacts/example.json'),
+      JSON.stringify({ status: 'ready' }),
+    );
+    await writeFile(path.join(projectRoot, 'logs/example.log'), 'ready\n');
+    await writeFile(path.join(projectRoot, 'reports/example.json'), '{}\n');
+
     for (const relativePath of manifestPaths) {
       const manifest = JSON.parse(
         await readFile(path.join(repoRoot, relativePath), 'utf-8'),
       ) as RecipeActionManifestDocument;
-      const command = manifest.actions.command;
-      const assertOutput = manifest.actions.assert_output;
-      assert.deepEqual(
-        Object.keys(command.schema?.properties as Record<string, unknown>).sort(),
-        ['allow_failure', 'cmd', 'cwd', 'timeout_ms'],
-        relativePath,
-      );
-      assert.deepEqual(command.schema?.required, ['cmd'], relativePath);
-      assert.deepEqual(
-        Object.keys(assertOutput.schema?.properties as Record<string, unknown>).sort(),
-        ['assert', 'contains', 'match', 'source', 'stream'],
-        relativePath,
-      );
-      assert.deepEqual(assertOutput.schema?.required, ['source'], relativePath);
-
       const context = {
         nodeId: 'example',
         recipe: {},
         projectRoot,
-        artifactsDir: path.join(projectRoot, 'artifacts'),
+        artifactsDir,
         env: {},
         outputs,
         getOutput: (nodeId: string) => outputs.get(nodeId),
@@ -224,8 +268,25 @@ test('tracked core action manifests match the bundled adapter contract', async (
         registerArtifact: () => undefined,
         logger: { info() {}, warn() {}, error() {} },
       };
-      await commandAdapter.execute(command.examples[0], context);
-      await assertOutputAdapter.execute(assertOutput.examples[0], context);
+      for (const [action, entry] of Object.entries(manifest.actions)) {
+        const adapter = adapters.get(action);
+        if (!adapter) continue;
+        const expected = expectedSchema.get(action);
+        assert.ok(expected, `Missing test schema contract for ${action}`);
+        assert.deepEqual(
+          Object.keys(entry.schema?.properties as Record<string, unknown>).sort(),
+          expected.properties,
+          `${relativePath}: ${action} properties`,
+        );
+        assert.deepEqual(
+          entry.schema?.required,
+          expected.required,
+          `${relativePath}: ${action} required`,
+        );
+        for (const example of entry.examples) {
+          await adapter.execute(example, context);
+        }
+      }
     }
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
