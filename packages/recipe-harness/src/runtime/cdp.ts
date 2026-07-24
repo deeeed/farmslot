@@ -32,6 +32,10 @@ export interface RetryJsonGetOptions {
   intervalMs?: number;
 }
 
+export interface JsonGetOptions {
+  timeoutMs?: number;
+}
+
 export interface SelectCdpTargetOptions {
   host?: string;
   port: number;
@@ -46,10 +50,21 @@ interface PendingCall {
   reject(error: Error): void;
 }
 
-export async function jsonGet<T = unknown>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`GET ${url} failed with HTTP ${response.status}.`);
-  return (await response.json()) as T;
+export async function jsonGet<T = unknown>(url: string, options: JsonGetOptions = {}): Promise<T> {
+  const controller = options.timeoutMs === undefined ? undefined : new AbortController();
+  const timer = controller ? setTimeout(() => controller.abort(), options.timeoutMs) : undefined;
+  try {
+    const response = await fetch(url, { signal: controller?.signal });
+    if (!response.ok) throw new Error(`GET ${url} failed with HTTP ${response.status}.`);
+    return (await response.json()) as T;
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      throw new Error(`GET ${url} timed out after ${options.timeoutMs}ms.`);
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function retryJsonGet<T = unknown>(
@@ -62,11 +77,15 @@ export async function retryJsonGet<T = unknown>(
   let lastError: unknown;
   while (Date.now() <= deadline) {
     try {
-      return await jsonGet<T>(url);
+      return await jsonGet<T>(url, {
+        timeoutMs: Math.max(1, deadline - Date.now()),
+      });
     } catch (error) {
       // Expected while a browser/debug target is still starting; retry until the caller's deadline.
       lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(intervalMs, remainingMs)));
     }
   }
   const message = lastError instanceof Error ? lastError.message : String(lastError);
