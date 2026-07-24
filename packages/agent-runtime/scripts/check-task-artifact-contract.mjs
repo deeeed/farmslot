@@ -325,6 +325,7 @@ function validateRecipeDocumentArtifact() {
     `${packageRoot}/artifact-manifest.json`,
     'recipe-run/artifact-manifest.json',
   );
+  const trace = readJsonArtifact(`${packageRoot}/trace.json`, 'recipe-run/trace.json');
   const recipeResolution = readJsonArtifact(
     `${packageRoot}/recipe-resolution.json`,
     'recipe-run/recipe-resolution.json',
@@ -343,6 +344,7 @@ function validateRecipeDocumentArtifact() {
     const result = sharedRecipeArtifactPackageValidator({
       recipe,
       manifest,
+      trace,
       recipeResolution,
       resolvedRecipes,
       artifactPaths: listArtifactPaths(path.join(taskDir, packageRoot)),

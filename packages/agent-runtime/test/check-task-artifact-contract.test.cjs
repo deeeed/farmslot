@@ -47,7 +47,7 @@ function makeTaskDir(name) {
     `${JSON.stringify({ version: 1, runStatus: 'pass', artifacts: [] })}\n`,
   );
   writeFileSync(path.join(runDir, 'summary.json'), '{"status":"pass"}\n');
-  writeFileSync(path.join(runDir, 'trace.json'), '[]\n');
+  writeFileSync(path.join(runDir, 'trace.json'), '[{"nodeId":"done","action":"end","ok":true}]\n');
   writeFileSync(path.join(artifactsDir, 'recipe-coverage.md'), '1/1 passed\n');
   return taskDir;
 }
