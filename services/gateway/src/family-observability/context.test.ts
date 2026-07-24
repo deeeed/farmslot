@@ -413,11 +413,6 @@ test('materializeInheritedContext inherits a task recipe library alongside recip
   await writeTaskArtifact(parentTaskDir, 'artifacts/recipe.json', '{"id":"orchestrator"}');
   await writeTaskArtifact(
     parentTaskDir,
-    'artifacts/recipe-library/library.json',
-    '{"kind":"recipe-library","name":"task"}',
-  );
-  await writeTaskArtifact(
-    parentTaskDir,
     'artifacts/recipe-library/recipes/ac/ac1.recipe.json',
     '{"id":"ac1"}',
   );

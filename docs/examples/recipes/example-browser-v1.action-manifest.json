@@ -1,28 +1,27 @@
 {
-  "runner_protocol_version": 1,
-  "action_registry_version": 1,
-  "supported_official_actions": [
-    "ui.navigate",
-    "ui.press",
-    "ui.key_press",
-    "ui.set_input",
-    "ui.scroll",
-    "ui.wait_for",
-    "ui.screenshot",
-    "cdp.target",
-    "cdp.storage",
-    "cdp.network",
-    "cdp.emulation",
-    "cdp.metrics",
-    "cdp.trace",
-    "state_read",
-    "watch_logs",
-    "index_artifacts",
-    "call",
-    "switch",
-    "end"
-  ],
-  "action_metadata": {
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "call": {
+      "description": "Invoke a named child recipe with explicit parameters.",
+      "examples": [
+        {
+          "action": "call",
+          "intent": "Reuse a shared browser setup recipe.",
+          "ref": "browser.setup",
+          "params": {},
+          "next": "done"
+        }
+      ]
+    },
+    "end": {
+      "description": "Finish recipe execution with an explicit status.",
+      "examples": [
+        {
+          "action": "end",
+          "status": "pass"
+        }
+      ]
+    },
     "cdp.target": {
       "description": "Select extension, notification, dapp, or background CDP targets.",
       "schema": {
@@ -36,13 +35,10 @@
       },
       "examples": [
         {
-          "description": "Select the main extension UI target.",
-          "node": {
-            "action": "cdp.target",
-            "role": "extension",
-            "next": "open-perps",
-            "intent": "Select the main extension UI target"
-          }
+          "action": "cdp.target",
+          "role": "extension",
+          "next": "open-perps",
+          "intent": "Confirm the requested application target is available."
         }
       ]
     },
@@ -68,12 +64,10 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "ui.navigate",
-            "target": "#/perps",
-            "next": "wait-for-perps",
-            "intent": "Navigate by extension route/hash, dapp URL, or selected CDP target page"
-          }
+          "action": "ui.navigate",
+          "target": "#/perps",
+          "next": "wait-for-perps",
+          "intent": "Open the requested application surface."
         }
       ]
     },
@@ -117,14 +111,12 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "ui.wait_for",
-            "selector": "[data-testid=perps-market-row-ETH]",
-            "visible": true,
-            "timeout_ms": 10000,
-            "next": "capture-proof",
-            "intent": "Wait for DOM selector, text, target role, or extension screen state"
-          }
+          "action": "ui.wait_for",
+          "selector": "[data-testid=perps-market-row-ETH]",
+          "visible": true,
+          "timeout_ms": 10000,
+          "next": "capture-proof",
+          "intent": "Confirm the requested application state is visible."
         }
       ]
     },
@@ -147,13 +139,11 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "cdp.network",
-            "mode": "observe",
-            "capture": ["request", "response", "failure"],
-            "next": "run-flow",
-            "intent": "Observe/probe network and fetch activity through CDP, including request/response/failure JSONL capture"
-          }
+          "action": "cdp.network",
+          "mode": "observe",
+          "capture": ["request", "response", "failure"],
+          "next": "run-flow",
+          "intent": "Record the requested network behavior for proof."
         }
       ]
     },
@@ -176,13 +166,11 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "cdp.trace",
-            "mode": "start",
-            "categories": ["devtools.timeline"],
-            "next": "open-perps",
-            "intent": "Start or stop CDP tracing/profiling capture"
-          }
+          "action": "cdp.trace",
+          "mode": "start",
+          "categories": ["devtools.timeline"],
+          "next": "open-perps",
+          "intent": "Record the requested browser execution timeline."
         }
       ]
     },
@@ -190,12 +178,11 @@
       "description": "Set text through the real UI input path.",
       "examples": [
         {
-          "node": {
-            "action": "ui.set_input",
-            "test_id": "account-search-input",
-            "value": "Account",
-            "intent": "Set text through the real UI input path"
-          }
+          "action": "ui.set_input",
+          "test_id": "account-search-input",
+          "value": "Account",
+          "intent": "Provide the requested value in the visible form.",
+          "next": "done"
         }
       ],
       "schema": {
@@ -227,21 +214,43 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.press",
+          "intent": "Activate the requested visible control.",
+          "test_id": "example-control",
+          "next": "done"
+        }
+      ]
     },
     "ui.key_press": {
       "description": "ui.key_press action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.key_press",
+          "intent": "Continue the requested keyboard interaction.",
+          "next": "done"
+        }
+      ]
     },
     "ui.scroll": {
       "description": "ui.scroll action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.scroll",
+          "intent": "Expose the requested content for visible review.",
+          "next": "done"
+        }
+      ]
     },
     "ui.screenshot": {
       "description": "ui.screenshot action.",
@@ -283,62 +292,112 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.screenshot",
+          "intent": "Preserve the visible application state as review evidence.",
+          "label": "example-state",
+          "next": "done"
+        }
+      ]
     },
     "cdp.storage": {
       "description": "cdp.storage action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "cdp.storage",
+          "intent": "Record the requested browser storage state for proof.",
+          "next": "done"
+        }
+      ]
     },
     "cdp.emulation": {
       "description": "cdp.emulation action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "cdp.emulation",
+          "intent": "Apply the requested browser environment for this proof.",
+          "next": "done"
+        }
+      ]
     },
     "cdp.metrics": {
       "description": "cdp.metrics action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "cdp.metrics",
+          "intent": "Record the requested browser performance measurements.",
+          "next": "done"
+        }
+      ]
     },
     "state_read": {
       "description": "state_read action.",
       "schema": {
         "type": "object",
         "properties": {
-          "save_as": {
+          "source": {
             "type": "string"
           },
-          "assert": {
-            "type": "object",
-            "properties": {
-              "path": {
-                "type": "string"
-              },
-              "operator": {
-                "type": "string"
-              },
-              "value": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
+          "path": {
+            "type": "string"
           }
         },
+        "required": ["source"],
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "state_read",
+          "intent": "Record the requested application state for proof.",
+          "source": "command",
+          "path": "$.stdout",
+          "next": "done"
+        }
+      ]
     },
     "watch_logs": {
       "description": "watch_logs action.",
       "schema": {
         "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "contains": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["run", "file"]
+          }
+        },
+        "required": ["path"],
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "watch_logs",
+          "intent": "Observe the runtime behavior needed for this proof.",
+          "path": "logs/example.log",
+          "contains": "ready",
+          "scope": "file",
+          "next": "done"
+        }
+      ]
     },
     "index_artifacts": {
       "description": "index_artifacts action.",
@@ -358,33 +417,69 @@
                 },
                 "label": {
                   "type": "string"
+                },
+                "nodeId": {
+                  "type": "string"
+                },
+                "mimeType": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "proofTarget": {
+                  "type": "string"
+                },
+                "covers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "additionalProperties": false
             }
           }
         },
+        "required": ["artifacts"],
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "index_artifacts",
+          "intent": "Preserve generated evidence in the review package.",
+          "artifacts": ["reports/example.json"],
+          "next": "done"
+        }
+      ]
     },
     "switch": {
       "description": "Choose a graph branch when one resolved string equals another.",
       "schema": {
         "type": "object",
         "properties": {
-          "value": { "type": "string" },
-          "equals": { "type": "string" }
+          "value": {
+            "type": "string"
+          },
+          "equals": {
+            "type": "string"
+          }
         },
         "required": ["value", "equals"],
         "additionalProperties": false
       },
-      "result_cases": ["match"]
-    }
-  },
-  "custom_actions": [
-    {
-      "name": "example.wallet.unlock",
-      "owner": "example",
+      "result_cases": ["match"],
+      "examples": [
+        {
+          "action": "switch",
+          "intent": "Choose the graph path matching the observed state.",
+          "value": "example",
+          "equals": "example",
+          "next": "done"
+        }
+      ]
+    },
+    "example.wallet.unlock": {
       "description": "Unlock a debug Example App wallet through the real extension unlock path.",
       "schema": {
         "type": "object",
@@ -398,18 +493,15 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "example.wallet.unlock",
-            "account": "primary",
-            "next": "open-perps"
-          }
+          "action": "example.wallet.unlock",
+          "intent": "Ensure the primary Example App wallet is unlocked.",
+          "account": "primary",
+          "next": "open-perps"
         }
       ],
       "execution_capabilities": ["app-mutation"]
     },
-    {
-      "name": "example.wallet.select_network",
-      "owner": "example",
+    "example.wallet.select_network": {
       "description": "Select or configure an Example App network fixture.",
       "schema": {
         "type": "object",
@@ -425,18 +517,15 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "example.wallet.select_network",
-            "network": "sepolia",
-            "next": "open-perps"
-          }
+          "action": "example.wallet.select_network",
+          "intent": "Use Sepolia for the following Example App checks.",
+          "network": "sepolia",
+          "next": "open-perps"
         }
       ],
       "execution_capabilities": ["app-mutation"]
     },
-    {
-      "name": "example.debug.eval",
-      "owner": "example",
+    "example.debug.eval": {
       "description": "Debug-only CDP eval escape hatch for setup diagnostics, not primary proof.",
       "schema": {
         "type": "object",
@@ -456,35 +545,15 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "example.debug.eval",
-            "target": "background",
-            "expression": "location.href",
-            "save_as": "background_url",
-            "next": "done"
-          }
+          "action": "example.debug.eval",
+          "intent": "Inspect the background page URL while diagnosing setup.",
+          "target": "background",
+          "expression": "location.href",
+          "save_as": "background_url",
+          "next": "done"
         }
       ],
-      "safety_notes": "Use cdp.*, ui.*, or state_read refs for proof. This action is debug-only.",
       "execution_capabilities": ["arbitrary-code"]
     }
-  ],
-  "native_bindings": [
-    {
-      "action": "cdp.target",
-      "implementation": "example-browser/cdp/select-target"
-    },
-    {
-      "action": "ui.wait_for",
-      "implementation": "example-browser/cdp/wait-for-dom"
-    },
-    {
-      "action": "cdp.network",
-      "implementation": "example-browser/cdp/network-probe"
-    },
-    {
-      "action": "ui.set_input",
-      "implementation": "example-browser/cdp/set-input"
-    }
-  ]
+  }
 }

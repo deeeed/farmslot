@@ -35,7 +35,10 @@ Direct `run` and nested `call` use the same ordered recipe index. The first sour
 
 Farmslot owns graph execution, static resolution, trust, trace, and artifact contracts. Projects own namespaced action implementations and libraries of parameterized recipes.
 
-Libraries contain `library.json` plus `recipes/`. Recipe identity derives from the path. Adapter suffixes `.core`, `.extension`, and `.mobile` select variants without changing the id.
+Libraries contain `recipes/` and may add runner-owned manifests/actions. Recipe
+identity derives from the path; provenance names come from the configured alias
+or directory. Adapter suffixes `.core`, `.extension`, and `.mobile` select
+variants without changing the id.
 
 Prefer parameters over near-duplicate recipes. Add reusable recipes only when they reduce repeated inference or enforce a safety invariant.
 

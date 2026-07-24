@@ -24,15 +24,9 @@ const terminalRecipe = (title: string) => ({
 
 async function createLibrary(
   root: string,
-  name: string,
   recipes: Record<string, Record<string, unknown>>,
 ): Promise<void> {
   await mkdir(path.join(root, 'recipes'), { recursive: true });
-  await writeJsonFile(path.join(root, 'library.json'), {
-    schema_version: 1,
-    kind: 'recipe-library',
-    name,
-  });
   for (const [file, document] of Object.entries(recipes)) {
     const target = path.join(root, 'recipes', file);
     await mkdir(path.dirname(target), { recursive: true });
@@ -66,7 +60,7 @@ test('places an adjacent task recipe library before configured sources', async (
   try {
     const taskDir = path.join(tempRoot, 'artifacts');
     const taskLibrary = path.join(taskDir, 'recipe-library');
-    await createLibrary(taskLibrary, 'task-local', {});
+    await createLibrary(taskLibrary, {});
     const sources = await resolveRecipeLibrarySources({
       recipePath: path.join(taskDir, 'recipe.json'),
       cliEntries: ['team=/tmp/team'],
@@ -92,16 +86,29 @@ test('places an adjacent task recipe library before configured sources', async (
   }
 });
 
+test('derives the source name from the configured alias or directory', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-source-'));
+  try {
+    await mkdir(path.join(tempRoot, 'recipes'), { recursive: true });
+    const derived = await loadRecipeLibraries([{ root: tempRoot }]);
+    assert.equal(derived.sources[0]?.name, path.basename(tempRoot));
+    const named = await loadRecipeLibraries([{ name: 'team', root: tempRoot }]);
+    assert.equal(named.sources[0]?.name, 'team');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('indexes recipe files with source precedence, adapter variants, and shadow visibility', async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-'));
   try {
     const team = path.join(tempRoot, 'team');
     const personal = path.join(tempRoot, 'personal');
-    await createLibrary(team, 'team', {
+    await createLibrary(team, {
       'perps/smoke.recipe.json': terminalRecipe('Team generic'),
       'perps/smoke.mobile.recipe.json': terminalRecipe('Team mobile'),
     });
-    await createLibrary(personal, 'personal', {
+    await createLibrary(personal, {
       'perps/smoke.recipe.json': terminalRecipe('Personal generic'),
     });
 
@@ -133,7 +140,7 @@ test('rejects invalid recipes and recipe symlinks that escape a library', async 
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-invalid-'));
   try {
     const invalid = path.join(tempRoot, 'invalid');
-    await createLibrary(invalid, 'invalid', {
+    await createLibrary(invalid, {
       'bad.recipe.json': {
         $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
         description: 'Intentionally invalid graph.',
@@ -145,7 +152,7 @@ test('rejects invalid recipes and recipe symlinks that escape a library', async 
     const outside = path.join(tempRoot, 'outside.recipe.json');
     await writeFile(outside, JSON.stringify(terminalRecipe('Outside')));
     const escaped = path.join(tempRoot, 'escaped');
-    await createLibrary(escaped, 'escaped', {});
+    await createLibrary(escaped, {});
     await symlink(outside, path.join(escaped, 'recipes', 'linked.recipe.json'));
     await assert.rejects(loadRecipeLibraries([{ root: escaped }]), /outside its library root/u);
   } finally {
@@ -158,10 +165,13 @@ test('rejects duplicate source names', async () => {
   try {
     const first = path.join(tempRoot, 'first');
     const second = path.join(tempRoot, 'second');
-    await createLibrary(first, 'same', {});
-    await createLibrary(second, 'same', {});
+    await createLibrary(first, {});
+    await createLibrary(second, {});
     await assert.rejects(
-      loadRecipeLibraries([{ root: first }, { root: second }]),
+      loadRecipeLibraries([
+        { name: 'same', root: first },
+        { name: 'same', root: second },
+      ]),
       /configured more than once/u,
     );
   } finally {

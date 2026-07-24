@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-07-24
+
+- Validate retained recipe traces against their recipes and artifact attribution.
+
 ## 0.3.0 - 2026-07-24
 
 - Fail artifact validation when the installed protocol rejects the canonical Recipe v1 envelope.

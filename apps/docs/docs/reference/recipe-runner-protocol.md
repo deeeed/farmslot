@@ -18,6 +18,7 @@ The runner connects [Recipe Protocol v1](./recipe-protocol-v1.md) to a project's
 | Artifact package | Exact recipes, provenance, trace, verdict, and proof                 |
 
 Projects own namespaced actions and recipe libraries. Farmslot owns the graph, trust, trace, and artifact contracts.
+Action manifests use `https://farmslot.io/schemas/action-manifest-v1.schema.json` for editor validation.
 
 ## Discovery
 

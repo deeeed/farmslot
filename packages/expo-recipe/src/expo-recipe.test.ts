@@ -59,9 +59,11 @@ test('installs the Expo recipe scaffold idempotently', async () => {
     assert.equal(forced.packageJsonUpdated, true);
     assert.equal((await runExpoRecipeDoctor({ projectRoot: root })).status, 'pass');
 
-    const manifest = await readFile(path.join(root, DEFAULT_EXPO_RECIPE_MANIFEST_PATH), 'utf-8');
-    assert.match(manifest, /"capability": "record\.video"/u);
-    assert.match(manifest, /"modes": \["full_run"\]/u);
+    const manifest = JSON.parse(
+      await readFile(path.join(root, DEFAULT_EXPO_RECIPE_MANIFEST_PATH), 'utf-8'),
+    );
+    assert.deepEqual(Object.keys(manifest).sort(), ['$schema', 'actions', 'observers']);
+    assert.ok(manifest.actions['ui.screenshot']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -75,9 +77,10 @@ test('installs optional bridge files and validates the dev guard contract', asyn
     assert.ok(result.written.includes('src/farmslot/RecipeBridgeProvider.tsx'));
     assert.ok(result.written.includes('src/farmslot/RecipeHud.tsx'));
 
-    const manifest = await readFile(path.join(root, DEFAULT_EXPO_RECIPE_MANIFEST_PATH), 'utf-8');
-    assert.match(manifest, /"app\.hud"/u);
-    assert.match(manifest, /"capability": "record\.video"/u);
+    const manifest = JSON.parse(
+      await readFile(path.join(root, DEFAULT_EXPO_RECIPE_MANIFEST_PATH), 'utf-8'),
+    );
+    assert.ok(manifest.actions['app.hud']);
 
     const provider = await readFile(
       path.join(root, 'src/farmslot/RecipeBridgeProvider.tsx'),
@@ -297,11 +300,6 @@ test('runs composed recipes from the configured library', async () => {
   try {
     await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
     await installExpoRecipeScaffold({ projectRoot: root });
-    await writeJson(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'test-library',
-    });
     await writeJson(path.join(libraryRoot, 'recipes', 'shared', 'wait-ready.recipe.json'), {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       description: 'Provides a reusable composed recipe boundary.',
@@ -355,11 +353,6 @@ test('CLI passes typed root params and resolves the adjacent task recipe library
     await installExpoRecipeScaffold({ projectRoot: root });
     const taskDir = path.join(root, 'artifacts');
     const libraryRoot = path.join(taskDir, 'recipe-library');
-    await writeJson(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'task-local',
-    });
     await writeJson(path.join(libraryRoot, 'recipes', 'task', 'write.recipe.json'), {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       description: 'Writes the caller-provided marker.',

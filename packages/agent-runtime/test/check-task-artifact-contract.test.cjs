@@ -47,7 +47,7 @@ function makeTaskDir(name) {
     `${JSON.stringify({ version: 1, runStatus: 'pass', artifacts: [] })}\n`,
   );
   writeFileSync(path.join(runDir, 'summary.json'), '{"status":"pass"}\n');
-  writeFileSync(path.join(runDir, 'trace.json'), '[]\n');
+  writeFileSync(path.join(runDir, 'trace.json'), '[{"nodeId":"done","action":"end","ok":true}]\n');
   writeFileSync(path.join(artifactsDir, 'recipe-coverage.md'), '1/1 passed\n');
   return taskDir;
 }
@@ -92,6 +92,13 @@ result = spawnSync(process.execPath, [checker, taskDir, '--require-recipe-qualit
   encoding: 'utf8',
 });
 assert.equal(result.status, 0, result.stderr);
+
+result = spawnSync(process.execPath, [checker, taskDir, '--require-recipe-quality-if-recipe'], {
+  encoding: 'utf8',
+  env: { ...process.env, FARMSLOT_TEST_DISABLE_RECIPE_PROTOCOL: '1' },
+});
+assert.equal(result.status, 1);
+assert.match(result.stderr, /requires built @farmslot\/protocol/);
 
 taskDir = makeTaskDir('farmslot-agent-artifact-symlink-');
 const outsideDir = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-artifact-outside-'));

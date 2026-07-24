@@ -51,6 +51,16 @@ export async function copyFileWithinRoots(
   destinationRoot: string,
   destinationRelativePath: string,
 ): Promise<string> {
+  const [sourceRootReal, destinationRootReal] = await Promise.all([
+    realpath(sourceRoot),
+    realpath(destinationRoot),
+  ]);
+  if (
+    sourceRootReal === destinationRootReal &&
+    normalizeRelativePath(sourceRelativePath) === normalizeRelativePath(destinationRelativePath)
+  ) {
+    throw new Error(`Source and destination must be different files: ${sourceRelativePath}.`);
+  }
   let source: FileHandle | undefined;
   let destination: { handle: FileHandle; path: string } | undefined;
   try {

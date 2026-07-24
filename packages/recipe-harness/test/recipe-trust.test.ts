@@ -4,8 +4,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import type { RecipeActionManifestDocument, RecipeSourceProvenance } from '@farmslot/protocol';
-import { canonicalRecipeJson } from '@farmslot/protocol/recipe';
+import type {
+  RecipeActionCatalogEntry,
+  RecipeActionManifestDocument,
+  RecipeSourceProvenance,
+} from '@farmslot/protocol';
+import {
+  canonicalRecipeJson,
+  OFFICIAL_RECIPE_ACTIONS,
+  RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+} from '@farmslot/protocol/recipe';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { runRecipeHarnessCli } from '../src/cli/index.js';
@@ -17,37 +25,71 @@ import { resolveRecipeTrustInput } from '../src/core/trust-input.js';
 
 const trusted: RecipeSourceProvenance = { kind: 'bundled', trust: 'trusted', name: 'test' };
 const untrusted: RecipeSourceProvenance = { kind: 'task', trust: 'untrusted', name: 'pr' };
+const officialActions = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
+
+function testActionSchema(action: string): Record<string, unknown> {
+  const properties =
+    action === 'command'
+      ? { cmd: { type: 'string' } }
+      : action === 'index_artifacts'
+        ? {
+            artifacts: {
+              type: 'array',
+              items: { type: ['string', 'object'], additionalProperties: true },
+            },
+          }
+        : {};
+  return { type: 'object', properties, additionalProperties: false };
+}
+
+function testAction(
+  action: string,
+  overrides: Partial<RecipeActionCatalogEntry> = {},
+): RecipeActionCatalogEntry {
+  return {
+    description: `Exercise ${action} trust behavior.`,
+    ...(action === 'call' || action === 'end' ? {} : { schema: testActionSchema(action) }),
+    ...(!officialActions.has(action) ? { execution_capabilities: [] } : {}),
+    examples:
+      action === 'end'
+        ? [{ action, status: 'pass' }]
+        : action === 'call'
+          ? [
+              {
+                action,
+                intent: 'Reuse the requested trust-policy recipe.',
+                ref: 'test.child',
+                params: {},
+                next: 'done',
+              },
+            ]
+          : [{ action, intent: 'Confirm the requested trust-policy state.', next: 'done' }],
+    ...overrides,
+  };
+}
+
 const manifest: RecipeActionManifestDocument = {
-  runner_protocol_version: 1,
-  action_registry_version: 1,
-  supported_official_actions: ['command', 'index_artifacts', 'call', 'end'],
-  action_metadata: {
-    command: {
+  $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+  actions: {
+    command: testAction('command', {
       description: 'Run a test command.',
-      schema: { type: 'object', additionalProperties: true },
-    },
-    index_artifacts: {
+      schema: testActionSchema('command'),
+    }),
+    index_artifacts: testAction('index_artifacts', {
       description: 'Index test artifacts.',
-      schema: { type: 'object', additionalProperties: true },
-    },
+      schema: testActionSchema('index_artifacts'),
+    }),
+    call: testAction('call'),
+    end: testAction('end'),
   },
 };
 
 function withOfficialActions(...actions: string[]): RecipeActionManifestDocument {
   return {
     ...manifest,
-    supported_official_actions: [...manifest.supported_official_actions, ...actions],
-    action_metadata: {
-      ...manifest.action_metadata,
-      ...Object.fromEntries(
-        actions.map((action) => [
-          action,
-          {
-            description: `Exercise ${action} trust behavior.`,
-            schema: { type: 'object', additionalProperties: true },
-          },
-        ]),
-      ),
+    actions: {
+      ...manifest.actions,
+      ...Object.fromEntries(actions.map((action) => [action, testAction(action)])),
     },
   };
 }
@@ -207,7 +249,7 @@ test('untrusted read-only recipes run while command is denied before side effect
   try {
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     const safe = await runner.run({
       recipeDocument: recipe({ action: 'end', status: 'pass' }),
@@ -250,7 +292,7 @@ test('parameter-templated recipe refs are rejected before side effects', async (
   try {
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
       defaultSource: trusted,
     });
     await assert.rejects(
@@ -273,11 +315,6 @@ test('library recipes cannot introduce parameter-templated refs after root valid
   try {
     const libraryRoot = path.join(root, 'library');
     await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'dynamic-library',
-    });
     await writeJsonFile(path.join(libraryRoot, 'recipes', 'dispatch.recipe.json'), {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       description: 'Attempts a dynamic nested recipe dispatch.',
@@ -296,7 +333,7 @@ test('library recipes cannot introduce parameter-templated refs after root valid
     });
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
       defaultSource: trusted,
     });
     await assert.rejects(
@@ -318,7 +355,7 @@ test('preflight authorizes the exact plan without actions or artifact writes', a
     let executed = false;
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }).map(
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }).map(
         (adapter) =>
           adapter.action === 'command'
             ? {
@@ -354,7 +391,7 @@ test('omitted programmatic provenance fails closed for restricted actions', asyn
   try {
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     await assert.rejects(
       runner.run({
@@ -378,7 +415,7 @@ test('caller source digests cannot misrepresent the loaded recipe document', asy
   try {
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     await assert.rejects(
       runner.preflight({
@@ -402,18 +439,18 @@ test('approved custom implementations are re-hashed immediately before execution
     let executed = false;
     const customManifest: RecipeActionManifestDocument = {
       ...manifest,
-      custom_actions: [
-        {
-          name: 'custom.exec',
+      actions: {
+        ...manifest.actions,
+        'custom.exec': testAction('custom.exec', {
           schema: { type: 'object', additionalProperties: false },
           execution_capabilities: ['arbitrary-code'],
-        },
-      ],
+        }),
+      },
     };
     const runner = createRecipeRunner({
       actionManifest: customManifest,
       adapters: [
-        ...createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+        ...createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
         {
           action: 'custom.exec',
           capabilities: ['arbitrary-code'],
@@ -467,7 +504,7 @@ test('exact-plan approval is bound to the execution context before side effects'
     process.env.FARMSLOT_RECIPE_CONTEXT_TEST = 'review';
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     const baseRequest = {
       recipeDocument: recipe({ action: 'command', cmd: 'touch context-marker.txt' }),
@@ -548,7 +585,7 @@ test('exact-plan approval is bound to effective recipe parameters before side ef
   try {
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     const document = recipe({ action: 'command', cmd: '{{params.cmd}}' });
     document.paramsSchema = {
@@ -611,7 +648,7 @@ test('approval cannot authorize restricted values derived from mutable runtime o
   try {
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     const document = {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
@@ -663,11 +700,6 @@ test('exact-plan approval binds parameters forwarded into nested recipes', async
     const libraryRoot = path.join(root, 'library');
     const childPath = path.join(libraryRoot, 'recipes', 'task', 'parameterized.recipe.json');
     await mkdir(path.dirname(childPath), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'parameter-library',
-    });
     await writeJsonFile(childPath, {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       description: 'Executes an explicitly forwarded command.',
@@ -708,7 +740,7 @@ test('exact-plan approval binds parameters forwarded into nested recipes', async
     };
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     const request = {
       recipeDocument: parent,
@@ -758,7 +790,7 @@ test('explicit execution environments exclude ambient host control variables', a
     process.env.FARMSLOT_RECIPE_CONTEXT_TEST = 'preview';
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     const request = {
       recipeDocument: recipe({ action: 'command', cmd: 'touch explicit-env-marker.txt' }),
@@ -796,7 +828,7 @@ test('untrusted recipes cannot export checkout files through index_artifacts', a
   try {
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     await writeFile(path.join(root, '.env'), 'SECRET=value\n');
     await assert.rejects(
@@ -820,6 +852,63 @@ test('untrusted recipes cannot export checkout files through index_artifacts', a
   }
 });
 
+test('passive observers are capability- and digest-bound before execution', async () => {
+  const root = await tempRoot();
+  try {
+    const action = testAction('demo.inspect', {
+      schema: { type: 'object', additionalProperties: false },
+      execution_capabilities: [],
+    });
+    const baseManifest: RecipeActionManifestDocument = {
+      $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+      actions: {
+        'demo.inspect': action,
+        end: testAction('end'),
+      },
+    };
+    const adapter = {
+      action: 'demo.inspect',
+      capabilities: [] as const,
+      source: trusted,
+      async execute() {
+        return {};
+      },
+      async observe() {
+        return { observations: { 'ui.screen': { name: 'Home' } } };
+      },
+    };
+    const createRunner = (actionManifest: RecipeActionManifestDocument) =>
+      createRecipeRunner({ actionManifest, adapters: [adapter] });
+    const request = {
+      recipeDocument: recipe({ action: 'demo.inspect' }),
+      artifactsDir: path.join(root, 'artifacts'),
+      projectRoot: root,
+      source: trusted,
+    };
+    const plainPlan = await createRunner(baseManifest).preflight(request);
+    const observedManifest: RecipeActionManifestDocument = {
+      ...baseManifest,
+      observers: [{ ref: 'ui.screen', default_for: ['demo.inspect'] }],
+    };
+    const observedRunner = createRunner(observedManifest);
+    const observedPlan = await observedRunner.preflight(request);
+    const observedNode = observedPlan.nodes.find((node) => node.action === 'demo.inspect');
+
+    assert.notEqual(observedPlan.digest, plainPlan.digest);
+    assert.deepEqual(observedNode?.observerRefs, ['ui.screen']);
+    assert.deepEqual(observedNode?.capabilities, ['host-read-export']);
+    await assert.rejects(
+      observedRunner.preflight({ ...request, source: untrusted }),
+      (error: unknown) =>
+        error instanceof RecipeTrustError &&
+        error.code === 'RECIPE_TRUST_REQUIRED' &&
+        error.failure.blocked?.[0]?.capabilities.includes('host-read-export') === true,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('untrusted recipes cannot trigger UI effects or capture screenshots', async () => {
   const root = await tempRoot();
   try {
@@ -827,7 +916,7 @@ test('untrusted recipes cannot trigger UI effects or capture screenshots', async
     const runner = createRecipeRunner({
       actionManifest: withOfficialActions('ui.press', 'ui.screenshot'),
       adapters: [
-        ...createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+        ...createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
         {
           action: 'ui.press',
           capabilities: [],
@@ -872,17 +961,15 @@ test('custom adapters default to arbitrary code and cannot self-downgrade', asyn
     let executed = false;
     const runner = createRecipeRunner({
       actionManifest: {
-        runner_protocol_version: 1,
-        action_registry_version: 1,
-        supported_official_actions: ['end'],
-        custom_actions: [
-          {
-            name: 'example.read',
+        $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+        actions: {
+          end: testAction('end'),
+          'example.read': testAction('example.read', {
             description: 'Claims to read only.',
             schema: { type: 'object', additionalProperties: false },
             execution_capabilities: [],
-          },
-        ],
+          }),
+        },
       },
       adapters: [
         ...createStandardCoreAdapters({ actions: ['end'] }),
@@ -926,16 +1013,14 @@ test('custom adapter capabilities are unique in public trust failures', async ()
   try {
     const runner = createRecipeRunner({
       actionManifest: {
-        runner_protocol_version: 1,
-        action_registry_version: 1,
-        supported_official_actions: ['end'],
-        custom_actions: [
-          {
-            name: 'example.exec',
+        $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+        actions: {
+          end: testAction('end'),
+          'example.exec': testAction('example.exec', {
             schema: { type: 'object', additionalProperties: false },
             execution_capabilities: ['arbitrary-code'],
-          },
-        ],
+          }),
+        },
       },
       adapters: [
         ...createStandardCoreAdapters({ actions: ['end'] }),
@@ -975,11 +1060,9 @@ test('official action names do not make caller-provided implementations trusted'
   try {
     const runner = createRecipeRunner({
       actionManifest: {
-        runner_protocol_version: 1,
-        action_registry_version: 1,
-        supported_official_actions: ['command', 'end'],
-        action_metadata: {
-          command: {
+        $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+        actions: {
+          command: testAction('command', {
             description: 'Run a command.',
             schema: {
               type: 'object',
@@ -987,7 +1070,16 @@ test('official action names do not make caller-provided implementations trusted'
               required: ['cmd'],
               additionalProperties: false,
             },
-          },
+            examples: [
+              {
+                action: 'command',
+                intent: 'Run the trust-policy probe.',
+                cmd: 'true',
+                next: 'done',
+              },
+            ],
+          }),
+          end: testAction('end'),
         },
       },
       adapters: [
@@ -1019,17 +1111,15 @@ test('manifest risk metadata adds restrictions that adapters cannot remove', asy
     let executed = false;
     const runner = createRecipeRunner({
       actionManifest: {
-        runner_protocol_version: 1,
-        action_registry_version: 1,
-        supported_official_actions: ['end'],
-        custom_actions: [
-          {
-            name: 'example.mutate',
+        $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+        actions: {
+          end: testAction('end'),
+          'example.mutate': testAction('example.mutate', {
             description: 'Mutates an external system.',
             schema: { type: 'object', additionalProperties: false },
             execution_capabilities: ['external-mutation'],
-          },
-        ],
+          }),
+        },
       },
       adapters: [
         ...createStandardCoreAdapters({ actions: ['end'] }),
@@ -1068,17 +1158,15 @@ test('approval cannot authorize custom implementation code without a digest', as
   try {
     const runner = createRecipeRunner({
       actionManifest: {
-        runner_protocol_version: 1,
-        action_registry_version: 1,
-        supported_official_actions: ['end'],
-        custom_actions: [
-          {
-            name: 'example.exec',
+        $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+        actions: {
+          end: testAction('end'),
+          'example.exec': testAction('example.exec', {
             description: 'Runs custom code.',
             schema: { type: 'object', additionalProperties: false },
             execution_capabilities: ['arbitrary-code'],
-          },
-        ],
+          }),
+        },
       },
       adapters: [
         ...createStandardCoreAdapters({ actions: ['end'] }),
@@ -1113,7 +1201,7 @@ test('untrusted recipes require exact approval before starting video capture', a
     let recordingStarts = 0;
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
       recording: {
         videoRecorder: {
           name: 'test',
@@ -1158,7 +1246,7 @@ test('automatic HUD implementation is included in trust preflight', async () => 
     const runner = createRecipeRunner({
       actionManifest: withOfficialActions('app.hud'),
       adapters: [
-        ...createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+        ...createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
         {
           action: 'app.hud',
           source: {
@@ -1210,7 +1298,7 @@ test('untrusted recipes cannot trigger automatic HUD mutations before approval',
     const runner = createRecipeRunner({
       actionManifest: withOfficialActions('app.hud'),
       adapters: [
-        ...createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+        ...createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
         {
           action: 'app.hud',
           source: trusted,
@@ -1251,11 +1339,6 @@ test('recipe dependency provenance is transitive and approval is digest-bound', 
     const libraryRoot = path.join(root, 'library');
     const recipePath = path.join(libraryRoot, 'recipes', 'task', 'exec.recipe.json');
     await mkdir(path.dirname(recipePath), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'task-library',
-    });
     const writeDependency = async (marker: string) =>
       writeJsonFile(
         recipePath,
@@ -1269,7 +1352,7 @@ test('recipe dependency provenance is transitive and approval is digest-bound', 
 
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     const request = {
       recipeDocument: recipe({ action: 'call', ref: 'task.exec' }),
@@ -1310,11 +1393,6 @@ test('untrusted callers cannot launder restricted actions through trusted recipe
     const libraryRoot = path.join(root, 'library');
     const recipePath = path.join(libraryRoot, 'recipes', 'trusted', 'exec.recipe.json');
     await mkdir(path.dirname(recipePath), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'trusted-library',
-    });
     await writeJsonFile(
       recipePath,
       recipe({
@@ -1325,7 +1403,7 @@ test('untrusted callers cannot launder restricted actions through trusted recipe
     );
     const runner = createRecipeRunner({
       actionManifest: manifest,
-      adapters: createStandardCoreAdapters({ actions: manifest.supported_official_actions }),
+      adapters: createStandardCoreAdapters({ actions: Object.keys(manifest.actions) }),
     });
     await assert.rejects(
       runner.run({
@@ -1354,11 +1432,6 @@ test('library recipe symlinks cannot escape the library root', async () => {
   const outside = await tempRoot();
   try {
     await mkdir(path.join(root, 'recipes'), { recursive: true });
-    await writeJsonFile(path.join(root, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'linked-library',
-    });
     const outsideRecipe = path.join(outside, 'outside.recipe.json');
     await writeJsonFile(outsideRecipe, recipe({ action: 'end', status: 'pass' }));
     await symlink(outsideRecipe, path.join(root, 'recipes', 'linked.recipe.json'));

@@ -31,14 +31,12 @@
         "action": "command",
         "next": "open-artifact-index",
         "cmd": "node apps/command-center/scripts/gateway-smoke.mjs --method run.recipeRunsForRun --gateway-url {{params.gateway_url}} --run-id {{params.run_id}} --slot-id {{params.slot_id}}",
-        "save_as": "list_recipe_runs",
         "intent": "Request run.recipeRunsForRun and verify the gateway returns current, attempted, and promoted recipe-run groups when available."
       },
       "open-artifact-index": {
         "action": "command",
         "next": "validate-manifest-package",
         "cmd": "curl -fsS \"{{params.gateway_url}}/api/run-artifact?runId={{params.run_id}}&recipeRunId={{params.recipe_run_id}}\" > reports/artifact-index-response.json",
-        "save_as": "artifact_response",
         "intent": "Open a typed recipe-run artifact through the /api/run-artifact route with the selected recipeRunId preserved."
       },
       "validate-manifest-package": {
@@ -51,7 +49,6 @@
         "action": "command",
         "next": "index-artifacts",
         "cmd": "node apps/command-center/scripts/gateway-smoke.mjs --method run.familyObservability --gateway-url {{params.gateway_url}} --run-id {{params.run_id}} --slot-id {{params.slot_id}}",
-        "save_as": "assert_family_projection",
         "intent": "Verify run/family observability can project recipe-run artifact groups without mixing PR feedback artifacts into recipe evidence."
       },
       "index-artifacts": {

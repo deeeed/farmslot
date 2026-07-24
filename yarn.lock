@@ -4589,6 +4589,7 @@ __metadata:
   dependencies:
     "@noble/hashes": "npm:1.4.0"
     "@types/node": "npm:^22.0.0"
+    ajv: "npm:^8.20.0"
     eslint: "npm:^10.3.0"
     prettier: "npm:^3.8.3"
     tsx: "npm:^4.19.0"
@@ -8141,7 +8142,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ajv@npm:^8.0.0, ajv@npm:^8.9.0":
+"ajv@npm:^8.0.0, ajv@npm:^8.20.0, ajv@npm:^8.9.0":
   version: 8.20.0
   resolution: "ajv@npm:8.20.0"
   dependencies:

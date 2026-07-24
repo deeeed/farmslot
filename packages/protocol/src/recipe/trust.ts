@@ -1,4 +1,4 @@
-import type { OfficialActionName, RecipeActionName } from './common.js';
+import type { OfficialActionName, RecipeActionName, UiObserverRef } from './common.js';
 
 export const RECIPE_EXECUTION_CAPABILITIES = [
   'host-exec',
@@ -30,6 +30,8 @@ export interface RecipePlanNode {
   nodeId: string;
   action: RecipeActionName;
   capabilities: RecipeExecutionCapability[];
+  /** Passive observations executed after this node. */
+  observerRefs?: UiObserverRef[];
   /** Where the node definition came from. */
   origin: RecipeSourceProvenance;
   /** Trust carried by the recipe call chain that reached this node. */

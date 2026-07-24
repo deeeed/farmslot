@@ -44,12 +44,8 @@
     "action": "index_artifacts",
     "ok": true,
     "durationMs": 1075,
-    "artifacts": [
-      "screenshots/mobile-companion-artifacts.svg",
-      "reports/mobile-navigation.json",
-      "logs/mobile-companion.log"
-    ],
-    "intent": "Publish mobile screenshot, navigation report, trace, summary, and resolved recipe for review."
+    "artifacts": ["reports/mobile-navigation.json", "logs/mobile-companion.log"],
+    "intent": "Publish the mobile navigation report and log; the screenshot is already registered by its capture action."
   },
   {
     "id": "done",

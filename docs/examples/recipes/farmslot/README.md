@@ -7,7 +7,7 @@ recipe with a sample artifact package shaped like a completed project run.
 
 The matching action catalog example is
 `../farmslot-v1.action-manifest.json`. It declares the official actions and
-precondition IDs these fixtures use.
+strict action contracts these fixtures use.
 
 The suite covers:
 
@@ -22,7 +22,6 @@ The suite covers:
 - Live recipe player: warm-slot replay, visible stream/logs, and generated
   output artifacts.
 - Documentation/onboarding: v1 contract validation for examples and fixtures.
-- Demo red banner: CDP UI proof for the ff-\* sandbox monitoring banner smoke task.
 
 Validate every fixture from the repository root with:
 

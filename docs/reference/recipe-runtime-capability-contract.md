@@ -198,12 +198,13 @@ Farmslot owns recipe indexing, `call` execution, validation, nested trace, and a
 
 Every runner manifest should declare:
 
-- supported official actions;
-- custom actions with descriptions, schemas, and examples;
-- native bindings that show which base capability implements an action;
-- capability notes for CDP, web, RN, browser extension, backend, or CLI support.
+- one keyed `actions` allowlist;
+- strict schemas and copyable examples for every action;
+- explicit `execution_capabilities` for every custom action.
 
-Agents should read the manifest instead of guessing actions.
+The loader derives official/custom identity from the protocol registry and source
+identity from resolution provenance. Agents should use runner discovery instead
+of guessing actions.
 
 ## Injection rule
 

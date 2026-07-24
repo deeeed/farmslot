@@ -1,0 +1,441 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "title": "Farmslot Recipe Action Manifest v1",
+  "description": "Declares the actions a Recipe Protocol v1 runner can execute.",
+  "type": "object",
+  "required": ["$schema", "actions"],
+  "properties": {
+    "$schema": {
+      "const": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+      "description": "Canonical Action Manifest v1 schema URL used by editors and validators."
+    },
+    "actions": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "anyOf": [
+          {
+            "enum": [
+              "command",
+              "wait",
+              "assert_file",
+              "assert_json",
+              "assert_exit_code",
+              "assert_output",
+              "state_read",
+              "watch_logs",
+              "index_artifacts",
+              "call",
+              "switch",
+              "manual",
+              "end",
+              "ui.navigate",
+              "ui.press",
+              "ui.key_press",
+              "ui.set_input",
+              "ui.scroll",
+              "ui.gesture",
+              "ui.wait_for",
+              "ui.screenshot",
+              "app.status",
+              "app.lifecycle",
+              "app.hud",
+              "app.trace",
+              "cdp.target",
+              "cdp.storage",
+              "cdp.network",
+              "cdp.emulation",
+              "cdp.metrics",
+              "cdp.trace"
+            ]
+          },
+          {
+            "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+$"
+          }
+        ]
+      },
+      "properties": {
+        "command": { "$ref": "#/$defs/actionWithSchema" },
+        "wait": { "$ref": "#/$defs/actionWithSchema" },
+        "assert_file": { "$ref": "#/$defs/actionWithSchema" },
+        "assert_json": { "$ref": "#/$defs/actionWithSchema" },
+        "assert_exit_code": { "$ref": "#/$defs/actionWithSchema" },
+        "assert_output": { "$ref": "#/$defs/actionWithSchema" },
+        "state_read": { "$ref": "#/$defs/actionWithSchema" },
+        "watch_logs": { "$ref": "#/$defs/actionWithSchema" },
+        "index_artifacts": { "$ref": "#/$defs/actionWithSchema" },
+        "call": { "$ref": "#/$defs/action" },
+        "switch": { "$ref": "#/$defs/actionWithSchema" },
+        "manual": { "$ref": "#/$defs/actionWithSchema" },
+        "end": { "$ref": "#/$defs/action" },
+        "ui.navigate": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.press": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.key_press": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.set_input": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.scroll": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.gesture": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.wait_for": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.screenshot": { "$ref": "#/$defs/actionWithSchema" },
+        "app.status": { "$ref": "#/$defs/actionWithSchema" },
+        "app.lifecycle": { "$ref": "#/$defs/actionWithSchema" },
+        "app.hud": { "$ref": "#/$defs/actionWithSchema" },
+        "app.trace": { "$ref": "#/$defs/actionWithSchema" },
+        "cdp.target": { "$ref": "#/$defs/actionWithSchema" },
+        "cdp.storage": { "$ref": "#/$defs/actionWithSchema" },
+        "cdp.network": { "$ref": "#/$defs/actionWithSchema" },
+        "cdp.emulation": { "$ref": "#/$defs/actionWithSchema" },
+        "cdp.metrics": { "$ref": "#/$defs/actionWithSchema" },
+        "cdp.trace": { "$ref": "#/$defs/actionWithSchema" }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/customAction"
+      },
+      "description": "Actions keyed by their official or namespaced custom action name."
+    },
+    "observers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/observer"
+      },
+      "description": "Optional passive observers automatically applied after selected actions."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "actionWithSchema": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/action"
+        },
+        {
+          "required": ["schema"]
+        }
+      ],
+      "description": "Official adapter action with an explicit parameter schema."
+    },
+    "customAction": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/action"
+        },
+        {
+          "required": ["schema", "execution_capabilities"]
+        }
+      ],
+      "description": "Namespaced custom action with explicit parameters and enforced execution effects."
+    },
+    "action": {
+      "type": "object",
+      "required": ["description", "examples"],
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Concise purpose shown by action discovery."
+        },
+        "schema": {
+          "$ref": "#/$defs/paramsSchema",
+          "description": "Strict JSON Schema for action-specific node parameters. The runtime additionally validates cross-field relationships such as required names and enum/default value types."
+        },
+        "result_cases": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Finite result cases available to recipe graph routing."
+        },
+        "examples": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/example"
+          },
+          "description": "Copyable Recipe v1 action nodes with a human-facing intent."
+        },
+        "execution_capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "host-exec",
+              "host-read-export",
+              "app-mutation",
+              "external-mutation",
+              "arbitrary-code"
+            ]
+          },
+          "description": "Security-relevant effects enforced by the runner trust plan. Custom actions must declare this field, including an empty array for read-only actions."
+        }
+      },
+      "additionalProperties": false
+    },
+    "paramsSchema": {
+      "type": "object",
+      "required": ["type", "additionalProperties"],
+      "properties": {
+        "type": {
+          "const": "object",
+          "description": "Action parameters are always represented by one object."
+        },
+        "additionalProperties": {
+          "const": false,
+          "description": "Unknown action parameters are rejected."
+        },
+        "required": {
+          "$ref": "#/$defs/requiredProperties"
+        },
+        "properties": {
+          "$ref": "#/$defs/parameterProperties"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Closed action-parameter schema supported by Recipe Protocol v1."
+    },
+    "parameterProperties": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/parameterSchema"
+      }
+    },
+    "requiredProperties": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "parameterType": {
+      "anyOf": [
+        {
+          "enum": ["string", "number", "integer", "boolean", "object", "array"]
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["string", "number", "integer", "boolean", "object", "array"]
+          }
+        }
+      ]
+    },
+    "parameterSchema": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/parameterType"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable purpose of this parameter."
+        },
+        "default": {
+          "description": "Optional default value applied when the parameter is omitted."
+        },
+        "enum": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Optional finite set of accepted parameter values."
+        },
+        "additionalProperties": {
+          "type": "boolean",
+          "description": "Whether an object parameter accepts undeclared nested properties."
+        },
+        "required": {
+          "$ref": "#/$defs/requiredProperties"
+        },
+        "properties": {
+          "$ref": "#/$defs/parameterProperties"
+        },
+        "items": {
+          "$ref": "#/$defs/parameterSchema"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "anyOf": [
+                  {
+                    "const": "array"
+                  },
+                  {
+                    "type": "array",
+                    "contains": {
+                      "const": "array"
+                    }
+                  }
+                ]
+              }
+            },
+            "required": ["type"]
+          },
+          "then": {
+            "required": ["items"]
+          }
+        }
+      ],
+      "description": "Supported schema for one action parameter."
+    },
+    "example": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["action", "status"],
+          "properties": {
+            "action": {
+              "const": "end",
+              "description": "Terminal examples use the Recipe v1 end action."
+            },
+            "status": {
+              "enum": ["pass", "fail", "unknown"],
+              "description": "Terminal verdict returned by the example."
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action", "intent", "ref", "next"],
+          "properties": {
+            "action": {
+              "const": "call",
+              "description": "Call examples compose another named recipe."
+            },
+            "intent": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Concise human-facing reason for executing the example node."
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1,
+              "not": { "pattern": "\\{\\{(?:params|outputs)\\.[A-Za-z0-9_.-]+\\}\\}" },
+              "description": "Recipe id to compose."
+            },
+            "params": {
+              "type": "object",
+              "description": "Parameters forwarded to the called recipe."
+            },
+            "proves": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "Proof target ids covered by this node."
+            },
+            "next": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Next node id."
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["action", "intent"],
+          "properties": {
+            "action": {
+              "type": "string",
+              "minLength": 1,
+              "not": { "enum": ["call", "end"] },
+              "description": "Action name matching the containing actions key."
+            },
+            "intent": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Concise human-facing reason for executing the example node."
+            },
+            "proves": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "Proof target ids covered by this node."
+            },
+            "next": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Next node id."
+            },
+            "cases": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "Result case names mapped to next node ids."
+            },
+            "default": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Fallback node id when no result case matches."
+            }
+          },
+          "oneOf": [
+            {
+              "required": ["next"],
+              "not": {
+                "anyOf": [{ "required": ["cases"] }, { "required": ["default"] }]
+              }
+            },
+            {
+              "required": ["cases", "default"],
+              "not": { "required": ["next"] }
+            }
+          ],
+          "additionalProperties": true
+        }
+      ]
+    },
+    "observer": {
+      "type": "object",
+      "required": ["ref", "default_for"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "anyOf": [
+            {
+              "enum": ["ui.screen", "ui.visible"]
+            },
+            {
+              "pattern": "\\."
+            }
+          ],
+          "description": "Built-in or namespaced passive observer reference."
+        },
+        "default_for": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "not": { "enum": ["call", "end"] }
+          },
+          "description": "Declared actions after which this observer runs."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

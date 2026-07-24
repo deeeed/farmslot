@@ -93,12 +93,8 @@
       "index-artifacts": {
         "action": "index_artifacts",
         "next": "done",
-        "artifacts": [
-          "screenshots/command-center-recipe-workspace.svg",
-          "reports/dom-assertions.json",
-          "logs/cdp-session.log"
-        ],
-        "intent": "Publish the Command Center UI screenshot, DOM report, trace, summary, and resolved recipe for review."
+        "artifacts": ["reports/dom-assertions.json", "logs/cdp-session.log"],
+        "intent": "Publish the Command Center DOM report and CDP log; the screenshot is already registered by its capture action."
       },
       "done": {
         "action": "end",

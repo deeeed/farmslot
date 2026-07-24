@@ -34,11 +34,11 @@ export interface RecipeRunRequest {
 }
 
 export interface RecipeLibrarySource {
-  /** Source name used in resolution output. Defaults to library.json name, then the directory basename. */
+  /** Source name used in resolution output. Defaults to the directory basename. */
   name?: string;
-  /** Library root directory containing library.json and recipes/. */
+  /** Library root directory containing recipes/ and optionally runner-owned manifests/actions. */
   root: string;
-  /** Trust comes from caller configuration, never from library.json. */
+  /** Trust comes from caller configuration, never from library contents. */
   provenance?: RecipeSourceProvenance;
 }
 
@@ -290,8 +290,7 @@ export interface SummaryDocument {
   harness: {
     name: '@farmslot/recipe-harness';
     version: string;
-    runner_protocol_version: number;
-    action_registry_version: number;
+    action_manifest_schema: string;
   };
   runner?: RecipeRunnerProvenance;
   /** Present when recipe library sources were configured for the run. */

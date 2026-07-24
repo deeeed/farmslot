@@ -112,11 +112,12 @@ async function validateSelfValidationFixtures() {
     const artifactDir = path.join(suiteRoot, entry.artifactDir);
     const recipe = await readJson(recipePath);
     const manifest = await readJson(path.join(artifactDir, 'artifact-manifest.json'));
+    const trace = await readJson(path.join(artifactDir, 'trace.json'));
     const resolution = await readRecipeResolutionBundle(artifactDir);
     const artifactPaths = await listRelativeFiles(artifactDir);
     const result = mergeRecipeValidationResults([
       validateRecipeWithManifest(recipe, actionManifest),
-      validateRecipeArtifactPackage({ recipe, manifest, artifactPaths, ...resolution }),
+      validateRecipeArtifactPackage({ recipe, trace, manifest, artifactPaths, ...resolution }),
     ]);
     entries.push({
       id: entry.id,
@@ -229,23 +230,11 @@ async function runSelfValidation(args: ParsedArgs): Promise<void> {
   const recipeDocument = buildRuntimeRecipe(reportRel, logRel);
   const actionManifest = await readJson(actionManifestPath);
   const runtimeActions = ['command', 'index_artifacts', 'end'];
-  const runtimeActionSet = new Set(runtimeActions);
+  const manifestActions =
+    ((actionManifest as Record<string, unknown>).actions as Record<string, unknown>) ?? {};
   const runtimeManifest = {
-    runner_protocol_version: (actionManifest as Record<string, unknown>).runner_protocol_version,
-    action_registry_version: (actionManifest as Record<string, unknown>).action_registry_version,
-    supported_official_actions: runtimeActions,
-    action_metadata: Object.fromEntries(
-      Object.entries(
-        ((actionManifest as Record<string, unknown>).action_metadata as Record<string, unknown>) ??
-          {},
-      ).filter(([action]) => runtimeActionSet.has(action)),
-    ),
-    native_bindings: (
-      ((actionManifest as Record<string, unknown>).native_bindings as Record<string, unknown>[]) ??
-      []
-    ).filter(
-      (binding) => typeof binding.action === 'string' && runtimeActionSet.has(binding.action),
-    ),
+    $schema: (actionManifest as Record<string, unknown>).$schema,
+    actions: Object.fromEntries(runtimeActions.map((action) => [action, manifestActions[action]])),
   };
   const runner = createRecipeRunner({
     actionManifest: runtimeManifest as never,
@@ -271,10 +260,12 @@ async function runSelfValidation(args: ParsedArgs): Promise<void> {
     },
   });
   const manifest = await readJson(path.join(artifactsDir, 'artifact-manifest.json'));
+  const trace = await readJson(path.join(artifactsDir, 'trace.json'));
   const resolution = await readRecipeResolutionBundle(artifactsDir);
   const artifactPaths = await listRelativeFiles(artifactsDir);
   const validation = validateRecipeArtifactPackage({
     recipe: recipeDocument,
+    trace,
     manifest,
     artifactPaths,
     ...resolution,

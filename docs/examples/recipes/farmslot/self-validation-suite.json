@@ -44,13 +44,6 @@
       "recipe": "documentation-onboarding.recipe.json",
       "artifactDir": "artifacts/documentation-onboarding",
       "proves": "Validates protocol examples, self-validation fixtures, and onboarding commands with the shared v1 contract validator."
-    },
-    {
-      "id": "demo-red-banner",
-      "surface": "command-center-web-ui",
-      "recipe": "demo-red-banner.recipe.json",
-      "artifactDir": "artifacts/demo-red-banner",
-      "proves": "Proves the demo-gated Command Center monitoring banner via CDP-driven UI recipe on ff-* sandboxes."
     }
   ]
 }

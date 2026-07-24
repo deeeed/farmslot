@@ -7,79 +7,77 @@ import {
   isRecord,
   type MutableValidationContext,
   OFFICIAL_ACTION_SET,
-  RECIPE_PROTOCOL_SCHEMA_VERSION,
+  RECIPE_ACTION_MANIFEST_SCHEMA_URL,
   type RecipeValidationResult,
 } from './common.js';
 import { validateRecipeParams, validateRecipeParamsSchema } from './params.js';
 import { RECIPE_EXECUTION_CAPABILITIES } from './trust.js';
-import { getRecipeActionParams } from './workflow.js';
+import {
+  getRecipeActionParams,
+  isDynamicRecipeRef,
+  validateRecipeActionCases,
+  validateRecipeWorkflowNode,
+} from './workflow.js';
 
 const recipeExecutionCapabilitySet = new Set<string>(RECIPE_EXECUTION_CAPABILITIES);
-const ACTION_MANIFEST_FIELDS = new Set([
-  'runner_protocol_version',
-  'action_registry_version',
-  'supported_official_actions',
-  'action_metadata',
-  'custom_actions',
-  'native_bindings',
-  'capabilities',
-  'observers',
+const ACTION_MANIFEST_FIELDS = new Set(['$schema', 'actions', 'observers']);
+const ACTION_ENTRY_FIELDS = new Set([
+  'description',
+  'schema',
+  'result_cases',
+  'examples',
+  'execution_capabilities',
 ]);
+const OBSERVER_FIELDS = new Set(['ref', 'default_for']);
 
 export function getRecipeActionManifestActionNames(manifest: unknown): string[] {
-  if (!isRecord(manifest)) return [];
-  const actionNames = new Set<string>();
-  if (Array.isArray(manifest.supported_official_actions)) {
-    for (const action of manifest.supported_official_actions) {
-      if (isNonEmptyString(action)) actionNames.add(action);
-    }
+  if (!isRecord(manifest) || !isRecord(manifest.actions)) return [];
+  return Object.keys(manifest.actions).sort();
+}
+
+function rejectUnknownFields(
+  ctx: MutableValidationContext,
+  value: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  path: string,
+  code: string,
+): void {
+  for (const field of Object.keys(value)) {
+    if (allowed.has(field)) continue;
+    addFinding(ctx, 'error', code, `${path}.${field}`, `${path} does not support ${field}.`);
   }
-  if (Array.isArray(manifest.custom_actions)) {
-    for (const action of manifest.custom_actions) {
-      if (isRecord(action) && isNonEmptyString(action.name)) actionNames.add(action.name);
-    }
-  }
-  return [...actionNames].sort();
 }
 
 function validateActionCatalogEntry(
   ctx: MutableValidationContext,
+  action: string,
   entry: unknown,
   path: string,
-  expectedAction?: string,
-  schemaRequired = true,
 ): void {
   if (!isRecord(entry)) {
+    addFinding(ctx, 'error', 'action_manifest.invalid_action', path, `${path} must be an object.`);
+    return;
+  }
+  rejectUnknownFields(
+    ctx,
+    entry,
+    ACTION_ENTRY_FIELDS,
+    path,
+    'action_manifest.unsupported_action_field',
+  );
+
+  if (!isNonEmptyString(entry.description)) {
     addFinding(
       ctx,
       'error',
-      'action_manifest.invalid_action_metadata',
-      path,
-      `${path} must be an object.`,
+      'action_manifest.missing_description',
+      `${path}.description`,
+      `${path}.description must be a non-empty string.`,
     );
-    return;
   }
 
-  for (const stringField of [
-    'description',
-    'when_to_use',
-    'avoid_when',
-    'proof_effect',
-    'safety_notes',
-  ]) {
-    const value = entry[stringField];
-    if (value != null && typeof value !== 'string') {
-      addFinding(
-        ctx,
-        'error',
-        'action_manifest.invalid_metadata_field',
-        `${path}.${stringField}`,
-        `${path}.${stringField} must be a string when present.`,
-      );
-    }
-  }
-
-  if (entry.schema == null) {
+  const schemaRequired = action !== 'call' && action !== 'end';
+  if (!Object.hasOwn(entry, 'schema')) {
     if (schemaRequired) {
       addFinding(
         ctx,
@@ -98,7 +96,7 @@ function validateActionCatalogEntry(
       `${path}.schema must be a JSON Schema object when present.`,
     );
   } else {
-    const schemaResult = validateRecipeParamsSchema(entry.schema, { requireClosedRoot: false });
+    const schemaResult = validateRecipeParamsSchema(entry.schema);
     ctx.findings.push(
       ...schemaResult.findings.map((finding) => ({
         ...finding,
@@ -107,7 +105,7 @@ function validateActionCatalogEntry(
     );
   }
 
-  if (entry.result_cases != null) {
+  if (Object.hasOwn(entry, 'result_cases')) {
     if (
       !Array.isArray(entry.result_cases) ||
       entry.result_cases.length === 0 ||
@@ -124,14 +122,17 @@ function validateActionCatalogEntry(
     }
   }
 
-  if (entry.execution_capabilities != null) {
-    if (!Array.isArray(entry.execution_capabilities)) {
+  if (Object.hasOwn(entry, 'execution_capabilities')) {
+    if (
+      !Array.isArray(entry.execution_capabilities) ||
+      new Set(entry.execution_capabilities).size !== entry.execution_capabilities.length
+    ) {
       addFinding(
         ctx,
         'error',
         'action_manifest.invalid_execution_capabilities',
         `${path}.execution_capabilities`,
-        `${path}.execution_capabilities must be an array when present.`,
+        `${path}.execution_capabilities must be an array of unique capabilities.`,
       );
     } else {
       entry.execution_capabilities.forEach((capability, index) => {
@@ -148,18 +149,16 @@ function validateActionCatalogEntry(
     }
   }
 
-  if (entry.examples == null) return;
-  if (!Array.isArray(entry.examples)) {
+  if (!Array.isArray(entry.examples) || entry.examples.length === 0) {
     addFinding(
       ctx,
       'error',
-      'action_manifest.invalid_examples',
+      'action_manifest.missing_examples',
       `${path}.examples`,
-      `${path}.examples must be an array when present.`,
+      `${path}.examples must contain at least one copyable recipe node.`,
     );
     return;
   }
-
   entry.examples.forEach((example, index) => {
     const examplePath = `${path}.examples[${index}]`;
     if (!isRecord(example)) {
@@ -168,55 +167,135 @@ function validateActionCatalogEntry(
         'error',
         'action_manifest.invalid_example',
         examplePath,
-        `${examplePath} must be an object.`,
+        `${examplePath} must be a recipe node object.`,
       );
       return;
     }
-    if (example.description != null && typeof example.description !== 'string') {
-      addFinding(
-        ctx,
-        'error',
-        'action_manifest.invalid_example_description',
-        `${examplePath}.description`,
-        `${examplePath}.description must be a string when present.`,
-      );
-    }
-    if (!isRecord(example.node)) {
-      addFinding(
-        ctx,
-        'error',
-        'action_manifest.invalid_example_node',
-        `${examplePath}.node`,
-        `${examplePath}.node must be an object.`,
-      );
-      return;
-    }
-    if (!isNonEmptyString(example.node.action)) {
-      addFinding(
-        ctx,
-        'error',
-        'action_manifest.invalid_example_action',
-        `${examplePath}.node.action`,
-        `${examplePath}.node.action must be a non-empty string.`,
-      );
-    } else if (expectedAction && example.node.action !== expectedAction) {
+    if (example.action !== action) {
       addFinding(
         ctx,
         'error',
         'action_manifest.example_action_mismatch',
-        `${examplePath}.node.action`,
-        `Example action ${example.node.action} must match declared action ${expectedAction}.`,
+        `${examplePath}.action`,
+        `${examplePath}.action must equal ${action}.`,
       );
     }
+    const nodeResult = validateRecipeWorkflowNode('example', example);
+    ctx.findings.push(
+      ...nodeResult.findings.map((finding) => ({
+        ...finding,
+        path: finding.path.replace(/^workflow\.nodes\.example/u, examplePath),
+      })),
+    );
+    if (action === 'call' && isNonEmptyString(example.ref) && isDynamicRecipeRef(example.ref)) {
+      addFinding(
+        ctx,
+        'error',
+        'workflow.dynamic_call_ref',
+        `${examplePath}.ref`,
+        'call.ref must be static so dependencies can be resolved and trusted before execution.',
+      );
+    }
+    const resultCases = Array.isArray(entry.result_cases)
+      ? entry.result_cases.filter(isNonEmptyString)
+      : undefined;
+    const casesResult = validateRecipeActionCases(example, action, resultCases, examplePath);
+    ctx.findings.push(...casesResult.findings);
     if (isRecord(entry.schema)) {
-      const paramsResult = validateRecipeParams(getRecipeActionParams(example.node), entry.schema, {
+      const paramsResult = validateRecipeParams(getRecipeActionParams(example), entry.schema, {
         allowTemplates: true,
       });
       ctx.findings.push(
         ...paramsResult.findings.map((finding) => ({
           ...finding,
-          path: `${examplePath}.node${finding.path === 'params' ? '' : finding.path.replace(/^params/u, '')}`,
+          path: `${examplePath}${finding.path === 'params' ? '' : finding.path.replace(/^params/u, '')}`,
         })),
+      );
+    }
+  });
+}
+
+function validateObserver(
+  ctx: MutableValidationContext,
+  observer: unknown,
+  index: number,
+  declaredActions: ReadonlySet<string>,
+  declaredObservers: Set<string>,
+): void {
+  const path = `observers[${index}]`;
+  if (!isRecord(observer)) {
+    addFinding(
+      ctx,
+      'error',
+      'action_manifest.invalid_observer',
+      path,
+      `${path} must be an object.`,
+    );
+    return;
+  }
+  rejectUnknownFields(
+    ctx,
+    observer,
+    OBSERVER_FIELDS,
+    path,
+    'action_manifest.unsupported_observer_field',
+  );
+  if (!isNonEmptyString(observer.ref)) {
+    addFinding(
+      ctx,
+      'error',
+      'action_manifest.invalid_observer_ref',
+      `${path}.ref`,
+      `${path}.ref must be a non-empty string.`,
+    );
+  } else {
+    if (!BUILT_IN_UI_OBSERVER_SET.has(observer.ref) && !observer.ref.includes('.')) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.invalid_observer_ref',
+        `${path}.ref`,
+        `${observer.ref} must be a built-in UI observer ref or a namespaced custom ref.`,
+      );
+    }
+    if (declaredObservers.has(observer.ref)) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.duplicate_observer',
+        `${path}.ref`,
+        `${observer.ref} is declared more than once.`,
+      );
+    }
+    declaredObservers.add(observer.ref);
+  }
+  if (
+    !Array.isArray(observer.default_for) ||
+    observer.default_for.length === 0 ||
+    new Set(observer.default_for).size !== observer.default_for.length
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'action_manifest.invalid_observer_default_for',
+      `${path}.default_for`,
+      `${path}.default_for must be a non-empty array of unique declared actions.`,
+    );
+    return;
+  }
+  observer.default_for.forEach((action, actionIndex) => {
+    if (
+      !isNonEmptyString(action) ||
+      !declaredActions.has(action) ||
+      action === 'call' ||
+      action === 'end'
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.invalid_observer_default_for',
+        `${path}.default_for[${actionIndex}]`,
+        `${path}.default_for[${actionIndex}] must reference a declared executable action.`,
       );
     }
   });
@@ -234,350 +313,63 @@ export function validateRecipeActionManifestDocument(manifest: unknown): RecipeV
     );
     return finishResult(ctx);
   }
-
-  for (const field of Object.keys(manifest)) {
-    if (!ACTION_MANIFEST_FIELDS.has(field)) {
-      addFinding(
-        ctx,
-        'error',
-        'action_manifest.unsupported_field',
-        field,
-        `Recipe action manifests do not support ${field}.`,
-      );
-    }
-  }
-
-  if (manifest.runner_protocol_version !== RECIPE_PROTOCOL_SCHEMA_VERSION) {
+  rejectUnknownFields(
+    ctx,
+    manifest,
+    ACTION_MANIFEST_FIELDS,
+    '$',
+    'action_manifest.unsupported_field',
+  );
+  if (manifest.$schema !== RECIPE_ACTION_MANIFEST_SCHEMA_URL) {
     addFinding(
       ctx,
       'error',
-      'action_manifest.invalid_runner_protocol_version',
-      'runner_protocol_version',
-      `runner_protocol_version must equal ${RECIPE_PROTOCOL_SCHEMA_VERSION}.`,
+      'action_manifest.invalid_schema_ref',
+      '$schema',
+      `$schema must equal ${RECIPE_ACTION_MANIFEST_SCHEMA_URL}.`,
     );
   }
-
-  if (manifest.action_registry_version !== RECIPE_PROTOCOL_SCHEMA_VERSION) {
+  if (!isRecord(manifest.actions) || Object.keys(manifest.actions).length === 0) {
     addFinding(
       ctx,
       'error',
-      'action_manifest.invalid_action_registry_version',
-      'action_registry_version',
-      `action_registry_version must equal ${RECIPE_PROTOCOL_SCHEMA_VERSION}.`,
+      'action_manifest.invalid_actions',
+      'actions',
+      'actions must be a non-empty object keyed by action name.',
     );
+    return finishResult(ctx);
   }
 
   const declaredActions = new Set<string>();
-  const officialActions = manifest.supported_official_actions;
-  if (!Array.isArray(officialActions) || officialActions.length === 0) {
-    addFinding(
-      ctx,
-      'error',
-      'action_manifest.invalid_supported_official_actions',
-      'supported_official_actions',
-      'supported_official_actions must be a non-empty array.',
-    );
-  } else {
-    officialActions.forEach((action, index) => {
-      const path = `supported_official_actions[${index}]`;
-      if (!isNonEmptyString(action)) {
-        addFinding(
-          ctx,
-          'error',
-          'action_manifest.invalid_supported_action',
-          path,
-          `${path} must be a non-empty string.`,
-        );
-        return;
-      }
-      if (!OFFICIAL_ACTION_SET.has(action)) {
-        addFinding(
-          ctx,
-          'error',
-          'action_manifest.unknown_official_action',
-          path,
-          `${action} is not in the Farmslot v1 official action registry.`,
-        );
-      }
-      if (declaredActions.has(action)) {
-        addFinding(
-          ctx,
-          'error',
-          'action_manifest.duplicate_action',
-          path,
-          `${action} is declared more than once.`,
-        );
-      }
-      declaredActions.add(action);
-    });
-  }
-
-  const customActions = manifest.custom_actions;
-  if (customActions != null) {
-    if (!Array.isArray(customActions)) {
+  for (const [action, entry] of Object.entries(manifest.actions)) {
+    const path = `actions.${action}`;
+    if (!OFFICIAL_ACTION_SET.has(action) && !/^[a-z0-9]+(?:[._-][a-z0-9]+)+$/u.test(action)) {
       addFinding(
         ctx,
         'error',
-        'action_manifest.invalid_custom_actions',
-        'custom_actions',
-        'custom_actions must be an array when present.',
+        'action_manifest.custom_action_not_namespaced',
+        path,
+        `${action} must be an official action or a lowercase namespaced custom action.`,
       );
-    } else {
-      customActions.forEach((action, index) => {
-        const path = `custom_actions[${index}]`;
-        if (!isRecord(action)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_custom_action',
-            path,
-            `${path} must be an object.`,
-          );
-          return;
-        }
-        if (!isNonEmptyString(action.name)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_custom_action_name',
-            `${path}.name`,
-            `${path}.name must be a non-empty string.`,
-          );
-        } else {
-          if (!/^[a-z0-9]+(?:[._-][a-z0-9]+)+$/u.test(action.name)) {
-            addFinding(
-              ctx,
-              'error',
-              'action_manifest.custom_action_not_namespaced',
-              `${path}.name`,
-              `${action.name} must be a lowercase namespaced action such as wallet.unlock.`,
-            );
-          }
-          if (OFFICIAL_ACTION_SET.has(action.name)) {
-            addFinding(
-              ctx,
-              'error',
-              'action_manifest.custom_action_overlaps_official',
-              `${path}.name`,
-              `${action.name} is official and must be declared in supported_official_actions.`,
-            );
-          }
-          if (declaredActions.has(action.name)) {
-            addFinding(
-              ctx,
-              'error',
-              'action_manifest.duplicate_action',
-              `${path}.name`,
-              `${action.name} is declared more than once.`,
-            );
-          }
-          declaredActions.add(action.name);
-        }
-        validateActionCatalogEntry(
-          ctx,
-          action,
-          path,
-          isNonEmptyString(action.name) ? action.name : undefined,
-        );
-        if (!Object.hasOwn(action, 'execution_capabilities')) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.missing_execution_capabilities',
-            `${path}.execution_capabilities`,
-            'Custom actions must explicitly declare execution_capabilities, including an empty array for read-only actions.',
-          );
-        }
-      });
     }
-  }
-
-  if (manifest.action_metadata != null) {
-    if (!isRecord(manifest.action_metadata)) {
+    declaredActions.add(action);
+    validateActionCatalogEntry(ctx, action, entry, path);
+    if (
+      !OFFICIAL_ACTION_SET.has(action) &&
+      (!isRecord(entry) || !Object.hasOwn(entry, 'execution_capabilities'))
+    ) {
       addFinding(
         ctx,
         'error',
-        'action_manifest.invalid_action_metadata',
-        'action_metadata',
-        'action_metadata must be an object when present.',
-      );
-    } else {
-      const declaredOfficialActions = new Set(
-        Array.isArray(officialActions)
-          ? officialActions.filter((action): action is string => isNonEmptyString(action))
-          : [],
-      );
-      for (const [action, metadata] of Object.entries(manifest.action_metadata)) {
-        if (!declaredOfficialActions.has(action)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.metadata_for_undeclared_action',
-            `action_metadata.${action}`,
-            `action_metadata may describe only supported_official_actions; declare ${action} once in custom_actions instead.`,
-          );
-        }
-        validateActionCatalogEntry(
-          ctx,
-          metadata,
-          `action_metadata.${action}`,
-          action,
-          action !== 'call' && action !== 'end',
-        );
-      }
-    }
-  }
-
-  for (const action of declaredActions) {
-    if (action === 'call' || action === 'end') continue;
-    const isCustom = Array.isArray(customActions)
-      ? customActions.some((entry) => isRecord(entry) && entry.name === action)
-      : false;
-    if (isCustom) continue;
-    if (!isRecord(manifest.action_metadata) || !isRecord(manifest.action_metadata[action])) {
-      addFinding(
-        ctx,
-        'error',
-        'action_manifest.missing_action_metadata',
-        `action_metadata.${action}`,
-        `Official action ${action} must declare metadata and a parameter schema.`,
+        'action_manifest.missing_execution_capabilities',
+        `${path}.execution_capabilities`,
+        'Custom actions must explicitly declare execution_capabilities, including an empty array for read-only actions.',
       );
     }
   }
 
-  const nativeBindings = manifest.native_bindings;
-  if (nativeBindings != null) {
-    if (!Array.isArray(nativeBindings)) {
-      addFinding(
-        ctx,
-        'error',
-        'action_manifest.invalid_native_bindings',
-        'native_bindings',
-        'native_bindings must be an array when present.',
-      );
-    } else {
-      nativeBindings.forEach((binding, index) => {
-        const path = `native_bindings[${index}]`;
-        if (!isRecord(binding)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_native_binding',
-            path,
-            `${path} must be an object.`,
-          );
-          return;
-        }
-        if (!isNonEmptyString(binding.action)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_native_binding_action',
-            `${path}.action`,
-            `${path}.action must be a non-empty string.`,
-          );
-        } else if (!declaredActions.has(binding.action)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.native_binding_for_undeclared_action',
-            `${path}.action`,
-            `Native binding action ${binding.action} is not declared by the manifest.`,
-          );
-        }
-        if (!isNonEmptyString(binding.implementation)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_native_binding_implementation',
-            `${path}.implementation`,
-            `${path}.implementation must be a non-empty string.`,
-          );
-        }
-      });
-    }
-  }
-
-  const capabilities = manifest.capabilities;
-  if (capabilities != null) {
-    if (!Array.isArray(capabilities)) {
-      addFinding(
-        ctx,
-        'error',
-        'action_manifest.invalid_capabilities',
-        'capabilities',
-        'capabilities must be an array when present.',
-      );
-    } else {
-      capabilities.forEach((capability, index) => {
-        const path = `capabilities[${index}]`;
-        if (!isRecord(capability)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_capability',
-            path,
-            `${path} must be an object.`,
-          );
-          return;
-        }
-        if (!isNonEmptyString(capability.capability)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_capability_name',
-            `${path}.capability`,
-            `${path}.capability must be a non-empty string.`,
-          );
-        }
-        if (
-          capability.status !== 'supported' &&
-          capability.status !== 'unsupported' &&
-          capability.status !== 'partial' &&
-          capability.status !== 'planned'
-        ) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_capability_status',
-            `${path}.status`,
-            `${path}.status must be supported, unsupported, partial, or planned.`,
-          );
-        }
-        for (const stringField of ['provider', 'reason']) {
-          const value = capability[stringField];
-          if (value != null && typeof value !== 'string') {
-            addFinding(
-              ctx,
-              'error',
-              'action_manifest.invalid_capability_field',
-              `${path}.${stringField}`,
-              `${path}.${stringField} must be a string when present.`,
-            );
-          }
-        }
-        for (const arrayField of ['platforms', 'modes', 'artifactTypes']) {
-          const value = capability[arrayField];
-          if (
-            value != null &&
-            (!Array.isArray(value) || value.some((entry) => !isNonEmptyString(entry)))
-          ) {
-            addFinding(
-              ctx,
-              'error',
-              'action_manifest.invalid_capability_field',
-              `${path}.${arrayField}`,
-              `${path}.${arrayField} must be an array of non-empty strings when present.`,
-            );
-          }
-        }
-      });
-    }
-  }
-
-  const observers = manifest.observers;
-  if (observers != null) {
-    if (!Array.isArray(observers)) {
+  if (Object.hasOwn(manifest, 'observers')) {
+    if (!Array.isArray(manifest.observers)) {
       addFinding(
         ctx,
         'error',
@@ -587,93 +379,10 @@ export function validateRecipeActionManifestDocument(manifest: unknown): RecipeV
       );
     } else {
       const declaredObservers = new Set<string>();
-      observers.forEach((observer, index) => {
-        const path = `observers[${index}]`;
-        if (!isRecord(observer)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_observer',
-            path,
-            `${path} must be an object.`,
-          );
-          return;
-        }
-        if (!isNonEmptyString(observer.ref)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_observer_ref',
-            `${path}.ref`,
-            `${path}.ref must be a non-empty string.`,
-          );
-        } else {
-          if (!BUILT_IN_UI_OBSERVER_SET.has(observer.ref) && !observer.ref.includes('.')) {
-            addFinding(
-              ctx,
-              'error',
-              'action_manifest.invalid_observer_ref',
-              `${path}.ref`,
-              `${observer.ref} must be a built-in UI observer ref or a namespaced custom ref.`,
-            );
-          }
-          if (declaredObservers.has(observer.ref)) {
-            addFinding(
-              ctx,
-              'error',
-              'action_manifest.duplicate_observer',
-              `${path}.ref`,
-              `${observer.ref} is declared more than once.`,
-            );
-          }
-          declaredObservers.add(observer.ref);
-        }
-        if (!isNonEmptyString(observer.description)) {
-          addFinding(
-            ctx,
-            'error',
-            'action_manifest.invalid_observer_description',
-            `${path}.description`,
-            `${path}.description must be a non-empty string.`,
-          );
-        }
-        if (observer.default_for != null) {
-          if (!Array.isArray(observer.default_for)) {
-            addFinding(
-              ctx,
-              'error',
-              'action_manifest.invalid_observer_default_for',
-              `${path}.default_for`,
-              `${path}.default_for must be an array when present.`,
-            );
-          } else {
-            observer.default_for.forEach((action, actionIndex) => {
-              if (!isNonEmptyString(action) || !declaredActions.has(action)) {
-                addFinding(
-                  ctx,
-                  'error',
-                  'action_manifest.invalid_observer_default_for',
-                  `${path}.default_for[${actionIndex}]`,
-                  `${path}.default_for[${actionIndex}] must reference a declared action.`,
-                );
-              }
-            });
-          }
-        }
-        for (const field of ['cost', 'redaction']) {
-          if (observer[field] != null && typeof observer[field] !== 'string') {
-            addFinding(
-              ctx,
-              'error',
-              'action_manifest.invalid_observer_field',
-              `${path}.${field}`,
-              `${path}.${field} must be a string when present.`,
-            );
-          }
-        }
-      });
+      manifest.observers.forEach((observer, index) =>
+        validateObserver(ctx, observer, index, declaredActions, declaredObservers),
+      );
     }
   }
-
   return finishResult(ctx);
 }

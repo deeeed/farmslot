@@ -1,26 +1,11 @@
 {
-  "runner_protocol_version": 1,
-  "action_registry_version": 1,
-  "supported_official_actions": [
-    "command",
-    "assert_output",
-    "wait",
-    "ui.press",
-    "ui.set_input",
-    "ui.scroll",
-    "ui.wait_for",
-    "ui.screenshot",
-    "end"
-  ],
-  "action_metadata": {
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
     "command": {
       "description": "Run a project-local command during setup, diagnostics, or headless proof. Prefer UI actions only when the recipe must prove visible interaction.",
       "schema": {
         "type": "object",
         "properties": {
-          "description": {
-            "type": "string"
-          },
           "cmd": {
             "type": "string"
           },
@@ -30,21 +15,27 @@
           "cwd": {
             "type": "string"
           },
-          "save_as": {
-            "type": "string"
+          "allow_failure": {
+            "type": "boolean"
           }
         },
+        "required": ["cmd"],
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "command",
+          "intent": "Prepare the project state needed for this proof.",
+          "cmd": "true",
+          "next": "done"
+        }
+      ]
     },
     "assert_output": {
       "description": "Assert stdout or stderr from a previous command node.",
       "schema": {
         "type": "object",
         "properties": {
-          "description": {
-            "type": "string"
-          },
           "source": {
             "type": "string"
           },
@@ -53,10 +44,27 @@
           },
           "contains": {
             "type": "string"
+          },
+          "match": {
+            "type": "string"
+          },
+          "assert": {
+            "type": "object",
+            "additionalProperties": true
           }
         },
+        "required": ["source"],
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "assert_output",
+          "intent": "Confirm the recorded output satisfies the requested condition.",
+          "source": "command",
+          "contains": "ready",
+          "next": "done"
+        }
+      ]
     },
     "wait": {
       "description": "Pause briefly for asynchronous setup work. Keep waits short and prefer deterministic assertions.",
@@ -69,7 +77,15 @@
         },
         "required": ["duration_ms"],
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "wait",
+          "intent": "Allow the requested asynchronous state to settle.",
+          "duration_ms": 1,
+          "next": "done"
+        }
+      ]
     },
     "ui.press": {
       "description": "Press a native accessibility target on the assigned simulator or device.",
@@ -87,7 +103,15 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.press",
+          "intent": "Activate the requested visible control.",
+          "test_id": "example-control",
+          "next": "done"
+        }
+      ]
     },
     "ui.set_input": {
       "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets.",
@@ -102,14 +126,30 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.set_input",
+          "intent": "Provide the requested value in the visible form.",
+          "test_id": "example-input",
+          "value": "example",
+          "next": "done"
+        }
+      ]
     },
     "ui.scroll": {
       "description": "Scroll the assigned native simulator or device and wait for stability.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.scroll",
+          "intent": "Expose the requested content for visible review.",
+          "next": "done"
+        }
+      ]
     },
     "ui.wait_for": {
       "description": "Wait for native accessibility content and UI stability.",
@@ -148,7 +188,16 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.wait_for",
+          "intent": "Confirm the requested application state is visible.",
+          "test_id": "example-control",
+          "visible": true,
+          "next": "done"
+        }
+      ]
     },
     "ui.screenshot": {
       "description": "Capture the assigned native simulator or device into the artifact package.",
@@ -190,38 +239,34 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.screenshot",
+          "intent": "Preserve the visible application state as review evidence.",
+          "label": "example-state",
+          "next": "done"
+        }
+      ]
     },
     "end": {
-      "description": "Terminate the recipe graph with pass, fail, or unknown."
+      "description": "Terminate the recipe graph with pass, fail, or unknown.",
+      "examples": [
+        {
+          "action": "end",
+          "status": "pass"
+        }
+      ]
     }
   },
-  "capabilities": [
-    {
-      "capability": "record.video",
-      "status": "partial",
-      "provider": "capture-helper",
-      "reason": "Supported on macOS when capture-helper is installed; node health reports runtime availability per machine.",
-      "platforms": ["macos"],
-      "modes": ["full_run"],
-      "artifactTypes": ["video/mp4"]
-    }
-  ],
   "observers": [
     {
       "ref": "ui.screen",
-      "description": "Current native app identity after supported UI actions.",
-      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"],
-      "cost": "cheap",
-      "redaction": "none"
+      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"]
     },
     {
       "ref": "ui.visible",
-      "description": "Bounded visible native accessibility targets after supported UI actions.",
-      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"],
-      "cost": "cheap",
-      "redaction": "labels-only"
+      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"]
     }
-  ],
-  "custom_actions": []
+  ]
 }

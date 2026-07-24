@@ -4,7 +4,6 @@ import {
   normalizeRecipeRef,
   OFFICIAL_RECIPE_ACTIONS,
   officialRecipeActionCapabilities,
-  type RecipeActionCatalogEntry,
   type RecipeActionManifestDocument,
   type RecipeExecutionCapability,
   type RecipeExecutionPlan,
@@ -16,6 +15,7 @@ import { extractWorkflowGraph } from './graph.js';
 import { isRecord } from './json.js';
 import type { ResolvedLibraryRecipe } from './library.js';
 import { resolveRecipeParams, resolveRecipeValue } from './parameters.js';
+import type { DefaultObserverRefs } from './passive-observations.js';
 import { RecipeResolutionError } from './resolution-error.js';
 import { invalidRecipeSource, RecipeTrustError } from './trust-error.js';
 import type { ActionAdapter, RecipeHudOptions, RecipeRunRequest } from './types.js';
@@ -61,6 +61,7 @@ export function buildRecipeExecutionPlan({
   recipes,
   adapters,
   actionManifest,
+  defaultObserverRefs,
   projectRoot,
   artifactsDir,
   env,
@@ -73,6 +74,7 @@ export function buildRecipeExecutionPlan({
   recipes: ReadonlyMap<string, ResolvedLibraryRecipe>;
   adapters: ReadonlyMap<string, ActionAdapter>;
   actionManifest: RecipeActionManifestDocument;
+  defaultObserverRefs: DefaultObserverRefs;
   projectRoot: string;
   artifactsDir: string;
   env: Record<string, string | undefined>;
@@ -91,17 +93,20 @@ export function buildRecipeExecutionPlan({
     if (typeof node.action !== 'string' || !node.action.trim()) return;
     const adapter = adapters.get(node.action);
     const adapterOrigin = adapterSource(node.action, adapter);
+    const observerRefs = [...(defaultObserverRefs.get(node.action) ?? [])];
     const capabilities = actionCapabilities(
       node.action,
       adapter,
       adapterOrigin,
       declaredActionCapabilities(actionManifest, node.action),
+      observerRefs.length > 0,
     );
     const planNode: RecipePlanNode = {
       nodeId,
       action: node.action,
       capabilities,
       origin,
+      ...(observerRefs.length > 0 ? { observerRefs } : {}),
       ...(containsRecipeOutputTemplate(node) ? { runtimeOutputDependent: true } : {}),
       ...(invocationOrigin ? { invocationOrigin } : {}),
       ...(adapterOrigin ? { adapterOrigin } : {}),
@@ -304,6 +309,7 @@ function actionCapabilities(
   adapter: ActionAdapter | undefined,
   adapterOrigin: RecipeSourceProvenance | undefined,
   manifestCapabilities: readonly RecipeExecutionCapability[],
+  observes: boolean,
 ): RecipeExecutionCapability[] {
   const declared = adapter?.capabilities;
   const official = officialActions.has(action)
@@ -311,13 +317,27 @@ function actionCapabilities(
         action as Parameters<typeof officialRecipeActionCapabilities>[0],
       )
     : [];
+  const observerCapabilities: RecipeExecutionCapability[] = observes ? ['host-read-export'] : [];
   const base: RecipeExecutionCapability[] = officialActions.has(action)
-    ? [...new Set([...official, ...manifestCapabilities, ...(declared ?? [])])]
+    ? [
+        ...new Set([
+          ...official,
+          ...manifestCapabilities,
+          ...(declared ?? []),
+          ...observerCapabilities,
+        ]),
+      ]
     : declared
-      ? [...new Set([...manifestCapabilities, ...declared])]
+      ? [...new Set([...manifestCapabilities, ...declared, ...observerCapabilities])]
       : action === 'call'
-        ? []
-        : [...new Set<RecipeExecutionCapability>(['arbitrary-code', ...manifestCapabilities])];
+        ? observerCapabilities
+        : [
+            ...new Set<RecipeExecutionCapability>([
+              'arbitrary-code',
+              ...manifestCapabilities,
+              ...observerCapabilities,
+            ]),
+          ];
   if (adapterOrigin?.trust === 'trusted' || base.includes('arbitrary-code')) return [...base];
   return [...base, 'arbitrary-code'];
 }
@@ -326,11 +346,7 @@ function declaredActionCapabilities(
   manifest: RecipeActionManifestDocument,
   action: string,
 ): RecipeExecutionCapability[] {
-  const metadata = (
-    manifest.action_metadata as Record<string, RecipeActionCatalogEntry> | undefined
-  )?.[action];
-  const custom = manifest.custom_actions?.find((entry) => entry.name === action);
-  return [...(metadata?.execution_capabilities ?? []), ...(custom?.execution_capabilities ?? [])];
+  return manifest.actions[action]?.execution_capabilities ?? [];
 }
 
 function adapterSource(

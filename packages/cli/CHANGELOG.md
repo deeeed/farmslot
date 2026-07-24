@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Validate retained traces against their recipes and artifact attribution.
 - **BREAKING:** Recipe validate/run uses the static recipe dependency graph and exact resolution evidence; direct runs accept typed `key=value` parameters.
 - security: dependency evidence readers derive canonical paths from validated digests.
 

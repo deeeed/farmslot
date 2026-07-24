@@ -90,7 +90,17 @@ function validateObjectSchema(
       `${path}.type must be object.`,
     );
   }
-  if (schema.additionalProperties != null && typeof schema.additionalProperties !== 'boolean') {
+  validateObjectSchemaKeywords(ctx, schema, path, exactObjectType, strictObjectBoundary);
+}
+
+function validateObjectSchemaKeywords(
+  ctx: MutableValidationContext,
+  schema: Record<string, unknown>,
+  path: string,
+  requireAdditionalProperties = false,
+  strictObjectBoundary = false,
+): void {
+  if (hasOwn(schema, 'additionalProperties') && typeof schema.additionalProperties !== 'boolean') {
     addFinding(
       ctx,
       'error',
@@ -98,7 +108,7 @@ function validateObjectSchema(
       `${path}.additionalProperties`,
       `${path}.additionalProperties must be a boolean.`,
     );
-  } else if (exactObjectType && schema.additionalProperties == null) {
+  } else if (requireAdditionalProperties && !hasOwn(schema, 'additionalProperties')) {
     addFinding(
       ctx,
       'error',
@@ -115,7 +125,7 @@ function validateObjectSchema(
       `${path}.additionalProperties must be false.`,
     );
   }
-  if (schema.properties != null && !isRecord(schema.properties)) {
+  if (hasOwn(schema, 'properties') && !isRecord(schema.properties)) {
     addFinding(
       ctx,
       'error',
@@ -137,7 +147,7 @@ function validateObjectSchema(
     }
     validatePropertySchema(ctx, propertySchema, `${path}.properties.${name}`);
   }
-  if (schema.required != null && !Array.isArray(schema.required)) {
+  if (hasOwn(schema, 'required') && !Array.isArray(schema.required)) {
     addFinding(
       ctx,
       'error',
@@ -198,7 +208,7 @@ function validatePropertySchema(
       `${path}.type must be a supported type or a non-empty array of supported types.`,
     );
   }
-  if (schema.description != null && typeof schema.description !== 'string') {
+  if (hasOwn(schema, 'description') && typeof schema.description !== 'string') {
     addFinding(
       ctx,
       'error',
@@ -207,7 +217,7 @@ function validatePropertySchema(
       `${path}.description must be a string.`,
     );
   }
-  if (schema.enum != null) {
+  if (hasOwn(schema, 'enum')) {
     const enumValues = schema.enum;
     if (!Array.isArray(enumValues) || enumValues.length === 0) {
       addFinding(
@@ -266,20 +276,17 @@ function validatePropertySchema(
       validateNestedStructuredValue(ctx, schema.default, schema, `${path}.default`);
     }
   }
-  if (schemaIncludesType(schema.type, 'object'))
-    validateObjectSchema(ctx, schema, path, PARAM_SCHEMA_FIELDS, false);
-  if (schemaIncludesType(schema.type, 'array')) {
-    if (schema.items == null) {
-      addFinding(
-        ctx,
-        'error',
-        'recipe.missing_param_items',
-        `${path}.items`,
-        `${path}.items is required for array parameters.`,
-      );
-    } else {
-      validatePropertySchema(ctx, schema.items, `${path}.items`);
-    }
+  validateObjectSchemaKeywords(ctx, schema, path);
+  if (hasOwn(schema, 'items')) {
+    validatePropertySchema(ctx, schema.items, `${path}.items`);
+  } else if (schemaIncludesType(schema.type, 'array')) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.missing_param_items',
+      `${path}.items`,
+      `${path}.items is required for array parameters.`,
+    );
   }
 }
 

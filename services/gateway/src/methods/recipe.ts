@@ -178,6 +178,7 @@ interface RecipeRunArtifactPackageOutputInput {
   artifactPaths: string[];
   artifactListError?: string;
   summary?: unknown;
+  trace?: unknown;
   manifest?: unknown;
   recipe?: unknown;
   recipeArtifactPresent?: boolean;
@@ -293,6 +294,7 @@ export function validateRecipeRunArtifactPackageOutput(
 
   const recipe = validateRecipeArtifactPackage({
     recipe: input.recipeArtifactPresent ? input.recipe : undefined,
+    trace: input.trace,
     recipeResolution: input.recipeResolution,
     resolvedRecipes: input.resolvedRecipes,
     manifest: input.manifest,
@@ -422,10 +424,15 @@ async function validateRecipeRunArtifactsOnSlot(
   const recipeArtifactPresent = artifactList.paths.includes('recipe.json');
   const recipeResolutionPresent = artifactList.paths.includes('recipe-resolution.json');
   const emptyRead = Promise.resolve({ value: undefined } as { value?: unknown; error?: string });
-  const [summary, manifest, recipe, recipeResolution] = await Promise.all([
+  const [summary, trace, manifest, recipe, recipeResolution] = await Promise.all([
     readSlotJsonIfPresent(
       slotVars,
       joinRemoteArtifactPath(artifactRoot, 'summary.json'),
+      artifactRoot,
+    ),
+    readSlotJsonIfPresent(
+      slotVars,
+      joinRemoteArtifactPath(artifactRoot, 'trace.json'),
       artifactRoot,
     ),
     readSlotJsonIfPresent(
@@ -468,6 +475,7 @@ async function validateRecipeRunArtifactsOnSlot(
     artifactPaths: artifactList.paths,
     artifactListError: artifactList.error,
     summary: summary.value,
+    trace: trace.value,
     manifest: manifest.value,
     recipe: recipe.value,
     recipeArtifactPresent,
@@ -475,6 +483,7 @@ async function validateRecipeRunArtifactsOnSlot(
     resolvedRecipes,
     readErrors: {
       ...(summary.error ? { 'summary.json': summary.error } : {}),
+      ...(trace.error ? { 'trace.json': trace.error } : {}),
       ...(manifest.error ? { 'artifact-manifest.json': manifest.error } : {}),
       ...(recipe.error ? { 'recipe.json': recipe.error } : {}),
       ...(recipeResolution.error ? { 'recipe-resolution.json': recipeResolution.error } : {}),

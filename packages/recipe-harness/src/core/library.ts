@@ -1,4 +1,4 @@
-import { readdir, readFile, realpath } from 'node:fs/promises';
+import { readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -15,7 +15,6 @@ import { RecipeResolutionError } from './resolution-error.js';
 import { invalidRecipeSource } from './trust-error.js';
 import type { LoadedRecipeLibrarySource, RecipeLibrarySource, RecipeLogger } from './types.js';
 
-const LIBRARY_MANIFEST_FILE = 'library.json';
 const LIBRARY_RECIPES_DIR = 'recipes';
 const RECIPE_FILE_SUFFIX = '.recipe.json';
 const RECIPE_ADAPTER_SUFFIXES = new Set(['core', 'extension', 'mobile']);
@@ -65,14 +64,7 @@ export async function defaultRecipeLibrarySources(
   env: RecipeLibraryEnv = process.env,
 ): Promise<RecipeLibrarySource[]> {
   const personalRoot = personalRecipeLibraryRoot(env);
-  try {
-    await readFile(path.join(personalRoot, LIBRARY_MANIFEST_FILE), 'utf-8');
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  }
+  if (!(await isDirectory(personalRoot))) return [];
   return [{ name: 'personal', root: personalRoot }];
 }
 
@@ -93,14 +85,7 @@ export async function resolveRecipeLibrarySources(options?: {
   const taskDir =
     path.basename(recipeDir) === 'resolved-recipes' ? path.dirname(recipeDir) : recipeDir;
   const taskRoot = path.join(taskDir, 'recipe-library');
-  try {
-    await readFile(path.join(taskRoot, LIBRARY_MANIFEST_FILE), 'utf-8');
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      return configured;
-    }
-    throw error;
-  }
+  if (!(await isDirectory(taskRoot))) return configured;
   if (configured.some((source) => path.resolve(source.root) === taskRoot)) return configured;
   return [
     {
@@ -141,8 +126,7 @@ export async function loadRecipeLibraries(
   for (const source of sources) {
     const root = path.resolve(expandTilde(source.root));
     const rootReal = await realpath(root);
-    const manifest = await readLibraryManifest(root);
-    const name = source.name ?? manifest.name ?? path.basename(root);
+    const name = source.name ?? path.basename(root);
     const sourceProvenance: RecipeSourceProvenance = source.provenance ?? {
       kind: 'library',
       trust: 'unknown',
@@ -153,7 +137,7 @@ export async function loadRecipeLibraries(
       throw new RecipeResolutionError(
         'RECIPE_LIBRARY_DUPLICATE_SOURCE',
         `Recipe library source ${name} is configured more than once.`,
-        `remove one ${name} library source from the configured search path`,
+        `assign distinct name=/path aliases or remove one ${name} source`,
       );
     }
     seenNames.add(name);
@@ -272,21 +256,13 @@ function logResolution(logger: RecipeLogger, resolution: RecipeLibraryResolution
   }
 }
 
-async function readLibraryManifest(root: string): Promise<{ name?: string }> {
-  const manifestPath = path.join(root, LIBRARY_MANIFEST_FILE);
-  let manifest: unknown;
+async function isDirectory(target: string): Promise<boolean> {
   try {
-    manifest = await readJsonFile(manifestPath);
+    return (await stat(target)).isDirectory();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `${root} is not a recipe library: ${message}. A library needs a ${LIBRARY_MANIFEST_FILE} with kind "recipe-library".`,
-    );
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    throw error;
   }
-  if (!isRecord(manifest) || manifest.kind !== 'recipe-library') {
-    throw new Error(`${manifestPath} must declare kind "recipe-library".`);
-  }
-  return { ...(typeof manifest.name === 'string' && manifest.name ? { name: manifest.name } : {}) };
 }
 
 function expandTilde(value: string): string {

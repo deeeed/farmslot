@@ -323,12 +323,6 @@ export async function materializeExtractedRecipe(
     return { inheritedRecipePath, inheritedRecipeFiles: [], provenancePath };
 
   const inheritedLibraryDir = path.join(inheritedDir, 'recipe-library');
-  await mkdir(inheritedLibraryDir, { recursive: true });
-  await writeFile(
-    path.join(inheritedLibraryDir, 'library.json'),
-    `${JSON.stringify({ kind: 'recipe-library', name: 'pr-body' }, null, 2)}\n`,
-    'utf-8',
-  );
   const inheritedRecipeFiles: string[] = [];
   for (const name of recipeNames) {
     const recipeJson = JSON.stringify(bundle.recipes[name], null, 2);

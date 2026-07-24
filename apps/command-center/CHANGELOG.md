@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Align embedded recipes and actions with the strict Action Manifest v1 contract.
 - feat: run composable Recipe v1 documents with strict manifests, typed parameters, and library dependency resolution.
 - fix: pass only recipe-declared runtime context from Farmslot hooks.
 - fix: resolve adjacent task recipe libraries and propagate invocation trust into their dependencies.
