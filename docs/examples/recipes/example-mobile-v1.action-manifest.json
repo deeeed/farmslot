@@ -1,26 +1,27 @@
 {
-  "runner_protocol_version": 1,
-  "action_registry_version": 1,
-  "supported_official_actions": [
-    "ui.navigate",
-    "ui.press",
-    "ui.key_press",
-    "ui.set_input",
-    "ui.scroll",
-    "ui.gesture",
-    "ui.wait_for",
-    "ui.screenshot",
-    "app.lifecycle",
-    "app.hud",
-    "app.trace",
-    "state_read",
-    "watch_logs",
-    "index_artifacts",
-    "call",
-    "switch",
-    "end"
-  ],
-  "action_metadata": {
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "call": {
+      "description": "Invoke a named child recipe with explicit parameters.",
+      "examples": [
+        {
+          "action": "call",
+          "intent": "Reuse a shared mobile setup recipe.",
+          "ref": "mobile.setup",
+          "params": {},
+          "next": "done"
+        }
+      ]
+    },
+    "end": {
+      "description": "Finish recipe execution with an explicit status.",
+      "examples": [
+        {
+          "action": "end",
+          "status": "pass"
+        }
+      ]
+    },
     "ui.navigate": {
       "description": "Navigate by React Native route name through the injected app control bridge.",
       "schema": {
@@ -38,13 +39,10 @@
       },
       "examples": [
         {
-          "description": "Open the Perps markets route.",
-          "node": {
-            "action": "ui.navigate",
-            "target": "PerpsMarkets",
-            "next": "wait-for-markets",
-            "intent": "Open the Perps markets route"
-          }
+          "action": "ui.navigate",
+          "target": "PerpsMarkets",
+          "next": "wait-for-markets",
+          "intent": "Open the requested application surface."
         }
       ]
     },
@@ -88,15 +86,12 @@
       },
       "examples": [
         {
-          "description": "Wait for a visible Perps market row.",
-          "node": {
-            "action": "ui.wait_for",
-            "test_id": "perps-market-row-ETH",
-            "visible": true,
-            "timeout_ms": 10000,
-            "next": "capture-proof",
-            "intent": "Wait for a visible Perps market row"
-          }
+          "action": "ui.wait_for",
+          "test_id": "perps-market-row-ETH",
+          "visible": true,
+          "timeout_ms": 10000,
+          "next": "capture-proof",
+          "intent": "Confirm the requested application state is visible."
         }
       ]
     },
@@ -104,16 +99,14 @@
       "description": "Capture a simulator screenshot and attach reviewer claims.",
       "examples": [
         {
-          "node": {
-            "action": "ui.screenshot",
-            "path": "screenshots/perps-market.png",
-            "claims": {
-              "must_show": ["ETH", "Perps"],
-              "must_not_show": ["Error"]
-            },
-            "next": "index-artifacts",
-            "intent": "Capture a simulator screenshot and attach reviewer claims"
-          }
+          "action": "ui.screenshot",
+          "path": "screenshots/perps-market.png",
+          "claims": {
+            "must_show": ["ETH", "Perps"],
+            "must_not_show": ["Error"]
+          },
+          "next": "index-artifacts",
+          "intent": "Preserve the visible application state as review evidence."
         }
       ],
       "schema": {
@@ -160,13 +153,11 @@
       "description": "Control the React Native app runtime through launch, terminate, background, foreground, reload, reset, or restart.",
       "examples": [
         {
-          "node": {
-            "action": "app.lifecycle",
-            "mode": "restart",
-            "wait_for": "example.mobile.bridge_ready",
-            "next": "unlock-wallet",
-            "intent": "Control the React Native app runtime through launch, terminate, background, foreground, reload, reset, or restart"
-          }
+          "action": "app.lifecycle",
+          "mode": "restart",
+          "wait_for": "example.mobile.bridge_ready",
+          "next": "unlock-wallet",
+          "intent": "Converge the application to the requested lifecycle state."
         }
       ],
       "schema": {
@@ -186,11 +177,9 @@
       "description": "Show an optional reviewer HUD annotation; normal step progress comes from node intent.",
       "examples": [
         {
-          "node": {
-            "action": "app.hud",
-            "next": "open-perps",
-            "intent": "Verify the Perps ETH market row is visible"
-          }
+          "action": "app.hud",
+          "next": "open-perps",
+          "intent": "Show the current goal to the supervising human."
         }
       ],
       "schema": {
@@ -207,12 +196,11 @@
       "description": "Set text through the real UI input path.",
       "examples": [
         {
-          "node": {
-            "action": "ui.set_input",
-            "test_id": "network-selector-network-search-input",
-            "value": "Sepolia",
-            "intent": "Set text through the real UI input path"
-          }
+          "action": "ui.set_input",
+          "test_id": "network-selector-network-search-input",
+          "value": "Sepolia",
+          "intent": "Provide the requested value in the visible form.",
+          "next": "done"
         }
       ],
       "schema": {
@@ -244,35 +232,71 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.press",
+          "intent": "Activate the requested visible control.",
+          "test_id": "example-control",
+          "next": "done"
+        }
+      ]
     },
     "ui.key_press": {
       "description": "ui.key_press action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.key_press",
+          "intent": "Continue the requested keyboard interaction.",
+          "next": "done"
+        }
+      ]
     },
     "ui.scroll": {
       "description": "ui.scroll action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.scroll",
+          "intent": "Expose the requested content for visible review.",
+          "next": "done"
+        }
+      ]
     },
     "ui.gesture": {
       "description": "ui.gesture action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.gesture",
+          "intent": "Complete the requested touch interaction.",
+          "next": "done"
+        }
+      ]
     },
     "app.trace": {
       "description": "app.trace action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "app.trace",
+          "intent": "Record the requested runtime timeline evidence.",
+          "next": "done"
+        }
+      ]
     },
     "state_read": {
       "description": "state_read action.",
@@ -302,14 +326,28 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "state_read",
+          "intent": "Record the requested application state for proof.",
+          "next": "done"
+        }
+      ]
     },
     "watch_logs": {
       "description": "watch_logs action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "watch_logs",
+          "intent": "Observe the runtime behavior needed for this proof.",
+          "next": "done"
+        }
+      ]
     },
     "index_artifacts": {
       "description": "index_artifacts action.",
@@ -336,26 +374,42 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "index_artifacts",
+          "intent": "Preserve generated evidence in the review package.",
+          "next": "done"
+        }
+      ]
     },
     "switch": {
       "description": "Choose a graph branch when one resolved string equals another.",
       "schema": {
         "type": "object",
         "properties": {
-          "value": { "type": "string" },
-          "equals": { "type": "string" }
+          "value": {
+            "type": "string"
+          },
+          "equals": {
+            "type": "string"
+          }
         },
         "required": ["value", "equals"],
         "additionalProperties": false
       },
-      "result_cases": ["match"]
-    }
-  },
-  "custom_actions": [
-    {
-      "name": "example.wallet.setup",
-      "owner": "example",
+      "result_cases": ["match"],
+      "examples": [
+        {
+          "action": "switch",
+          "intent": "Choose the graph path matching the observed state.",
+          "value": "example",
+          "equals": "example",
+          "next": "done"
+        }
+      ]
+    },
+    "example.wallet.setup": {
       "description": "Seed/import a declared throwaway Example App wallet fixture.",
       "schema": {
         "type": "object",
@@ -369,19 +423,15 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "example.wallet.setup",
-            "fixture": "primary-dev-wallet",
-            "next": "unlock-wallet"
-          }
+          "action": "example.wallet.setup",
+          "intent": "Prepare the declared Example App wallet fixture.",
+          "fixture": "primary-dev-wallet",
+          "next": "unlock-wallet"
         }
       ],
-      "safety_notes": "Fixture-only; never use production secrets.",
       "execution_capabilities": ["app-mutation"]
     },
-    {
-      "name": "example.wallet.unlock",
-      "owner": "example",
+    "example.wallet.unlock": {
       "description": "Unlock a debug Example App wallet through the real unlock path.",
       "schema": {
         "type": "object",
@@ -395,18 +445,15 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "example.wallet.unlock",
-            "account": "primary",
-            "next": "open-perps"
-          }
+          "action": "example.wallet.unlock",
+          "intent": "Ensure the primary Example App wallet is unlocked.",
+          "account": "primary",
+          "next": "open-perps"
         }
       ],
       "execution_capabilities": ["app-mutation"]
     },
-    {
-      "name": "example.trade.enter_amount_keypad",
-      "owner": "example",
+    "example.trade.enter_amount_keypad": {
       "description": "Enter a Perps amount through the product keypad journey when raw text input would bypass product behavior.",
       "schema": {
         "type": "object",
@@ -423,18 +470,15 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "example.trade.enter_amount_keypad",
-            "value": "10",
-            "next": "review-order"
-          }
+          "action": "example.trade.enter_amount_keypad",
+          "intent": "Enter the order amount through the visible product keypad.",
+          "value": "10",
+          "next": "review-order"
         }
       ],
       "execution_capabilities": ["app-mutation"]
     },
-    {
-      "name": "example.debug.eval",
-      "owner": "example",
+    "example.debug.eval": {
       "description": "Debug-only eval escape hatch for setup diagnostics, not primary proof.",
       "schema": {
         "type": "object",
@@ -454,34 +498,14 @@
       },
       "examples": [
         {
-          "node": {
-            "action": "example.debug.eval",
-            "expression": "Engine.context.NetworkController.state.providerConfig.chainId",
-            "save_as": "chain_id",
-            "next": "assert-chain"
-          }
+          "action": "example.debug.eval",
+          "intent": "Inspect the active chain while diagnosing setup.",
+          "expression": "Engine.context.NetworkController.state.providerConfig.chainId",
+          "save_as": "chain_id",
+          "next": "assert-chain"
         }
       ],
-      "safety_notes": "Use state_read refs for proof. This action is debug-only.",
       "execution_capabilities": ["arbitrary-code"]
     }
-  ],
-  "native_bindings": [
-    {
-      "action": "ui.navigate",
-      "implementation": "example-mobile/app-control/navigate"
-    },
-    {
-      "action": "ui.wait_for",
-      "implementation": "example-mobile/app-control/query-ui"
-    },
-    {
-      "action": "app.hud",
-      "implementation": "example-mobile/agent-step-hud"
-    },
-    {
-      "action": "ui.set_input",
-      "implementation": "example-mobile/app-control/set-input"
-    }
-  ]
+  }
 }

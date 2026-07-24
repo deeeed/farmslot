@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+## 0.12.0 - 2026-07-24
+
 - Describe every Recipe v1 field for editor hover and completion help.
+- **BREAKING:** Replace duplicated action-manifest lists with one strict keyed `actions` allowlist and direct copyable node examples.
+- Publish the Action Manifest v1 JSON Schema for editor validation.
+- Keep manifest examples, result cases, and transitions identical across runtime and JSON Schema validation.
+- Reject explicit nulls and remove the ignored `requireSchemaRef` option.
 
 ## 0.11.1 - 2026-07-23
 

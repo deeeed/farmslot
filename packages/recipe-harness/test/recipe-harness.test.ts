@@ -15,6 +15,9 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import {
+  OFFICIAL_RECIPE_ACTIONS,
+  RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+  type RecipeActionCatalogEntry,
   type RecipeActionManifestDocument,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
@@ -38,44 +41,133 @@ import {
   createReactNativeBridgeUiTransport,
   type ReactNativeBridgeCommand,
 } from '../src/runtime/react-native-bridge.js';
+import { RECIPE_HARNESS_VERSION } from '../src/version.js';
+
+const officialActions = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
+
+const stringParam = { type: 'string' } as const;
+const numberParam = { type: 'number' } as const;
+const openObjectParam = { type: 'object', additionalProperties: true } as const;
+const objectArrayParam = {
+  type: 'array',
+  items: { type: ['string', 'object'], additionalProperties: true },
+} as const;
+
+const testActionProperties: Record<string, Record<string, unknown>> = {
+  command: { cmd: stringParam },
+  assert_file: { path: stringParam },
+  assert_json: { path: stringParam, assert: openObjectParam },
+  assert_output: { source: stringParam, stream: stringParam, contains: stringParam },
+  watch_logs: { path: stringParam, contains: stringParam, scope: stringParam },
+  index_artifacts: { artifacts: objectArrayParam },
+  wait: { ms: numberParam },
+  switch: { value: stringParam, equals: stringParam },
+  'ui.press': { note: stringParam, selector: stringParam },
+  'ui.scroll': { detail: stringParam, test_id: stringParam, delta_y: numberParam },
+  'app.hud': { text: stringParam },
+  'demo.consume': { count: numberParam },
+  'example.route': { source: openObjectParam },
+};
+
+function testActionSchema(action: string): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: testActionProperties[action] ?? {},
+    additionalProperties: false,
+  };
+}
+
+function testAction(
+  action: string,
+  overrides: Partial<RecipeActionCatalogEntry> = {},
+): RecipeActionCatalogEntry {
+  return {
+    description: `Test ${action}.`,
+    ...(action === 'call' || action === 'end' ? {} : { schema: testActionSchema(action) }),
+    ...(!officialActions.has(action) ? { execution_capabilities: [] } : {}),
+    examples:
+      action === 'end'
+        ? [{ action, status: 'pass' }]
+        : action === 'call'
+          ? [
+              {
+                action,
+                intent: 'Reuse the requested test recipe.',
+                ref: 'test.child',
+                params: {},
+                next: 'done',
+              },
+            ]
+          : [{ action, intent: 'Confirm the requested test state.', next: 'done' }],
+    ...overrides,
+  };
+}
 
 function withTestSchemas(manifest: RecipeActionManifestDocument): RecipeActionManifestDocument {
   return {
     ...manifest,
-    action_metadata: Object.fromEntries(
-      manifest.supported_official_actions
-        .filter((action) => action !== 'call' && action !== 'end')
-        .map((action) => [
-          action,
-          manifest.action_metadata?.[action] ?? {
-            description: `Test ${action}.`,
-            schema: { type: 'object', additionalProperties: true },
-            ...(action === 'switch' ? { result_cases: ['match'] } : {}),
-          },
-        ]),
+    actions: Object.fromEntries(
+      Object.entries(manifest.actions).map(([action, entry]) => [
+        action,
+        {
+          description: entry.description ?? `Test ${action}.`,
+          ...entry,
+          ...(action === 'call' || action === 'end'
+            ? {}
+            : {
+                schema: entry.schema ?? testActionSchema(action),
+              }),
+          examples:
+            entry.examples.length > 0
+              ? entry.examples
+              : action === 'end'
+                ? [{ action, status: 'pass' }]
+                : action === 'call'
+                  ? [
+                      {
+                        action,
+                        intent: 'Reuse the requested test recipe.',
+                        ref: 'test.child',
+                        params: {},
+                        next: 'done',
+                      },
+                    ]
+                  : [
+                      {
+                        action,
+                        intent: 'Confirm the requested test state.',
+                        next: 'done',
+                      },
+                    ],
+          ...(action === 'switch' && !entry.result_cases ? { result_cases: ['match'] } : {}),
+        },
+      ]),
     ),
   };
 }
 
-const coreActionManifest: RecipeActionManifestDocument = withTestSchemas({
-  runner_protocol_version: 1,
-  action_registry_version: 1,
-  supported_official_actions: [
-    'end',
-    'wait',
-    'command',
-    'assert_file',
-    'assert_json',
-    'assert_exit_code',
-    'assert_output',
-    'state_read',
-    'watch_logs',
-    'index_artifacts',
-    'call',
-    'switch',
-    'manual',
-  ],
-});
+function testManifest(actions: readonly string[]): RecipeActionManifestDocument {
+  return withTestSchemas({
+    $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+    actions: Object.fromEntries(actions.map((action) => [action, testAction(action)])),
+  });
+}
+
+const coreActionManifest: RecipeActionManifestDocument = testManifest([
+  'end',
+  'wait',
+  'command',
+  'assert_file',
+  'assert_json',
+  'assert_exit_code',
+  'assert_output',
+  'state_read',
+  'watch_logs',
+  'index_artifacts',
+  'call',
+  'switch',
+  'manual',
+]);
 
 function createRecipeRunner(options: Parameters<typeof createRawRecipeRunner>[0]) {
   return createRawRecipeRunner({
@@ -277,6 +369,10 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
       'Run the smoke command and create report artifacts',
     );
     assert.equal((summary as { status?: string }).status, 'pass');
+    assert.equal(
+      (summary as { harness?: { version?: string } }).harness?.version,
+      RECIPE_HARNESS_VERSION,
+    );
 
     const packageResult = validateRecipeArtifactPackage({
       recipe,
@@ -496,11 +592,6 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
 
     const libraryRoot = path.join(tempRoot, 'watch-library');
     await mkdir(path.join(libraryRoot, 'recipes', 'local'), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'watch-library',
-    });
     await writeJsonFile(path.join(libraryRoot, 'recipes', 'local', 'watch-stale.recipe.json'), {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       description: 'Checks that called recipes share the run-scoped log baseline.',
@@ -1267,11 +1358,6 @@ test('external recipe roots can call a library recipe with the same filename ref
   try {
     const libraryRoot = path.join(tempRoot, 'library');
     await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'collision-library',
-    });
     await writeJsonFile(
       path.join(libraryRoot, 'recipes', 'smoke.recipe.json'),
       recipeDocument({ done: { action: 'end', status: 'pass' } }),
@@ -1323,11 +1409,6 @@ test('runs nested parameterized recipes with defaults and explicit falsy overrid
   try {
     const libraryRoot = path.join(tempRoot, 'library');
     await mkdir(path.join(libraryRoot, 'recipes', 'example'), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'test-library',
-    });
     await writeJsonFile(
       path.join(libraryRoot, 'recipes', 'example', 'write.recipe.json'),
       recipeDocument(
@@ -1455,11 +1536,6 @@ test('preserves typed parent outputs across recipe call parameters', async () =>
   try {
     const libraryRoot = path.join(tempRoot, 'library');
     await mkdir(path.join(libraryRoot, 'recipes', 'example'), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'typed-output-library',
-    });
     await writeJsonFile(
       path.join(libraryRoot, 'recipes', 'example', 'consume.recipe.json'),
       recipeDocument(
@@ -1482,19 +1558,15 @@ test('preserves typed parent outputs across recipe call parameters', async () =>
         },
       ),
     );
-    const actionManifest: RecipeActionManifestDocument = {
-      runner_protocol_version: 1,
-      action_registry_version: 1,
-      supported_official_actions: ['call', 'end'],
-      custom_actions: [
-        {
-          name: 'demo.produce',
+    const actionManifest: RecipeActionManifestDocument = withTestSchemas({
+      ...testManifest(['call', 'end']),
+      actions: {
+        ...testManifest(['call', 'end']).actions,
+        'demo.produce': testAction('demo.produce', {
           description: 'Produce a typed count.',
           schema: { type: 'object', additionalProperties: false },
-          execution_capabilities: [],
-        },
-        {
-          name: 'demo.consume',
+        }),
+        'demo.consume': testAction('demo.consume', {
           description: 'Consume a typed count.',
           schema: {
             type: 'object',
@@ -1502,10 +1574,17 @@ test('preserves typed parent outputs across recipe call parameters', async () =>
             required: ['count'],
             additionalProperties: false,
           },
-          execution_capabilities: [],
-        },
-      ],
-    };
+          examples: [
+            {
+              action: 'demo.consume',
+              intent: 'Consume the typed test count.',
+              count: 1,
+              next: 'done',
+            },
+          ],
+        }),
+      },
+    });
     let consumed: unknown;
     const runner = createRecipeRunner({
       actionManifest,
@@ -1569,28 +1648,31 @@ test('rejects action values whose resolved output violates the manifest schema',
   const tempRoot = await createTempRoot();
   try {
     let consumed = false;
-    const actionManifest: RecipeActionManifestDocument = {
-      runner_protocol_version: 1,
-      action_registry_version: 1,
-      supported_official_actions: ['end'],
-      custom_actions: [
-        {
-          name: 'demo.produce',
+    const actionManifest: RecipeActionManifestDocument = withTestSchemas({
+      ...testManifest(['end']),
+      actions: {
+        ...testManifest(['end']).actions,
+        'demo.produce': testAction('demo.produce', {
           schema: { type: 'object', additionalProperties: false },
-          execution_capabilities: [],
-        },
-        {
-          name: 'demo.consume',
+        }),
+        'demo.consume': testAction('demo.consume', {
           schema: {
             type: 'object',
             properties: { count: { type: 'integer' } },
             required: ['count'],
             additionalProperties: false,
           },
-          execution_capabilities: [],
-        },
-      ],
-    };
+          examples: [
+            {
+              action: 'demo.consume',
+              intent: 'Consume the typed test count.',
+              count: 1,
+              next: 'done',
+            },
+          ],
+        }),
+      },
+    });
     const runner = createRecipeRunner({
       actionManifest,
       adapters: [
@@ -1641,11 +1723,6 @@ test('rejects invalid nested call parameters during preflight', async () => {
   try {
     const libraryRoot = path.join(tempRoot, 'library');
     await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'typed-library',
-    });
     await writeJsonFile(
       path.join(libraryRoot, 'recipes', 'child.recipe.json'),
       recipeDocument(
@@ -1698,11 +1775,6 @@ test('rejects recipe call cycles before running actions', async () => {
   try {
     const libraryRoot = path.join(tempRoot, 'library');
     await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'cycle-library',
-    });
     for (const [ref, target] of [
       ['a', 'b'],
       ['b', 'a'],
@@ -1769,11 +1841,6 @@ test('rejects depth overflow and invalid nested parameters before side effects',
   try {
     const libraryRoot = path.join(tempRoot, 'library');
     await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      schema_version: 1,
-      kind: 'recipe-library',
-      name: 'preflight-library',
-    });
     for (let level = 1; level <= 8; level += 1) {
       await writeJsonFile(
         path.join(libraryRoot, 'recipes', `level-${level}.recipe.json`),
@@ -1872,15 +1939,14 @@ test('routes from declared result cases and ignores adapter-owned status or dest
   try {
     const actionManifest: RecipeActionManifestDocument = {
       ...coreActionManifest,
-      custom_actions: [
-        {
-          name: 'example.route',
+      actions: {
+        ...coreActionManifest.actions,
+        'example.route': testAction('example.route', {
           description: 'Return a semantic result case.',
           schema: { type: 'object', additionalProperties: false },
           result_cases: ['match'],
-          execution_capabilities: [],
-        },
-      ],
+        }),
+      },
     };
     const runner = createRecipeRunner({
       actionManifest,
@@ -2032,27 +2098,24 @@ test('fails fast for missing manifest declarations and missing adapter implement
     },
   });
   const customManifest: RecipeActionManifestDocument = {
-    runner_protocol_version: 1,
-    action_registry_version: 1,
-    supported_official_actions: ['end'],
-    custom_actions: [
-      {
-        name: 'example.echo',
+    ...testManifest(['end']),
+    actions: {
+      ...testManifest(['end']).actions,
+      'example.echo': testAction('example.echo', {
         description: 'Echo a test message.',
         schema: {
           type: 'object',
           properties: { message: { type: 'string' } },
           additionalProperties: false,
         },
-        execution_capabilities: [],
-      },
-    ],
+      }),
+    },
   };
 
   assert.throws(
     () =>
       createRecipeRunner({
-        actionManifest: { ...customManifest, custom_actions: [] },
+        actionManifest: testManifest(['end']),
         adapters: [echoAdapter],
       }),
     /not declared/,
@@ -2063,6 +2126,17 @@ test('fails fast for missing manifest declarations and missing adapter implement
   );
   assert.doesNotThrow(() =>
     createRecipeRunner({ actionManifest: customManifest, adapters: [echoAdapter] }),
+  );
+});
+
+test('official registry membership does not enable an action absent from the manifest allowlist', () => {
+  assert.throws(
+    () =>
+      createRecipeRunner({
+        actionManifest: testManifest(['end']),
+        adapters: createStandardCoreAdapters({ actions: ['command', 'end'] }),
+      }),
+    /Adapter command is not declared by the recipe action manifest/u,
   );
 });
 
@@ -2149,11 +2223,6 @@ test('validates composed artifact packages from their retained dependency graph'
     const recipePath = path.join(tempRoot, 'recipe.json');
     const manifestPath = path.join(tempRoot, 'action-manifest.json');
     const artifactsDir = path.join(tempRoot, 'artifacts');
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      kind: 'recipe-library',
-      schema_version: 1,
-      name: 'team',
-    });
     await writeJsonFile(
       path.join(libraryRoot, 'recipes/team/nested.recipe.json'),
       recipeDocument(
@@ -2207,10 +2276,6 @@ test('CLI discovers, describes, and runs a parameterized library recipe by id', 
     const recipePath = path.join(libraryRoot, 'recipes/demo/check.recipe.json');
     const manifestPath = path.join(tempRoot, 'action-manifest.json');
     const artifactsDir = path.join(tempRoot, 'artifacts');
-    await writeJsonFile(path.join(libraryRoot, 'library.json'), {
-      kind: 'recipe-library',
-      name: 'team',
-    });
     await writeJsonFile(recipePath, {
       ...recipeDocument(
         {
@@ -2238,10 +2303,6 @@ test('CLI discovers, describes, and runs a parameterized library recipe by id', 
         },
       ),
       title: 'Parameterized check',
-    });
-    await writeJsonFile(path.join(shadowLibraryRoot, 'library.json'), {
-      kind: 'recipe-library',
-      name: 'personal',
     });
     await writeJsonFile(
       path.join(shadowLibraryRoot, 'recipes/demo/check.recipe.json'),
@@ -2381,11 +2442,7 @@ test('reports missing artifact manifests as validation findings instead of file 
 test('runs official UI adapters through a runner-provided transport', async () => {
   const tempRoot = await createTempRoot();
   try {
-    const manifest: RecipeActionManifestDocument = {
-      runner_protocol_version: 1,
-      action_registry_version: 1,
-      supported_official_actions: ['ui.press', 'app.hud', 'end'],
-    };
+    const manifest = testManifest(['ui.press', 'app.hud', 'end']);
     const calls: string[] = [];
     const hudPayloads: Record<string, unknown>[] = [];
     const transport: UiActionTransport = {
@@ -2420,7 +2477,7 @@ test('runs official UI adapters through a runner-provided transport', async () =
     const runner = createRecipeRunner({
       actionManifest: manifest,
       adapters: [
-        ...createStandardUiAdapters({ transport, actions: manifest.supported_official_actions }),
+        ...createStandardUiAdapters({ transport, actions: Object.keys(manifest.actions) }),
         ...createStandardCoreAdapters({ actions: ['end'] }),
       ],
     });
@@ -2452,23 +2509,15 @@ test('maps React Native bridge transport commands without project-specific ui re
   const tempRoot = await createTempRoot();
   try {
     const manifest: RecipeActionManifestDocument = {
-      runner_protocol_version: 1,
-      action_registry_version: 1,
-      supported_official_actions: ['ui.scroll', 'app.hud', 'end'],
+      ...testManifest(['ui.scroll', 'app.hud', 'end']),
       observers: [
         {
           ref: 'ui.screen',
-          description: 'Current native screen.',
           default_for: ['ui.scroll'],
-          cost: 'cheap',
-          redaction: 'none',
         },
         {
           ref: 'ui.visible',
-          description: 'Current visible native controls.',
           default_for: ['ui.scroll'],
-          cost: 'cheap',
-          redaction: 'labels-only',
         },
       ],
     };
@@ -2507,7 +2556,7 @@ test('maps React Native bridge transport commands without project-specific ui re
     const runner = createRecipeRunner({
       actionManifest: manifest,
       adapters: [
-        ...createStandardUiAdapters({ transport, actions: manifest.supported_official_actions }),
+        ...createStandardUiAdapters({ transport, actions: Object.keys(manifest.actions) }),
         ...createStandardCoreAdapters({ actions: ['end'] }),
       ],
     });

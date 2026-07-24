@@ -33,7 +33,7 @@ The authoritative schema is `https://farmslot.io/schemas/recipe-v1.schema.json`.
 }
 ```
 
-Required root fields are `$schema`, `description`, and `workflow`. Optional root fields are `title`, `paramsSchema`, and `proofTargets`. Unknown fields are errors.
+Required root fields are `$schema` and `workflow`. Optional root fields are `title`, `description`, `paramsSchema`, and `proofTargets`. Unknown fields are errors.
 
 ## Workflow
 

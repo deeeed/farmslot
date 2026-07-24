@@ -1,36 +1,23 @@
 {
-  "runner_protocol_version": 1,
-  "action_registry_version": 1,
-  "supported_official_actions": [
-    "command",
-    "assert_json",
-    "assert_output",
-    "state_read",
-    "watch_logs",
-    "index_artifacts",
-    "ui.navigate",
-    "ui.press",
-    "ui.set_input",
-    "ui.scroll",
-    "ui.wait_for",
-    "ui.screenshot",
-    "app.status",
-    "app.lifecycle",
-    "app.hud",
-    "cdp.target",
-    "end"
-  ],
-  "action_metadata": {
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "end": {
+      "description": "Finish recipe execution with an explicit status.",
+      "examples": [
+        {
+          "action": "end",
+          "status": "pass"
+        }
+      ]
+    },
     "ui.navigate": {
       "description": "Navigate Command Center, Mobile Companion, or browser surfaces by route/hash/URL.",
       "examples": [
         {
-          "node": {
-            "action": "ui.navigate",
-            "target": "#slot/{{slot_id}}?reviewDrawer=recipe",
-            "next": "wait-for-panel",
-            "intent": "Navigate Command Center, Mobile Companion, or browser surfaces by route/hash/URL"
-          }
+          "action": "ui.navigate",
+          "target": "#slot/{{slot_id}}?reviewDrawer=recipe",
+          "next": "wait-for-panel",
+          "intent": "Open the requested application surface."
         }
       ],
       "schema": {
@@ -56,14 +43,12 @@
       "description": "Wait for selector, text, event, or UI state in Farmslot review surfaces.",
       "examples": [
         {
-          "node": {
-            "action": "ui.wait_for",
-            "selector": "recipe-graph",
-            "text_contains": ["VALIDATE"],
-            "timeout_ms": 10000,
-            "next": "capture",
-            "intent": "Wait for selector, text, event, or UI state in Farmslot review surfaces"
-          }
+          "action": "ui.wait_for",
+          "selector": "recipe-graph",
+          "text_contains": ["VALIDATE"],
+          "timeout_ms": 10000,
+          "next": "capture",
+          "intent": "Confirm the requested application state is visible."
         }
       ],
       "schema": {
@@ -126,14 +111,11 @@
       },
       "examples": [
         {
-          "description": "Fill a test-id backed field in a UI fixture.",
-          "node": {
-            "action": "ui.set_input",
-            "test_id": "shipping-address",
-            "value": "1 Recipe Protocol Way",
-            "next": "submit-order",
-            "intent": "Fill a test-id backed field in a UI fixture"
-          }
+          "action": "ui.set_input",
+          "test_id": "shipping-address",
+          "value": "1 Recipe Protocol Way",
+          "next": "submit-order",
+          "intent": "Provide the requested value in the visible form."
         }
       ]
     },
@@ -142,18 +124,23 @@
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.scroll",
+          "intent": "Expose the requested content for visible review.",
+          "next": "done"
+        }
+      ]
     },
     "app.hud": {
       "description": "Reviewer proof HUD injected into the Command Center browser session during recipe playback and video capture. Automatic running/pass/fail updates come from the harness lifecycle; use explicit app.hud nodes only for extra annotations.",
       "examples": [
         {
-          "node": {
-            "action": "app.hud",
-            "intent": "Open the slot shell and verify the recipe drawer is visible",
-            "status": "running",
-            "next": "wait-for-panel"
-          }
+          "action": "app.hud",
+          "intent": "Show the current goal to the supervising human.",
+          "status": "running",
+          "next": "wait-for-panel"
         }
       ],
       "schema": {
@@ -180,7 +167,14 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "app.status",
+          "intent": "Record the resolved application state before continuing.",
+          "next": "done"
+        }
+      ]
     },
     "app.lifecycle": {
       "description": "Reload or navigate back in the Command Center browser session during recipe proof.",
@@ -195,7 +189,14 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "app.lifecycle",
+          "intent": "Converge the application to the requested lifecycle state.",
+          "next": "done"
+        }
+      ]
     },
     "command": {
       "description": "command action.",
@@ -219,7 +220,15 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "command",
+          "intent": "Prepare the project state needed for this proof.",
+          "cmd": "true",
+          "next": "done"
+        }
+      ]
     },
     "assert_json": {
       "description": "assert_json action.",
@@ -246,7 +255,15 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "assert_json",
+          "intent": "Confirm the recorded data satisfies the requested condition.",
+          "path": "artifacts/example.json",
+          "next": "done"
+        }
+      ]
     },
     "assert_output": {
       "description": "assert_output action.",
@@ -267,7 +284,15 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "assert_output",
+          "intent": "Confirm the recorded output satisfies the requested condition.",
+          "contains": "ready",
+          "next": "done"
+        }
+      ]
     },
     "state_read": {
       "description": "state_read action.",
@@ -294,14 +319,28 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "state_read",
+          "intent": "Record the requested application state for proof.",
+          "next": "done"
+        }
+      ]
     },
     "watch_logs": {
       "description": "watch_logs action.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "watch_logs",
+          "intent": "Observe the runtime behavior needed for this proof.",
+          "next": "done"
+        }
+      ]
     },
     "index_artifacts": {
       "description": "index_artifacts action.",
@@ -328,7 +367,14 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "index_artifacts",
+          "intent": "Preserve generated evidence in the review package.",
+          "next": "done"
+        }
+      ]
     },
     "ui.press": {
       "description": "ui.press action.",
@@ -346,7 +392,15 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.press",
+          "intent": "Activate the requested visible control.",
+          "test_id": "example-control",
+          "next": "done"
+        }
+      ]
     },
     "ui.screenshot": {
       "description": "ui.screenshot action.",
@@ -388,7 +442,15 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.screenshot",
+          "intent": "Preserve the visible application state as review evidence.",
+          "label": "example-state",
+          "next": "done"
+        }
+      ]
     },
     "cdp.target": {
       "description": "cdp.target action.",
@@ -400,41 +462,25 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "cdp.target",
+          "intent": "Confirm the requested application target is available.",
+          "role": "extension",
+          "next": "done"
+        }
+      ]
     }
   },
   "observers": [
     {
       "ref": "ui.screen",
-      "description": "Current screen, route, title, or URL digest recorded after supported UI actions.",
-      "default_for": ["ui.navigate", "ui.press", "ui.set_input", "ui.wait_for"],
-      "cost": "cheap",
-      "redaction": "none"
+      "default_for": ["ui.navigate", "ui.press", "ui.set_input", "ui.wait_for"]
     },
     {
       "ref": "ui.visible",
-      "description": "Bounded list of visible actionable UI targets for authoring the next recipe node.",
-      "default_for": ["ui.navigate", "ui.press", "ui.set_input", "ui.wait_for"],
-      "cost": "cheap",
-      "redaction": "labels-only"
-    }
-  ],
-  "native_bindings": [
-    {
-      "action": "command",
-      "implementation": "farmslot/local-command-runner"
-    },
-    {
-      "action": "ui.navigate",
-      "implementation": "farmslot/apps/command-center/cdp-navigate"
-    },
-    {
-      "action": "ui.wait_for",
-      "implementation": "farmslot/apps/command-center/ui-wait"
-    },
-    {
-      "action": "ui.set_input",
-      "implementation": "farmslot/apps/command-center/ui-set-input"
+      "default_for": ["ui.navigate", "ui.press", "ui.set_input", "ui.wait_for"]
     }
   ]
 }

@@ -268,47 +268,27 @@ export function commandCenterRecipeParams(recipe, runtimeParams, explicitParams 
 }
 
 export function commandCenterActionManifest(manifest, implementedActions) {
-  const supportedOfficialActions = Array.isArray(manifest?.supported_official_actions)
-    ? manifest.supported_official_actions.filter((action) => implementedActions.has(action))
-    : [];
-  const customActions = Array.isArray(manifest?.custom_actions)
-    ? manifest.custom_actions.filter(
-        (entry) => entry && typeof entry === 'object' && implementedActions.has(entry.name),
-      )
-    : [];
-  const declared = new Set([
-    ...supportedOfficialActions,
-    ...customActions.map((entry) => entry.name),
-  ]);
-  const actionMetadata =
-    manifest?.action_metadata && typeof manifest.action_metadata === 'object'
+  const actions =
+    manifest?.actions && typeof manifest.actions === 'object' && !Array.isArray(manifest.actions)
       ? Object.fromEntries(
-          Object.entries(manifest.action_metadata).filter(([action]) =>
-            supportedOfficialActions.includes(action),
-          ),
+          Object.entries(manifest.actions).filter(([action]) => implementedActions.has(action)),
         )
-      : undefined;
-  const nativeBindings = Array.isArray(manifest?.native_bindings)
-    ? manifest.native_bindings.filter((entry) => declared.has(entry?.action))
-    : undefined;
+      : {};
+  const declared = new Set(Object.keys(actions));
   const observers = Array.isArray(manifest?.observers)
-    ? manifest.observers.map((observer) => ({
-        ...observer,
-        ...(Array.isArray(observer?.default_for)
-          ? { default_for: observer.default_for.filter((action) => declared.has(action)) }
-          : {}),
-      }))
-    : undefined;
+    ? manifest.observers.flatMap((observer) => {
+        if (!observer || typeof observer !== 'object' || Array.isArray(observer)) return [];
+        const defaultFor = Array.isArray(observer.default_for)
+          ? observer.default_for.filter((action) => declared.has(action))
+          : [];
+        return defaultFor.length ? [{ ...observer, default_for: defaultFor }] : [];
+      })
+    : [];
 
   return {
-    runner_protocol_version: manifest?.runner_protocol_version,
-    action_registry_version: manifest?.action_registry_version,
-    supported_official_actions: supportedOfficialActions,
-    ...(actionMetadata ? { action_metadata: actionMetadata } : {}),
-    ...(customActions.length ? { custom_actions: customActions } : {}),
-    ...(nativeBindings ? { native_bindings: nativeBindings } : {}),
-    ...(Array.isArray(manifest?.capabilities) ? { capabilities: manifest.capabilities } : {}),
-    ...(observers ? { observers } : {}),
+    $schema: manifest?.$schema,
+    actions,
+    ...(observers.length ? { observers } : {}),
   };
 }
 
@@ -658,6 +638,7 @@ async function main() {
   ];
   const implementedActions = new Set([...coreActions, ...uiActions]);
   const filteredManifest = commandCenterActionManifest(manifest, implementedActions);
+  const filteredActions = Object.keys(filteredManifest.actions);
 
   const gatewayToken = await resolveGatewayToken(options.projectRoot);
   let preferredHash = '';
@@ -696,7 +677,7 @@ async function main() {
       ? withCapturableRecordingTarget(webVideoRecorder)
       : webVideoRecorder;
 
-  const hudEnabled = filteredManifest.supported_official_actions.includes('app.hud');
+  const hudEnabled = filteredActions.includes('app.hud');
   const trust = resolveCommandCenterRecipeTrust();
   const invocationTrust = trust.source?.trust ?? COMMAND_CENTER_RECIPE_SOURCE.trust;
   const librarySources = applyTaskLocalInvocationTrust(
@@ -709,10 +690,10 @@ async function main() {
     adapters: [
       ...createStandardUiAdapters({
         transport,
-        actions: filteredManifest.supported_official_actions,
+        actions: filteredActions,
       }),
       ...createStandardCoreAdapters({
-        actions: filteredManifest.supported_official_actions,
+        actions: filteredActions,
       }),
     ],
     hud: hudEnabled

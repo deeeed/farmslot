@@ -23,10 +23,6 @@ test('recipe validate and run discover an adjacent task library without flags', 
   try {
     mkdirSync(childDir, { recursive: true });
     writeFileSync(
-      path.join(libraryRoot, 'library.json'),
-      `${JSON.stringify({ schema_version: 1, kind: 'recipe-library', name: 'task-local' })}\n`,
-    );
-    writeFileSync(
       path.join(childDir, 'child.recipe.json'),
       `${JSON.stringify({
         $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
@@ -67,10 +63,8 @@ test('recipe validate and run discover an adjacent task library without flags', 
     writeFileSync(
       actionManifest,
       `${JSON.stringify({
-        runner_protocol_version: 1,
-        action_registry_version: 1,
-        supported_official_actions: ['command', 'call', 'end'],
-        action_metadata: {
+        $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
+        actions: {
           command: {
             description: 'Run a command.',
             schema: {
@@ -79,6 +73,34 @@ test('recipe validate and run discover an adjacent task library without flags', 
               required: ['cmd'],
               additionalProperties: false,
             },
+            examples: [
+              {
+                action: 'command',
+                intent: 'Run a command from the project root.',
+                cmd: 'pwd',
+                next: 'done',
+              },
+            ],
+          },
+          call: {
+            description: 'Run a nested recipe.',
+            examples: [
+              {
+                action: 'call',
+                intent: 'Reuse a child recipe.',
+                ref: 'demo.child',
+                next: 'done',
+              },
+            ],
+          },
+          end: {
+            description: 'Finish recipe execution.',
+            examples: [
+              {
+                action: 'end',
+                status: 'pass',
+              },
+            ],
           },
         },
       })}\n`,

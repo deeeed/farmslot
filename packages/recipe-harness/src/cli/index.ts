@@ -2,10 +2,10 @@ import { pathToFileURL } from 'node:url';
 
 import { Command } from 'commander';
 
+import { RECIPE_HARNESS_VERSION } from '../version.js';
+
 import { registerRunCommand } from './run-command.js';
 import { registerValidateCommand } from './validate-command.js';
-
-const CLI_VERSION = '0.1.0';
 
 export interface RecipeHarnessCliOptions {
   commandName?: string;
@@ -16,7 +16,7 @@ export function createRecipeHarnessProgram(options: RecipeHarnessCliOptions = {}
   program
     .name(options.commandName ?? 'farmslot-recipe')
     .description('Farmslot v1 recipe harness CLI')
-    .version(CLI_VERSION);
+    .version(RECIPE_HARNESS_VERSION);
 
   registerValidateCommand(program);
   registerRunCommand(program);

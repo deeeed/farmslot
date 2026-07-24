@@ -4,6 +4,12 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.10.0 - 2026-07-24
+
+- **BREAKING:** Read action support from the keyed manifest allowlist and derive recipe-library identity from configuration or path, removing redundant per-library metadata.
+- Record the canonical action-manifest schema in run summaries.
+- Bind passive observers to trust plans and emit the package version in CLI and run metadata.
+
 ## 0.9.4 - 2026-07-24
 
 - Bound CDP HTTP discovery and abort stalled responses within the caller deadline.

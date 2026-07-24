@@ -1,22 +1,15 @@
 {
-  "runner_protocol_version": 1,
-  "action_registry_version": 1,
-  "supported_official_actions": [
-    "command",
-    "assert_output",
-    "wait",
-    "end",
-    "index_artifacts",
-    "ui.press",
-    "ui.set_input",
-    "ui.scroll",
-    "ui.wait_for",
-    "ui.screenshot",
-    "app.status",
-    "app.hud",
-    "app.trace"
-  ],
-  "action_metadata": {
+  "$schema": "https://farmslot.io/schemas/action-manifest-v1.schema.json",
+  "actions": {
+    "end": {
+      "description": "Finish recipe execution with an explicit status.",
+      "examples": [
+        {
+          "action": "end",
+          "status": "pass"
+        }
+      ]
+    },
     "command": {
       "description": "Run a project-local command during setup, diagnostics, or headless proof. Prefer UI actions only when the recipe must prove visible interaction.",
       "schema": {
@@ -39,7 +32,15 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "command",
+          "intent": "Prepare the project state needed for this proof.",
+          "cmd": "true",
+          "next": "done"
+        }
+      ]
     },
     "app.status": {
       "description": "Query the dev-only Farmslot Expo bridge to confirm the app is reachable.",
@@ -51,7 +52,14 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "app.status",
+          "intent": "Record the resolved application state before continuing.",
+          "next": "done"
+        }
+      ]
     },
     "app.hud": {
       "description": "Display one concise human intent line from the current recipe node.",
@@ -67,14 +75,28 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "app.hud",
+          "intent": "Show the current goal to the supervising human.",
+          "next": "done"
+        }
+      ]
     },
     "app.trace": {
       "description": "Emit a lightweight bridge trace event for recipe timeline observability.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "app.trace",
+          "intent": "Record the requested runtime timeline evidence.",
+          "next": "done"
+        }
+      ]
     },
     "ui.press": {
       "description": "Press a native app control through the simulator or device assigned to this Farmslot slot; live runs require slot device context.",
@@ -92,7 +114,15 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.press",
+          "intent": "Activate the requested visible control.",
+          "test_id": "example-control",
+          "next": "done"
+        }
+      ]
     },
     "ui.set_input": {
       "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets.",
@@ -107,14 +137,30 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.set_input",
+          "intent": "Provide the requested value in the visible form.",
+          "test_id": "example-input",
+          "value": "example",
+          "next": "done"
+        }
+      ]
     },
     "ui.scroll": {
       "description": "Scroll the assigned native simulator or device and wait for stability.",
       "schema": {
         "type": "object",
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.scroll",
+          "intent": "Expose the requested content for visible review.",
+          "next": "done"
+        }
+      ]
     },
     "ui.wait_for": {
       "description": "Wait for native accessibility content on the simulator or device assigned to this Farmslot slot; live runs require slot device context.",
@@ -153,7 +199,16 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.wait_for",
+          "intent": "Confirm the requested application state is visible.",
+          "test_id": "example-control",
+          "visible": true,
+          "next": "done"
+        }
+      ]
     },
     "ui.screenshot": {
       "description": "Capture the assigned simulator or device into the recipe artifact package; live runs require slot device context.",
@@ -195,7 +250,15 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "ui.screenshot",
+          "intent": "Preserve the visible application state as review evidence.",
+          "label": "example-state",
+          "next": "done"
+        }
+      ]
     },
     "index_artifacts": {
       "description": "Copy generated screenshot artifacts into the recipe artifact package for review.",
@@ -222,7 +285,14 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "index_artifacts",
+          "intent": "Preserve generated evidence in the review package.",
+          "next": "done"
+        }
+      ]
     },
     "assert_output": {
       "description": "assert_output action.",
@@ -243,7 +313,15 @@
           }
         },
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "assert_output",
+          "intent": "Confirm the recorded output satisfies the requested condition.",
+          "contains": "ready",
+          "next": "done"
+        }
+      ]
     },
     "wait": {
       "description": "Pause briefly for asynchronous setup work. Keep waits short and prefer deterministic assertions.",
@@ -256,24 +334,25 @@
         },
         "required": ["duration_ms"],
         "additionalProperties": false
-      }
+      },
+      "examples": [
+        {
+          "action": "wait",
+          "intent": "Allow the requested asynchronous state to settle.",
+          "duration_ms": 1,
+          "next": "done"
+        }
+      ]
     }
   },
   "observers": [
     {
       "ref": "ui.screen",
-      "description": "Current native app identity recorded after supported UI actions.",
-      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"],
-      "cost": "cheap",
-      "redaction": "none"
+      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"]
     },
     {
       "ref": "ui.visible",
-      "description": "Bounded native accessibility targets visible after supported UI actions.",
-      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"],
-      "cost": "cheap",
-      "redaction": "labels-only"
+      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"]
     }
-  ],
-  "custom_actions": []
+  ]
 }

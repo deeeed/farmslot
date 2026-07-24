@@ -16,6 +16,7 @@ import {
   errorMessage,
   manifestTarget,
 } from '../recording/capture-helper.js';
+import { RECIPE_HARNESS_VERSION } from '../version.js';
 
 import {
   type ResolvedRecipeDependencies,
@@ -64,7 +65,6 @@ import type {
 } from './types.js';
 import { assertManifestIsValid, assertRecipeMatchesManifest } from './validation.js';
 
-const HARNESS_VERSION = '0.1.0';
 const RUNNER_BUILT_IN_ACTIONS = new Set(['call', 'end']);
 const noopLogger: RecipeLogger = {
   info() {},
@@ -261,6 +261,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipes: dependencyResolution.recipes,
       adapters: this.#adapters,
       actionManifest: this.#actionManifest,
+      defaultObserverRefs: this.#defaultObserverRefs,
       projectRoot,
       artifactsDir,
       env,
@@ -462,9 +463,8 @@ class DefaultRecipeRunner implements RecipeRunner {
       durationMs: endedAt.getTime() - startedAt.getTime(),
       harness: {
         name: '@farmslot/recipe-harness',
-        version: HARNESS_VERSION,
-        runner_protocol_version: this.#actionManifest.runner_protocol_version,
-        action_registry_version: this.#actionManifest.action_registry_version,
+        version: RECIPE_HARNESS_VERSION,
+        action_manifest_schema: this.#actionManifest.$schema,
       },
       ...(this.#runnerProvenance ? { runner: this.#runnerProvenance } : {}),
       ...(libraryResolution

@@ -60,6 +60,12 @@ yarn release:cut --group npm --from-proposal .release-cut/proposal.json --execut
 
 See [release-process.md](release-process.md) for the full workflow and What's New surfaces.
 
+Publish Recipe Protocol packages in dependency order:
+
+1. `@farmslot/protocol`
+2. `@farmslot/recipe-harness`
+3. `@farmslot/expo-recipe`
+
 ## Publish command
 
 There is intentionally no root publish command yet. Add one only after strict

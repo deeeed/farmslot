@@ -77,10 +77,8 @@ test('recipe run blocks an untrusted command until the exact plan is approved', 
     writeFileSync(
       manifestPath,
       JSON.stringify({
-        runner_protocol_version: 1,
-        action_registry_version: 1,
-        supported_official_actions: ['command', 'end'],
-        action_metadata: {
+        $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
+        actions: {
           command: {
             description: 'Run a command.',
             schema: {
@@ -89,6 +87,23 @@ test('recipe run blocks an untrusted command until the exact plan is approved', 
               required: ['cmd'],
               additionalProperties: false,
             },
+            examples: [
+              {
+                action: 'command',
+                intent: 'Write a marker from the project root.',
+                cmd: 'touch approved.txt',
+                next: 'done',
+              },
+            ],
+          },
+          end: {
+            description: 'Finish recipe execution.',
+            examples: [
+              {
+                action: 'end',
+                status: 'pass',
+              },
+            ],
           },
         },
       }),

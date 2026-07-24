@@ -4,9 +4,11 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-24
+
 - Accept root recipe parameters and task-local composed recipes.
 - Enforce assigned-device context for native actions anywhere in the resolved recipe graph.
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Generate strict keyed Action Manifest v1 templates.
 
 ## 0.3.0 - 2026-07-19
 

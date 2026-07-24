@@ -166,9 +166,13 @@ test('validateRecipeProjectHookOutput validates action manifest and doctor JSON 
     validateRecipeProjectHookOutput(
       'recipe_action_manifest',
       JSON.stringify({
-        runner_protocol_version: 1,
-        action_registry_version: 1,
-        supported_official_actions: ['end'],
+        $schema: 'https://farmslot.io/schemas/action-manifest-v1.schema.json',
+        actions: {
+          end: {
+            description: 'Finish the recipe.',
+            examples: [{ action: 'end', status: 'pass' }],
+          },
+        },
       }),
     ).status,
     'pass',

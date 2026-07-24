@@ -8,7 +8,6 @@ import {
   RECIPE_PROTOCOL_SCHEMA_URL,
   type RecipeValidationFinding,
   type RecipeValidationResult,
-  requireStringField,
   validateOptionalStringField,
 } from './common.js';
 import {
@@ -20,6 +19,7 @@ import {
   extractWorkflow,
   getRecipeActionParams,
   getRecipeWorkflowActionEntries,
+  validateRecipeActionCases,
   validateRecipeCalls,
   validateWorkflowGraph,
 } from './workflow.js';
@@ -35,8 +35,6 @@ const RECIPE_FIELDS = new Set([
 
 export interface RecipeDocumentValidationOptions {
   externalRecipeIds?: ReadonlySet<string>;
-  /** Retained for callers; Recipe v1 always requires the canonical schema ref. */
-  requireSchemaRef?: boolean;
   skipRecipeCallResolution?: boolean;
 }
 
@@ -116,30 +114,9 @@ export function validateRecipeWithManifest(
       ctx.findings.push(...paramsResult.findings.map((finding) => rebaseFinding(finding, path)));
     }
 
-    if (isRecord(node.cases)) {
-      if (!contract?.resultCases?.length) {
-        addFinding(
-          ctx,
-          'error',
-          'recipe.action_cases_not_declared',
-          `${path}.cases`,
-          `Action ${action} uses result cases but its manifest declares none.`,
-        );
-      } else {
-        const allowed = new Set(contract.resultCases);
-        for (const caseName of Object.keys(node.cases)) {
-          if (!allowed.has(caseName)) {
-            addFinding(
-              ctx,
-              'error',
-              'recipe.action_case_not_declared',
-              `${path}.cases.${caseName}`,
-              `Case ${caseName} is not declared by action ${action}.`,
-            );
-          }
-        }
-      }
-    }
+    ctx.findings.push(
+      ...validateRecipeActionCases(node, action, contract?.resultCases, path).findings,
+    );
   }
 
   return finishResult(ctx);
@@ -191,13 +168,15 @@ export function validateRecipeDocument(
     );
   }
 
-  requireStringField(ctx, recipe, 'description', 'description');
+  validateOptionalStringField(ctx, recipe, 'description', 'description');
   validateOptionalStringField(ctx, recipe, 'title', 'title');
   if (hasOwn(recipe, 'paramsSchema')) {
     ctx.findings.push(...validateRecipeParamsSchema(recipe.paramsSchema).findings);
   }
 
-  const proofTargetIds = validateProofTargets(ctx, recipe.proofTargets);
+  const proofTargetIds = hasOwn(recipe, 'proofTargets')
+    ? validateProofTargets(ctx, recipe.proofTargets)
+    : new Set<string>();
   const workflow = extractWorkflow(ctx, recipe);
   if (workflow) {
     validateWorkflowGraph(ctx, workflow);
@@ -213,7 +192,6 @@ export function validateRecipeDocument(
 
 function validateProofTargets(ctx: ReturnType<typeof createContext>, value: unknown): Set<string> {
   const ids = new Set<string>();
-  if (value == null) return ids;
   if (!Array.isArray(value)) {
     addFinding(
       ctx,
@@ -310,19 +288,10 @@ function validateProofLinks(
 
 function manifestActionContracts(manifest: unknown): Map<string, ManifestActionContract> {
   const contracts = new Map<string, ManifestActionContract>();
-  if (!isRecord(manifest)) return contracts;
-  if (isRecord(manifest.action_metadata)) {
-    for (const [name, entry] of Object.entries(manifest.action_metadata)) {
-      if (!isRecord(entry)) continue;
-      contracts.set(name, actionContract(entry));
-    }
-  }
-  if (Array.isArray(manifest.custom_actions)) {
-    for (const entry of manifest.custom_actions) {
-      if (isRecord(entry) && isNonEmptyString(entry.name)) {
-        contracts.set(entry.name, actionContract(entry));
-      }
-    }
+  if (!isRecord(manifest) || !isRecord(manifest.actions)) return contracts;
+  for (const [name, entry] of Object.entries(manifest.actions)) {
+    if (!isRecord(entry)) continue;
+    contracts.set(name, actionContract(entry));
   }
   return contracts;
 }

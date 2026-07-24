@@ -7,6 +7,8 @@ export const RECIPE_PROTOCOL_SCHEMA_URL = 'https://farmslot.io/schemas/recipe-v1
 export const RECIPE_PROTOCOL_SCHEMA_URLS = {
   [RECIPE_PROTOCOL_SCHEMA_VERSION]: RECIPE_PROTOCOL_SCHEMA_URL,
 } as const;
+export const RECIPE_ACTION_MANIFEST_SCHEMA_URL =
+  'https://farmslot.io/schemas/action-manifest-v1.schema.json';
 
 export const OFFICIAL_RECIPE_ACTIONS = [
   'command',
@@ -48,33 +50,14 @@ export const BUILT_IN_UI_OBSERVERS = ['ui.screen', 'ui.visible'] as const;
 export type BuiltInUiObserverRef = (typeof BUILT_IN_UI_OBSERVERS)[number];
 export type UiObserverRef = BuiltInUiObserverRef | (string & {});
 
-export interface RecipeActionCatalogExample {
-  description?: string;
-  node: Record<string, unknown>;
-}
-
 export interface RecipeActionCatalogEntry {
-  description?: string;
+  description: string;
   schema?: Record<string, unknown>;
   /** Finite control cases this action may return. The recipe owns their destinations. */
   result_cases?: string[];
-  examples?: RecipeActionCatalogExample[];
+  examples: Record<string, unknown>[];
   /** Security-relevant effects. Discovery metadata only; runtime adapters may add but never remove capabilities. */
   execution_capabilities?: RecipeExecutionCapability[];
-  when_to_use?: string;
-  avoid_when?: string;
-  proof_effect?: string;
-  safety_notes?: string;
-}
-
-export interface RecipeCustomActionDeclaration extends RecipeActionCatalogEntry {
-  name: string;
-  owner?: string;
-}
-
-export interface RecipeNativeBindingDeclaration {
-  action: RecipeActionName;
-  implementation: string;
 }
 
 export interface RecipeRuntimeCapabilityDeclaration {
@@ -89,20 +72,12 @@ export interface RecipeRuntimeCapabilityDeclaration {
 
 export interface RecipeObserverDeclaration {
   ref: UiObserverRef;
-  description: string;
-  default_for?: RecipeActionName[];
-  cost?: 'cheap' | 'moderate' | 'expensive' | string;
-  redaction?: string;
+  default_for: RecipeActionName[];
 }
 
 export interface RecipeActionManifestDocument {
-  runner_protocol_version: 1;
-  action_registry_version: 1;
-  supported_official_actions: OfficialActionName[];
-  action_metadata?: Partial<Record<OfficialActionName, RecipeActionCatalogEntry>>;
-  custom_actions?: RecipeCustomActionDeclaration[];
-  native_bindings?: RecipeNativeBindingDeclaration[];
-  capabilities?: RecipeRuntimeCapabilityDeclaration[];
+  $schema: typeof RECIPE_ACTION_MANIFEST_SCHEMA_URL;
+  actions: Record<string, RecipeActionCatalogEntry>;
   observers?: RecipeObserverDeclaration[];
 }
 
@@ -138,7 +113,6 @@ export interface RecipeArtifactPackageInput {
   resolvedRecipes?: Record<string, unknown>;
   /** Static dependency graph and provenance emitted as recipe-resolution.json. */
   recipeResolution?: unknown;
-  requireSchemaRef?: boolean;
 }
 
 export interface RecipeResolutionDependency {
@@ -230,7 +204,7 @@ export function validateOptionalStringField(
   field: string,
   path: string,
 ): void {
-  if (!hasOwn(document, field) || document[field] == null) return;
+  if (!hasOwn(document, field)) return;
   if (isNonEmptyString(document[field])) return;
   addFinding(ctx, 'error', `recipe.invalid_${field}`, path, `${path} must be a non-empty string.`);
 }

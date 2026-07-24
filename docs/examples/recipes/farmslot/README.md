@@ -7,7 +7,7 @@ recipe with a sample artifact package shaped like a completed project run.
 
 The matching action catalog example is
 `../farmslot-v1.action-manifest.json`. It declares the official actions and
-precondition IDs these fixtures use.
+strict action contracts these fixtures use.
 
 The suite covers:
 

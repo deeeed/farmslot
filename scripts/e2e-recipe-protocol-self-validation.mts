@@ -229,23 +229,11 @@ async function runSelfValidation(args: ParsedArgs): Promise<void> {
   const recipeDocument = buildRuntimeRecipe(reportRel, logRel);
   const actionManifest = await readJson(actionManifestPath);
   const runtimeActions = ['command', 'index_artifacts', 'end'];
-  const runtimeActionSet = new Set(runtimeActions);
+  const manifestActions =
+    ((actionManifest as Record<string, unknown>).actions as Record<string, unknown>) ?? {};
   const runtimeManifest = {
-    runner_protocol_version: (actionManifest as Record<string, unknown>).runner_protocol_version,
-    action_registry_version: (actionManifest as Record<string, unknown>).action_registry_version,
-    supported_official_actions: runtimeActions,
-    action_metadata: Object.fromEntries(
-      Object.entries(
-        ((actionManifest as Record<string, unknown>).action_metadata as Record<string, unknown>) ??
-          {},
-      ).filter(([action]) => runtimeActionSet.has(action)),
-    ),
-    native_bindings: (
-      ((actionManifest as Record<string, unknown>).native_bindings as Record<string, unknown>[]) ??
-      []
-    ).filter(
-      (binding) => typeof binding.action === 'string' && runtimeActionSet.has(binding.action),
-    ),
+    $schema: (actionManifest as Record<string, unknown>).$schema,
+    actions: Object.fromEntries(runtimeActions.map((action) => [action, manifestActions[action]])),
   };
   const runner = createRecipeRunner({
     actionManifest: runtimeManifest as never,

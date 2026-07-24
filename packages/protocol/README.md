@@ -128,22 +128,38 @@ namespaced, for example `example.trade.place_order` or `checkout.ensure_cart`.
 
 ```ts
 import {
+  RECIPE_ACTION_MANIFEST_SCHEMA_URL,
   validateRecipeActionManifestDocument,
   validateRecipeWithManifest,
   type RecipeActionManifestDocument,
 } from '@farmslot/protocol';
 
 const manifest: RecipeActionManifestDocument = {
-  runner_protocol_version: 1,
-  action_registry_version: 1,
-  supported_official_actions: ['command', 'wait', 'end'],
-  custom_actions: [
-    {
-      name: 'example.echo',
-      description: 'Echoes a message for adapter smoke tests.',
-      schema: { type: 'object', required: ['message'] },
+  $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+  actions: {
+    end: {
+      description: 'Finish recipe execution.',
+      examples: [{ action: 'end', status: 'pass' }],
     },
-  ],
+    'example.echo': {
+      description: 'Echoes a message for adapter smoke tests.',
+      schema: {
+        type: 'object',
+        properties: { message: { type: 'string' } },
+        required: ['message'],
+        additionalProperties: false,
+      },
+      examples: [
+        {
+          action: 'example.echo',
+          intent: 'Echo the test message.',
+          message: 'hello',
+          next: 'done',
+        },
+      ],
+      execution_capabilities: [],
+    },
+  },
 };
 
 const manifestResult = validateRecipeActionManifestDocument(manifest);

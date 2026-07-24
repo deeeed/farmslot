@@ -4,7 +4,7 @@
   "title": "Farmslot Recipe Protocol v1",
   "description": "A parameterized, composable workflow that executes actions or other recipes and records explicit proof claims.",
   "type": "object",
-  "required": ["$schema", "description", "workflow"],
+  "required": ["$schema", "workflow"],
   "properties": {
     "$schema": {
       "const": "https://farmslot.io/schemas/recipe-v1.schema.json",
@@ -223,6 +223,7 @@
         "ref": {
           "type": "string",
           "minLength": 1,
+          "not": { "pattern": "\\{\\{(?:params|outputs)\\.[A-Za-z0-9_.-]+\\}\\}" },
           "description": "Static recipe id resolved from configured recipe libraries."
         },
         "params": {

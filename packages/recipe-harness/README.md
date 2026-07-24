@@ -83,14 +83,16 @@ A recipe path works in place of a library id. UI, CDP, React Native, browser-ext
 ## Recipe libraries
 
 ```text
-library.json
 recipes/
   wallet/ensure_unlocked.recipe.json
   checkout/smoke.mobile.recipe.json
   checkout/smoke.extension.recipe.json
 ```
 
-`library.json` must declare `{ "kind": "recipe-library" }`; `name` is optional. Recipe ids derive from their path below `recipes/`. `.core`, `.extension`, and `.mobile` select adapter variants without changing the id.
+Recipe ids derive from their path below `recipes/`. Configure a source as
+`name=/path` when its provenance label should differ from the directory name.
+`.core`, `.extension`, and `.mobile` select adapter variants without changing
+the id.
 
 Sources are ordered and the first source wins. Configure repeatable `--library name=path`, `RECIPE_LIBRARY_PATH`, or the personal library under the Farmslot home. Shadows are reported. Duplicate ids within one source and escaping symlinks are rejected.
 

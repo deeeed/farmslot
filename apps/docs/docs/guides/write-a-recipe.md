@@ -33,7 +33,7 @@ Call the closest recipe when its graph already fits. Copy it only when the workf
 }
 ```
 
-Required root fields are `$schema`, `description`, and `workflow`. Use `paramsSchema` for reusable inputs, `call` for composition, `proofTargets` for explicit claims, and `workflow.teardown` only when cleanup must be guaranteed.
+Required root fields are `$schema` and `workflow`. Use optional `description` for human context, `paramsSchema` for reusable inputs, `call` for composition, `proofTargets` for explicit claims, and `workflow.teardown` only when cleanup must be guaranteed.
 
 Every non-terminal node needs a short human-facing `intent`. UI intent describes the visible outcome; selectors, routes, keys, and action names remain in parameters.
 

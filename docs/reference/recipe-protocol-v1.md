@@ -28,7 +28,7 @@ The authoritative schema is `https://farmslot.io/schemas/recipe-v1.schema.json`.
 }
 ```
 
-Required root fields are `$schema`, `description`, and `workflow`. Optional root fields are `title`, `paramsSchema`, and `proofTargets`. Unknown fields are errors.
+Required root fields are `$schema` and `workflow`. Optional root fields are `title`, `description`, `paramsSchema`, and `proofTargets`. Unknown fields are errors.
 
 ## Workflow
 
@@ -149,14 +149,17 @@ Prefer an existing recipe, then an existing action. Add a shared recipe only whe
 ## Libraries
 
 ```text
-library.json
 recipes/
   wallet/ensure_unlocked.recipe.json
   perps/smoke.mobile.recipe.json
   perps/smoke.extension.recipe.json
 ```
 
-Recipe identity comes from its path below `recipes/`. Adapter suffixes select variants without changing the id. Ordered library sources use first-match precedence; shadows are reported, duplicates within one source are errors, and symlinks may not escape the library root.
+Recipe identity comes from its path below `recipes/`. The configured source
+alias, or directory name when no alias is provided, identifies provenance.
+Adapter suffixes select variants without changing the id. Ordered library
+sources use first-match precedence; shadows are reported, duplicates within one
+source are errors, and symlinks may not escape the library root.
 
 ## Trust and evidence
 

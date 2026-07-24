@@ -347,7 +347,6 @@ export function validateRecipeArtifactPackage(
 
   if (input.recipe != null) {
     const recipeResult = validateRecipeDocument(input.recipe, {
-      requireSchemaRef: input.requireSchemaRef === true,
       externalRecipeIds,
     });
     ctx.findings.push(...recipeResult.findings);
@@ -409,7 +408,6 @@ export function validateRecipeArtifactPackage(
         );
       }
       const result = validateRecipeDocument(document, {
-        requireSchemaRef: input.requireSchemaRef === true,
         externalRecipeIds,
       });
       ctx.findings.push(...result.findings);

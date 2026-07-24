@@ -1,10 +1,13 @@
 import {
   addFinding,
+  createContext,
+  finishResult,
   hasOwn,
   isNonEmptyString,
   isRecord,
   type MutableValidationContext,
   OFFICIAL_ACTION_SET,
+  type RecipeValidationResult,
   TERMINAL_STATUSES,
 } from './common.js';
 
@@ -130,7 +133,7 @@ export function extractWorkflow(
   }
 
   const teardown = workflow.teardown;
-  if (teardown != null && !isNonEmptyString(teardown)) {
+  if (hasOwn(workflow, 'teardown') && !isNonEmptyString(teardown)) {
     addFinding(
       ctx,
       'error',
@@ -230,7 +233,7 @@ function validateProves(
   node: Record<string, unknown>,
   path: string,
 ): void {
-  if (node.proves == null) return;
+  if (!hasOwn(node, 'proves')) return;
   if (
     !Array.isArray(node.proves) ||
     node.proves.some((target) => !isNonEmptyString(target)) ||
@@ -253,7 +256,7 @@ function collectTargets(
   emitFindings = true,
 ): string[] {
   const targets: string[] = [];
-  if (node.next != null) {
+  if (hasOwn(node, 'next')) {
     if (isNonEmptyString(node.next)) targets.push(node.next);
     else if (emitFindings)
       addFinding(
@@ -265,7 +268,7 @@ function collectTargets(
       );
   }
 
-  if (node.default != null) {
+  if (hasOwn(node, 'default')) {
     if (isNonEmptyString(node.default)) targets.push(node.default);
     else if (emitFindings)
       addFinding(
@@ -277,7 +280,7 @@ function collectTargets(
       );
   }
 
-  if (node.cases != null) {
+  if (hasOwn(node, 'cases')) {
     if (!isRecord(node.cases) || Object.keys(node.cases).length === 0) {
       if (emitFindings)
         addFinding(
@@ -386,7 +389,7 @@ function validateNodeShape(
         'call.ref must be a non-empty recipe id.',
       );
     }
-    if (node.params != null && !isRecord(node.params)) {
+    if (hasOwn(node, 'params') && !isRecord(node.params)) {
       addFinding(
         ctx,
         'error',
@@ -396,6 +399,54 @@ function validateNodeShape(
       );
     }
   }
+}
+
+export function validateRecipeWorkflowNode(nodeId: string, node: unknown): RecipeValidationResult {
+  const ctx = createContext();
+  if (!isNonEmptyString(nodeId) || !NODE_ID_PATTERN.test(nodeId) || !isRecord(node)) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_node',
+      `workflow.nodes.${String(nodeId)}`,
+      `Workflow node ${String(nodeId)} must be an object whose id contains only letters, numbers, underscores, or hyphens.`,
+    );
+    return finishResult(ctx);
+  }
+  validateNodeShape(ctx, nodeId, node);
+  return finishResult(ctx);
+}
+
+export function validateRecipeActionCases(
+  node: Record<string, unknown>,
+  action: string,
+  resultCases: readonly string[] | undefined,
+  path: string,
+): RecipeValidationResult {
+  const ctx = createContext();
+  if (!isRecord(node.cases)) return finishResult(ctx);
+  if (!resultCases?.length) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.action_cases_not_declared',
+      `${path}.cases`,
+      `Action ${action} uses result cases but its manifest declares none.`,
+    );
+    return finishResult(ctx);
+  }
+  const allowed = new Set(resultCases);
+  for (const caseName of Object.keys(node.cases)) {
+    if (allowed.has(caseName)) continue;
+    addFinding(
+      ctx,
+      'error',
+      'recipe.action_case_not_declared',
+      `${path}.cases.${caseName}`,
+      `Case ${caseName} is not declared by action ${action}.`,
+    );
+  }
+  return finishResult(ctx);
 }
 
 function walkSubgraph(

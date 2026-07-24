@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/protocol",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -359,6 +359,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "ajv": "^8.20.0",
     "eslint": "^10.3.0",
     "prettier": "^3.8.3",
     "tsx": "^4.19.0",

@@ -27,11 +27,12 @@ test('Command Center derives a strict manifest for only its implemented actions'
   );
 
   assert.equal(validateRecipeActionManifestDocument(filtered).status, 'valid');
-  assert.deepEqual(filtered.supported_official_actions, ['ui.navigate', 'ui.wait_for', 'end']);
-  assert.deepEqual(Object.keys(filtered.action_metadata), ['ui.navigate', 'ui.wait_for']);
+  assert.deepEqual(Object.keys(filtered.actions), ['end', 'ui.navigate', 'ui.wait_for']);
   assert.ok(
-    filtered.native_bindings.every((binding) =>
-      new Set(['ui.navigate', 'ui.wait_for']).has(binding.action),
+    filtered.observers.every((observer) =>
+      observer.default_for.every((action) =>
+        new Set(['ui.navigate', 'ui.wait_for', 'end']).has(action),
+      ),
     ),
   );
   assert.equal(Object.hasOwn(filtered, 'pre_conditions'), false);
@@ -65,10 +66,6 @@ test('Command Center runs an adjacent task recipe library without manual configu
   const library = path.join(artifacts, 'recipe-library');
   try {
     await mkdir(path.join(library, 'recipes', 'task'), { recursive: true });
-    await writeFile(
-      path.join(library, 'library.json'),
-      `${JSON.stringify({ kind: 'recipe-library', schema_version: 1, name: 'task-local' })}\n`,
-    );
     await writeFile(
       path.join(library, 'recipes', 'task', 'write.recipe.json'),
       `${JSON.stringify({

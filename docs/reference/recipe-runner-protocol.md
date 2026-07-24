@@ -4,14 +4,14 @@ The runner contract connects [Recipe Protocol v1](recipe-protocol-v1.md) to a pr
 
 ## Required pieces
 
-| Piece            | Responsibility                                                                                 |
-| ---------------- | ---------------------------------------------------------------------------------------------- |
-| Recipe           | Declares `$schema`, description, parameters, workflow, optional proof targets and teardown     |
-| Action manifest  | Declares supported actions, strict parameter schemas, result cases, examples, and capabilities |
-| Adapter          | Implements each declared action against the selected runtime                                   |
-| Library          | Publishes named, optionally adapter-specific recipes                                           |
-| Runner command   | Receives recipe, target, parameters, and artifact directory                                    |
-| Artifact package | Retains exact inputs, resolution, trace, verdict, observations, and proof                      |
+| Piece            | Responsibility                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------- |
+| Recipe           | Declares `$schema`, workflow, optional title/description, parameters, proof targets, and teardown |
+| Action manifest  | Declares supported actions, strict parameter schemas, result cases, examples, and capabilities    |
+| Adapter          | Implements each declared action against the selected runtime                                      |
+| Library          | Publishes named, optionally adapter-specific recipes                                              |
+| Runner command   | Receives recipe, target, parameters, and artifact directory                                       |
+| Artifact package | Retains exact inputs, resolution, trace, verdict, observations, and proof                         |
 
 ## Action manifest
 
@@ -25,7 +25,8 @@ An action manifest is the runner's public capability contract. An action declara
 
 Namespaced project actions such as `metamask.wallet.ensure_unlocked` remain project-owned. Official actions stay small and platform-neutral.
 
-The manifest is authoritative. Unknown actions, fields, result cases, or duplicate custom declarations fail validation.
+The manifest is authoritative. Unknown actions, fields, and result cases fail validation.
+The published Action Manifest schema at `https://farmslot.io/schemas/action-manifest-v1.schema.json` provides editor structure and completion; runtime validation also enforces cross-field relationships such as required-property membership and enum/default value types.
 
 ## Discovery
 

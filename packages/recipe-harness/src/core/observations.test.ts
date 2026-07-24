@@ -4,16 +4,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import type { RecipeActionManifestDocument } from '@farmslot/protocol';
+import {
+  RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+  type RecipeActionManifestDocument,
+} from '@farmslot/protocol';
 
 import { createRecipeRunner } from './runner.js';
 import type { ActionAdapter, TraceEntry } from './types.js';
 
 const manifest: RecipeActionManifestDocument = {
-  runner_protocol_version: 1,
-  action_registry_version: 1,
-  supported_official_actions: ['ui.press', 'call', 'end'],
-  action_metadata: {
+  $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+  actions: {
     'ui.press': {
       description: 'Press one visible control.',
       schema: {
@@ -22,17 +23,39 @@ const manifest: RecipeActionManifestDocument = {
         required: ['test_id'],
         additionalProperties: false,
       },
+      examples: [
+        {
+          action: 'ui.press',
+          intent: 'Open the requested screen.',
+          test_id: 'next',
+          next: 'done',
+        },
+      ],
+    },
+    call: {
+      description: 'Invoke a named child recipe.',
+      examples: [
+        {
+          action: 'call',
+          intent: 'Reuse a child recipe.',
+          ref: 'example.child',
+          params: {},
+          next: 'done',
+        },
+      ],
+    },
+    end: {
+      description: 'Finish recipe execution.',
+      examples: [{ action: 'end', status: 'pass' }],
     },
   },
   observers: [
     {
       ref: 'ui.screen',
-      description: 'Current screen.',
       default_for: ['ui.press'],
     },
     {
       ref: 'ui.visible',
-      description: 'Visible controls.',
       default_for: ['ui.press'],
     },
   ],
@@ -129,10 +152,6 @@ test('called recipes run their own passive observers and expose only the call ou
   const root = await mkdtemp(path.join(os.tmpdir(), 'recipe-observation-library-'));
   const recipesDir = path.join(root, 'recipes');
   await mkdir(recipesDir, { recursive: true });
-  await writeFile(
-    path.join(root, 'library.json'),
-    `${JSON.stringify({ schema_version: 1, kind: 'recipe-library', name: 'test' })}\n`,
-  );
   await writeFile(path.join(recipesDir, 'child.recipe.json'), `${JSON.stringify(document())}\n`);
   const rootRecipe = {
     $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
