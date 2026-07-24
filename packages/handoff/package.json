@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/handoff",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -46,6 +46,7 @@
       "import": "./dist/pr-publish/index.js",
       "default": "./dist/pr-publish/index.js"
     },
+    "./cli": "./dist/bin/handoff.js",
     "./schemas/*": "./schemas/*"
   },
   "scripts": {
