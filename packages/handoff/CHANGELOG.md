@@ -4,6 +4,10 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+## 0.3.1 - 2026-07-24
+
+- Expose the Handoff executable through the supported `@farmslot/handoff/cli` subpath.
+
 ## 0.3.0 - 2026-07-24
 
 - Allow approved closeout sharing to receive a local destination directly, without a config file.

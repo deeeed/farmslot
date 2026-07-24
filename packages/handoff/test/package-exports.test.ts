@@ -46,6 +46,7 @@ test('package exports expose the stable public handoff surface', async () => {
 
 test('the shipped schema assets are reachable as package subpaths', () => {
   const require = createRequire(import.meta.url);
+  assert.match(require.resolve('@farmslot/handoff/cli'), /dist\/bin\/handoff\.js$/u);
   const resolved = require.resolve('@farmslot/handoff/schemas/manifest.schema.json');
   const schema = JSON.parse(readFileSync(resolved, 'utf8')) as { $id: string };
   assert.ok(schema.$id.endsWith('manifest.schema.json'));
