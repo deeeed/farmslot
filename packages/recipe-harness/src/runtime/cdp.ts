@@ -116,11 +116,37 @@ export class CdpSession {
     ws.on('close', () => this.#rejectAll(new Error('CDP websocket closed.')));
   }
 
-  static async connect(webSocketDebuggerUrl: string): Promise<CdpSession> {
+  static async connect(
+    webSocketDebuggerUrl: string,
+    options: { timeoutMs?: number } = {},
+  ): Promise<CdpSession> {
     const ws = new WebSocket(webSocketDebuggerUrl);
+    const timeoutMs = options.timeoutMs;
     await new Promise<void>((resolve, reject) => {
-      ws.once('open', resolve);
-      ws.once('error', reject);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = () => {
+        ws.off('open', onOpen);
+        ws.off('error', onError);
+        if (timer) clearTimeout(timer);
+      };
+      const onOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      ws.once('open', onOpen);
+      ws.once('error', onError);
+      if (timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          cleanup();
+          ws.once('error', () => undefined);
+          ws.terminate();
+          reject(new Error(`CDP connection timed out after ${timeoutMs}ms.`));
+        }, timeoutMs);
+      }
     });
     return new CdpSession(ws);
   }
