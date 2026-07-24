@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-24
+
 - Fail artifact validation when the installed protocol rejects the canonical Recipe v1 envelope.
 
 - **BREAKING:** Task artifact checks require Recipe v1 resolution metadata and exact reachable dependency documents.
