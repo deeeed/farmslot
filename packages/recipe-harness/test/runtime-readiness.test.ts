@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import vm from 'node:vm';
 
-import { probeCdpCompositorInteractivity } from '../src/runtime/cdp.js';
+import { CdpSession, probeCdpCompositorInteractivity } from '../src/runtime/cdp.js';
 import type { RuntimeDecisionReport } from '../src/runtime/decision-types.js';
 import {
   depsCheck,
@@ -57,6 +58,64 @@ test('CDP compositor probe requires advancing frames and sane hit testing', asyn
   });
   assert.equal(obscured.status, 'not-interactive');
   assert.match(obscured.reason ?? '', /hit testing/u);
+});
+
+test('CDP session connection timeout rejects a stalled WebSocket upgrade', async () => {
+  const server = createServer();
+  let upgradedSocket: import('node:net').Socket | undefined;
+  server.on('upgrade', (_request, socket) => {
+    upgradedSocket = socket;
+    socket.write('HTTP/1.1 101 Switching Protocols\r\n');
+    socket.resume();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address === 'object');
+
+  try {
+    await assert.rejects(
+      CdpSession.connect(`ws://127.0.0.1:${address.port}/devtools/page/stalled`, {
+        timeoutMs: 100,
+      }),
+      /CDP connection timed out after 100ms/u,
+    );
+    assert(upgradedSocket, 'the server should receive the stalled WebSocket upgrade');
+    const termination = await new Promise<'end' | 'close' | 'error'>((resolve, reject) => {
+      if (upgradedSocket.readableEnded) return resolve('end');
+      if (upgradedSocket.destroyed) return resolve('close');
+      const cleanup = () => {
+        clearTimeout(timer);
+        upgradedSocket?.off('end', onEnd);
+        upgradedSocket?.off('close', onClose);
+        upgradedSocket?.off('error', onError);
+      };
+      const onEnd = () => {
+        cleanup();
+        resolve('end');
+      };
+      const onClose = () => {
+        cleanup();
+        resolve('close');
+      };
+      const onError = () => {
+        cleanup();
+        resolve('error');
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('the timed-out CDP client did not terminate its stalled handshake'));
+      }, 500);
+      upgradedSocket.once('end', onEnd);
+      upgradedSocket.once('close', onClose);
+      upgradedSocket.once('error', onError);
+    });
+    assert.match(termination, /^(?:end|close|error)$/u);
+  } finally {
+    upgradedSocket?.destroy();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });
 
 test('CDP compositor probe reports a frame timeout as suspended', async () => {
