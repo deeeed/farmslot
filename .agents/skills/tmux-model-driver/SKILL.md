@@ -142,6 +142,7 @@ Important:
 Rules:
 
 - send natural-language instructions, not shell commands
+- clean-room Claude: pass the selected `SKILL.md` last; the helper isolates it and disables subagents
 - if you need shell work, exit or interrupt back to shell first
 - submit with `send-keys -l` + named `Enter`; capture again before sending more keys
 - if the raw text you sent is still sitting in the compose box at `❯`, it did not execute — send `Enter` again or `C-u` + resend

@@ -3,9 +3,16 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import vm from 'node:vm';
 
+import { probeCdpCompositorInteractivity } from '../src/runtime/cdp.js';
 import type { RuntimeDecisionReport } from '../src/runtime/decision-types.js';
-import { depsCheck, recordDepsBaseline } from '../src/runtime/deps-readiness.js';
+import {
+  depsCheck,
+  depsFingerprint,
+  recordDepsBaseline,
+  writeDecisionState,
+} from '../src/runtime/deps-readiness.js';
 import {
   analyzeBundleLog,
   evaluatePersistentBundleError,
@@ -13,6 +20,133 @@ import {
   supersededErrorCapture,
 } from '../src/runtime/log-analysis.js';
 import { orchestrateRuntimeUp } from '../src/runtime/orchestrate-up.js';
+
+test('CDP compositor probe requires advancing frames and sane hit testing', async () => {
+  const ready = await probeCdpCompositorInteractivity({
+    async call() {
+      return {
+        result: {
+          value: {
+            frameAdvanced: true,
+            interactiveTargetFound: true,
+            hitTestOk: true,
+          },
+        },
+      };
+    },
+  });
+  assert.deepEqual(ready, {
+    status: 'ready',
+    frameAdvanced: true,
+    interactiveTargetFound: true,
+    hitTestOk: true,
+  });
+
+  const obscured = await probeCdpCompositorInteractivity({
+    async call() {
+      return {
+        result: {
+          value: {
+            frameAdvanced: true,
+            interactiveTargetFound: true,
+            hitTestOk: false,
+          },
+        },
+      };
+    },
+  });
+  assert.equal(obscured.status, 'not-interactive');
+  assert.match(obscured.reason ?? '', /hit testing/u);
+});
+
+test('CDP compositor probe reports a frame timeout as suspended', async () => {
+  const report = await probeCdpCompositorInteractivity(
+    {
+      async call() {
+        return new Promise(() => undefined);
+      },
+    },
+    5,
+  );
+  assert.equal(report.status, 'suspended');
+  assert.match(report.reason ?? '', /did not advance/u);
+});
+
+test('CDP compositor probe propagates transport and evaluation failures', async () => {
+  await assert.rejects(
+    probeCdpCompositorInteractivity({
+      async call() {
+        throw new Error('WebSocket disconnected');
+      },
+    }),
+    /WebSocket disconnected/u,
+  );
+
+  await assert.rejects(
+    probeCdpCompositorInteractivity({
+      async call() {
+        return {
+          exceptionDetails: {
+            text: 'Evaluation failed',
+          },
+        };
+      },
+    }),
+    /Evaluation failed/u,
+  );
+});
+
+test('CDP compositor probe accepts a hittable modal control after an occluded candidate', async () => {
+  let frame = 0;
+  let now = 0;
+  const occluded = {
+    disabled: false,
+    getAttribute: () => null,
+    getBoundingClientRect: () => ({
+      left: 0,
+      top: 0,
+      right: 20,
+      bottom: 20,
+      width: 20,
+      height: 20,
+    }),
+    contains: () => false,
+  };
+  const modalControl = {
+    disabled: false,
+    getAttribute: () => null,
+    getBoundingClientRect: () => ({
+      left: 30,
+      top: 0,
+      right: 50,
+      bottom: 20,
+      width: 20,
+      height: 20,
+    }),
+    contains: () => false,
+  };
+  const overlay = {};
+  const report = await probeCdpCompositorInteractivity({
+    async call(_method, params) {
+      const value = await vm.runInNewContext(String(params?.expression), {
+        Promise,
+        performance: { now: () => ++now },
+        requestAnimationFrame: (callback: (timestamp: number) => void) => callback(++frame),
+        document: {
+          querySelectorAll: () => [occluded, modalControl],
+          elementFromPoint: (x: number) => (x < 30 ? overlay : modalControl),
+        },
+        getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }),
+        innerWidth: 100,
+        innerHeight: 100,
+      });
+      return { result: { value } };
+    },
+  });
+  assert.equal(report.status, 'ready');
+  assert.equal(report.interactiveTargetFound, true);
+  assert.equal(report.hitTestOk, true);
+});
 
 test('depsCheck reports missing install markers', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
@@ -39,8 +173,129 @@ test('depsCheck requires node_modules state for the node-modules linker', async 
 
     await rm(path.join(root, '.yarnrc.yml'));
     const unknownLinker = depsCheck(root);
-    assert.equal(unknownLinker.installed, true);
-    assert.equal(unknownLinker.status, 'current');
+    assert.equal(unknownLinker.installed, false);
+    assert.equal(unknownLinker.status, 'missing');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('depsCheck uses node_modules state as the authoritative node-modules freshness marker', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
+  try {
+    const lockfile = path.join(root, 'yarn.lock');
+    const nodeModulesState = path.join(root, 'node_modules/.yarn-state.yml');
+    const yarnInstallState = path.join(root, '.yarn/install-state.gz');
+    await writeFile(path.join(root, 'package.json'), '{"name":"stub"}\n');
+    await writeFile(path.join(root, '.yarnrc.yml'), 'nodeLinker: node-modules\n');
+    await writeFile(lockfile, '# lock\n');
+    await mkdir(path.dirname(nodeModulesState), { recursive: true });
+    await mkdir(path.dirname(yarnInstallState), { recursive: true });
+    await writeFile(nodeModulesState, 'stale node_modules\n');
+    await writeFile(yarnInstallState, 'newer yarn metadata\n');
+
+    const staleAt = new Date(Date.now() - 10_000);
+    const inputAt = new Date(Date.now());
+    const misleadingAt = new Date(Date.now() + 10_000);
+    await utimes(nodeModulesState, staleAt, staleAt);
+    await utimes(lockfile, inputAt, inputAt);
+    await utimes(yarnInstallState, misleadingAt, misleadingAt);
+
+    const check = depsCheck(root);
+    assert.equal(check.status, 'stale');
+    assert.equal(check.hasBaseline, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('depsCheck ignores leftover node_modules state for the pnp linker', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
+  try {
+    await writeFile(path.join(root, 'package.json'), '{"name":"stub"}\n');
+    await writeFile(path.join(root, '.yarnrc.yml'), 'nodeLinker: pnp\n');
+    await mkdir(path.join(root, 'node_modules'), { recursive: true });
+    await writeFile(path.join(root, 'node_modules/.yarn-state.yml'), 'leftover\n');
+
+    const check = depsCheck(root);
+    assert.equal(check.status, 'missing');
+    assert.equal(check.installed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('depsCheck requires the pnp runtime loader, not Yarn install cache metadata', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
+  try {
+    await writeFile(path.join(root, 'package.json'), '{"name":"stub"}\n');
+    await writeFile(path.join(root, '.yarnrc.yml'), 'nodeLinker: pnp\n');
+    await mkdir(path.join(root, '.yarn'), { recursive: true });
+    await writeFile(path.join(root, '.yarn/install-state.gz'), 'install cache\n');
+
+    const missingLoader = depsCheck(root);
+    assert.equal(missingLoader.installed, false);
+    assert.equal(missingLoader.status, 'missing');
+
+    await writeFile(path.join(root, '.pnp.cjs'), 'module.exports = {};\n');
+    await rm(path.join(root, '.yarn/install-state.gz'));
+    const installed = depsCheck(root);
+    assert.equal(installed.installed, true);
+    assert.equal(installed.status, 'current');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('depsCheck uses pnp install metadata only for freshness', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
+  try {
+    const lockfile = path.join(root, 'yarn.lock');
+    const loader = path.join(root, '.pnp.cjs');
+    const installState = path.join(root, '.yarn/install-state.gz');
+    await writeFile(path.join(root, 'package.json'), '{"name":"stub"}\n');
+    await writeFile(path.join(root, '.yarnrc.yml'), 'nodeLinker: pnp\n');
+    await writeFile(lockfile, '# lock\n');
+    await writeFile(loader, 'module.exports = {};\n');
+    await mkdir(path.dirname(installState), { recursive: true });
+    await writeFile(installState, 'install cache\n');
+
+    const staleAt = new Date(Date.now() - 10_000);
+    const inputAt = new Date(Date.now());
+    await utimes(loader, staleAt, staleAt);
+    await utimes(installState, staleAt, staleAt);
+    await utimes(lockfile, inputAt, inputAt);
+    assert.equal(depsCheck(root).status, 'stale');
+
+    const installedAt = new Date(Date.now() + 5_000);
+    await utimes(installState, installedAt, installedAt);
+    assert.equal(depsCheck(root).status, 'current');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('depsCheck ignores legacy baselines not certified by a dependency install', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
+  try {
+    const lockfile = path.join(root, 'yarn.lock');
+    const installState = path.join(root, 'node_modules/.yarn-state.yml');
+    await writeFile(path.join(root, 'package.json'), '{"name":"stub"}\n');
+    await writeFile(path.join(root, '.yarnrc.yml'), 'nodeLinker: node-modules\n');
+    await writeFile(lockfile, '# lock\n');
+    await mkdir(path.dirname(installState), { recursive: true });
+    await writeFile(installState, 'stale install\n');
+
+    writeDecisionState(root, 'deps-state.json', { fingerprint: depsFingerprint(root) });
+
+    const staleAt = new Date(Date.now() - 10_000);
+    const inputAt = new Date(Date.now());
+    await utimes(installState, staleAt, staleAt);
+    await utimes(lockfile, inputAt, inputAt);
+
+    const check = depsCheck(root);
+    assert.equal(check.status, 'stale');
+    assert.equal(check.hasBaseline, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

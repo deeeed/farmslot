@@ -185,6 +185,124 @@ export class CdpSession {
   }
 }
 
+export interface CdpCompositorProbe {
+  status: 'ready' | 'suspended' | 'not-interactive';
+  frameAdvanced: boolean;
+  interactiveTargetFound: boolean;
+  hitTestOk: boolean | null;
+  reason?: string;
+}
+
+interface CdpCallSession {
+  call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
+}
+
+/**
+ * Distinguish a reachable JavaScript context from a renderable, interactive
+ * browser page. The probe is read-only: it waits for two animation frames and
+ * checks the hit-test result of one already-visible interactive element.
+ */
+export async function probeCdpCompositorInteractivity(
+  session: CdpCallSession,
+  timeoutMs = 1_000,
+): Promise<CdpCompositorProbe> {
+  const frameTimeoutReason = `requestAnimationFrame did not advance within ${timeoutMs}ms`;
+  try {
+    const result = await withTimeout(
+      session.call<{
+        result?: { value?: Omit<CdpCompositorProbe, 'status'> };
+        exceptionDetails?: { text?: string; exception?: { description?: string } };
+      }>('Runtime.evaluate', {
+        expression: `new Promise((resolve) => {
+          const startedAt = performance.now();
+          requestAnimationFrame((firstFrame) => {
+            requestAnimationFrame((secondFrame) => {
+              const candidates = [...document.querySelectorAll('button, a, [role="button"], [role="link"], [role="tab"]')];
+              const visibleTargets = candidates.filter((element) => {
+                if (element.disabled || element.getAttribute('aria-disabled') === 'true') return false;
+                const style = getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                return style.display !== 'none' &&
+                  style.visibility !== 'hidden' &&
+                  Number(style.opacity || 1) > 0 &&
+                  rect.width > 0 &&
+                  rect.height > 0 &&
+                  rect.left >= 0 &&
+                  rect.top >= 0 &&
+                  rect.right <= innerWidth &&
+                  rect.bottom <= innerHeight;
+              });
+              let hitTestOk = null;
+              if (visibleTargets.length > 0) {
+                hitTestOk = visibleTargets.some((target) => {
+                  const rect = target.getBoundingClientRect();
+                  const hit = document.elementFromPoint(
+                    rect.left + rect.width / 2,
+                    rect.top + rect.height / 2,
+                  );
+                  return Boolean(hit && (hit === target || target.contains(hit)));
+                });
+              }
+              resolve({
+                frameAdvanced: secondFrame > firstFrame && performance.now() > startedAt,
+                interactiveTargetFound: visibleTargets.length > 0,
+                hitTestOk,
+              });
+            });
+          });
+        })`,
+        awaitPromise: true,
+        returnByValue: true,
+      }),
+      timeoutMs,
+      frameTimeoutReason,
+    );
+    if (result.exceptionDetails) {
+      throw new Error(
+        result.exceptionDetails.exception?.description ??
+          result.exceptionDetails.text ??
+          'CDP compositor probe evaluation failed.',
+      );
+    }
+    const value = result.result?.value;
+    if (!value?.frameAdvanced) {
+      return {
+        status: 'suspended',
+        frameAdvanced: false,
+        interactiveTargetFound: Boolean(value?.interactiveTargetFound),
+        hitTestOk: value?.hitTestOk ?? null,
+        reason: 'requestAnimationFrame did not advance.',
+      };
+    }
+    if (value.interactiveTargetFound && value.hitTestOk !== true) {
+      return {
+        status: 'not-interactive',
+        frameAdvanced: true,
+        interactiveTargetFound: true,
+        hitTestOk: false,
+        reason: 'The visible interactive target failed browser hit testing.',
+      };
+    }
+    return {
+      status: 'ready',
+      frameAdvanced: true,
+      interactiveTargetFound: Boolean(value.interactiveTargetFound),
+      hitTestOk: value.hitTestOk ?? null,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === frameTimeoutReason) {
+      return {
+        status: 'suspended',
+        frameAdvanced: false,
+        interactiveTargetFound: false,
+        hitTestOk: null,
+        reason: frameTimeoutReason,
+      };
+    }
+    throw error;
+  }
+}
+
 export class CdpWebPage {
   readonly session: CdpSession;
 

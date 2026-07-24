@@ -2,9 +2,21 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const { expandedArtifactsForCommand } = require('./worker-terminal-contract.cjs');
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const workspaceProtocolRoot = path.resolve(packageRoot, '../protocol');
+
+function isMissingWorkspaceProtocolBuild(error, output) {
+  return (
+    error?.code === 'ERR_MODULE_NOT_FOUND' &&
+    path.basename(path.dirname(packageRoot)) === 'packages' &&
+    existsSync(path.join(workspaceProtocolRoot, 'package.json')) &&
+    !existsSync(path.join(workspaceProtocolRoot, output))
+  );
+}
 
 let sharedRecipeQualityValidator = null;
 let sharedRecipeDocumentValidator = null;
@@ -13,27 +25,59 @@ let sharedResolvedRecipeArtifactPath = null;
 // Keep the source-checkout fallback pinned to the canonical Recipe v1 schema.
 const RECIPE_SCHEMA_URL = 'https://farmslot.io/schemas/recipe-v1.schema.json';
 try {
-  ({ isRecipeQualityArtifact: sharedRecipeQualityValidator } =
-    await import('@farmslot/protocol/contracts/recipes'));
+  const qualityProtocol = await import('@farmslot/protocol/contracts/recipes');
+  if (typeof qualityProtocol.isRecipeQualityArtifact !== 'function') {
+    throw new Error('installed @farmslot/protocol does not export isRecipeQualityArtifact');
+  }
+  sharedRecipeQualityValidator = qualityProtocol.isRecipeQualityArtifact;
 } catch (error) {
+  if (!isMissingWorkspaceProtocolBuild(error, 'dist/contracts/recipes.js')) throw error;
   // Source checkouts run this script before @farmslot/protocol has emitted dist/.
   // Keep strict local validation instead of downgrading to the historical loose gate.
   if (process.env.FARMSLOT_DEBUG_AGENT_RUNTIME) {
     console.warn(`[agent-runtime] using local RecipeQualityArtifact fallback: ${error.message}`);
   }
 }
+let recipeProtocol = null;
 try {
-  const recipeProtocol = await import('@farmslot/protocol/recipe');
-  sharedRecipeDocumentValidator = recipeProtocol.validateRecipeDocument;
-  sharedRecipeArtifactPackageValidator = recipeProtocol.validateRecipeArtifactPackage;
-  sharedResolvedRecipeArtifactPath = recipeProtocol.resolvedRecipeArtifactPath;
+  recipeProtocol = await import('@farmslot/protocol/recipe');
 } catch (error) {
-  // Compatibility fail-safe: source checkouts can run before @farmslot/protocol
-  // has emitted dist/. In that degraded state, do not bypass recipe checks;
-  // enforce the minimum executable envelope locally until the shared validator loads.
+  if (!isMissingWorkspaceProtocolBuild(error, 'dist/recipe/index.js')) throw error;
+  // Source checkouts can run before @farmslot/protocol has emitted dist/.
+  // Keep strict local validation until the shared validator is available.
   if (process.env.FARMSLOT_DEBUG_AGENT_RUNTIME) {
     console.warn(`[agent-runtime] using local Recipe v1 fallback: ${error.message}`);
   }
+}
+if (recipeProtocol) {
+  for (const api of [
+    'validateRecipeDocument',
+    'validateRecipeArtifactPackage',
+    'resolvedRecipeArtifactPath',
+  ]) {
+    if (typeof recipeProtocol[api] !== 'function') {
+      throw new Error(`installed @farmslot/protocol does not export ${api}`);
+    }
+  }
+  const compatibilityProbe = recipeProtocol.validateRecipeDocument({
+    $schema: RECIPE_SCHEMA_URL,
+    description: 'Validate the canonical Recipe v1 envelope.',
+    workflow: {
+      entry: 'done',
+      nodes: { done: { action: 'end', status: 'pass' } },
+    },
+  });
+  const incompatibleFinding = compatibilityProbe?.findings?.find(
+    (finding) => finding?.severity === 'error',
+  );
+  if (incompatibleFinding) {
+    throw new Error(
+      `installed @farmslot/protocol rejects canonical Recipe v1 (${incompatibleFinding.code})`,
+    );
+  }
+  sharedRecipeDocumentValidator = recipeProtocol.validateRecipeDocument;
+  sharedRecipeArtifactPackageValidator = recipeProtocol.validateRecipeArtifactPackage;
+  sharedResolvedRecipeArtifactPath = recipeProtocol.resolvedRecipeArtifactPath;
 }
 
 const taskDir = process.argv[2];
