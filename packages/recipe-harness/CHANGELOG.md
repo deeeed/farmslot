@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.9.2 - 2026-07-24
+
 - Detect reachable-but-suspended browser pages with a read-only compositor probe.
 - Treat the active Yarn linker marker as dependency-install authority and ignore uncertified legacy baselines.
 
