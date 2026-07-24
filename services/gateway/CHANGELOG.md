@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Validate remote retained traces against their recipes and artifact attribution.
 - Open a detached `devserver-log` tmux window during prepare, replace it idempotently on re-prepare, and close it on slot release.
 
 - **BREAKING:** Recipe ingestion, task inheritance, and PR-body extraction now use recipe libraries plus exact `recipe-resolution.json` dependency evidence.
