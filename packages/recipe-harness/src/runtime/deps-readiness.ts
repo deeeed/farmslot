@@ -6,8 +6,10 @@ import path from 'node:path';
 /** Lock/manifest inputs hashed for the deps baseline. */
 export const DEPS_INPUTS = ['package.json', 'yarn.lock', '.yarnrc.yml', '.tool-versions'];
 
-/** Yarn install-state markers. */
-export const INSTALL_MARKERS = ['node_modules/.yarn-state.yml', '.yarn/install-state.gz'];
+/** Runtime dependency surfaces produced by Yarn's supported linkers. */
+export const INSTALL_MARKERS = ['node_modules/.yarn-state.yml', '.pnp.cjs'];
+
+const DEPS_BASELINE_SCHEMA_VERSION = 2;
 
 export interface DepsCheck {
   installed: boolean;
@@ -70,16 +72,35 @@ function readYarnNodeLinker(target: string): string | undefined {
   return /^nodeLinker:\s*["']?([^"'\s#]+)["']?/mu.exec(yarnrc)?.[1];
 }
 
-function hasInstallSurface(target: string): boolean {
-  if (readYarnNodeLinker(target) === 'node-modules') {
-    return fs.existsSync(path.join(target, 'node_modules/.yarn-state.yml'));
+function installSurfaceMarkers(target: string): string[] {
+  const linker = readYarnNodeLinker(target);
+  if (linker === 'node-modules') {
+    return ['node_modules/.yarn-state.yml'];
   }
-  return INSTALL_MARKERS.some((rel) => fs.existsSync(path.join(target, rel)));
+  if (linker === 'pnp') return ['.pnp.cjs'];
+  return INSTALL_MARKERS;
 }
 
-/** Record the current deps fingerprint as the install baseline (OS temp dir). */
+function installFreshnessMarkers(target: string): string[] {
+  const linker = readYarnNodeLinker(target);
+  if (linker === 'node-modules') {
+    return ['node_modules/.yarn-state.yml'];
+  }
+  if (linker === 'pnp') return ['.pnp.cjs', '.yarn/install-state.gz'];
+  return [...INSTALL_MARKERS, '.yarn/install-state.gz'];
+}
+
+function hasInstallSurface(target: string): boolean {
+  return installSurfaceMarkers(target).some((rel) => fs.existsSync(path.join(target, rel)));
+}
+
+/** Record the current deps fingerprint after a successful dependency install. */
 export function recordDepsBaseline(target: string): void {
-  writeBaseline(target, 'deps-state.json', { fingerprint: depsFingerprint(target) });
+  writeBaseline(target, 'deps-state.json', {
+    schemaVersion: DEPS_BASELINE_SCHEMA_VERSION,
+    source: 'dependency-install',
+    fingerprint: depsFingerprint(target),
+  });
 }
 
 export function readDecisionState(target: string, name: string): Record<string, unknown> | null {
@@ -105,6 +126,7 @@ export function clearDecisionState(target: string, name: string): void {
 export function depsCheck(target: string, options: { productMarkers?: string[] } = {}): DepsCheck {
   const productMarkers = options.productMarkers ?? [];
   const inputs = DEPS_INPUTS.filter((rel) => fs.existsSync(path.join(target, rel)));
+  const markers = installFreshnessMarkers(target);
   const installed = inputs.length > 0 && hasInstallSurface(target);
   if (!installed) return { installed: false, status: 'missing', hasBaseline: false };
 
@@ -118,13 +140,18 @@ export function depsCheck(target: string, options: { productMarkers?: string[] }
     };
   }
 
-  const baseline = readBaseline(target, 'deps-state.json');
+  const rawBaseline = readBaseline(target, 'deps-state.json');
+  const baseline =
+    rawBaseline?.schemaVersion === DEPS_BASELINE_SCHEMA_VERSION &&
+    rawBaseline.source === 'dependency-install'
+      ? rawBaseline
+      : null;
   if (!baseline) {
-    const drift = newestMtime(target, inputs) > newestMtime(target, INSTALL_MARKERS);
+    const drift = newestMtime(target, inputs) > newestMtime(target, markers);
     return { installed: true, status: drift ? 'stale' : 'current', hasBaseline: false };
   }
   const fingerprintMatches = baseline.fingerprint === depsFingerprint(target);
-  const installedAfterInputs = newestMtime(target, INSTALL_MARKERS) >= newestMtime(target, inputs);
+  const installedAfterInputs = newestMtime(target, markers) >= newestMtime(target, inputs);
   const status = fingerprintMatches || installedAfterInputs ? 'current' : 'stale';
   return { installed: true, status, hasBaseline: true };
 }

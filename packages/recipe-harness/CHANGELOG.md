@@ -4,6 +4,9 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Detect reachable-but-suspended browser pages with a read-only compositor probe.
+- Treat the active Yarn linker marker as dependency-install authority and ignore uncertified legacy baselines.
+
 ## 0.9.1 - 2026-07-23
 
 - Preserve the current Mobile route when foregrounding an app instead of reopening its launch URL.

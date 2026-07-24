@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fail artifact validation when the installed protocol rejects the canonical Recipe v1 envelope.
+
 - **BREAKING:** Task artifact checks require Recipe v1 resolution metadata and exact reachable dependency documents.
 - security: resolved dependency reads use digest-derived paths only.
 - Validate authored recipes separately from their executed `artifacts/recipe-run` package.
