@@ -525,7 +525,7 @@ function validateTraceConsistency(
     if (
       expectedNode.intent !== undefined &&
       (value.intent !== undefined || value.ok !== false) &&
-      value.intent !== expectedNode.intent
+      !traceIntentMatches(expectedNode.intent, value.intent)
     ) {
       addFinding(
         ctx,
@@ -587,6 +587,23 @@ function validateTraceConsistency(
       }
     }
   }
+}
+
+function traceIntentMatches(authored: string, retained: unknown): boolean {
+  if (retained === authored) return true;
+  if (typeof retained !== 'string') return false;
+  const segments = authored.split(/\{\{(?:params|outputs)\.[A-Za-z0-9_.-]+\}\}/gu);
+  if (segments.length === 1 || !retained.startsWith(segments[0]!)) return false;
+
+  let cursor = segments[0]!.length;
+  for (const segment of segments.slice(1, -1)) {
+    if (!segment) continue;
+    const index = retained.indexOf(segment, cursor);
+    if (index < 0) return false;
+    cursor = index + segment.length;
+  }
+  const suffix = segments.at(-1)!;
+  return retained.endsWith(suffix) && retained.length - suffix.length >= cursor;
 }
 
 function traceEntries(trace: unknown): unknown[] | undefined {

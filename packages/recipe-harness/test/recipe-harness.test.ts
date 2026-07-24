@@ -521,6 +521,52 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
   }
 });
 
+test('retains resolved parameterized intents in a valid real-run package', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipe = recipeDocument(
+      {
+        inspect: {
+          action: 'command',
+          intent: 'Inspect {{params.market}} state for reviewer confirmation.',
+          cmd: 'pwd',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      },
+      {
+        paramsSchema: {
+          type: 'object',
+          properties: { market: { type: 'string' } },
+          required: ['market'],
+          additionalProperties: false,
+        },
+      },
+    );
+    const artifactsDir = path.join(tempRoot, 'artifacts');
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+
+    const result = await runner.run({
+      recipeDocument: recipe,
+      artifactsDir,
+      projectRoot: tempRoot,
+      params: { market: 'ETH' },
+    });
+    const trace = await readJsonFile(path.join(artifactsDir, 'trace.json'));
+
+    assert.equal(result.status, 'pass');
+    assert.equal(
+      (trace as Array<{ intent?: string }>)[0]?.intent,
+      'Inspect ETH state for reviewer confirmation.',
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('project read and artifact export actions reject symlink escapes', async () => {
   const tempRoot = await createTempRoot();
   const outsideRoot = await createTempRoot();
