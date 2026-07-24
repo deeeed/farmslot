@@ -607,6 +607,50 @@ test('missing config still stages locally', () => {
   assert.equal(manifest.packageId, deriveCloseoutPackageId(metadata));
 });
 
+test('explicit destination shares without a config file', () => {
+  const destination = destinationRepo();
+  const { taskDir } = scenario();
+  const configPath = path.join(taskDir, 'missing', 'learning.config.json');
+  closeoutLearningPackage({ taskDir, configPath, destination });
+  const result = closeoutLearningPackage({
+    taskDir,
+    configPath,
+    destination,
+    share: true,
+  });
+  assert.equal(result.status, 'written');
+  if (result.status !== 'written') return;
+  assert.ok(result.destinationPath.startsWith(destination));
+});
+
+test('the CLI accepts an explicit destination without a config file', () => {
+  const destination = destinationRepo();
+  const { taskDir, configPath } = scenario();
+  closeoutLearningPackage({ taskDir, configPath });
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      'src/bin/handoff.ts',
+      'closeout',
+      taskDir,
+      '--share',
+      '--destination',
+      destination,
+      '--json',
+    ],
+    {
+      cwd: path.resolve(import.meta.dirname, '..'),
+      encoding: 'utf8',
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout) as { status: string; destinationPath?: string };
+  assert.equal(output.status, 'written');
+  assert.ok(output.destinationPath?.startsWith(destination));
+});
+
 test('relative destination resolves from the config directory', () => {
   const destination = destinationRepo();
   const { taskDir, configPath } = scenario();

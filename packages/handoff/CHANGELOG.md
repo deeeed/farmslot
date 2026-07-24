@@ -4,6 +4,8 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Allow approved closeout sharing to receive a local destination directly, without a config file.
+
 ## 0.2.0 - 2026-07-23
 
 - Make local closeout zero-config; use Git commit metadata for publication identity instead of duplicating it in manifests and indexes.

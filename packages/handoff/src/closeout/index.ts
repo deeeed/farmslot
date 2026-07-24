@@ -61,6 +61,7 @@ interface TerminalSignal {
 export interface CloseoutOptions {
   taskDir: string;
   configPath?: string;
+  destination?: string;
   metadataPath?: string;
   share?: boolean;
 }
@@ -404,12 +405,17 @@ export function closeoutLearningPackage(options: CloseoutOptions): CloseoutResul
     !options.share,
   );
   const stagedPackage = path.join(stagingRoot, packageId);
-  const destination = config.destination ? resolveConfigPath(configPath, config.destination) : '';
+  const destination =
+    options.destination === undefined
+      ? config.destination
+        ? resolveConfigPath(configPath, config.destination)
+        : ''
+      : path.resolve(expandHome(options.destination));
   if (options.share) {
-    if (!config.destination) {
+    if (!destination) {
       throw new Error(
-        `learning config at ${configPath} has no destination. ` +
-          'Next: add the local clone path before sharing.',
+        'no learning destination was provided. ' +
+          'Next: pass --destination <local-git-clone> or configure a destination before sharing.',
       );
     }
     if (!existsSync(stagedPackage) || !validateLearningPackage(stagedPackage).valid) {

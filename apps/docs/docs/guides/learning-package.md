@@ -25,6 +25,13 @@ Local staging needs no setup. To configure sharing, create
 The destination is a local clone of the shared git repository. It is optional
 until you choose to share.
 
+Callers that already own an opt-in setting may pass the clone directly instead
+of creating a config file:
+
+```bash
+handoff closeout <task-dir> --share --destination <local-git-clone>
+```
+
 ## Close out a task
 
 After the task writes `SIGNAL.json`, `artifacts/report.md`, and
