@@ -623,6 +623,30 @@ test('explicit destination shares without a config file', () => {
   assert.ok(result.destinationPath.startsWith(destination));
 });
 
+test('explicit destination overrides the configured destination', () => {
+  const configuredDestination = destinationRepo();
+  const destination = destinationRepo();
+  const { taskDir, configPath } = scenario({ destination: configuredDestination });
+  closeoutLearningPackage({ taskDir, configPath, destination });
+  const result = closeoutLearningPackage({
+    taskDir,
+    configPath,
+    destination,
+    share: true,
+  });
+  assert.equal(result.status, 'written');
+  if (result.status !== 'written') return;
+  assert.ok(result.destinationPath.startsWith(destination));
+});
+
+test('explicit destination rejects an empty path', () => {
+  const { taskDir, configPath } = scenario();
+  assert.throws(
+    () => closeoutLearningPackage({ taskDir, configPath, destination: ' ' }),
+    /destination must be a non-empty local git clone path/u,
+  );
+});
+
 test('the CLI accepts an explicit destination without a config file', () => {
   const destination = destinationRepo();
   const { taskDir, configPath } = scenario();

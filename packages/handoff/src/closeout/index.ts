@@ -405,6 +405,9 @@ export function closeoutLearningPackage(options: CloseoutOptions): CloseoutResul
     !options.share,
   );
   const stagedPackage = path.join(stagingRoot, packageId);
+  if (options.destination !== undefined && options.destination.trim() === '') {
+    throw new Error('destination must be a non-empty local git clone path.');
+  }
   const destination =
     options.destination === undefined
       ? config.destination
