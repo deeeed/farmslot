@@ -13,7 +13,12 @@ import {
 } from './common.js';
 import { digestRecipeDocument, resolvedRecipeArtifactPath } from './digest.js';
 import { validateRecipeDocument } from './document.js';
-import { getRecipeCallRefs, getRecipeWorkflowNodeIds } from './workflow.js';
+import {
+  getRecipeCallRefs,
+  getRecipeWorkflowActionEntries,
+  getRecipeWorkflowNodeIds,
+  normalizeRecipeRef,
+} from './workflow.js';
 
 export function validateArtifactManifestDocument(
   manifest: unknown,
@@ -352,6 +357,7 @@ export function validateRecipeArtifactPackage(
     ctx.findings.push(...recipeResult.findings);
   }
 
+  const documents = new Map<string, unknown>();
   if (resolution && input.recipe != null) {
     const rootDigest = digestRecipeDocument(input.recipe);
     if (resolution.root.digest !== rootDigest) {
@@ -363,7 +369,6 @@ export function validateRecipeArtifactPackage(
         'Root recipe digest does not match recipe.json.',
       );
     }
-    const documents = new Map<string, unknown>();
     const expectedDigests = new Set(resolution.dependencies.map((entry) => entry.digest));
     for (const digest of Object.keys(resolvedRecipes)) {
       if (!expectedDigests.has(digest)) {
@@ -415,7 +420,222 @@ export function validateRecipeArtifactPackage(
     validateResolutionEdges(ctx, input.recipe, resolution, documents);
   }
 
+  if (input.recipe != null) {
+    validateTraceConsistency(ctx, input.trace, input.recipe, documents, input.manifest);
+  }
+
   return finishResult(ctx);
+}
+
+interface ExpectedTraceNode {
+  action: string;
+  intent?: string;
+}
+
+function validateTraceConsistency(
+  ctx: ReturnType<typeof createContext>,
+  trace: unknown,
+  rootRecipe: unknown,
+  documents: ReadonlyMap<string, unknown>,
+  manifest: unknown,
+): void {
+  const entries = traceEntries(trace);
+  if (!entries) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.invalid_trace',
+      'trace.json',
+      'trace.json must be an array or an object with entries[].',
+    );
+    return;
+  }
+
+  const expected = new Map<string, ExpectedTraceNode>();
+  collectExpectedTraceNodes(rootRecipe, '', documents, expected, new Set());
+  const manifestArtifacts =
+    isRecord(manifest) && Array.isArray(manifest.artifacts)
+      ? manifest.artifacts.filter(isRecord)
+      : [];
+  const manifestByPath = new Map(
+    manifestArtifacts
+      .filter((artifact) => isNonEmptyString(artifact.path))
+      .map((artifact) => [String(artifact.path), artifact]),
+  );
+  const seen = new Set<string>();
+
+  for (const [index, value] of entries.entries()) {
+    const path = `trace.json${Array.isArray(trace) ? '' : '.entries'}[${index}]`;
+    if (!isRecord(value)) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.invalid_trace_entry',
+        path,
+        'Trace entries must be objects.',
+      );
+      continue;
+    }
+    const nodeId = isNonEmptyString(value.nodeId)
+      ? value.nodeId
+      : isNonEmptyString(value.id)
+        ? value.id
+        : undefined;
+    if (!nodeId) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.invalid_trace_node',
+        path,
+        'Trace entries require nodeId (or id in retained fixture traces).',
+      );
+      continue;
+    }
+    const expectedNode =
+      expected.get(nodeId) ?? expectedLifecycleTraceNode(nodeId, value.action, expected);
+    if (!expectedNode) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.unknown_trace_node',
+        `${path}.${isNonEmptyString(value.nodeId) ? 'nodeId' : 'id'}`,
+        `Trace node ${nodeId} is not present in the retained recipe graph.`,
+      );
+      continue;
+    }
+    if (seen.has(nodeId)) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.duplicate_trace_node',
+        path,
+        `Trace node ${nodeId} appears more than once.`,
+      );
+    }
+    seen.add(nodeId);
+    if (value.action !== expectedNode.action) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.trace_action_mismatch',
+        `${path}.action`,
+        `Trace action must match recipe node ${nodeId} (${expectedNode.action}).`,
+      );
+    }
+    if (
+      expectedNode.intent !== undefined &&
+      (value.intent !== undefined || value.ok !== false) &&
+      value.intent !== expectedNode.intent
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.trace_intent_mismatch',
+        `${path}.intent`,
+        `Trace intent must match recipe node ${nodeId}.`,
+      );
+    }
+    if (!Array.isArray(value.artifacts)) continue;
+    for (const [artifactIndex, traceArtifact] of value.artifacts.entries()) {
+      const artifactPath = isNonEmptyString(traceArtifact)
+        ? traceArtifact
+        : isRecord(traceArtifact) && isNonEmptyString(traceArtifact.path)
+          ? traceArtifact.path
+          : undefined;
+      if (!artifactPath) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_package.invalid_trace_artifact',
+          `${path}.artifacts[${artifactIndex}]`,
+          'Trace artifacts must be relative paths or artifact objects with a path.',
+        );
+        continue;
+      }
+      const manifestArtifact = manifestByPath.get(artifactPath);
+      if (!manifestArtifact) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_package.trace_artifact_missing_manifest',
+          `${path}.artifacts[${artifactIndex}]`,
+          `Trace artifact ${artifactPath} is missing from artifact-manifest.json.`,
+        );
+        continue;
+      }
+      if (isNonEmptyString(manifestArtifact.nodeId) && manifestArtifact.nodeId !== nodeId) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_package.trace_artifact_node_mismatch',
+          `${path}.artifacts[${artifactIndex}]`,
+          `Trace artifact ${artifactPath} is attributed to ${manifestArtifact.nodeId} in artifact-manifest.json, not ${nodeId}.`,
+        );
+      }
+      if (
+        isRecord(traceArtifact) &&
+        isNonEmptyString(traceArtifact.nodeId) &&
+        traceArtifact.nodeId !== nodeId
+      ) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_package.trace_artifact_node_mismatch',
+          `${path}.artifacts[${artifactIndex}].nodeId`,
+          `Trace artifact ${artifactPath} must be attributed to trace node ${nodeId}.`,
+        );
+      }
+    }
+  }
+}
+
+function traceEntries(trace: unknown): unknown[] | undefined {
+  if (Array.isArray(trace)) return trace;
+  return isRecord(trace) && Array.isArray(trace.entries) ? trace.entries : undefined;
+}
+
+function expectedLifecycleTraceNode(
+  nodeId: string,
+  action: unknown,
+  recipeNodes: ReadonlyMap<string, ExpectedTraceNode>,
+): ExpectedTraceNode | undefined {
+  if (nodeId === 'recipe-run:video' && action === 'record.video') {
+    return { action: 'record.video' };
+  }
+  if (nodeId === 'recipe-complete:hud' && action === 'app.hud') {
+    return { action: 'app.hud' };
+  }
+  const hudMatch = /^(.*):hud:(?:running|pass|fail)$/u.exec(nodeId);
+  return hudMatch && recipeNodes.has(hudMatch[1]) && action === 'app.hud'
+    ? { action: 'app.hud' }
+    : undefined;
+}
+
+function collectExpectedTraceNodes(
+  recipe: unknown,
+  prefix: string,
+  documents: ReadonlyMap<string, unknown>,
+  expected: Map<string, ExpectedTraceNode>,
+  stack: ReadonlySet<string>,
+): void {
+  for (const { nodeId, action, node } of getRecipeWorkflowActionEntries(recipe)) {
+    const traceNodeId = `${prefix}${nodeId}`;
+    expected.set(traceNodeId, {
+      action,
+      ...(isNonEmptyString(node.intent) ? { intent: node.intent } : {}),
+    });
+    if (action !== 'call' || !isNonEmptyString(node.ref)) continue;
+    const ref = normalizeRecipeRef(node.ref);
+    const dependency = documents.get(ref);
+    if (!dependency || stack.has(ref)) continue;
+    collectExpectedTraceNodes(
+      dependency,
+      `${traceNodeId}/`,
+      documents,
+      expected,
+      new Set(stack).add(ref),
+    );
+  }
 }
 
 function parseRecipeResolution(

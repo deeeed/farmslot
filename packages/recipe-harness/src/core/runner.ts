@@ -483,6 +483,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         ]),
       ),
       recipeResolution: dependencyResolution.document,
+      trace,
       manifest: {
         version: 1,
         runStatus: status,

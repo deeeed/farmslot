@@ -188,6 +188,7 @@ const result = validateRecipeArtifactPackage({
     'artifact-manifest.json',
   ],
   recipe: recipeJson,
+  trace: traceJson,
   recipeResolution: recipeResolutionJson,
   resolvedRecipes: resolvedRecipeDocumentsByDigest,
 });

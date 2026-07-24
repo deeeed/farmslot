@@ -238,6 +238,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     dependencies: [],
     edges: [],
   };
+  const trace = [{ nodeId: 'done', action: 'end', ok: true, artifacts: [] }];
 
   const valid = validateRecipeRunArtifactPackageOutput({
     artifactPaths: [
@@ -250,6 +251,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     recipe,
     recipeArtifactPresent: true,
     recipeResolution,
+    trace,
     summary,
     manifest,
   });
@@ -273,6 +275,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     recipe,
     recipeArtifactPresent: true,
     recipeResolution,
+    trace,
     summary,
     manifest,
     artifactListError: 'find maxBuffer exceeded',
@@ -300,6 +303,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     recipe,
     recipeArtifactPresent: true,
     recipeResolution,
+    trace,
     summary: { ...summary, status: 'fail' },
     manifest,
   });
@@ -315,6 +319,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     recipe,
     recipeArtifactPresent: true,
     recipeResolution,
+    trace,
     summary,
     manifest: undefined,
     readErrors: { 'artifact-manifest.json': 'file missing' },
@@ -346,6 +351,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     recipe,
     recipeArtifactPresent: true,
     recipeResolution,
+    trace,
     summary,
     manifest: undefined,
     readErrors: { 'artifact-manifest.json': 'Unexpected token' },
@@ -393,6 +399,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     recipe,
     recipeArtifactPresent: true,
     recipeResolution,
+    trace,
     summary,
     manifest: { ...manifest, artifacts: [{ path: 'missing.png', type: 'screenshot' }] },
   });
@@ -478,6 +485,17 @@ test('validateRecipeRunArtifactPackageOutput requires exact recipe dependency ev
     recipeArtifactPresent: true,
     recipeResolution,
     resolvedRecipes: { [childDigest]: child },
+    trace: [
+      { nodeId: 'call-x/done', action: 'end', ok: true, artifacts: [] },
+      {
+        nodeId: 'call-x',
+        action: 'call',
+        intent: 'Run the reusable child proof.',
+        ok: true,
+        artifacts: [],
+      },
+      { nodeId: 'done', action: 'end', ok: true, artifacts: [] },
+    ],
     summary: { status: 'pass', passed: 1, failed: 0, total: 1 },
     manifest,
   });

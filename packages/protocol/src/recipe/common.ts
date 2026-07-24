@@ -107,6 +107,7 @@ export interface RecipeValidationResult {
 
 export interface RecipeArtifactPackageInput {
   manifest?: unknown;
+  trace?: unknown;
   artifactPaths?: readonly string[];
   recipe?: unknown;
   /** Exact reachable dependency documents keyed by their sha256 digest. */

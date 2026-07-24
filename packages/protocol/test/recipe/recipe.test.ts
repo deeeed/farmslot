@@ -1153,6 +1153,7 @@ test('validates artifact manifests and complete packages', () => {
   );
   const result = validateRecipeArtifactPackage({
     recipe: document,
+    trace: [{ nodeId: 'done', action: 'end', ok: true, artifacts: [] }],
     manifest: artifactManifest,
     artifactPaths: [
       ...artifactManifest.artifacts.map((entry) => entry.path),
@@ -1168,4 +1169,74 @@ test('validates artifact manifests and complete packages', () => {
     resolvedRecipes: {},
   });
   assert.equal(result.status, 'valid', JSON.stringify(result.findings));
+});
+
+test('rejects retained traces that no longer match their recipe or artifact attribution', () => {
+  const document = recipe({
+    capture: {
+      action: 'ui.screenshot',
+      intent: 'Record the rendered account summary for reviewer confirmation.',
+      next: 'index-report',
+    },
+    'index-report': {
+      action: 'index_artifacts',
+      intent: 'Publish the generated account report for reviewer confirmation.',
+      artifacts: ['reports/account.json'],
+      next: 'done',
+    },
+    done: { action: 'end', status: 'pass' },
+  });
+  const artifactManifest = {
+    version: 1,
+    runStatus: 'pass',
+    artifacts: [
+      { path: 'recipe.json', type: 'recipe' },
+      { path: 'summary.json', type: 'summary' },
+      { path: 'trace.json', type: 'trace' },
+      { path: 'screenshots/account.png', type: 'screenshot', nodeId: 'capture' },
+      { path: 'reports/account.json', type: 'report', nodeId: 'index-report' },
+    ],
+  };
+  const result = validateRecipeArtifactPackage({
+    recipe: document,
+    trace: [
+      {
+        id: 'capture',
+        action: 'ui.screenshot',
+        ok: true,
+        artifacts: ['screenshots/account.png'],
+        intent: 'Record the rendered account summary for reviewer confirmation.',
+      },
+      {
+        id: 'index-report',
+        action: 'index_artifacts',
+        ok: true,
+        artifacts: ['screenshots/account.png', 'reports/account.json'],
+        intent: 'Publish the screenshot and report.',
+      },
+      { id: 'done', action: 'end', ok: true, artifacts: [] },
+    ],
+    manifest: artifactManifest,
+    artifactPaths: [
+      ...artifactManifest.artifacts.map((entry) => entry.path),
+      'artifact-manifest.json',
+      'recipe-resolution.json',
+    ],
+    recipeResolution: {
+      schema_version: 1,
+      root: { ref: 'root', digest: digestRecipeDocument(document) },
+      dependencies: [],
+      edges: [],
+    },
+    resolvedRecipes: {},
+  });
+  assert.equal(result.status, 'invalid');
+  assert.ok(
+    result.findings.some((finding) => finding.code === 'artifact_package.trace_intent_mismatch'),
+  );
+  assert.ok(
+    result.findings.some(
+      (finding) => finding.code === 'artifact_package.trace_artifact_node_mismatch',
+    ),
+  );
 });

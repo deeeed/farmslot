@@ -180,6 +180,9 @@ export async function validateRecipeCliInput({
   const recipeResolution = artifactRoot
     ? await readOptionalRecipeCliJsonFileWithinRoot(artifactRoot, 'recipe-resolution.json')
     : undefined;
+  const trace = artifactRoot
+    ? await readOptionalRecipeCliJsonFileWithinRoot(artifactRoot, 'trace.json')
+    : undefined;
   const resolvedRecipes: Record<string, unknown> = {};
   if (artifactRoot && isRecord(recipeResolution) && Array.isArray(recipeResolution.dependencies)) {
     for (const dependency of recipeResolution.dependencies) {
@@ -283,6 +286,7 @@ export async function validateRecipeCliInput({
       validateRecipeArtifactPackage({
         recipe,
         manifest,
+        trace,
         artifactPaths,
         resolvedRecipes,
         recipeResolution,

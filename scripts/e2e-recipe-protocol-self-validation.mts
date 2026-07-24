@@ -112,11 +112,12 @@ async function validateSelfValidationFixtures() {
     const artifactDir = path.join(suiteRoot, entry.artifactDir);
     const recipe = await readJson(recipePath);
     const manifest = await readJson(path.join(artifactDir, 'artifact-manifest.json'));
+    const trace = await readJson(path.join(artifactDir, 'trace.json'));
     const resolution = await readRecipeResolutionBundle(artifactDir);
     const artifactPaths = await listRelativeFiles(artifactDir);
     const result = mergeRecipeValidationResults([
       validateRecipeWithManifest(recipe, actionManifest),
-      validateRecipeArtifactPackage({ recipe, manifest, artifactPaths, ...resolution }),
+      validateRecipeArtifactPackage({ recipe, trace, manifest, artifactPaths, ...resolution }),
     ]);
     entries.push({
       id: entry.id,
@@ -259,10 +260,12 @@ async function runSelfValidation(args: ParsedArgs): Promise<void> {
     },
   });
   const manifest = await readJson(path.join(artifactsDir, 'artifact-manifest.json'));
+  const trace = await readJson(path.join(artifactsDir, 'trace.json'));
   const resolution = await readRecipeResolutionBundle(artifactsDir);
   const artifactPaths = await listRelativeFiles(artifactsDir);
   const validation = validateRecipeArtifactPackage({
     recipe: recipeDocument,
+    trace,
     manifest,
     artifactPaths,
     ...resolution,

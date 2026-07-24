@@ -44,12 +44,8 @@
     "action": "index_artifacts",
     "ok": true,
     "durationMs": 1075,
-    "artifacts": [
-      "screenshots/live-replay-result.svg",
-      "reports/replay-session.json",
-      "logs/recipe-player.log"
-    ],
-    "intent": "Publish replay screenshot, runner log, replay report, trace, summary, and resolved recipe."
+    "artifacts": ["reports/replay-session.json", "logs/recipe-player.log"],
+    "intent": "Publish the replay report and runner log; the screenshot is already registered by its capture action."
   },
   {
     "id": "done",
