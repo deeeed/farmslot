@@ -2,7 +2,7 @@
   "schema_version": 1,
   "root": {
     "ref": "command-center-ui",
-    "digest": "sha256:6817a1c22768cc9f6eee7b0f6ef69535a3b20b7ea1eced7a92d727c4064095a1"
+    "digest": "sha256:7a66e10dcd3d9413e20dace1e9ffe732664684043419f088f2ec2c2a4b2a2ed3"
   },
   "dependencies": [],
   "edges": []

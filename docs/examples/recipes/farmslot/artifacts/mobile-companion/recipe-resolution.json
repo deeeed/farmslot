@@ -2,7 +2,7 @@
   "schema_version": 1,
   "root": {
     "ref": "mobile-companion",
-    "digest": "sha256:a1d13dcaebaf5e21efeb5c86c84856d3eefa1a8f4b2b2d8e67c825bad0f18110"
+    "digest": "sha256:cce9695d7565baf4e5bd0bfd3ca0f83a95abe187ef0f7bdfbbb327649b76bc3f"
   },
   "dependencies": [],
   "edges": []

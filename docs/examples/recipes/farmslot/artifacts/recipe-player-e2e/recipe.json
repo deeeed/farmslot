@@ -57,12 +57,8 @@
       "index-artifacts": {
         "action": "index_artifacts",
         "next": "done",
-        "artifacts": [
-          "screenshots/live-replay-result.svg",
-          "reports/replay-session.json",
-          "logs/recipe-player.log"
-        ],
-        "intent": "Publish replay screenshot, runner log, replay report, trace, summary, and resolved recipe."
+        "artifacts": ["reports/replay-session.json", "logs/recipe-player.log"],
+        "intent": "Publish the replay report and runner log; the screenshot is already registered by its capture action."
       },
       "done": {
         "action": "end",

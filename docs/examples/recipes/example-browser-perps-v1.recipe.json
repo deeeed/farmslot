@@ -55,9 +55,9 @@
       },
       "index-artifacts": {
         "action": "index_artifacts",
-        "artifacts": ["screenshots/extension-perps-market.png", "recipe-issues.json"],
+        "artifacts": ["recipe-issues.json"],
         "next": "done",
-        "intent": "Publish the index artifacts evidence for review"
+        "intent": "Publish the recipe issue report for review"
       },
       "done": {
         "action": "end",

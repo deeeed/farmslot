@@ -601,6 +601,111 @@ test('artifact writes reject pre-existing symlink destinations', async () => {
   }
 });
 
+test('artifact export rejects identical source and destination without truncating the source', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    await writeFile(path.join(tempRoot, 'proof.txt'), 'approved proof\n');
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const result = await runner.run({
+      recipeDocument: createSingleActionRecipe({
+        action: 'index_artifacts',
+        artifacts: ['proof.txt'],
+      }),
+      artifactsDir: tempRoot,
+      projectRoot: tempRoot,
+    });
+    assert.equal(result.status, 'fail');
+    assert.equal(await readFile(path.join(tempRoot, 'proof.txt'), 'utf-8'), 'approved proof\n');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('screenshot capture composes with project artifact indexing across distinct roots', async () => {
+  const tempRoot = await createTempRoot();
+  const artifactsDir = path.join(tempRoot, 'run-artifacts');
+  try {
+    await mkdir(path.join(tempRoot, 'reports'), { recursive: true });
+    await mkdir(artifactsDir, { recursive: true });
+    await writeFile(path.join(tempRoot, 'reports/result.json'), '{"status":"ready"}\n');
+    const baseManifest = testManifest(['end', 'index_artifacts']);
+    const runner = createRecipeRunner({
+      actionManifest: {
+        ...baseManifest,
+        actions: {
+          ...baseManifest.actions,
+          'ui.screenshot': testAction('ui.screenshot', {
+            schema: {
+              type: 'object',
+              properties: { path: { type: 'string' } },
+              required: ['path'],
+              additionalProperties: false,
+            },
+            examples: [
+              {
+                action: 'ui.screenshot',
+                intent: 'Record the rendered account summary for reviewer confirmation.',
+                path: 'screenshots/proof.png',
+                next: 'done',
+              },
+            ],
+          }),
+        },
+      },
+      adapters: [
+        ...createStandardCoreAdapters({ actions: ['index_artifacts'] }),
+        defineActionAdapter({
+          action: 'ui.screenshot',
+          async execute(node, context) {
+            const artifactPath = String(node.path);
+            await writeFileWithinRoot(context.artifactsDir, artifactPath, 'captured image\n');
+            const artifact = {
+              path: artifactPath,
+              type: 'screenshot' as const,
+              nodeId: context.nodeId,
+            };
+            context.registerArtifact(artifact);
+            return { artifacts: [artifact], output: { path: artifactPath } };
+          },
+        }),
+      ],
+    });
+    const result = await runner.run({
+      recipeDocument: recipeDocument({
+        capture: {
+          action: 'ui.screenshot',
+          intent: 'Record the rendered account summary for reviewer confirmation.',
+          path: 'screenshots/proof.png',
+          next: 'index-report',
+        },
+        'index-report': {
+          action: 'index_artifacts',
+          intent: 'Publish the project-produced report.',
+          artifacts: ['reports/result.json'],
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
+      artifactsDir,
+      projectRoot: tempRoot,
+    });
+    assert.equal(result.status, 'pass');
+    assert.equal(
+      await readFile(path.join(artifactsDir, 'screenshots/proof.png'), 'utf-8'),
+      'captured image\n',
+    );
+    assert.equal(
+      await readFile(path.join(artifactsDir, 'reports/result.json'), 'utf-8'),
+      '{"status":"ready"}\n',
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('artifact parent rejection does not create directories through an escaping symlink', async () => {
   const tempRoot = await createTempRoot();
   const outsideRoot = await createTempRoot();
