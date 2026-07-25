@@ -206,16 +206,22 @@ with each work item, for the atomicity reason given in §5.5.
   `0o600`, explicit `chmodSync` after every save because the write mode only applies on create.
 - **Atomicity.** Every mutation is a whole-file write to a temporary file in the same directory
   followed by `rename`.
-- **Single writer, enforced by a store-adjacent lock.** Atomic rename prevents a torn read, not a
-  lost update, so exclusion needs a lock — and **a machine-global store needs a machine-global
-  lock**. The lock lives beside the store in `FARMSLOT_HOME` and is acquired by *any* writer: the
-  running gateway holds it for the lifetime of its writer, and an offline operation refuses while it
-  is held. **The gateway singleton lock is a different concern and cannot serve this one**:
-  `acquireGatewaySingletonLock()` writes `<farmslotRoot>/.runs/gateway-<PORT>.pid`
-  (`services/gateway/src/index.ts:100-144`), scoped per root *and* per port, so two gateways with
-  different roots or ports hold different locks while sharing one `credentials.json`. Rescoping the
-  store to a farmslot root would fix the locking and break the identity model — one machine, one set
-  of principals — so the lock moves to the store, not the store to the lock.
+- **Write exclusion — `credentials.lock`, held only for each read-modify-write.** Atomic rename
+  prevents a torn read, not a lost update, so exclusion needs a lock, and **a machine-global store
+  needs a machine-global lock**: it lives beside the store in `FARMSLOT_HOME` and *every* writer
+  takes it — any running gateway, and the offline CLI. It is **exclusive but short-lived, held for
+  the duration of a single read-modify-write and released**. This is all the store itself requires,
+  and it is what keeps the lock compatible with the per-root, per-port gateway design: **a gateway
+  never holds it while merely running**, so concurrent gateways — which that design permits — do not
+  exclude one another. Concurrent writes serialize; running gateways do not contend.
+
+  **The gateway singleton lock cannot serve this purpose**, which is a symptom of the two being
+  different concerns: `acquireGatewaySingletonLock()` writes
+  `<farmslotRoot>/.runs/gateway-<PORT>.pid` (`services/gateway/src/index.ts:100-144`), scoped per
+  root *and* per port, so gateways with different roots or ports hold different locks while sharing
+  one `credentials.json`. Rescoping the store to a farmslot root would fix the locking and break the
+  identity model — one machine, one set of principals — so the lock moves to the store, not the
+  store to the lock.
 - **Missing principal fails closed.** A credential whose `principalId` resolves to no principal does
   not authenticate. An unparseable record is rejected at load with the file named, and the gateway
   refuses to start rather than running with a silently truncated store.
@@ -227,11 +233,20 @@ with each work item, for the atomicity reason given in §5.5.
   id makes verification a single record lookup instead of a scan, which would either leak timing
   across records or force every record to be hashed on every attempt. The credential id is **hex**,
   because the base64url secret alphabet contains `_` and would make the delimiter ambiguous.
-  **The legacy env secret is the bounded exception**: it has no prefix and no embedded id, so a
-  non-prefixed presented secret is verified against active `env-migrated` credentials only. Migration
-  creates at most one (§3), so that path is a lookup over a set of size ≤ 1 rather than a scan — the
-  stored hash stays real and is what authenticates, rather than the gateway comparing against a
-  resolved in-memory token and leaving the hash decorative.
+  **The legacy env secret is bounded structurally, not by cardinality**: it has no prefix and no
+  embedded id, and additive-only reconciliation (§3) means `env-migrated` credentials accumulate
+  across roots and rotations — so "there is at most one" is not available as a bound. Instead, **the
+  non-prefixed path resolves only against this gateway's own boot-time environment secret.** Boot
+  reconciliation already establishes which credential corresponds to that secret; the gateway holds
+  that mapping for its process lifetime, compares a presented non-prefixed secret against that one
+  value in constant time, and resolves to that one credential. No scan, no `scrypt` on this path, and
+  no timing surface across records.
+
+  The narrowing is real and worth stating: **an `env-migrated` credential is presentable only to a
+  gateway configured with that secret.** Other roots' migrated credentials remain valid records in
+  the store, but they are not authenticable through this gateway. That is correct rather than
+  unfortunate — the environment variable *is* the presentation mechanism for that credential, and a
+  gateway never given it has no way to know it.
 - **Hash — `scrypt-v1` fully pinned**, because a version tag that does not name its parameters means
   nothing: `scrypt` from `node:crypto`, **N = 2^15 (32768), r = 8, p = 1, dkLen = 32, salt 16 random
   bytes**, `maxmem` set explicitly to 64 MiB because `128 · N · r` is exactly 32 MiB and sits on
@@ -253,8 +268,8 @@ change.**
   (`packages/protocol/src/rpc/auth.ts:60-67`).
 - The gateway resolves the presented secret against the credential store instead of comparing it to
   one configured value. **Prefixed** secrets resolve by their embedded id, so that is a single record
-  lookup; a **non-prefixed** secret takes the bounded env path above, against the at-most-one active
-  `env-migrated` credential. One rule with one stated exception, not two rules.
+  lookup; a **non-prefixed** secret takes the bounded env path above, resolving only against this
+  gateway's own boot-time environment secret. One rule with one stated exception, not two rules.
 
 **Password mode stays legacy-only**: it is reachable only through the env-configured admin path of
 §3, and no credential is ever issued in password mode. Because credentials reuse token mode
@@ -307,12 +322,27 @@ place this ADR can cheaply shrink its own self-admitted non-additive seam: the s
    `/api/file` and `/api/run-artifact` request (`auth.ts:216-235`), and the Companion loads images
    through that path — so running `scrypt` at N = 2^15 per request would cost tens to hundreds of
    milliseconds each and is a visible regression. The gateway therefore keeps a **bounded in-memory
-   cache of the secret→credential verification**, keyed by a fast digest of the presented secret and
-   cleared on every store write. **This does not weaken invariant 1**, because what is reused is only
-   the KDF result: the principal and its role bindings are still resolved from the store on every
-   check, so a revoked credential or a changed binding takes effect on the next request regardless of
-   what is cached. The distinction is the whole point — caching *that this secret matches that
-   credential* is safe; caching *what that credential may do* would not be.
+   cache of the secret→credential verification**, keyed by a fast digest of the presented secret.
+   **This does not weaken invariant 1**, because what is reused is only the KDF result: the principal
+   and its role bindings are still resolved on every check, so a revoked credential or a changed
+   binding takes effect on the next request regardless of what is cached. The distinction is the
+   whole point — caching *that this secret matches that credential* is safe; caching *what that
+   credential may do* would not be.
+
+   **Invalidation is change-based, not authorship-based**, and the difference matters because the
+   store is machine-global: a gateway that only invalidated on **its own** writes would keep serving
+   revoked authority after any external write — another gateway's, or an offline operation's. So a
+   gateway invalidates its cached verification **and** its in-memory principal state on its own
+   writes *and* whenever it observes that the store has changed underneath it. The observation is a
+   cheap freshness check on store identity and modification metadata.
+
+   **That check precedes every authority resolution, not merely every credential verification.** An
+   established session authenticates once and then resolves authority on each request without
+   re-verifying any secret, so a check placed only in front of the cache would never run for it —
+   and another writer's revocation would not reach that session at all. Before **any** authorization
+   decision the gateway confirms its cached principal state is current against the store and reloads
+   when it is not. That is what invariant 1 actually promises; placed anywhere narrower it would hold
+   only for new authentications, and only within one gateway's own view of the world.
 4. **Outbound is authorized too.** The privileged hello and every broadcast are filtered by the
    receiving session's principal. Today `broadcast()` reaches every authenticated socket — and
    *every* socket when `auth.mode === 'none'` (`server.ts:624-633`) — while `sendHello()` fires
@@ -332,36 +362,59 @@ active operator credentials and no admin, and that state needs its own answer.
 
 | State                                    | Condition                                                  | Who may authenticate                                                       | Who may write the store                                    |
 | ---------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| **Solo mode**                            | never latched; loopback-only bind; proxy trust off          | nobody needs to — resolver returns `local-admin` / `local-node` (§1)        | the running gateway, acting for the virtual admin over RPC  |
-| **Never-latched, non-loopback**          | never latched; bind not loopback-only, or proxy trust on    | nobody — the bind is refused before serving                                 | offline CLI only (gateway not running)                      |
-| **Activated, ≥1 active admin credential**| latched; at least one **admin** credential active           | holders of active credentials                                               | the running gateway over RPC, exclusively                   |
-| **Activated, no active admin credential**| latched; every admin credential revoked or demoted          | active non-admin holders, if any — otherwise nobody                         | offline CLI only (gateway must be stopped)                  |
+| **Solo mode**                            | never latched; loopback-only bind; proxy trust off          | nobody needs to — resolver returns `local-admin` / `local-node` (§1)        | a running gateway, acting for the virtual admin over RPC    |
+| **Never-latched, non-loopback**          | never latched; bind not loopback-only, or proxy trust on    | nobody — the bind is refused before serving                                 | offline CLI only (no gateway running)                       |
+| **Activated, ≥1 active admin credential**| latched; at least one **admin** credential active           | holders of active credentials                                               | any running gateway over RPC, serialized on the store lock  |
+| **Activated, no active admin credential**| latched; every admin credential revoked or demoted          | active non-admin holders, if any — otherwise nobody                         | offline CLI only (every gateway stopped)                    |
 
 Rows one and two are unchanged. Row three narrows from "any active credential" to "any active
 **admin** credential"; row four widens correspondingly, and now covers both the everything-revoked
 case and the operators-but-no-admin case that has no other home.
 
-The write column describes each state **while the gateway is serving**. Stopping the gateway hands
+The write column describes each state **while a gateway is serving**. Stopping every gateway hands
 the store to the host owner in every row alike — that is the single rule below, not a property of
 rows two and four.
 
-There is one rule for who may write, and it turns on whether the gateway is running:
+Two mechanisms govern writing, and they answer different questions:
 
-- **While the gateway is up it is the only writer.** All issuance, revocation, and binding changes
-  go through RPC. In solo mode that RPC is authorized by the virtual `local-admin`, which is why
-  solo mode needs no offline path.
-- **While the gateway is stopped, the host owner may perform any credential-store operation** —
-  issue, revoke, or edit bindings — proven by the absence of the store lock. The justification is
-  the same one solo mode rests on: whoever can write a `0600` file in `FARMSLOT_HOME` is
-  definitionally the gateway owner, and no restriction placed there would constrain them.
+- **Any writer serializes on `credentials.lock`** (§2), held only for the duration of each
+  read-modify-write. That is what makes the write safe. It does not care whether a gateway is
+  running, and running gateways do not hold it, so **the design's per-root, per-port gateways may
+  run concurrently** without excluding each other.
+- **Offline operations additionally require that no gateway is running.** This is a *separate*
+  requirement with a *different* reason: a running gateway holds in-memory state derived from the
+  store — §2's verification cache and resolved principals. §2's invalidation is change-based, so a
+  live gateway does converge on an external write, but only at its next freshness check; requiring
+  quiescence removes the window entirely for operations performed deliberately out-of-band. So this
+  protects **cache coherence, not write atomicity**, and it is why the store lock alone is
+  insufficient.
+
+**Proving "no gateway is running" must itself be machine-global**, since gateways are per-root and
+per-port and the singleton pidfile is scoped to one of each (§2). A **presence marker in
+`FARMSLOT_HOME`** carries it: every running gateway holds it in **shared** mode for its lifetime, and
+an offline operation must acquire it **exclusively**. Shared so gateways never exclude each other;
+exclusive so an offline operation fails while any gateway is live, naming what is running:
+
+```
+Cannot modify the credential store: 2 gateways are running
+(/Users/…/farmslot on port 7789, /Users/…/other-root on port 8808).
+Next: stop them, then re-run this command.
+```
+
+**While any gateway is up, writing happens through RPC**: all issuance, revocation, and binding
+changes go through a gateway, each serializing on `credentials.lock`, and in solo mode that RPC is
+authorized by the virtual `local-admin`, which is why solo mode needs no offline path. **With every gateway stopped, the host owner may perform any
+credential-store operation** — issue, revoke, or edit bindings — on the justification solo mode
+already rests on: whoever can write a `0600` file in `FARMSLOT_HOME` is definitionally the gateway
+owner, and no restriction placed there would constrain them.
 
 That single rule replaces the narrower "offline issuance only when no admin is active" predicate,
 which was wrong in a way worth recording: **losing or compromising an admin secret does not enter
 row four at all.** The credential record stays active until something tombstones it, so the gateway
 is still in row three, still accepting the compromised secret. Recovery is therefore *revoke, then
 issue* — and a predicate permitting only issuance could never have performed the first step. One
-coherent story: **stop the gateway, revoke the compromised credential, issue a replacement, start
-it again.**
+coherent story: **stop every gateway, revoke the compromised credential, issue a replacement, start
+them again.**
 
 In row four the gateway keeps serving whatever its active non-admin credentials authorize. Refusing
 to serve would convert a lost admin credential into a total outage for no security gain — the
@@ -375,7 +428,7 @@ admin credential for the owner alongside whatever was asked for — which is why
 correctness requirement, not a convenience. It survives only through an offline first issuance that
 creates a non-admin and nothing else.
 
-The second is revoking or demoting the last active admin, which the running gateway's writer refuses
+The second is revoking or demoting the last active admin, which a running gateway's writer refuses
 — rejecting any revocation or role-binding removal that would leave zero active admin credentials:
 
 ```
@@ -385,10 +438,10 @@ Next: issue a replacement admin credential first, then revoke this one:
   farmslot credential issue --principal owner --name owner-new
 ```
 
-**That invariant binds the running gateway's writer only.** It is a guard against an admin locking
+**That invariant binds a running gateway's writer only.** It is a guard against an admin locking
 themselves out through the API, not a property of the file — and it deliberately does not apply
-offline, because the offline path is the recovery path and an owner who has stopped the gateway must
-be able to demote or revoke a compromised admin before issuing its replacement. It holds for
+offline, because the offline path is the recovery path and an owner who has stopped every gateway on
+the machine must be able to demote or revoke a compromised admin before issuing its replacement. It holds for
 `credential.revoke` and `principal.revokeRole` alike (§7), since it lives on the writer rather than
 in either handler.
 
@@ -406,19 +459,19 @@ session establishment from `clientKind`, **not** inside the authorization check.
 ```
 This gateway has no active admin credential, so nothing can be issued or
 revoked over RPC.
-Next: stop the gateway, then on this machine run
+Next: stop every gateway on this machine, then run
   farmslot credential issue --principal owner --role admin --scope global
-and start it again.
+and start them again.
 ```
 
 A **compromised** admin credential is the same procedure with one step in front, and the gateway is
 in row three throughout — the bad credential is still active, which is exactly the problem:
 
 ```
-Next: stop the gateway, then on this machine run
+Next: stop every gateway on this machine, then run
   farmslot credential revoke <compromised-id>
   farmslot credential issue --principal owner --role admin --scope global
-and start it again.
+and start them again.
 ```
 
 **Latching activation on** closes open sessions (invariant 2) and stops `local-node` resolving, so
@@ -449,45 +502,42 @@ with `origin: 'env-migrated'` whose hash is that secret's. The env secret keeps 
 keep working unchanged; `authMode` stays in the protocol contract. That credential is revocable
 individually — the first time that has been possible.
 
-**Boot reconciliation has exactly three cases**, and the env value *is* the migrated credential's
-secret, which is what makes them differ:
+**Boot reconciliation is additive only.** It has exactly one action and one prohibition:
 
-1. **Env secret present and matching an active `env-migrated` credential.** Nothing to do.
-2. **Env secret present but different — rotation.** The presented value no longer matches the stored
-   hash, so reconciliation **issues the credential for the new value before revoking the stale one.**
-   The ordering is stated because reversing it would trip the very invariant it exists to respect:
-   revoking first, when the migrated credential is the only admin, leaves zero active admins for the
-   instant before the new one lands. Create-then-revoke never passes through that state, and an
-   operator who rotates does not silently lose their only admin.
-3. **Env secret absent — removal. Nothing is revoked, in every case, whatever the admin count.** The
-   migrated credential stays active, and reconciliation reports the condition at boot.
+- **If the current env secret has no active `env-migrated` credential, migrate it** — create one.
+- **Never revoke any credential on the basis of an env value, in any case.** Not on rotation, not on
+  removal, not on mismatch.
+- **Report at boot any other active `env-migrated` credentials that do not match the current
+  environment**, naming explicit revocation as the way to remove them.
 
-**When an env secret is present, reconciliation leaves exactly one active `env-migrated` credential
-and it matches that secret.** That invariant is scoped to cases 1 and 2; case 3 has no current
-secret for it to describe.
+The reason is a limit on what the gateway can know, and it subsumes what would otherwise look like
+two unrelated rules for rotation and removal. **The credential store is machine-global while
+`.env.local-auth` is root-local** — `services/gateway/src/index.ts:173-188` loads it from
+`resolve(farmslotRoot, …)` — so **a gateway cannot distinguish "the operator rotated this secret"
+from "this is a different deployment's secret".** Both present as a mismatch against the store.
+Inferring revocation from an ambiguity the system cannot resolve would let one root silently disable
+another's access, and it would thrash sequentially: migrate root A's secret, start a gateway in root
+B and revoke A's, return to A and revoke B's, indefinitely.
 
-Case 3's asymmetry with case 2 is deliberate, and worth stating because it otherwise looks
-arbitrary. **After migration the credential exists in the store on its own terms, and this model
-revokes only explicitly, by tombstone.** An absent environment variable is ambiguous — a deployment
-change, a shell that did not export it, a systemd unit edited for another reason — and inferring
-revocation from ambiguity would make credential lifecycle depend on process environment rather than
-on the store. Rotation is different precisely because presenting a *new* value proves the operator
-still controls that variable and still intends it to be the credential. Removing the credential is
-therefore an explicit act: `credential.revoke` on a running gateway, or the offline path.
+So env reconciliation only ever **adds**, and revocation is always **explicit** — which is exactly
+the tombstone-only model §2 already establishes, applied to the one path that was tempted to deviate
+from it. There is consequently no ordering hazard to manage: a rule that never revokes cannot pass
+through a zero-admin state.
 
 The boot report says so plainly, because the surprise would otherwise run in the dangerous
-direction — an operator who unsets the variable expecting access to be gone:
+direction — an operator who changes or unsets the variable expecting access to follow:
 
 ```
-FARMSLOT_GATEWAY_TOKEN is no longer set, but the credential it was migrated to
-is still active — unsetting the variable does not remove access.
+FARMSLOT_GATEWAY_TOKEN does not match any active credential; migrated it as a new one.
+1 other active env-migrated credential does not match this environment — changing or
+unsetting the variable does not remove access.
 Next: to remove it, run
   farmslot credential revoke <id>
-or stop the gateway and revoke offline.
+or stop every gateway and revoke offline.
 ```
 
 A gateway may not reconcile itself into a state where nothing can issue, and it may not silently
-reconcile away an operator's access either.
+reconcile away access that another root or another operator still depends on.
 
 **Loopback is a claim about the bind address, not the peer.** Auto-admit keys off the listen address,
 never the request IP, because `resolveRequestIp()` returns a forwarded header when proxy trust is on
@@ -1013,8 +1063,8 @@ differ, the prose governs. What the index provides is findability, not authority
 
 **SSO / OIDC**
 
-- Break-glass must never depend on the identity provider; offline store management with the gateway
-  stopped is the IdP-independent path. *(Out of scope: SSO)*
+- Break-glass must never depend on the identity provider; offline store management, with every
+  gateway on the machine stopped, is the IdP-independent path. *(Out of scope: SSO)*
 - Token expiry must be built — `CredentialRecord` has no expiry field and live lookup covers
   stored-credential tombstones and role changes only. *(Out of scope: SSO)*
 - The external token grammar must be constrained so credential and IdP resolution stay unambiguous.
@@ -1186,7 +1236,8 @@ and it turns ADR-046's zero-config local node into a setup step.
   denied, so an incomplete sweep costs usability rather than safety.
 - Existing token/password deployments keep working untouched, and their secret becomes revocable for
   the first time.
-- Every gateway state has exactly one store writer, by exclusion rather than convention.
+- Store writes are serialized by a lock rather than by convention, and offline management is refused
+  while any gateway is live.
 - Provenance is a single mechanical rule keyed on write origin, with no field list and no cross-store
   transaction.
 - The document stops needing edits when handlers change; the gate absorbs that.
@@ -1208,8 +1259,8 @@ and it turns ADR-046's zero-config local node into a setup step.
   credentials reuse token mode verbatim (§2). The only surface this ADR leaves **unchanged** is the
   public queue payload (§5.5).
 - Runtime parameter validation becomes load-bearing where §5 depends on parameter shape.
-- Credential-store recovery — a lost or compromised admin credential — requires stopping the
-  gateway, making it a deliberate outage rather than a background fix.
+- Credential-store recovery — a lost or compromised admin credential — requires stopping every
+  gateway on the machine, making it a deliberate outage rather than a background fix.
 - **The residual in §5.6 remains open.** v2 does not deliver isolation, and says so.
 
 **Risks**
@@ -1389,9 +1440,9 @@ and it turns ADR-046's zero-config local node into a setup step.
   **Break-glass must never depend on the identity provider — a requirement on that work, not a
   property it inherits.** The latch never clears (§3), so `local-admin` is a pre-activation
   affordance only; for an activated gateway the IdP-independent recovery path is **offline store
-  management with the gateway stopped**. That is the answer when the IdP is unreachable, or when an
+  management with every gateway on the machine stopped**. That is the answer when the IdP is unreachable, or when an
   IdP-driven mapping change would otherwise leave no reachable admin — and §3's last-admin protection
-  binds the running gateway's writer, so it cannot by itself defend against an admin binding that
+  binds a running gateway's writer, so it cannot by itself defend against an admin binding that
   vanishes because a group membership changed upstream.
 - **A managed or hosted gateway.** Multi-tenancy and tenant isolation are a different product shape.
 - **Audit logging.** A queryable, tamper-evident log of every authorization decision is its own
@@ -1412,6 +1463,7 @@ Four decisions belong to the gateway's owner rather than to implementation.
    the single blocker on seven of the ten non-conformant methods and a much smaller piece of work
    than containment as a whole — the highest-leverage way to make the operator role useful.
 4. **Is credential-store recovery a documented procedure or a deliberate gap?** Recovering a lost or
-   compromised admin credential means stopping the gateway and editing the store, which makes
+   compromised admin credential means stopping every gateway on the machine and editing the store,
+   which makes
    store-file access equivalent to gateway ownership. Documenting it makes recovery reliable;
    leaving it undocumented keeps it from being treated as routine administration.
