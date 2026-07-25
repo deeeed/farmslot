@@ -903,6 +903,78 @@ This item was authored by 'owner' (admin) and is now authored by you
 Everything below is rationale and evidence. It is **not normative**: the invariants (§5.2), the
 allowlist (§5.3), and the gate (§5.4) are.
 
+### Requirements on deferred work
+
+A spec author for any deferred ADR should read their group here rather than reconstruct it from the
+whole document. **This index adds nothing and confers nothing.** Each entry carries exactly the
+status of the section it points to, no more: a requirement binds future work because its deferred
+entry says so, not because this list restates it. Where this wording and the establishing prose
+differ, the prose governs. What the index provides is findability, not authority.
+
+**Worker session and project-step containment**
+
+- I1 must be satisfied for slot preparation — either sandbox preparation itself, or require operator
+  dispatch to target an already-prepared slot. *(Deferred: containment)*
+- Confined artifact reads must exist before artifact-reading observability can qualify for the
+  allowlist; they are the single blocker on seven of the ten non-conformant methods. *(§5.3;
+  Assigned implementation work)*
+
+**Farm scoping**
+
+- The form of the farm scope representation — a further scope variant versus a composable term —
+  must be chosen before any farm record is persisted. *(Deferred: farm scoping)*
+
+**Node identity and machine binding**
+
+- Binding must be enforced on every node frame, not once at registration: `node.metrics` carries
+  `payload.machine` without passing through `node.connect`. *(Deferred: node identity)*
+
+**Run attribution and reporting**
+
+- Attribution must stamp the **principal id**, never a credential id. *(Deferred: attribution)*
+- That work decides what becomes public payload and what a `system`-originated run records.
+  *(Deferred: attribution)*
+
+**SSO / OIDC**
+
+- Break-glass must never depend on the identity provider; offline store management with the gateway
+  stopped is the IdP-independent path. *(Out of scope: SSO)*
+- Token expiry must be built — `CredentialRecord` has no expiry field and live lookup covers
+  stored-credential tombstones and role changes only. *(Out of scope: SSO)*
+- The external token grammar must be constrained so credential and IdP resolution stay unambiguous.
+  *(Out of scope: SSO)*
+- That work must choose between **materializing** IdP-derived bindings into stored `Principal.roles`
+  and **resolving** live claims per authorization check. *(Out of scope: SSO)*
+
+**Group or team authority**
+
+- `RoleBinding` needs an optional `source` plus a dedupe rule for equal-valued bindings from
+  different origins, once derived bindings coexist. *(Deferred: groups)*
+- §3's last-admin accounting must count group-derived admins. *(Deferred: groups)*
+- The group model must be decided together with SSO's materialize-versus-resolve choice — they are
+  one decision seen from two sides. *(Deferred: groups)*
+
+**Principal lifecycle**
+
+- Deactivating the last active admin must be refused exactly as revoking it is. *(Deferred:
+  lifecycle)*
+
+**Relational authority and steering**
+
+- The first conditioned allowlist entry introduces a second, in-handler evaluation point — the moment
+  default-deny stops being structural-at-one-place. *(§5.4)*
+- Relational conditions and resolved-value conditions are one mechanism and should be decided
+  together. *(Deferred: relational authority)*
+- Candidate rule, recorded as a candidate: steering a run requires the authority that dispatching
+  that run at its effective tier would require. *(Deferred: relational authority)*
+- Session continuity is required — a steer must reach the *live* session, or the use case that
+  motivates it is lost. *(Deferred: relational authority)*
+
+**Binding implementation now, not a future ADR.** The Assigned implementation work table below lists
+the five changes this ADR's design requires but that have not been made: two CLI plumbing items for
+§7's `principal` summary, confined artifact reads, atomic confinement on `fs.*`, and argv conversion
+of the shared `resolvePrRef()` path.
+
 ### Non-conformance record
 
 Methods audited against §5.2 and found non-conformant. These are recorded because each was expected
@@ -1130,6 +1202,74 @@ and it turns ADR-046's zero-config local node into a setup step.
   since the information is not written anywhere to recover later. Whether that matters is a question
   for whoever needs the audit trail; it is noted here because the cost of adding it rises with every
   binding granted before it exists.
+- **Relational authority: view, dispatch-and-own, steer.** Three distinct authorities over a run are
+  collapsed today, because the model cannot express any of them separately. **Viewing** a run's
+  output and progress, **dispatching and owning** a run, and **steering** one — communicating with
+  its running worker — are different powers. v2 expresses only part of the first: `run.list` is
+  allowlisted, so a non-admin does see run status and step state, while `run.get` and artifact output
+  stay denied by I4, dispatch is not on the allowlist at all, and pane input fails I1 outright. So
+  **viewing is partially expressed** — what is unexpressed is the distinction between that thin
+  status view and the richer output-and-progress view an engineer reviewing a run actually needs.
+  The other two authorities are unexpressed entirely.
+
+  **The workflow that makes this concrete.** A run is dispatched either by a person or automatically
+  from a ticket, and the engineer who later steers it during review is frequently neither. It must be
+  the *original* worker rather than a fresh one, because that worker holds the implementation context
+  and every review loop it has already been through — re-dispatching discards exactly what makes the
+  steer valuable.
+
+  **The open question is whether authority stays purely static or gains relational predicates** —
+  rules of the form "the caller stands in some relation to this run". A `RoleBinding` is
+  `{ role, scope }` and the check reads only the resolved principal, so nothing today can express any
+  such rule. There are two axes here, and both stay undecided.
+
+  **Where steering authority comes from** — three sources, none sufficient alone: the run's
+  **originator**; **scope-derived** authority, meaning dispatch authority over the farm the run
+  belongs to; or explicit **assignment** to a named principal, such as the reviewer. A
+  ticket-dispatched run originates as `system` and a run dispatched by one engineer is routinely
+  steered by another, so no single source answers the workflow above.
+
+  **How that authority is represented** — a separate question with two shapes: a dynamic
+  **run-scoped scope representation**, which would make scope per-resource with a lifecycle quite
+  unlike static farm scope; or a **relational predicate** evaluated against the run's stored
+  originator, which adds no scope but requires authorization to read resource state for the first
+  time. **§5.5 already persists that originator per work item** — the data a relational rule needs
+  exists, and no authorization rule reads it. That asymmetry is the gap.
+
+  **A relational rule is a condition on an allowlist entry**, so it lands on exactly the constraint
+  §5.4 already records: the first conditioned entry introduces a second, in-handler evaluation point.
+  Relational conditions and resolved-value conditions are the same mechanism seen twice, and should
+  be decided together rather than arriving separately.
+
+  **Raw transport and structured instruction are different capabilities, and conflating them
+  overstates the bound.** Sending keystrokes to a worker pane — `terminal.send`, `tmux.sendKeys` — is
+  raw shell as the gateway OS user, so it fails I1 regardless of who dispatched the run: no
+  relational rule can make *that* non-admin, and ownership cannot confer authority the role never
+  had. But steering *semantically* is "deliver an instruction to the worker agent", which does not
+  require keystroke injection. A structured instruction channel routed to the runner's compose path
+  is a different capability with a different ceiling — and that distinction is the difference between
+  "steering can never be non-admin" and "steering has a form that could be proven conformant". This
+  ADR does not design that channel; it records that the distinction is what decides the question.
+
+  **The honest bound on any such channel is the run's effective safety tier, not the transport.** A
+  structured instruction still influences what an autonomous agent does, and that agent runs with the
+  run's own authority. The candidate rule — recorded as a candidate, not a decision — is that
+  **steering a run requires the authority that dispatching that run at its effective tier would
+  require.** That keeps steering inside the transitive ceiling and inside I6's resolved-effective-value
+  rule rather than inventing a new axis: a sandboxed run stays steerable within the sandbox, and a
+  dangerous-tier run is admin either way.
+
+  **Session continuity is a requirement on that work, not an implementation detail.** The value is
+  the original worker's accumulated context, so whatever is decided must reach the *live* session —
+  the run's session has to remain addressable for a steer to mean anything. A design that answers the
+  authorization question but loses session continuity fails the use case that motivated it.
+
+  **Containment and relational authority stay orthogonal**, now in three parts: containment decides
+  whether raw pane access can ever be non-admin, the structured-channel question decides whether
+  steering needs raw access at all, and relational authority decides only *whose* runs — whichever
+  transport wins. Related to farm scoping but not the same axis either: per-farm authority answers
+  *which runs may I dispatch*, relational authority answers *which runs are mine to steer*. A
+  farm-scoped operator still needs the second question answered.
 
 ### Out of scope
 
