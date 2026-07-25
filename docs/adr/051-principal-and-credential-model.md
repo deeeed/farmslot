@@ -134,6 +134,14 @@ credentialed, never issuable, and cannot be authenticated as. There are exactly 
 | `local-node`      | `node`, `machine` = the local machine name | `[]` — subject-authorized                        | solo mode, connection presents `clientKind: 'node'` |
 | `system`          | `service`, display name `system`           | `[{ role: 'admin', scope: { kind: 'global' } }]` | the gateway acts on its own schedule over admin-authored work only (§5.5) |
 
+**Every virtual principal's id is reserved**, and the store writer refuses to create a stored
+principal bearing one — today that is `local-admin`, `local-node`, and `system`, and any virtual
+principal added later inherits the reservation without needing this sentence rewritten. The reason
+is one rule, not three cases: a stored principal sharing a virtual id could shadow it and inherit
+its resolution, which is exploitable rather than merely untidy — most sharply for `system`, which
+§5.5 grants admin over gateway-scheduled work. For the same reason the migrated env principal (§3)
+must not take a display name that collides with `system`.
+
 Authorization code sees ordinary `Principal` values in every case, **including their role bindings**
 — `system` holds a real `admin`/`global` binding rather than a role-gating exemption, so the check
 has no virtual-principal branch at all. Virtualness is a fact about where the value came from, not a
@@ -158,8 +166,8 @@ interface CredentialRecord {
 
 interface StoredSecret {
   scheme: 'scrypt-v1';
-  salt: string;
-  hash: string;
+  salt: string;   // base64
+  hash: string;   // base64
 }
 ```
 
@@ -198,9 +206,16 @@ with each work item, for the atomicity reason given in §5.5.
   `0o600`, explicit `chmodSync` after every save because the write mode only applies on create.
 - **Atomicity.** Every mutation is a whole-file write to a temporary file in the same directory
   followed by `rename`.
-- **Single writer, enforced by exclusion.** Atomic rename prevents a torn read, not a lost update.
-  Offline store operations therefore require the gateway process not to be running, proven by the
-  store lock / pidfile; whenever the gateway is up it is the only writer (§3).
+- **Single writer, enforced by a store-adjacent lock.** Atomic rename prevents a torn read, not a
+  lost update, so exclusion needs a lock — and **a machine-global store needs a machine-global
+  lock**. The lock lives beside the store in `FARMSLOT_HOME` and is acquired by *any* writer: the
+  running gateway holds it for the lifetime of its writer, and an offline operation refuses while it
+  is held. **The gateway singleton lock is a different concern and cannot serve this one**:
+  `acquireGatewaySingletonLock()` writes `<farmslotRoot>/.runs/gateway-<PORT>.pid`
+  (`services/gateway/src/index.ts:100-144`), scoped per root *and* per port, so two gateways with
+  different roots or ports hold different locks while sharing one `credentials.json`. Rescoping the
+  store to a farmslot root would fix the locking and break the identity model — one machine, one set
+  of principals — so the lock moves to the store, not the store to the lock.
 - **Missing principal fails closed.** A credential whose `principalId` resolves to no principal does
   not authenticate. An unparseable record is rejected at load with the file named, and the gateway
   refuses to start rather than running with a silently truncated store.
@@ -208,9 +223,15 @@ with each work item, for the atomicity reason given in §5.5.
 #### Secret handling
 
 - **Entropy.** 32 bytes from `randomBytes`, base64url-encoded.
-- **Wire format.** `fs_<credentialId>_<secret>` — the embedded id makes verification a single record
-  lookup instead of a scan, which would either leak timing across records or force every record to
-  be hashed on every attempt.
+- **Wire format.** `fs_<credentialId>_<secret>` — for **issued and paired** credentials the embedded
+  id makes verification a single record lookup instead of a scan, which would either leak timing
+  across records or force every record to be hashed on every attempt. The credential id is **hex**,
+  because the base64url secret alphabet contains `_` and would make the delimiter ambiguous.
+  **The legacy env secret is the bounded exception**: it has no prefix and no embedded id, so a
+  non-prefixed presented secret is verified against active `env-migrated` credentials only. Migration
+  creates at most one (§3), so that path is a lookup over a set of size ≤ 1 rather than a scan — the
+  stored hash stays real and is what authenticates, rather than the gateway comparing against a
+  resolved in-memory token and leaving the hash decorative.
 - **Hash — `scrypt-v1` fully pinned**, because a version tag that does not name its parameters means
   nothing: `scrypt` from `node:crypto`, **N = 2^15 (32768), r = 8, p = 1, dkLen = 32, salt 16 random
   bytes**, `maxmem` set explicitly to 64 MiB because `128 · N · r` is exactly 32 MiB and sits on
@@ -230,8 +251,10 @@ change.**
   (`packages/cli/src/gateway-profiles.ts:100-105`), and what `PairingExchangeResult.profile` already
   permits, since its `authMode` is `Exclude<GatewayAuthMode, 'none'>`
   (`packages/protocol/src/rpc/auth.ts:60-67`).
-- The gateway resolves the presented secret against the credential store (§2's wire format makes
-  that a single record lookup) instead of comparing it to one configured value.
+- The gateway resolves the presented secret against the credential store instead of comparing it to
+  one configured value. **Prefixed** secrets resolve by their embedded id, so that is a single record
+  lookup; a **non-prefixed** secret takes the bounded env path above, against the at-most-one active
+  `env-migrated` credential. One rule with one stated exception, not two rules.
 
 **Password mode stays legacy-only**: it is reachable only through the env-configured admin path of
 §3, and no credential is ever issued in password mode. Because credentials reuse token mode
@@ -280,7 +303,17 @@ place this ADR can cheaply shrink its own self-admitted non-additive seam: the s
 1. **Live lookup per check** — an in-memory map read with the file as source of truth.
 2. **Authority changes invalidate live sessions.** Credential revocation, role-binding change, and
    the activation latch each close or downgrade every affected open session, including subscriptions.
-3. **Outbound is authorized too.** The privileged hello and every broadcast are filtered by the
+3. **Verification may be cached; authority may not.** `authorizeHttpRequest()` authenticates *every*
+   `/api/file` and `/api/run-artifact` request (`auth.ts:216-235`), and the Companion loads images
+   through that path — so running `scrypt` at N = 2^15 per request would cost tens to hundreds of
+   milliseconds each and is a visible regression. The gateway therefore keeps a **bounded in-memory
+   cache of the secret→credential verification**, keyed by a fast digest of the presented secret and
+   cleared on every store write. **This does not weaken invariant 1**, because what is reused is only
+   the KDF result: the principal and its role bindings are still resolved from the store on every
+   check, so a revoked credential or a changed binding takes effect on the next request regardless of
+   what is cached. The distinction is the whole point — caching *that this secret matches that
+   credential* is safe; caching *what that credential may do* would not be.
+4. **Outbound is authorized too.** The privileged hello and every broadcast are filtered by the
    receiving session's principal. Today `broadcast()` reaches every authenticated socket — and
    *every* socket when `auth.mode === 'none'` (`server.ts:624-633`) — while `sendHello()` fires
    immediately after `auth.connect` (`server.ts:541`). A session receives only surfaces its principal
@@ -413,8 +446,48 @@ boot with `FARMSLOT_GATEWAY_TOKEN`/`PASSWORD` configured (`auth.ts:97-114`), the
 activation, creates a `service` principal with an `admin`/`global` binding, and writes a credential
 with `origin: 'env-migrated'` whose hash is that secret's. The env secret keeps authenticating
 **because it is that credential**, so existing deployments, stored profiles, and paired Companions
-keep working unchanged; `authMode` stays in the protocol contract. Rotating or removing the variable
-revokes that one credential and nothing else — the first time that operation has been possible.
+keep working unchanged; `authMode` stays in the protocol contract. That credential is revocable
+individually — the first time that has been possible.
+
+**Boot reconciliation has exactly three cases**, and the env value *is* the migrated credential's
+secret, which is what makes them differ:
+
+1. **Env secret present and matching an active `env-migrated` credential.** Nothing to do.
+2. **Env secret present but different — rotation.** The presented value no longer matches the stored
+   hash, so reconciliation **issues the credential for the new value before revoking the stale one.**
+   The ordering is stated because reversing it would trip the very invariant it exists to respect:
+   revoking first, when the migrated credential is the only admin, leaves zero active admins for the
+   instant before the new one lands. Create-then-revoke never passes through that state, and an
+   operator who rotates does not silently lose their only admin.
+3. **Env secret absent — removal. Nothing is revoked, in every case, whatever the admin count.** The
+   migrated credential stays active, and reconciliation reports the condition at boot.
+
+**When an env secret is present, reconciliation leaves exactly one active `env-migrated` credential
+and it matches that secret.** That invariant is scoped to cases 1 and 2; case 3 has no current
+secret for it to describe.
+
+Case 3's asymmetry with case 2 is deliberate, and worth stating because it otherwise looks
+arbitrary. **After migration the credential exists in the store on its own terms, and this model
+revokes only explicitly, by tombstone.** An absent environment variable is ambiguous — a deployment
+change, a shell that did not export it, a systemd unit edited for another reason — and inferring
+revocation from ambiguity would make credential lifecycle depend on process environment rather than
+on the store. Rotation is different precisely because presenting a *new* value proves the operator
+still controls that variable and still intends it to be the credential. Removing the credential is
+therefore an explicit act: `credential.revoke` on a running gateway, or the offline path.
+
+The boot report says so plainly, because the surprise would otherwise run in the dangerous
+direction — an operator who unsets the variable expecting access to be gone:
+
+```
+FARMSLOT_GATEWAY_TOKEN is no longer set, but the credential it was migrated to
+is still active — unsetting the variable does not remove access.
+Next: to remove it, run
+  farmslot credential revoke <id>
+or stop the gateway and revoke offline.
+```
+
+A gateway may not reconcile itself into a state where nothing can issue, and it may not silently
+reconcile away an operator's access either.
 
 **Loopback is a claim about the bind address, not the peer.** Auto-admit keys off the listen address,
 never the request IP, because `resolveRequestIp()` returns a forwarded header when proxy trust is on
@@ -831,7 +904,10 @@ absent value may be read as permission, so there is no "omit for global" conveni
 `credential.revoke` and `principal.revokeRole` are both subject to §3's last-admin invariant: the
 store writer rejects either call when it would leave zero active admin credentials, with the
 issue-first teaching error. The invariant lives on the writer rather than in each handler, so it
-cannot be bypassed by a future caller.
+cannot be bypassed by a future caller. **Boundary note for spec authors: the writer-side revoke
+primitives — credential revocation and role revocation — belong to the principal-core node, not to
+the RPC handlers**, because the last-admin invariant lives on the writer and must be provable before
+any handler can reach it. That is a placement consequence of the invariant, not a new decision.
 
 #### Changed contract: `pairing.create`
 
