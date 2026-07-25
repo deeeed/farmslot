@@ -202,13 +202,34 @@ Identity and credentials share one file because a role change and a credential i
 half-apply on the authorization path. **Work-item provenance is deliberately not here** — it lives
 with each work item, for the atomicity reason given in §5.5.
 
+#### One identity domain per `FARMSLOT_HOME`
+
+**The scope of everything in this ADR is one `FARMSLOT_HOME`, not one machine.** `farmslotHome()`
+resolves the `FARMSLOT_HOME` environment variable and falls back to `~/.farmslot`
+(`packages/protocol/src/node/farmslot-home.ts:11-15`); its own contract calls it "the single source
+of truth for where gateway profiles, auth, logs, llm-config, and the gateway pid/log live", imported
+by both CLI and gateway precisely so a custom value "can never half-apply". So the store is
+machine-wide *by default*, not by design.
+
+That matters because **the credential store, the activation latch, `credentials.lock`, and the
+gateway presence marker all live in `FARMSLOT_HOME`** — they therefore share one scope by
+construction and cannot disagree about which domain they are protecting. Every rule below about
+locking, reconciliation, and offline safety inherits that single premise rather than needing its own
+justification.
+
+**The operator consequence runs in both directions, and surprises either way.** Deployments that
+share a `FARMSLOT_HOME` share one identity domain: the same principals, the same activation state,
+and one deployment's first issued credential ends solo mode for all of them. A deployment that wants
+its own principals and its own solo-mode lifecycle **sets its own `FARMSLOT_HOME`** — that is the
+supported separation mechanism, and it already exists.
+
 - **Permissions** follow `gateway-profiles.ts:56`: `mkdirSync` mode `0o700`, `writeFileSync` mode
   `0o600`, explicit `chmodSync` after every save because the write mode only applies on create.
 - **Atomicity.** Every mutation is a whole-file write to a temporary file in the same directory
   followed by `rename`.
 - **Write exclusion — `credentials.lock`, held only for each read-modify-write.** Atomic rename
-  prevents a torn read, not a lost update, so exclusion needs a lock, and **a machine-global store
-  needs a machine-global lock**: it lives beside the store in `FARMSLOT_HOME` and *every* writer
+  prevents a torn read, not a lost update, so exclusion needs a lock, and **the lock's scope must be
+  the store's scope**: it lives beside the store in `FARMSLOT_HOME` and *every* writer
   takes it — any running gateway, and the offline CLI. It is **exclusive but short-lived, held for
   the duration of a single read-modify-write and released**. This is all the store itself requires,
   and it is what keeps the lock compatible with the per-root, per-port gateway design: **a gateway
@@ -220,7 +241,7 @@ with each work item, for the atomicity reason given in §5.5.
   `<farmslotRoot>/.runs/gateway-<PORT>.pid` (`services/gateway/src/index.ts:100-144`), scoped per
   root *and* per port, so gateways with different roots or ports hold different locks while sharing
   one `credentials.json`. Rescoping the store to a farmslot root would fix the locking and break the
-  identity model — one machine, one set of principals — so the lock moves to the store, not the
+  identity model — one `FARMSLOT_HOME`, one set of principals — so the lock moves to the store, not the
   store to the lock.
 - **Missing principal fails closed.** A credential whose `principalId` resolves to no principal does
   not authenticate. An unparseable record is rejected at load with the file named, and the gateway
@@ -330,7 +351,7 @@ place this ADR can cheaply shrink its own self-admitted non-additive seam: the s
    credential may do* would not be.
 
    **Invalidation is change-based, not authorship-based**, and the difference matters because the
-   store is machine-global: a gateway that only invalidated on **its own** writes would keep serving
+   store is shared across the identity domain: a gateway that only invalidated on **its own** writes would keep serving
    revoked authority after any external write — another gateway's, or an offline operation's. So a
    gateway invalidates its cached verification **and** its in-memory principal state on its own
    writes *and* whenever it observes that the store has changed underneath it. The observation is a
@@ -356,6 +377,14 @@ credential is issued, the bind is non-loopback, or proxy-header trust is declare
 silently unlatches**. A store holding only tombstones is a store that *was* activated, so revoking
 the last credential does not return the gateway to solo mode — falling back would mean revocation
 *increases* what an unauthenticated caller can do.
+
+**The latch is stored, so it is shared by the whole identity domain (§2), and that has a consequence
+worth meeting here rather than discovering later.** Issuing a credential from one deployment latches
+activation for *every* deployment sharing that `FARMSLOT_HOME`: their virtual `local-admin` stops
+resolving, and their co-launched nodes need issued credentials too. That is shared domain, shared
+activation — the same rule as shared principals, seen from the lifecycle side. **A deployment that
+needs its own solo-mode lifecycle sets its own `FARMSLOT_HOME`**, which is the same separation
+mechanism §2 already describes, applied to activation rather than to identity.
 
 The rows key on **active admin** presence, not on active credentials generally — a store can hold
 active operator credentials and no admin, and that state needs its own answer.
@@ -389,8 +418,10 @@ Two mechanisms govern writing, and they answer different questions:
   protects **cache coherence, not write atomicity**, and it is why the store lock alone is
   insufficient.
 
-**Proving "no gateway is running" must itself be machine-global**, since gateways are per-root and
-per-port and the singleton pidfile is scoped to one of each (§2). A **presence marker in
+**Proving "no gateway is running" must itself span the identity domain**, since gateways are
+per-root and per-port and the singleton pidfile is scoped to one of each (§2). "No gateway running"
+means none in this `FARMSLOT_HOME` — gateways under a different one are a different domain and are
+irrelevant here. A **presence marker in
 `FARMSLOT_HOME`** carries it: every running gateway holds it in **shared** mode for its lifetime, and
 an offline operation must acquire it **exclusively**. Shared so gateways never exclude each other;
 exclusive so an offline operation fails while any gateway is live, naming what is running:
@@ -440,10 +471,10 @@ Next: issue a replacement admin credential first, then revoke this one:
 
 **That invariant binds a running gateway's writer only.** It is a guard against an admin locking
 themselves out through the API, not a property of the file — and it deliberately does not apply
-offline, because the offline path is the recovery path and an owner who has stopped every gateway on
-the machine must be able to demote or revoke a compromised admin before issuing its replacement. It holds for
-`credential.revoke` and `principal.revokeRole` alike (§7), since it lives on the writer rather than
-in either handler.
+offline, because the offline path is the recovery path and an owner who has stopped every gateway in
+the identity domain must be able to demote or revoke a compromised admin before issuing its
+replacement. It holds for `credential.revoke` and `principal.revokeRole` alike (§7), since it lives
+on the writer rather than in either handler.
 
 Solo mode's rationale: whoever owns the gateway process already owns the machine — they can read
 `credentials.json`, attach to the process, and run anything the gateway could run. Demanding a
@@ -459,7 +490,7 @@ session establishment from `clientKind`, **not** inside the authorization check.
 ```
 This gateway has no active admin credential, so nothing can be issued or
 revoked over RPC.
-Next: stop every gateway on this machine, then run
+Next: stop every gateway in this identity domain, then run
   farmslot credential issue --principal owner --role admin --scope global
 and start them again.
 ```
@@ -468,7 +499,7 @@ A **compromised** admin credential is the same procedure with one step in front,
 in row three throughout — the bad credential is still active, which is exactly the problem:
 
 ```
-Next: stop every gateway on this machine, then run
+Next: stop every gateway in this identity domain, then run
   farmslot credential revoke <compromised-id>
   farmslot credential issue --principal owner --role admin --scope global
 and start them again.
@@ -511,13 +542,14 @@ individually — the first time that has been possible.
   environment**, naming explicit revocation as the way to remove them.
 
 The reason is a limit on what the gateway can know, and it subsumes what would otherwise look like
-two unrelated rules for rotation and removal. **The credential store is machine-global while
-`.env.local-auth` is root-local** — `services/gateway/src/index.ts:173-188` loads it from
-`resolve(farmslotRoot, …)` — so **a gateway cannot distinguish "the operator rotated this secret"
-from "this is a different deployment's secret".** Both present as a mismatch against the store.
-Inferring revocation from an ambiguity the system cannot resolve would let one root silently disable
-another's access, and it would thrash sequentially: migrate root A's secret, start a gateway in root
-B and revoke A's, return to A and revoke B's, indefinitely.
+two unrelated rules for rotation and removal. **Deployments sharing an identity domain share one
+credential store, while each loads its own `.env.local-auth`** — `services/gateway/src/index.ts:173-188`
+reads it from `resolve(farmslotRoot, …)`, which is how two deployments in one domain come to present
+different secrets. So **a gateway cannot distinguish "the operator rotated this secret" from "this is
+a different deployment's secret in the same domain".** Both present as a mismatch against the store.
+Inferring revocation from an ambiguity the system cannot resolve would let one deployment silently
+disable another's access, and it would thrash sequentially: migrate deployment A's secret, start B
+and revoke A's, return to A and revoke B's, indefinitely.
 
 So env reconciliation only ever **adds**, and revocation is always **explicit** — which is exactly
 the tombstone-only model §2 already establishes, applied to the one path that was tempted to deviate
@@ -1064,7 +1096,7 @@ differ, the prose governs. What the index provides is findability, not authority
 **SSO / OIDC**
 
 - Break-glass must never depend on the identity provider; offline store management, with every
-  gateway on the machine stopped, is the IdP-independent path. *(Out of scope: SSO)*
+  gateway in the identity domain stopped, is the IdP-independent path. *(Out of scope: SSO)*
 - Token expiry must be built — `CredentialRecord` has no expiry field and live lookup covers
   stored-credential tombstones and role changes only. *(Out of scope: SSO)*
 - The external token grammar must be constrained so credential and IdP resolution stay unambiguous.
@@ -1260,7 +1292,7 @@ and it turns ADR-046's zero-config local node into a setup step.
   public queue payload (§5.5).
 - Runtime parameter validation becomes load-bearing where §5 depends on parameter shape.
 - Credential-store recovery — a lost or compromised admin credential — requires stopping every
-  gateway on the machine, making it a deliberate outage rather than a background fix.
+  gateway in the identity domain, making it a deliberate outage rather than a background fix.
 - **The residual in §5.6 remains open.** v2 does not deliver isolation, and says so.
 
 **Risks**
@@ -1440,7 +1472,7 @@ and it turns ADR-046's zero-config local node into a setup step.
   **Break-glass must never depend on the identity provider — a requirement on that work, not a
   property it inherits.** The latch never clears (§3), so `local-admin` is a pre-activation
   affordance only; for an activated gateway the IdP-independent recovery path is **offline store
-  management with every gateway on the machine stopped**. That is the answer when the IdP is unreachable, or when an
+  management with every gateway in the identity domain stopped**. That is the answer when the IdP is unreachable, or when an
   IdP-driven mapping change would otherwise leave no reachable admin — and §3's last-admin protection
   binds a running gateway's writer, so it cannot by itself defend against an admin binding that
   vanishes because a group membership changed upstream.
@@ -1463,7 +1495,7 @@ Four decisions belong to the gateway's owner rather than to implementation.
    the single blocker on seven of the ten non-conformant methods and a much smaller piece of work
    than containment as a whole — the highest-leverage way to make the operator role useful.
 4. **Is credential-store recovery a documented procedure or a deliberate gap?** Recovering a lost or
-   compromised admin credential means stopping every gateway on the machine and editing the store,
+   compromised admin credential means stopping every gateway in the identity domain and editing the store,
    which makes
    store-file access equivalent to gateway ownership. Documenting it makes recovery reliable;
    leaving it undocumented keeps it from being treated as routine administration.
