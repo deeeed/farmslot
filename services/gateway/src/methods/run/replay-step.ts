@@ -15,7 +15,11 @@ import {
   type RunStatus,
 } from '@farmslot/protocol';
 
-import { cancelGraphQueuedItem, getQueueSnapshot } from '../../backlog/dispatch-queue.js';
+import {
+  getQueueSnapshot,
+  persistQueueNow,
+  removeQueueItemInternal,
+} from '../../backlog/dispatch-queue.js';
 import { execOnSlot } from '../../core/exec.js';
 import { SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
@@ -57,6 +61,25 @@ const REPLAY_STEP_TO_ACTIVE_STATUS: Partial<Record<string, RunStatus>> = {
 
 function activeStatusForReplayStep(stepName: string): RunStatus {
   return REPLAY_STEP_TO_ACTIVE_STATUS[stepName] ?? 'created';
+}
+
+// Which queue row, if any, replaced this run when it was cancelled?
+//
+// Graph and node identity alone is not enough to answer that. Launch-plan
+// comparison rows are deliberately built with the baseline's workGraphId and
+// workNodeId, so a graph/node match can select a sibling candidate's work.
+// Removing that row would delete required comparison work, and the candidate
+// projection keeps the dead queue id so it never rematerializes. The candidate
+// identity is what distinguishes them; plain runs have none on either side.
+function isReplacementFor(
+  item: { workGraphId?: string; workNodeId?: string; launchCandidateId?: string },
+  run: NonNullable<ReturnType<typeof getRun>>,
+): boolean {
+  return (
+    item.workGraphId === run.workGraphId &&
+    item.workNodeId === run.workNodeId &&
+    item.launchCandidateId === run.launchCandidateId
+  );
 }
 
 function resetPublishGateApprovalForReplay(
@@ -268,10 +291,7 @@ export async function runReplayStep(
   // unlike a queued row a dispatching one cannot be taken back. Refuse before any
   // state is touched.
   if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
-    const replacement = getQueueSnapshot().find(
-      (item) =>
-        item.workGraphId === existing.workGraphId && item.workNodeId === existing.workNodeId,
-    );
+    const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
     if (replacement && replacement.status === 'dispatching') {
       throw new Error(
         `Run ${params.runId.slice(0, 8)} was cancelled and its node has already been ` +
@@ -699,28 +719,23 @@ export async function runReplayStep(
     existing.workGraphId &&
     existing.workNodeId
   ) {
-    const reclaimed = await cancelGraphQueuedItem({
-      workGraphId: existing.workGraphId,
-      workNodeId: existing.workNodeId,
-      reason: `replay-revives-run:${params.runId}`,
-    });
+    // Select the row by id rather than by graph/node, so a sibling launch-plan
+    // candidate sharing this node is never the one removed.
+    const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
     // The entry check can go stale: a queued row may reach `dispatching` while the
-    // replay prepares. Reclaim then fails, and reviving anyway would put two live
-    // runs behind one node. A failed reclaim with no row left is the ordinary case
-    // (nothing was queued), so only a surviving row is an error.
-    if (!reclaimed) {
-      const survivor = getQueueSnapshot().find(
-        (item) =>
-          item.workGraphId === existing.workGraphId && item.workNodeId === existing.workNodeId,
+    // replay prepares. Reviving alongside a handed-off row would put two live runs
+    // behind one node, and a dispatching row cannot be taken back.
+    if (replacement && replacement.status !== 'queued') {
+      throw new Error(
+        `Run ${params.runId.slice(0, 8)} could not be replayed: its node was redispatched ` +
+          `while this replay was preparing (queue item ${replacement.id.slice(0, 8)} is ` +
+          `${replacement.status}). The run is left cancelled. ` +
+          'Next: follow the new run for this node, or cancel that dispatch and replay again.',
       );
-      if (survivor) {
-        throw new Error(
-          `Run ${params.runId.slice(0, 8)} could not be replayed: its node was redispatched ` +
-            `while this replay was preparing (queue item ${survivor.id.slice(0, 8)} is ` +
-            `${survivor.status}). The run is left cancelled. ` +
-            'Next: follow the new run for this node, or cancel that dispatch and replay again.',
-        );
-      }
+    }
+    if (replacement) {
+      removeQueueItemInternal(replacement.id, `replay-revives-run:${params.runId}`);
+      await persistQueueNow();
     }
   }
   updateRun(params.runId, {

@@ -223,6 +223,65 @@ test('replay is refused once the node has already been redispatched', async (t) 
   assert.equal(getRun(run.id)?.status, 'cancelled');
 });
 
+test('replay does not reclaim a sibling launch-plan candidate sharing the node', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4105',
+    prNumber: 4105,
+    workGraphId: 'wg_replay_sibling',
+    workNodeId: 'wn_replay_sibling',
+  });
+  const doneBeforeCiWatch = new Set([
+    'write-task',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+    'finalize',
+  ]);
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    steps: run.steps.map((step) =>
+      step.name === 'ci-watch'
+        ? { ...step, status: 'skipped', completedAt: new Date().toISOString() }
+        : doneBeforeCiWatch.has(step.name)
+          ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+
+  // Comparison candidates are built with the baseline's graph and node ids, so a
+  // graph/node-only reclaim would delete this row — and the candidate projection
+  // would keep the dead queue id, so the work never comes back.
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4105',
+    workGraphId: 'wg_replay_sibling',
+    workNodeId: 'wn_replay_sibling',
+    launchPlanId: 'lp_1',
+    launchCandidateId: 'cand_comparison',
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+  );
+  assert.equal(getRun(run.id)?.status, 'ci-watching');
+  assert.ok(
+    getQueueSnapshot().some((item) => item.launchCandidateId === 'cand_comparison'),
+    'the comparison candidate must survive the baseline being replayed',
+  );
+});
+
 test('runReplayStep rejects monitor replay when dispatch is still running', async (t) => {
   const run = createRun({
     flowType: 'dev',
