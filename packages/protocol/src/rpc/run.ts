@@ -73,6 +73,8 @@ export interface RunCreateParams {
   variant?: string | null;
   /** Selected project-owned worker template version for this run. */
   taskTemplate?: import('../contracts/index.js').TaskTemplateSelection;
+  /** Exact shared-catalog template id. Valid only for configured projects. */
+  executionTemplateId?: string;
   slotId?: string;
   taskFile?: string;
   branch?: string;

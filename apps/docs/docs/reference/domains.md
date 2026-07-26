@@ -4,7 +4,10 @@ title: Domains
 
 # Domains
 
-A **domain** (for example `perps`, `swaps`, `assets`) is a named overlay a run or slot can carry. It selects domain-specific prompt content and fixtures without forking the project or the orchestration system. Domains are generic and project-defined — Farmslot only threads the name through dispatch, prepare, and fixture sync; the project owns what a domain actually means.
+A **domain** (for example `payments` or `trading`) is a project-defined name
+carried by a run or slot. It can select domain-specific execution templates,
+fixtures, and command environment without putting product knowledge in
+Farmslot.
 
 ## The `domains/<name>/` convention
 
@@ -12,9 +15,9 @@ A project that wants domain overlays keeps them under a `domains/<name>/` direct
 
 ```text
 projects/<project>/fixtures/domains/
-  perps/
+  trading/
     review-patterns.md
-  swaps/
+  payments/
     review-patterns.md
 ```
 
@@ -53,19 +56,41 @@ A domain name can be set at three levels, with the most specific value winning:
 
 Unset at every level means no domain overlay — existing single-domain and no-domain projects are unaffected.
 
-The resolved domain flows through to:
+The effective domain is resolved once:
 
-- **Fixture sync** — passed to `sync-fixtures.sh` as `--domain <name>`, available in fixture content as the `{{domain}}` / `{{DOMAIN}}` placeholders, and used to resolve `{{domain}}`-templated fixture paths (including optional compose includes).
-- **Worker template selection** — when a run doesn't select an explicit or interactive template, a domain-variant template `<flow>-<domain>.md` (for example `fix-bug-perps.md`) is preferred over the flow default when it exists. See [Customize worker prompts](../guides/customize-worker-prompts.md).
+```text
+explicit run or prepare domain → slot domain → pool domain → none
+```
 
-Domain names must match a lowercase slug contract (`^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$`) — the same value lands in fixture paths, sed replacement text, and template file names, so anything outside that allowlist is rejected at the entry point rather than sanitized.
+That same value controls:
+
+- fixture sync and `{{domain}}` / `{{DOMAIN}}` expansion;
+- configured execution-template source/default filtering;
+- the matching `command_env.domains.<name>` overlay for prepare, lifecycle,
+  and worker commands.
+
+With `execution_templates` configured, a domain-scoped source adds the exact
+`domain:<name>` label to its templates. Selection uses that label and an
+explicit configured default or exact template id; it never derives domain from
+a filename.
+
+With no `execution_templates` configuration, existing farms retain their
+original worker-template behavior, including the legacy optional
+`<flow>-<domain>.md` preference. New configured sources must use
+`<flow>/<variant>.md`.
+
+Domain names must match
+`^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$`; invalid names are rejected rather
+than sanitized.
 
 ## Selection model
 
 Domains use a **set-once default + optional picker** model rather than forcing a per-dispatch choice:
 
-- The pool `domain` field (machine or slot) sets the default once, at setup time.
+- The pool or slot `domain` field sets the default once, at setup time.
 - `--domain` overrides per dispatch when a run needs a different overlay than the default.
-- A dispatch UI or CLI can offer a picker seeded by `farmslot domain ls`, pre-selected to the resolved default.
+- Command Center and the dispatch CLI show the domains declared by the project
+  execution-template and command-environment configuration. When no override
+  is selected, the gateway applies the slot or pool default.
 
 A single-domain project never has to think about this — set the machine default once and every dispatch carries it. A multi-domain project switches per dispatch with one flag or picker selection.

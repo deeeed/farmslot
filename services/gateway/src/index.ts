@@ -349,6 +349,8 @@ async function main(): Promise<void> {
       lane: item.lane,
       variant: item.variant ?? undefined,
       taskTemplate: item.taskTemplate ? { ...item.taskTemplate } : undefined,
+      executionTemplateId: item.executionTemplateId,
+      domain: item.domain,
       app: item.app,
       prepareProfile: item.prepareProfile,
       slotId: item.slotId,
@@ -379,7 +381,9 @@ async function main(): Promise<void> {
       reviewDepth: item.reviewDepth,
       pendingReviewPlan: item.pendingReviewPlan,
     } satisfies import('@farmslot/protocol').RunCreateParams;
-    const { run } = await runCreate(runParams, broadcastEvent);
+    const { run } = await runCreate(runParams, broadcastEvent, {
+      expectedExecutionTemplate: item.executionTemplate,
+    });
     item.runId = run.id;
     try {
       await markBacklogRunStarted(item, run);

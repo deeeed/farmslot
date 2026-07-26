@@ -85,6 +85,33 @@ test('isResultPackageManifest accepts package kernel manifests', () => {
     true,
   );
   assert.equal(
+    isResultPackageManifest(
+      validResultPackage({
+        axes: { template: { path: '/private/machine/fix-bug.md' } },
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    isResultPackageManifest(
+      validResultPackage({
+        templateProvenance: {
+          kind: 'task-template',
+          flowType: 'fix-bug',
+          project: 'example-mobile-farm',
+          role: 'eval-candidate',
+          templatePath: '/private/machine/fix-bug.md',
+          templateName: 'fix-bug.md',
+          contentHash: 'abc123',
+          projectRepoPath: '/private/machine',
+          source: 'current-project',
+          renderedAt: '2026-05-09T00:00:00.000Z',
+        },
+      }),
+    ),
+    false,
+  );
+  assert.equal(
     isResultPackageManifest(validResultPackage({ status: 'draft', finalizedAt: undefined })),
     true,
   );
@@ -100,12 +127,51 @@ test('isResultPackageManifest accepts package kernel manifests', () => {
           templatePath: 'templates/worker/fix-bug.md',
           templateName: 'fix-bug.md',
           contentHash: 'abc123',
+          executionTemplate: {
+            id: 'fix-bug/autonomous.mobile',
+            sourceId: 'package:canonical',
+            flow: 'fix-bug',
+            runMode: 'autonomous',
+            platforms: ['mobile'],
+            labels: ['runtime-proof'],
+            relativePath: 'fix-bug/autonomous.mobile.md',
+            sourceRevision: 'a'.repeat(40),
+            sha256: 'b'.repeat(64),
+            renderedSha256: 'c'.repeat(64),
+          },
           source: 'current-project',
           renderedAt: '2026-05-09T00:00:00.000Z',
         },
       }),
     ),
     true,
+  );
+  assert.equal(
+    isResultPackageManifest(
+      validResultPackage({
+        templateProvenance: {
+          kind: 'task-template',
+          flowType: 'fix-bug',
+          project: 'example-mobile-farm',
+          role: 'eval-candidate',
+          templatePath: 'templates/worker/fix-bug.md',
+          templateName: 'fix-bug.md',
+          contentHash: 'abc123',
+          executionTemplate: {
+            id: 'fix-bug/mobile',
+            sourceId: 'package:canonical',
+            flow: 'fix-bug',
+            platforms: ['mobile'],
+            labels: [],
+            relativePath: '/private/machine/fix-bug/mobile.md',
+            sha256: 'b'.repeat(64),
+          },
+          source: 'current-project',
+          renderedAt: '2026-05-09T00:00:00.000Z',
+        },
+      }),
+    ),
+    false,
   );
 });
 

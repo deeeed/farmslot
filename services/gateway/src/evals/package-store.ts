@@ -15,6 +15,7 @@ import {
   isEvalExperimentManifest,
   isFamilyDiffProvenance,
   isResultPackageManifest,
+  type PortableTemplateProvenance,
   type ResultPackageManifest,
   type ResultPackageMetrics,
   type Run,
@@ -273,20 +274,84 @@ export async function writeEvalExperimentManifest(
 
 export async function readResultPackageManifest(filePath: string): Promise<ResultPackageManifest> {
   const parsed = JSON.parse(await readFile(filePath, 'utf-8')) as unknown;
-  if (!isResultPackageManifest(parsed))
+  const normalized = normalizeStoredResultPackageManifest(parsed);
+  if (!isResultPackageManifest(normalized))
     throw new Error(`Invalid result package manifest: ${filePath}`);
-  return parsed;
+  return normalized;
 }
 
 export async function writeResultPackageManifest(
   filePath: string,
   manifest: ResultPackageManifest,
 ): Promise<ResultPackageManifest> {
-  const withHash = withPackageHash(manifest);
+  const portableManifest = portableResultPackageManifest(manifest);
+  const withHash = withPackageHash(portableManifest);
   if (!isResultPackageManifest(withHash))
     throw new Error(`Refusing to write invalid result package manifest: ${filePath}`);
   await writeJsonFile(filePath, withHash);
   return withHash;
+}
+
+function portableResultPackageManifest(manifest: ResultPackageManifest): ResultPackageManifest {
+  const portableProvenance = manifest.templateProvenance
+    ? portableTemplateProvenance(manifest.templateProvenance)
+    : undefined;
+  const templatePath = portableProvenance?.templatePath ?? manifest.axes.template?.path;
+  const portableTemplatePath =
+    templatePath && path.isAbsolute(templatePath) ? path.basename(templatePath) : templatePath;
+  const portableManifest: ResultPackageManifest = {
+    ...manifest,
+    axes: portableTemplatePath
+      ? {
+          ...manifest.axes,
+          template: {
+            ...manifest.axes.template,
+            path: portableTemplatePath,
+          },
+        }
+      : manifest.axes,
+    ...(portableProvenance ? { templateProvenance: portableProvenance } : {}),
+  };
+  return portableManifest;
+}
+
+export function normalizeStoredResultPackageManifest(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  const axes = record.axes;
+  const template =
+    axes && typeof axes === 'object' && !Array.isArray(axes)
+      ? (axes as Record<string, unknown>).template
+      : undefined;
+  const templatePath =
+    template && typeof template === 'object' && !Array.isArray(template)
+      ? (template as Record<string, unknown>).path
+      : undefined;
+  const provenance = record.templateProvenance;
+  const hasLegacyProvenance =
+    isTemplateProvenanceRecord(provenance) &&
+    (path.isAbsolute(provenance.templatePath) || provenance.projectRepoPath != null);
+  const hasLegacyAxisPath = typeof templatePath === 'string' && path.isAbsolute(templatePath);
+  if (!hasLegacyProvenance && !hasLegacyAxisPath) return value;
+
+  // Pre-portability manifests remain readable in place. Their historical
+  // packageHash is preserved; the next write/finalize emits a portable payload
+  // with a hash for that new payload.
+  const normalizedAxes =
+    hasLegacyAxisPath && axes && typeof axes === 'object' && !Array.isArray(axes)
+      ? {
+          ...(axes as Record<string, unknown>),
+          template: {
+            ...(template as Record<string, unknown>),
+            path: path.basename(templatePath),
+          },
+        }
+      : axes;
+  return {
+    ...record,
+    ...(normalizedAxes ? { axes: normalizedAxes } : {}),
+    ...(hasLegacyProvenance ? { templateProvenance: portableTemplateProvenance(provenance) } : {}),
+  };
 }
 
 export async function readTaskDiffProvenance(
@@ -452,6 +517,19 @@ function isTemplateProvenanceRecord(value: unknown): value is TemplateProvenance
   );
 }
 
+function portableTemplateProvenance(provenance: TemplateProvenance): PortableTemplateProvenance {
+  const { projectRepoPath: _projectRepoPath, ...portable } = provenance;
+  const relativeTemplatePath =
+    !path.isAbsolute(provenance.templatePath) &&
+    !provenance.templatePath.split(/[\\/]/).includes('..')
+      ? provenance.templatePath
+      : provenance.templateName;
+  return {
+    ...portable,
+    templatePath: provenance.executionTemplate?.relativePath ?? relativeTemplatePath,
+  };
+}
+
 async function readTemplateProvenance(taskDir: string): Promise<TemplateProvenance | null> {
   const provenancePath = path.join(taskDir, TEMPLATE_PROVENANCE_INPUT);
   if (!(await fileExists(provenancePath))) return null;
@@ -498,6 +576,11 @@ export async function finalizeEvalResultPackageForRun(
   if (!templateProvenance && !missingData.includes('template-provenance-missing'))
     missingData.push('template-provenance-missing');
 
+  const portableProvenance = templateProvenance
+    ? portableTemplateProvenance(templateProvenance)
+    : currentPackage.templateProvenance
+      ? portableTemplateProvenance(currentPackage.templateProvenance)
+      : undefined;
   const finalized = await writeResultPackageManifest(link.packagePath, {
     ...currentPackage,
     status: 'final',
@@ -505,21 +588,21 @@ export async function finalizeEvalResultPackageForRun(
     runId: run.id,
     familyId: run.familyId,
     diff,
-    axes: templateProvenance
+    axes: portableProvenance
       ? {
           ...currentPackage.axes,
           template: {
             ...currentPackage.axes.template,
-            path: currentPackage.axes.template?.path ?? templateProvenance.templatePath,
+            path: portableProvenance.templatePath,
             name:
               currentPackage.axes.template?.name ??
-              templateProvenance.templateName.replace(/\.md$/, ''),
-            hash: templateProvenance.contentHash,
-            ref: templateProvenance.projectRepoHeadSha ?? currentPackage.axes.template?.ref,
+              portableProvenance.templateName.replace(/\.md$/, ''),
+            hash: portableProvenance.contentHash,
+            ref: portableProvenance.projectRepoHeadSha ?? currentPackage.axes.template?.ref,
           },
         }
       : currentPackage.axes,
-    templateProvenance: templateProvenance ?? currentPackage.templateProvenance,
+    templateProvenance: portableProvenance,
     visualEvidence,
     validationEvidence,
     evidenceRequirements: finalizeEvidenceRequirements(currentPackage.evidenceRequirements, {

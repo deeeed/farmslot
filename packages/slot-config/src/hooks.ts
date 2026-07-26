@@ -17,6 +17,17 @@ const localHostname = os.hostname().replace(/\.local$/, '');
 // Node deployment dir on remote machines (scripts + tools synced by deploy-node.sh)
 const REMOTE_AGENT_DIR = '~/farmslot-node';
 
+/** Explicit run/prepare domain overrides the slot's already-resolved slot/pool default. */
+export function resolveEffectiveDomain(
+  explicitDomain?: string | null,
+  slotOrPoolDomain?: string | null,
+): string | undefined {
+  const explicit = explicitDomain?.trim();
+  if (explicit) return explicit;
+  const configured = slotOrPoolDomain?.trim();
+  return configured || undefined;
+}
+
 export function expandTemplate(
   template: string,
   slotVars: SlotVars,

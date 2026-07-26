@@ -19,6 +19,7 @@ import { makeRun } from './run/test-fixtures.js';
 import {
   assertDecisionStillUnresolved,
   assertDuplicateRunAllowed,
+  assertExpectedExecutionTemplate,
   resolveCreateSafetyTier,
   runCreate,
   runInteractiveDevResolve,
@@ -26,6 +27,28 @@ import {
   runRehydratePrNumber,
   runResolveDecision,
 } from './run.js';
+
+test('assertExpectedExecutionTemplate rejects a changed queued snapshot', () => {
+  const expected = {
+    id: 'fix-bug/autonomous.mobile',
+    sourceId: 'package:canonical',
+    flow: 'fix-bug',
+    runMode: 'autonomous' as const,
+    platforms: ['mobile', 'ios', 'android'],
+    labels: [],
+    relativePath: 'fix-bug/autonomous.mobile.md',
+    sha256: 'expected-sha',
+  };
+  assert.doesNotThrow(() => assertExpectedExecutionTemplate(expected, expected));
+  assert.throws(
+    () => assertExpectedExecutionTemplate({ ...expected, sha256: 'changed-sha' }, expected),
+    /changed while queued/,
+  );
+  assert.throws(
+    () => assertExpectedExecutionTemplate(undefined, expected),
+    /no configured execution template/,
+  );
+});
 
 function makeReadyGatePackage(overrides: Partial<ReadyGatePrPackage> = {}): ReadyGatePrPackage {
   const packageWithoutHash: Omit<ReadyGatePrPackage, 'packageHash'> = {

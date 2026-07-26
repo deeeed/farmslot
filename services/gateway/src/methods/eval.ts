@@ -725,6 +725,11 @@ export async function evalTrialStart(
   );
   const axes = templateResolution.axes;
   if (!isEvalPackageAxes(axes)) throw new Error('Invalid candidate axes: expected EvalPackageAxes');
+  if (axes.template && (await loadProjectConfig(params.project))?.executionTemplates) {
+    throw new Error(
+      'Template-variant eval axes are not supported for projects using execution_templates. Use an exact execution-template selection outside the eval variant axis.',
+    );
+  }
   const harnessLifecycle = harnessLifecycleForAxes(params.project, axes);
   const candidateSource = await resolveCandidateSource(params.project, params.source);
   const candidateStrategyFingerprint = computeCandidateStrategyFingerprint({

@@ -9,6 +9,19 @@ import { withProgress } from '../progress.js';
 
 import { executeRunCreate, type RunCreateCliOptions, runWizardDispatch } from './run.js';
 
+const DISPATCH_MODES = new Set(['interactive', 'autonomous', 'validation']);
+
+function parseDispatchMode(value: string | undefined) {
+  if (!value) return undefined;
+  if (!DISPATCH_MODES.has(value)) {
+    throw Object.assign(new Error(`Invalid run mode: ${value}`), {
+      code: 'CLI_INVALID_OPTION_VALUE',
+      userAction: 'Use --mode interactive, --mode autonomous, or --mode validation.',
+    });
+  }
+  return value as 'interactive' | 'autonomous' | 'validation';
+}
+
 export function registerDispatchCommand(program: Command): void {
   const dispatch = program
     .command('dispatch')
@@ -39,6 +52,8 @@ export function registerDispatchCommand(program: Command): void {
     .requiredOption('--flow-type <type>', 'Flow type (fix-bug, review-pr, dev, pr-complete)')
     .requiredOption('--ticket <id>', 'Ticket or PR identifier')
     .option('--slot <id>', 'Specific slot ID')
+    .option('--mode <mode>', 'Run mode (interactive, autonomous, validation)')
+    .option('--execution-template <id>', 'Exact execution-template id')
     .option('--domain <name>', 'Domain overlay carried by the dispatch')
     .action(async (opts: any, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
@@ -52,6 +67,8 @@ export function registerDispatchCommand(program: Command): void {
               flowType: opts.flowType,
               ticketOrPr: opts.ticket,
               slotId: opts.slot,
+              ...(opts.mode ? { mode: parseDispatchMode(opts.mode) } : {}),
+              ...(opts.executionTemplate ? { executionTemplateId: opts.executionTemplate } : {}),
               ...(opts.domain ? { domain: opts.domain } : {}),
             }),
           !emit.machine,
@@ -70,6 +87,13 @@ export function registerDispatchCommand(program: Command): void {
               `  Runner:    ${p.runner}:${p.model}`,
               `  Task:      ${p.taskId}`,
               ...(p.domain ? [`  Domain:    ${p.domain}`] : []),
+              ...(p.executionTemplate
+                ? [
+                    `  Template:  ${green(p.executionTemplate.id)}`,
+                    `  Source:    ${p.executionTemplate.sourceId}`,
+                    `  Digest:    ${p.executionTemplate.sha256.slice(0, 12)}`,
+                  ]
+                : []),
               '',
             ].join('\n'),
           );

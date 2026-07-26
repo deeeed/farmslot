@@ -18,7 +18,7 @@ import {
   loadProjectVars,
   updateSlotStatus,
 } from '../core/index.js';
-import { loadFleetStatus, loadProjectConfigs } from '../fleet/state.js';
+import { loadFleetStatus, loadProjectConfig, loadProjectConfigs } from '../fleet/state.js';
 import {
   collectBranchAffinityNudgeCandidates,
   dispatchPreview,
@@ -49,6 +49,10 @@ import {
 } from '../methods/slot/slot-tracking.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 import { getRun, updateRun } from '../runs/store.js';
+import {
+  projectUsesExecutionTemplateCatalog,
+  resolveConfiguredExecutionTemplateForSlot,
+} from '../tasks/execution-template-catalog.js';
 import { precheckTaskDirCollision } from '../tasks/writer.js';
 
 import { detectProfileFit } from './profile-fit-gate.js';
@@ -112,6 +116,46 @@ async function claimSelectedSlot(
   agent?: 'working',
   opts?: { takeoverLiveOwner?: boolean },
 ): Promise<void> {
+  const run = getRun(runId);
+  if (!run) throw new Error(`Run not found while claiming slot: ${runId}`);
+  let selectedExecutionTemplate:
+    | import('@farmslot/protocol').ExecutionTemplateReference
+    | undefined;
+  const projectConfig = await loadProjectConfig(run.project);
+  if (projectConfig?.executionTemplates) {
+    const [projectVars, slotVars] = await Promise.all([
+      loadProjectVars(run.project),
+      loadSlotVars(slotId),
+    ]);
+    if (!projectUsesExecutionTemplateCatalog(projectVars)) {
+      throw new Error(
+        `Project "${run.project}" exposes execution-template capability but raw project configuration is missing execution_templates.`,
+      );
+    }
+    if (!run.mode) {
+      throw new Error('Configured execution-template selection requires an explicit run mode.');
+    }
+    const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+      flow: run.flowType,
+      platform: slotVars.platform,
+      runMode: run.mode,
+      ...(run.domain ? { explicitDomain: run.domain } : {}),
+      ...(slotVars.domain ? { slotDomain: slotVars.domain } : {}),
+      ...(run.executionTemplateId ? { explicitId: run.executionTemplateId } : {}),
+    });
+    selectedExecutionTemplate = selected.reference;
+    if (
+      run.executionTemplate &&
+      (run.executionTemplate.id !== selected.reference.id ||
+        run.executionTemplate.sourceId !== selected.reference.sourceId ||
+        run.executionTemplate.sha256 !== selected.reference.sha256)
+    ) {
+      throw new Error(
+        `Execution template changed before slot claim: expected ${run.executionTemplate.id} from ${run.executionTemplate.sourceId} at ${run.executionTemplate.sha256}, got ${selected.reference.id} from ${selected.reference.sourceId} at ${selected.reference.sha256}. Dispatch the run again.`,
+      );
+    }
+  }
+
   const claim = await claimSlotStatusIf(
     slotId,
     (slot) => {
@@ -153,6 +197,9 @@ async function claimSelectedSlot(
       ),
       { code: SLOT_CLAIM_REFUSED_CODE },
     );
+  }
+  if (selectedExecutionTemplate && !run.executionTemplate) {
+    updateRun(runId, { executionTemplate: selectedExecutionTemplate });
   }
 }
 

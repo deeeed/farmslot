@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -14,16 +22,36 @@ import {
 } from './infer.js';
 import { lintExecutionTemplates, lintExecutionTemplateText } from './lint.js';
 import {
+  listProjectWorkerTemplateOptions,
+  resolveProjectWorkerTemplateForRun,
+} from './project-worker.js';
+import {
   customTemplateSource,
   listExecutionTemplates,
   packageFlowTreeTemplateSource,
   projectWorkerTemplateSource,
 } from './resolve.js';
+import { selectExecutionTemplate } from './select.js';
+import {
+  executionTemplateReference,
+  materializeExecutionTemplate,
+  sha256Text,
+} from './snapshot.js';
+import { resolveConfiguredExecutionTemplateSources } from './source-config.js';
 
 function withTemp(fn: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), 'farmslot-exec-tpl-'));
   try {
     fn(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function withTempAsync(fn: (root: string) => Promise<void>): Promise<void> {
+  const root = mkdtempSync(join(tmpdir(), 'farmslot-exec-tpl-'));
+  try {
+    await fn(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -62,6 +90,78 @@ test('catalog ids collide across worker-flat and flow-tree layouts', () => {
   assert.equal(catalogRelativeId('notes.md', 'worker-flat'), 'notes');
 });
 
+test('shared project-worker selector preserves no-config option ordering', async () => {
+  await withTempAsync(async (root) => {
+    const worker = join(root, 'templates', 'worker');
+    mkdirSync(worker, { recursive: true });
+    writeFileSync(join(worker, 'fix-bug-v2.md'), '# V2\n');
+    writeFileSync(join(worker, 'fix-bug.md'), '# Default\n');
+    writeFileSync(join(worker, 'fix-bug-interactive.md'), '# Interactive\n');
+    writeFileSync(join(worker, 'dev.md'), '# Other flow\n');
+
+    const options = await listProjectWorkerTemplateOptions(join(root, 'templates'), 'fix-bug');
+    assert.deepEqual(
+      options.map((option) => option.fileName),
+      ['fix-bug.md', 'fix-bug-interactive.md', 'fix-bug-v2.md'],
+    );
+    assert.equal(options[0]?.isDefault, true);
+    assert.equal(options[1]?.variant, 'interactive');
+  });
+});
+
+test('shared project-worker selector preserves explicit, interactive, domain, and fallback precedence', async () => {
+  await withTempAsync(async (root) => {
+    const templates = join(root, 'templates');
+    const worker = join(templates, 'worker');
+    mkdirSync(worker, { recursive: true });
+    writeFileSync(join(worker, 'fix-bug.md'), '# Default\n');
+    writeFileSync(join(worker, 'fix-bug-interactive.md'), '# Interactive\n');
+    writeFileSync(join(worker, 'fix-bug-trading.md'), '# Trading\n');
+    writeFileSync(join(worker, 'fix-bug-v2.md'), '# Explicit\n');
+
+    const explicit = await resolveProjectWorkerTemplateForRun(
+      templates,
+      'fix-bug',
+      'interactive',
+      { fileName: 'fix-bug-v2.md' },
+      'trading',
+    );
+    assert.equal(explicit.fileName, 'fix-bug-v2.md');
+    assert.equal(explicit.selectionSource, 'explicit');
+
+    const interactive = await resolveProjectWorkerTemplateForRun(
+      templates,
+      'fix-bug',
+      'interactive',
+      null,
+      'trading',
+    );
+    assert.equal(interactive.fileName, 'fix-bug-interactive.md');
+    assert.equal(interactive.selectionSource, 'implicit-interactive-fix-bug');
+
+    const domain = await resolveProjectWorkerTemplateForRun(
+      templates,
+      'fix-bug',
+      'autonomous',
+      null,
+      'trading',
+    );
+    assert.equal(domain.fileName, 'fix-bug-trading.md');
+    assert.equal(domain.selectionSource, 'implicit-domain');
+
+    const fallback = await resolveProjectWorkerTemplateForRun(
+      templates,
+      'fix-bug',
+      'autonomous',
+      null,
+      'payments',
+    );
+    assert.equal(fallback.fileName, 'fix-bug.md');
+    assert.equal(fallback.content, '# Default\n');
+    assert.equal(fallback.selectionSource, 'default');
+  });
+});
+
 test('inferTemplateMetadata prefers frontmatter then filename/heading', () => {
   const meta = inferTemplateMetadata({
     absolutePath: '/tmp/dev-autonomous.mobile.md',
@@ -91,6 +191,283 @@ version: 2
   assert.equal(meta.version, '2');
   assert.equal(meta.runMode, 'autonomous');
   assert.deepEqual(meta.platforms, ['mobile']);
+  assert.equal(
+    meta.sha256,
+    sha256Text(`---
+id: custom-dev-mobile
+title: Custom Dev
+runMode: autonomous
+platforms: [mobile]
+version: 2
+---
+
+# Ignored heading
+
+- [ ] Do the work
+`),
+  );
+});
+
+test('source domains add exact domain labels without removing frontmatter labels', () => {
+  const meta = inferTemplateMetadata({
+    absolutePath: '/tmp/fix-bug/mobile.md',
+    relativePath: 'fix-bug/mobile.md',
+    source: {
+      id: 'team:trading',
+      kind: 'workspace',
+      root: '/tmp',
+      layout: 'flow-tree',
+      domains: ['trading'],
+    },
+    text: '---\nlabels: [runtime-proof]\n---\n\n# Proof\n\n- [ ] Run\n',
+  });
+  assert.deepEqual(meta.labels, ['runtime-proof', 'domain:trading']);
+});
+
+test('standalone domain filters keep general and exact-domain templates only', () => {
+  withTemp((root) => {
+    const generalRoot = join(root, 'general');
+    const tradingRoot = join(root, 'trading');
+    const paymentsRoot = join(root, 'payments');
+    for (const sourceRoot of [generalRoot, tradingRoot, paymentsRoot]) {
+      mkdirSync(join(sourceRoot, 'fix-bug'), { recursive: true });
+      writeFileSync(join(sourceRoot, 'fix-bug', 'mobile.md'), '# Proof\n\n- [ ] Run\n');
+    }
+    const trading = packageFlowTreeTemplateSource('trading', tradingRoot);
+    trading.kind = 'workspace';
+    trading.domains = ['trading'];
+    const payments = packageFlowTreeTemplateSource('payments', paymentsRoot);
+    payments.kind = 'workspace';
+    payments.domains = ['payments'];
+
+    const entries = listExecutionTemplates({
+      sources: [packageFlowTreeTemplateSource('general', generalRoot), trading, payments],
+      domain: 'trading',
+    });
+    assert.deepEqual(entries.map((entry) => entry.sourceId).sort(), [
+      'package:general',
+      'package:trading',
+    ]);
+  });
+});
+
+test('configured selection treats missing mode as compatible without ranking it above exact mode', () => {
+  withTemp((root) => {
+    const source = join(root, 'catalog');
+    mkdirSync(join(source, 'dev'), { recursive: true });
+    writeFileSync(join(source, 'dev', 'general.mobile.md'), '# General\n\n- [ ] Run\n');
+    writeFileSync(
+      join(source, 'dev', 'autonomous.mobile.md'),
+      '---\nrunMode: autonomous\n---\n\n# Exact\n\n- [ ] Run\n',
+    );
+    const sources = [packageFlowTreeTemplateSource('catalog', source)];
+
+    assert.equal(
+      listExecutionTemplates({ sources, runMode: 'autonomous' }).some(
+        (entry) => entry.id === 'dev/general.mobile',
+      ),
+      true,
+    );
+
+    assert.throws(
+      () =>
+        selectExecutionTemplate({
+          sources,
+          flow: 'dev',
+          platform: 'mobile',
+          runMode: 'autonomous',
+        }),
+      /ambiguous/,
+    );
+
+    const explicit = selectExecutionTemplate({
+      sources,
+      flow: 'dev',
+      platform: 'mobile',
+      runMode: 'autonomous',
+      explicitId: 'dev/autonomous.mobile',
+    });
+    assert.equal(explicit.entry.title, 'Exact');
+    assert.equal(explicit.reason, 'explicit');
+  });
+});
+
+test('configured selection prefers one exact-domain candidate before a general candidate', () => {
+  withTemp((root) => {
+    const generalRoot = join(root, 'general');
+    const tradingRoot = join(root, 'trading');
+    mkdirSync(join(generalRoot, 'fix-bug'), { recursive: true });
+    mkdirSync(join(tradingRoot, 'fix-bug'), { recursive: true });
+    writeFileSync(join(generalRoot, 'fix-bug', 'mobile.md'), '# General\n\n- [ ] Run\n');
+    writeFileSync(join(tradingRoot, 'fix-bug', 'mobile.md'), '# Trading\n\n- [ ] Run\n');
+
+    const tradingSource = packageFlowTreeTemplateSource('trading', tradingRoot);
+    tradingSource.kind = 'workspace';
+    tradingSource.domains = ['trading'];
+    const selected = selectExecutionTemplate({
+      sources: [packageFlowTreeTemplateSource('canonical', generalRoot), tradingSource],
+      flow: 'fix-bug',
+      platform: 'mobile',
+      runMode: 'autonomous',
+      domain: 'trading',
+    });
+    assert.equal(selected.entry.sourceId, 'package:trading');
+    assert.equal(selected.reason, 'single-domain-candidate');
+
+    const fallback = selectExecutionTemplate({
+      sources: [packageFlowTreeTemplateSource('canonical', generalRoot), tradingSource],
+      flow: 'fix-bug',
+      platform: 'mobile',
+      runMode: 'autonomous',
+      domain: 'payments',
+    });
+    assert.equal(fallback.entry.sourceId, 'package:canonical');
+    assert.equal(fallback.reason, 'single-general-candidate');
+
+    assert.equal(
+      listExecutionTemplates({ sources: [tradingSource] })[0]?.labels.includes('domain:trading'),
+      true,
+    );
+  });
+});
+
+test('configured defaults are ordered and incompatible targets fail instead of falling through', () => {
+  withTemp((root) => {
+    const source = join(root, 'catalog');
+    mkdirSync(join(source, 'fix-bug'), { recursive: true });
+    writeFileSync(join(source, 'fix-bug', 'mobile.md'), '# Mobile\n\n- [ ] Run\n');
+    writeFileSync(join(source, 'fix-bug', 'default.extension.md'), '# Extension\n\n- [ ] Run\n');
+    const sources = [packageFlowTreeTemplateSource('catalog', source)];
+
+    const selected = selectExecutionTemplate({
+      sources,
+      flow: 'fix-bug',
+      platform: 'mobile',
+      runMode: 'autonomous',
+      defaults: [
+        { when: { flow: 'fix-bug' }, templateId: 'fix-bug/mobile' },
+        { when: { platform: 'mobile' }, templateId: 'fix-bug/default.extension' },
+      ],
+    });
+    assert.equal(selected.entry.id, 'fix-bug/mobile');
+    assert.equal(selected.reason, 'configured-default');
+
+    assert.throws(
+      () =>
+        selectExecutionTemplate({
+          sources,
+          flow: 'fix-bug',
+          platform: 'mobile',
+          runMode: 'autonomous',
+          defaults: [
+            { when: { flow: 'fix-bug' }, templateId: 'fix-bug/default.extension' },
+            { when: { platform: 'mobile' }, templateId: 'fix-bug/mobile' },
+          ],
+        }),
+      /default "fix-bug\/default\.extension" is missing or incompatible/,
+    );
+  });
+});
+
+test('portable reference hashes source and rendered Markdown without absolute paths', () => {
+  const source = '# Source\n\n- [ ] {{task}}\n';
+  const entry = inferTemplateMetadata({
+    absolutePath: '/private/machine/catalog/dev/mobile.md',
+    relativePath: 'dev/mobile.md',
+    source: {
+      id: 'package:canonical',
+      kind: 'package',
+      root: '/private/machine/catalog',
+      layout: 'flow-tree',
+      sourceRevision: 'abc123',
+    },
+    text: source,
+  });
+  const reference = executionTemplateReference(entry, '# Source\n\n- [ ] prove it\n');
+  assert.equal(reference.sha256, sha256Text(source));
+  assert.equal(reference.renderedSha256, sha256Text('# Source\n\n- [ ] prove it\n'));
+  assert.equal(reference.sourceRevision, 'abc123');
+  assert.equal(reference.relativePath, 'dev/mobile.md');
+  assert.equal('path' in reference, false);
+  assert.equal(reference.version, undefined);
+});
+
+test('materializeExecutionTemplate copies one immutable snapshot and records its digest', () => {
+  withTemp((root) => {
+    const templates = join(root, 'templates');
+    const sourcePath = join(templates, 'dev', 'autonomous.mobile.md');
+    const outputPath = join(root, 'task', 'CHECKLIST.md');
+    mkdirSync(join(templates, 'dev'), { recursive: true });
+    writeFileSync(sourcePath, '# Mobile proof\n\n- [ ] Validate it.\n');
+    const [entry] = listExecutionTemplates({
+      sources: [packageFlowTreeTemplateSource('canonical', templates)],
+    });
+    assert.ok(entry);
+
+    const result = materializeExecutionTemplate(entry, outputPath);
+    assert.equal(readFileSync(outputPath, 'utf8'), '# Mobile proof\n\n- [ ] Validate it.\n');
+    assert.equal(result.reference.sha256, result.reference.renderedSha256);
+    assert.equal('path' in result.reference, false);
+    assert.throws(
+      () => materializeExecutionTemplate(entry, outputPath),
+      /destination already exists/,
+    );
+  });
+});
+
+test('configured sources resolve lazily and constrain subpaths below their root', () => {
+  withTemp((root) => {
+    const projectPack = join(root, 'project-pack');
+    const library = join(root, 'library');
+    const outside = join(root, 'outside');
+    mkdirSync(join(projectPack, 'local', 'checklists', 'dev'), { recursive: true });
+    mkdirSync(join(library, 'checklists', 'dev'), { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    symlinkSync(outside, join(library, 'escaped'));
+
+    const result = resolveConfiguredExecutionTemplateSources(
+      {
+        sources: [
+          {
+            id: 'project:local',
+            kind: 'workspace',
+            root: { projectPath: 'local' },
+            subpath: 'checklists',
+          },
+          {
+            id: 'team:available',
+            kind: 'package',
+            root: { env: 'TEAM_ROOT' },
+            subpath: 'checklists',
+          },
+          {
+            id: 'team:unset',
+            kind: 'package',
+            root: { env: 'UNSET_ROOT' },
+          },
+          {
+            id: 'team:escaped',
+            kind: 'package',
+            root: { env: 'TEAM_ROOT' },
+            subpath: 'escaped',
+          },
+        ],
+      },
+      {
+        projectPackRoot: projectPack,
+        env: { TEAM_ROOT: library },
+      },
+    );
+
+    assert.deepEqual(
+      result.sources.map((source) => source.id),
+      ['project:local', 'team:available'],
+    );
+    assert.deepEqual(result.unavailable, [
+      { id: 'team:unset', reason: 'missing-environment' },
+      { id: 'team:escaped', reason: 'invalid-root' },
+    ]);
+  });
 });
 
 test('listExecutionTemplates reports shadowing across project and package sources', () => {

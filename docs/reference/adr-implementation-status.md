@@ -38,7 +38,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [045](../adr/045-worker-terminal-contract.md)              | Worker terminal contract           | Accepted   | Shipped        | None tracked; authoring-quality tooling is optional                          |
 | [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel       | Accepted   | In progress    | Experimental read-only transcript mirror on active sessions                  |
 | [048](../adr/048-interactive-operator-packets.md)          | Interactive operator packets       | Accepted   | Partial        | Eval/replay packet response persistence remains open                         |
-| [049](../adr/049-agent-execution-template-selection.md)    | Agent execution template selection | Proposed   | Partial        | Resolver + `list`/`lint`/`new` only; dispatch/render/skills integration open |
+| [049](../adr/049-agent-execution-template-selection.md)    | Agent execution template selection | Accepted   | Implemented    | None tracked                                                                 |
 
 Older ADRs **001–025** are foundation/shipped for their core scope. This file does not re-audit every legacy ADR; use `IMPLEMENTED-HISTORY.md` for historical detail.
 
@@ -280,18 +280,20 @@ shipped because the human review loop and promotion-to-backlog UX still need clo
 
 **Follow-ups:** none tracked; authoring-quality tooling (`fs-worker-template-quality`) stays optional, not runtime.
 
-## ADR-049 — Agent Execution Template Selection (Proposed)
+## ADR-049 — Agent Execution Template Selection (Accepted)
 
-**Implementation: Partial (resolver + CLI tools shipped in PR #347, MANUAL-000012)**
+**Implementation: Implemented; final remote multi-node operational proof remains**
 
-| ADR requirement                                     | Status      | Evidence / gap                                                    |
-| --------------------------------------------------- | ----------- | ----------------------------------------------------------------- |
-| Markdown templates with optional frontmatter        | Shipped     | execution-template resolver in `@farmslot/agent-runtime`          |
-| `list`/`lint`/`new` tools                           | Shipped     | `farmslot-agent execution-template` CLI + `@farmslot/cli` command |
-| Gateway dispatch consumption of the shared resolver | Not started | no `services/gateway` consumer of the resolver exists yet         |
-| Render/skills integration + migration               | Not started | ADR phases beyond the resolver/CLI slice remain open              |
+| ADR requirement                                              | Status        | Evidence / gap                                                                    |
+| ------------------------------------------------------------ | ------------- | --------------------------------------------------------------------------------- |
+| Markdown catalog, lint, authoring, selection                 | Implemented   | `packages/agent-runtime/src/execution-template/`                                  |
+| Source-aware portable provenance and immutable task snapshot | Implemented   | protocol execution-template contract + gateway task writer/eval package store     |
+| Gateway, API, CLI, and Command Center integration            | Implemented   | shared gateway catalog consumed by preview/create/options and dispatch UI         |
+| Direct skill and hosted-resume parity                        | Implemented   | thin `mm-harness execution-template` delegation and canonical Consensys templates |
+| Project/domain configuration and MetaMask migration          | Implemented   | generic project schema plus MetaMask farm-pack configuration                      |
+| Remote control-plane/worker separation                       | Pending proof | Requires an online remote registered node; local contract/snapshot tests pass     |
 
-**Follow-ups:** wire dispatch/render/skills consumers, then accept or revise the ADR body.
+**Follow-up:** capture one genuine remote-node snapshot/environment proof when a registered node is available.
 
 ---
 

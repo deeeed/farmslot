@@ -16,6 +16,9 @@ export function buildDispatchPreviewParamsForRun(
     | 'branch'
     | 'prepareProfile'
     | 'app'
+    | 'mode'
+    | 'domain'
+    | 'executionTemplateId'
   >,
 ): DispatchPreviewParams {
   // For PR-bound flows the run's branch IS the PR head, so pass it as
@@ -33,6 +36,9 @@ export function buildDispatchPreviewParamsForRun(
     lane: run.lane,
     variant: run.variant ?? null,
     slotId: run.slotId || undefined,
+    mode: run.mode || undefined,
+    domain: run.domain || undefined,
+    executionTemplateId: run.executionTemplateId || undefined,
     app: run.app || undefined,
     prepareProfile: run.prepareProfile || undefined,
     allowedSlots: run.allowedSlots && run.allowedSlots.length > 0 ? run.allowedSlots : undefined,

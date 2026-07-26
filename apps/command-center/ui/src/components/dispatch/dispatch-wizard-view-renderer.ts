@@ -3,6 +3,7 @@ import { html, nothing } from 'lit';
 import type {
   DevInteractiveProfile,
   DispatchCandidatesResult,
+  ExecutionTemplateOptions,
   FlowType,
   ProfileFitSuggestion,
   QueueItem,
@@ -12,6 +13,7 @@ import type {
   SlotStatus,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
+import { EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX } from '@farmslot/protocol';
 
 import '../queue/dispatch-queue-panel.js';
 import '../shared/hydrating-placeholder.js';
@@ -53,6 +55,9 @@ interface DispatchWizardViewContext {
   templateOptionsLoading: boolean;
   templateOptionsError: string;
   selectedTaskTemplateFileName: string;
+  executionTemplates: ExecutionTemplateOptions | null;
+  selectedExecutionTemplateId: string;
+  domain: string;
   runner: string;
   model: string;
   effort: EffortLevel;
@@ -97,6 +102,9 @@ interface DispatchWizardViewContext {
   selectProject: (project: string) => void;
   setApp: (app: string) => void;
   setTaskTemplateFileName: (fileName: string) => void;
+  setExecutionTemplateId: (id: string) => void;
+  setDomain: (domain: string) => void;
+  setMode: (mode: 'interactive' | 'autonomous') => void;
   setRunner: (runner: string) => void;
   setModel: (model: string) => void;
   setEffort: (effort: EffortLevel) => void;
@@ -291,6 +299,87 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
       <div class="section-label">Task template</div>
       <div class="error-inline">${ctx.templateOptionsError}</div>
     </div>`;
+  }
+  if (ctx.executionTemplates) {
+    const domains = ctx.executionTemplates.availableDomains;
+    return html`
+      ${domains.length > 0
+        ? html`
+            <div class="config-group">
+              <div class="section-label">Domain</div>
+              <div class="pill-row">
+                <button
+                  class="pill ${ctx.domain === '' ? 'selected' : ''}"
+                  @click=${() => ctx.setDomain('')}
+                >
+                  general
+                </button>
+                ${domains.map(
+                  (domain) => html`
+                    <button
+                      class="pill ${ctx.domain === domain ? 'selected' : ''}"
+                      @click=${() => ctx.setDomain(domain)}
+                    >
+                      ${domain}
+                    </button>
+                  `,
+                )}
+              </div>
+            </div>
+          `
+        : nothing}
+      <div class="config-group">
+        <div class="section-label">Run mode</div>
+        <div class="pill-row">
+          ${(['autonomous', 'interactive'] as const).map(
+            (mode) => html`
+              <button
+                class="pill ${ctx.mode === mode ? 'selected' : ''}"
+                @click=${() => ctx.setMode(mode)}
+              >
+                ${mode}
+              </button>
+            `,
+          )}
+        </div>
+      </div>
+      <div class="config-group">
+        <div class="section-label">Execution template</div>
+        <div class="pill-row">
+          ${ctx.executionTemplates.options.length === 0
+            ? html`<span class="section-help">No compatible execution template.</span>`
+            : ctx.executionTemplates.options.map(
+                (option) => html`
+                  <button
+                    class="pill ${ctx.selectedExecutionTemplateId === option.id ? 'selected' : ''}"
+                    title=${`${option.id} · ${option.sourceId} · ${option.sha256.slice(0, 12)}`}
+                    @click=${() => ctx.setExecutionTemplateId(option.id)}
+                  >
+                    ${option.title}
+                    <span class="pill-key">
+                      ${option.sourceId} · ${option.platforms.join('/')} ·
+                      ${option.runMode ?? 'any mode'}
+                      ${option.labels
+                        .filter((label) => label.startsWith(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX))
+                        .map((label) => ` · ${label}`)}
+                    </span>
+                  </button>
+                `,
+              )}
+        </div>
+        <div class="section-help">
+          ${ctx.executionTemplates.selectionReason
+            ? `Default selection: ${ctx.executionTemplates.selectionReason}. `
+            : ''}
+          The gateway validates the exact source and digest before claiming the slot.
+          ${ctx.executionTemplates.unavailableSources.length > 0
+            ? ` Unavailable sources: ${ctx.executionTemplates.unavailableSources
+                .map((source) => `${source.id} (${source.reason})`)
+                .join(', ')}.`
+            : ''}
+        </div>
+      </div>
+    `;
   }
   if (ctx.templateOptions.length <= 1) return nothing;
   return html`

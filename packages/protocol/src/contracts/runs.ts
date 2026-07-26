@@ -1237,6 +1237,10 @@ export interface Run {
   variant?: string | null;
   /** Selected project-owned worker template version for this run. */
   taskTemplate?: TaskTemplateSelection;
+  /** Exact shared-catalog template id requested for this run. */
+  executionTemplateId?: string;
+  /** Portable snapshot selected and revalidated by the gateway. */
+  executionTemplate?: import('./execution-templates.js').ExecutionTemplateReference;
   /** Worker pipeline/template carrier. Eval candidates may use dev as a carrier while taskProfile stores rubric semantics. */
   flowType: FlowType;
   /** Operator/autonomy behavior preset. mode='validation' implies lane='validation' and is not used for comparison siblings. */

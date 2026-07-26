@@ -11,6 +11,7 @@ import {
   type DispatchExecuteParams,
   primaryRoleForFlow,
 } from '@farmslot/protocol';
+import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { markAgentContextStatus, upsertAgentContext } from '../../agents/contexts.js';
 import {
@@ -18,12 +19,14 @@ import {
   claimSlotStatusIf,
   execLocal,
   execOnSlot,
+  expandTemplate,
   farmslotRoot,
   getProjectField,
   isLocal,
   loadProjectVars,
   loadSlotVars,
   markSlotBusy,
+  type ProjectVars,
   type RawProjectJson,
   readSlotField,
   resetSlot,
@@ -707,7 +710,7 @@ export async function dispatchExecute(
   if (vars.slotMode === 'custom' && !params.force)
     throw new Error(`Slot ${params.slotId} is in manual mode — use force`);
 
-  let projectVars;
+  let projectVars: ProjectVars | undefined;
   let projectJson: RawProjectJson = {};
   try {
     projectVars = await loadProjectVars(vars.projectName);
@@ -1082,7 +1085,14 @@ export async function dispatchExecute(
     runtimeDir: projectVars?.runtimeDir,
   });
 
-  agentLaunch = applyProjectCommandEnv(projectJson, `${WORKER_ENV_PREFIX} && ${agentLaunch}`);
+  const effectiveDomain = resolveEffectiveDomain(currentRun?.domain, vars.domain);
+  agentLaunch = applyProjectCommandEnv(projectJson, `${WORKER_ENV_PREFIX} && ${agentLaunch}`, {
+    ...(effectiveDomain ? { domain: effectiveDomain } : {}),
+    expandDomainValue: (value) =>
+      expandTemplate(value, vars, projectVars, {
+        domain: effectiveDomain ?? '',
+      }),
+  });
 
   let sessionMeta: Awaited<ReturnType<typeof captureRunnerSessionMetadata>> = {
     runnerSessionPath: null,

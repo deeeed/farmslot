@@ -1,6 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
+import { EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX } from '@farmslot/protocol';
+
 import { inferTemplateMetadata } from './infer.js';
 import type {
   ExecutionTemplateEntry,
@@ -48,10 +50,21 @@ function matchesFilters(
   options: ListExecutionTemplatesOptions,
 ): boolean {
   if (options.flow && entry.flow !== options.flow) return false;
-  if (options.runMode && entry.runMode !== options.runMode) return false;
+  if (options.runMode && entry.runMode !== null && entry.runMode !== options.runMode) return false;
   if (options.platform) {
     const platforms = entry.platforms;
     if (!platforms.includes('*') && !platforms.includes(options.platform)) return false;
+  }
+  if (options.domain) {
+    const domainLabels = entry.labels.filter((label) =>
+      label.startsWith(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX),
+    );
+    if (
+      domainLabels.length > 0 &&
+      !domainLabels.includes(`${EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX}${options.domain}`)
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -115,12 +128,16 @@ export function listExecutionTemplates(
 export function projectWorkerTemplateSource(
   projectName: string,
   projectTemplatesDir: string,
+  sourceRevision?: string,
+  sourceDirty?: boolean,
 ): ExecutionTemplateSource {
   return {
     id: `project:${projectName}`,
     kind: 'project',
     root: path.join(projectTemplatesDir, 'worker'),
     layout: 'worker-flat',
+    ...(sourceRevision ? { sourceRevision } : {}),
+    ...(sourceDirty === undefined ? {} : { sourceDirty }),
   };
 }
 

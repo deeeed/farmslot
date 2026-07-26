@@ -4,6 +4,7 @@ import {
   type DevInteractiveActionRecord,
   type DevInteractiveProfile,
   Events,
+  type ExecutionTemplateReference,
   FLOW_STEPS,
   isInteractiveDevRun,
   isTerminalRunStatus,
@@ -85,6 +86,7 @@ import {
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
+import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
 import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
@@ -196,7 +198,35 @@ function buildInteractiveDevTicketData(
   };
 }
 
-export async function runCreate(params: RunCreateParams, emit: Emit): Promise<RunCreateResult> {
+interface RunCreateInternalOptions {
+  expectedExecutionTemplate?: ExecutionTemplateReference;
+}
+
+export function assertExpectedExecutionTemplate(
+  current: ExecutionTemplateReference | undefined,
+  expected: ExecutionTemplateReference | undefined,
+): void {
+  if (!expected) return;
+  if (
+    !current ||
+    current.id !== expected.id ||
+    current.sourceId !== expected.sourceId ||
+    current.sha256 !== expected.sha256
+  ) {
+    const actual = current
+      ? `${current.id} from ${current.sourceId} at ${current.sha256}`
+      : 'no configured execution template';
+    throw new Error(
+      `Execution template changed while queued: expected ${expected.id} from ${expected.sourceId} at ${expected.sha256}, got ${actual}. Queue the dispatch again.`,
+    );
+  }
+}
+
+export async function runCreate(
+  params: RunCreateParams,
+  emit: Emit,
+  options: RunCreateInternalOptions = {},
+): Promise<RunCreateResult> {
   // Gateway-internal — clients must not forge HEAD verification.
   delete params.startRefSkipPrepareVerified;
 
@@ -226,6 +256,35 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   params.safetyTier = resolveCreateSafetyTier(params.safetyTier, projectConfig?.defaultSafetyTier);
 
   await normalizeRunCreateMode(params, projectConfig);
+  if (!projectConfig?.executionTemplates && params.executionTemplateId) {
+    throw new Error(
+      'executionTemplateId is only valid for a project with execution_templates configured.',
+    );
+  }
+  if (projectConfig?.executionTemplates && params.taskTemplate) {
+    throw new Error(
+      'Configured execution-template projects require executionTemplateId, not taskTemplate.',
+    );
+  }
+  let executionTemplateSnapshot: Run['executionTemplate'];
+  if (projectConfig?.executionTemplates && params.slotId) {
+    const [projectVars, slotVars] = await Promise.all([
+      loadProjectVars(params.project),
+      loadSlotVars(params.slotId),
+    ]);
+    if (!params.mode) {
+      throw new Error('Configured execution-template selection requires an explicit run mode.');
+    }
+    executionTemplateSnapshot = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+      flow: params.flowType,
+      platform: slotVars.platform,
+      runMode: params.mode,
+      ...(params.domain ? { explicitDomain: params.domain } : {}),
+      ...(slotVars.domain ? { slotDomain: slotVars.domain } : {}),
+      ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
+    }).reference;
+  }
+  assertExpectedExecutionTemplate(executionTemplateSnapshot, options.expectedExecutionTemplate);
 
   const { lane, variant } = normalizeRunClassification(params);
   params.lane = lane;
@@ -235,7 +294,10 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   const shouldResolveImplicitInteractiveTemplate =
     params.mode === 'interactive' &&
     (params.flowType === 'dev' || params.flowType === 'pr-complete');
-  if (params.taskTemplate || shouldResolveImplicitInteractiveTemplate) {
+  if (
+    !projectConfig?.executionTemplates &&
+    (params.taskTemplate || shouldResolveImplicitInteractiveTemplate)
+  ) {
     const projectVars = await loadProjectVars(params.project);
     const selectedTemplate = await resolveWorkerTemplateSelectionForRun(
       projectVars,
@@ -399,7 +461,10 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
     ...(normalizedTaskTemplate ? { ...params, taskTemplate: normalizedTaskTemplate } : params),
     ...(startRefSkipPrepareVerified ? { startRefSkipPrepareVerified: true as const } : {}),
   };
-  const run = createRun(createParams);
+  let run = createRun(createParams);
+  if (executionTemplateSnapshot) {
+    run = updateRun(run.id, { executionTemplate: executionTemplateSnapshot });
+  }
   // Set runtime flags (not persisted)
   if (params.skipPrepare) {
     setRunFlags(run.id, { skipPrepare: true });

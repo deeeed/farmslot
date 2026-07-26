@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-26
+
+- Add the shared execution-template catalog, selection, snapshot, and CLI boundary.
+
 ## 0.3.1 - 2026-07-24
 
 - Validate retained recipe traces against their recipes and artifact attribution.

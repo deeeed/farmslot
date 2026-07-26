@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.13.0 - 2026-07-26
+
+- Add portable execution-template selection and provenance contracts.
+
 ## 0.12.0 - 2026-07-24
 
 - Describe every Recipe v1 field for editor hover and completion help.

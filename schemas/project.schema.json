@@ -182,7 +182,7 @@
       "type": "object",
       "description": "Related repos cloned alongside the main repo for cross-codebase comparison.",
       "patternProperties": {
-        "^[a-z][a-z0-9-]*$": {
+        "^[a-z][a-z0-9_-]*$": {
           "type": "object",
           "required": ["repo_url", "local_name"],
           "properties": {
@@ -286,6 +286,134 @@
           },
           "additionalProperties": {
             "type": "string"
+          }
+        },
+        "domains": {
+          "type": "object",
+          "description": "Optional domain-specific environment overlays applied after the base mutation.",
+          "patternProperties": {
+            "^[a-z][a-z0-9-]*$": {
+              "type": "object",
+              "properties": {
+                "unset": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "uniqueItems": true
+                },
+                "set": {
+                  "type": "object",
+                  "propertyNames": {
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution_templates": {
+      "type": "object",
+      "description": "Optional shared Markdown execution-template sources and ordered defaults.",
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "root"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": ["workspace", "user", "package", "fallback"]
+              },
+              "root": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["projectPath"],
+                    "properties": {
+                      "projectPath": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": ["env"],
+                    "properties": {
+                      "env": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "subpath": {
+                "type": "string",
+                "minLength": 1
+              },
+              "domains": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*$"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "defaults": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["when", "templateId"],
+            "properties": {
+              "when": {
+                "type": "object",
+                "properties": {
+                  "flow": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "platform": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "runMode": {
+                    "enum": ["autonomous", "interactive", "validation"]
+                  },
+                  "domain": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]*$"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "templateId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
           }
         }
       },
@@ -416,6 +544,10 @@
           "type": "string",
           "description": "Quick check if the dev server (Metro) is listening on the worker.",
           "examples": ["lsof -i :{{port}} >/dev/null 2>&1"]
+        },
+        "artifact_check": {
+          "type": "string",
+          "description": "Fast probe used by prepare profiles to confirm that a requested build artifact is available before slot preparation."
         },
         "recycle": {
           "type": "string",

@@ -3,7 +3,7 @@
  * Standalone execution-template CLI for ADR-049.
  * Used by `farmslot-agent execution-template` and thin Consensys wrappers.
  */
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -12,11 +12,13 @@ const distEntry = resolve(packageRoot, 'dist', 'index.js');
 
 function usage(exitCode = 0) {
   const text = [
-    'Usage: execution-template <list|lint|new> [options]',
+    'Usage: execution-template <list|materialize|lint|new> [options]',
     '',
-    'list   --dir <path> --project-worker <path> --package-templates <path>',
+    'list   --dir <path> --domain-dir <domain=path> --project-worker <path> --package-templates <path>',
     '       [--project-name name] [--package-id id] [--flow f] [--run-mode m]',
-    '       [--platform p] [--no-include-shadowed] [--json]',
+    '       [--platform p] [--domain d] [--no-include-shadowed] [--json]',
+    'materialize <output> --flow f --run-mode m --platform p [--domain d] [--id id]',
+    '       [the same source options as list] [--provenance path] [--json]',
     'lint   <file-or-dir> [--json]',
     'new    <path> [--flow f] [--run-mode m] [--platform p] [--title t] [--force] [--json]',
   ].join('\n');
@@ -44,9 +46,22 @@ function parseRunMode(value) {
   throw new Error(`--run-mode must be autonomous|interactive|validation (got ${value})`);
 }
 
-async function cmdList(args, runtime) {
+function parseDomainDir(value) {
+  const separator = value.indexOf('=');
+  if (separator <= 0 || separator === value.length - 1) {
+    throw new Error('--domain-dir must use domain=path');
+  }
+  const domain = value.slice(0, separator);
+  if (!/^[a-z][a-z0-9-]*$/.test(domain)) {
+    throw new Error(`--domain-dir domain must be a lowercase slug (got ${domain})`);
+  }
+  return { domain, root: value.slice(separator + 1) };
+}
+
+function parseCatalogArgs(args, { materialize = false } = {}) {
   const opts = {
     dirs: [],
+    domainDirs: [],
     projectWorker: null,
     projectName: 'project',
     packageTemplates: null,
@@ -54,12 +69,18 @@ async function cmdList(args, runtime) {
     flow: undefined,
     runMode: undefined,
     platform: undefined,
+    domain: undefined,
+    id: undefined,
     includeShadowed: true,
+    output: null,
+    provenance: null,
     json: false,
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--dir') opts.dirs.push(takeValue(args, i++, arg));
+    else if (arg === '--domain-dir')
+      opts.domainDirs.push(parseDomainDir(takeValue(args, i++, arg)));
     else if (arg === '--project-worker') opts.projectWorker = takeValue(args, i++, arg);
     else if (arg === '--project-name') opts.projectName = takeValue(args, i++, arg);
     else if (arg === '--package-templates') opts.packageTemplates = takeValue(args, i++, arg);
@@ -67,20 +88,51 @@ async function cmdList(args, runtime) {
     else if (arg === '--flow') opts.flow = takeValue(args, i++, arg);
     else if (arg === '--run-mode') opts.runMode = parseRunMode(takeValue(args, i++, arg));
     else if (arg === '--platform') opts.platform = takeValue(args, i++, arg);
+    else if (arg === '--domain') opts.domain = takeValue(args, i++, arg);
+    else if (arg === '--id') opts.id = takeValue(args, i++, arg);
+    else if (arg === '--provenance' && materialize) opts.provenance = takeValue(args, i++, arg);
     else if (arg === '--include-shadowed') opts.includeShadowed = true;
     else if (arg === '--no-include-shadowed') opts.includeShadowed = false;
     else if (arg === '--json') opts.json = true;
     else if (arg === '-h' || arg === '--help') usage(0);
+    else if (materialize && !arg.startsWith('-') && !opts.output) opts.output = arg;
     else throw new Error(`unknown option ${arg}`);
   }
+  return opts;
+}
 
+function buildSources(opts, runtime) {
   const sources = [];
+  const domainSourceIds = new Set();
   for (const [index, dir] of opts.dirs.entries()) {
     const root = resolve(dir);
     if (!existsSync(root) || !statSync(root).isDirectory()) {
       throw new Error(`--dir is not a directory: ${root}`);
     }
-    sources.push(runtime.customTemplateSource(`dir-${index + 1}`, root, 'flow-tree'));
+    const source = runtime.customTemplateSource(`dir-${index + 1}`, root, 'flow-tree');
+    source.sourceRevision = runtime.executionTemplateSourceRevision(root);
+    source.sourceDirty = runtime.executionTemplateSourceDirty(root);
+    sources.push(source);
+  }
+  for (const item of opts.domainDirs) {
+    const root = resolve(item.root);
+    if (!existsSync(root) || !statSync(root).isDirectory()) {
+      throw new Error(`--domain-dir is not a directory: ${root}`);
+    }
+    const sourceId = `team:${item.domain}`;
+    if (domainSourceIds.has(sourceId)) {
+      throw new Error(`--domain-dir repeats domain ${item.domain}`);
+    }
+    domainSourceIds.add(sourceId);
+    sources.push({
+      id: sourceId,
+      kind: 'workspace',
+      root,
+      layout: 'flow-tree',
+      domains: [item.domain],
+      sourceRevision: runtime.executionTemplateSourceRevision(root),
+      sourceDirty: runtime.executionTemplateSourceDirty(root),
+    });
   }
   if (opts.projectWorker) {
     const input = resolve(opts.projectWorker);
@@ -92,34 +144,112 @@ async function cmdList(args, runtime) {
     if (!existsSync(workerRoot) || !statSync(workerRoot).isDirectory()) {
       throw new Error(`--project-worker is not a directory: ${workerRoot}`);
     }
-    sources.push(runtime.projectWorkerTemplateSource(opts.projectName, projectTemplatesDir));
+    sources.push(
+      runtime.projectWorkerTemplateSource(
+        opts.projectName,
+        projectTemplatesDir,
+        runtime.executionTemplateSourceRevision(projectTemplatesDir),
+        runtime.executionTemplateSourceDirty(projectTemplatesDir),
+      ),
+    );
   }
   if (opts.packageTemplates) {
     const root = resolve(opts.packageTemplates);
     if (!existsSync(root) || !statSync(root).isDirectory()) {
       throw new Error(`--package-templates is not a directory: ${root}`);
     }
-    sources.push(runtime.packageFlowTreeTemplateSource(opts.packageId, root));
+    const source = runtime.packageFlowTreeTemplateSource(opts.packageId, root);
+    source.sourceRevision = runtime.executionTemplateSourceRevision(root);
+    source.sourceDirty = runtime.executionTemplateSourceDirty(root);
+    sources.push(source);
   }
   if (sources.length === 0) {
-    throw new Error('provide --dir, --project-worker, and/or --package-templates');
+    throw new Error('provide --dir, --domain-dir, --project-worker, and/or --package-templates');
   }
+  return sources;
+}
 
-  const templates = runtime.listExecutionTemplates({
-    sources,
-    flow: opts.flow,
-    runMode: opts.runMode,
-    platform: opts.platform,
-    includeShadowed: opts.includeShadowed,
-  });
+async function cmdList(args, runtime) {
+  const opts = parseCatalogArgs(args);
+  if (opts.id) throw new Error('--id is only valid with materialize');
+  const sources = buildSources(opts, runtime);
+  const templates =
+    opts.flow && opts.platform && opts.runMode
+      ? runtime.listCompatibleExecutionTemplates({
+          sources,
+          flow: opts.flow,
+          platform: opts.platform,
+          runMode: opts.runMode,
+          ...(opts.domain ? { domain: opts.domain } : {}),
+        })
+      : runtime.listExecutionTemplates({
+          sources,
+          flow: opts.flow,
+          runMode: opts.runMode,
+          platform: opts.platform,
+          domain: opts.domain,
+          includeShadowed: opts.includeShadowed,
+        });
+  const catalog = templates.map((entry) => ({
+    ...runtime.executionTemplateReference(entry),
+    title: entry.title,
+    sourceKind: entry.sourceKind,
+    ...(entry.shadowedBy ? { shadowedBy: entry.shadowedBy } : {}),
+  }));
   if (opts.json) {
-    process.stdout.write(`${JSON.stringify({ templates }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ templates: catalog }, null, 2)}\n`);
     return;
   }
-  for (const entry of templates) {
+  for (const entry of catalog) {
     const shadow = entry.shadowedBy ? ` (shadowed by ${entry.shadowedBy})` : '';
     process.stdout.write(
-      `${entry.id}\t${entry.flow}\t${entry.runMode ?? '-'}\t${entry.platforms.join(',')}\t${entry.sourceId}\t${entry.path}${shadow}\n`,
+      `${entry.id}\t${entry.flow}\t${entry.runMode ?? '-'}\t${entry.platforms.join(',')}\t${entry.sourceId}${shadow}\n`,
+    );
+  }
+}
+
+async function cmdMaterialize(args, runtime) {
+  const opts = parseCatalogArgs(args, { materialize: true });
+  if (!opts.output) throw new Error('materialize requires <output>');
+  if (!opts.flow) throw new Error('materialize requires --flow');
+  if (!opts.runMode) throw new Error('materialize requires --run-mode');
+  if (!opts.platform) throw new Error('materialize requires --platform');
+  const output = resolve(opts.output);
+  if (existsSync(output)) {
+    throw new Error(`Execution-template destination already exists: ${output}`);
+  }
+  if (opts.provenance && existsSync(resolve(opts.provenance))) {
+    throw new Error(
+      `Execution-template provenance destination already exists: ${resolve(opts.provenance)}`,
+    );
+  }
+  const selected = runtime.selectExecutionTemplate({
+    sources: buildSources(opts, runtime),
+    flow: opts.flow,
+    platform: opts.platform,
+    runMode: opts.runMode,
+    ...(opts.domain ? { domain: opts.domain } : {}),
+    ...(opts.id ? { explicitId: opts.id } : {}),
+  });
+  const materialized = runtime.materializeExecutionTemplate(selected.entry, output);
+  const provenance = {
+    schemaVersion: 1,
+    selectionReason: selected.reason,
+    executionTemplate: materialized.reference,
+  };
+  if (opts.provenance) {
+    const destination = resolve(opts.provenance);
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(destination, `${JSON.stringify(provenance, null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
+  }
+  const result = { ...materialized, provenance };
+  if (opts.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  else {
+    process.stdout.write(
+      `materialized ${selected.entry.id} from ${selected.entry.sourceId} -> ${materialized.path}\n`,
     );
   }
 }
@@ -192,6 +322,7 @@ async function main() {
   if (!command || command === '-h' || command === '--help') usage(0);
   const runtime = await loadRuntime();
   if (command === 'list') await cmdList(rest, runtime);
+  else if (command === 'materialize') await cmdMaterialize(rest, runtime);
   else if (command === 'lint') await cmdLint(rest, runtime);
   else if (command === 'new') await cmdNew(rest, runtime);
   else usage(2);

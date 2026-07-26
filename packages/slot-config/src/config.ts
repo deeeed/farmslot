@@ -9,12 +9,14 @@ import {
   DEFAULT_TASK_DIR,
   FAILURE_CATEGORIES,
   type FlowType,
+  isValidDomainName,
   type PoolSlotMode,
   PREPARE_PHASES,
   PREPARE_REQUIREMENTS,
   type PreparePhase,
   type PrepareRequirement,
   type ProjectConfig,
+  type ProjectExecutionTemplatesConfig,
   type ReviewSessionPolicy,
   type SlotActionDefinition,
 } from '@farmslot/protocol';
@@ -172,7 +174,15 @@ export interface RawProjectJson {
   command_env?: {
     unset?: string[];
     set?: Record<string, string>;
+    domains?: Record<
+      string,
+      {
+        unset?: string[];
+        set?: Record<string, string>;
+      }
+    >;
   };
+  execution_templates?: ProjectExecutionTemplatesConfig;
   eval_harnesses?: Record<
     string,
     {
@@ -639,6 +649,8 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateEvalHarnessesConfig(projectJson, projectConfig);
   validatePublicationReviewConfig(projectJson, projectConfig);
   validatePrepareConfig(projectJson, projectConfig);
+  validateCommandEnvConfig(projectJson, projectConfig);
+  validateExecutionTemplatesConfig(projectJson, projectConfig);
 
   const runtimeDir = projectJson.paths?.runtime_dir || '.agent';
   const artifactDir = projectJson.paths?.artifact_dir || '.task';
@@ -676,6 +688,171 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   };
   projectVarsCache.set(projectName, { value, at: Date.now() });
   return value;
+}
+
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+function validateEnvironmentMutation(value: unknown, field: string, projectConfig: string): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${projectConfig}: ${field} must be an object`);
+  }
+  const mutation = value as { unset?: unknown; set?: unknown };
+  if (
+    mutation.unset !== undefined &&
+    (!Array.isArray(mutation.unset) ||
+      mutation.unset.some((entry) => typeof entry !== 'string' || !ENV_NAME_RE.test(entry)))
+  ) {
+    throw new Error(`${projectConfig}: ${field}.unset must contain valid environment names`);
+  }
+  if (mutation.set !== undefined) {
+    if (!mutation.set || typeof mutation.set !== 'object' || Array.isArray(mutation.set)) {
+      throw new Error(`${projectConfig}: ${field}.set must be an object`);
+    }
+    for (const [name, entry] of Object.entries(mutation.set)) {
+      if (!ENV_NAME_RE.test(name) || typeof entry !== 'string') {
+        throw new Error(
+          `${projectConfig}: ${field}.set must map valid environment names to strings`,
+        );
+      }
+    }
+  }
+}
+
+export function validateCommandEnvConfig(projectJson: RawProjectJson, projectConfig: string): void {
+  const commandEnv = projectJson.command_env;
+  if (!commandEnv) return;
+  // Base command_env predates domain overlays and remains load-compatible.
+  // Validate only the newly introduced domains boundary here.
+  if (commandEnv.domains === undefined) return;
+  if (
+    !commandEnv.domains ||
+    typeof commandEnv.domains !== 'object' ||
+    Array.isArray(commandEnv.domains)
+  ) {
+    throw new Error(`${projectConfig}: command_env.domains must be an object`);
+  }
+  for (const [domain, mutation] of Object.entries(commandEnv.domains)) {
+    if (!isValidDomainName(domain)) {
+      throw new Error(`${projectConfig}: command_env.domains key "${domain}" is invalid`);
+    }
+    validateEnvironmentMutation(mutation, `command_env.domains.${domain}`, projectConfig);
+  }
+}
+
+function validateSafeRelativePath(value: string, field: string, projectConfig: string): void {
+  if (
+    !value.trim() ||
+    path.isAbsolute(value) ||
+    value.split(/[\\/]/).some((part) => part === '..')
+  ) {
+    throw new Error(`${projectConfig}: ${field} must be a safe relative path`);
+  }
+}
+
+export function validateExecutionTemplatesConfig(
+  projectJson: RawProjectJson,
+  projectConfig: string,
+): void {
+  const config = projectJson.execution_templates;
+  if (!config) return;
+  if (typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error(`${projectConfig}: execution_templates must be an object`);
+  }
+
+  if (config.sources !== undefined && !Array.isArray(config.sources)) {
+    throw new Error(`${projectConfig}: execution_templates.sources must be an array`);
+  }
+  const sourceIds = new Set<string>();
+  for (const [index, source] of (config.sources ?? []).entries()) {
+    const field = `execution_templates.sources[${index}]`;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      throw new Error(`${projectConfig}: ${field} must be an object`);
+    }
+    if (typeof source.id !== 'string' || !source.id.trim()) {
+      throw new Error(`${projectConfig}: ${field}.id must be a non-empty string`);
+    }
+    if (sourceIds.has(source.id)) {
+      throw new Error(`${projectConfig}: duplicate execution-template source id "${source.id}"`);
+    }
+    sourceIds.add(source.id);
+    if (!['workspace', 'user', 'package', 'fallback'].includes(source.kind)) {
+      throw new Error(
+        `${projectConfig}: ${field}.kind must be workspace, user, package, or fallback`,
+      );
+    }
+    const root = source.root;
+    if (!root || typeof root !== 'object' || Array.isArray(root)) {
+      throw new Error(`${projectConfig}: ${field}.root must be an object`);
+    }
+    const rootKeys = Object.keys(root);
+    if (rootKeys.length !== 1 || (rootKeys[0] !== 'projectPath' && rootKeys[0] !== 'env')) {
+      throw new Error(
+        `${projectConfig}: ${field}.root must define exactly one of projectPath or env`,
+      );
+    }
+    if ('projectPath' in root) {
+      if (typeof root.projectPath !== 'string') {
+        throw new Error(`${projectConfig}: ${field}.root.projectPath must be a string`);
+      }
+      validateSafeRelativePath(root.projectPath, `${field}.root.projectPath`, projectConfig);
+    }
+    if ('env' in root && (typeof root.env !== 'string' || !ENV_NAME_RE.test(root.env))) {
+      throw new Error(`${projectConfig}: ${field}.root.env must be a valid environment name`);
+    }
+    if (source.subpath !== undefined) {
+      if (typeof source.subpath !== 'string') {
+        throw new Error(`${projectConfig}: ${field}.subpath must be a string`);
+      }
+      validateSafeRelativePath(source.subpath, `${field}.subpath`, projectConfig);
+    }
+    if (
+      source.domains !== undefined &&
+      (!Array.isArray(source.domains) ||
+        source.domains.length === 0 ||
+        source.domains.some((domain) => typeof domain !== 'string' || !isValidDomainName(domain)))
+    ) {
+      throw new Error(`${projectConfig}: ${field}.domains must contain valid domain names`);
+    }
+  }
+
+  if (config.defaults !== undefined && !Array.isArray(config.defaults)) {
+    throw new Error(`${projectConfig}: execution_templates.defaults must be an array`);
+  }
+  for (const [index, rule] of (config.defaults ?? []).entries()) {
+    const field = `execution_templates.defaults[${index}]`;
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
+      throw new Error(`${projectConfig}: ${field} must be an object`);
+    }
+    if (typeof rule.templateId !== 'string' || !rule.templateId.trim()) {
+      throw new Error(`${projectConfig}: ${field}.templateId must be a non-empty string`);
+    }
+    if (!rule.when || typeof rule.when !== 'object' || Array.isArray(rule.when)) {
+      throw new Error(`${projectConfig}: ${field}.when must be an object`);
+    }
+    const unknown = Object.keys(rule.when).filter(
+      (key) => !['flow', 'platform', 'runMode', 'domain'].includes(key),
+    );
+    if (unknown.length > 0) {
+      throw new Error(`${projectConfig}: ${field}.when contains unknown field "${unknown[0]}"`);
+    }
+    for (const key of ['flow', 'platform'] as const) {
+      const value = rule.when[key];
+      if (value !== undefined && (typeof value !== 'string' || !value.trim())) {
+        throw new Error(`${projectConfig}: ${field}.when.${key} must be a non-empty string`);
+      }
+    }
+    if (
+      rule.when.runMode !== undefined &&
+      !['autonomous', 'interactive', 'validation'].includes(rule.when.runMode)
+    ) {
+      throw new Error(`${projectConfig}: ${field}.when.runMode is invalid`);
+    }
+    if (
+      rule.when.domain !== undefined &&
+      (typeof rule.when.domain !== 'string' || !isValidDomainName(rule.when.domain))
+    ) {
+      throw new Error(`${projectConfig}: ${field}.when.domain is invalid`);
+    }
+  }
 }
 
 /** Project runtime dir for runner observability and hook installs (defaults to `.agent`). */

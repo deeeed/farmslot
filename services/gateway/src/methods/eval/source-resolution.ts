@@ -15,6 +15,7 @@ import {
 
 import {
   fileExists,
+  normalizeStoredResultPackageManifest,
   readTaskDiffProvenance,
   scanResultPackageArtifacts,
   unavailableDiff,
@@ -314,6 +315,7 @@ async function resolvePackageSource(
       `Invalid result package source: ${source.packagePath}: ${(err as Error).message}`,
     );
   }
+  parsed = normalizeStoredResultPackageManifest(parsed);
   if (!isResultPackageManifest(parsed))
     throw new Error(`Invalid result package source: ${source.packagePath}`);
   return {

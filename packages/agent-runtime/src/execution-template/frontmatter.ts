@@ -62,7 +62,7 @@ export function parseMarkdownDocument(text: string): ParsedMarkdownDocument {
     if (end !== -1) {
       const fmBlock = normalized.slice(4, end).replace(/\r/g, '');
       const rest = normalized.slice(end + '\n---'.length).replace(/^\r?\n/, '');
-      frontmatter = {};
+      frontmatter = Object.create(null) as ExecutionTemplateFrontmatter;
       for (const line of fmBlock.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('#')) continue;

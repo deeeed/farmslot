@@ -20,7 +20,11 @@ import {
   updateItem,
 } from '../../backlog/dispatch-queue.js';
 import { removeOrphanBacklogQueueItem } from '../../backlog/store.js';
-import { loadProjectVars } from '../../core/index.js';
+import { loadProjectVars, loadSlotVars } from '../../core/index.js';
+import {
+  projectUsesExecutionTemplateCatalog,
+  resolveConfiguredExecutionTemplateForSlot,
+} from '../../tasks/execution-template-catalog.js';
 import { resolveWorkerTemplateSelection } from '../../tasks/worker-template-options.js';
 
 // ─── Queue Handlers ───
@@ -54,9 +58,20 @@ export async function dispatchQueueAdd(
       'dispatch.queue.add cannot accept backlog handoff metadata; use backlog.enqueue',
     );
   }
+  const projectVars = await loadProjectVars(params.project);
+  const configuredCatalog = projectUsesExecutionTemplateCatalog(projectVars);
+  if (params.executionTemplateId && !configuredCatalog) {
+    throw new Error(
+      'executionTemplateId is only valid for a project with execution_templates configured.',
+    );
+  }
   let normalizedTaskTemplate: DispatchQueueAddParams['taskTemplate'];
   if (params.taskTemplate) {
-    const projectVars = await loadProjectVars(params.project);
+    if (configuredCatalog) {
+      throw new Error(
+        'Configured execution-template projects require executionTemplateId, not taskTemplate.',
+      );
+    }
     const selectedTemplate = await resolveWorkerTemplateSelection(
       projectVars,
       params.flowType,
@@ -67,9 +82,28 @@ export async function dispatchQueueAdd(
       variant: selectedTemplate.variant,
     };
   }
-  const item = addItem(
-    normalizedTaskTemplate ? { ...params, taskTemplate: normalizedTaskTemplate } : params,
-  );
+  let executionTemplate: import('@farmslot/protocol').ExecutionTemplateReference | undefined;
+  if (configuredCatalog) {
+    if (!params.slotId || !params.mode) {
+      throw new Error(
+        'Queued execution-template selection requires both slotId and mode so the gateway can validate and snapshot it.',
+      );
+    }
+    const slotVars = await loadSlotVars(params.slotId);
+    executionTemplate = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+      flow: params.flowType,
+      platform: slotVars.platform,
+      runMode: params.mode,
+      ...(params.domain ? { explicitDomain: params.domain } : {}),
+      ...(slotVars.domain ? { slotDomain: slotVars.domain } : {}),
+      ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
+    }).reference;
+  }
+  const item = addItem({
+    ...params,
+    ...(normalizedTaskTemplate ? { taskTemplate: normalizedTaskTemplate } : {}),
+    ...(executionTemplate ? { executionTemplate: { ...executionTemplate } } : {}),
+  });
   return { item };
 }
 

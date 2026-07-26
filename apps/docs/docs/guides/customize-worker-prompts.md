@@ -11,7 +11,9 @@ A prompt template does two jobs at once:
 1. it gives the runner concrete task instructions;
 2. it exposes a simple observable structure that Command Center, Mobile Companion, CLI tools, and Gateway Intelligence can monitor.
 
-## Where templates live
+## Two supported modes
+
+### Existing farms with no catalog configuration
 
 Each imported project can own worker templates under its project profile:
 
@@ -55,9 +57,42 @@ If neither file exists, CI-watch inline fix is skipped and the operator gets a d
 
 Project-specific validation belongs in the project override. The Farmslot default intentionally uses conservative `yarn lint` / `yarn lint:tsc` placeholders so new projects get a working inline-fix path before they customize.
 
-A project can override any of these by adding a file with the same name. It can also provide variants such as `fix-bug-fast.md` or `review-pr-full.md`; the selected variant is rendered for that run without mutating the source template.
+A project can override any of these by adding a file with the same name. It can
+also provide variants such as `fix-bug-fast.md` or `review-pr-full.md`; the
+selected variant is rendered for that run without mutating the source template.
 
-A `<flow>-<domain>.md` variant (for example `fix-bug-perps.md`) is preferred automatically when a run carries a matching domain and the file exists — see [Domains](../reference/domains.md).
+This no-config path preserves the original interactive and
+`<flow>-<domain>.md` selection behavior exactly.
+
+### Shared execution-template catalog
+
+Projects that configure `execution_templates` can combine:
+
+- the project worker templates above;
+- canonical package templates;
+- workspace or user templates;
+- optional `checklists/` trees from team libraries.
+
+Configured flow-tree sources use:
+
+```text
+<source-root>/<flow>/<variant>.md
+```
+
+For example, `fix-bug/autonomous.mobile.md`. Source configuration can scope a
+whole tree to a domain; authors do not encode domain in the filename or add a
+second metadata field.
+
+Command Center and the CLI list compatible templates for the effective
+project, flow, platform, run mode, and domain. Selection is exact: an explicit
+id wins, then the first matching configured default, then a sole compatible
+domain or general candidate. Ambiguity requires a human choice.
+
+The gateway copies the selected Markdown into the task and records its source,
+revision, and source/rendered digests. Workers use that immutable copy and do
+not need access to the control-plane source.
+
+See [Domains](../reference/domains.md) for domain resolution.
 
 ## Observable prompt shape
 
@@ -177,10 +212,21 @@ This keeps imports low-friction while preserving the operator-visible format tha
 
 ## Optional template quality (authoring only)
 
-Before merging template changes, run deterministic lint locally:
+Before merging project worker-template changes, run:
 
 ```bash
 yarn quality:worker-templates projects/<your-farm>
 ```
 
-For a second pass (succinctness, contradictions, checklist flow), use the **`fs-worker-template-quality`** agent skill — see [Worker template quality (optional)](../reference/worker-template-quality.md). Neither tool is invoked during dispatch; runtime finish still uses `./mark` and packaged artifacts ([Finish a worker run](../reference/worker-run-finish.md)).
+For a configured flow-tree source, run:
+
+```bash
+farmslot execution-template lint <source-root>
+```
+
+For a second pass (succinctness, contradictions, checklist flow), use the
+**`fs-worker-template-quality`** agent skill — see
+[Worker template quality (optional)](../reference/worker-template-quality.md).
+Authoring checks do not change runtime completion: rendered tasks still use
+`./mark` and packaged artifacts
+([Finish a worker run](../reference/worker-run-finish.md)).

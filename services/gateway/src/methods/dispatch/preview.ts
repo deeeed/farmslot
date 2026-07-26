@@ -14,6 +14,7 @@ import {
 import {
   execOnSlot,
   isLocal,
+  loadProjectVars,
   loadSlotVars,
   SLOT_PHASE_RELEASING,
   updateSlotStatus,
@@ -22,7 +23,7 @@ import { firstWindowTarget, resolveTmuxSession, shellQuote } from '../../core/tm
 import { buildFollowUpLineage } from '../../family-observability/context.js';
 import { findFollowUpParentRun } from '../../family-observability/state.js';
 import { getNode } from '../../fleet/machine-registry.js';
-import { loadFleetStatus, loadProjectConfigs } from '../../fleet/state.js';
+import { loadFleetStatus, loadProjectConfig, loadProjectConfigs } from '../../fleet/state.js';
 import { detectProfileFit } from '../../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
@@ -33,6 +34,11 @@ import {
 } from '../../runners/registry.js';
 import { getRunnerStatusProvider } from '../../runners/status-provider.js';
 import { getAllRuns } from '../../runs/store.js';
+import {
+  projectUsesExecutionTemplateCatalog,
+  resolveConfiguredExecutionTemplateForSlot,
+} from '../../tasks/execution-template-catalog.js';
+import { normalizeRunCreateMode } from '../run-create-mode.js';
 
 import {
   companionResourceBlocker,
@@ -816,6 +822,7 @@ export async function dispatchCandidates(
 export async function dispatchPreview(
   params: DispatchPreviewParams,
 ): Promise<DispatchPreviewResult> {
+  await normalizeRunCreateMode(params, await loadProjectConfig(params.project));
   const fleet = await loadFleetStatus(true);
   const projectSlots = fleet.slots.filter(
     (s) => s.project === params.project && s.lifecycle !== 'disabled',
@@ -868,6 +875,32 @@ export async function dispatchPreview(
     { requiredPrepareProfile },
   );
   const slotInfo = fleet.slots.find((s) => s.slot === result.preview.slotId);
+  const configuredProject = projectConfigList.find(
+    (project) => project.name === params.project,
+  )?.executionTemplates;
+  if (slotInfo && configuredProject) {
+    const projectVars = await loadProjectVars(params.project);
+    if (!projectUsesExecutionTemplateCatalog(projectVars)) {
+      throw new Error(
+        `Project "${params.project}" advertises execution templates but its validated configuration does not contain them.`,
+      );
+    }
+    if (!params.mode) {
+      throw new Error('Configured execution-template preview requires an explicit run mode.');
+    }
+    const slotVars = await loadSlotVars(slotInfo.slot);
+    const selected = resolveConfiguredExecutionTemplateForSlot(projectVars, {
+      flow: params.flowType,
+      platform: slotVars.platform,
+      runMode: params.mode,
+      ...(params.domain ? { explicitDomain: params.domain } : {}),
+      ...(slotVars.domain ? { slotDomain: slotVars.domain } : {}),
+      ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
+    });
+    result.preview.executionTemplate = selected.reference;
+    if (selected.effectiveDomain) result.preview.domain = selected.effectiveDomain;
+    else delete result.preview.domain;
+  }
   const profileFit = detectProfileFit(previewRun, ticketData, {
     prepareProfile: params.prepareProfile,
     app: params.app,

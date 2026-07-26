@@ -4,6 +4,7 @@ import { property, state } from 'lit/decorators.js';
 import type {
   DevInteractiveProfile,
   DispatchCandidatesResult,
+  ExecutionTemplateOptions,
   FlowType,
   ProfileFitSuggestion,
   ProjectConfig,
@@ -50,6 +51,10 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _templateOptionsLoading = false;
   @state() _templateOptionsError = '';
   @state() _selectedTaskTemplateFileName = '';
+  @state() _executionTemplates: ExecutionTemplateOptions | null = null;
+  @state() _selectedExecutionTemplateId = '';
+  @state() _domain = '';
+  @state() _catalogMode: 'interactive' | 'autonomous' = 'autonomous';
   _templateOptionsKey = '';
   @state() _dispatching = false;
   @state() _error = '';

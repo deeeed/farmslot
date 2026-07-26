@@ -233,7 +233,11 @@ export async function executeGradeStep(
     if (actionId === 'abort') {
       stepPartialIO.set(runId, {
         inputs,
-        outputs: { profileFit: resolvedProfileFit, source: ticketData?.source, title: ticketData?.title },
+        outputs: {
+          profileFit: resolvedProfileFit,
+          source: ticketData?.source,
+          title: ticketData?.title,
+        },
       });
       throw new Error('Prepare profile mismatch: aborted by user');
     }
@@ -377,7 +381,8 @@ export async function executeWriteTaskStep(
     const templateName =
       current.templateProvenance?.templateName ??
       current.taskTemplate?.fileName ??
-      (FLOW_TO_TASK_TEMPLATE[current.flowType] ?? `${current.flowType}.md`);
+      FLOW_TO_TASK_TEMPLATE[current.flowType] ??
+      `${current.flowType}.md`;
     const pv = await loadProjectVarsOrNull(current.project, 'run step', current.id);
     const orchestratorTaskRoot = pv
       ? getOrchestratorTaskRoot(current.project, pv.projectJson)
@@ -392,7 +397,14 @@ export async function executeWriteTaskStep(
       });
     }
     const templateProvenance = await readTemplateProvenanceForTask(current.taskFile);
-    if (templateProvenance) updateRun(runId, { templateProvenance });
+    if (templateProvenance) {
+      updateRun(runId, {
+        templateProvenance,
+        ...(templateProvenance.executionTemplate
+          ? { executionTemplate: templateProvenance.executionTemplate }
+          : {}),
+      });
+    }
     const artifacts: ArtifactRef[] = [
       { path: 'TASK.md', purpose: 'task-md' },
       { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
@@ -613,7 +625,12 @@ export async function executeWriteTaskStep(
     }
   }
   const templateProvenance = await readTemplateProvenanceForTask(taskFilePath);
-  updateRun(runId, { templateProvenance });
+  updateRun(runId, {
+    templateProvenance,
+    ...(templateProvenance?.executionTemplate
+      ? { executionTemplate: templateProvenance.executionTemplate }
+      : {}),
+  });
   // Capture review-input artifacts after collision handling so they are
   // written under the final task path, not an abandoned TASK.md location.
   const inputArtifacts = await captureReviewInputArtifactsForRun(getRun(runId)!);

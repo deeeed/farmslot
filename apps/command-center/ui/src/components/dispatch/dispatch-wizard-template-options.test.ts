@@ -15,7 +15,15 @@ const options: WorkerTemplateOption[] = [
 ];
 
 test('template options helpers preserve valid selection and derive stable request key', () => {
-  assert.equal(templateOptionsRequestKey('mobile', 'dev'), 'mobile:dev');
+  assert.equal(templateOptionsRequestKey('mobile', 'dev'), 'mobile:dev:::');
+  assert.equal(
+    templateOptionsRequestKey('mobile', 'dev', {
+      platform: 'ios',
+      runMode: 'autonomous',
+      domain: 'trading',
+    }),
+    'mobile:dev:ios:autonomous:trading',
+  );
   assert.deepEqual(deriveTemplateOptionsState(options, 'custom.md'), {
     options,
     error: '',

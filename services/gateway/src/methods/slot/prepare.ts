@@ -10,6 +10,7 @@ import {
   SLOT_DESTRUCTIVE_OPS,
   type SlotPrepareParams,
 } from '@farmslot/protocol';
+import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import {
   applyProjectCommandEnv,
@@ -235,7 +236,15 @@ async function slotPrepareInner(
   const forceNewBranch = params.forceNewBranch ?? false;
   let resolvedStartRef: StartRefResolution | undefined;
   const runtimeDir = projectVars?.runtimeDir || '.agent';
-  const applyCommandEnv = (command: string) => applyProjectCommandEnv(projectJson, command);
+  const effectiveDomain = resolveEffectiveDomain(params.domain, vars.domain);
+  const applyCommandEnv = (command: string) =>
+    applyProjectCommandEnv(projectJson, command, {
+      ...(effectiveDomain ? { domain: effectiveDomain } : {}),
+      expandDomainValue: (value) =>
+        expandTemplate(value, vars, projectVars, {
+          domain: effectiveDomain ?? '',
+        }),
+    });
   const slotIsLocal = isLocal(vars.host, vars.machine);
   const prepareLogDir = slotIsLocal
     ? path.join(vars.remoteRepo, runtimeDir, 'prepare-logs')
@@ -548,7 +557,7 @@ async function slotPrepareInner(
     await runFixtureSync(vars, {
       slotId: params.slotId,
       flowType: params.flowType,
-      domain: params.domain ?? vars.domain,
+      domain: effectiveDomain,
       selectedApp,
       logPath: syncLogPath,
       signal,
