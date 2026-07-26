@@ -146,6 +146,44 @@ test('replaying a cancelled graph run reclaims the node instead of double-dispat
   );
 });
 
+test('a replay that fails validation leaves the re-queued node intact', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4103',
+    prNumber: 4103,
+    workGraphId: 'wg_replay_strand',
+    workNodeId: 'wn_replay_strand',
+  });
+  updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4103',
+    workGraphId: 'wg_replay_strand',
+    workNodeId: 'wn_replay_strand',
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  // Fails on an unknown step, after the old reclaim point but before the run revives.
+  await assert.rejects(
+    () => runReplayStep({ runId: run.id, stepName: 'not-a-step' }, () => {}),
+    /Step not found: not-a-step/,
+  );
+  // The run never went live, so its replacement work must still be queued.
+  assert.equal(getRun(run.id)?.status, 'cancelled');
+  assert.ok(
+    getQueueSnapshot().some((item) => item.workNodeId === 'wn_replay_strand'),
+    'a failed replay must not strand the node by dropping its queue item',
+  );
+});
+
 test('runReplayStep rejects monitor replay when dispatch is still running', async (t) => {
   const run = createRun({
     flowType: 'dev',

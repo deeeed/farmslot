@@ -15,7 +15,7 @@ import {
   type RunStatus,
 } from '@farmslot/protocol';
 
-import { cancelGraphQueuedItem } from '../../backlog/dispatch-queue.js';
+import { cancelGraphQueuedItem, getQueueSnapshot } from '../../backlog/dispatch-queue.js';
 import { execOnSlot } from '../../core/exec.js';
 import { SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
@@ -263,14 +263,22 @@ export async function runReplayStep(
   }
   // Replaying a cancelled run is supported (e.g. resuming ci-watch on an
   // update-branch run). But cancelling released the node, so the graph has since
-  // re-queued its work; reviving the run without dropping that queue item would
-  // dispatch the same node twice. Reclaim the node for the run being revived.
+  // re-queued its work. If that replacement has already been handed to a slot the
+  // handoff wins: reviving here would put two live runs behind one node, and
+  // unlike a queued row a dispatching one cannot be taken back. Refuse before any
+  // state is touched.
   if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
-    await cancelGraphQueuedItem({
-      workGraphId: existing.workGraphId,
-      workNodeId: existing.workNodeId,
-      reason: `replay-revives-run:${params.runId}`,
-    });
+    const replacement = getQueueSnapshot().find(
+      (item) =>
+        item.workGraphId === existing.workGraphId && item.workNodeId === existing.workNodeId,
+    );
+    if (replacement && replacement.status === 'dispatching') {
+      throw new Error(
+        `Run ${params.runId.slice(0, 8)} was cancelled and its node has already been ` +
+          'redispatched, so replaying it would run the same work twice. ' +
+          'Next: follow the new run for this node, or cancel that dispatch and replay again.',
+      );
+    }
   }
   const triggeredBy = params.triggeredBy ?? 'operator';
 
@@ -683,6 +691,20 @@ export async function runReplayStep(
   const engineStateForReplay = replaysCompletionOrGate
     ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
     : currentBeforeReplayUpdate.engineState;
+  // Reclaim the node here, not at entry: every check that can throw has passed, so
+  // the run is about to go live. Dropping the queue row earlier would strand the
+  // node — no queued work and a still-cancelled run — whenever replay then failed.
+  if (
+    currentBeforeReplayUpdate.status === 'cancelled' &&
+    existing.workGraphId &&
+    existing.workNodeId
+  ) {
+    await cancelGraphQueuedItem({
+      workGraphId: existing.workGraphId,
+      workNodeId: existing.workNodeId,
+      reason: `replay-revives-run:${params.runId}`,
+    });
+  }
   updateRun(params.runId, {
     status: activeStatusForReplayStep(replayStepName),
     error: undefined,
