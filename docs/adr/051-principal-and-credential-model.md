@@ -1,6 +1,6 @@
 # ADR-051: Principal and Credential Model
 
-**Status:** Proposed
+**Status:** Accepted (not yet implemented)
 **Date:** 2026-07-25
 **Relates to:** [ADR-036](036-cli-gateway-profiles.md) (supersedes its single-secret assumption), [ADR-046](046-mandatory-local-node.md), [ADR-008](008-remote-communication.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-023](023-runner-agnostic-tui-execution.md) (safety tiers become an authorization axis), [ADR-037](037-prepare-profiles.md), [ADR-040](040-work-graph-orchestration.md)
 
