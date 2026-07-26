@@ -10,7 +10,7 @@
 #   default and is used by example-browser; 4355 is already reserved for another flow).
 #
 # Flags (preferred) or the equivalent env vars:
-#   --slot <id>       resolve --port from that slot's resources.dev-server.cdp_port
+#   --slot <id>       resolve --port from the cdp_port of any of that slot's resources
 #   --pool <dir>      FARMSLOT_POOL_DIR      where --slot looks (default <repo>/pool).
 #                     Fleet configs are machine-local, so a worktree has no fleet of its own —
 #                     point this at the checkout that owns it.
@@ -47,7 +47,9 @@ USAGE
 }
 
 need_value() {
-  [[ -n "${2:-}" && "${2:0:2}" != "--" ]] || {
+  # Reject any leading dash: `--port -h` should report a missing value, not consume
+  # the next flag as one.
+  [[ -n "${2:-}" && "${2:0:1}" != "-" ]] || {
     echo "[debug-chrome] $1 requires a value" >&2; echo "Next: run with --help" >&2; exit 2
   }
 }
@@ -86,7 +88,12 @@ if [[ -f "$FARMSLOT_ROOT/.env.ports" ]]; then
 fi
 POOL_DIR="${ARG_POOL:-${FARMSLOT_POOL_DIR:-$FARMSLOT_ROOT/pool}}"
 if [[ -n "$ARG_SLOT" ]]; then
-  slot_err_file="$(mktemp)"; trap 'rm -f "$slot_err_file"' EXIT
+  slot_err_file="$(mktemp)" || {
+    echo "[debug-chrome] could not create a temporary file to capture slot resolution errors" >&2
+    echo "Next: check TMPDIR is writable, or pass --port explicitly to skip slot resolution." >&2
+    exit 1
+  }
+  trap 'rm -f "$slot_err_file"' EXIT
   slot_port="$(node -e '
     const fs=require("fs"),path=require("path");
     const dir=process.argv[1]; const want=process.argv[2]; let found=false; let unreadable=[];
@@ -119,34 +126,66 @@ fi
 PROFILE="${PROFILE:-$HOME/.chrome-farmslot-$PORT}"
 URL="${ARG_URL:-${FARMSLOT_UI_URL:-http://localhost:${DEFAULT_UI_PORT}/}}"
 
-# Which --user-data-dir is the Chrome on this port actually using? Empty when it
-# cannot be determined; only a positively-identified mismatch is treated as one.
-running_profile_for_port() {
-  # BSD pgrep has no -a, so it prints bare pids and the command line is unavailable.
-  # ps is portable across macOS and Linux.
-  ps -Ao command= 2>/dev/null \
-    | grep -E -- "--remote-debugging-port=${PORT}([^0-9]|$)" \
-    | grep -oE -- "--user-data-dir=[^ ]+" | head -1 | cut -d= -f2- || true
+# Identify the Chrome serving $PORT by pid, not by parsing `ps` output. Chrome only
+# writes DevToolsActivePort when the port is 0, but it always maintains
+# <profile>/SingletonLock, a symlink named <host>-<pid>, for the instance that owns
+# the profile. Comparing that pid to the port's listener is exact: no text parsing,
+# so profile paths containing spaces and multiple Chromes cannot confuse it.
+profile_owner_pid() {
+  local link pid
+  link="$(readlink "$PROFILE/SingletonLock" 2>/dev/null)" || return 1
+  [[ "$link" =~ -([0-9]+)$ ]] || return 1
+  pid="${BASH_REMATCH[1]}"
+  kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s\n' "$pid"
 }
 
+port_listener_pids() {
+  command -v lsof >/dev/null 2>&1 || return 1
+  lsof -t -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null
+}
+
+# Recorded before launching: a live owner that predates our launch is the only
+# unambiguous singleton-handoff conflict. Checking after would match the instance
+# we just started.
+pre_launch_owner="$(profile_owner_pid || true)"
+
 if curl -sf "http://localhost:${PORT}/json/version" >/dev/null 2>&1; then
-  existing_profile="$(running_profile_for_port)"
-  if [[ -n "$existing_profile" && "$existing_profile" != "$PROFILE" ]]; then
-    echo "[debug-chrome] a Chrome is already serving CDP on :${PORT}, but with a different profile" >&2
-    echo "  running: ${existing_profile}" >&2
-    echo "  wanted:  ${PROFILE}" >&2
-    echo "Next: reusing it would drive an unrelated browser. Either pass --profile ${existing_profile}" >&2
-    echo "      to target it deliberately, choose another --port, or stop that instance." >&2
+  owner_pid="$pre_launch_owner"
+  listener_pids="$(port_listener_pids || true)"
+  # Once the listeners are known, anything that is not our profile's owner is
+  # someone else's browser — including the common case where our profile has no
+  # live owner at all. Only an inability to enumerate listeners is truly unknown.
+  identity="unknown"
+  if [[ -n "$listener_pids" ]]; then
+    if [[ -n "$owner_pid" ]] && grep -qx -- "$owner_pid" <<<"$listener_pids"; then
+      identity="ours"
+    else
+      identity="other"
+    fi
+  fi
+
+  if [[ "$identity" == "other" ]]; then
+    echo "[debug-chrome] a browser is already serving CDP on :${PORT} (pid $(tr '\n' ' ' <<<"$listener_pids" | sed 's/ $//'))," >&2
+    echo "  but it does not hold profile ${PROFILE}." >&2
+    echo "Next: reusing it would drive an unrelated browser. Choose another --port, stop that" >&2
+    echo "      instance, or pass the --profile it actually owns to target it deliberately." >&2
     exit 1
   fi
+
   echo "[debug-chrome] CDP already listening on :${PORT} — reusing existing session"
   echo "[debug-chrome] endpoints:  http://localhost:${PORT}/json"
-  if [[ -n "$URL" ]]; then
+  if [[ -n "$URL" && "$identity" == "ours" ]]; then
     url_js="$(node -e 'console.log(JSON.stringify(process.argv[1]))' "$URL")"
     FARMSLOT_CDP_PORT="$PORT" node "$SCRIPT_DIR/cdp.mjs" eval "-" \
       "window.location.href=${url_js}; await new Promise((r) => setTimeout(r, 2000)); true" \
       >/dev/null 2>&1 \
       || echo "[debug-chrome] warn: could not navigate reused session to ${URL}" >&2
+  elif [[ -n "$URL" ]]; then
+    # Navigation is the one destructive act here, so it needs positive identity.
+    echo "[debug-chrome] not navigating to ${URL}: could not confirm this Chrome owns ${PROFILE}" >&2
+    echo "Next: the session above is still usable. Install lsof, or stop the instance and re-run" >&2
+    echo "      so this script launches the browser it drives." >&2
   fi
   exit 0
 fi
@@ -203,11 +242,8 @@ for _ in $(seq 1 "$attempts"); do
 done
 
 echo "[debug-chrome] CDP did not come up on :${PORT} within ${TIMEOUT_SECS}s (profile ${PROFILE})" >&2
-# Only meaningful if a Chrome owns this profile while NOT serving our port — the
-# instance we just launched would otherwise match and be misreported as a conflict.
-if ps -Ao command= 2>/dev/null | grep -qF -- "--user-data-dir=${PROFILE}" \
-  && ! curl -sf "http://localhost:${PORT}/json/version" >/dev/null 2>&1; then
-  echo "Next: a Chrome already owns this profile without serving :${PORT}. Chrome holds a singleton" >&2
+if [[ -n "$pre_launch_owner" ]]; then
+  echo "Next: pid ${pre_launch_owner} already owned this profile before launch. Chrome holds a singleton" >&2
   echo "      lock on --user-data-dir, so this launch handed off to it and exited without binding" >&2
   echo "      the port. Use a different --profile, or stop that instance." >&2
 else
