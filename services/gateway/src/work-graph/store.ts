@@ -950,8 +950,15 @@ async function executeNodeUnlock(
   let existingQueue = getQueueSnapshot().find(
     (item) => item.workGraphId === snapshot.graph.id && item.workNodeId === node.id,
   );
+  // Same rule as syncNodeFromBacklogQueueRuns: a cancelled run is an aborted
+  // dispatch, not work in flight. Counting it as an existing run made unlock
+  // record the action completed and return, so a node reset to ready after a
+  // cancel was never re-enqueued.
   const existingRun = getAllRuns().find(
-    (run) => run.workGraphId === snapshot.graph.id && run.workNodeId === node.id,
+    (run) =>
+      run.workGraphId === snapshot.graph.id &&
+      run.workNodeId === node.id &&
+      run.status !== 'cancelled',
   );
   if (
     existingQueue?.status === 'queued' &&
