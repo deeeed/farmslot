@@ -156,22 +156,28 @@ owner_requested_port() {
   [[ "$cmd " == *"--user-data-dir=${PROFILE} "* ]]
 }
 
-# "<pid> <address>" per listening socket. Non-zero exit means we could not find
-# out, which is different from finding nobody.
+# "<pid> <family> <address>" per listening socket, family being IPv4 or IPv6.
+# The family is not decoration: lsof prints a bare `*:PORT` for a wildcard in
+# EITHER family, so dropping it makes an IPv6-only listener look like it covers
+# IPv4. Non-zero exit means we could not find out, which differs from finding
+# nobody.
 port_listeners() {
   if command -v lsof >/dev/null 2>&1; then
-    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { print $2, $9 }'
+    # COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME — TYPE is the family.
+    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { print $2, $5, $9 }'
     return 0
   fi
   if command -v ss >/dev/null 2>&1; then
     # One socket can list several pids; emit every one against its address rather
-    # than letting a greedy match keep only the last.
+    # than letting a greedy match keep only the last. ss encodes the family in the
+    # address itself.
     ss -ltnpH "sport = :${PORT}" 2>/dev/null |
       awk '{
         addr = $4
+        family = (addr ~ /\[|::/) ? "IPv6" : "IPv4"
         rest = $0
         while (match(rest, /pid=[0-9]+/)) {
-          print substr(rest, RSTART + 4, RLENGTH - 4), addr
+          print substr(rest, RSTART + 4, RLENGTH - 4), family, addr
           rest = substr(rest, RSTART + RLENGTH)
         }
       }'
@@ -186,16 +192,18 @@ port_listeners() {
 # and demand the owner hold that address (or a wildcard covering it), so being
 # merely present among the listeners is not enough.
 owner_holds_endpoint() {
-  local owner="$1" pid addr
-  while read -r pid addr; do
+  local owner="$1" pid family addr host_family
+  host_family="IPv4"
+  [[ "$CDP_HOST" == *:* ]] && host_family="IPv6"
+  while read -r pid family addr; do
     [[ "$pid" == "$owner" ]] || continue
     case "$addr" in
-      "${CDP_HOST}:${PORT}") return 0 ;;
-      "*:${PORT}" | "0.0.0.0:${PORT}")
-        # IPv4 wildcard. It covers an IPv4 CDP_HOST, but an IPv6 one only if the
-        # kernel maps v4 into v6 — not something to assume, so require the family
-        # to match. `[::]` is deliberately absent for the same reason.
-        [[ "$CDP_HOST" == *:* ]] || return 0
+      "${CDP_HOST}:${PORT}" | "[${CDP_HOST}]:${PORT}") return 0 ;;
+      "*:${PORT}" | "0.0.0.0:${PORT}" | "[::]:${PORT}")
+        # A wildcard only covers its own family. Accepting an IPv6 wildcard for an
+        # IPv4 host would assume v4-mapped-into-v6, which is a kernel setting, not
+        # a guarantee — and lsof prints a bare `*:PORT` for either family.
+        [[ "$family" == "$host_family" ]] && return 0
         ;;
     esac
   done
