@@ -164,8 +164,17 @@ port_listeners() {
     return 0
   fi
   if command -v ss >/dev/null 2>&1; then
+    # One socket can list several pids; emit every one against its address rather
+    # than letting a greedy match keep only the last.
     ss -ltnpH "sport = :${PORT}" 2>/dev/null |
-      sed -nE 's/^[^ ]+ +[^ ]+ +[^ ]+ +([^ ]+) .*pid=([0-9]+).*/\2 \1/p'
+      awk '{
+        addr = $4
+        rest = $0
+        while (match(rest, /pid=[0-9]+/)) {
+          print substr(rest, RSTART + 4, RLENGTH - 4), addr
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+      }'
     return 0
   fi
   return 1
@@ -181,7 +190,13 @@ owner_holds_endpoint() {
   while read -r pid addr; do
     [[ "$pid" == "$owner" ]] || continue
     case "$addr" in
-      "${CDP_HOST}:${PORT}" | "*:${PORT}" | "0.0.0.0:${PORT}" | "[::]:${PORT}") return 0 ;;
+      "${CDP_HOST}:${PORT}") return 0 ;;
+      "*:${PORT}" | "0.0.0.0:${PORT}")
+        # IPv4 wildcard. It covers an IPv4 CDP_HOST, but an IPv6 one only if the
+        # kernel maps v4 into v6 — not something to assume, so require the family
+        # to match. `[::]` is deliberately absent for the same reason.
+        [[ "$CDP_HOST" == *:* ]] || return 0
+        ;;
     esac
   done
   return 1
