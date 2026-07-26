@@ -25,7 +25,14 @@ function stripQuotes(value: string): string {
 }
 
 function parseScalar(raw: string): string | number | boolean {
-  const value = stripQuotes(raw.trim());
+  const trimmed = raw.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return stripQuotes(trimmed);
+  }
+  const value = stripQuotes(trimmed);
   if (value === 'true') return true;
   if (value === 'false') return false;
   if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);

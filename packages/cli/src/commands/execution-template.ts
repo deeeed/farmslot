@@ -159,8 +159,11 @@ function formatListHuman(entries: ExecutionTemplateEntry[]): string {
     const platforms = entry.platforms.join(',');
     const shadow = entry.shadowedBy ? ` ${yellow(`(shadowed by ${entry.shadowedBy})`)}` : '';
     lines.push(
-      `${entry.id}\t${entry.flow}\t${mode}\t${platforms}\t${entry.sourceId}\t${entry.path}${shadow}${entry.description ? `\t${dim(entry.description.replace(/\s+/g, ' ').trim())}` : ''}`,
+      `${entry.id}\t${entry.flow}\t${mode}\t${platforms}\t${entry.sourceId}\t${entry.path}${shadow}`,
     );
+    if (entry.description) {
+      lines.push(`  ${dim(entry.description.replace(/\s+/g, ' ').trim())}`);
+    }
   }
   return `${lines.join('\n')}\n`;
 }

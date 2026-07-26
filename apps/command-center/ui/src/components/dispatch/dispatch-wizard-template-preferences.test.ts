@@ -29,33 +29,33 @@ function withStorage(run: () => void): void {
 
 test('dispatch template preferences retain a template per domain and mode', () => {
   withStorage(() => {
-    const project = 'metamask-mobile-farm';
+    const project = 'example-app-farm';
     const flowType: FlowType = 'dev';
     persistDispatchTemplatePreference({
       project,
       flowType,
-      domain: 'perps',
+      domain: 'payments',
       mode: 'interactive',
-      executionTemplateId: 'perps/mobile-interactive',
+      executionTemplateId: 'payments/app-interactive',
     });
     persistDispatchTemplatePreference({
       project,
       flowType,
-      domain: 'perps',
+      domain: 'payments',
       mode: 'autonomous',
-      executionTemplateId: 'perps/mobile-autonomous',
+      executionTemplateId: 'payments/app-autonomous',
     });
 
     const preference = loadDispatchTemplatePreference(project, flowType);
-    assert.equal(preference?.domain, 'perps');
+    assert.equal(preference?.domain, 'payments');
     assert.equal(preference?.mode, 'autonomous');
     assert.equal(
-      selectedExecutionTemplatePreference(preference, 'perps', 'interactive'),
-      'perps/mobile-interactive',
+      selectedExecutionTemplatePreference(preference, 'payments', 'interactive'),
+      'payments/app-interactive',
     );
     assert.equal(
-      selectedExecutionTemplatePreference(preference, 'perps', 'autonomous'),
-      'perps/mobile-autonomous',
+      selectedExecutionTemplatePreference(preference, 'payments', 'autonomous'),
+      'payments/app-autonomous',
     );
   });
 });

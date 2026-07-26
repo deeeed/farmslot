@@ -5,8 +5,6 @@ import type { ExecutionTemplateCatalogOption, TemplatePreview } from '@farmslot/
 
 import { colors, fonts, radii, shadows, spacing } from '../../styles/theme-tokens.js';
 
-import { parseExecutionTemplateOutline } from './execution-template-preview-model.js';
-
 type PreviewView = 'outline' | 'raw';
 
 @customElement('execution-template-preview-modal')
@@ -199,11 +197,6 @@ export class ExecutionTemplatePreviewModal extends LitElement {
       color: ${unsafeCSS(colors.textMuted)};
     }
 
-    .step.checked,
-    .step.checked .checkbox {
-      color: ${unsafeCSS(colors.statusOk)};
-    }
-
     .status,
     .error {
       padding: ${unsafeCSS(spacing.xl)};
@@ -264,7 +257,28 @@ export class ExecutionTemplatePreviewModal extends LitElement {
   }
 
   private readonly _onKeydown = (event: KeyboardEvent): void => {
-    if (this.open && event.key === 'Escape') this._close();
+    if (!this.open) return;
+    if (event.key === 'Escape') {
+      this._close();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = [
+      ...(this.shadowRoot?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      ) ?? []),
+    ];
+    if (focusable.length === 0) return;
+    const active = this.shadowRoot?.activeElement;
+    const first = focusable[0]!;
+    const last = focusable.at(-1)!;
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
   };
 
   private _close(): void {
@@ -276,30 +290,32 @@ export class ExecutionTemplatePreviewModal extends LitElement {
   }
 
   private _renderPreview(preview: TemplatePreview) {
-    const outline = parseExecutionTemplateOutline(preview.rawMarkdown);
+    const { schema } = preview;
     return html`
       <div class="view-bar">
         <div class="summary">
-          ${outline.totalSteps > 0
-            ? `${outline.totalSteps} ${outline.totalSteps === 1 ? 'step' : 'steps'} · ${
-                outline.phases.length
-              } ${outline.phases.length === 1 ? 'phase' : 'phases'}${
-                outline.checkedSteps > 0 ? ` · ${outline.checkedSteps} pre-checked` : ''
-              }`
+          ${schema.totalSteps > 0
+            ? `${schema.totalSteps} ${schema.totalSteps === 1 ? 'step' : 'steps'} · ${
+                schema.phases.length
+              } ${schema.phases.length === 1 ? 'phase' : 'phases'}`
             : 'No checklist steps detected'}
         </div>
         <div class="tabs" role="tablist" aria-label="Template preview format">
           <button
+            id="execution-template-outline-tab"
             class="tab ${this._view === 'outline' ? 'active' : ''}"
             role="tab"
+            aria-controls="execution-template-preview-content"
             aria-selected=${this._view === 'outline'}
             @click=${() => (this._view = 'outline')}
           >
             Outline
           </button>
           <button
+            id="execution-template-raw-tab"
             class="tab ${this._view === 'raw' ? 'active' : ''}"
             role="tab"
+            aria-controls="execution-template-preview-content"
             aria-selected=${this._view === 'raw'}
             @click=${() => (this._view = 'raw')}
           >
@@ -309,33 +325,32 @@ export class ExecutionTemplatePreviewModal extends LitElement {
       </div>
       ${this._view === 'raw'
         ? html`<pre>${preview.rawMarkdown}</pre>`
-        : outline.totalSteps === 0
+        : schema.totalSteps === 0
           ? html`<div class="status">
               This template has no checkbox steps. Use Raw to inspect it.
             </div>`
           : html`
               <div class="outline">
-                ${outline.phases.map(
+                ${schema.phases.map(
                   (phase) => html`
                     <section class="phase">
                       <div class="phase-head">
-                        <span>${phase.title}</span>
+                        <span>${phase.name}</span>
                         <span class="phase-count"
                           >${phase.steps.length}
                           ${phase.steps.length === 1 ? 'step' : 'steps'}</span
                         >
                       </div>
                       <div>
-                        ${phase.steps.map(
-                          (step) => html`
-                            <div class="step ${step.checked ? 'checked' : ''}">
-                              <span class="checkbox" aria-hidden="true"
-                                >${step.checked ? '☑' : '☐'}</span
-                              >
-                              <span>${step.text}</span>
+                        ${phase.steps.map((step) => {
+                          const name = step.name.replace(new RegExp(`^${step.index}\\.\\s+`), '');
+                          return html`
+                            <div class="step">
+                              <span class="checkbox" aria-hidden="true">☐</span>
+                              <span>${step.index}. ${name}</span>
                             </div>
-                          `,
-                        )}
+                          `;
+                        })}
                       </div>
                     </section>
                   `,
@@ -381,7 +396,15 @@ export class ExecutionTemplatePreviewModal extends LitElement {
               ×
             </button>
           </div>
-          <div class="body" tabindex="0" aria-label="Execution template source">
+          <div
+            id="execution-template-preview-content"
+            class="body"
+            role="tabpanel"
+            tabindex="0"
+            aria-labelledby=${this._view === 'outline'
+              ? 'execution-template-outline-tab'
+              : 'execution-template-raw-tab'}
+          >
             ${this.loading
               ? html`<div class="status">Loading exact template…</div>`
               : this.error

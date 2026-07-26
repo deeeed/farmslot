@@ -104,7 +104,7 @@ interface DispatchWizardViewContext {
   setApp: (app: string) => void;
   setTaskTemplateFileName: (fileName: string) => void;
   setExecutionTemplateId: (id: string) => void;
-  previewExecutionTemplate: (option: ExecutionTemplateCatalogOption) => void;
+  previewExecutionTemplate: (option: ExecutionTemplateCatalogOption, trigger?: HTMLElement) => void;
   setDomain: (domain: string) => void;
   setMode: (mode: 'interactive' | 'autonomous') => void;
   setRunner: (runner: string) => void;
@@ -304,6 +304,9 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
   }
   if (ctx.executionTemplates) {
     const domains = ctx.executionTemplates.availableDomains;
+    const runWhenReady = (action: () => void): void => {
+      if (!ctx.templateOptionsLoading) action();
+    };
     return html`<div
       class="template-selector-region ${ctx.templateOptionsLoading ? 'refreshing' : ''}"
       aria-busy=${ctx.templateOptionsLoading ? 'true' : 'false'}
@@ -315,8 +318,8 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
               <div class="pill-row">
                 <button
                   class="pill ${ctx.domain === '' ? 'selected' : ''}"
-                  ?disabled=${ctx.templateOptionsLoading}
-                  @click=${() => ctx.setDomain('')}
+                  aria-disabled=${ctx.templateOptionsLoading}
+                  @click=${() => runWhenReady(() => ctx.setDomain(''))}
                 >
                   general
                 </button>
@@ -324,8 +327,8 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
                   (domain) => html`
                     <button
                       class="pill ${ctx.domain === domain ? 'selected' : ''}"
-                      ?disabled=${ctx.templateOptionsLoading}
-                      @click=${() => ctx.setDomain(domain)}
+                      aria-disabled=${ctx.templateOptionsLoading}
+                      @click=${() => runWhenReady(() => ctx.setDomain(domain))}
                     >
                       ${domain}
                     </button>
@@ -342,8 +345,8 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
             (mode) => html`
               <button
                 class="pill ${ctx.mode === mode ? 'selected' : ''}"
-                ?disabled=${ctx.templateOptionsLoading}
-                @click=${() => ctx.setMode(mode)}
+                aria-disabled=${ctx.templateOptionsLoading}
+                @click=${() => runWhenReady(() => ctx.setMode(mode))}
               >
                 ${mode}
               </button>
@@ -364,8 +367,8 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
                         ? 'selected'
                         : ''}"
                       title=${`${option.id} · ${option.sourceId} · ${option.sha256.slice(0, 12)}`}
-                      ?disabled=${ctx.templateOptionsLoading}
-                      @click=${() => ctx.setExecutionTemplateId(option.id)}
+                      aria-disabled=${ctx.templateOptionsLoading}
+                      @click=${() => runWhenReady(() => ctx.setExecutionTemplateId(option.id))}
                     >
                       ${option.title}
                       ${option.description
@@ -385,8 +388,11 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
                       class="template-preview"
                       title=${`Preview ${option.title}`}
                       aria-label=${`Preview ${option.title}`}
-                      ?disabled=${ctx.templateOptionsLoading}
-                      @click=${() => ctx.previewExecutionTemplate(option)}
+                      aria-disabled=${ctx.templateOptionsLoading}
+                      @click=${(event: MouseEvent) =>
+                        runWhenReady(() =>
+                          ctx.previewExecutionTemplate(option, event.currentTarget as HTMLElement),
+                        )}
                     >
                       <svg
                         aria-hidden="true"
@@ -420,6 +426,9 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
     </div>`;
   }
   if (ctx.templateOptions.length <= 1) return nothing;
+  const setTaskTemplateWhenReady = (fileName: string): void => {
+    if (!ctx.templateOptionsLoading) ctx.setTaskTemplateFileName(fileName);
+  };
   return html`
     <div
       class="config-group ${ctx.templateOptionsLoading ? 'refreshing' : ''}"
@@ -432,8 +441,8 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
             <button
               class="pill ${ctx.selectedTaskTemplateFileName === option.fileName ? 'selected' : ''}"
               title=${option.fileName}
-              ?disabled=${ctx.templateOptionsLoading}
-              @click=${() => ctx.setTaskTemplateFileName(option.fileName)}
+              aria-disabled=${ctx.templateOptionsLoading}
+              @click=${() => setTaskTemplateWhenReady(option.fileName)}
             >
               ${option.isDefault ? 'default' : option.label}
             </button>

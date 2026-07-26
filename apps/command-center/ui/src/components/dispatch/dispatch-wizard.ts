@@ -185,6 +185,7 @@ export class DispatchWizard extends DispatchWizardState {
     if (fleetView.projectAutoSelected) {
       this._project = fleetView.project;
       this._slotOverride = '';
+      this._restoreTemplatePreference();
       this._syncSelectedAppForProject(this._project);
       void this._fetchCandidates(this._project);
     }
@@ -197,6 +198,7 @@ export class DispatchWizard extends DispatchWizardState {
       this._app = '';
       this._candidates = [];
       this._allProjectSlots = [];
+      this._restoreTemplatePreference();
     }
 
     this._allProjectSlots = fleetView.allProjectSlots;
@@ -348,9 +350,12 @@ export class DispatchWizard extends DispatchWizardState {
     }
   }
 
-  private async _previewExecutionTemplate(option: ExecutionTemplateCatalogOption): Promise<void> {
+  private async _previewExecutionTemplate(
+    option: ExecutionTemplateCatalogOption,
+    trigger?: HTMLElement,
+  ): Promise<void> {
     if (!this._project || !this._flowType) return;
-    const activeElement = this.shadowRoot?.activeElement;
+    const activeElement = trigger ?? this.shadowRoot?.activeElement;
     if (
       activeElement instanceof HTMLElement &&
       activeElement.classList.contains('template-preview')
@@ -398,8 +403,13 @@ export class DispatchWizard extends DispatchWizardState {
     );
     if (refreshed) {
       this._executionTemplatePreviewTrigger = trigger;
-      await this._previewExecutionTemplate(refreshed);
+      await this._previewExecutionTemplate(refreshed, trigger ?? undefined);
+      return;
     }
+    this._executionTemplatePreviewOption = previous;
+    this._executionTemplatePreviewTrigger = trigger;
+    this._executionTemplatePreviewError =
+      'This template is no longer available. Close the preview and choose another template.';
   }
 
   private _selectProject(project: string, autoProject = ''): void {
@@ -1176,8 +1186,8 @@ export class DispatchWizard extends DispatchWizardState {
         this._selectedExecutionTemplateId = id;
         this._persistTemplatePreference();
       },
-      previewExecutionTemplate: (option) => {
-        void this._previewExecutionTemplate(option);
+      previewExecutionTemplate: (option, trigger) => {
+        void this._previewExecutionTemplate(option, trigger);
       },
       setDomain: (domain) => {
         this._closeExecutionTemplatePreview(false);

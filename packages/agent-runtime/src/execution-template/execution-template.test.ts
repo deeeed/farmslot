@@ -584,6 +584,19 @@ test('createExecutionTemplate quotes description frontmatter safely', () => {
   });
 });
 
+test('quoted numeric description remains a string', () => {
+  withTemp((root) => {
+    const target = join(root, 'dev', 'autonomous.md');
+    createExecutionTemplate({ path: target, description: '42' });
+
+    assert.equal(lintExecutionTemplates(target).ok, true);
+    assert.equal(
+      listExecutionTemplates({ sources: [customTemplateSource('test', root)] })[0]?.description,
+      '42',
+    );
+  });
+});
+
 test('custom source outranks package source for the same id', () => {
   withTemp((root) => {
     const custom = join(root, 'custom');

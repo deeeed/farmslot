@@ -4,6 +4,8 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 
 export const dispatchWizardStyles = css`
   :host {
+    /* Preserve the three template selector groups while their catalog refreshes. */
+    --template-selector-min-height: 174px;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -55,7 +57,7 @@ export const dispatchWizardStyles = css`
 
   .template-selector-region {
     display: flex;
-    min-height: 174px;
+    min-height: var(--template-selector-min-height);
     flex: 0 0 auto;
     flex-direction: column;
     gap: ${unsafeCSS(spacing.xl)};
@@ -73,7 +75,7 @@ export const dispatchWizardStyles = css`
   }
 
   .template-selector-loading {
-    min-height: 174px;
+    min-height: var(--template-selector-min-height);
     flex: 0 0 auto;
   }
 
@@ -129,8 +131,7 @@ export const dispatchWizardStyles = css`
     outline: none;
   }
 
-  .template-preview:disabled {
-    opacity: 0.45;
+  .template-selector-region [aria-disabled='true'] {
     cursor: wait;
   }
 
