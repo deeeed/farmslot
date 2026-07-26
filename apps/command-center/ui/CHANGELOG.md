@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat: select compatible execution templates by project, flow, mode, platform, and domain in the dispatch wizard.
 - fix: show namespaced runtime evidence when inspecting nodes from a composed recipe dependency.
 - feat: dispatch wizard candidate rows that FIND_SLOT would reject (branch ownership, missing companion resources) render disabled with a NOT ELIGIBLE badge and reason tooltip, are excluded from auto-pick, and suppress nudge/fresh actions (`DispatchCandidate.ineligibleReason`).
 
