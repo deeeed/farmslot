@@ -23,17 +23,44 @@
 
 set -euo pipefail
 
-usage() { sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() {
+  cat <<'USAGE'
+Launch a dedicated Chrome with CDP enabled for Farmslot UI debugging.
+
+Chrome holds a singleton lock on --user-data-dir, so the profile is keyed by port:
+two slots with different CDP ports each get their own profile and can run at once.
+
+  --slot <id>       resolve the port from that slot's cdp_port in the fleet config
+  --pool <dir>      where --slot looks (default <repo>/pool). Fleet configs are
+                    machine-local, so a worktree has no fleet of its own.
+  --port <n>        CDP port (default 9323)
+  --profile <dir>   user-data-dir (default ~/.chrome-farmslot-<port>)
+  --url <url>       page to open
+  --headless        run headless
+  --timeout <secs>  how long to wait for CDP (default 15)
+  --help
+
+Env equivalents: FARMSLOT_CDP_PORT, FARMSLOT_POOL_DIR, FARMSLOT_CDP_PROFILE,
+FARMSLOT_UI_URL, FARMSLOT_CDP_HEADLESS, FARMSLOT_CDP_TIMEOUT, FARMSLOT_CHROME.
+USAGE
+  exit 0
+}
+
+need_value() {
+  [[ -n "${2:-}" && "${2:0:2}" != "--" ]] || {
+    echo "[debug-chrome] $1 requires a value" >&2; echo "Next: run with --help" >&2; exit 2
+  }
+}
 
 ARG_SLOT=""; ARG_POOL=""; ARG_PORT=""; ARG_PROFILE=""; ARG_URL=""; ARG_TIMEOUT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --slot) ARG_SLOT="${2:-}"; shift 2 ;;
-    --pool) ARG_POOL="${2:-}"; shift 2 ;;
-    --port) ARG_PORT="${2:-}"; shift 2 ;;
-    --profile) ARG_PROFILE="${2:-}"; shift 2 ;;
-    --url) ARG_URL="${2:-}"; shift 2 ;;
-    --timeout) ARG_TIMEOUT="${2:-}"; shift 2 ;;
+    --slot) need_value "$1" "${2:-}"; ARG_SLOT="$2"; shift 2 ;;
+    --pool) need_value "$1" "${2:-}"; ARG_POOL="$2"; shift 2 ;;
+    --port) need_value "$1" "${2:-}"; ARG_PORT="$2"; shift 2 ;;
+    --profile) need_value "$1" "${2:-}"; ARG_PROFILE="$2"; shift 2 ;;
+    --url) need_value "$1" "${2:-}"; ARG_URL="$2"; shift 2 ;;
+    --timeout) need_value "$1" "${2:-}"; ARG_TIMEOUT="$2"; shift 2 ;;
     --headless) FARMSLOT_CDP_HEADLESS=1; shift ;;
     -h|--help) usage ;;
     *) echo "[debug-chrome] unknown argument: $1" >&2; echo "Next: run with --help" >&2; exit 2 ;;
@@ -43,6 +70,9 @@ done
 PORT="${ARG_PORT:-${FARMSLOT_CDP_PORT:-9323}}"
 PROFILE="${ARG_PROFILE:-${FARMSLOT_CDP_PROFILE:-}}"
 TIMEOUT_SECS="${ARG_TIMEOUT:-${FARMSLOT_CDP_TIMEOUT:-15}}"
+[[ "$TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]] || {
+  echo "[debug-chrome] --timeout must be a positive integer, got: ${TIMEOUT_SECS}" >&2; exit 2
+}
 CHROME="${FARMSLOT_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 HEADLESS="${FARMSLOT_CDP_HEADLESS:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,28 +86,59 @@ if [[ -f "$FARMSLOT_ROOT/.env.ports" ]]; then
 fi
 POOL_DIR="${ARG_POOL:-${FARMSLOT_POOL_DIR:-$FARMSLOT_ROOT/pool}}"
 if [[ -n "$ARG_SLOT" ]]; then
+  slot_err_file="$(mktemp)"; trap 'rm -f "$slot_err_file"' EXIT
   slot_port="$(node -e '
     const fs=require("fs"),path=require("path");
-    const dir=process.argv[1]; const want=process.argv[2];
+    const dir=process.argv[1]; const want=process.argv[2]; let found=false; let unreadable=[];
     for (const f of fs.readdirSync(dir).filter((n)=>n.endsWith(".json"))) {
-      let d; try { d=JSON.parse(fs.readFileSync(path.join(dir,f),"utf8")); } catch { continue; }
+      let d; try { d=JSON.parse(fs.readFileSync(path.join(dir,f),"utf8")); } catch (e) { unreadable.push(f); continue; }
       for (const s of d.slots ?? []) {
-        if (s.id === want) { const p=s.resources?.["dev-server"]?.cdp_port; if (p) { console.log(p); process.exit(0); } }
+        if (s.id !== want) continue;
+        found = true;
+        // cdp_port may live under any resource group (dev-server, browser, ...).
+        for (const r of Object.values(s.resources ?? {})) {
+          const p = r && typeof r === "object" ? r.cdp_port : undefined;
+          if (p) { console.log(p); process.exit(0); }
+        }
       }
     }
+    if (unreadable.length) console.error("unreadable pool files: " + unreadable.join(", "));
+    console.error(found ? "slot found but no resource declares cdp_port" : "no such slot");
     process.exit(1);
-  ' "$POOL_DIR" "$ARG_SLOT" 2>/dev/null)" || {
-    echo "[debug-chrome] slot '${ARG_SLOT}' not found with a resources.dev-server.cdp_port in ${POOL_DIR}/*.json" >&2
+  ' "$POOL_DIR" "$ARG_SLOT" 2>"$slot_err_file")" || {
+    echo "[debug-chrome] could not resolve --slot '${ARG_SLOT}' in ${POOL_DIR}/*.json: $(tr '\n' '; ' <"$slot_err_file")" >&2
     echo "Next: fleet configs are machine-local, so a worktree has no fleet of its own." >&2
     echo "      Point at the checkout that owns it with --pool <dir>, or pass --port explicitly." >&2
     exit 1
   }
   PORT="$slot_port"
 fi
+[[ "$PORT" =~ ^[1-9][0-9]*$ ]] || {
+  echo "[debug-chrome] --port must be a positive integer, got: ${PORT}" >&2; exit 2
+}
 PROFILE="${PROFILE:-$HOME/.chrome-farmslot-$PORT}"
 URL="${ARG_URL:-${FARMSLOT_UI_URL:-http://localhost:${DEFAULT_UI_PORT}/}}"
 
+# Which --user-data-dir is the Chrome on this port actually using? Empty when it
+# cannot be determined; only a positively-identified mismatch is treated as one.
+running_profile_for_port() {
+  # BSD pgrep has no -a, so it prints bare pids and the command line is unavailable.
+  # ps is portable across macOS and Linux.
+  ps -Ao command= 2>/dev/null \
+    | grep -E -- "--remote-debugging-port=${PORT}([^0-9]|$)" \
+    | grep -oE -- "--user-data-dir=[^ ]+" | head -1 | cut -d= -f2- || true
+}
+
 if curl -sf "http://localhost:${PORT}/json/version" >/dev/null 2>&1; then
+  existing_profile="$(running_profile_for_port)"
+  if [[ -n "$existing_profile" && "$existing_profile" != "$PROFILE" ]]; then
+    echo "[debug-chrome] a Chrome is already serving CDP on :${PORT}, but with a different profile" >&2
+    echo "  running: ${existing_profile}" >&2
+    echo "  wanted:  ${PROFILE}" >&2
+    echo "Next: reusing it would drive an unrelated browser. Either pass --profile ${existing_profile}" >&2
+    echo "      to target it deliberately, choose another --port, or stop that instance." >&2
+    exit 1
+  fi
   echo "[debug-chrome] CDP already listening on :${PORT} — reusing existing session"
   echo "[debug-chrome] endpoints:  http://localhost:${PORT}/json"
   if [[ -n "$URL" ]]; then
@@ -121,7 +182,12 @@ if [[ "$CHROME" == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
   # instance, which can drop the requested CDP port and immediately exit.
   # `open -na` forces a separate app instance for both headed capture and
   # headless validation profiles.
-  open -na "Google Chrome" --args "${CHROME_ARGS[@]}" "$URL" >/dev/null 2>&1
+  launch_err="$(open -na "Google Chrome" --args "${CHROME_ARGS[@]}" "$URL" 2>&1 >/dev/null)" || {
+    echo "[debug-chrome] failed to launch Chrome via 'open -na': ${launch_err:-<no output>}" >&2
+    echo "Next: verify the app at /Applications/Google Chrome.app, or set FARMSLOT_CHROME to a" >&2
+    echo "      binary and re-run so it is launched directly instead." >&2
+    exit 1
+  }
 else
   "$CHROME" "${CHROME_ARGS[@]}" "$URL" >/dev/null 2>&1 &
 fi
@@ -137,10 +203,13 @@ for _ in $(seq 1 "$attempts"); do
 done
 
 echo "[debug-chrome] CDP did not come up on :${PORT} within ${TIMEOUT_SECS}s (profile ${PROFILE})" >&2
-if pgrep -f -- "--user-data-dir=${PROFILE}" >/dev/null 2>&1; then
-  echo "Next: a Chrome already owns this profile. Chrome holds a singleton lock on --user-data-dir," >&2
-  echo "      so a second launch hands off to it and exits without binding the port. Use a different" >&2
-  echo "      --profile, or stop that instance." >&2
+# Only meaningful if a Chrome owns this profile while NOT serving our port — the
+# instance we just launched would otherwise match and be misreported as a conflict.
+if ps -Ao command= 2>/dev/null | grep -qF -- "--user-data-dir=${PROFILE}" \
+  && ! curl -sf "http://localhost:${PORT}/json/version" >/dev/null 2>&1; then
+  echo "Next: a Chrome already owns this profile without serving :${PORT}. Chrome holds a singleton" >&2
+  echo "      lock on --user-data-dir, so this launch handed off to it and exited without binding" >&2
+  echo "      the port. Use a different --profile, or stop that instance." >&2
 else
   echo "Next: raise --timeout if this machine is slow to start Chrome, or run without --headless to" >&2
   echo "      see the launch failure. Verify the binary at: ${CHROME}" >&2
