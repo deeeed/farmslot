@@ -53,11 +53,77 @@ export const dispatchWizardStyles = css`
     line-height: 1.4;
   }
 
+  .template-selector-region {
+    display: flex;
+    min-height: 174px;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: ${unsafeCSS(spacing.xl)};
+    transition: opacity 0.12s ease;
+  }
+
+  .template-selector-region.refreshing {
+    opacity: 0.72;
+  }
+
+  .template-selector-loading {
+    min-height: 174px;
+    flex: 0 0 auto;
+  }
+
   /* ── Pill row (flow, project, model, runner, effort, slot) ── */
   .pill-row {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+  }
+
+  .template-option {
+    display: inline-flex;
+    max-width: 100%;
+    align-items: stretch;
+  }
+
+  .pill.template-select {
+    min-width: 0;
+    border-radius: 4px 0 0 4px;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .pill .pill-description {
+    display: block;
+    max-width: 440px;
+    margin-top: 3px;
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 10px;
+    font-weight: 400;
+    line-height: 1.35;
+  }
+
+  .template-preview {
+    display: inline-grid;
+    width: 34px;
+    flex: 0 0 34px;
+    place-items: center;
+    border: 1px solid #2a2a44;
+    border-left: 0;
+    border-radius: 0 4px 4px 0;
+    background: ${unsafeCSS(colors.bgCard)};
+    color: ${unsafeCSS(colors.textMuted)};
+    cursor: pointer;
+  }
+
+  .template-preview:hover,
+  .template-preview:focus-visible {
+    border-color: ${unsafeCSS(colors.accent)};
+    color: ${unsafeCSS(colors.accent)};
+    outline: none;
+  }
+
+  .template-preview:disabled {
+    opacity: 0.45;
+    cursor: wait;
   }
 
   .pill {

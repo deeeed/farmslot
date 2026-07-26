@@ -175,6 +175,7 @@ test('inferTemplateMetadata prefers frontmatter then filename/heading', () => {
     text: `---
 id: custom-dev-mobile
 title: Custom Dev
+description: Choose for autonomous Mobile feature work.
 runMode: autonomous
 platforms: [mobile]
 version: 2
@@ -187,6 +188,7 @@ version: 2
   });
   assert.equal(meta.id, 'custom-dev-mobile');
   assert.equal(meta.title, 'Custom Dev');
+  assert.equal(meta.description, 'Choose for autonomous Mobile feature work.');
   assert.equal(meta.flow, 'dev');
   assert.equal(meta.version, '2');
   assert.equal(meta.runMode, 'autonomous');
@@ -196,6 +198,7 @@ version: 2
     sha256Text(`---
 id: custom-dev-mobile
 title: Custom Dev
+description: Choose for autonomous Mobile feature work.
 runMode: autonomous
 platforms: [mobile]
 version: 2
@@ -525,6 +528,16 @@ test('lintExecutionTemplates accepts valid checkboxes and rejects fix-ticket / b
     assert.equal(badResult.ok, false);
     assert.ok(badResult.issues.some((i) => /fix-ticket/.test(i.message)));
     assert.ok(badResult.issues.some((i) => /checkbox/.test(i.message)));
+
+    const badDescription = join(root, 'dev-autonomous.mobile.md');
+    writeFileSync(
+      badDescription,
+      '---\ndescription: 42\n---\n\n# Bad description\n\n- [ ] step\n',
+      'utf8',
+    );
+    const badDescriptionResult = lintExecutionTemplates(badDescription);
+    assert.equal(badDescriptionResult.ok, false);
+    assert.ok(badDescriptionResult.issues.some((i) => /description/.test(i.message)));
   });
 });
 
@@ -535,11 +548,16 @@ test('createExecutionTemplate writes lint-clean starter with optional frontmatte
       path: target,
       runMode: 'autonomous',
       platforms: ['mobile'],
+      description: 'Choose when the agent should implement without operator checkpoints.',
     });
     assert.equal(created.created, true);
     const text = readFileSync(target, 'utf8');
     assert.match(text, /runMode: autonomous/);
     assert.match(text, /platforms: \[mobile\]/);
+    assert.match(
+      text,
+      /description: Choose when the agent should implement without operator checkpoints\./,
+    );
     assert.match(text, /- \[ \] Read the task prompt/);
     assert.equal(lintExecutionTemplates(target).ok, true);
   });

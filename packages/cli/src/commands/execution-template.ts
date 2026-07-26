@@ -92,6 +92,7 @@ interface NewOptions {
   runMode?: string;
   platform?: string;
   title?: string;
+  description?: string;
   force?: boolean;
   json?: boolean;
 }
@@ -160,6 +161,7 @@ function formatListHuman(entries: ExecutionTemplateEntry[]): string {
     lines.push(
       `${entry.id}\t${entry.flow}\t${mode}\t${platforms}\t${entry.sourceId}\t${entry.path}${shadow}`,
     );
+    if (entry.description) lines.push(`  ${dim(entry.description)}`);
   }
   return `${lines.join('\n')}\n`;
 }
@@ -172,6 +174,7 @@ function formatCatalogHuman(catalog: ExecutionTemplateOptions): string {
     lines.push(
       `${option.id}${selected}\n` +
         `  ${option.title} · ${option.sourceId} (${option.sourceKind})\n` +
+        `${option.description ? `  ${option.description}\n` : ''}` +
         `  ${option.runMode ?? '*'} · ${option.platforms.join(',')} · ${domain ?? 'general'} · ${option.sha256.slice(0, 12)}`,
     );
   }
@@ -325,6 +328,7 @@ export function registerExecutionTemplateCommand(program: Command): void {
     .option('--run-mode <mode>', 'autonomous|interactive|validation')
     .option('--platform <platform>', 'Single platform for frontmatter (repeat via comma)')
     .option('--title <title>', 'Template title')
+    .option('--description <text>', 'Short guidance for when to select this template')
     .option('--force', 'Overwrite an existing file')
     .action(async (pathArg: string, opts: NewOptions, command: Command) => {
       const output = new OutputContext(Boolean(command.optsWithGlobals().json ?? opts.json));
@@ -342,6 +346,7 @@ export function registerExecutionTemplateCommand(program: Command): void {
           runMode: parseRunMode(opts.runMode),
           platforms,
           title: opts.title,
+          description: opts.description,
           force: Boolean(opts.force),
         });
         if (emit.machine) emit.ok(created);

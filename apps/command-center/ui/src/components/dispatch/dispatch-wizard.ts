@@ -1,7 +1,9 @@
+import { html } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
 import type {
   DispatchCandidatesResult,
+  ExecutionTemplateCatalogOption,
   FlowType,
   PRStatus,
   ReviewRunnerId,
@@ -9,6 +11,8 @@ import type {
   Run,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+
+import './execution-template-preview-modal.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
@@ -55,6 +59,7 @@ import {
   requestDispatchProfileFit,
   requestDispatchProjectMatch,
   requestDispatchWizardCandidates,
+  requestExecutionTemplatePreview,
   requestProjectConfigs,
   requestTemplateOptions,
 } from './dispatch-wizard-loaders.js';
@@ -330,13 +335,43 @@ export class DispatchWizard extends DispatchWizardState {
       if (this._templateOptionsKey === key) this._templateOptionsLoading = false;
     }
   }
+
+  private async _previewExecutionTemplate(option: ExecutionTemplateCatalogOption): Promise<void> {
+    if (!this._project || !this._flowType) return;
+    const generation = ++this._executionTemplatePreviewGeneration;
+    this._executionTemplatePreviewOption = option;
+    this._executionTemplatePreview = null;
+    this._executionTemplatePreviewError = '';
+    this._executionTemplatePreviewLoading = true;
+    try {
+      const result = await requestExecutionTemplatePreview(this._project, this._flowType, option);
+      if (this._executionTemplatePreviewGeneration !== generation) return;
+      this._executionTemplatePreview = result.template;
+    } catch (error) {
+      if (this._executionTemplatePreviewGeneration !== generation) return;
+      this._executionTemplatePreviewError =
+        error instanceof Error ? error.message : 'Template preview failed to load';
+    } finally {
+      if (this._executionTemplatePreviewGeneration === generation) {
+        this._executionTemplatePreviewLoading = false;
+      }
+    }
+  }
+
+  private _closeExecutionTemplatePreview(): void {
+    this._executionTemplatePreviewGeneration += 1;
+    this._executionTemplatePreviewOption = null;
+    this._executionTemplatePreview = null;
+    this._executionTemplatePreviewLoading = false;
+    this._executionTemplatePreviewError = '';
+  }
+
   private _selectProject(project: string, autoProject = ''): void {
     this._project = project;
     this._autoProject = autoProject;
     this._slotOverride = '';
     this._domain = '';
     this._selectedExecutionTemplateId = '';
-    this._executionTemplates = null;
     this._prepareProfile = '';
     this._syncSelectedAppForProject(project);
     this._syncFleet(getState());
@@ -908,7 +943,6 @@ export class DispatchWizard extends DispatchWizardState {
   private _selectFlowType(flowType: FlowType): void {
     this._assignFlowType(flowType);
     this._selectedExecutionTemplateId = '';
-    this._executionTemplates = null;
     this._autoFlowType = false;
     void this._fetchTemplateOptions();
   }
@@ -973,7 +1007,7 @@ export class DispatchWizard extends DispatchWizardState {
           this._templateOptions,
           this._selectedTaskTemplateFileName,
         );
-    return renderDispatchWizardView({
+    const view = renderDispatchWizardView({
       hydrating: this._hydrating,
       bootstrapFailed: this._bootstrapFailed,
       connectionStale: this._connectionStale,
@@ -1062,6 +1096,9 @@ export class DispatchWizard extends DispatchWizardState {
       setExecutionTemplateId: (id) => {
         this._selectedExecutionTemplateId = id;
       },
+      previewExecutionTemplate: (option) => {
+        void this._previewExecutionTemplate(option);
+      },
       setDomain: (domain) => {
         this._domain = domain;
         this._selectedExecutionTemplateId = '';
@@ -1144,6 +1181,17 @@ export class DispatchWizard extends DispatchWizardState {
       addToQueue: () => this._addToQueue(),
       cancelConflictingRun: () => this._cancelConflictingRun(),
     });
+    return html`
+      ${view}
+      <execution-template-preview-modal
+        .open=${this._executionTemplatePreviewOption !== null}
+        .option=${this._executionTemplatePreviewOption}
+        .preview=${this._executionTemplatePreview}
+        .loading=${this._executionTemplatePreviewLoading}
+        .error=${this._executionTemplatePreviewError}
+        @preview-close=${() => this._closeExecutionTemplatePreview()}
+      ></execution-template-preview-modal>
+    `;
   }
 }
 

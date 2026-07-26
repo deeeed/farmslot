@@ -35,6 +35,7 @@ export interface ExecutionTemplateSource {
 export interface ExecutionTemplateFrontmatter {
   id?: string;
   title?: string;
+  description?: string;
   flow?: string;
   version?: string | number;
   runMode?: ExecutionRunMode;
@@ -46,6 +47,7 @@ export interface ExecutionTemplateFrontmatter {
 export interface ExecutionTemplateEntry {
   id: string;
   title: string;
+  description?: string;
   flow: string;
   version: string;
   runMode: ExecutionRunMode | null;
@@ -136,5 +138,6 @@ export interface CreateExecutionTemplateOptions {
   runMode?: ExecutionRunMode;
   platforms?: string[];
   title?: string;
+  description?: string;
   force?: boolean;
 }

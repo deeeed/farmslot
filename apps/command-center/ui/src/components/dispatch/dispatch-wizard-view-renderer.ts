@@ -3,6 +3,7 @@ import { html, nothing } from 'lit';
 import type {
   DevInteractiveProfile,
   DispatchCandidatesResult,
+  ExecutionTemplateCatalogOption,
   ExecutionTemplateOptions,
   FlowType,
   ProfileFitSuggestion,
@@ -103,6 +104,7 @@ interface DispatchWizardViewContext {
   setApp: (app: string) => void;
   setTaskTemplateFileName: (fileName: string) => void;
   setExecutionTemplateId: (id: string) => void;
+  previewExecutionTemplate: (option: ExecutionTemplateCatalogOption) => void;
   setDomain: (domain: string) => void;
   setMode: (mode: 'interactive' | 'autonomous') => void;
   setRunner: (runner: string) => void;
@@ -288,8 +290,8 @@ function renderRehydratingBanner(ctx: DispatchWizardViewContext) {
 
 function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
   if (!ctx.project || !ctx.flowType) return nothing;
-  if (ctx.templateOptionsLoading) {
-    return html`<div class="config-group">
+  if (ctx.templateOptionsLoading && !ctx.executionTemplates && ctx.templateOptions.length === 0) {
+    return html`<div class="config-group template-selector-loading" aria-busy="true">
       <div class="section-label">Task template</div>
       <div class="section-help">Loading template versions...</div>
     </div>`;
@@ -302,7 +304,10 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
   }
   if (ctx.executionTemplates) {
     const domains = ctx.executionTemplates.availableDomains;
-    return html`
+    return html`<div
+      class="template-selector-region ${ctx.templateOptionsLoading ? 'refreshing' : ''}"
+      aria-busy=${ctx.templateOptionsLoading ? 'true' : 'false'}
+    >
       ${domains.length > 0
         ? html`
             <div class="config-group">
@@ -310,6 +315,7 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
               <div class="pill-row">
                 <button
                   class="pill ${ctx.domain === '' ? 'selected' : ''}"
+                  ?disabled=${ctx.templateOptionsLoading}
                   @click=${() => ctx.setDomain('')}
                 >
                   general
@@ -318,6 +324,7 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
                   (domain) => html`
                     <button
                       class="pill ${ctx.domain === domain ? 'selected' : ''}"
+                      ?disabled=${ctx.templateOptionsLoading}
                       @click=${() => ctx.setDomain(domain)}
                     >
                       ${domain}
@@ -335,6 +342,7 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
             (mode) => html`
               <button
                 class="pill ${ctx.mode === mode ? 'selected' : ''}"
+                ?disabled=${ctx.templateOptionsLoading}
                 @click=${() => ctx.setMode(mode)}
               >
                 ${mode}
@@ -350,20 +358,50 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
             ? html`<span class="section-help">No compatible execution template.</span>`
             : ctx.executionTemplates.options.map(
                 (option) => html`
-                  <button
-                    class="pill ${ctx.selectedExecutionTemplateId === option.id ? 'selected' : ''}"
-                    title=${`${option.id} · ${option.sourceId} · ${option.sha256.slice(0, 12)}`}
-                    @click=${() => ctx.setExecutionTemplateId(option.id)}
-                  >
-                    ${option.title}
-                    <span class="pill-key">
-                      ${option.sourceId} · ${option.platforms.join('/')} ·
-                      ${option.runMode ?? 'any mode'}
-                      ${option.labels
-                        .filter((label) => label.startsWith(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX))
-                        .map((label) => ` · ${label}`)}
-                    </span>
-                  </button>
+                  <div class="template-option">
+                    <button
+                      class="pill template-select ${ctx.selectedExecutionTemplateId === option.id
+                        ? 'selected'
+                        : ''}"
+                      title=${`${option.id} · ${option.sourceId} · ${option.sha256.slice(0, 12)}`}
+                      ?disabled=${ctx.templateOptionsLoading}
+                      @click=${() => ctx.setExecutionTemplateId(option.id)}
+                    >
+                      ${option.title}
+                      ${option.description
+                        ? html`<span class="pill-description">${option.description}</span>`
+                        : nothing}
+                      <span class="pill-key">
+                        ${option.sourceId} · ${option.platforms.join('/')} ·
+                        ${option.runMode ?? 'any mode'}
+                        ${option.labels
+                          .filter((label) =>
+                            label.startsWith(EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX),
+                          )
+                          .map((label) => ` · ${label}`)}
+                      </span>
+                    </button>
+                    <button
+                      class="template-preview"
+                      title=${`Preview ${option.title}`}
+                      aria-label=${`Preview ${option.title}`}
+                      ?disabled=${ctx.templateOptionsLoading}
+                      @click=${() => ctx.previewExecutionTemplate(option)}
+                    >
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                      >
+                        <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path>
+                        <circle cx="12" cy="12" r="2.8"></circle>
+                      </svg>
+                    </button>
+                  </div>
                 `,
               )}
         </div>
@@ -379,11 +417,14 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
             : ''}
         </div>
       </div>
-    `;
+    </div>`;
   }
   if (ctx.templateOptions.length <= 1) return nothing;
   return html`
-    <div class="config-group">
+    <div
+      class="config-group ${ctx.templateOptionsLoading ? 'refreshing' : ''}"
+      aria-busy=${ctx.templateOptionsLoading ? 'true' : 'false'}
+    >
       <div class="section-label">Task template</div>
       <div class="pill-row">
         ${ctx.templateOptions.map(
@@ -391,6 +432,7 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
             <button
               class="pill ${ctx.selectedTaskTemplateFileName === option.fileName ? 'selected' : ''}"
               title=${option.fileName}
+              ?disabled=${ctx.templateOptionsLoading}
               @click=${() => ctx.setTaskTemplateFileName(option.fileName)}
             >
               ${option.isDefault ? 'default' : option.label}

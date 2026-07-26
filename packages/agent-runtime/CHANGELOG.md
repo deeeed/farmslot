@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Surface optional execution-template descriptions for selection guidance.
+
 ## 0.4.0 - 2026-07-26
 
 - Add the shared execution-template catalog, selection, snapshot, and CLI boundary.

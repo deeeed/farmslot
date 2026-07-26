@@ -129,6 +129,16 @@ export function lintExecutionTemplateText(filePath: string, text: string): LintI
         message: 'frontmatter flow must be a string',
       });
     }
+    if (
+      frontmatter.description != null &&
+      (typeof frontmatter.description !== 'string' || !frontmatter.description.trim())
+    ) {
+      issues.push({
+        path: filePath,
+        severity: 'error',
+        message: 'frontmatter description must be a non-empty string',
+      });
+    }
   }
 
   const lines = body.split(/\r?\n/);

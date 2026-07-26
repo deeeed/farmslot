@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- Show optional execution-template descriptions and accept them when creating templates.
+
 - feat: inspect execution-template options and dispatch runs with an exact template id.
 - Validate retained traces against their recipes and artifact attribution.
 - **BREAKING:** Recipe validate/run uses the static recipe dependency graph and exact resolution evidence; direct runs accept typed `key=value` parameters.

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: carry optional execution-template descriptions and let `config.templatePreview` identify an exact source-backed template.
+
 ## 0.13.0 - 2026-07-26
 
 - Add portable execution-template selection and provenance contracts.
