@@ -69,15 +69,26 @@ function activeStatusForReplayStep(stepName: string): RunStatus {
 // comparison rows are deliberately built with the baseline's workGraphId and
 // workNodeId, so a graph/node match can select a sibling candidate's work.
 // Removing that row would delete required comparison work, and the candidate
-// projection keeps the dead queue id so it never rematerializes. The candidate
-// identity is what distinguishes them; plain runs have none on either side.
+// projection keeps the dead queue id so it never rematerializes.
+//
+// Candidate ids are scoped to their plan — see `launchCandidateKey`, which keys
+// on [backlogItemId, launchPlanId, candidateId]. A replacement plan may reuse a
+// candidate id, so the plan must match too, or replaying a run from a superseded
+// plan would delete the current plan's work. Plain runs have none of these on
+// either side.
 function isReplacementFor(
-  item: { workGraphId?: string; workNodeId?: string; launchCandidateId?: string },
+  item: {
+    workGraphId?: string;
+    workNodeId?: string;
+    launchPlanId?: string;
+    launchCandidateId?: string;
+  },
   run: NonNullable<ReturnType<typeof getRun>>,
 ): boolean {
   return (
     item.workGraphId === run.workGraphId &&
     item.workNodeId === run.workNodeId &&
+    item.launchPlanId === run.launchPlanId &&
     item.launchCandidateId === run.launchCandidateId
   );
 }

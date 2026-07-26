@@ -282,6 +282,68 @@ test('replay does not reclaim a sibling launch-plan candidate sharing the node',
   );
 });
 
+test('replay does not reclaim a replacement plan reusing the same candidate id', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4106',
+    prNumber: 4106,
+    workGraphId: 'wg_replay_plan',
+    workNodeId: 'wn_replay_plan',
+    launchPlanId: 'lp_superseded',
+    launchCandidateId: 'cand_shared',
+  });
+  const doneBeforeCiWatch = new Set([
+    'write-task',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+    'finalize',
+  ]);
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    steps: run.steps.map((step) =>
+      step.name === 'ci-watch'
+        ? { ...step, status: 'skipped', completedAt: new Date().toISOString() }
+        : doneBeforeCiWatch.has(step.name)
+          ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+
+  // Candidate ids are scoped to their plan (launchCandidateKey keys on
+  // [backlogItemId, launchPlanId, candidateId]), so a replacement plan may reuse
+  // one. This row belongs to the CURRENT plan and must not be taken by a run from
+  // the superseded plan — the current plan would keep a dead queue id, and the
+  // revived run's observations are rejected as foreign-plan.
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4106',
+    workGraphId: 'wg_replay_plan',
+    workNodeId: 'wn_replay_plan',
+    launchPlanId: 'lp_current',
+    launchCandidateId: 'cand_shared',
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+  );
+  assert.ok(
+    getQueueSnapshot().some((item) => item.launchPlanId === 'lp_current'),
+    "the current plan's work must survive a replay from the superseded plan",
+  );
+});
+
 test('runReplayStep rejects monitor replay when dispatch is still running', async (t) => {
   const run = createRun({
     flowType: 'dev',
