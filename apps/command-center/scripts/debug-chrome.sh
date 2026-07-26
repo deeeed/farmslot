@@ -145,7 +145,9 @@ profile_owner_pid() {
 # and /p/profile cannot satisfy /p/profile2.
 owner_serves_port() {
   local cmd
-  cmd="$(ps -p "$1" -o command= 2>/dev/null)" || return 1
+  # -ww: never truncate argv to terminal width, or the flags we match on could be
+  # cut off and a browser that is ours would be refused.
+  cmd="$(ps -ww -p "$1" -o command= 2>/dev/null)" || return 1
   [[ -n "$cmd" ]] || return 1
   [[ "$cmd " == *"--remote-debugging-port=${PORT} "* ]] || return 1
   [[ "$cmd " == *"--user-data-dir=${PROFILE} "* ]]
