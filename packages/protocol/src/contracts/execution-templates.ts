@@ -68,8 +68,9 @@ export type ExecutionTemplateSourceKind =
 
 export interface ExecutionTemplateCatalogOption extends ExecutionTemplateReference {
   title: string;
+  /** Short guidance explaining when an operator should select this template. */
+  description?: string;
   sourceKind: ExecutionTemplateSourceKind;
-  shadowedBy?: string;
 }
 
 export interface UnavailableExecutionTemplateSource {

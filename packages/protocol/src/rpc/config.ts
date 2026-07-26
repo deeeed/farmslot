@@ -68,6 +68,9 @@ export interface ConfigTemplatesResult {
 export interface ConfigTemplatePreviewParams {
   project: string;
   flowType: string;
+  executionTemplateId?: string;
+  executionTemplateSourceId?: string;
+  executionTemplateSha256?: string;
 }
 
 export interface ConfigTemplatePreviewResult {

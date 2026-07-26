@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **BREAKING:** carry optional execution-template descriptions, keep catalog options effective-only (removing unused `shadowedBy`), and let `config.templatePreview` identify an exact source-backed template.
+
 ## 0.13.0 - 2026-07-26
 
 - Add portable execution-template selection and provenance contracts.

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(gateway): expose template selection guidance and preview a catalog template only when its source id and digest still match.
 - feat(gateway): snapshot source-aware execution templates at dispatch and revalidate them before task materialization.
 - Validate remote retained traces against their recipes and artifact attribution.
 - Open a detached `devserver-log` tmux window during prepare, replace it idempotently on re-prepare, and close it on slot release.
