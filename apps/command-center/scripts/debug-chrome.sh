@@ -126,11 +126,9 @@ fi
 PROFILE="${PROFILE:-$HOME/.chrome-farmslot-$PORT}"
 URL="${ARG_URL:-${FARMSLOT_UI_URL:-http://localhost:${DEFAULT_UI_PORT}/}}"
 
-# Identify the Chrome serving $PORT by pid, not by parsing `ps` output. Chrome only
-# writes DevToolsActivePort when the port is 0, but it always maintains
-# <profile>/SingletonLock, a symlink named <host>-<pid>, for the instance that owns
-# the profile. Comparing that pid to the port's listener is exact: no text parsing,
-# so profile paths containing spaces and multiple Chromes cannot confuse it.
+# Chrome only writes DevToolsActivePort when the requested port is 0, but it always
+# maintains <profile>/SingletonLock, a symlink named <host>-<pid>, for the instance
+# owning that profile. That gives us one authoritative pid to ask about.
 profile_owner_pid() {
   local link pid
   link="$(readlink "$PROFILE/SingletonLock" 2>/dev/null)" || return 1
@@ -140,52 +138,44 @@ profile_owner_pid() {
   printf '%s\n' "$pid"
 }
 
-port_listener_pids() {
-  command -v lsof >/dev/null 2>&1 || return 1
-  lsof -t -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null
+# Does that pid hold our profile AND serve our port? Reading one known pid's argv
+# cannot select the wrong process the way scanning for a pattern could, and a stale
+# lock naming a recycled or non-Chrome pid simply fails both tests. The trailing
+# space makes each match end at an argument boundary, so :9399 cannot satisfy :93990
+# and /p/profile cannot satisfy /p/profile2.
+owner_serves_port() {
+  local cmd
+  cmd="$(ps -p "$1" -o command= 2>/dev/null)" || return 1
+  [[ -n "$cmd" ]] || return 1
+  [[ "$cmd " == *"--remote-debugging-port=${PORT} "* ]] || return 1
+  [[ "$cmd " == *"--user-data-dir=${PROFILE} "* ]]
 }
 
-# Recorded before launching: a live owner that predates our launch is the only
-# unambiguous singleton-handoff conflict. Checking after would match the instance
-# we just started.
+# Recorded before launching: only an owner that predates our launch can be the
+# instance this launch handed off to. Checking after would match what we started.
 pre_launch_owner="$(profile_owner_pid || true)"
 
 if curl -sf "http://localhost:${PORT}/json/version" >/dev/null 2>&1; then
-  owner_pid="$pre_launch_owner"
-  listener_pids="$(port_listener_pids || true)"
-  # Once the listeners are known, anything that is not our profile's owner is
-  # someone else's browser — including the common case where our profile has no
-  # live owner at all. Only an inability to enumerate listeners is truly unknown.
-  identity="unknown"
-  if [[ -n "$listener_pids" ]]; then
-    if [[ -n "$owner_pid" ]] && grep -qx -- "$owner_pid" <<<"$listener_pids"; then
-      identity="ours"
-    else
-      identity="other"
-    fi
-  fi
-
-  if [[ "$identity" == "other" ]]; then
-    echo "[debug-chrome] a browser is already serving CDP on :${PORT} (pid $(tr '\n' ' ' <<<"$listener_pids" | sed 's/ $//'))," >&2
-    echo "  but it does not hold profile ${PROFILE}." >&2
+  # Identity is deliberately binary. Something is serving this port; unless the
+  # process holding our profile is demonstrably that server, it is someone else's
+  # browser and we must not hand the caller a success it will chain CDP onto.
+  owner_pid="$(profile_owner_pid || true)"
+  if [[ -z "$owner_pid" ]] || ! owner_serves_port "$owner_pid"; then
+    echo "[debug-chrome] a browser is already serving CDP on :${PORT}, but it is not the Chrome" >&2
+    echo "  holding profile ${PROFILE}." >&2
     echo "Next: reusing it would drive an unrelated browser. Choose another --port, stop that" >&2
     echo "      instance, or pass the --profile it actually owns to target it deliberately." >&2
     exit 1
   fi
 
-  echo "[debug-chrome] CDP already listening on :${PORT} — reusing existing session"
+  echo "[debug-chrome] CDP already listening on :${PORT} — reusing existing session (pid ${owner_pid})"
   echo "[debug-chrome] endpoints:  http://localhost:${PORT}/json"
-  if [[ -n "$URL" && "$identity" == "ours" ]]; then
+  if [[ -n "$URL" ]]; then
     url_js="$(node -e 'console.log(JSON.stringify(process.argv[1]))' "$URL")"
     FARMSLOT_CDP_PORT="$PORT" node "$SCRIPT_DIR/cdp.mjs" eval "-" \
       "window.location.href=${url_js}; await new Promise((r) => setTimeout(r, 2000)); true" \
       >/dev/null 2>&1 \
       || echo "[debug-chrome] warn: could not navigate reused session to ${URL}" >&2
-  elif [[ -n "$URL" ]]; then
-    # Navigation is the one destructive act here, so it needs positive identity.
-    echo "[debug-chrome] not navigating to ${URL}: could not confirm this Chrome owns ${PROFILE}" >&2
-    echo "Next: the session above is still usable. Install lsof, or stop the instance and re-run" >&2
-    echo "      so this script launches the browser it drives." >&2
   fi
   exit 0
 fi
@@ -242,10 +232,14 @@ for _ in $(seq 1 "$attempts"); do
 done
 
 echo "[debug-chrome] CDP did not come up on :${PORT} within ${TIMEOUT_SECS}s (profile ${PROFILE})" >&2
-if [[ -n "$pre_launch_owner" ]]; then
-  echo "Next: pid ${pre_launch_owner} already owned this profile before launch. Chrome holds a singleton" >&2
-  echo "      lock on --user-data-dir, so this launch handed off to it and exited without binding" >&2
-  echo "      the port. Use a different --profile, or stop that instance." >&2
+# Report the handoff only when the same owner both predated the launch and is still
+# running: that is what is actually observable. Claiming causation from a single
+# pre-launch snapshot would assert more than the evidence supports.
+if [[ -n "$pre_launch_owner" ]] && kill -0 "$pre_launch_owner" 2>/dev/null; then
+  echo "Next: pid ${pre_launch_owner} held this profile before the launch and is still running." >&2
+  echo "      Chrome holds a singleton lock on --user-data-dir, so a launch against an owned" >&2
+  echo "      profile hands off to that instance and exits without binding the port." >&2
+  echo "      Use a different --profile, or stop that instance." >&2
 else
   echo "Next: raise --timeout if this machine is slow to start Chrome, or run without --headless to" >&2
   echo "      see the launch failure. Verify the binary at: ${CHROME}" >&2
