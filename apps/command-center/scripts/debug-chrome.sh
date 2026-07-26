@@ -125,6 +125,10 @@ fi
 }
 PROFILE="${PROFILE:-$HOME/.chrome-farmslot-$PORT}"
 URL="${ARG_URL:-${FARMSLOT_UI_URL:-http://localhost:${DEFAULT_UI_PORT}/}}"
+# Probe, verify, and advertise one explicit address. "localhost" may resolve to
+# ::1 while a different process holds 127.0.0.1 on the same port, which would let
+# us verify one socket and then talk to another.
+CDP_HOST="${FARMSLOT_CDP_HOST:-127.0.0.1}"
 
 # Chrome only writes DevToolsActivePort when the requested port is 0, but it always
 # maintains <profile>/SingletonLock, a symlink named <host>-<pid>, for the instance
@@ -138,12 +142,11 @@ profile_owner_pid() {
   printf '%s\n' "$pid"
 }
 
-# Does that pid hold our profile AND serve our port? Reading one known pid's argv
-# cannot select the wrong process the way scanning for a pattern could, and a stale
-# lock naming a recycled or non-Chrome pid simply fails both tests. The trailing
-# space makes each match end at an argument boundary, so :9399 cannot satisfy :93990
-# and /p/profile cannot satisfy /p/profile2.
-owner_serves_port() {
+# Was that pid asked for our profile and our port? The trailing space makes each
+# match end at an argument boundary, so :9399 cannot satisfy :93990 and /p/profile
+# cannot satisfy /p/profile2. Reading one known pid's argv cannot select the wrong
+# process the way scanning for a pattern could.
+owner_requested_port() {
   local cmd
   # -ww: never truncate argv to terminal width, or the flags we match on could be
   # cut off and a browser that is ours would be refused.
@@ -153,25 +156,81 @@ owner_serves_port() {
   [[ "$cmd " == *"--user-data-dir=${PROFILE} "* ]]
 }
 
+# "<pid> <address>" per listening socket. Non-zero exit means we could not find
+# out, which is different from finding nobody.
+port_listeners() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { print $2, $9 }'
+    return 0
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnpH "sport = :${PORT}" 2>/dev/null |
+      sed -nE 's/^[^ ]+ +[^ ]+ +[^ ]+ +([^ ]+) .*pid=([0-9]+).*/\2 \1/p'
+    return 0
+  fi
+  return 1
+}
+
+# Does this pid hold the socket we will actually connect to? A dual-stack split is
+# real: another process can own 127.0.0.1:PORT while ours owns [::1]:PORT, and which
+# one answers "localhost" is resolution order. We connect to $CDP_HOST explicitly
+# and demand the owner hold that address (or a wildcard covering it), so being
+# merely present among the listeners is not enough.
+owner_holds_endpoint() {
+  local owner="$1" pid addr
+  while read -r pid addr; do
+    [[ "$pid" == "$owner" ]] || continue
+    case "$addr" in
+      "${CDP_HOST}:${PORT}" | "*:${PORT}" | "0.0.0.0:${PORT}" | "[::]:${PORT}") return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# ours | foreign | unverifiable
+#
+# argv is a request, not a claim: Chrome keeps --remote-debugging-port in its
+# command line even when the port was already taken and it never bound. So the
+# process holding our profile must ALSO own the listening socket before we are
+# entitled to drive the endpoint. Anything we cannot demonstrate is not ours.
+identify_port_owner() {
+  local owner listeners
+  owner="$(profile_owner_pid || true)"
+  [[ -n "$owner" ]] && owner_requested_port "$owner" || { printf 'foreign\n'; return; }
+  listeners="$(port_listeners)" || { printf 'unverifiable\n'; return; }
+  [[ -n "$listeners" ]] || { printf 'unverifiable\n'; return; }
+  if owner_holds_endpoint "$owner" <<<"$listeners"; then printf 'ours\n'; else printf 'foreign\n'; fi
+}
+
 # Recorded before launching: only an owner that predates our launch can be the
 # instance this launch handed off to. Checking after would match what we started.
 pre_launch_owner="$(profile_owner_pid || true)"
 
-if curl -sf "http://localhost:${PORT}/json/version" >/dev/null 2>&1; then
-  # Identity is deliberately binary. Something is serving this port; unless the
-  # process holding our profile is demonstrably that server, it is someone else's
-  # browser and we must not hand the caller a success it will chain CDP onto.
+if curl -sf "http://${CDP_HOST}:${PORT}/json/version" >/dev/null 2>&1; then
+  # Something is serving this port. Unless the process holding our profile is
+  # demonstrably that server, we must not hand the caller a success it will chain
+  # CDP commands onto.
+  case "$(identify_port_owner)" in
+    foreign)
+      echo "[debug-chrome] a browser is already serving CDP on :${PORT}, but it is not the Chrome" >&2
+      echo "  holding profile ${PROFILE}." >&2
+      echo "Next: reusing it would drive an unrelated browser. Choose another --port, stop that" >&2
+      echo "      instance, or pass the --profile it actually owns to target it deliberately." >&2
+      exit 1
+      ;;
+    unverifiable)
+      echo "[debug-chrome] something is serving CDP on :${PORT}, and this script cannot tell whether" >&2
+      echo "  it is the Chrome holding ${PROFILE}: no lsof or ss to read socket ownership from." >&2
+      echo "Next: driving an unverified browser is not safe, so this is a refusal rather than a" >&2
+      echo "      guess. Install lsof (or iproute2 for ss), choose another --port, or stop the" >&2
+      echo "      instance on :${PORT} and re-run so this script launches the browser it drives." >&2
+      exit 1
+      ;;
+  esac
   owner_pid="$(profile_owner_pid || true)"
-  if [[ -z "$owner_pid" ]] || ! owner_serves_port "$owner_pid"; then
-    echo "[debug-chrome] a browser is already serving CDP on :${PORT}, but it is not the Chrome" >&2
-    echo "  holding profile ${PROFILE}." >&2
-    echo "Next: reusing it would drive an unrelated browser. Choose another --port, stop that" >&2
-    echo "      instance, or pass the --profile it actually owns to target it deliberately." >&2
-    exit 1
-  fi
 
   echo "[debug-chrome] CDP already listening on :${PORT} — reusing existing session (pid ${owner_pid})"
-  echo "[debug-chrome] endpoints:  http://localhost:${PORT}/json"
+  echo "[debug-chrome] endpoints:  http://${CDP_HOST}:${PORT}/json"
   if [[ -n "$URL" ]]; then
     url_js="$(node -e 'console.log(JSON.stringify(process.argv[1]))' "$URL")"
     FARMSLOT_CDP_PORT="$PORT" node "$SCRIPT_DIR/cdp.mjs" eval "-" \
@@ -226,18 +285,36 @@ fi
 # Wait for CDP so callers can chain `scripts/cdp.mjs` immediately.
 attempts=$(( TIMEOUT_SECS * 5 ))
 for _ in $(seq 1 "$attempts"); do
-  if curl -sf "http://localhost:${PORT}/json/version" >/dev/null 2>&1; then
-    echo "[debug-chrome] ready on :${PORT}"
-    exit 0
+  if curl -sf "http://${CDP_HOST}:${PORT}/json/version" >/dev/null 2>&1; then
+    # A responder appearing during launch is not proof it is ours — another
+    # process can win the port in the same window. Hold reuse to the same standard.
+    case "$(identify_port_owner)" in
+      ours)
+        echo "[debug-chrome] ready on :${PORT}"
+        exit 0
+        ;;
+      foreign)
+        echo "[debug-chrome] :${PORT} is served by a browser that does not hold ${PROFILE}" >&2
+        echo "Next: another process took this port while Chrome was starting. Choose another" >&2
+        echo "      --port, or stop that instance and re-run." >&2
+        exit 1
+        ;;
+      unverifiable)
+        echo "[debug-chrome] :${PORT} answered, but socket ownership cannot be read here" >&2
+        echo "Next: install lsof (or iproute2 for ss) so this script can confirm the endpoint is" >&2
+        echo "      the browser it launched, or choose another --port." >&2
+        exit 1
+        ;;
+    esac
   fi
   sleep 0.2
 done
 
 echo "[debug-chrome] CDP did not come up on :${PORT} within ${TIMEOUT_SECS}s (profile ${PROFILE})" >&2
-# Report the handoff only when the same owner both predated the launch and is still
-# running: that is what is actually observable. Claiming causation from a single
-# pre-launch snapshot would assert more than the evidence supports.
-if [[ -n "$pre_launch_owner" ]] && kill -0 "$pre_launch_owner" 2>/dev/null; then
+# Report the handoff only when the pid that predated the launch is STILL the pid
+# recorded in the profile's lock. Liveness alone would misattribute a recycled pid,
+# or a lock that has since changed hands, to a singleton handoff.
+if [[ -n "$pre_launch_owner" && "$(profile_owner_pid || true)" == "$pre_launch_owner" ]]; then
   echo "Next: pid ${pre_launch_owner} held this profile before the launch and is still running." >&2
   echo "      Chrome holds a singleton lock on --user-data-dir, so a launch against an owned" >&2
   echo "      profile hands off to that instance and exits without binding the port." >&2
