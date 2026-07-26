@@ -175,6 +175,53 @@ test('configured preview reads only the exact catalog source and digest', () => 
   });
 });
 
+test('configured preview can read an offered source shadowed outside the active domain', () => {
+  withProject((projectVars) => {
+    const root = path.dirname(projectVars.projectConfig);
+    const canonicalRoot = path.join(root, 'canonical', 'checklists', 'fix-bug');
+    mkdirSync(canonicalRoot, { recursive: true });
+    writeFileSync(
+      path.join(canonicalRoot, 'mobile.md'),
+      `---
+id: fix-bug/perps-mobile
+runMode: autonomous
+platforms: [ios]
+---
+
+# Canonical mobile proof
+
+- [ ] Validate the canonical journey.
+`,
+    );
+    (projectVars.projectJson.execution_templates!.sources ??= []).unshift({
+      id: 'package:canonical',
+      kind: 'package',
+      root: { projectPath: 'canonical' },
+      subpath: 'checklists',
+    });
+
+    const capability = configuredExecutionTemplateOptions(projectVars, {
+      flow: 'fix-bug',
+      platform: 'ios',
+      runMode: 'autonomous',
+    });
+    const option = capability.options.find(
+      (candidate) =>
+        candidate.id === 'fix-bug/perps-mobile' && candidate.sourceId === 'package:canonical',
+    );
+    assert.ok(option);
+
+    const snapshot = readConfiguredExecutionTemplateSnapshot(projectVars, {
+      flow: 'fix-bug',
+      id: option.id,
+      sourceId: option.sourceId,
+      sha256: option.sha256,
+    });
+    assert.equal(snapshot.entry.sourceId, 'package:canonical');
+    assert.match(snapshot.markdown, /Validate the canonical journey/);
+  });
+});
+
 test('slot resolution uses explicit domain before the slot or pool default', () => {
   withProject((projectVars) => {
     const fromSlotDefault = resolveConfiguredExecutionTemplateForSlot(projectVars, {

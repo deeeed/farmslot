@@ -66,6 +66,12 @@ export const dispatchWizardStyles = css`
     opacity: 0.72;
   }
 
+  .config-group.refreshing {
+    flex: 0 0 auto;
+    opacity: 0.72;
+    transition: opacity 0.12s ease;
+  }
+
   .template-selector-loading {
     min-height: 174px;
     flex: 0 0 auto;
@@ -79,12 +85,14 @@ export const dispatchWizardStyles = css`
   }
 
   .template-option {
-    display: inline-flex;
+    display: flex;
+    width: 100%;
     max-width: 100%;
     align-items: stretch;
   }
 
   .pill.template-select {
+    flex: 1 1 auto;
     min-width: 0;
     border-radius: 4px 0 0 4px;
     text-align: left;

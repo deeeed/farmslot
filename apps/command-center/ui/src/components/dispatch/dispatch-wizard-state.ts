@@ -62,6 +62,7 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _executionTemplatePreviewLoading = false;
   @state() _executionTemplatePreviewError = '';
   _executionTemplatePreviewGeneration = 0;
+  _executionTemplatePreviewTrigger: HTMLElement | null = null;
   _templateOptionsKey = '';
   @state() _dispatching = false;
   @state() _error = '';

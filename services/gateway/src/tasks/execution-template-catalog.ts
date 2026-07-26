@@ -94,7 +94,6 @@ function catalogOption(entry: ExecutionTemplateEntry): ExecutionTemplateCatalogO
     title: entry.title,
     ...(entry.description ? { description: entry.description } : {}),
     sourceKind: entry.sourceKind,
-    ...(entry.shadowedBy ? { shadowedBy: entry.shadowedBy } : {}),
   };
 }
 
@@ -217,7 +216,7 @@ export function readConfiguredExecutionTemplateSnapshot(
   const entry = listExecutionTemplates({
     sources,
     flow: query.flow,
-    includeShadowed: false,
+    includeShadowed: true,
   }).find((candidate) => candidate.id === query.id && candidate.sourceId === query.sourceId);
   if (!entry) {
     throw new Error(

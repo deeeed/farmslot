@@ -71,7 +71,6 @@ export interface ExecutionTemplateCatalogOption extends ExecutionTemplateReferen
   /** Short guidance explaining when an operator should select this template. */
   description?: string;
   sourceKind: ExecutionTemplateSourceKind;
-  shadowedBy?: string;
 }
 
 export interface UnavailableExecutionTemplateSource {

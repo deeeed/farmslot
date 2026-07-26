@@ -159,9 +159,8 @@ function formatListHuman(entries: ExecutionTemplateEntry[]): string {
     const platforms = entry.platforms.join(',');
     const shadow = entry.shadowedBy ? ` ${yellow(`(shadowed by ${entry.shadowedBy})`)}` : '';
     lines.push(
-      `${entry.id}\t${entry.flow}\t${mode}\t${platforms}\t${entry.sourceId}\t${entry.path}${shadow}`,
+      `${entry.id}\t${entry.flow}\t${mode}\t${platforms}\t${entry.sourceId}\t${entry.path}${shadow}${entry.description ? `\t${dim(entry.description.replace(/\s+/g, ' ').trim())}` : ''}`,
     );
-    if (entry.description) lines.push(`  ${dim(entry.description)}`);
   }
   return `${lines.join('\n')}\n`;
 }
@@ -174,7 +173,7 @@ function formatCatalogHuman(catalog: ExecutionTemplateOptions): string {
     lines.push(
       `${option.id}${selected}\n` +
         `  ${option.title} · ${option.sourceId} (${option.sourceKind})\n` +
-        `${option.description ? `  ${option.description}\n` : ''}` +
+        `${option.description ? `  ${option.description.replace(/\s+/g, ' ').trim()}\n` : ''}` +
         `  ${option.runMode ?? '*'} · ${option.platforms.join(',')} · ${domain ?? 'general'} · ${option.sha256.slice(0, 12)}`,
     );
   }

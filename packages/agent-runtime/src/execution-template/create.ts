@@ -18,7 +18,7 @@ function renderTemplate(input: {
   description?: string;
 }): string {
   const meta: string[] = [];
-  if (input.description) meta.push(`description: ${input.description}`);
+  if (input.description) meta.push(`description: ${JSON.stringify(input.description)}`);
   if (input.runMode) meta.push(`runMode: ${input.runMode}`);
   if (input.platforms.length > 0 && !(input.platforms.length === 1 && input.platforms[0] === '*')) {
     meta.push(`platforms: [${input.platforms.join(', ')}]`);

@@ -556,10 +556,31 @@ test('createExecutionTemplate writes lint-clean starter with optional frontmatte
     assert.match(text, /platforms: \[mobile\]/);
     assert.match(
       text,
-      /description: Choose when the agent should implement without operator checkpoints\./,
+      /description: "Choose when the agent should implement without operator checkpoints\."/,
     );
     assert.match(text, /- \[ \] Read the task prompt/);
     assert.equal(lintExecutionTemplates(target).ok, true);
+  });
+});
+
+test('createExecutionTemplate quotes description frontmatter safely', () => {
+  withTemp((root) => {
+    const target = join(root, 'dev', 'autonomous.mobile.md');
+    createExecutionTemplate({
+      path: target,
+      description: 'Use for "quoted" guidance.\nKeep this in one YAML value.',
+    });
+
+    const text = readFileSync(target, 'utf8');
+    assert.match(
+      text,
+      /description: "Use for \\"quoted\\" guidance\.\\nKeep this in one YAML value\."/,
+    );
+    assert.equal(lintExecutionTemplates(target).ok, true);
+    assert.equal(
+      listExecutionTemplates({ sources: [customTemplateSource('test', root)] })[0]?.description,
+      'Use for "quoted" guidance.\nKeep this in one YAML value.',
+    );
   });
 });
 

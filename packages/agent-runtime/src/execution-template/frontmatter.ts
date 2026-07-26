@@ -9,10 +9,16 @@ export interface ParsedMarkdownDocument {
 }
 
 function stripQuotes(value: string): string {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed === 'string') return parsed;
+    } catch {
+      // Keep the minimal parser permissive for manually authored frontmatter.
+    }
+    return value.slice(1, -1);
+  }
+  if (value.startsWith("'") && value.endsWith("'")) {
     return value.slice(1, -1);
   }
   return value;
