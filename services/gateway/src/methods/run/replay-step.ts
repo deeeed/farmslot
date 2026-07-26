@@ -15,6 +15,7 @@ import {
   type RunStatus,
 } from '@farmslot/protocol';
 
+import { cancelGraphQueuedItem } from '../../backlog/dispatch-queue.js';
 import { execOnSlot } from '../../core/exec.js';
 import { SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
@@ -259,6 +260,17 @@ export async function runReplayStep(
     throw new Error(
       `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,
     );
+  }
+  // Replaying a cancelled run is supported (e.g. resuming ci-watch on an
+  // update-branch run). But cancelling released the node, so the graph has since
+  // re-queued its work; reviving the run without dropping that queue item would
+  // dispatch the same node twice. Reclaim the node for the run being revived.
+  if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
+    await cancelGraphQueuedItem({
+      workGraphId: existing.workGraphId,
+      workNodeId: existing.workNodeId,
+      reason: `replay-revives-run:${params.runId}`,
+    });
   }
   const triggeredBy = params.triggeredBy ?? 'operator';
 

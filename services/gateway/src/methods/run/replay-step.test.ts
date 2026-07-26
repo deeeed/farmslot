@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { Events, type RunDecision } from '@farmslot/protocol';
 
+import { addItem, getQueueSnapshot } from '../../backlog/dispatch-queue.js';
 import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
@@ -81,6 +82,67 @@ test('runReplayStep rejects read-only imported reference runs', async (t) => {
   await assert.rejects(
     () => runReplayStep({ runId: run.id, stepName: 'prepare' }, () => {}),
     /read-only imported reference and cannot be replayed/,
+  );
+});
+
+test('replaying a cancelled graph run reclaims the node instead of double-dispatching', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4102',
+    prNumber: 4102,
+    workGraphId: 'wg_replay_reclaim',
+    workNodeId: 'wn_replay_reclaim',
+  });
+  const doneBeforeCiWatch = new Set([
+    'write-task',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+    'finalize',
+  ]);
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    error: 'Cancelled by user',
+    steps: run.steps.map((step) =>
+      step.name === 'ci-watch'
+        ? { ...step, status: 'skipped', completedAt: new Date().toISOString() }
+        : doneBeforeCiWatch.has(step.name)
+          ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+
+  // Cancelling releases the node, so the scheduler re-queues its work. That queue
+  // item must not survive the run being revived, or the node dispatches twice.
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4102',
+    workGraphId: 'wg_replay_reclaim',
+    workNodeId: 'wn_replay_reclaim',
+  });
+  assert.ok(
+    getQueueSnapshot().some((item) => item.workNodeId === 'wn_replay_reclaim'),
+    'precondition: the graph has re-queued the node',
+  );
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+  );
+  assert.equal(getRun(run.id)?.status, 'ci-watching');
+  assert.ok(
+    !getQueueSnapshot().some((item) => item.workNodeId === 'wn_replay_reclaim'),
+    'the duplicate queue item was reclaimed by the revived run',
   );
 });
 
