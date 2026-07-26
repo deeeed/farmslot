@@ -703,15 +703,18 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): voi
     backlog?.status === 'ready' &&
     !latestRun &&
     !queued &&
-    // A node only legitimately reads `running` while it has an active linked run
-    // (handled above with an early return). Reaching here means the run is gone
-    // (deleted/cancelled/missing), so a lingering `running` is orphaned and must
-    // reset to `ready` alongside the other stuck states — otherwise the node
-    // stays permanently un-dispatchable.
+    // A node only legitimately reads `running` or `gated` while it has an active
+    // linked run (handled above with an early return). Reaching here means the run
+    // is gone (deleted/cancelled/missing), so a lingering `running` or `gated` is
+    // orphaned and must reset to `ready` alongside the other stuck states —
+    // otherwise the node stays permanently un-dispatchable. `gated` matters
+    // particularly because the scheduler tick skips nodes already in that state,
+    // so nothing else would ever re-evaluate it.
     (node.status === 'failed' ||
       node.status === 'needs-attention' ||
       node.status === 'queued' ||
-      node.status === 'running')
+      node.status === 'running' ||
+      node.status === 'gated')
   ) {
     node.status = 'ready';
     delete node.latestRunId;
@@ -973,8 +976,19 @@ async function executeNodeUnlock(
     snapshot.ledger = snapshot.ledger.filter((entry) => entry.key !== actionKey);
   }
   if (actionKind === 'enqueue' && backlogItem?.autoDispatch === false && !options.forceEnqueue) {
+    // Declining is correct, but it must be visible: clearing `waitingOn` here left
+    // the node reading `ready` with nothing pending and no ledger entry, so a graph
+    // that could never dispatch looked healthy. State the reason and both escapes.
     node.status = 'ready';
-    node.waitingOn = [];
+    node.waitingOn = [
+      {
+        kind: 'policy',
+        detail:
+          `Backlog item ${backlogItem.sourceRef ?? backlogItem.id} has autoDispatch disabled, ` +
+          'so the graph will not enqueue it. Enable autoDispatch on the item, or force a ' +
+          'scheduler tick with forceEnqueue.',
+      },
+    ];
     node.updatedAt = now;
     return;
   }
