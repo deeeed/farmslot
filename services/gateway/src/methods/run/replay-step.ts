@@ -699,11 +699,29 @@ export async function runReplayStep(
     existing.workGraphId &&
     existing.workNodeId
   ) {
-    await cancelGraphQueuedItem({
+    const reclaimed = await cancelGraphQueuedItem({
       workGraphId: existing.workGraphId,
       workNodeId: existing.workNodeId,
       reason: `replay-revives-run:${params.runId}`,
     });
+    // The entry check can go stale: a queued row may reach `dispatching` while the
+    // replay prepares. Reclaim then fails, and reviving anyway would put two live
+    // runs behind one node. A failed reclaim with no row left is the ordinary case
+    // (nothing was queued), so only a surviving row is an error.
+    if (!reclaimed) {
+      const survivor = getQueueSnapshot().find(
+        (item) =>
+          item.workGraphId === existing.workGraphId && item.workNodeId === existing.workNodeId,
+      );
+      if (survivor) {
+        throw new Error(
+          `Run ${params.runId.slice(0, 8)} could not be replayed: its node was redispatched ` +
+            `while this replay was preparing (queue item ${survivor.id.slice(0, 8)} is ` +
+            `${survivor.status}). The run is left cancelled. ` +
+            'Next: follow the new run for this node, or cancel that dispatch and replay again.',
+        );
+      }
+    }
   }
   updateRun(params.runId, {
     status: activeStatusForReplayStep(replayStepName),
