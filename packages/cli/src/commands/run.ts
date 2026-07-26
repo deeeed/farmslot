@@ -170,6 +170,7 @@ export interface RunCreateCliOptions {
   model?: string;
   app?: string;
   domain?: string;
+  executionTemplate?: string;
   familyId?: string;
   parentRunId?: string;
   familyRootTicketOrPr?: string;
@@ -238,6 +239,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     ...(scripted ? { scripted } : {}),
     app: opts.app || undefined,
     ...(opts.domain ? { domain: opts.domain } : {}),
+    ...(opts.executionTemplate ? { executionTemplateId: opts.executionTemplate } : {}),
     familyId: opts.familyId || undefined,
     parentRunId: opts.parentRunId || undefined,
     familyRootTicketOrPr: opts.familyRootTicketOrPr || undefined,
@@ -465,6 +467,10 @@ export function registerRunCommand(program: Command): void {
     .option(
       '--domain <name>',
       'Domain overlay for fixture compose + {{domain}} template substitution',
+    )
+    .option(
+      '--execution-template <id>',
+      'Exact execution-template catalog id (inspect with `farmslot execution-template options`)',
     )
     .option('--family-id <id>', 'Run family id for comparison/follow-up lineage')
     .option('--parent-run-id <id>', 'Parent run id for explicit lineage')

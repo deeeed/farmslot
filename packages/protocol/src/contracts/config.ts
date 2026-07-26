@@ -1,6 +1,7 @@
 import type { SafetyTier } from './agents.js';
 import type { ProjectBacklogConfig } from './backlog.js';
 import type { FailureCategory } from './chat.js';
+import type { ProjectExecutionTemplatesConfig } from './execution-templates.js';
 import type { ResourceDefinition, SlotActionDefinition } from './resources.js';
 import type { FlowType } from './runs.js';
 import type { PoolSlotMode } from './slots.js';
@@ -206,6 +207,8 @@ export interface ProjectConfig {
   recipeRunSupportsPlaybackSlow?: boolean;
   /** When true, UI may offer video recording and gateway appends --record-video=full-run to recipe_run. */
   recipeRunSupportsVideoRecording?: boolean;
+  /** Optional shared execution-template sources and deterministic defaults. */
+  executionTemplates?: ProjectExecutionTemplatesConfig;
 }
 
 export interface ProjectCICheckGroup {

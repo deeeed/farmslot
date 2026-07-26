@@ -150,7 +150,7 @@ export function deriveIssueTypeFlowState(
   issueType: string | undefined,
   currentFlowType: FlowType | null,
   autoFlowType: boolean,
-): { flowType: FlowType | null; autoFlowType: boolean; mode: DispatchMode } | null {
+): { flowType: FlowType; autoFlowType: boolean; mode: DispatchMode } | null {
   if (!issueType || (currentFlowType && !autoFlowType)) return null;
   const type = issueType.toLowerCase();
   if (type === 'bug') return { flowType: 'fix-bug', autoFlowType: true, mode: 'autonomous' };

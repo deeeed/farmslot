@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document shared execution-template sources, selection, and domain configuration.
 - Publish the Action Manifest v1 schema and concise runtime contract.
 - Document direct learning destination overrides.
 - Document zero-config local learning staging and explicit per-farm sharing configuration.

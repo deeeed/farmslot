@@ -52,6 +52,16 @@ test('run create omits the domain key entirely unless --domain is given', () => 
   assert.equal(withDomain.domain, 'blue');
 });
 
+test('run create carries an exact execution-template id only when requested', () => {
+  const params = buildRunCreateParams({
+    project: 'example',
+    flowType: 'fix-bug',
+    ticket: 'PROJ-123',
+    executionTemplate: 'fix-bug/trading-mobile',
+  });
+  assert.equal(params.executionTemplateId, 'fix-bug/trading-mobile');
+});
+
 test('run create builds params from an existing task file source', () => {
   assert.deepEqual(
     buildRunCreateParams({

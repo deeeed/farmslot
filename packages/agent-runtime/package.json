@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/agent-runtime",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,7 +16,8 @@
     "./scripts/mark-checklist-step.cjs": "./scripts/mark-checklist-step.cjs",
     "./scripts/checklist-target.cjs": "./scripts/checklist-target.cjs",
     "./scripts/worker-terminal-contract.cjs": "./scripts/worker-terminal-contract.cjs",
-    "./scripts/check-task-artifact-contract.mjs": "./scripts/check-task-artifact-contract.mjs"
+    "./scripts/check-task-artifact-contract.mjs": "./scripts/check-task-artifact-contract.mjs",
+    "./scripts/execution-template-cli.mjs": "./scripts/execution-template-cli.mjs"
   },
   "scripts": {
     "typecheck": "yarn workspace @farmslot/protocol build && tsc --noEmit --project tsconfig.json",

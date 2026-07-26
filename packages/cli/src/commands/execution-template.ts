@@ -8,8 +8,15 @@ import type {
   ExecutionTemplateEntry,
   ExecutionTemplateSource,
 } from '@farmslot/agent-runtime';
+import type {
+  ConfigTemplateOptionsResult,
+  ExecutionTemplateOptions,
+  FlowType,
+  WorkerTemplateOption,
+} from '@farmslot/protocol';
 
-import { dim, green, red, yellow } from '../colors.js';
+import { bold, dim, green, red, yellow } from '../colors.js';
+import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { OutputContext } from '../output.js';
 
@@ -89,6 +96,16 @@ interface NewOptions {
   json?: boolean;
 }
 
+interface CatalogOptions {
+  project: string;
+  flow: FlowType;
+  platform?: string;
+  runMode?: string;
+  domain?: string;
+  id?: string;
+  json?: boolean;
+}
+
 function parseRunMode(value: string | undefined): ExecutionRunMode | undefined {
   if (!value) return undefined;
   if (value === 'autonomous' || value === 'interactive' || value === 'validation') return value;
@@ -147,10 +164,80 @@ function formatListHuman(entries: ExecutionTemplateEntry[]): string {
   return `${lines.join('\n')}\n`;
 }
 
+function formatCatalogHuman(catalog: ExecutionTemplateOptions): string {
+  const lines = [`${bold('Execution templates')} ${dim(`${catalog.options.length} compatible`)}`];
+  for (const option of catalog.options) {
+    const selected = option.id === catalog.selectedId ? ` ${green('(selected)')}` : '';
+    const domain = option.labels.find((label) => label.startsWith('domain:'));
+    lines.push(
+      `${option.id}${selected}\n` +
+        `  ${option.title} · ${option.sourceId} (${option.sourceKind})\n` +
+        `  ${option.runMode ?? '*'} · ${option.platforms.join(',')} · ${domain ?? 'general'} · ${option.sha256.slice(0, 12)}`,
+    );
+  }
+  if (catalog.availableDomains.length > 0) {
+    lines.push(`${dim('domains')} ${catalog.availableDomains.join(', ')}`);
+  }
+  for (const source of catalog.unavailableSources) {
+    lines.push(`${yellow('unavailable')} ${source.id}: ${source.reason}`);
+  }
+  if (catalog.selectionReason) lines.push(`${dim('selection')} ${catalog.selectionReason}`);
+  return `${lines.join('\n')}\n`;
+}
+
+function formatProjectWorkerOptionsHuman(options: WorkerTemplateOption[]): string {
+  const lines = [
+    `${bold('Execution templates')} ${dim(`${options.length} project worker option${options.length === 1 ? '' : 's'} · no configured catalog`)}`,
+  ];
+  for (const option of options) {
+    lines.push(
+      `${option.fileName}${option.isDefault ? ` ${green('(default)')}` : ''}\n` +
+        `  ${option.label}`,
+    );
+  }
+  if (options.length === 0) lines.push(dim('no compatible project worker templates found'));
+  return `${lines.join('\n')}\n`;
+}
+
 export function registerExecutionTemplateCommand(program: Command): void {
   const cmd = program
     .command('execution-template')
     .description('Shared Markdown execution-template catalog (ADR-049)');
+
+  cmd
+    .command('options')
+    .description('List the effective gateway catalog for one dispatch context')
+    .requiredOption('--project <name>', 'Project name')
+    .requiredOption('--flow <flow>', 'Flow type')
+    .option('--platform <platform>', 'Slot platform')
+    .option('--run-mode <mode>', 'autonomous|interactive|validation')
+    .option('--domain <domain>', 'Project domain')
+    .option('--id <id>', 'Validate one exact template id')
+    .action(async (opts: CatalogOptions, command: Command) => {
+      const ctx = resolveContext(command);
+      const emit = createEmitter(ctx.output, command);
+      try {
+        const result = await ctx.client.call<ConfigTemplateOptionsResult>(
+          'config.templateOptions',
+          {
+            project: opts.project,
+            flowType: opts.flow,
+            ...(opts.platform ? { platform: opts.platform } : {}),
+            ...(opts.runMode ? { runMode: parseRunMode(opts.runMode) } : {}),
+            ...(opts.domain ? { domain: opts.domain } : {}),
+            ...(opts.id ? { executionTemplateId: opts.id } : {}),
+          },
+        );
+        if (emit.machine) emit.ok(result);
+        else if (result.executionTemplates) {
+          ctx.output.write(formatCatalogHuman(result.executionTemplates));
+        } else {
+          ctx.output.write(formatProjectWorkerOptionsHuman(result.options));
+        }
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
 
   cmd
     .command('list')

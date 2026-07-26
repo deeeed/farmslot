@@ -557,6 +557,24 @@ function writeObservabilityInstallManifest(obsDir, manifest) {
   );
 }
 
+function ensureCompatObservabilityLink(repoPath, obsDir) {
+  const compatObsDir = path.join(repoPath, '.observability');
+  let stat;
+  try {
+    stat = fs.lstatSync(compatObsDir);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    fs.symlinkSync(obsDir, compatObsDir, 'dir');
+    return;
+  }
+
+  if (!stat.isSymbolicLink()) return;
+  const currentTarget = path.resolve(path.dirname(compatObsDir), fs.readlinkSync(compatObsDir));
+  if (currentTarget === obsDir) return;
+  fs.unlinkSync(compatObsDir);
+  fs.symlinkSync(obsDir, compatObsDir, 'dir');
+}
+
 function installObservabilityBinaries({ repo, runtimeDir, slotId, runner }) {
   const repoPath = path.resolve(repo);
   const obsDir = path.resolve(repoPath, runtimeDir, '.observability');
@@ -565,8 +583,7 @@ function installObservabilityBinaries({ repo, runtimeDir, slotId, runner }) {
   fs.mkdirSync(binDir, { recursive: true });
   fs.writeFileSync(hookPath, HOOK_SCRIPT);
   execFileSync(process.execPath, ['--check', hookPath], { stdio: 'pipe' });
-  const compatObsDir = path.join(repoPath, '.observability');
-  if (!fs.existsSync(compatObsDir)) fs.symlinkSync(obsDir, compatObsDir, 'dir');
+  ensureCompatObservabilityLink(repoPath, obsDir);
   const hookCommand = [
     `FARMSLOT_OBS_DIR=${shQuote(obsDir)}`,
     `FARMSLOT_SLOT_ID=${shQuote(slotId)}`,

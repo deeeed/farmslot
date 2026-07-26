@@ -137,6 +137,29 @@ test('buildDispatchQueueAddParams matches golden queue-add payload', () => {
   assert.deepEqual(stablePayload<DispatchQueueAddParams>(payload), fixture('queue-add'));
 });
 
+test('configured execution-template selection is identical for direct and queued dispatch', () => {
+  const draft: DispatchPayloadDraft = {
+    ...baseDraft,
+    flowType: 'fix-bug',
+    project: 'example-mobile',
+    ticketOrPr: 'PROJ-2368',
+    slotId: 'runner-a-example-mobile-1',
+    mode: 'autonomous',
+    devInteractiveProfile: 'lightweight',
+    domain: 'trading',
+    executionTemplateId: 'fix-bug/trading-mobile',
+    comparison: {},
+  };
+  const direct = buildRunCreateParams(draft);
+  const queued = buildDispatchQueueAddParams(draft);
+  assert.equal(direct.domain, 'trading');
+  assert.equal(queued.domain, 'trading');
+  assert.equal(direct.executionTemplateId, 'fix-bug/trading-mobile');
+  assert.equal(queued.executionTemplateId, 'fix-bug/trading-mobile');
+  assert.equal(direct.taskTemplate, undefined);
+  assert.equal(queued.taskTemplate, undefined);
+});
+
 test('buildRunCreateParams forwards prepareProfile and suppresses it under skipPrepare', () => {
   const draft: DispatchPayloadDraft = {
     ...baseDraft,

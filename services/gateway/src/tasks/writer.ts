@@ -6,6 +6,7 @@ import { chmod, mkdir, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { executionTemplateReference } from '@farmslot/agent-runtime';
 import {
   type ArtifactRef,
   type FlowType,
@@ -17,6 +18,7 @@ import {
   type TemplateProvenance,
   WORKER_TERMINAL_CONTRACT_INPUT,
 } from '@farmslot/protocol';
+import { resolveEffectiveDomain } from '@farmslot/slot-config';
 
 import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { collectPlaceholderTokens, expandTemplate } from '../core/hooks.js';
@@ -40,6 +42,10 @@ import {
   evaluateArtifactOnlyTaskGuard,
 } from './artifact-only-guard.js';
 import { writeWorkerChecklistTargetLocal } from './checklist-target.js';
+import {
+  projectUsesExecutionTemplateCatalog,
+  resolveConfiguredExecutionTemplateForSlot,
+} from './execution-template-catalog.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 import {
@@ -501,27 +507,81 @@ export async function writeTaskFile(
 
   // Read worker template. A selected template version is render-only: it affects this
   // run's TASK.md and provenance, never the project template files themselves.
-  const templateSelection = await resolveWorkerTemplateSelectionForRun(
-    projectVars,
-    run.flowType,
-    run.mode,
-    run.taskTemplate,
-    run.domain ?? slotVars.domain,
-  );
-  const templateName = templateSelection.fileName;
-  const templatePath = templateSelection.templatePath;
-  let template = templateSelection.content;
+  const usesConfiguredCatalog = projectUsesExecutionTemplateCatalog(projectVars);
+  if (!usesConfiguredCatalog && (run.executionTemplateId || run.executionTemplate)) {
+    throw new Error(
+      'Execution-template selection is only valid for a project with execution_templates configured.',
+    );
+  }
+  if (usesConfiguredCatalog && run.taskTemplate) {
+    throw new Error(
+      'Configured execution-template projects require executionTemplateId, not taskTemplate.',
+    );
+  }
+  if (usesConfiguredCatalog && !run.mode) {
+    throw new Error('Configured execution-template selection requires an explicit run mode.');
+  }
+  const configuredTemplate = usesConfiguredCatalog
+    ? resolveConfiguredExecutionTemplateForSlot(projectVars, {
+        flow: run.flowType,
+        platform: slotVars.platform,
+        runMode: run.mode!,
+        ...(run.domain ? { explicitDomain: run.domain } : {}),
+        ...(slotVars.domain ? { slotDomain: slotVars.domain } : {}),
+        ...(run.executionTemplateId ? { explicitId: run.executionTemplateId } : {}),
+      })
+    : undefined;
+  const effectiveDomain =
+    configuredTemplate?.effectiveDomain ?? resolveEffectiveDomain(run.domain, slotVars.domain);
+  if (configuredTemplate && run.executionTemplate) {
+    const currentReference = configuredTemplate.reference;
+    if (
+      currentReference.id !== run.executionTemplate.id ||
+      currentReference.sourceId !== run.executionTemplate.sourceId ||
+      currentReference.sha256 !== run.executionTemplate.sha256
+    ) {
+      throw new Error(
+        `Execution template changed after selection: expected ${run.executionTemplate.id} from ${run.executionTemplate.sourceId} at ${run.executionTemplate.sha256}, got ${currentReference.id} from ${currentReference.sourceId} at ${currentReference.sha256}. Preview or create the run again.`,
+      );
+    }
+  }
+  const legacyTemplate = configuredTemplate
+    ? undefined
+    : await resolveWorkerTemplateSelectionForRun(
+        projectVars,
+        run.flowType,
+        run.mode,
+        run.taskTemplate,
+        effectiveDomain,
+      );
+  const templateName = configuredTemplate
+    ? path.basename(configuredTemplate.entry.relativePath)
+    : legacyTemplate!.fileName;
+  const templatePath = configuredTemplate
+    ? configuredTemplate.entry.path
+    : legacyTemplate!.templatePath;
+  let template = configuredTemplate ? configuredTemplate.markdown : legacyTemplate!.content;
   const templateProvenance = await buildTemplateProvenance({
     flowType: run.flowType,
     project: run.project,
     templatePath,
     templateName,
     templateContent: template,
-    templateVariant: templateSelection.variant,
-    templateIsDefault: templateSelection.isDefault,
-    templateSelectionSource: templateSelection.selectionSource,
-    templateSelectionReason: templateSelection.selectionReason,
+    templateVariant: legacyTemplate?.variant,
+    templateIsDefault: legacyTemplate?.isDefault,
+    templateSelectionSource: configuredTemplate
+      ? configuredTemplate.reason === 'explicit'
+        ? 'explicit'
+        : 'default'
+      : legacyTemplate!.selectionSource,
+    templateSelectionReason: configuredTemplate?.reason ?? legacyTemplate!.selectionReason,
     role: shouldApplyArtifactOnlyTaskPolicy(run) ? 'eval-candidate' : 'worker',
+    source: configuredTemplate
+      ? configuredTemplate.entry.sourceKind === 'project'
+        ? 'current-project'
+        : 'external'
+      : undefined,
+    projectRepoPath: configuredTemplate ? path.dirname(configuredTemplate.entry.path) : undefined,
   });
 
   // Inject mode preamble after first heading line (# Worker: Dev, # Session Context, etc.)
@@ -891,6 +951,12 @@ export async function writeTaskFile(
   const finalContent = applyArtifactOnlyTaskPolicy(withInteractivePrCompleteHandoff, run);
   if (shouldApplyArtifactOnlyTaskPolicy(run)) {
     assertArtifactOnlyTaskGuard(finalContent);
+  }
+  if (configuredTemplate) {
+    templateProvenance.executionTemplate = executionTemplateReference(
+      configuredTemplate.entry,
+      finalContent,
+    );
   }
   await writeFile(taskFilePath, finalContent, 'utf-8');
   await writeChecklistMarker(taskAbsDir, farmslotDirForSlot);

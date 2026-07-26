@@ -19,6 +19,8 @@ export interface DispatchPayloadDraft {
   ticketOrPr: string;
   app?: string;
   taskTemplate?: TaskTemplateSelection;
+  domain?: string;
+  executionTemplateId?: string;
   model?: string;
   runner?: string;
   effort?: string;
@@ -62,6 +64,8 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
     effort: input.effort,
     app: input.app,
     taskTemplate: input.taskTemplate,
+    domain: input.domain,
+    executionTemplateId: input.executionTemplateId,
     skipPrepare: input.skipPrepare,
     prepareProfile: input.skipPrepare ? undefined : input.prepareProfile,
     nudgeReuse: input.nudgeReuse,
@@ -83,6 +87,8 @@ export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): Dispat
     app: input.app,
     prepareProfile: input.skipPrepare ? undefined : input.prepareProfile,
     taskTemplate: input.taskTemplate,
+    domain: input.domain,
+    executionTemplateId: input.executionTemplateId,
     model: input.model,
     runner: input.runner,
     effort: input.effort,

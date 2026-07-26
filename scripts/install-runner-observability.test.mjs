@@ -63,6 +63,63 @@ test('claude install registers observability hook events validated against Claud
   ]);
 });
 
+test('claude install replaces a stale compatibility symlink and remains idempotent', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-stale-link-'));
+  const compat = path.join(repo, '.observability');
+  fs.symlinkSync(path.join(repo, '.agent', '.observability'), compat, 'dir');
+
+  for (let i = 0; i < 2; i += 1) {
+    execFileSync(
+      process.execPath,
+      [
+        INSTALLER,
+        '--runner',
+        'claude',
+        '--repo',
+        repo,
+        '--runtime-dir',
+        'temp/recipe/runtime',
+        '--slot-id',
+        'install-test-stale-link',
+      ],
+      { stdio: 'pipe' },
+    );
+  }
+
+  const expected = path.join(repo, 'temp', 'recipe', 'runtime', '.observability');
+  assert.equal(path.resolve(repo, fs.readlinkSync(compat)), expected);
+  assert.ok(fs.existsSync(path.join(expected, 'bin', 'farmslot-observability-hook.mjs')));
+  const settings = fs.readFileSync(path.join(repo, '.claude', 'settings.local.json'), 'utf8');
+  assert.match(settings, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'u'));
+  assert.doesNotMatch(settings, /\.agent\/\.observability/u);
+});
+
+test('claude install preserves a non-symlink compatibility directory', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-real-dir-'));
+  const compat = path.join(repo, '.observability');
+  fs.mkdirSync(compat);
+  fs.writeFileSync(path.join(compat, 'operator-file'), 'keep\n');
+
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'claude',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      'temp/recipe/runtime',
+      '--slot-id',
+      'install-test-real-dir',
+    ],
+    { stdio: 'pipe' },
+  );
+
+  assert.ok(!fs.lstatSync(compat).isSymbolicLink());
+  assert.equal(fs.readFileSync(path.join(compat, 'operator-file'), 'utf8'), 'keep\n');
+});
+
 test('installed hook appends real newlines so hooks.jsonl splits into records', () => {
   const { obsDir, hookPath } = installToTempDir();
   const logPath = path.join(obsDir, 'hooks.jsonl');

@@ -9,7 +9,15 @@ import {
   expandTemplate,
   expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
+  resolveEffectiveDomain,
 } from './hooks.js';
+
+test('resolveEffectiveDomain uses explicit then slot/pool default then none', () => {
+  assert.equal(resolveEffectiveDomain('trading', 'payments'), 'trading');
+  assert.equal(resolveEffectiveDomain(undefined, 'payments'), 'payments');
+  assert.equal(resolveEffectiveDomain(' ', ' trading '), 'trading');
+  assert.equal(resolveEffectiveDomain(undefined, undefined), undefined);
+});
 
 test('expandTemplate exposes the full slot id for configured actions', () => {
   const slotVars: SlotVars = {

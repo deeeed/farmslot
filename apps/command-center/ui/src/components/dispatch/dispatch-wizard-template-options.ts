@@ -6,8 +6,22 @@ export interface TemplateOptionsState {
   selectedFileName: string;
 }
 
-export function templateOptionsRequestKey(project: string, flowType: FlowType): string {
-  return `${project}:${flowType}`;
+export function templateOptionsRequestKey(
+  project: string,
+  flowType: FlowType,
+  filters?: {
+    platform?: string;
+    runMode?: string;
+    domain?: string;
+  },
+): string {
+  return [
+    project,
+    flowType,
+    filters?.platform ?? '',
+    filters?.runMode ?? '',
+    filters?.domain ?? '',
+  ].join(':');
 }
 
 export function clearTemplateOptionsState(): TemplateOptionsState {

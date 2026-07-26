@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -11,6 +11,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
+import { resolveEvalSource } from '../methods/eval/source-resolution.js';
 import { TEMPLATE_PROVENANCE_INPUT } from '../tasks/writer.js';
 
 import {
@@ -20,6 +21,7 @@ import {
   finalizeEvalResultPackageForRun,
   MAX_RESULT_PACKAGE_ARTIFACT_SCAN_FILES,
   packageIdFor,
+  readResultPackageManifest,
   scanResultPackageArtifacts,
   stableJson,
   unavailableDiff,
@@ -96,6 +98,135 @@ function makePackage(overrides: Partial<ResultPackageManifest> = {}): ResultPack
     ...overrides,
   };
 }
+
+test('writeResultPackageManifest strips control-plane paths from draft packages', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-result-package-portable-'));
+  const filePath = path.join(root, 'candidate.result-package.json');
+  try {
+    const written = await writeResultPackageManifest(
+      filePath,
+      makePackage({
+        axes: {
+          template: {
+            path: '/control-plane/projects/example/templates/worker/fix-bug.md',
+          },
+        },
+        templateProvenance: {
+          kind: 'task-template',
+          flowType: 'fix-bug',
+          taskProfile: 'fix-bug',
+          project: 'example',
+          role: 'eval-candidate',
+          templatePath: '/control-plane/projects/example/templates/worker/fix-bug.md',
+          templateName: 'fix-bug.md',
+          templateVariant: null,
+          templateIsDefault: true,
+          contentHash: 'template-content-hash',
+          projectRepoPath: '/control-plane/projects/example/templates',
+          source: 'current-project',
+          renderedAt: '2026-07-25T00:00:00.000Z',
+        },
+      } as unknown as Partial<ResultPackageManifest>),
+    );
+
+    assert.equal(written.axes.template?.path, 'fix-bug.md');
+    assert.equal(written.templateProvenance?.templatePath, 'fix-bug.md');
+    assert.equal(
+      written.templateProvenance && 'projectRepoPath' in written.templateProvenance,
+      false,
+    );
+    assert.doesNotMatch(await readFile(filePath, 'utf8'), /control-plane/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('readResultPackageManifest normalizes pre-portability control-plane paths', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-result-package-legacy-read-'));
+  const filePath = path.join(root, 'candidate.result-package.json');
+  try {
+    await writeFile(
+      filePath,
+      JSON.stringify(
+        makePackage({
+          packageHash: 'historical-package-hash',
+          axes: {
+            template: {
+              path: '/control-plane/projects/example/templates/worker/fix-bug.md',
+            },
+          },
+          templateProvenance: {
+            kind: 'task-template',
+            flowType: 'fix-bug',
+            taskProfile: 'fix-bug',
+            project: 'example',
+            role: 'eval-candidate',
+            templatePath: '/control-plane/projects/example/templates/worker/fix-bug.md',
+            templateName: 'fix-bug.md',
+            templateVariant: null,
+            templateIsDefault: true,
+            contentHash: 'template-content-hash',
+            projectRepoPath: '/control-plane/projects/example/templates',
+            source: 'current-project',
+            renderedAt: '2026-07-24T00:00:00.000Z',
+          },
+        } as unknown as Partial<ResultPackageManifest>),
+      ),
+    );
+
+    const read = await readResultPackageManifest(filePath);
+    assert.equal(read.packageHash, 'historical-package-hash');
+    assert.equal(read.axes.template?.path, 'fix-bug.md');
+    assert.equal(read.templateProvenance?.templatePath, 'fix-bug.md');
+    assert.equal(read.templateProvenance && 'projectRepoPath' in read.templateProvenance, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('eval package sources normalize pre-portability paths before validation', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-source-legacy-read-'));
+  const filePath = path.join(root, 'candidate.result-package.json');
+  try {
+    await writeFile(
+      filePath,
+      JSON.stringify(
+        makePackage({
+          packageHash: 'historical-package-hash',
+          axes: {
+            template: {
+              path: '/control-plane/projects/example/templates/worker/fix-bug.md',
+            },
+          },
+          templateProvenance: {
+            kind: 'task-template',
+            flowType: 'fix-bug',
+            taskProfile: 'fix-bug',
+            project: 'example',
+            role: 'eval-candidate',
+            templatePath: '/control-plane/projects/example/templates/worker/fix-bug.md',
+            templateName: 'fix-bug.md',
+            templateVariant: null,
+            templateIsDefault: true,
+            contentHash: 'template-content-hash',
+            projectRepoPath: '/control-plane/projects/example/templates',
+            source: 'current-project',
+            renderedAt: '2026-07-24T00:00:00.000Z',
+          },
+        } as unknown as Partial<ResultPackageManifest>),
+      ),
+    );
+
+    const resolved = await resolveEvalSource('example-mobile-farm', {
+      kind: 'package',
+      packagePath: filePath,
+    });
+    assert.equal(resolved.package?.axes.template?.path, 'fix-bug.md');
+    assert.equal(resolved.package?.templateProvenance?.templatePath, 'fix-bug.md');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('stableJson normalizes key order for deterministic hashes', () => {
   assert.equal(stableJson({ b: 2, a: { d: 4, c: 3 } }), stableJson({ a: { c: 3, d: 4 }, b: 2 }));
@@ -254,10 +385,21 @@ test('finalizeEvalResultPackageForRun hashes artifacts and updates experiment tr
         taskProfile: 'fix-bug',
         project: 'example-mobile-farm',
         role: 'eval-candidate',
-        templatePath: 'templates/worker/fix-bug.md',
-        templateName: 'fix-bug.md',
+        templatePath: '/control-plane/consensys/templates/fix-bug/autonomous.mobile.md',
+        templateName: 'autonomous.mobile.md',
         contentHash: 'template-hash-123',
+        projectRepoPath: '/control-plane/consensys',
         projectRepoHeadSha: 'project-sha-123',
+        executionTemplate: {
+          id: 'fix-bug/autonomous.mobile',
+          sourceId: 'package:consensys-recipe-cook',
+          flow: 'fix-bug',
+          runMode: 'autonomous',
+          platforms: ['mobile'],
+          labels: [],
+          relativePath: 'fix-bug/autonomous.mobile.md',
+          sha256: 'a'.repeat(64),
+        },
         source: 'current-project',
         renderedAt: '2026-05-09T00:00:00.000Z',
       }),
@@ -379,7 +521,14 @@ test('finalizeEvalResultPackageForRun hashes artifacts and updates experiment tr
     assert.equal(finalized.missingData.includes('candidate-run-pending'), false);
     assert.equal(finalized.missingData.includes('template-provenance-missing'), false);
     assert.equal(finalized.axes.template?.hash, 'template-hash-123');
+    assert.equal(finalized.axes.template?.path, 'fix-bug/autonomous.mobile.md');
     assert.equal(finalized.templateProvenance?.contentHash, 'template-hash-123');
+    assert.equal(finalized.templateProvenance?.templatePath, 'fix-bug/autonomous.mobile.md');
+    assert.equal(
+      finalized.templateProvenance && 'projectRepoPath' in finalized.templateProvenance,
+      false,
+    );
+    assert.equal(JSON.stringify(finalized).includes('/control-plane/consensys'), false);
     assert.equal(isResultPackageManifest(finalized), true);
     assert.deepEqual(
       finalized.evidenceRequirements?.map((requirement) => [

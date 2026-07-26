@@ -48,6 +48,10 @@ import {
   loadProjectConfig,
   loadProjectConfigs,
 } from '../fleet/state.js';
+import {
+  configuredExecutionTemplateOptions,
+  projectUsesExecutionTemplateCatalog,
+} from '../tasks/execution-template-catalog.js';
 import { listWorkerTemplateOptions } from '../tasks/worker-template-options.js';
 import { FLOW_TO_TEMPLATE, generateTaskSchema } from '../tasks/writer.js';
 
@@ -237,7 +241,18 @@ export async function configTemplateOptions(
   params: ConfigTemplateOptionsParams,
 ): Promise<ConfigTemplateOptionsResult> {
   const projectVars = await loadProjectVars(params.project);
-  return { options: await listWorkerTemplateOptions(projectVars, params.flowType) };
+  const options = await listWorkerTemplateOptions(projectVars, params.flowType);
+  if (!projectUsesExecutionTemplateCatalog(projectVars)) return { options };
+  return {
+    options,
+    executionTemplates: configuredExecutionTemplateOptions(projectVars, {
+      flow: params.flowType,
+      ...(params.platform ? { platform: params.platform } : {}),
+      ...(params.runMode ? { runMode: params.runMode } : {}),
+      ...(params.domain ? { domain: params.domain } : {}),
+      ...(params.executionTemplateId ? { explicitId: params.executionTemplateId } : {}),
+    }),
+  };
 }
 
 export async function configTemplatePreview(

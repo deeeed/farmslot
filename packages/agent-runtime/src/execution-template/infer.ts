@@ -1,11 +1,14 @@
 import path from 'node:path';
 
+import { EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX } from '@farmslot/protocol';
+
 import {
   frontmatterPlatforms,
   frontmatterRunMode,
   type ParsedMarkdownDocument,
   parseMarkdownDocument,
 } from './frontmatter.js';
+import { sha256Text } from './snapshot.js';
 import type {
   ExecutionRunMode,
   ExecutionTemplateEntry,
@@ -131,9 +134,17 @@ export function inferTemplateMetadata(input: {
 
   const platforms = frontmatterPlatforms(fm) ?? inferPlatformsFromBasename(basename) ?? ['*'];
 
-  const labels = Array.isArray(fm?.labels)
+  const frontmatterLabels = Array.isArray(fm?.labels)
     ? fm.labels.filter((item): item is string => typeof item === 'string')
     : [];
+  const labels = [
+    ...new Set([
+      ...frontmatterLabels,
+      ...(input.source.domains ?? []).map(
+        (domain) => `${EXECUTION_TEMPLATE_DOMAIN_LABEL_PREFIX}${domain}`,
+      ),
+    ]),
+  ];
 
   return {
     id,
@@ -147,6 +158,9 @@ export function inferTemplateMetadata(input: {
     relativePath: input.relativePath.replace(/\\/g, '/'),
     sourceId: input.source.id,
     sourceKind: input.source.kind,
+    sha256: sha256Text(input.text),
+    sourceRevision: input.source.sourceRevision,
+    sourceDirty: input.source.sourceDirty,
     frontmatter: fm,
     heading: parsed.heading,
   };

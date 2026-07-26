@@ -1,3 +1,4 @@
+import type { ExecutionTemplateReference } from './execution-templates.js';
 import {
   type FamilyDiffProvenance,
   type FamilyInputCommitMetadata,
@@ -79,6 +80,8 @@ export interface TemplateProvenance {
   /** Operator/debug-facing reason for implicit or default template selection. */
   templateSelectionReason?: string;
   contentHash: string;
+  /** Portable source-aware identity. Legacy absolute paths are internal compatibility fields. */
+  executionTemplate?: ExecutionTemplateReference;
   projectRepoPath?: string;
   projectRepoHeadSha?: string;
   projectRepoDirty?: boolean;
@@ -86,6 +89,8 @@ export interface TemplateProvenance {
   source: TemplateProvenanceSource;
   renderedAt: string;
 }
+
+export type PortableTemplateProvenance = Omit<TemplateProvenance, 'projectRepoPath'>;
 
 export interface EvalPackageAxes {
   template?: EvalPackageAxisRef;
@@ -272,7 +277,7 @@ export interface ResultPackageManifest {
   outcomeClaims: string[];
   evidenceRequirements?: EvalEvidenceRequirement[];
   metrics?: ResultPackageMetrics;
-  templateProvenance?: TemplateProvenance;
+  templateProvenance?: PortableTemplateProvenance;
   harnessLifecycle?: EvalHarnessLifecycle;
   missingData: string[];
 }
@@ -435,7 +440,18 @@ function isTemplateProvenanceSource(value: unknown): value is TemplateProvenance
   );
 }
 
-function isTemplateProvenance(value: unknown): value is TemplateProvenance {
+function isPortableRelativePath(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    !value.startsWith('/') &&
+    !value.startsWith('\\\\') &&
+    !/^[A-Za-z]:[\\/]/.test(value) &&
+    !value.split(/[\\/]/).includes('..')
+  );
+}
+
+function isTemplateProvenance(value: unknown): value is PortableTemplateProvenance {
   if (!isPlainRecord(value)) return false;
   return (
     value.kind === 'task-template' &&
@@ -443,17 +459,47 @@ function isTemplateProvenance(value: unknown): value is TemplateProvenance {
     (value.taskProfile == null || isEvalTaskProfile(value.taskProfile)) &&
     typeof value.project === 'string' &&
     (value.role === 'worker' || value.role === 'orchestrator' || value.role === 'eval-candidate') &&
-    typeof value.templatePath === 'string' &&
+    isPortableRelativePath(value.templatePath) &&
     typeof value.templateName === 'string' &&
     isOptionalString(value.templateVariant) &&
     (value.templateIsDefault === undefined || typeof value.templateIsDefault === 'boolean') &&
     typeof value.contentHash === 'string' &&
-    isOptionalString(value.projectRepoPath) &&
+    (value.executionTemplate == null || isExecutionTemplateReference(value.executionTemplate)) &&
+    value.projectRepoPath == null &&
     isOptionalString(value.projectRepoHeadSha) &&
     (value.projectRepoDirty == null || typeof value.projectRepoDirty === 'boolean') &&
     isOptionalString(value.farmslotHeadSha) &&
     isTemplateProvenanceSource(value.source) &&
     typeof value.renderedAt === 'string'
+  );
+}
+
+function isExecutionTemplateReference(value: unknown): value is ExecutionTemplateReference {
+  if (!isPlainRecord(value)) return false;
+  return (
+    typeof value.id === 'string' &&
+    value.id.length > 0 &&
+    typeof value.sourceId === 'string' &&
+    value.sourceId.length > 0 &&
+    typeof value.flow === 'string' &&
+    value.flow.length > 0 &&
+    (value.runMode == null ||
+      value.runMode === 'autonomous' ||
+      value.runMode === 'interactive' ||
+      value.runMode === 'validation') &&
+    Array.isArray(value.platforms) &&
+    value.platforms.every((item) => typeof item === 'string') &&
+    Array.isArray(value.labels) &&
+    value.labels.every((item) => typeof item === 'string') &&
+    isPortableRelativePath(value.relativePath) &&
+    (value.sourceRevision == null ||
+      (typeof value.sourceRevision === 'string' && /^[0-9a-f]{40}$/i.test(value.sourceRevision))) &&
+    (value.sourceDirty == null || typeof value.sourceDirty === 'boolean') &&
+    isOptionalString(value.version) &&
+    typeof value.sha256 === 'string' &&
+    /^[0-9a-f]{64}$/i.test(value.sha256) &&
+    (value.renderedSha256 == null ||
+      (typeof value.renderedSha256 === 'string' && /^[0-9a-f]{64}$/i.test(value.renderedSha256)))
   );
 }
 
@@ -756,6 +802,8 @@ export function isResultPackageManifest(value: unknown): value is ResultPackageM
   if (!isEvalTaskProfile(value.taskProfile) || !isEvalPackageSource(value.source)) return false;
   if (value.productRef != null && !isEvalProductRef(value.productRef)) return false;
   if (!isFamilyDiffProvenance(value.diff) || !isEvalPackageAxes(value.axes)) return false;
+  if (value.axes.template?.path != null && !isPortableRelativePath(value.axes.template.path))
+    return false;
   if (value.runId != null && typeof value.runId !== 'string') return false;
   if (value.role != null && !isEvalPackageRole(value.role)) return false;
   if (value.baseline != null && !isPlainRecord(value.baseline)) return false;

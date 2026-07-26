@@ -134,6 +134,10 @@ export interface DispatchQueueAddParams {
   variant?: string | null;
   /** Selected project-owned worker template version for queued dispatch parity. */
   taskTemplate?: import('../contracts/index.js').TaskTemplateSelection;
+  /** Exact shared-catalog template id for queued dispatch parity. */
+  executionTemplateId?: string;
+  /** Named project domain carried through queue dispatch. */
+  domain?: string;
   app?: string;
   /** Named prepare profile from the project's prepare.profiles (ADR-037). */
   prepareProfile?: string;
@@ -217,8 +221,12 @@ export interface DispatchQueueReorderResult {
 export interface DispatchPreviewParams {
   slotId?: string;
   project: string;
-  flowType: string;
+  flowType: import('../contracts/index.js').FlowType;
   ticketOrPr: string;
+  /** Required when the project uses configured execution templates. */
+  mode?: 'interactive' | 'autonomous' | 'validation';
+  /** Exact configured-catalog template id to preview. */
+  executionTemplateId?: string;
   familyId?: string;
   lane?: import('../contracts/index.js').RunLane;
   variant?: string | null;

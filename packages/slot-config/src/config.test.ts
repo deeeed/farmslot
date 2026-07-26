@@ -10,15 +10,113 @@ import {
   isIgnoredPoolFile,
   isMockModeProject,
   loadProjectVars,
+  type RawProjectJson,
   resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
   resolveTaskRelDir,
+  validateCommandEnvConfig,
+  validateExecutionTemplatesConfig,
   validatePrepareConfig,
 } from './config.js';
 
 test('isMockModeProject detects external mock_mode flag', () => {
   assert.equal(isMockModeProject({ external: { mock_mode: true } } as any), true);
   assert.equal(isMockModeProject({} as any), false);
+});
+
+test('execution-template config accepts portable sources/defaults and rejects unsafe roots', () => {
+  const valid: RawProjectJson = {
+    execution_templates: {
+      sources: [
+        {
+          id: 'package:canonical',
+          kind: 'package',
+          root: { env: 'CANONICAL_ROOT' },
+          subpath: 'references/templates',
+        },
+        {
+          id: 'team:trading',
+          kind: 'workspace',
+          root: { projectPath: 'libraries/trading' },
+          subpath: 'checklists',
+          domains: ['trading'],
+        },
+      ],
+      defaults: [
+        {
+          when: {
+            flow: 'fix-bug',
+            platform: 'mobile',
+            runMode: 'autonomous',
+            domain: 'trading',
+          },
+          templateId: 'fix-bug/autonomous.mobile',
+        },
+      ],
+    },
+  };
+  assert.doesNotThrow(() => validateExecutionTemplatesConfig(valid, 'project.json'));
+
+  assert.throws(
+    () =>
+      validateExecutionTemplatesConfig(
+        {
+          execution_templates: {
+            sources: [
+              {
+                id: 'bad',
+                kind: 'package',
+                root: { projectPath: '../outside' },
+              },
+            ],
+          },
+        },
+        'project.json',
+      ),
+    /safe relative path/,
+  );
+  assert.throws(
+    () =>
+      validateExecutionTemplatesConfig(
+        {
+          execution_templates: {
+            sources: [{ id: 'bad', kind: 'project' as never, root: { env: 'ROOT' } }],
+          },
+        },
+        'project.json',
+      ),
+    /kind must be/,
+  );
+});
+
+test('command_env validates domain names and environment mutation shapes', () => {
+  assert.doesNotThrow(() =>
+    validateCommandEnvConfig(
+      {
+        command_env: {
+          set: { SHARED: 'literal' },
+          domains: { trading: { unset: ['OLD'], set: { LIBRARY: '{{repo}}' } } },
+        },
+      },
+      'project.json',
+    ),
+  );
+  assert.throws(
+    () =>
+      validateCommandEnvConfig(
+        { command_env: { domains: { 'Bad Domain': { set: { VALUE: 'x' } } } } },
+        'project.json',
+      ),
+    /domains key/,
+  );
+  assert.throws(
+    () =>
+      validateCommandEnvConfig(
+        { command_env: { domains: { trading: { set: { 'BAD-NAME': 'x' } } } } },
+        'project.json',
+      ),
+    /valid environment names/,
+  );
 });
 
 test('isHttpFetchForbiddenPort flags CDP ports that Node fetch refuses', () => {

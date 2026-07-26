@@ -304,6 +304,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const isTerminal = r.status === 'done' || r.status === 'failed' || r.status === 'cancelled';
   const engine = resolveRunEngine(r);
   const boundSlotId = resolveRunSlotId(r);
+  const executionTemplate = r.executionTemplate ?? r.templateProvenance?.executionTemplate;
   const variantDrift = Boolean(
     r.variant && engine.runner && !r.variant.startsWith(`${engine.runner}-`),
   );
@@ -518,10 +519,30 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             <div class="meta-value">${runModeLabel(r)}</div>
           </div>`
         : nothing}
-      ${runTemplateFileName(r)
+      ${executionTemplate || runTemplateFileName(r)
         ? html`<div class="meta-item">
             <div class="meta-label">Template</div>
-            <div class="meta-value">${runTemplateFileName(r)}</div>
+            <div class="meta-value">${executionTemplate?.id ?? runTemplateFileName(r)}</div>
+          </div>`
+        : nothing}
+      ${executionTemplate
+        ? html`
+            <div class="meta-item">
+              <div class="meta-label">Template source</div>
+              <div class="meta-value">${executionTemplate.sourceId}</div>
+            </div>
+            <div class="meta-item">
+              <div class="meta-label">Source digest</div>
+              <div class="meta-value" title=${executionTemplate.sha256}>
+                ${executionTemplate.sha256.slice(0, 12)}
+              </div>
+            </div>
+          `
+        : nothing}
+      ${r.domain
+        ? html`<div class="meta-item">
+            <div class="meta-label">Domain</div>
+            <div class="meta-value">${r.domain}</div>
           </div>`
         : nothing}
       ${runChainedModeDrift(r)

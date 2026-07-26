@@ -1,4 +1,6 @@
 import type {
+  ExecutionTemplateOptions,
+  ExecutionTemplateRunMode,
   FlowType,
   PoolConfig,
   ProjectAutoRecoveryConfig,
@@ -75,10 +77,16 @@ export interface ConfigTemplatePreviewResult {
 export interface ConfigTemplateOptionsParams {
   project: string;
   flowType: FlowType;
+  platform?: string;
+  runMode?: ExecutionTemplateRunMode;
+  domain?: string;
+  executionTemplateId?: string;
 }
 
 export interface ConfigTemplateOptionsResult {
   options: WorkerTemplateOption[];
+  /** Present only when the project opts into the shared configured catalog. */
+  executionTemplates?: ExecutionTemplateOptions;
 }
 
 export interface ConfigSlotUpdateParams {

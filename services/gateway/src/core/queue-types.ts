@@ -12,6 +12,7 @@ export type InternalDispatchQueueAddParams = DispatchQueueAddParams &
     | 'launchGroupId'
     | 'launchSlotPolicy'
     | 'launchAttempt'
+    | 'executionTemplate'
   > & {
     autoDispatch?: boolean;
   };

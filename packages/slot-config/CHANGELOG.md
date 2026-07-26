@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- feat: validate project execution-template sources, defaults, and domain environment.
 - feat: template placeholder guard — `collectTemplatePlaceholders` / `collectPlaceholderTokens` / `knownTemplatePlaceholders` / `assertNoUnknownPlaceholders` / `expandTemplateWithReservedLast`; worker-facing render sinks fail hard on unexpandable `{{...}}` instead of shipping raw tokens to agents.
 - fix: config values substituted verbatim (slot resource values, `paths.*`, project var values) are validated against `{{...}}` smuggling at load; the documented `{{runtime_dir}}/recipes` recipe_dir default now resolves in the loader.
 

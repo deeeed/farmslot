@@ -30,6 +30,8 @@ export interface DispatchPayloadDraftInput {
   effort: string;
   app: string | undefined;
   taskTemplate: TaskTemplateSelection | undefined;
+  domain?: string;
+  executionTemplateId?: string;
   skipPrepare: boolean;
   prepareProfile: string;
   nudgeIntent: 'nudge' | 'fresh' | undefined;
@@ -63,6 +65,8 @@ export function buildDispatchWizardPayloadDraft(
     effort: input.effort || undefined,
     app: input.app,
     taskTemplate: input.taskTemplate,
+    domain: input.domain,
+    executionTemplateId: input.executionTemplateId,
     skipPrepare: input.skipPrepare || undefined,
     prepareProfile: input.prepareProfile || undefined,
     nudgeReuse: input.nudgeIntent === 'nudge' ? true : undefined,

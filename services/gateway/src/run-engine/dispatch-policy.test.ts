@@ -42,6 +42,20 @@ test('buildDispatchPreviewParamsForRun forwards explicit profile and app', () =>
   assert.equal(params.prepareProfile, 'sandbox');
 });
 
+test('buildDispatchPreviewParamsForRun preserves execution-template selection context', () => {
+  const params = buildDispatchPreviewParamsForRun(
+    makeRun({
+      mode: 'autonomous',
+      domain: 'trading',
+      executionTemplateId: 'fix-bug/autonomous.extension',
+    }),
+  );
+
+  assert.equal(params.mode, 'autonomous');
+  assert.equal(params.domain, 'trading');
+  assert.equal(params.executionTemplateId, 'fix-bug/autonomous.extension');
+});
+
 test('resolveCIWatchTerminalPatch maps blocked to blocked/partial', () => {
   const patch = resolveCIWatchTerminalPatch({ result: 'blocked' });
   assert.deepEqual(patch, {

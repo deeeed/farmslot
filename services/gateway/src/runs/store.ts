@@ -556,6 +556,7 @@ export function createRun(params: RunCreateParams): Run {
     lane,
     variant,
     taskTemplate: params.taskTemplate ? { ...params.taskTemplate } : undefined,
+    executionTemplateId: params.executionTemplateId,
     flowType: params.flowType,
     mode: params.mode,
     devInteractiveProfile,

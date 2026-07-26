@@ -9,7 +9,6 @@ import type {
   Run,
   RunListParams,
   RunListResult,
-  WorkerTemplateOption,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
@@ -28,12 +27,18 @@ export async function requestProjectConfigs(): Promise<ProjectConfig[]> {
 export async function requestTemplateOptions(
   project: string,
   flowType: FlowType,
-): Promise<WorkerTemplateOption[]> {
-  const res = await gateway.request<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
+  filters: {
+    platform?: string;
+    runMode?: 'interactive' | 'autonomous';
+    domain?: string;
+    executionTemplateId?: string;
+  } = {},
+): Promise<ConfigTemplateOptionsResult> {
+  return gateway.request<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
     project,
     flowType,
+    ...filters,
   });
-  return res.options;
 }
 
 export interface DispatchWizardCandidatesRequest {
@@ -101,6 +106,9 @@ export async function requestDispatchProfileFit(input: {
   flowType: FlowType;
   ticketOrPr: string;
   slotId?: string;
+  mode?: 'interactive' | 'autonomous';
+  domain?: string;
+  executionTemplateId?: string;
   prepareProfile?: string;
   app?: string;
 }): Promise<ProfileFitSuggestion | null> {
@@ -109,6 +117,9 @@ export async function requestDispatchProfileFit(input: {
     flowType: input.flowType,
     ticketOrPr: input.ticketOrPr,
     slotId: input.slotId,
+    mode: input.mode,
+    domain: input.domain,
+    executionTemplateId: input.executionTemplateId,
     prepareProfile: input.prepareProfile || undefined,
     app: input.app || undefined,
   });

@@ -24,6 +24,10 @@ export interface RecipeSourceProvenance {
   name?: string;
   path?: string;
   digest?: string;
+  /** Git commit for a source backed by a checkout. */
+  revision?: string;
+  /** Whether that checkout contained uncommitted changes when resolved. */
+  dirty?: boolean;
 }
 
 export interface RecipePlanNode {

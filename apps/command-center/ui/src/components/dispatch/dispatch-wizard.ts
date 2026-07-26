@@ -267,20 +267,32 @@ export class DispatchWizard extends DispatchWizardState {
       this._templateOptions = cleared.options;
       this._templateOptionsError = cleared.error;
       this._selectedTaskTemplateFileName = cleared.selectedFileName;
+      this._executionTemplates = null;
+      this._selectedExecutionTemplateId = '';
       return;
     }
-    const key = templateOptionsRequestKey(this._project, this._flowType);
+    const platform = this._allProjectSlots.find(
+      (slot) => slot.slot === this._slotOverride,
+    )?.platform;
+    const filters = {
+      ...(platform ? { platform } : {}),
+      runMode: this._catalogMode,
+      ...(this._domain ? { domain: this._domain } : {}),
+    };
+    const key = templateOptionsRequestKey(this._project, this._flowType, filters);
     this._templateOptionsKey = key;
     this._templateOptionsLoading = true;
     this._templateOptionsError = '';
     try {
-      const options = await requestTemplateOptions(this._project, this._flowType);
+      const result = await requestTemplateOptions(this._project, this._flowType, filters);
       if (this._templateOptionsKey !== key) return;
+      const options = result.options;
       const previousSelectionStillValid = options.some(
         (option) => option.fileName === this._selectedTaskTemplateFileName,
       );
       const next = deriveTemplateOptionsState(options, this._selectedTaskTemplateFileName);
       if (
+        !result.executionTemplates &&
         !previousSelectionStillValid &&
         this._flowType &&
         modeForFlow(this._flowType) === 'interactive'
@@ -291,12 +303,29 @@ export class DispatchWizard extends DispatchWizardState {
       this._templateOptions = next.options;
       this._templateOptionsError = next.error;
       this._selectedTaskTemplateFileName = next.selectedFileName;
+      this._executionTemplates = result.executionTemplates ?? null;
+      if (result.executionTemplates) {
+        const selectedStillValid = result.executionTemplates.options.some(
+          (option) => option.id === this._selectedExecutionTemplateId,
+        );
+        this._selectedExecutionTemplateId = selectedStillValid
+          ? this._selectedExecutionTemplateId
+          : (result.executionTemplates.selectedId ??
+            (result.executionTemplates.options.length === 1
+              ? result.executionTemplates.options[0]!.id
+              : ''));
+      } else {
+        this._selectedExecutionTemplateId = '';
+        this._domain = '';
+      }
     } catch (err: unknown) {
       if (this._templateOptionsKey !== key) return;
       this._templateOptions = [];
       this._templateOptionsError =
         err instanceof Error ? err.message : 'Template options failed to load';
       this._selectedTaskTemplateFileName = '';
+      this._executionTemplates = null;
+      this._selectedExecutionTemplateId = '';
     } finally {
       if (this._templateOptionsKey === key) this._templateOptionsLoading = false;
     }
@@ -305,6 +334,9 @@ export class DispatchWizard extends DispatchWizardState {
     this._project = project;
     this._autoProject = autoProject;
     this._slotOverride = '';
+    this._domain = '';
+    this._selectedExecutionTemplateId = '';
+    this._executionTemplates = null;
     this._prepareProfile = '';
     this._syncSelectedAppForProject(project);
     this._syncFleet(getState());
@@ -318,7 +350,7 @@ export class DispatchWizard extends DispatchWizardState {
 
   private _applyMockInitial(): void {
     if (!this.mockMode || !this.mockInitial) return;
-    if (this.mockInitial.flowType) this._flowType = this.mockInitial.flowType;
+    if (this.mockInitial.flowType) this._assignFlowType(this.mockInitial.flowType);
     if (this.mockInitial.ticketId !== undefined) this._ticketId = this.mockInitial.ticketId;
     if (this.mockInitial.normalizedTicket !== undefined)
       this._normalizedTicket = this.mockInitial.normalizedTicket;
@@ -422,6 +454,9 @@ export class DispatchWizard extends DispatchWizardState {
         flowType: this._flowType,
         ticketOrPr: this._ticketId.trim(),
         slotId: this._slotOverride || undefined,
+        mode: this._catalogMode,
+        domain: this._domain || undefined,
+        executionTemplateId: this._selectedExecutionTemplateId || undefined,
         app: this._app || undefined,
       });
       if (gen !== this._fetchGen) return;
@@ -450,6 +485,7 @@ export class DispatchWizard extends DispatchWizardState {
     if (next.nudgeIntentsChanged) this._nudgeIntentVersion++;
     this._lastFetchScoringKey = next.scoringKey;
     this._slotOverride = next.slotOverride;
+    if (next.slotOverride !== prevOverride) void this._fetchTemplateOptions();
   }
 
   // Debounced server-side project resolution
@@ -486,7 +522,7 @@ export class DispatchWizard extends DispatchWizardState {
           this._autoFlowType,
         );
         if (flowState) {
-          this._flowType = flowState.flowType;
+          this._assignFlowType(flowState.flowType);
           this._autoFlowType = flowState.autoFlowType;
         }
       }
@@ -605,7 +641,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._model = next.model;
     this._ticketId = run.ticketOrPr;
     this._normalizedTicket = '';
-    this._flowType = run.flowType;
+    this._assignFlowType(run.flowType);
     this._autoFlowType = false;
     this._autoProject = '';
     if (run.project) {
@@ -672,7 +708,7 @@ export class DispatchWizard extends DispatchWizardState {
     const prefill = parseDispatchWizardHash(location.hash, RUNNER_OPTIONS);
     if (!prefill) return;
     if (prefill.flowType) {
-      this._flowType = prefill.flowType;
+      this._assignFlowType(prefill.flowType);
       if (prefill.ticketId) this._ticketId = prefill.ticketId;
     }
     if (prefill.publicationReviewLoops.length > 0) {
@@ -738,11 +774,12 @@ export class DispatchWizard extends DispatchWizardState {
     // also their pick of the slot. Without this, the intent flips on a row that's not the
     // active one and the next Dispatch click ignores it.
     this._slotOverride = slotId;
+    void this._fetchTemplateOptions();
   }
 
   private _blockingState() {
     const state = getState();
-    return deriveDispatchWizardBlockingState({
+    const base = deriveDispatchWizardBlockingState({
       flowType: this._flowType,
       ticketId: this._ticketId,
       project: this._project,
@@ -762,18 +799,40 @@ export class DispatchWizard extends DispatchWizardState {
       comparisonFlow: this._comparisonFlow,
       comparisonParentRunId: this._comparisonParentRunId,
     });
+    const templateReason = this._templateOptionsError
+      ? 'Execution-template options are unavailable.'
+      : this._templateOptionsLoading
+        ? 'Loading execution-template options.'
+        : this._executionTemplates && !this._selectedExecutionTemplateId
+          ? this._executionTemplates.options.length === 0
+            ? 'No compatible execution template is available.'
+            : 'Select one exact execution template.'
+          : null;
+    const queueTemplateReason =
+      templateReason ??
+      (this._executionTemplates && !this._slotOverride
+        ? 'Select a slot before queuing a configured execution template.'
+        : null);
+    return {
+      ...base,
+      dispatchBlockedReason: templateReason ?? base.dispatchBlockedReason,
+      dispatchBlocked: base.dispatchBlocked || templateReason !== null,
+      queueBlockedReason: queueTemplateReason ?? base.queueBlockedReason,
+      queueBlocked: base.queueBlocked || queueTemplateReason !== null,
+    };
   }
 
   private _dispatchPayloadDraft() {
-    const mode = selectedTemplateMode(
-      this._flowType,
-      this._templateOptions,
-      this._selectedTaskTemplateFileName,
-    );
-    const taskTemplate = selectedTaskTemplate(
-      this._templateOptions,
-      this._selectedTaskTemplateFileName,
-    );
+    const mode = this._executionTemplates
+      ? this._catalogMode
+      : selectedTemplateMode(
+          this._flowType,
+          this._templateOptions,
+          this._selectedTaskTemplateFileName,
+        );
+    const taskTemplate = this._executionTemplates
+      ? undefined
+      : selectedTaskTemplate(this._templateOptions, this._selectedTaskTemplateFileName);
     return buildDispatchWizardPayloadDraft({
       flowType: this._flowType,
       project: this._project,
@@ -786,6 +845,8 @@ export class DispatchWizard extends DispatchWizardState {
       effort: this._effort,
       app: selectedDispatchApp(projectApps(this._projectConfigs, this._project), this._app),
       taskTemplate,
+      domain: this._domain || undefined,
+      executionTemplateId: this._selectedExecutionTemplateId || undefined,
       skipPrepare: this._skipPrepare,
       prepareProfile: this._prepareProfile,
       nudgeIntent: selectedNudgeIntent({
@@ -845,9 +906,16 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _selectFlowType(flowType: FlowType): void {
-    this._flowType = flowType;
+    this._assignFlowType(flowType);
+    this._selectedExecutionTemplateId = '';
+    this._executionTemplates = null;
     this._autoFlowType = false;
     void this._fetchTemplateOptions();
+  }
+
+  private _assignFlowType(flowType: FlowType): void {
+    this._flowType = flowType;
+    this._catalogMode = modeForFlow(flowType);
   }
 
   private _setRunner(runner: string) {
@@ -898,11 +966,13 @@ export class DispatchWizard extends DispatchWizardState {
 
   render() {
     const blockers = this._blockingState();
-    const mode = selectedTemplateMode(
-      this._flowType,
-      this._templateOptions,
-      this._selectedTaskTemplateFileName,
-    );
+    const mode = this._executionTemplates
+      ? this._catalogMode
+      : selectedTemplateMode(
+          this._flowType,
+          this._templateOptions,
+          this._selectedTaskTemplateFileName,
+        );
     return renderDispatchWizardView({
       hydrating: this._hydrating,
       bootstrapFailed: this._bootstrapFailed,
@@ -925,6 +995,9 @@ export class DispatchWizard extends DispatchWizardState {
       templateOptionsLoading: this._templateOptionsLoading,
       templateOptionsError: this._templateOptionsError,
       selectedTaskTemplateFileName: this._selectedTaskTemplateFileName,
+      executionTemplates: this._executionTemplates,
+      selectedExecutionTemplateId: this._selectedExecutionTemplateId,
+      domain: this._domain,
       runner: this._runner,
       model: this._model,
       effort: this._effort,
@@ -986,6 +1059,19 @@ export class DispatchWizard extends DispatchWizardState {
       setTaskTemplateFileName: (fileName) => {
         this._selectedTaskTemplateFileName = fileName;
       },
+      setExecutionTemplateId: (id) => {
+        this._selectedExecutionTemplateId = id;
+      },
+      setDomain: (domain) => {
+        this._domain = domain;
+        this._selectedExecutionTemplateId = '';
+        void this._fetchTemplateOptions();
+      },
+      setMode: (mode) => {
+        this._catalogMode = mode;
+        this._selectedExecutionTemplateId = '';
+        void this._fetchTemplateOptions();
+      },
       setRunner: (runner) => this._setRunner(runner),
       setModel: (model) => this._setModel(model),
       setEffort: (effort) => {
@@ -1045,6 +1131,7 @@ export class DispatchWizard extends DispatchWizardState {
         slotSummaryLabel({ slotId, slots: this._allProjectSlots, runs: getState().runs ?? [] }),
       selectSlot: (slotId) => {
         this._slotOverride = slotId;
+        void this._fetchTemplateOptions();
       },
       setNudgeIntent: (slotId, intent) => this._setNudgeIntent(slotId, intent),
       dispatchBlocked: () => blockers.dispatchBlocked,

@@ -57,4 +57,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [045](045-worker-terminal-contract.md)                 | Worker Terminal Contract — project.json required outputs                | Accepted |
 | [047](047-worker-session-history-panel.md)             | Experimental Worker Session History Panel (transcript mirror)           | Accepted |
 | [048](048-interactive-operator-packets.md)             | Interactive Operator Packets for Agent Review Surfaces                  | Accepted |
-| [049](049-agent-execution-template-selection.md)       | Agent Execution Template Selection                                      | Proposed |
+| [049](049-agent-execution-template-selection.md)       | Agent Execution Template Selection                                      | Accepted |

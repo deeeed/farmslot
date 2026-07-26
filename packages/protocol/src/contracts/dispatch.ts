@@ -54,6 +54,12 @@ export interface QueueItem {
   variant?: string | null;
   /** Selected project-owned worker template version for queued dispatch parity. */
   taskTemplate?: TaskTemplateSelection;
+  /** Exact shared-catalog template id for queued dispatch parity. */
+  executionTemplateId?: string;
+  /** Portable snapshot when the queue entry can be resolved against a concrete slot. */
+  executionTemplate?: import('./execution-templates.js').ExecutionTemplateReference;
+  /** Named project domain carried through queue dispatch. */
+  domain?: string;
   app?: string;
   /** Named prepare profile persisted for queued dispatch parity (ADR-037). */
   prepareProfile?: string;
@@ -107,5 +113,7 @@ export interface DispatchPreview {
   taskId: string;
   /** Named domain overlay the dispatch will carry (echoed so the operator sees it before launch). */
   domain?: string;
+  /** Exact template snapshot the gateway will use if this preview is dispatched. */
+  executionTemplate?: import('./execution-templates.js').ExecutionTemplateReference;
   profileFit?: ProfileFitSuggestion;
 }

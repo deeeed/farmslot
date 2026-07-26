@@ -878,6 +878,11 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
           ...(publicationReview ? { publicationReview } : {}),
           ...(recipeRunSupportsPlaybackSlow ? { recipeRunSupportsPlaybackSlow: true } : {}),
           ...(recipeRunSupportsVideoRecording ? { recipeRunSupportsVideoRecording: true } : {}),
+          ...(raw.execution_templates &&
+          typeof raw.execution_templates === 'object' &&
+          !Array.isArray(raw.execution_templates)
+            ? { executionTemplates: raw.execution_templates }
+            : {}),
         });
       } catch {
         /* skip invalid projects */
