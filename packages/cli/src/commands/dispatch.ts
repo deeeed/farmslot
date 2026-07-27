@@ -1,8 +1,8 @@
 import type { Command } from 'commander';
 
-import type { DispatchPreviewResult } from '@farmslot/protocol';
+import type { DispatchPreviewResult, DispatchQueueListResult } from '@farmslot/protocol';
 
-import { bold, dim, green } from '../colors.js';
+import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { withProgress } from '../progress.js';
@@ -101,6 +101,34 @@ export function registerDispatchCommand(program: Command): void {
       } catch (err) {
         emit.fail(err);
         return;
+      }
+    });
+
+  const queue = dispatch.command('queue').description('Inspect the shared dispatch queue');
+
+  queue
+    .command('list')
+    .description('List dispatch queue items')
+    .action(async (_opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await withProgress(
+          'Loading dispatch queue',
+          () => client.call<DispatchQueueListResult>('dispatch.queue.list', {}),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else if (result.items.length === 0) output.write(`${dim('queue empty')}\n`);
+        else {
+          for (const item of result.items) {
+            output.write(
+              `${cyan(item.id.slice(0, 8))}  p${String(item.priority ?? '-').padEnd(3)}  ${item.project}  ${item.flowType}  ${item.ticketOrPr || item.label || '-'}\n`,
+            );
+          }
+        }
+      } catch (err) {
+        emit.fail(err);
       }
     });
 

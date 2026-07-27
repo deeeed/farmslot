@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 // CI gate: every gateway RPC method in the protocol registry must be
 // classified in docs/reference/cli-protocol-method-matrix.json, and the
-// generated markdown table must be in sync. Regenerate the markdown with:
+// generated markdown table + cli-exemptions must be in sync. Regenerate with:
 //   node scripts/quality/check-method-matrix.mjs --write-markdown
+//
+// Classification contract (allowlist, not blocklist):
+//   - typed-command / tui → dedicated CLI surface
+//   - na → deliberate UI-only exemption (reason required; mirrored in cli-exemptions.json)
+//   - rpc-only → interim raw `farmslot rpc` reachability (not a typed command yet)
+// A registry method with no matrix entry fails. UI-only exemptions live in
+// docs/reference/cli-exemptions.json (generated from surface=na entries).
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,8 +18,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const registryPath = resolve(repoRoot, 'packages/protocol/src/rpc/registry.ts');
 const matrixPath = resolve(repoRoot, 'docs/reference/cli-protocol-method-matrix.json');
 const markdownPath = resolve(repoRoot, 'docs/reference/cli-protocol-method-matrix.md');
+const exemptionsPath = resolve(repoRoot, 'docs/reference/cli-exemptions.json');
 
 const SURFACES = new Set(['typed-command', 'tui', 'rpc-only', 'na']);
+/** Surfaces that count as a dedicated CLI operator surface. */
+const CLI_SURFACES = new Set(['typed-command', 'tui']);
 
 function registryMethods() {
   const source = readFileSync(registryPath, 'utf8');
@@ -84,6 +94,7 @@ const methods = registryMethods();
 const matrix = JSON.parse(readFileSync(matrixPath, 'utf8'));
 
 const problems = [];
+const exemptionMethods = {};
 for (const method of methods) {
   const entry = matrix.methods[method];
   if (!entry) {
@@ -99,6 +110,17 @@ for (const method of methods) {
   }
   if (entry.surface === 'na' && !nonEmptyString(entry.note)) {
     problems.push(`na without a justification note: ${method}`);
+  }
+  if (entry.surface === 'rpc-only' && !nonEmptyString(entry.note)) {
+    problems.push(`rpc-only without a justification note: ${method}`);
+  }
+  // Every method must have a dedicated CLI surface, an interim rpc-only entry,
+  // or a recorded UI-only exemption (surface=na → cli-exemptions.json).
+  if (!CLI_SURFACES.has(entry.surface) && entry.surface !== 'rpc-only' && entry.surface !== 'na') {
+    problems.push(`method has neither CLI surface nor cli-exemption: ${method}`);
+  }
+  if (entry.surface === 'na') {
+    exemptionMethods[method] = { reason: entry.note };
   }
   if ('command' in entry && !nonEmptyString(entry.command)) {
     problems.push(`empty or non-string command for ${method}`);
@@ -121,6 +143,32 @@ for (const method of Object.keys(matrix.methods)) {
   if (!known.has(method)) problems.push(`matrix entry for unknown method: ${method}`);
 }
 
+// Roadmap must stay on typed commands — never park it in cli-exemptions.
+for (const method of Object.keys(exemptionMethods)) {
+  if (method.startsWith('roadmap.')) {
+    problems.push(`roadmap method must not be in cli-exemptions: ${method}`);
+  }
+}
+for (const method of methods) {
+  if (!method.startsWith('roadmap.')) continue;
+  const entry = matrix.methods[method];
+  if (!entry) continue;
+  if (entry.surface !== 'typed-command') {
+    problems.push(`roadmap method must be typed-command (got ${entry.surface}): ${method}`);
+  }
+}
+
+const exemptionsDoc = {
+  description:
+    'UI-only gateway methods deliberately without a dedicated farmslot subcommand. Generated from surface=na entries in cli-protocol-method-matrix.json by scripts/quality/check-method-matrix.mjs. Every registry method must have a typed CLI surface, an interim rpc-only classification, or an entry here with a reason.',
+  methods: Object.fromEntries(
+    Object.keys(exemptionMethods)
+      .sort((a, b) => a.localeCompare(b))
+      .map((method) => [method, exemptionMethods[method]]),
+  ),
+};
+const exemptionsJson = `${JSON.stringify(exemptionsDoc, null, 2)}\n`;
+
 if (problems.length > 0) {
   console.error(`Protocol method matrix guard failed (${problems.length} problem(s)):`);
   for (const problem of problems) console.error(`  ${problem}`);
@@ -138,14 +186,41 @@ const markdown = await prettier.format(renderMarkdown(matrix, methods), {
   ...prettierConfig,
   parser: 'markdown',
 });
-if (process.argv.includes('--write-markdown')) {
+const write = process.argv.includes('--write-markdown');
+if (write) {
   writeFileSync(markdownPath, markdown);
+  writeFileSync(exemptionsPath, exemptionsJson);
   console.log(`Wrote ${markdownPath}`);
-} else if (readFileSync(markdownPath, 'utf8') !== markdown) {
-  console.error(
-    'cli-protocol-method-matrix.md is stale. Regenerate with: node scripts/quality/check-method-matrix.mjs --write-markdown',
-  );
-  process.exit(1);
+  console.log(`Wrote ${exemptionsPath}`);
 } else {
-  console.log(`Protocol method matrix guard passed (${methods.length} methods classified).`);
+  let stale = false;
+  if (readFileSync(markdownPath, 'utf8') !== markdown) {
+    console.error(
+      'cli-protocol-method-matrix.md is stale. Regenerate with: node scripts/quality/check-method-matrix.mjs --write-markdown',
+    );
+    stale = true;
+  }
+  let existingExemptions = '';
+  try {
+    existingExemptions = readFileSync(exemptionsPath, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      console.error(
+        'cli-exemptions.json is missing. Regenerate with: node scripts/quality/check-method-matrix.mjs --write-markdown',
+      );
+      stale = true;
+    } else {
+      throw err;
+    }
+  }
+  if (existingExemptions && existingExemptions !== exemptionsJson) {
+    console.error(
+      'cli-exemptions.json is stale. Regenerate with: node scripts/quality/check-method-matrix.mjs --write-markdown',
+    );
+    stale = true;
+  }
+  if (stale) process.exit(1);
+  console.log(
+    `Protocol method matrix guard passed (${methods.length} methods classified; ${Object.keys(exemptionMethods).length} UI-only exemptions).`,
+  );
 }

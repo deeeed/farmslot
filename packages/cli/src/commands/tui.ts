@@ -6,7 +6,9 @@ import { createEmitter } from '../envelope.js';
 export function registerTuiCommand(program: Command): void {
   program
     .command('tui')
-    .description('Interactive operator TUI (fleet, backlog, runs, recovery)')
+    .description(
+      'Interactive operator TUI (fleet, backlog, runs, roadmap/map, decisions/decide, recovery/fix, prepare/prep)',
+    )
     .action(async (_: unknown, cmd: Command) => {
       const { client, output, target } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);

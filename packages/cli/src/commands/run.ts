@@ -4,9 +4,18 @@ import { fileURLToPath } from 'node:url';
 
 import type { Command } from 'commander';
 
-import type { EventFrame, Run } from '@farmslot/protocol';
+import type {
+  EventFrame,
+  HumanGrade,
+  Run,
+  RunForceCompleteResult,
+  RunGetGradeResult,
+  RunGradeResult,
+  RunPauseResult,
+  RunResumeResult,
+} from '@farmslot/protocol';
 
-import { bold, green } from '../colors.js';
+import { bold, cyan, green } from '../colors.js';
 import { type CommandContext, resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { withProgress, withStreamProgress } from '../progress.js';
@@ -426,6 +435,149 @@ export function registerRunCommand(program: Command): void {
         );
         if (emit.machine) emit.ok(result);
         else output.write(`Archived ${runId}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('pause <runId>')
+    .description('Pause a running run')
+    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await withProgress(
+          `Pausing ${runId.slice(0, 8)}`,
+          () => client.call<RunPauseResult>('run.pause', { runId }),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else output.write(`${green('Paused')} ${cyan(runId.slice(0, 8))}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('resume <runId>')
+    .description('Resume a paused run')
+    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await withProgress(
+          `Resuming ${runId.slice(0, 8)}`,
+          () => client.call<RunResumeResult>('run.resume', { runId }),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else output.write(`${green('Resumed')} ${cyan(runId.slice(0, 8))}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('force-complete <runId>')
+    .description('Force-complete a run (operator escape hatch)')
+    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await withProgress(
+          `Force-completing ${runId.slice(0, 8)}`,
+          () => client.call<RunForceCompleteResult>('run.forceComplete', { runId }),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else output.write(`${green('Force-completed')} ${cyan(runId.slice(0, 8))}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('for-slot <slotId>')
+    .description('Show the run currently bound to a slot (if any)')
+    .action(async (slotId: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await withProgress(
+          `Run for ${slotId}`,
+          () => client.call<{ run: Run | null }>('run.forSlot', { slotId }),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else if (!result.run) output.write(`No run bound to ${slotId}.\n`);
+        else
+          output.write(
+            `${result.run.id.slice(0, 8)}  ${String(result.run.status)}  ${result.run.flowType}  ${result.run.ticketOrPr ?? '-'}\n`,
+          );
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('grade <runId>')
+    .description('Record a human grade on a run')
+    .requiredOption('--semantic <grade>', 'recipe_semantic: good | ok | bad')
+    .requiredOption('--reasoning <text>', 'Why this grade')
+    .option('--by <id>', 'Grader identity', 'cli-operator')
+    .action(
+      async (
+        runId: string,
+        opts: { semantic: string; reasoning: string; by: string },
+        cmd: Command,
+      ) => {
+        const { client, output } = resolveContext(cmd);
+        const emit = createEmitter(output, cmd);
+        try {
+          if (!['good', 'ok', 'bad'].includes(opts.semantic)) {
+            throw Object.assign(new Error(`Invalid --semantic '${opts.semantic}'.`), {
+              code: 'RUN_GRADE_INVALID',
+              userAction: 'Pass --semantic good, --semantic ok, or --semantic bad.',
+            });
+          }
+          const grade: HumanGrade = {
+            recipe_semantic: opts.semantic as HumanGrade['recipe_semantic'],
+            reasoning: opts.reasoning,
+            graded_by: opts.by,
+            graded_at: new Date().toISOString(),
+          };
+          const result = await withProgress(
+            `Grading ${runId.slice(0, 8)}`,
+            () => client.call<RunGradeResult>('run.grade', { runId, grade }),
+            !emit.machine,
+          );
+          if (emit.machine) emit.ok(result);
+          else output.write(`${green('Graded')} ${cyan(runId.slice(0, 8))} as ${opts.semantic}\n`);
+        } catch (err) {
+          emit.fail(err);
+        }
+      },
+    );
+
+  run
+    .command('get-grade <runId>')
+    .description('Read the human grade on a run, if any')
+    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await withProgress(
+          `Grade for ${runId.slice(0, 8)}`,
+          () => client.call<RunGetGradeResult>('run.getGrade', { runId }),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else if (!result.grade) output.write('No grade recorded.\n');
+        else
+          output.write(
+            `${result.grade.recipe_semantic}  by ${result.grade.graded_by}  ${result.grade.graded_at}\n${result.grade.reasoning}\n`,
+          );
       } catch (err) {
         emit.fail(err);
       }
