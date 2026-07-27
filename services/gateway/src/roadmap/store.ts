@@ -9,10 +9,14 @@ import { promisify } from 'node:util';
 import {
   DEFAULT_ROADMAP_REFINEMENT_MODEL,
   DEFAULT_ROADMAP_REFINEMENT_RUNNER,
+  isConcreteRoadmapProject,
+  isUnscopedGlobalRoadmapItem,
   normalizeRunTags,
   type PoolConfig,
+  ROADMAP_GLOBAL_PROJECT,
   ROADMAP_ITEM_STAGES,
   ROADMAP_SOURCE_KINDS,
+  ROADMAP_UNASSIGNED_PROJECT,
   type RoadmapDeleteParams,
   type RoadmapDeleteResult,
   type RoadmapGetParams,
@@ -145,7 +149,7 @@ async function withRoadmapMutation<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function normalizeProject(value: string | undefined): string {
-  const project = value?.trim() || 'unassigned';
+  const project = value?.trim() || ROADMAP_UNASSIGNED_PROJECT;
   assertSafePathSegment('roadmap project', project);
   return project;
 }
@@ -158,7 +162,7 @@ function normalizeTargetProjects(value: string[] | undefined): string[] {
         .map((project) => project.trim())
         .filter(Boolean)
         .map((project) => {
-          if (project === 'global' || project === 'unassigned') {
+          if (project === ROADMAP_GLOBAL_PROJECT || project === ROADMAP_UNASSIGNED_PROJECT) {
             throw new Error(`Roadmap target project must be concrete: ${project}`);
           }
           assertSafePathSegment('roadmap target project', project);
@@ -238,8 +242,9 @@ function newRoadmapId(): string {
 }
 
 function targetDirForProject(project: string): string {
-  if (project === 'global' || project === 'unassigned')
+  if (project === ROADMAP_GLOBAL_PROJECT || project === ROADMAP_UNASSIGNED_PROJECT) {
     return path.join(ROADMAP_ROOT, 'inbox', 'items');
+  }
   return path.join(ROADMAP_ROOT, 'projects', project, 'items');
 }
 
@@ -257,7 +262,9 @@ async function allocatePath(project: string, title: string): Promise<string> {
   const dir = targetDirForProject(project);
   await mkdir(dir, { recursive: true });
   const date = new Date().toISOString().slice(0, 10);
-  const base = `${date}-${project === 'unassigned' ? 'unassigned-' : ''}${slugify(title)}`;
+  const base = `${date}-${
+    project === ROADMAP_UNASSIGNED_PROJECT ? 'unassigned-' : ''
+  }${slugify(title)}`;
   for (let i = 0; i < 1000; i += 1) {
     const suffix = i === 0 ? '' : `-${i + 1}`;
     const candidate = path.join(dir, `${base}${suffix}.md`);
@@ -486,7 +493,8 @@ export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<
     if (
       params.project &&
       item.project !== params.project &&
-      !(item.targetProjects ?? []).includes(params.project)
+      !(item.targetProjects ?? []).includes(params.project) &&
+      !(isConcreteRoadmapProject(params.project) && isUnscopedGlobalRoadmapItem(item))
     ) {
       return false;
     }
@@ -657,14 +665,10 @@ function renderBacklogSpecMarkdown(
   return `---\n${frontmatter}\n---\n\n${titledBody.trimEnd()}\n`;
 }
 
-function isConcreteProject(project: string): boolean {
-  return project !== 'global' && project !== 'unassigned';
-}
-
 function defaultPromotionTargetProject(item: RoadmapItem): string | null {
   const targets = item.targetProjects ?? [];
   if (targets.length === 1) return targets[0]!;
-  if (targets.length === 0 && isConcreteProject(item.project)) return item.project;
+  if (targets.length === 0 && isConcreteRoadmapProject(item.project)) return item.project;
   return null;
 }
 
@@ -676,6 +680,13 @@ function resolvePromotionSpecProject(item: RoadmapItem, spec: RoadmapPromoteSpec
     if (!project) throw new Error('Backlog spec project is required');
     if (targets.length > 0 && !targets.includes(project)) {
       throw new Error(`Backlog spec project ${project} is not in roadmap targetProjects`);
+    }
+    if (
+      targets.length === 0 &&
+      (item.project === ROADMAP_GLOBAL_PROJECT || item.project === ROADMAP_UNASSIGNED_PROJECT) &&
+      isConcreteRoadmapProject(project)
+    ) {
+      return project;
     }
     if (targets.length === 0 && project !== item.project) {
       throw new Error(
@@ -710,7 +721,9 @@ async function projectRefinementConfig(item: RoadmapItem): Promise<{
   runnerCommand?: string;
   farmslotCommand?: string;
 }> {
-  if (item.project === 'global' || item.project === 'unassigned') return {};
+  if (item.project === ROADMAP_GLOBAL_PROJECT || item.project === ROADMAP_UNASSIGNED_PROJECT) {
+    return {};
+  }
   const project = await loadProjectConfig(item.project);
   if (!project) return {};
   const roadmap = project.roadmap;
@@ -802,7 +815,7 @@ function defaultPromotionRequestCommand(item: RoadmapItem, farmslotCommand?: str
 function contextProjects(item: RoadmapItem): string[] {
   const projects = item.targetProjects?.length
     ? item.targetProjects
-    : isConcreteProject(item.project)
+    : isConcreteRoadmapProject(item.project)
       ? [item.project]
       : [];
   return [...new Set(projects)].sort();
@@ -970,7 +983,7 @@ async function resolveRoadmapRefinementPrompt(
   );
   if (projectTemplate?.trim()) return `${projectTemplate.trimEnd()}\n`;
 
-  if (item.project !== DEFAULT_PROMPT_PROJECT) {
+  if (item.project !== DEFAULT_PROMPT_PROJECT && isConcreteRoadmapProject(item.project)) {
     const fallback = await loadPromptTemplate(
       DEFAULT_PROMPT_PROJECT,
       ROADMAP_REFINEMENT_PROMPT_TEMPLATE,
@@ -1036,8 +1049,10 @@ function renderBuiltInRefinementPrompt(
     'When the file satisfies this contract, update the roadmap item frontmatter to `stage: "refined"` and refresh `updatedAt`.',
     'Leave it as `stage: "refining"` only if important information is still missing.',
     '',
-    'Keep backlog boundaries clear: one refined roadmap item may promote into multiple backlog specs.',
-    'When target projects are listed, write project-specific dispatch boundaries and backlog specs.',
+    'Keep backlog boundaries clear: draft count follows deployable objectives, not len(targetProjects).',
+    'targetProjects is the allowed implementation set, not a mandate to open one ticket per listed project.',
+    'Multiple drafts for the same project are valid when objectives are independent; one deployable objective should produce one draft (narrow over-broad targetProjects).',
+    'Cross-project fan-out only when each project needs distinct code or dispatch. A concrete owning project may override this fallback through roadmap.refinement_prompt_path / refinement_prompt.',
     'Each backlog draft must include a promotion-valid `## Acceptance Criteria` section.',
     'Use one `### Backlog Draft: <title>` heading per draft and do not repeat the same title as a separate `Title:` line.',
     'Use draft-local `#### Implementation Notes` and `#### References` headings so the roadmap remains readable.',
@@ -1418,6 +1433,11 @@ async function promoteRoadmapItemUnlocked(
     const tags = normalizeRunTags([...(current.tags ?? []), ...(spec.tags ?? [])]);
     return { spec, project, markdown, tags };
   });
+  for (const prepared of preparedSpecs) {
+    if (!(await loadProjectConfig(prepared.project))) {
+      throw new Error(`Unknown backlog spec project: ${prepared.project}`);
+    }
+  }
 
   const backlogItems: RoadmapPromoteResult['backlogItems'] = [];
   const specPaths: string[] = [];

@@ -71,7 +71,17 @@ export async function createRoadmapPromotionRequest(
     : [];
   const route = input.roadmapRoute?.trim() || `#roadmap?item=${encodeURIComponent(itemId)}`;
   const promotionRoute = withRouteParam(route, 'promote', '1');
-  const expectedBacklogItems = Math.max(1, targetProjects.length);
+  // Count materialized drafts, not targetProjects. Targets are the allowed set;
+  // one framework ticket can list many targets by mistake and still be one draft.
+  const expectedBacklogItems = draftSpecPaths.length;
+  const decisionTitle =
+    expectedBacklogItems > 0
+      ? `Review roadmap promotion (${expectedBacklogItems} backlog ${expectedBacklogItems === 1 ? 'item' : 'items'})`
+      : 'Review roadmap promotion (no generated drafts)';
+  const reviewActionLabel =
+    expectedBacklogItems > 0
+      ? `Review ${expectedBacklogItems} draft${expectedBacklogItems === 1 ? '' : 's'}`
+      : 'Review promotion';
   const decisionDir = path.join(
     root,
     'projects',
@@ -84,8 +94,11 @@ export async function createRoadmapPromotionRequest(
     id: decisionPath,
     type: 'blocked_alert',
     slot_id: null,
-    title: `Review roadmap promotion (${expectedBacklogItems} backlog ${expectedBacklogItems === 1 ? 'item' : 'items'})`,
-    description: `Refinement is ready for "${title}". Review the generated backlog spec attachments with the operator; promote only after confirming the scope and target projects.`,
+    title: decisionTitle,
+    description:
+      expectedBacklogItems > 0
+        ? `Refinement is ready for "${title}". Review the generated backlog spec attachments with the operator; promote only after confirming the scope and target projects.`
+        : `Refinement is ready for "${title}", but no backlog draft attachments were generated. Review the roadmap item and confirm its scope before promotion.`,
     context: {
       kind: 'roadmap-promotion',
       roadmapItemId: itemId,
@@ -107,7 +120,7 @@ export async function createRoadmapPromotionRequest(
     actions: [
       {
         id: 'review-promotion',
-        label: `Review ${expectedBacklogItems} draft${expectedBacklogItems === 1 ? '' : 's'}`,
+        label: reviewActionLabel,
         style: 'primary',
         description:
           'Open the roadmap promotion panel and review the generated draft spec attachments. This does not create backlog items.',

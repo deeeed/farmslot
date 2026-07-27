@@ -1,5 +1,7 @@
 import type { PromotionDraft, RoadmapItem } from '@farmslot/protocol';
 import {
+  isConcreteRoadmapProject,
+  isUnscopedGlobalRoadmapItem,
   parsePromotionDraftAttachment,
   parsePromotionDraftsFromRoadmapBody,
   promotionDraftAttachment,
@@ -12,8 +14,25 @@ export {
   promotionDraftAttachment,
 };
 
-function concreteProject(project: string): boolean {
-  return project !== 'global' && project !== 'unassigned';
+export function filterRoadmapItemsByGlobalProjects(
+  items: RoadmapItem[],
+  globalProjects: readonly string[],
+): RoadmapItem[] {
+  const projects = new Set(globalProjects);
+  // Preserve identity for the common no-filter path so Lit does not receive a
+  // new list solely because global filters were cleared.
+  if (projects.size === 0) return items;
+
+  return items.filter((item) => {
+    const targets = item.targetProjects ?? [];
+    // An unscoped global item coordinates across projects, so it remains visible
+    // in concrete project views. `unassigned` means not scoped yet and stays hidden.
+    return (
+      projects.has(item.project) ||
+      targets.some((project) => projects.has(project)) ||
+      isUnscopedGlobalRoadmapItem(item)
+    );
+  });
 }
 
 export function defaultSpecBody(item: RoadmapItem | null): string {
@@ -38,7 +57,7 @@ export function promotionDraftsFromRoadmapItem(item: RoadmapItem): PromotionDraf
 
   const targets = item.targetProjects ?? [];
   const projects =
-    targets.length > 0 ? targets : concreteProject(item.project) ? [item.project] : [''];
+    targets.length > 0 ? targets : isConcreteRoadmapProject(item.project) ? [item.project] : [''];
   return projects.map((project) => ({
     project,
     title: item.title,

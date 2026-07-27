@@ -15,11 +15,15 @@ import type {
 import {
   DEFAULT_ROADMAP_REFINEMENT_MODEL,
   DEFAULT_ROADMAP_REFINEMENT_RUNNER,
+  isConcreteRoadmapProject,
+  isUnscopedGlobalRoadmapItem,
   Methods,
   parsePromotionDraftsFromRoadmapBody,
   promotionDraftAttachment,
+  ROADMAP_GLOBAL_PROJECT,
   ROADMAP_ITEM_STAGES,
   ROADMAP_SOURCE_KINDS,
+  ROADMAP_UNASSIGNED_PROJECT,
   RoadmapMethods,
 } from '../../src/index.js';
 
@@ -55,6 +59,20 @@ test('roadmap protocol exports method constants and stages', () => {
     'archived',
   ]);
   assert.deepEqual(ROADMAP_SOURCE_KINDS, ['manual', 'import', 'agent', 'external']);
+  assert.equal(ROADMAP_GLOBAL_PROJECT, 'global');
+  assert.equal(ROADMAP_UNASSIGNED_PROJECT, 'unassigned');
+  assert.equal(isConcreteRoadmapProject('farmslot-farm'), true);
+  assert.equal(isConcreteRoadmapProject('global'), false);
+  assert.equal(isConcreteRoadmapProject('unassigned'), false);
+  assert.equal(isConcreteRoadmapProject('  '), false);
+  assert.equal(isUnscopedGlobalRoadmapItem({ project: 'global', targetProjects: [] }), true);
+  assert.equal(
+    isUnscopedGlobalRoadmapItem({
+      project: 'global',
+      targetProjects: ['farmslot-farm'],
+    }),
+    false,
+  );
 });
 
 test('roadmap promotion draft helpers produce attachment-shaped specs', () => {

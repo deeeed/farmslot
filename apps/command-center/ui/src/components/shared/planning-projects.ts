@@ -1,3 +1,9 @@
+import { isConcreteRoadmapProject } from '@farmslot/protocol';
+
+export function concretePlanningProjects(projects: readonly string[]): string[] {
+  return [...new Set(projects.map((project) => project.trim()).filter(isConcreteRoadmapProject))];
+}
+
 export function syncedDraftProject(input: {
   currentProject: string;
   availableProjects: readonly string[];
@@ -14,4 +20,24 @@ export function syncedDraftProject(input: {
   if (current && !fallbackProjects.has(current)) return current;
 
   return input.availableProjects[0] ?? '';
+}
+
+/**
+ * Keep draft `targetProjects` aligned with global project filters.
+ *
+ * Only a *single* concrete filter pre-fills targets. Multi-project filters set
+ * owner `project=global` for coordination but must not auto-fan-out every filtered
+ * farm into `targetProjects` — that forced N backlog drafts for framework-only ideas.
+ * Multi-target fan-out is operator-explicit. Clearing all global filters preserves
+ * the capture form's current targets, whether auto-filled or operator-selected.
+ */
+export function syncedDraftTargetProjects(input: {
+  currentTargets: readonly string[];
+  concreteGlobalProjects: readonly string[];
+  preserveCurrentTargets: boolean;
+}): string[] {
+  if (input.preserveCurrentTargets || input.concreteGlobalProjects.length === 0) {
+    return [...input.currentTargets];
+  }
+  return input.concreteGlobalProjects.length === 1 ? [input.concreteGlobalProjects[0]!] : [];
 }

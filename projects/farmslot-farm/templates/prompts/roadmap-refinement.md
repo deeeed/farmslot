@@ -75,9 +75,30 @@ When the file satisfies this contract, update the roadmap item frontmatter to
 `stage: "refined"` and refresh `updatedAt`. Leave it as `stage: "refining"`
 only if important information is still missing.
 
-When target projects are listed, include a `## Backlog Drafts` section with one
-dispatch-ready draft per target project. Use this exact shape for each draft;
-do not repeat the title as both a heading and a separate `Title:` line:
+When the item is ready for backlog, include a `## Backlog Drafts` section.
+Draft count follows **deployable objectives**, not the length of `targetProjects`.
+
+### Draft count policy
+
+`targetProjects` is the **allowed set** of implementation homes — not a mandate
+to open N tickets:
+
+1. **Same project, multiple drafts is valid** when there are truly separate
+   deployable objectives (e.g. two independent PRs that should not share a
+   worker). Prefer that over stuffing unrelated work into one ticket.
+2. **Default to one draft** when the work is one objective. Do not invent
+   project-specific verification tickets for projects that need no code change.
+3. **Cross-project fan-out** only when each project needs distinct code or
+   dispatch (e.g. metamask-mobile-farm vs metamask-extension-farm). If several
+   projects are listed but only one needs changes, **narrow frontmatter
+   `targetProjects`** and emit one draft; propose that collapse before writing
+   when unsure.
+4. A concrete owning project may override this fallback through
+   `roadmap.refinement_prompt_path` (or inline `roadmap.refinement_prompt`) in
+   its `project.json`.
+
+Use this exact shape for each draft; do not repeat the title as both a heading
+and a separate `Title:` line:
 
 ```markdown
 ### Backlog Draft: <clear dispatch title>
@@ -121,10 +142,12 @@ Keep boundaries clear:
 
 - Roadmap items can begin as rough ideas and mature into refined project or epic specs.
 - Backlog items are dispatch-ready implementation tickets with explicit acceptance criteria.
-- One roadmap item may promote into multiple backlog specs; do not collapse multi-concern work into one ticket.
-- If target projects are listed, produce project-specific dispatch boundaries and backlog specs.
+- Multiple backlog specs from one roadmap item are fine (including several for the
+  **same** project) when objectives are independent; never invent tickets just
+  because `targetProjects` is multi or the global filter listed many farms.
+- When multi-project fan-out is genuine, give each draft clear project-specific boundaries.
 - Use shared tag semantics across roadmap, backlog, queue, and runs.
-- Favor simple dispatchable slices over architecture-heavy plans.
+- Favor simple dispatchable slices.
 
 ## Current roadmap markdown
 

@@ -124,6 +124,44 @@ test('roadmap store saves rough inbox markdown and supports get/list filters', a
   assert.equal((await listRoadmapItems({ stage: 'refined' })).items.length, 0);
 });
 
+test('roadmap project filters include only relevant global coordination items', async () => {
+  const { listRoadmapItems, saveRoadmapItem } = await store();
+  await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: [],
+      title: 'Unscoped global coordination',
+      body: 'Coordinate across projects.',
+    },
+  });
+  await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: ['metamask-mobile-farm'],
+      title: 'Mobile-only coordination',
+      body: 'Coordinate mobile work.',
+    },
+  });
+  await saveRoadmapItem({
+    item: {
+      project: 'farmslot-farm',
+      title: 'Farmslot-owned work',
+      body: 'Implement framework work.',
+    },
+  });
+
+  const farmslotItems = await listRoadmapItems({ project: 'farmslot-farm' });
+  assert.deepEqual(farmslotItems.items.map((item) => item.title).sort(), [
+    'Farmslot-owned work',
+    'Unscoped global coordination',
+  ]);
+  assert.deepEqual((await listRoadmapItems({ project: 'unassigned' })).items, []);
+  assert.deepEqual(
+    (await listRoadmapItems({ project: 'global' })).items.map((item) => item.title),
+    ['Mobile-only coordination', 'Unscoped global coordination'],
+  );
+});
+
 test('roadmap store rejects stale edits and accepts matching hash updates', async () => {
   const { getRoadmapItem, saveRoadmapItem } = await store();
   const created = await saveRoadmapItem({
@@ -480,6 +518,30 @@ test('roadmap store lists, reads, and saves promotion draft attachments', async 
   );
 });
 
+test('global roadmap refinement resolves the project-neutral built-in policy', async () => {
+  const { saveRoadmapItem, startRoadmapRefinement } = await store();
+  const created = await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: [],
+      title: 'Cross-project coordination',
+      stage: 'rough',
+      body: 'Decide which projects need implementation work.',
+    },
+  });
+
+  const refined = await startRoadmapRefinement({
+    itemId: created.item.id,
+    expectedHash: created.item.fileHash,
+    launch: false,
+  });
+  const prompt = await readFile(path.join(farmslotRoot, refined.promptPath), 'utf-8');
+
+  assert.match(prompt, /draft count follows deployable objectives/);
+  assert.match(prompt, /Cross-project fan-out.*each project needs distinct code or\s+dispatch/s);
+  assert.doesNotMatch(prompt, /farmslot-farm/);
+});
+
 test('roadmap refinement runner command clears ambient tmux context', async () => {
   const { __roadmapStoreTest, saveRoadmapItem } = await store();
   const created = await saveRoadmapItem({
@@ -703,6 +765,121 @@ test('roadmap promotion requires spec projects when multiple target projects exi
       }),
     /Backlog spec project is required/,
   );
+});
+
+test('roadmap promotion accepts an explicit project for an unscoped global item', async () => {
+  const { promoteRoadmapItem, saveRoadmapItem } = await store();
+  const roadmap = await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: [],
+      title: 'Unscoped global coordination',
+      stage: 'refined',
+      body: refinedBody('The operator chooses the concrete project during promotion.'),
+    },
+  });
+
+  const promoted = await promoteRoadmapItem({
+    itemId: roadmap.item.id,
+    expectedHash: roadmap.item.fileHash,
+    specs: [
+      {
+        project: 'farmslot-farm',
+        title: 'Implement the coordinated change',
+        body: '## Context\n\nCoordinated work.\n\n## Acceptance Criteria\n\n- Change ships.',
+      },
+    ],
+  });
+
+  assert.equal(promoted.backlogItems[0]?.project, 'farmslot-farm');
+  assert.equal(promoted.roadmapItem.promotion?.[0]?.project, 'farmslot-farm');
+});
+
+test('roadmap promotion accepts an explicit project for an unassigned item', async () => {
+  const { promoteRoadmapItem, saveRoadmapItem } = await store();
+  const roadmap = await saveRoadmapItem({
+    item: {
+      project: 'unassigned',
+      targetProjects: [],
+      title: 'Unassigned idea',
+      stage: 'refined',
+      body: refinedBody('The operator chooses the implementation project during promotion.'),
+    },
+  });
+
+  const promoted = await promoteRoadmapItem({
+    itemId: roadmap.item.id,
+    expectedHash: roadmap.item.fileHash,
+    specs: [
+      {
+        project: 'farmslot-farm',
+        title: 'Implement the idea',
+        body: '## Context\n\nScoped work.\n\n## Acceptance Criteria\n\n- Change ships.',
+      },
+    ],
+  });
+
+  assert.equal(promoted.backlogItems[0]?.project, 'farmslot-farm');
+});
+
+test('roadmap promotion rejects an unknown concrete project', async () => {
+  const { promoteRoadmapItem, saveRoadmapItem } = await store();
+  const roadmap = await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: [],
+      title: 'Unscoped global coordination',
+      stage: 'refined',
+      body: refinedBody('Promotion must use a configured project.'),
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      promoteRoadmapItem({
+        itemId: roadmap.item.id,
+        expectedHash: roadmap.item.fileHash,
+        specs: [
+          {
+            project: 'farmslot-farm-typo',
+            title: 'Invalid target',
+            body: '## Context\n\nScoped work.\n\n## Acceptance Criteria\n\n- Change ships.',
+          },
+        ],
+      }),
+    /Unknown backlog spec project: farmslot-farm-typo/,
+  );
+});
+
+test('roadmap promotion rejects non-concrete projects for an unscoped global item', async () => {
+  const { promoteRoadmapItem, saveRoadmapItem } = await store();
+  const roadmap = await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: [],
+      title: 'Unscoped global coordination',
+      stage: 'refined',
+      body: refinedBody('Promotion needs a concrete implementation project.'),
+    },
+  });
+
+  for (const project of ['global', 'unassigned']) {
+    await assert.rejects(
+      () =>
+        promoteRoadmapItem({
+          itemId: roadmap.item.id,
+          expectedHash: roadmap.item.fileHash,
+          specs: [
+            {
+              project,
+              title: 'Invalid coordination target',
+              body: '## Context\n\nCoordinate work.\n\n## Acceptance Criteria\n\n- Change ships.',
+            },
+          ],
+        }),
+      /must be concrete/,
+    );
+  }
 });
 
 test('roadmap promotion validates every spec before writing backlog side effects', async () => {
