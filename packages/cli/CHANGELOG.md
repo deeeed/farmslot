@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat: `farmslot roadmap list|get|save|delete|refine|refinement-session|prompt-get|promotion-draft|promote` — full gateway roadmap RPC parity with machine envelopes; `request-promotion` now uses the same envelope path.
 - Show optional execution-template descriptions and accept them when creating templates.
 
 - feat: inspect execution-template options and dispatch runs with an exact template id.

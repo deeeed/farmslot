@@ -273,19 +273,19 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## roadmap.\*
 
-| Method                          | Surface  | CLI command | TUI | Note |
-| ------------------------------- | -------- | ----------- | --- | ---- |
-| `roadmap.list`                  | rpc-only |             |     |      |
-| `roadmap.get`                   | rpc-only |             |     |      |
-| `roadmap.save`                  | rpc-only |             |     |      |
-| `roadmap.delete`                | rpc-only |             |     |      |
-| `roadmap.refine`                | rpc-only |             |     |      |
-| `roadmap.refinementSession.get` | rpc-only |             |     |      |
-| `roadmap.prompt.get`            | rpc-only |             |     |      |
-| `roadmap.promotionDraft.list`   | rpc-only |             |     |      |
-| `roadmap.promotionDraft.get`    | rpc-only |             |     |      |
-| `roadmap.promotionDraft.save`   | rpc-only |             |     |      |
-| `roadmap.promote`               | rpc-only |             |     |      |
+| Method                          | Surface       | CLI command                             | TUI | Note |
+| ------------------------------- | ------------- | --------------------------------------- | --- | ---- |
+| `roadmap.list`                  | typed-command | `farmslot roadmap list`                 |     |      |
+| `roadmap.get`                   | typed-command | `farmslot roadmap get`                  |     |      |
+| `roadmap.save`                  | typed-command | `farmslot roadmap save`                 |     |      |
+| `roadmap.delete`                | typed-command | `farmslot roadmap delete`               |     |      |
+| `roadmap.refine`                | typed-command | `farmslot roadmap refine`               |     |      |
+| `roadmap.refinementSession.get` | typed-command | `farmslot roadmap refinement-session`   |     |      |
+| `roadmap.prompt.get`            | typed-command | `farmslot roadmap prompt-get`           |     |      |
+| `roadmap.promotionDraft.list`   | typed-command | `farmslot roadmap promotion-draft list` |     |      |
+| `roadmap.promotionDraft.get`    | typed-command | `farmslot roadmap promotion-draft get`  |     |      |
+| `roadmap.promotionDraft.save`   | typed-command | `farmslot roadmap promotion-draft save` |     |      |
+| `roadmap.promote`               | typed-command | `farmslot roadmap promote`              |     |      |
 
 ## run.\*
 

@@ -212,37 +212,48 @@
       "surface": "rpc-only"
     },
     "roadmap.list": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap list"
     },
     "roadmap.get": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap get"
     },
     "roadmap.save": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap save"
     },
     "roadmap.delete": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap delete"
     },
     "roadmap.refine": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap refine"
     },
     "roadmap.refinementSession.get": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap refinement-session"
     },
     "roadmap.prompt.get": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap prompt-get"
     },
     "roadmap.promotionDraft.list": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap promotion-draft list"
     },
     "roadmap.promotionDraft.get": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap promotion-draft get"
     },
     "roadmap.promotionDraft.save": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap promotion-draft save"
     },
     "roadmap.promote": {
-      "surface": "rpc-only"
+      "surface": "typed-command",
+      "command": "farmslot roadmap promote"
     },
     "terminal.subscribe": {
       "surface": "na",
