@@ -338,16 +338,20 @@ export async function executeMonitorStep(
       // human gate is skipped for this profile precisely because the operator is
       // expected to be steering, so there is nothing downstream to catch this.
       console.warn(
-        `[run-engine] run ${runId.slice(0, 8)} — ignoring worker '${workerSignal.status}' signal; ` +
-          'interactive lightweight completion is operator-owned',
+        `[run-engine] run ${runId.slice(0, 8)} — worker '${workerSignal.status}' signal noted; ` +
+          'interactive completion is resolved by the operator at the human gate',
       );
+      // Record the signal and let the pipeline advance to the human gate, which is
+      // no longer skipped for this profile. The gate is what holds the run for its
+      // operator; returning here would otherwise be indistinguishable from the
+      // worker completing the run itself.
       return {
         inputs,
         outputs: {
           ...stepOutputs,
-          workerTerminalSignalIgnored: workerSignal.status,
-          reason: 'interactive-lightweight-operator-owned-completion',
+          workerTerminalSignalNoted: workerSignal.status,
           awaitingOperator: true,
+          reason: 'interactive-completion-resolved-at-human-gate',
         },
       };
     }
@@ -573,20 +577,12 @@ export async function executeHumanGateStep(
   const noChangeGate = shouldForceNoChangeHumanGate(current);
   const publicationApprovalGate = requiresPublicationApproval(current);
   const artifactOnly = isArtifactOnlyRun(current);
-  if (isLightweightInteractiveDevRun(current)) {
-    console.log(
-      `[run-engine] run ${runId.slice(0, 8)} — human-gate skipped for interactive lightweight dev policy`,
-    );
-    return {
-      inputs: { gateType, gateEnabled: false, policy: 'interactive-lightweight' },
-      outputs: {
-        skipped: true,
-        reason: 'interactive-lightweight-policy',
-        source: 'operator-policy',
-        externalReview: 'deferred',
-      },
-    };
-  }
+  // No lightweight-interactive skip here. `isHumanGateEnabled` already returns true
+  // for every interactive run, and skipping on top of it removed the one place an
+  // operator-owned run stops for its operator: self-review is skipped for this
+  // profile too, so a worker signal ran straight through to `complete`, released
+  // the slot and finished the run (32909fa2, with 26 files uncommitted and no PR).
+  // The gate is where the operator resolves the run and the signal is written.
   if (artifactOnly) {
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — human-gate skipped for artifact-only completion policy`,

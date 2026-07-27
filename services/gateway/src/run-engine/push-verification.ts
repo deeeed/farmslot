@@ -219,9 +219,17 @@ export async function verifyWorkerPushedBranch(
     }
     if (satisfied(state)) {
       console.log(
-        `[push-verification] run ${runId.slice(0, 8)} — branch ${branch} published after nudge`,
+        `[push-verification] run ${runId.slice(0, 8)} — branch ${branch} ` +
+          `${requiresPush ? 'published' : 'committed'} after nudge`,
       );
-      return { verified: true, dirtyFiles: 0, unpushedCommits: 0, nudged };
+      // Report what was actually observed. In commit mode unpushed commits are
+      // expected and left for the publication step, so claiming zero would be false.
+      return {
+        verified: true,
+        dirtyFiles: state.dirtyFiles,
+        unpushedCommits: state.unpushedCommits,
+        nudged,
+      };
     }
   }
 
