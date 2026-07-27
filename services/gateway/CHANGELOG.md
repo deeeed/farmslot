@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(tasks): the interactive checklist renders as `**N. Text**` so the task schema parser keeps each step's label. `**N.** Text` made it strip the first bold group and discard the rest, so Command Center showed eight numbered steps with no titles.
 - fix(run-engine): a dev run's terminal signal is now commit-verified. The push guard covered only pr-complete and update-branch, so a dev worker could finish with its work uncommitted in the slot worktree, where it is destroyed on reclaim. A push is still not required for dev — the publication step performs it — and interactive dev stays exempt, since publishing there is the operator's call.
 - fix(gateway): the interactive dev checklist is an execution plan again, not the ticket's acceptance criteria. ACs are end-state assertions, so a worker could not mark progress against them and the operator could not follow the session; they stay in TASK.md as proof targets.
 - fix(run-engine): a lightweight interactive dev run is held for its operator instead of completing itself. The dev pipeline runs MONITOR → SELF_REVIEW → COMPLETE → HUMAN_GATE, so the gate is a publication gate and cannot hold a run before completion; a worker terminal signal ran through COMPLETE, released the slot and killed the worker. The signal now pauses the run at MONITOR, which stops the pipeline before any slot cleanup, so the slot stays owned and the worker alive and every interactive action (done-no-pr, blocked, failed, abort, self-review) remains available.
