@@ -25,7 +25,13 @@ import {
 } from './auto-recovery/watcher.js';
 import { initAutoRecycle } from './automation/auto-recycle.js';
 import { onBranchChange, startBranchWatchers } from './automation/branch-watcher.js';
-import { assertQueueClaimHeld, initDispatchQueue, loadQueue } from './backlog/dispatch-queue.js';
+import {
+  assertQueueClaimHeld,
+  getQueueSnapshot,
+  initDispatchQueue,
+  loadQueue,
+  removeQueueItemInternal,
+} from './backlog/dispatch-queue.js';
 import {
   initBacklogStore,
   loadBacklog,
@@ -341,6 +347,11 @@ async function main(): Promise<void> {
         { beforeCreate },
       );
       item.runId = result.run?.id;
+      // Durable run exists: drop the queue row before further awaits so a concurrent
+      // replay cannot reclaim a row that already produced work (two live runs).
+      if (result.run?.id && getQueueSnapshot().some((q) => q.id === item.id)) {
+        removeQueueItemInternal(item.id, 'dispatch-created');
+      }
       return;
     }
     const { runCreate } = await import('./methods/run.js');
@@ -391,6 +402,12 @@ async function main(): Promise<void> {
       beforeCreate,
     });
     item.runId = run.id;
+    // Handoff complete at durable create: remove before markBacklogRunStarted
+    // (or any other await) so replay reclaim cannot revive a cancelled sibling
+    // while this new run is already live.
+    if (getQueueSnapshot().some((q) => q.id === item.id)) {
+      removeQueueItemInternal(item.id, 'dispatch-created');
+    }
     try {
       await markBacklogRunStarted(item, run);
     } catch (err) {
