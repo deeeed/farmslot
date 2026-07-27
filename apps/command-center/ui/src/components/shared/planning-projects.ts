@@ -1,3 +1,13 @@
+export function concretePlanningProjects(projects: readonly string[]): string[] {
+  return [
+    ...new Set(
+      projects
+        .map((project) => project.trim())
+        .filter((project) => project && project !== 'global' && project !== 'unassigned'),
+    ),
+  ];
+}
+
 export function syncedDraftProject(input: {
   currentProject: string;
   availableProjects: readonly string[];
@@ -28,10 +38,11 @@ export function syncedDraftProject(input: {
 export function syncedDraftTargetProjects(input: {
   currentTargets: readonly string[];
   globalProjects: readonly string[];
+  preserveCurrentTargets: boolean;
 }): string[] {
-  const globalProjects = [
-    ...new Set(input.globalProjects.map((project) => project.trim()).filter(Boolean)),
-  ];
-  if (globalProjects.length === 0) return [...input.currentTargets];
+  const globalProjects = concretePlanningProjects(input.globalProjects);
+  if (input.preserveCurrentTargets || globalProjects.length === 0) {
+    return [...input.currentTargets];
+  }
   return globalProjects.length === 1 ? [globalProjects[0]!] : [];
 }

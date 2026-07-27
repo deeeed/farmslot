@@ -174,9 +174,9 @@ test('createRoadmapPromotionRequest does not use targets as a draft-count fallba
   );
 
   const raw = JSON.parse(await readFile(result.decisionPath, 'utf8'));
-  assert.equal(raw.title, 'Review roadmap promotion (1 backlog item)');
-  assert.equal(raw.payload.expectedBacklogItems, 1);
-  assert.equal(raw.actions[0]?.label, 'Review 1 draft');
+  assert.equal(raw.title, 'Review roadmap promotion (no generated drafts)');
+  assert.equal(raw.payload.expectedBacklogItems, 0);
+  assert.equal(raw.actions[0]?.label, 'Review promotion');
   assert.deepEqual(raw.payload.draftSpecPaths, []);
 });
 

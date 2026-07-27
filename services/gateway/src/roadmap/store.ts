@@ -479,6 +479,10 @@ function itemMatchesSearch(item: RoadmapItem, search: string | undefined): boole
     .includes(needle);
 }
 
+function isUnscopedGlobalItem(item: RoadmapItem): boolean {
+  return item.project === 'global' && (item.targetProjects ?? []).length === 0;
+}
+
 export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<RoadmapListResult> {
   const tagFilter = normalizeRunTags(params.tags);
   const all = await loadAllItems();
@@ -486,7 +490,8 @@ export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<
     if (
       params.project &&
       item.project !== params.project &&
-      !(item.targetProjects ?? []).includes(params.project)
+      !(item.targetProjects ?? []).includes(params.project) &&
+      !isUnscopedGlobalItem(item)
     ) {
       return false;
     }
@@ -676,6 +681,9 @@ function resolvePromotionSpecProject(item: RoadmapItem, spec: RoadmapPromoteSpec
     if (!project) throw new Error('Backlog spec project is required');
     if (targets.length > 0 && !targets.includes(project)) {
       throw new Error(`Backlog spec project ${project} is not in roadmap targetProjects`);
+    }
+    if (targets.length === 0 && item.project === 'global' && isConcreteProject(project)) {
+      return project;
     }
     if (targets.length === 0 && project !== item.project) {
       throw new Error(

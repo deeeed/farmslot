@@ -4,7 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
-- fix(roadmap): `request-promotion` counts expected backlog items from materialized draft files, not `len(targetProjects)`, so an over-broad target list with one draft reports “1 backlog item”.
+- fix(roadmap): `request-promotion` counts expected backlog items from materialized draft files, not `len(targetProjects)`, so an over-broad target list with one draft reports “1 backlog item” and a request with no materialized drafts says so instead of inventing a count.
 - feat: CLI operator parity v2 — roadmap full surface (+ `set-stage`, promote defaults to drafts); backlog `delete|archive|dequeue|upcoming`; `decision list|resolve`; run `pause|resume|force-complete|for-slot|grade|get-grade`; `dispatch queue list`; TUI surfaces for roadmap + decisions; method matrix requires notes on every `rpc-only` and generates `cli-exemptions.json`.
 - Show optional execution-template descriptions and accept them when creating templates.
 

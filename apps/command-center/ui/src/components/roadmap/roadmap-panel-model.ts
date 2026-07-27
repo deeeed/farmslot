@@ -25,6 +25,8 @@ export function filterRoadmapItemsByGlobalProjects(
 
   return items.filter((item) => {
     const targets = item.targetProjects ?? [];
+    // An unscoped global item coordinates across projects, so it remains visible
+    // in concrete project views. `unassigned` means not scoped yet and stays hidden.
     return (
       projects.has(item.project) ||
       targets.some((project) => projects.has(project)) ||

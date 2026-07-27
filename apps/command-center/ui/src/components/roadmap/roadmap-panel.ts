@@ -50,7 +50,11 @@ import {
   renderChoiceButtons,
   renderToggleChips,
 } from '../shared/planning-controls.js';
-import { syncedDraftProject, syncedDraftTargetProjects } from '../shared/planning-projects.js';
+import {
+  concretePlanningProjects,
+  syncedDraftProject,
+  syncedDraftTargetProjects,
+} from '../shared/planning-projects.js';
 import { encodeWorkerRouteParam } from '../terminal/split-view-model.js';
 
 import {
@@ -144,6 +148,7 @@ export class RoadmapPanel extends LitElement {
   @state() private _newTitle = '';
   @state() private _newProject = 'unassigned';
   @state() private _newTargetProjects: string[] = [];
+  private _newTargetProjectsTouched = false;
   @state() private _newTags = '';
   @state() private _newBody = '';
 
@@ -749,7 +754,7 @@ export class RoadmapPanel extends LitElement {
       }
     }
     if (previousProjects !== this._globalFilters.projects.join('\0')) {
-      const globalProjects = [...new Set(state.globalFilters.projects.filter(concreteProject))];
+      const globalProjects = concretePlanningProjects(state.globalFilters.projects);
       // Multi-project filters set owner to `global` for coordination but do NOT
       // pre-fill every filtered farm as targetProjects — silent multi-target
       // inheritance forced N backlog drafts for framework-only ideas. Fan-out
@@ -757,6 +762,7 @@ export class RoadmapPanel extends LitElement {
       this._newTargetProjects = syncedDraftTargetProjects({
         currentTargets: this._newTargetProjects,
         globalProjects,
+        preserveCurrentTargets: this._newTargetProjectsTouched,
       });
       if (globalProjects.length > 1) {
         this._newProject = 'global';
@@ -1089,6 +1095,7 @@ export class RoadmapPanel extends LitElement {
       this._newTitle = '';
       this._newBody = '';
       this._newTags = '';
+      this._newTargetProjectsTouched = false;
       this._message = 'Roadmap item captured';
       await this._refresh(result.item.id);
     } catch (err) {
@@ -1859,6 +1866,7 @@ export class RoadmapPanel extends LitElement {
             'roadmap-new-target-projects',
             this._newTargetProjects,
             (projects) => {
+              this._newTargetProjectsTouched = true;
               this._newTargetProjects = projects;
             },
           )}

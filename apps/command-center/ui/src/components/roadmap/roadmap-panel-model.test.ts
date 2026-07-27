@@ -71,9 +71,42 @@ test('project filters only show targeted global items when a target matches', ()
 });
 
 test('roadmap filtering preserves the item list when no global projects are active', () => {
-  const items: RoadmapItem[] = [];
+  const items = [
+    {
+      id: 'ri_passthrough',
+      kind: 'roadmap-item',
+      project: 'farmslot-farm',
+      title: 'Passthrough item',
+      stage: 'rough',
+      source: { kind: 'manual' },
+      body: 'Raw idea.\n',
+      createdAt: '2026-07-28T00:00:00.000Z',
+      updatedAt: '2026-07-28T00:00:00.000Z',
+      filePath: '.roadmap/items/ri_passthrough.md',
+      fileHash: 'passthrough-hash',
+    },
+  ] satisfies RoadmapItem[];
 
   assert.equal(filterRoadmapItemsByGlobalProjects(items, []), items);
+});
+
+test('project filters keep unassigned items hidden until they are scoped', () => {
+  const unassigned = {
+    id: 'ri_unassigned',
+    kind: 'roadmap-item',
+    project: 'unassigned',
+    targetProjects: [],
+    title: 'Unassigned item',
+    stage: 'rough',
+    source: { kind: 'manual' },
+    body: 'Raw idea.\n',
+    createdAt: '2026-07-28T00:00:00.000Z',
+    updatedAt: '2026-07-28T00:00:00.000Z',
+    filePath: '.roadmap/items/ri_unassigned.md',
+    fileHash: 'unassigned-hash',
+  } satisfies RoadmapItem;
+
+  assert.deepEqual(filterRoadmapItemsByGlobalProjects([unassigned], ['farmslot-farm']), []);
 });
 
 test('roadmap promotion parser extracts generated backlog drafts', () => {

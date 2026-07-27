@@ -124,6 +124,32 @@ test('roadmap store saves rough inbox markdown and supports get/list filters', a
   assert.equal((await listRoadmapItems({ stage: 'refined' })).items.length, 0);
 });
 
+test('roadmap project filters include only relevant global coordination items', async () => {
+  const { listRoadmapItems, saveRoadmapItem } = await store();
+  await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: [],
+      title: 'Unscoped global coordination',
+      body: 'Coordinate across projects.',
+    },
+  });
+  await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: ['metamask-mobile-farm'],
+      title: 'Mobile-only coordination',
+      body: 'Coordinate mobile work.',
+    },
+  });
+
+  const farmslotItems = await listRoadmapItems({ project: 'farmslot-farm' });
+  assert.deepEqual(
+    farmslotItems.items.map((item) => item.title),
+    ['Unscoped global coordination'],
+  );
+});
+
 test('roadmap store rejects stale edits and accepts matching hash updates', async () => {
   const { getRoadmapItem, saveRoadmapItem } = await store();
   const created = await saveRoadmapItem({
@@ -703,6 +729,34 @@ test('roadmap promotion requires spec projects when multiple target projects exi
       }),
     /Backlog spec project is required/,
   );
+});
+
+test('roadmap promotion accepts an explicit project for an unscoped global item', async () => {
+  const { promoteRoadmapItem, saveRoadmapItem } = await store();
+  const roadmap = await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: [],
+      title: 'Unscoped global coordination',
+      stage: 'refined',
+      body: refinedBody('The operator chooses the concrete project during promotion.'),
+    },
+  });
+
+  const promoted = await promoteRoadmapItem({
+    itemId: roadmap.item.id,
+    expectedHash: roadmap.item.fileHash,
+    specs: [
+      {
+        project: 'farmslot-farm',
+        title: 'Implement the coordinated change',
+        body: '## Context\n\nCoordinated work.\n\n## Acceptance Criteria\n\n- Change ships.',
+      },
+    ],
+  });
+
+  assert.equal(promoted.backlogItems[0]?.project, 'farmslot-farm');
+  assert.equal(promoted.roadmapItem.promotion?.[0]?.project, 'farmslot-farm');
 });
 
 test('roadmap promotion validates every spec before writing backlog side effects', async () => {

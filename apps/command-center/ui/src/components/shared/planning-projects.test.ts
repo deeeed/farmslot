@@ -43,6 +43,7 @@ test('draft target projects follow filters without clearing explicit targets', (
     syncedDraftTargetProjects({
       currentTargets: [],
       globalProjects: ['farmslot-farm'],
+      preserveCurrentTargets: false,
     }),
     ['farmslot-farm'],
   );
@@ -50,6 +51,7 @@ test('draft target projects follow filters without clearing explicit targets', (
     syncedDraftTargetProjects({
       currentTargets: ['operator-selected-farm'],
       globalProjects: ['farmslot-farm', 'metamask-mobile-farm'],
+      preserveCurrentTargets: false,
     }),
     [],
   );
@@ -57,6 +59,7 @@ test('draft target projects follow filters without clearing explicit targets', (
     syncedDraftTargetProjects({
       currentTargets: ['operator-selected-farm'],
       globalProjects: [],
+      preserveCurrentTargets: false,
     }),
     ['operator-selected-farm'],
   );
@@ -64,6 +67,23 @@ test('draft target projects follow filters without clearing explicit targets', (
     syncedDraftTargetProjects({
       currentTargets: [],
       globalProjects: ['farmslot-farm', 'farmslot-farm'],
+      preserveCurrentTargets: false,
+    }),
+    ['farmslot-farm'],
+  );
+  assert.deepEqual(
+    syncedDraftTargetProjects({
+      currentTargets: ['operator-selected-farm'],
+      globalProjects: ['farmslot-farm', 'metamask-mobile-farm'],
+      preserveCurrentTargets: true,
+    }),
+    ['operator-selected-farm'],
+  );
+  assert.deepEqual(
+    syncedDraftTargetProjects({
+      currentTargets: [],
+      globalProjects: ['global', 'unassigned', 'farmslot-farm'],
+      preserveCurrentTargets: false,
     }),
     ['farmslot-farm'],
   );
