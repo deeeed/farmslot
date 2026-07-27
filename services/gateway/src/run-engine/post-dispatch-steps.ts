@@ -271,7 +271,7 @@ export async function executeMonitorStep(
   runId: string,
   context: PostDispatchStepContext,
 ): Promise<StepIO> {
-  const { activeMonitors, monitorTerminalError } = context;
+  const { activeMonitors, broadcastFn, monitorTerminalError } = context;
   const current = getRun(runId)!;
   if (!current.slotId) throw new Error('No slot assigned');
   const inputs: Record<string, unknown> = { slotId: current.slotId };
@@ -352,6 +352,11 @@ export async function executeMonitorStep(
           'interactive completion is operator-owned',
       );
       updateRun(runId, { status: 'paused' });
+      // Broadcast it: the orchestrator's post-step guard returns before its own
+      // RUN_UPDATED, so without this Command Center keeps showing `monitoring`
+      // until the next refetch — and offers a Pause button that then errors
+      // because the backend is already paused.
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       return {
         inputs,
         outputs: {
