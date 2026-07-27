@@ -101,7 +101,16 @@ start_metro_background() {
   tmux new-session -d -s "${metro_session}" -c "${APP_DIR}" bash -c "${metro_command}"
   # A first boot builds its transform cache and legitimately takes longer than a
   # warm one, so the wait is generous and overridable rather than a flat 45s.
+  # Validate before the loop: a non-numeric value fails the arithmetic test under
+  # `set -u` AFTER Metro has been started, which would exit past the cleanup below
+  # and leave exactly the unconfirmed session this function exists to prevent.
   local ready_timeout="${METRO_READY_TIMEOUT_SECS:-120}"
+  if [[ ! "$ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[prepare-profile] METRO_READY_TIMEOUT_SECS must be a positive integer, got: ${ready_timeout}" >&2
+    echo "Next: unset it to use the 120s default, or set a whole number of seconds." >&2
+    tmux kill-session -t "=${metro_session}" 2>/dev/null || true
+    return 1
+  fi
   local i=0
   while (( i < ready_timeout )); do
     if metro_listening; then
