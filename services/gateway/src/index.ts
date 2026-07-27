@@ -318,11 +318,12 @@ async function main(): Promise<void> {
   });
 
   initDispatchQueue(observedBroadcast, async (item, claim) => {
-    // Dynamic imports and runCreate await below — re-validate at every boundary
-    // before durable create so a concurrent reclaim cannot leave a second run.
+    // runCreate/evalTrialStart await substantially before the durable store write.
+    // Pass beforeCreate so assertQueueClaimHeld runs synchronously immediately
+    // before createRun in the store — after those awaits, not before them.
+    const beforeCreate = () => assertQueueClaimHeld(claim, 'pre-durable-createRun');
     if (item.queueKind === 'eval-cell' && item.evalCell) {
       const { evalTrialStart } = await import('./methods/eval.js');
-      assertQueueClaimHeld(claim, 'pre-evalTrialStart');
       const params = item.evalCell.trialStartParams as unknown as EvalTrialStartParams;
       const result = await evalTrialStart(
         {
@@ -337,6 +338,7 @@ async function main(): Promise<void> {
             item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,
         },
         observedBroadcast,
+        { beforeCreate },
       );
       item.runId = result.run?.id;
       return;
@@ -384,11 +386,9 @@ async function main(): Promise<void> {
       reviewDepth: item.reviewDepth,
       pendingReviewPlan: item.pendingReviewPlan,
     } satisfies import('@farmslot/protocol').RunCreateParams;
-    // Last check at the createRun boundary: a revoke after this line races
-    // inside runCreate itself, which is past the ownership handoff.
-    assertQueueClaimHeld(claim, 'pre-runCreate');
     const { run } = await runCreate(runParams, broadcastEvent, {
       expectedExecutionTemplate: item.executionTemplate,
+      beforeCreate,
     });
     item.runId = run.id;
     try {

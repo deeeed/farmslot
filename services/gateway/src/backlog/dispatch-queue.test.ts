@@ -1319,42 +1319,40 @@ test('reclaimExpiredClaims restores stranded dispatching rows to queued', () => 
 });
 
 test('assertQueueClaimHeld stops create after mid-callback revoke', async () => {
+  // Does not rely on fleet/slot selection: claim first, then drive the
+  // production createAndStartRun-shaped callback with a pause before the
+  // durable-create guard (mirrors runCreate's beforeCreate hook).
   const item = addItem({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
     ticketOrPr: 'PROJ-claim-mid-callback',
-    allowedSlots: ['mid-slot'],
     workGraphId: 'wg_mid',
     workNodeId: 'wn_mid',
   });
   let createdRuns = 0;
+  let enteredCallback = false;
   let releaseGate: () => void;
   const gate = new Promise<void>((resolve) => {
     releaseGate = resolve;
   });
-  initDispatchQueue(
-    () => {},
-    async (_item, claim) => {
-      // Simulate index.ts awaits (import/ticket work) before createRun.
-      await gate;
-      assertQueueClaimHeld(claim, 'pre-runCreate');
-      createdRuns += 1;
-    },
-  );
-  setCachedFleetForTests(readyFleetSlot('mid-slot') as any);
+  const claim = claimQueueItem(item.id, 'mid-holder');
+  assert.ok(claim);
 
-  const dispatch = tryDispatchNext();
-  // Wait for claim, then revoke while create is paused.
-  for (let i = 0; i < 50; i++) {
-    if (getQueueSnapshot().find((q) => q.id === item.id)?.status === 'dispatching') break;
-    await new Promise((r) => setTimeout(r, 5));
-  }
+  // Simulate createAndStartRun body: await work, then beforeCreate guard.
+  const createPath = (async () => {
+    enteredCallback = true;
+    await gate;
+    assertQueueClaimHeld(claim, 'pre-durable-createRun');
+    createdRuns += 1;
+  })();
+
+  assert.equal(enteredCallback, true);
   await cancelGraphQueuedItem({
     workGraphId: 'wg_mid',
     workNodeId: 'wn_mid',
     reason: 'mid-callback-reclaim',
   });
   releaseGate!();
-  await dispatch;
+  await assert.rejects(() => createPath, QueueClaimLostError);
   assert.equal(createdRuns, 0);
 });

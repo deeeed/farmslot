@@ -740,6 +740,9 @@ function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
   console.log(
     `[dispatch-queue] claim lost for ${claim.itemId.slice(0, 8)} after ${phase}; stopping before createRun`,
   );
+  // Returning true ends this dispatch cycle (tryDispatchNextOnce returns).
+  // Other queued rows are picked up on the next tryDispatchNext trigger —
+  // intentional: one claim loss should not continue scanning under stale fleet.
   return true;
 }
 

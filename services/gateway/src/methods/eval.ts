@@ -703,6 +703,7 @@ function buildEvalReplayTicketData(input: {
 export async function evalTrialStart(
   params: EvalTrialStartParams,
   emit: (event: string, payload: unknown) => void,
+  options: { beforeCreate?: () => void } = {},
 ): Promise<EvalTrialStartResult> {
   assertEvalTrialStartParams(params);
   const experimentManifest = await readEvalExperimentManifest(params.experimentManifestPath);
@@ -886,6 +887,7 @@ export async function evalTrialStart(
         : undefined,
     },
     emit,
+    { beforeCreate: options.beforeCreate },
   );
 
   const run = updateRun(result.run.id, {

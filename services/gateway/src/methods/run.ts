@@ -200,6 +200,12 @@ function buildInteractiveDevTicketData(
 
 interface RunCreateInternalOptions {
   expectedExecutionTemplate?: ExecutionTemplateReference;
+  /**
+   * Called synchronously immediately before durable store createRun.
+   * Used by the dispatch queue claim protocol to re-validate exclusive
+   * ownership after runCreate's own awaits (config/ticket/template work).
+   */
+  beforeCreate?: () => void;
 }
 
 export function assertExpectedExecutionTemplate(
@@ -461,6 +467,8 @@ export async function runCreate(
     ...(normalizedTaskTemplate ? { ...params, taskTemplate: normalizedTaskTemplate } : params),
     ...(startRefSkipPrepareVerified ? { startRefSkipPrepareVerified: true as const } : {}),
   };
+  // Last ownership check at the durable create boundary (after all awaits above).
+  options.beforeCreate?.();
   let run = createRun(createParams);
   if (executionTemplateSnapshot) {
     run = updateRun(run.id, { executionTemplate: executionTemplateSnapshot });
