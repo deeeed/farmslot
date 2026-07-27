@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(ui): the roadmap screen lists items as single-line rows (stage, item id, title, backlog links, edit) instead of stacked cards, and the capture form is behind a `New item` button rather than permanently occupying the top of the page. Titles wrap instead of truncating. Project, target projects, tags and file path continue to show in the detail pane.
 - fix(ui): show the backlog/roadmap item ref (`MANUAL-000055`, a Jira key, a PR ref) next to the title in the backlog list and detail, work-graph nodes, the execution overlay and the roadmap composer. Every surface previously rendered the ref only as a fallback for a missing title, so it disappeared exactly when the item was well-formed — and work-graph nodes fell back to the opaque backlogItemId uuid rather than the ref the CLI and specs actually use.
 - feat: preview execution templates as an outline or exact source with provenance and optional selection guidance; keep selectors stable while catalogs refresh and remember domain, mode, and template choices per dispatch context.
 - feat: select compatible execution templates by project, flow, mode, platform, and domain in the dispatch wizard.

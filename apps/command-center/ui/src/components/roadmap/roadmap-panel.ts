@@ -126,6 +126,9 @@ export class RoadmapPanel extends LitElement {
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _selectedId = '';
+  /** The capture form used to sit permanently above the list, pushing the items
+      most visits are here to read below the fold. Opened on demand instead. */
+  @state() private _createPanelOpen = false;
   @state() private _filterProject = 'all';
   @state() private _filterStage: RoadmapItemStage | 'all' = 'all';
   @state() private _filterTags = '';
@@ -368,12 +371,43 @@ export class RoadmapPanel extends LitElement {
       }
       .row {
         border: 1px solid ${unsafeCSS(colors.textMuted)}22;
-        border-radius: ${unsafeCSS(radii.md)};
+        border-radius: ${unsafeCSS(radii.sm)};
         background: ${unsafeCSS(colors.bgSurface)};
-        padding: ${unsafeCSS(spacing.md)};
+        padding: 4px 8px;
+        /* stage badge, item id, title, trailing actions — one line per item, so a
+           visit that is only here to find an item does not scroll through cards. */
         display: grid;
-        gap: ${unsafeCSS(spacing.sm)};
+        grid-template-columns: auto auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        min-height: 28px;
         cursor: pointer;
+      }
+      .row .title {
+        font-size: ${unsafeCSS(fonts.sizeSm)};
+        font-weight: 500;
+        min-width: 0;
+        /* Wrap rather than truncate: a roadmap title is the whole point of the row,
+           and an ellipsis hides the part that distinguishes similar entries. Short
+           titles still sit on one line; long ones take a second. */
+        overflow-wrap: anywhere;
+        white-space: normal;
+      }
+      .row .item-ref {
+        color: ${unsafeCSS(colors.textSecondary)};
+        font-family: ${unsafeCSS(fonts.mono)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        white-space: nowrap;
+      }
+      .row-trailing {
+        align-items: center;
+        display: flex;
+        gap: 6px;
+      }
+      .list-toolbar {
+        display: flex;
+        gap: 8px;
+        margin-bottom: ${unsafeCSS(spacing.sm)};
       }
       .row.selected {
         border-color: ${unsafeCSS(colors.accent)}99;
@@ -1955,27 +1989,19 @@ export class RoadmapPanel extends LitElement {
         }
       }}
     >
-      <div class="row-head">
-        <div>
-          <div class="title">${item.title}</div>
-          <div class="meta">${item.project} · ${item.filePath}</div>
-        </div>
-        ${renderPlanningBadge(
-          item.stage,
-          item.stage === 'refined' || item.stage === 'promoted' ? 'positive' : 'default',
-        )}
-      </div>
-      <div class="badges">
-        ${(item.targetProjects ?? []).map((project) => renderPlanningBadge(project, 'positive'))}
-        ${renderTagChips(item.tags)}
+      ${renderPlanningBadge(
+        item.stage,
+        item.stage === 'refined' || item.stage === 'promoted' ? 'positive' : 'default',
+      )}
+      <span class="item-ref" title=${item.id}>${item.id}</span>
+      <div class="title" title=${item.title}>${item.title}</div>
+      <div class="row-trailing">
         ${item.promotion?.length
           ? renderPlanningBadge(
               `${item.promotion.length} backlog link${item.promotion.length === 1 ? '' : 's'}`,
               'positive',
             )
           : nothing}
-      </div>
-      <div class="actions">
         <button
           type="button"
           @click=${(event: Event) => {
@@ -2354,7 +2380,17 @@ export class RoadmapPanel extends LitElement {
       </div>
       ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
       ${this._message ? html`<div class="message">${this._message}</div>` : nothing}
-      ${this._renderCreateForm()} ${this._renderFilters()}
+      <div class="list-toolbar">
+        <button
+          type="button"
+          @click=${() => {
+            this._createPanelOpen = !this._createPanelOpen;
+          }}
+        >
+          ${this._createPanelOpen ? 'Hide form' : 'New item'}
+        </button>
+      </div>
+      ${this._createPanelOpen ? this._renderCreateForm() : nothing} ${this._renderFilters()}
       <div class="layout">
         <div class="card">
           <h2>Items (${this._items.length})</h2>
