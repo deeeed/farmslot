@@ -56,16 +56,16 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
 
 ### Phase 1: Setup
 
-- [ ] **1. Confirm recipe runtime** — doctor must pass before UI proof:
+- [ ] **1. Read requirements** — map acceptance criteria to proof mode (`state`, `visual`, `mixed`) in this TASK file, and record whether any AC has a Command Center surface. This decides step 4 and Phase 2 below, so it comes first.
+- [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
+- [ ] **3. Update status** — set `STATUS: working`, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
+- [ ] **4. Confirm recipe runtime** — required only when step 1 found at least one AC with a Command Center surface. When every AC is backend-only, state that reason in this TASK file and skip this step; it gates the UI proof in Phase 2, which is skipped for the same reason.
   ```bash
   cd {{REPO}}
   node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
   bash apps/command-center/scripts/debug-chrome.sh
   ```
-  If CDP or the sandbox UI is down, set `STATUS: blocked` with the failing check and stop.
-- [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
-- [ ] **3. Update status** — set `STATUS: working`, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
-- [ ] **4. Read requirements** — map acceptance criteria to proof mode (`state`, `visual`, `mixed`) in this TASK file.
+  If CDP or the sandbox UI is down and any AC needs a Command Center surface, set `STATUS: blocked` with the failing check and stop.
 - [ ] **5. Create branch** — `git checkout -b {{BRANCH}}`
 
 ### Phase 2: Baseline recipe (UI/command-center ACs)
