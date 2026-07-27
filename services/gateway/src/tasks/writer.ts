@@ -240,18 +240,32 @@ export function applyArtifactOnlyTaskPolicy(
   return result;
 }
 
-function checklistForInteractiveDev(run: Run): string[] {
+// The interactive checklist is an execution plan, not the acceptance criteria.
+// Acceptance criteria are end-state assertions ("no caller-derived value reaches
+// shell text") — a worker cannot walk through them, so using them here left
+// progress unmarkable and the operator unable to follow the session. They stay in
+// the TASK.md `## Acceptance Criteria` section, where they are the proof targets.
+//
+// The steps are deliberately few. An interactive run decides its specific work
+// live with the operator, so only the opening moves are common: understand, plan,
+// present. The task-specific plan is authored into artifacts/approach.md and
+// approved at the first gate.
+const INTERACTIVE_DEV_CHECKLIST = [
+  'Read the task and repository context',
+  'Write artifacts/approach.md — affected files, implementation plan, validation plan',
+  'HUMAN GATE — present the approach and wait for the operator',
+  'Implement the approved change',
+  'Validate — targeted tests, lint and typecheck, or record why validation was skipped',
+  'HUMAN GATE — present the diff and validation for review',
+  'Write artifacts/report.md and artifacts/learnings.md',
+  'Wait for the operator to choose a completion action in Farmslot',
+] as const;
+
+export function checklistForInteractiveDev(run: Run): string[] {
   const configured =
     run.engineState?.interactiveDev?.checklist?.map((item) => item.trim()).filter(Boolean) ?? [];
   if (configured.length > 0) return configured;
-  const acs = run.ticketData?.acceptanceCriteria?.map((item) => item.trim()).filter(Boolean) ?? [];
-  if (acs.length > 0) return acs;
-  return [
-    'Clarify the target outcome with the operator',
-    'Implement the smallest useful change on the selected branch',
-    'Run focused validation or capture why validation was skipped',
-    'Choose an interactive completion action in Farmslot',
-  ];
+  return [...INTERACTIVE_DEV_CHECKLIST];
 }
 
 async function writeInteractiveDevSidecars(
@@ -727,6 +741,13 @@ export async function writeTaskFile(
     ARTIFACT_DIR: projectVars.artifactDir || '.task',
     DESCRIPTION: description || '_No description_',
     ACCEPTANCE_CRITERIA: ticket.acceptanceCriteria.join('\n') || '_Not specified_',
+    // Rendered from the same list that writes CHECKLIST.md, so the numbers a
+    // worker reads in TASK.md are the numbers `mark N` targets. A configured
+    // override changes the list; hardcoding steps in the template would leave
+    // `mark 3` pointing at a step that no longer exists.
+    INTERACTIVE_CHECKLIST: checklistForInteractiveDev(run)
+      .map((item, index) => `- [ ] **${index + 1}.** ${item}`)
+      .join('\n'),
     AFFECTED_AREA: ticket.affectedArea || '_Not specified_',
     SCREENSHOTS: screenshotsMd,
     COMMENTS:

@@ -20,6 +20,7 @@ import {
   buildChecklistMarkerScript,
   buildTaskFolderPrefix,
   buildTemplateProvenance,
+  checklistForInteractiveDev,
   checklistMarkerHelperPath,
   COMMENT_SUMMARY_MAX_ROWS,
   type CommentRow,
@@ -781,4 +782,46 @@ test('writeTaskFile fails loudly when explicit selected template disappears', as
     () => writeTaskFile(run, { skipCollisionCheck: true }),
     /selected Worker template not found:/,
   );
+});
+
+test('interactive checklist is an execution plan, never the acceptance criteria', () => {
+  const run = makeRun(`PROJ-${Date.now()}`, 'interactive-checklist');
+  run.ticketData = {
+    title: 'Argv transport',
+    description: 'desc',
+    acceptanceCriteria: [
+      'A caller-derived value reaches the executed program as one literal argument',
+      'No caller-derived value is interpolated into shell text at any inventoried site',
+    ],
+  } as Run['ticketData'];
+
+  const checklist = checklistForInteractiveDev(run);
+
+  // The regression: acceptance criteria are end-state assertions, not steps. Using
+  // them left the worker with nothing markable and the operator unable to follow
+  // progress — run 32909fa2 marked 0 of 11.
+  for (const ac of run.ticketData?.acceptanceCriteria ?? []) {
+    assert.ok(
+      !checklist.includes(ac),
+      `checklist must not contain acceptance criterion: ${ac.slice(0, 40)}`,
+    );
+  }
+  assert.ok(checklist.length > 0);
+  assert.match(checklist.join('\n'), /approach\.md/);
+  assert.match(checklist.join('\n'), /HUMAN GATE/);
+});
+
+test('an explicitly configured interactive checklist still wins', () => {
+  const run = makeRun(`PROJ-${Date.now()}`, 'interactive-checklist-override');
+  run.ticketData = {
+    title: 'x',
+    description: 'y',
+    acceptanceCriteria: ['some criterion'],
+  } as Run['ticketData'];
+  run.engineState = {
+    ...(run.engineState ?? {}),
+    interactiveDev: { checklist: ['Do the one thing', 'Then stop'] },
+  } as Run['engineState'];
+
+  assert.deepEqual(checklistForInteractiveDev(run), ['Do the one thing', 'Then stop']);
 });

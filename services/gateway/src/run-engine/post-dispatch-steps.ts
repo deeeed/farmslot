@@ -271,7 +271,7 @@ export async function executeMonitorStep(
   runId: string,
   context: PostDispatchStepContext,
 ): Promise<StepIO> {
-  const { activeMonitors, monitorTerminalError } = context;
+  const { activeMonitors, broadcastFn, monitorTerminalError } = context;
   const current = getRun(runId)!;
   if (!current.slotId) throw new Error('No slot assigned');
   const inputs: Record<string, unknown> = { slotId: current.slotId };
@@ -326,6 +326,46 @@ export async function executeMonitorStep(
         stepInputs: inputs,
         stepOutputs,
       });
+    }
+    if (
+      isLightweightInteractiveDevRun(current) &&
+      (workerSignal?.status === 'complete' || workerSignal?.status === 'done')
+    ) {
+      // Hold the run for its operator instead of completing it.
+      //
+      // MONITOR is the only step that can stop this: FLOW_STEPS.dev runs
+      // MONITOR -> SELF_REVIEW -> COMPLETE -> HUMAN_GATE, so COMPLETE precedes the
+      // gate and would release the slot and kill the worker first.
+      //
+      // `paused`, not `blocked`. Both routes to a terminal-ish status —
+      // MonitorTerminalError's catch and the non-thrown blocked branch — call
+      // cleanupSlotAfterRunFailure, which frees the slot and clears
+      // current_run_id; another run could then claim it and the operator's later
+      // Abort would tear down someone else's work. The orchestrator's post-step
+      // check returns on `paused` before marking the step done and before any
+      // cleanup, so slot ownership and the worker survive. `paused` is
+      // non-terminal, and runInteractiveDevResolve rejects only terminal statuses,
+      // so done-no-pr / blocked / failed / abort / run-self-review all stay
+      // available — as does plain resume.
+      console.warn(
+        `[run-engine] run ${runId.slice(0, 8)} — worker '${workerSignal.status}' signal held; ` +
+          'interactive completion is operator-owned',
+      );
+      updateRun(runId, { status: 'paused' });
+      // Broadcast it: the orchestrator's post-step guard returns before its own
+      // RUN_UPDATED, so without this Command Center keeps showing `monitoring`
+      // until the next refetch — and offers a Pause button that then errors
+      // because the backend is already paused.
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+      return {
+        inputs,
+        outputs: {
+          ...stepOutputs,
+          workerTerminalSignalHeld: workerSignal.status,
+          awaitingOperator: true,
+          reason: 'interactive-completion-operator-owned',
+        },
+      };
     }
     if (workerSignal?.status === 'complete' || workerSignal?.status === 'done') {
       // Worker-owned-push flows must have the branch published before the run
@@ -550,6 +590,13 @@ export async function executeHumanGateStep(
   const publicationApprovalGate = requiresPublicationApproval(current);
   const artifactOnly = isArtifactOnlyRun(current);
   if (isLightweightInteractiveDevRun(current)) {
+    // Kept skipped. In the dev flow HUMAN_GATE runs AFTER COMPLETE
+    // (MONITOR -> SELF_REVIEW -> COMPLETE -> HUMAN_GATE), so it is a publication
+    // gate, not a completion gate — it cannot hold a run that has already
+    // completed and released its slot. The operator hold for this profile is in
+    // MONITOR, which parks a worker-authored terminal signal before COMPLETE can
+    // run. Gating again here would re-prompt an operator who just chose their
+    // completion action.
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — human-gate skipped for interactive lightweight dev policy`,
     );
