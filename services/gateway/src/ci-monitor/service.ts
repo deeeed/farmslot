@@ -457,6 +457,12 @@ export async function monitorCI(
     // Already merged or closed — we're done
     if (merged || pr.prState === 'CLOSED') {
       console.log(`[ci-monitor] run ${runId.slice(0, 8)} — PR ${pr.prState}`);
+      // Persist the observation before returning. This is the only place the
+      // gateway ever learns a PR merged, and a work-graph `merged` edge can only
+      // read it off the run — so dropping it here strands every downstream node
+      // behind an upstream that has actually shipped.
+      updateRun(runId, { prState: pr.prState, mergedAt: pr.mergedAt ?? null });
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       return buildOutcome('passed');
     }
 

@@ -1282,6 +1282,15 @@ export interface Run {
   activeTaskFile?: string; // currently active task md (TASK.md, SELF-REVIEW.md, SELF-REVIEW-FIX.md)
   agentContexts?: AgentContext[];
   prNumber?: number;
+  /**
+   * Merge outcome for `prNumber`, recorded by ci-watch when it observes the PR
+   * reach a terminal state. Work-graph `merged` edges gate on this: without a
+   * persisted observation, a downstream node can never learn that its upstream
+   * shipped, because the observation itself lives only inside the CI monitor.
+   */
+  prState?: 'OPEN' | 'CLOSED' | 'MERGED';
+  /** ISO timestamp GitHub reports for the merge; absent unless prState is MERGED. */
+  mergedAt?: string | null;
   steps: RunStep[];
   decisions: RunDecision[];
   metrics: RunMetrics;

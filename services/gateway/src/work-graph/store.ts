@@ -650,20 +650,28 @@ function terminalFamilyOutcome(
   return 'success';
 }
 
-function mergedEvidenceFromRuns(
-  runs: readonly Run[],
-): { prNumber?: number; mergeSha?: string } | null {
+function mergedEvidenceFromRuns(runs: readonly Run[]): { prNumber?: number } | null {
+  // This used to cast Run to a shape carrying prState/mergedAt/mergeSha. Run
+  // declared none of them and nothing wrote them, so the check was always false
+  // and every `merged` edge stayed pending forever regardless of what shipped.
+  // ci-watch now persists the merge observation onto the run; read the declared
+  // fields so a lie in the type cannot hide a dead condition again.
   for (const run of runs) {
-    const record = run as Run & { mergedAt?: string; mergeSha?: string; prState?: string };
-    if (record.prState === 'MERGED' || record.mergedAt || record.mergeSha) {
-      return { prNumber: run.prNumber, mergeSha: record.mergeSha };
+    if (run.prState === 'MERGED' || run.mergedAt) {
+      return { prNumber: run.prNumber };
     }
   }
   return null;
 }
 
-function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): void {
-  if (!isBacklogNode(node)) return;
+/**
+ * Returns true when the node was reclaimed — reset to `ready` because the run it
+ * pointed at is gone. The caller needs to know: a reclaimed node reads `ready`
+ * without any work having started, which is not the same thing as a node whose
+ * dependency regressed mid-flight.
+ */
+function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boolean {
+  if (!isBacklogNode(node)) return false;
   // A cancelled run is an aborted dispatch, not the node's active work — ignore
   // it so cancel returns the node to a dispatchable state instead of pinning it
   // to the cancelled run's status (which would otherwise read as running/failed
@@ -686,7 +694,7 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): voi
     else if (latestRun.status === 'failed') node.status = 'failed';
     else node.status = 'running';
     node.updatedAt = new Date().toISOString();
-    return;
+    return false;
   }
   if (queued) {
     const backlog = node.backlogItemId ? getBacklogItemSnapshot(node.backlogItemId) : null;
@@ -695,7 +703,7 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): voi
     } else {
       node.status = 'queued';
       node.updatedAt = new Date().toISOString();
-      return;
+      return false;
     }
   }
   const backlog = node.backlogItemId ? getBacklogItemSnapshot(node.backlogItemId) : null;
@@ -730,7 +738,9 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): voi
     delete node.currentFamilyId;
     delete node.currentRootRunId;
     node.updatedAt = new Date().toISOString();
+    return true;
   }
+  return false;
 }
 
 function evaluateEdge(
@@ -1117,14 +1127,22 @@ export async function schedulerTick(
     const now = new Date(nowMs).toISOString();
     const unlockOptions = { forceEnqueue: params.forceEnqueue === true };
     const targets = [...graphs.values()].filter((snapshot) => {
-      if (params.graphId && snapshot.graph.id !== params.graphId) return false;
+      // A targeted tick is an operator asking about one specific graph, so it
+      // recomputes whatever state that graph is in. The background sweep still
+      // skips the rest: `needs-attention` means a human has to look, and a graph
+      // that reached it could otherwise never be reprocessed — not even once the
+      // condition that flagged it cleared — leaving no way back except activate.
+      if (params.graphId) return snapshot.graph.id === params.graphId;
       return snapshot.graph.status === 'active' || snapshot.graph.status === 'waiting';
     });
     const updated: WorkGraphProjection[] = [];
     for (const snapshot of targets) {
       if (!acquireLease(snapshot, owner, nowMs)) continue;
       const runs = getAllRuns();
-      for (const node of snapshot.nodes) syncNodeFromBacklogQueueRuns(node, runs);
+      const reclaimed = new Set<string>();
+      for (const node of snapshot.nodes) {
+        if (syncNodeFromBacklogQueueRuns(node, runs)) reclaimed.add(node.id);
+      }
       for (const edge of snapshot.edges) evaluateEdge(edge, snapshot, runs, now);
       let runnable = 0;
       for (const node of snapshot.nodes) {
@@ -1171,7 +1189,16 @@ export async function schedulerTick(
         computeWaiting(node, startInbound);
         const blocked = node.waitingOn.length > 0;
         if (blocked) {
-          if (['ready', 'queued', 'running', 'gated', 'succeeded'].includes(node.status)) {
+          // A node reclaimed on this very tick reads `ready` only because its run
+          // went away, not because work regressed under it. Flagging that as a
+          // regression made the two rules fight: the reclaim reset the node every
+          // tick and this branch re-flagged it, pinning the node and its graph in
+          // `needs-attention` — which the background sweep skips, so nothing could
+          // ever clear it.
+          if (
+            !reclaimed.has(node.id) &&
+            ['ready', 'queued', 'running', 'gated', 'succeeded'].includes(node.status)
+          ) {
             const regressionReason =
               'Start dependency regressed after this node became active; review queued/running work manually';
             if (node.backlogItemId && node.status === 'queued') {
