@@ -546,3 +546,87 @@ test('prepare recovery re-runs prepare when sub-steps show incomplete phases', a
     'prepare must never be marked recovered with incomplete sub-steps',
   );
 });
+
+test('recovery holds an interactive dev run instead of completing it for the operator', async () => {
+  // Run 6e092aa9: a gateway restart found the run `monitoring` with the slot no
+  // longer reporting `working`, so recovery inferred the worker was finished,
+  // marked MONITOR done with no outputs and advanced to COMPLETE. The worker was
+  // still mid-task — its SIGNAL.json read `status: running, step 7` — and the run
+  // finished `success` with a PR nobody approved and the slot released underneath
+  // it. Completion on this flow is the operator's.
+  const run = minimalActiveRun({
+    flowType: 'dev',
+    mode: 'interactive',
+    devInteractiveProfile: 'lightweight',
+    status: 'monitoring',
+    ticketOrPr: 'MANUAL-000046',
+    familyRootTicketOrPr: 'MANUAL-000046',
+    taskFile: '/Users/op/dev/farmslot/.sandbox/farmslot-farm/tasks/feat/manual-000046/TASK.md',
+    steps: [{ name: 'monitor', status: 'running' }],
+  });
+  const statuses: string[] = [];
+  const advancedSteps: string[] = [];
+  let started = false;
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'idle' }],
+    }),
+    updateRun: (_id: string, patch: Partial<Run>) => {
+      if (patch.status) statuses.push(patch.status);
+    },
+    updateRunStep: (_id: string, step: string) => {
+      advancedSteps.push(step);
+    },
+    startRun: async () => {
+      started = true;
+    },
+    broadcast: () => {},
+    setPrHealthOverlay: () => {},
+    quarantineLeakedRun: async () => {},
+    recoverInflightPublicationReviews: async () => [],
+    replayHumanGate: async () => {},
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.ok(statuses.includes('paused'), 'interactive run should be held, not advanced');
+  assert.ok(!statuses.includes('completing'), 'recovery must not advance it to complete');
+  assert.ok(!advancedSteps.includes('complete'), 'complete must not be started by recovery');
+  assert.equal(started, false, 'the pipeline must not be re-driven past the hold');
+});
+
+test('recovery still advances an autonomous dev run whose worker finished', async () => {
+  // The hold is scoped to interactive runs; autonomous recovery is unchanged.
+  const run = minimalActiveRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    status: 'monitoring',
+    ticketOrPr: 'PROJ-4242',
+    familyRootTicketOrPr: 'PROJ-4242',
+    taskFile: '/Users/op/dev/farmslot/.sandbox/farmslot-farm/tasks/feat/proj-4242/TASK.md',
+    steps: [{ name: 'monitor', status: 'running' }],
+  });
+  const statuses: string[] = [];
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'idle' }],
+    }),
+    updateRun: (_id: string, patch: Partial<Run>) => {
+      if (patch.status) statuses.push(patch.status);
+    },
+    updateRunStep: () => {},
+    startRun: async () => {},
+    broadcast: () => {},
+    setPrHealthOverlay: () => {},
+    quarantineLeakedRun: async () => {},
+    recoverInflightPublicationReviews: async () => [],
+    replayHumanGate: async () => {},
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.ok(statuses.includes('completing'), 'autonomous behaviour must be unchanged');
+  assert.ok(!statuses.includes('paused'));
+});

@@ -7,6 +7,7 @@ import {
   Events,
   FLOW_STEPS,
   type FlowType,
+  isLightweightInteractiveDevRun,
   PipelineSteps,
   type ReviewGatePayload,
   type Run,
@@ -476,6 +477,21 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
               `[run-engine] recovery failed for ${run.id.slice(0, 8)}: ${(err as Error).message}`,
             );
           });
+          continue;
+        }
+        // Completion on an interactive dev run belongs to its operator. This
+        // branch decides from slot state alone that the worker is finished and
+        // advances the pipeline, skipping the monitor step entirely — so the
+        // hold that lives there never runs. Run 6e092aa9 finished this way after
+        // a gateway restart: monitor marked done with no outputs, no operator
+        // action recorded, run `success`, 26 files and a PR nobody approved.
+        // Park it instead; `paused` is skipped by the top of this same loop, so
+        // later restarts leave it alone until the operator resolves it.
+        if (isLightweightInteractiveDevRun(run)) {
+          console.log(
+            `[run-engine] run ${run.id.slice(0, 8)} — worker finished (agent=${slot.agent}), holding for operator`,
+          );
+          deps.updateRun(run.id, { status: 'paused' });
           continue;
         }
         console.log(
