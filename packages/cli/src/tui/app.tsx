@@ -1,9 +1,9 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 // The pragma must stay single-line: tsx resolves tsconfig from the invocation
 // cwd (often apps/command-center), so it pins the automatic JSX runtime.
-// app.tsx — farmslot TUI shell. One authenticated gateway connection, four
-// surfaces (fleet / backlog / runs / recovery), live event-driven refresh.
-// Business rules stay in the gateway + shared view-models (ADR-050).
+// app.tsx — farmslot TUI shell. One authenticated gateway connection, seven
+// surfaces (fleet / backlog / runs / roadmap / decisions / recovery / prepare),
+// live event-driven refresh. Business rules stay in the gateway + view-models (ADR-050).
 
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -274,18 +274,23 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
     if (surface === 'roadmap') {
       const row = roadmapVm[cursor];
       if (!row) return;
-      // Cycle common stages: s = set next stage for operator close-loop
+      // Cycle common stages: s = set next stage for operator close-loop.
+      // Always derive next from a fresh get so concurrent promote cannot be demoted.
       if (input === 's' && row.canSetStage) {
-        const order = ['rough', 'refining', 'refined', 'parked', 'archived'] as const;
-        const next =
-          order[(order.indexOf(row.stage as (typeof order)[number]) + 1) % order.length] ??
-          'refined';
         void (async () => {
           try {
-            setNotice(`setting ${row.shortId} → ${next}…`);
+            const order = ['rough', 'refining', 'refined', 'parked', 'archived'] as const;
             const current = await connection.call<{ item: RoadmapItem }>('roadmap.get', {
               itemId: row.id,
             });
+            if (current.item.stage === 'promoted') {
+              setNotice(`${row.shortId} is promoted — stage locked; use CLI promote path only`);
+              void refresh();
+              return;
+            }
+            const idx = order.indexOf(current.item.stage as (typeof order)[number]);
+            const next = order[idx >= 0 ? (idx + 1) % order.length : 0] ?? 'refined';
+            setNotice(`setting ${row.shortId} → ${next}…`);
             await connection.call('roadmap.save', {
               item: {
                 id: current.item.id,

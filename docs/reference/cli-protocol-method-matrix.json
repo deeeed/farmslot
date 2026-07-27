@@ -276,13 +276,11 @@
     },
     "roadmap.promotionDraft.list": {
       "surface": "typed-command",
-      "command": "farmslot roadmap promotion-draft list",
-      "tui": true
+      "command": "farmslot roadmap promotion-draft list"
     },
     "roadmap.promotionDraft.get": {
       "surface": "typed-command",
-      "command": "farmslot roadmap promotion-draft get",
-      "tui": true
+      "command": "farmslot roadmap promotion-draft get"
     },
     "roadmap.promotionDraft.save": {
       "surface": "typed-command",
@@ -290,8 +288,7 @@
     },
     "roadmap.promote": {
       "surface": "typed-command",
-      "command": "farmslot roadmap promote",
-      "tui": true
+      "command": "farmslot roadmap promote"
     },
     "terminal.subscribe": {
       "surface": "na",
@@ -400,8 +397,7 @@
     },
     "decision.resolve": {
       "surface": "typed-command",
-      "command": "farmslot decision resolve",
-      "tui": true
+      "command": "farmslot decision resolve"
     },
     "nodes.list": {
       "surface": "typed-command",

@@ -89,7 +89,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | Method             | Surface       | CLI command                 | TUI | Note |
 | ------------------ | ------------- | --------------------------- | --- | ---- |
 | `decision.list`    | typed-command | `farmslot decision list`    | yes |      |
-| `decision.resolve` | typed-command | `farmslot decision resolve` | yes |      |
+| `decision.resolve` | typed-command | `farmslot decision resolve` |     |      |
 
 ## diagnostics.\*
 
@@ -282,10 +282,10 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `roadmap.refine`                | typed-command | `farmslot roadmap refine`               |     |      |
 | `roadmap.refinementSession.get` | typed-command | `farmslot roadmap refinement-session`   |     |      |
 | `roadmap.prompt.get`            | typed-command | `farmslot roadmap prompt-get`           |     |      |
-| `roadmap.promotionDraft.list`   | typed-command | `farmslot roadmap promotion-draft list` | yes |      |
-| `roadmap.promotionDraft.get`    | typed-command | `farmslot roadmap promotion-draft get`  | yes |      |
+| `roadmap.promotionDraft.list`   | typed-command | `farmslot roadmap promotion-draft list` |     |      |
+| `roadmap.promotionDraft.get`    | typed-command | `farmslot roadmap promotion-draft get`  |     |      |
 | `roadmap.promotionDraft.save`   | typed-command | `farmslot roadmap promotion-draft save` |     |      |
-| `roadmap.promote`               | typed-command | `farmslot roadmap promote`              | yes |      |
+| `roadmap.promote`               | typed-command | `farmslot roadmap promote`              |     |      |
 
 ## run.\*
 
