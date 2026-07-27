@@ -300,6 +300,24 @@ Rules:
 - budget timeouts to the task — a large-diff review can legitimately need well over 10 minutes;
   a mid-analysis kill produces silent no-verdict output
 
+**Use `scripts/headless-exec.sh` rather than re-deriving this.** The rules above were
+prose an orchestrator had to remember, and both failures kept being rediscovered live.
+The script closes stdin, keeps output in files, gates on the process's own exit code,
+truncates a stale artifact before the run, and requires the marker in the final-message
+file. It exits non-zero — loudly — on any of those, so a silent no-verdict run cannot be
+mistaken for a completed one.
+
+```bash
+scripts/headless-exec.sh --last /tmp/run.last --log /tmp/run.log --timeout 1200 \
+  -- codex exec --sandbox read-only --output-last-message /tmp/run.last \
+     '<prompt … end with VERDICT line>'
+```
+
+It prints the final message on success, so the caller reads stdout and does not have to
+know the artifact convention. `--marker` overrides the default `^VERDICT:`.
+
+Doing it by hand, if you must:
+
 ```bash
 timeout 1200 codex exec --sandbox read-only --output-last-message /tmp/run.last \
   '<prompt … end with VERDICT line>' </dev/null > /tmp/run.log 2>&1
