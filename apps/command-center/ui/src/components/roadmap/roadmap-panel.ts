@@ -58,6 +58,7 @@ import { encodeWorkerRouteParam } from '../terminal/split-view-model.js';
 
 import {
   defaultSpecBody,
+  filterRoadmapItemsByGlobalProjects,
   parsePromotionDraftAttachment,
   parsePromotionDraftsFromRoadmapBody,
   type PromotionDraft,
@@ -856,14 +857,8 @@ export class RoadmapPanel extends LitElement {
   }
 
   private get _items(): RoadmapItem[] {
-    const globalProjects = new Set(this._globalFilters.projects);
-    if (this._filterProject === 'all' && globalProjects.size > 0) {
-      return this._allItems.filter(
-        (item) =>
-          globalProjects.has(item.project) ||
-          (item.targetProjects ?? []).some((project) => globalProjects.has(project)),
-      );
-    }
+    if (this._filterProject === 'all')
+      return filterRoadmapItemsByGlobalProjects(this._allItems, this._globalFilters.projects);
     return this._allItems;
   }
 

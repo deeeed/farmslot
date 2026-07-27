@@ -1,10 +1,48 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import type { RoadmapItem } from '@farmslot/protocol';
+
 import {
+  filterRoadmapItemsByGlobalProjects,
   parsePromotionDraftsFromRoadmapBody,
   promotionDraftAttachment,
 } from './roadmap-panel-model.js';
+
+test('multi-project filters keep newly captured global items visible', () => {
+  const captured = {
+    id: 'ri_global_capture',
+    kind: 'roadmap-item',
+    project: 'global',
+    targetProjects: [],
+    title: 'Coordinate framework work',
+    stage: 'rough',
+    source: { kind: 'manual' },
+    body: 'Raw idea.\n',
+    createdAt: '2026-07-28T00:00:00.000Z',
+    updatedAt: '2026-07-28T00:00:00.000Z',
+    filePath: '.roadmap/items/ri_global_capture.md',
+    fileHash: 'global-hash',
+  } satisfies RoadmapItem;
+
+  assert.deepEqual(
+    filterRoadmapItemsByGlobalProjects(
+      [
+        captured,
+        {
+          ...captured,
+          id: 'ri_other',
+          project: 'another-farm',
+          title: 'Other work',
+          filePath: '.roadmap/items/ri_other.md',
+          fileHash: 'other-hash',
+        },
+      ],
+      ['farmslot-farm', 'metamask-mobile-farm'],
+    ),
+    [captured],
+  );
+});
 
 test('roadmap promotion parser extracts generated backlog drafts', () => {
   const drafts = parsePromotionDraftsFromRoadmapBody(

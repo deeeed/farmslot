@@ -16,6 +16,21 @@ function concreteProject(project: string): boolean {
   return project !== 'global' && project !== 'unassigned';
 }
 
+export function filterRoadmapItemsByGlobalProjects(
+  items: readonly RoadmapItem[],
+  globalProjects: readonly string[],
+): RoadmapItem[] {
+  const projects = new Set(globalProjects);
+  if (projects.size === 0) return [...items];
+
+  return items.filter(
+    (item) =>
+      (projects.size > 1 && item.project === 'global') ||
+      projects.has(item.project) ||
+      (item.targetProjects ?? []).some((project) => projects.has(project)),
+  );
+}
+
 export function defaultSpecBody(item: RoadmapItem | null): string {
   return [
     '## Context',
