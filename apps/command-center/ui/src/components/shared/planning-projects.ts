@@ -15,3 +15,16 @@ export function syncedDraftProject(input: {
 
   return input.availableProjects[0] ?? '';
 }
+
+/**
+ * Default `targetProjects` for a new roadmap capture from global project filters.
+ *
+ * Only a *single* concrete filter pre-fills targets. Multi-project filters set
+ * owner `project=global` for coordination but must not auto-fan-out every filtered
+ * farm into `targetProjects` — that forced N backlog drafts for framework-only ideas.
+ * Multi-target fan-out is operator-explicit.
+ */
+export function defaultTargetProjectsForGlobalFilters(globalProjects: readonly string[]): string[] {
+  const concrete = [...new Set(globalProjects.map((project) => project.trim()).filter(Boolean))];
+  return concrete.length === 1 ? [concrete[0]!] : [];
+}

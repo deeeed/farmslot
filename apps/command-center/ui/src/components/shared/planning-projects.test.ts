@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { syncedDraftProject } from './planning-projects.js';
+import { defaultTargetProjectsForGlobalFilters, syncedDraftProject } from './planning-projects.js';
 
 test('draft project follows a single global project filter', () => {
   assert.equal(
@@ -36,4 +36,16 @@ test('draft project treats configured fallback projects as unset', () => {
     }),
     'metamask-core-farm',
   );
+});
+
+test('default target projects prefill only a single global filter', () => {
+  assert.deepEqual(defaultTargetProjectsForGlobalFilters(['farmslot-farm']), ['farmslot-farm']);
+  assert.deepEqual(
+    defaultTargetProjectsForGlobalFilters(['farmslot-farm', 'metamask-mobile-farm']),
+    [],
+  );
+  assert.deepEqual(defaultTargetProjectsForGlobalFilters([]), []);
+  assert.deepEqual(defaultTargetProjectsForGlobalFilters(['farmslot-farm', 'farmslot-farm']), [
+    'farmslot-farm',
+  ]);
 });

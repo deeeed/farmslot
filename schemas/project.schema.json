@@ -91,11 +91,11 @@
       "properties": {
         "refinement_prompt": {
           "type": "string",
-          "description": "Inline project-specific roadmap refinement prompt template."
+          "description": "Inline project-specific roadmap refinement prompt template. Owns backlog draft fan-out/consolidation policy for this project (e.g. prefer smaller PR slices vs framework-style consolidation)."
         },
         "refinement_prompt_path": {
           "type": "string",
-          "description": "Markdown prompt template path, absolute or relative to projects/<project>/. Defaults to templates/prompts/roadmap-refinement.md when present."
+          "description": "Markdown prompt template path, absolute or relative to projects/<project>/. Defaults to templates/prompts/roadmap-refinement.md when present. Use a project-owned prompt to override draft-count policy (multi-objective same-project tickets, smaller client slices, etc.) without changing the farmslot-farm default."
         },
         "runner_command": {
           "type": "string",

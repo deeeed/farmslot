@@ -71,7 +71,12 @@ export async function createRoadmapPromotionRequest(
     : [];
   const route = input.roadmapRoute?.trim() || `#roadmap?item=${encodeURIComponent(itemId)}`;
   const promotionRoute = withRouteParam(route, 'promote', '1');
-  const expectedBacklogItems = Math.max(1, targetProjects.length);
+  // Count materialized drafts, not targetProjects. Targets are the allowed set;
+  // one framework ticket can list many targets by mistake and still be one draft.
+  const expectedBacklogItems = Math.max(
+    1,
+    draftSpecPaths.length > 0 ? draftSpecPaths.length : targetProjects.length,
+  );
   const decisionDir = path.join(
     root,
     'projects',

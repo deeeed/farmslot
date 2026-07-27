@@ -168,7 +168,16 @@ Captured items may also declare multiple target projects. The owner project answ
 
 The user can launch or attach a tmux runner from a roadmap item with a project-specific refinement prompt. The prompt is a per-project markdown template (`projects/<project>/templates/prompts/roadmap-refinement.md`, with explicit `project.json` path override when needed), rendered as the agent context before the tmux session opens. The runner helps turn the markdown into a refined item. V1 does not require a separate refinement-session database.
 
-If `targetProjects` contains more than one project, the rendered refinement prompt must include the target project list and ask the runner to produce project-specific dispatch boundaries. The refined markdown should make it clear which backlog spec belongs to which target project. The UI should support selecting several target projects before launching refinement, not require duplicating the rough idea manually.
+If `targetProjects` contains more than one project, the rendered refinement prompt must include the target project list. The runner must treat that list as the **allowed** implementation set, not a mandatory 1:1 ticket fan-out.
+
+**Draft count = deployable objectives**, not `len(targetProjects)`:
+
+- Multiple backlog drafts for the **same** project are valid when objectives are independent (e.g. two PRs that should not share a worker).
+- Multiple drafts across projects are appropriate when each project needs distinct code or dispatch (e.g. mobile vs extension).
+- Framework-only Farmslot monorepo work should **consolidate** into one `farmslot-farm` draft and narrow over-broad `targetProjects` in frontmatter.
+- **Per-project policy is the prompt.** The default farmslot-farm refinement template prefers consolidation for framework work. Other packs that want smaller PR-shaped slices override via `project.json` `roadmap.refinement_prompt_path` or inline `roadmap.refinement_prompt` — not by hardcoding fan-out in the gateway.
+
+The refined markdown should make it clear which backlog spec belongs to which target project when fan-out is genuine. The UI should support selecting several target projects before launching refinement, not require duplicating the rough idea manually — and must **not** silently pre-fill every global-filter project as `targetProjects` on capture (multi-target selection is operator-explicit).
 
 The gate to mark refined is explicit: the item must have a problem statement, proposed solution, non-goals, acceptance criteria, risks, and dispatch notes.
 
@@ -254,7 +263,7 @@ The roadmap capture/edit surface must distinguish:
 - **Owner project:** one project or `global`/`unassigned`, used for file placement and refinement defaults.
 - **Target projects:** zero or more concrete projects selected with the same chip-style selector as the global project filter.
 
-The refinement action should show the target project set before launching. The promotion editor should display one project selector per backlog spec and should be able to initialize one draft spec per selected target project.
+The refinement action should show the target project set before launching. The promotion editor should display one project selector per backlog spec. Initializing “one draft per selected target” may be offered as a **convenience for genuine multi-client fan-out**, not as the only or default decomposition — draft count remains objective-based, and packs may prefer fewer or more drafts via their refinement prompt override.
 
 ## Non-goals
 
