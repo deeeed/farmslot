@@ -5,16 +5,14 @@ import {
   promotionDraftAttachment,
 } from '@farmslot/protocol';
 
+import { isConcretePlanningProject } from '../shared/planning-projects.js';
+
 export type { PromotionDraft, PromotionDraftAttachment } from '@farmslot/protocol';
 export {
   parsePromotionDraftAttachment,
   parsePromotionDraftsFromRoadmapBody,
   promotionDraftAttachment,
 };
-
-function concreteProject(project: string): boolean {
-  return project !== 'global' && project !== 'unassigned';
-}
 
 export function filterRoadmapItemsByGlobalProjects(
   items: RoadmapItem[],
@@ -57,7 +55,7 @@ export function promotionDraftsFromRoadmapItem(item: RoadmapItem): PromotionDraf
 
   const targets = item.targetProjects ?? [];
   const projects =
-    targets.length > 0 ? targets : concreteProject(item.project) ? [item.project] : [''];
+    targets.length > 0 ? targets : isConcretePlanningProject(item.project) ? [item.project] : [''];
   return projects.map((project) => ({
     project,
     title: item.title,

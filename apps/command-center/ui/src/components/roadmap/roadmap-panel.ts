@@ -52,6 +52,7 @@ import {
 } from '../shared/planning-controls.js';
 import {
   concretePlanningProjects,
+  isConcretePlanningProject,
   syncedDraftProject,
   syncedDraftTargetProjects,
 } from '../shared/planning-projects.js';
@@ -110,10 +111,6 @@ interface PromptPreview {
 
 interface PromotionDraftAttachmentState extends PromotionDraftAttachment {
   contentHash?: string;
-}
-
-function concreteProject(project: string): boolean {
-  return project !== 'global' && project !== 'unassigned';
 }
 
 function isRoadmapRoute(route: string): boolean {
@@ -761,7 +758,7 @@ export class RoadmapPanel extends LitElement {
       // is operator-explicit (or a single concrete filter).
       this._newTargetProjects = syncedDraftTargetProjects({
         currentTargets: this._newTargetProjects,
-        globalProjects,
+        concreteGlobalProjects: globalProjects,
         preserveCurrentTargets: this._newTargetProjectsTouched,
       });
       if (globalProjects.length > 1) {
@@ -799,7 +796,7 @@ export class RoadmapPanel extends LitElement {
   }
 
   private get _targetProjectOptions(): string[] {
-    return this._projects.filter(concreteProject);
+    return this._projects.filter(isConcretePlanningProject);
   }
 
   private _newTitleForSubmit(): string {
@@ -864,7 +861,10 @@ export class RoadmapPanel extends LitElement {
 
   private get _items(): RoadmapItem[] {
     if (this._filterProject === 'all')
-      return filterRoadmapItemsByGlobalProjects(this._allItems, this._globalFilters.projects);
+      return filterRoadmapItemsByGlobalProjects(
+        this._allItems,
+        concretePlanningProjects(this._globalFilters.projects),
+      );
     return this._allItems;
   }
 
@@ -1095,6 +1095,11 @@ export class RoadmapPanel extends LitElement {
       this._newTitle = '';
       this._newBody = '';
       this._newTags = '';
+      this._newTargetProjects = syncedDraftTargetProjects({
+        currentTargets: [],
+        concreteGlobalProjects: concretePlanningProjects(this._globalFilters.projects),
+        preserveCurrentTargets: false,
+      });
       this._newTargetProjectsTouched = false;
       this._message = 'Roadmap item captured';
       await this._refresh(result.item.id);
@@ -1228,7 +1233,9 @@ export class RoadmapPanel extends LitElement {
       {
         project:
           this._editTargetProjects[0] ??
-          (this._selected && concreteProject(this._selected.project) ? this._selected.project : ''),
+          (this._selected && isConcretePlanningProject(this._selected.project)
+            ? this._selected.project
+            : ''),
         title: this._selected?.title ?? '',
         body: defaultSpecBody(this._selected),
       },

@@ -78,28 +78,24 @@ only if important information is still missing.
 When the item is ready for backlog, include a `## Backlog Drafts` section.
 Draft count follows **deployable objectives**, not the length of `targetProjects`.
 
-### Draft count policy (this prompt = farmslot-farm / framework default)
+### Draft count policy
 
 `targetProjects` is the **allowed set** of implementation homes — not a mandate
-to open N tickets. This Farmslot framework prompt **prefers consolidation**:
+to open N tickets:
 
 1. **Same project, multiple drafts is valid** when there are truly separate
    deployable objectives (e.g. two independent PRs that should not share a
    worker). Prefer that over stuffing unrelated work into one ticket.
-2. **Default to one draft** when the work is one objective — especially
-   framework/monorepo changes under `farmslot-farm` (catalogs, gateway,
-   protocol, UI defaults, harness). Do not invent pack-level "verify no pins"
-   tickets for projects that only inherit framework defaults.
+2. **Default to one draft** when the work is one objective. Do not invent
+   project-specific verification tickets for projects that need no code change.
 3. **Cross-project fan-out** only when each project needs distinct code or
-   dispatch (e.g. metamask-mobile-farm vs metamask-extension-farm). If many
-   farms are listed but the solution is monorepo-only, **narrow frontmatter
+   dispatch (e.g. metamask-mobile-farm vs metamask-extension-farm). If several
+   projects are listed but only one needs changes, **narrow frontmatter
    `targetProjects`** and emit one draft; propose that collapse before writing
    when unsure.
-4. **Other packs may prefer smaller slices.** That is **not** encoded here —
-   override via project `roadmap.refinement_prompt_path` (or inline
-   `roadmap.refinement_prompt`) on that pack’s `project.json`. The owning
-   project’s prompt is the refinement policy; do not assume every farm wants
-   Farmslot-style consolidation.
+4. A concrete owning project may override this fallback through
+   `roadmap.refinement_prompt_path` (or inline `roadmap.refinement_prompt`) in
+   its `project.json`.
 
 Use this exact shape for each draft; do not repeat the title as both a heading
 and a separate `Title:` line:
@@ -151,7 +147,7 @@ Keep boundaries clear:
   because `targetProjects` is multi or the global filter listed many farms.
 - When multi-project fan-out is genuine, give each draft clear project-specific boundaries.
 - Use shared tag semantics across roadmap, backlog, queue, and runs.
-- Favor simple dispatchable slices; for this Farmslot prompt, consolidate framework work.
+- Favor simple dispatchable slices.
 
 ## Current roadmap markdown
 

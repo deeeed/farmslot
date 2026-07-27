@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- fix(roadmap): multi-project global filters no longer pre-fill every farm as `targetProjects` on capture — only a single concrete filter auto-targets; multi-target fan-out is operator-explicit, and unscoped global captures remain visible in project-filtered lists (stops silent N-ticket promotion for framework-only ideas).
+- fix(roadmap): stop multi-project filters from silently pre-filling every capture target. Unscoped global captures stay visible, and explicit targets survive filter changes.
 - refactor: unified independent-review language (MANUAL-000008) — review timeline, gate summary, ready-workspace modal/shell, dispatch wizard and dispatch-config surfaces label every automated pass **Independent review** (operator-requested passes as _Independent review (requested)_); runner diversity renders as policy metadata (`runner: <id>` / `runner diversity`) via the new `reviewPolicyLabel` helper instead of the retired _External review_ / _Extra review_ kinds. Persisted decision-action ids are unchanged.
 - fix: PR cards render path-skipped CI checks with the `statusUnknown` dot instead of the pending color, and CI-timeout recovery / auto-resolve no longer require `passed === total` — skipped checks count toward the total but do not block a green verdict. Persisted ci-watch summaries carry the `skipped` count through snapshot reload.
 - fix: filter nested-loop task progress by active checklist basename so self-review panels do not accept stale events during fix or CI-fix phases; clear progress when `activeTaskFile` changes and label fix vs review progress from the protocol checklist registry.

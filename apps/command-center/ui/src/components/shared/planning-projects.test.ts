@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { syncedDraftProject, syncedDraftTargetProjects } from './planning-projects.js';
+import {
+  concretePlanningProjects,
+  syncedDraftProject,
+  syncedDraftTargetProjects,
+} from './planning-projects.js';
 
 test('draft project follows a single global project filter', () => {
   assert.equal(
@@ -38,53 +42,64 @@ test('draft project treats configured fallback projects as unset', () => {
   );
 });
 
-test('draft target projects follow filters without clearing explicit targets', () => {
+test('draft target projects follow a single filter', () => {
   assert.deepEqual(
     syncedDraftTargetProjects({
       currentTargets: [],
-      globalProjects: ['farmslot-farm'],
+      concreteGlobalProjects: ['farmslot-farm'],
       preserveCurrentTargets: false,
     }),
     ['farmslot-farm'],
   );
+});
+
+test('draft target projects clear automatic targets for multiple filters', () => {
   assert.deepEqual(
     syncedDraftTargetProjects({
       currentTargets: ['operator-selected-farm'],
-      globalProjects: ['farmslot-farm', 'metamask-mobile-farm'],
+      concreteGlobalProjects: ['farmslot-farm', 'metamask-mobile-farm'],
       preserveCurrentTargets: false,
     }),
     [],
   );
+});
+
+test('draft target projects remain unchanged without filters', () => {
   assert.deepEqual(
     syncedDraftTargetProjects({
       currentTargets: ['operator-selected-farm'],
-      globalProjects: [],
+      concreteGlobalProjects: [],
       preserveCurrentTargets: false,
     }),
     ['operator-selected-farm'],
   );
-  assert.deepEqual(
-    syncedDraftTargetProjects({
-      currentTargets: [],
-      globalProjects: ['farmslot-farm', 'farmslot-farm'],
-      preserveCurrentTargets: false,
-    }),
-    ['farmslot-farm'],
-  );
+});
+
+test('draft target projects preserve operator selections', () => {
   assert.deepEqual(
     syncedDraftTargetProjects({
       currentTargets: ['operator-selected-farm'],
-      globalProjects: ['farmslot-farm', 'metamask-mobile-farm'],
+      concreteGlobalProjects: ['farmslot-farm', 'metamask-mobile-farm'],
       preserveCurrentTargets: true,
     }),
     ['operator-selected-farm'],
   );
+});
+
+test('capture reset replaces prior explicit targets with current filter defaults', () => {
   assert.deepEqual(
     syncedDraftTargetProjects({
-      currentTargets: [],
-      globalProjects: ['global', 'unassigned', 'farmslot-farm'],
+      currentTargets: ['operator-selected-farm', 'another-farm'],
+      concreteGlobalProjects: ['farmslot-farm'],
       preserveCurrentTargets: false,
     }),
+    ['farmslot-farm'],
+  );
+});
+
+test('concrete planning projects normalize filters', () => {
+  assert.deepEqual(
+    concretePlanningProjects(['global', 'unassigned', ' farmslot-farm ', 'farmslot-farm', '']),
     ['farmslot-farm'],
   );
 });

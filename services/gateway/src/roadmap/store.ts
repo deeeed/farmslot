@@ -491,7 +491,7 @@ export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<
       params.project &&
       item.project !== params.project &&
       !(item.targetProjects ?? []).includes(params.project) &&
-      !isUnscopedGlobalItem(item)
+      !(isConcreteProject(params.project) && isUnscopedGlobalItem(item))
     ) {
       return false;
     }

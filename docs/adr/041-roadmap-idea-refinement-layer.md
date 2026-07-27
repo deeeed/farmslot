@@ -174,8 +174,8 @@ If `targetProjects` contains more than one project, the rendered refinement prom
 
 - Multiple backlog drafts for the **same** project are valid when objectives are independent (e.g. two PRs that should not share a worker).
 - Multiple drafts across projects are appropriate when each project needs distinct code or dispatch (e.g. mobile vs extension).
-- Framework-only Farmslot monorepo work should **consolidate** into one `farmslot-farm` draft and narrow over-broad `targetProjects` in frontmatter.
-- **Per-project policy is the prompt.** The default farmslot-farm refinement template prefers consolidation for framework work. Other packs that want smaller PR-shaped slices override via `project.json` `roadmap.refinement_prompt_path` or inline `roadmap.refinement_prompt` — not by hardcoding fan-out in the gateway.
+- Work with one deployable objective should produce one draft and narrow over-broad `targetProjects` in frontmatter.
+- **Per-project policy is the prompt.** The shared fallback is project-neutral. A concrete owning project may override it through `project.json` `roadmap.refinement_prompt_path` or inline `roadmap.refinement_prompt` — not by hardcoding fan-out in the gateway.
 
 The refined markdown should make it clear which backlog spec belongs to which target project when fan-out is genuine. The UI should support selecting several target projects before launching refinement, not require duplicating the rough idea manually — and must **not** silently pre-fill every global-filter project as `targetProjects` on capture (multi-target selection is operator-explicit).
 

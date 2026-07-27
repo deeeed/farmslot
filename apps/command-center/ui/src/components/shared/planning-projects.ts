@@ -1,11 +1,17 @@
+const GLOBAL_PLANNING_PROJECT = 'global';
+const UNASSIGNED_PLANNING_PROJECT = 'unassigned';
+
+export function isConcretePlanningProject(project: string): boolean {
+  const normalized = project.trim();
+  return (
+    Boolean(normalized) &&
+    normalized !== GLOBAL_PLANNING_PROJECT &&
+    normalized !== UNASSIGNED_PLANNING_PROJECT
+  );
+}
+
 export function concretePlanningProjects(projects: readonly string[]): string[] {
-  return [
-    ...new Set(
-      projects
-        .map((project) => project.trim())
-        .filter((project) => project && project !== 'global' && project !== 'unassigned'),
-    ),
-  ];
+  return [...new Set(projects.map((project) => project.trim()).filter(isConcretePlanningProject))];
 }
 
 export function syncedDraftProject(input: {
@@ -37,12 +43,11 @@ export function syncedDraftProject(input: {
  */
 export function syncedDraftTargetProjects(input: {
   currentTargets: readonly string[];
-  globalProjects: readonly string[];
+  concreteGlobalProjects: readonly string[];
   preserveCurrentTargets: boolean;
 }): string[] {
-  const globalProjects = concretePlanningProjects(input.globalProjects);
-  if (input.preserveCurrentTargets || globalProjects.length === 0) {
+  if (input.preserveCurrentTargets || input.concreteGlobalProjects.length === 0) {
     return [...input.currentTargets];
   }
-  return globalProjects.length === 1 ? [globalProjects[0]!] : [];
+  return input.concreteGlobalProjects.length === 1 ? [input.concreteGlobalProjects[0]!] : [];
 }
