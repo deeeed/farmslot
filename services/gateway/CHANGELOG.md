@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(work-graph): re-enqueue a node whose run was cancelled, and surface a node the graph declines to enqueue. Both previously left the node stalled while it read healthy.
+- fix(run): replaying a cancelled run reclaims that run's own queue row, matched on graph, node, launch plan and candidate, so sibling candidates and replacement plans keep their work. Replay is refused once the node has been handed to a slot.
 - feat(gateway): snapshot source-aware execution templates at dispatch and revalidate them before task materialization.
 - Validate remote retained traces against their recipes and artifact attribution.
 - Open a detached `devserver-log` tmux window during prepare, replace it idempotently on re-prepare, and close it on slot release.
