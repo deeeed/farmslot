@@ -456,17 +456,27 @@ export function registerBacklogCommand(program: Command): void {
     .command('upcoming')
     .description('Show ready vs blocked backlog items for auto-dispatch')
     .option('--project <name>', 'Filter by project')
-    .option('--limit <n>', 'Max items', (v) => Number(v))
-    .action(async (opts: { project?: string; limit?: number }, cmd: Command) => {
+    .option('--limit <n>', 'Max items')
+    .action(async (opts: { project?: string; limit?: string }, cmd: Command) => {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
+        let limit: number | undefined;
+        if (opts.limit !== undefined) {
+          limit = Number(opts.limit);
+          if (!Number.isInteger(limit) || limit <= 0) {
+            throw Object.assign(new Error(`Invalid --limit '${opts.limit}'.`), {
+              code: 'BACKLOG_LIMIT_INVALID',
+              userAction: 'Pass a positive integer, e.g. `--limit 20`.',
+            });
+          }
+        }
         const result = await withProgress(
           'Loading upcoming backlog',
           () =>
             ctx.client.call<BacklogUpcomingResult>('backlog.upcoming', {
               ...(opts.project ? { project: opts.project } : {}),
-              ...(opts.limit ? { limit: opts.limit } : {}),
+              ...(limit !== undefined ? { limit } : {}),
             }),
           !emit.machine,
         );

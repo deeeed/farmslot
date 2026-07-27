@@ -58,9 +58,13 @@ export async function resolveRoadmapItem(ctx: CommandContext, ref: string): Prom
     const { item } = await ctx.client.call<RoadmapGetResult>('roadmap.get', { itemId: needle });
     return item;
   } catch (err) {
-    // Not found / non-exact ref: fall through to list + prefix match for short refs.
-    // Other gateway failures still surface if the list path also fails.
-    void err;
+    // Only fall through for missing-item errors. Transport/auth/server failures
+    // must not be hidden by a list fallback (cross-review P2).
+    const message = err instanceof Error ? err.message : String(err);
+    const notFound =
+      /not found|Roadmap item not found/i.test(message) ||
+      ((err as { code?: string }).code === 'METHOD_ERROR' && /not found/i.test(message));
+    if (!notFound) throw err;
   }
 
   const { items } = await ctx.client.call<RoadmapListResult>('roadmap.list', {
@@ -126,6 +130,35 @@ function parseStage(value: string | undefined): RoadmapItemStage | undefined {
     });
   }
   return value as RoadmapItemStage;
+}
+
+/** CLI must not fake gateway promotion or silently demote promoted items. */
+function assertStageTransition(
+  existing: RoadmapItem | undefined,
+  next: RoadmapItemStage | undefined,
+): void {
+  if (!next) return;
+  if (next === 'promoted') {
+    throw Object.assign(
+      new Error('Cannot set stage to promoted via save/set-stage; use `farmslot roadmap promote`.'),
+      {
+        code: 'ROADMAP_STAGE_PROMOTE_REQUIRED',
+        userAction:
+          'Run `farmslot roadmap promote <id>` (defaults to promotion drafts) after the item is refined.',
+      },
+    );
+  }
+  // After the promoted-target guard above, any stage change on a promoted item is a demotion.
+  if (existing?.stage === 'promoted') {
+    throw Object.assign(
+      new Error('Cannot demote a promoted roadmap item via CLI save/set-stage.'),
+      {
+        code: 'ROADMAP_STAGE_PROMOTED_LOCKED',
+        userAction:
+          'Promoted items keep their backlog linkage. Open Command Center if archive/park is required, or leave stage as promoted.',
+      },
+    );
+  }
 }
 
 async function loadBody(opts: { body?: string; bodyFile?: string }): Promise<string | undefined> {
@@ -359,6 +392,7 @@ export function registerRoadmapCommand(program: Command): void {
               if (itemRef) {
                 existing = await resolveRoadmapItem(ctx, itemRef);
               }
+              assertStageTransition(existing, stage);
 
               const title = opts.title ?? existing?.title;
               if (!title?.trim()) {
@@ -441,6 +475,7 @@ export function registerRoadmapCommand(program: Command): void {
                 userAction: `Use one of: ${ROADMAP_ITEM_STAGES.join(', ')}.`,
               });
             }
+            assertStageTransition(existing, stage);
             return ctx.client.call<RoadmapSaveResult>('roadmap.save', {
               item: {
                 id: existing.id,

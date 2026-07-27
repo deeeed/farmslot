@@ -45,6 +45,22 @@ test('resolveRoadmapItem accepts unique id prefixes via list fallback', async ()
   assert.equal((await resolveRoadmapItem(ctx, 'ri_bbb')).id, 'ri_bbb222');
 });
 
+test('resolveRoadmapItem rethrows non-not-found roadmap.get failures', async () => {
+  const ctx = {
+    client: {
+      call: async () => {
+        throw Object.assign(new Error('gateway unauthorized'), { code: 'AUTH' });
+      },
+    },
+    output: {},
+    target: {},
+  } as unknown as CommandContext;
+  await assert.rejects(
+    () => resolveRoadmapItem(ctx, 'ri_anything'),
+    (err: unknown) => /unauthorized/i.test((err as Error).message),
+  );
+});
+
 test('resolveRoadmapItem rejects ambiguous id prefixes with a teach-the-escape error', async () => {
   const ctx = ctxWith(
     [

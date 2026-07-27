@@ -8,14 +8,13 @@
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import {
-  type BacklogItem,
-  type EventFrame,
-  type FleetStatus,
-  parsePromotionDraftAttachment,
-  type PendingDecision,
-  type RoadmapItem,
-  type Run,
+import type {
+  BacklogItem,
+  EventFrame,
+  FleetStatus,
+  PendingDecision,
+  RoadmapItem,
+  Run,
 } from '@farmslot/protocol';
 
 import type { GatewayConnection } from '../gateway-client.js';
@@ -131,7 +130,16 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
           fleetGeneration.current++;
           setFleet(payload.fleet);
         }
-      } else if (event.event === 'backlog.updated' || event.event === 'run.updated') {
+      } else if (
+        event.event === 'backlog.updated' ||
+        event.event === 'run.updated' ||
+        event.event === 'decision.new' ||
+        event.event === 'decision.updated' ||
+        event.event === 'decision.resolved' ||
+        event.event === 'run.decision.new' ||
+        event.event === 'run.decision.updated' ||
+        event.event === 'run.decision.resolved'
+      ) {
         void refresh();
       }
     });
@@ -300,67 +308,23 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
           }
         })();
       }
+      // Promote stays CLI-only: drafts need review before decomposition (cross-review P1).
       if (input === 'p' && row.canPromote) {
-        void (async () => {
-          try {
-            setNotice(`promoting ${row.shortId} from drafts…`);
-            const listed = await connection.call<{ drafts: Array<{ path: string }> }>(
-              'roadmap.promotionDraft.list',
-              { itemId: row.id },
-            );
-            if (listed.drafts.length === 0) {
-              setNotice(`no promotion drafts for ${row.shortId}`);
-              return;
-            }
-            const specs = [];
-            for (const draft of listed.drafts) {
-              const full = await connection.call<{ path: string; content: string }>(
-                'roadmap.promotionDraft.get',
-                { path: draft.path },
-              );
-              const parsed = parsePromotionDraftAttachment(full.path, full.content);
-              specs.push({
-                title: parsed.title || draft.path.split('/').pop() || row.title,
-                body: parsed.body || full.content,
-                ...(parsed.project ? { project: parsed.project } : {}),
-              });
-            }
-            const current = await connection.call<{ item: RoadmapItem }>('roadmap.get', {
-              itemId: row.id,
-            });
-            await connection.call('roadmap.promote', {
-              itemId: row.id,
-              expectedHash: current.item.fileHash,
-              specs,
-            });
-            setNotice(`promoted ${row.shortId}`);
-            void refresh();
-          } catch (err) {
-            setNotice(`promote failed: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        })();
+        setNotice(
+          `promote via CLI: farmslot roadmap promote ${row.id}  (drafts reviewed outside TUI)`,
+        );
       }
     }
 
     if (surface === 'decisions') {
       const row = decisionsVm[cursor];
       if (!row) return;
-      // First action on Enter or 'a'
-      if ((input === 'a' || key.return) && row.actions[0]) {
-        const actionId = row.actions[0];
-        void (async () => {
-          try {
-            setNotice(`resolving ${row.shortId} with ${actionId}…`);
-            await connection.call('decision.resolve', {
-              decisionId: row.id,
-              actionId,
-            });
-            setNotice(`resolved ${row.shortId} with ${actionId}`);
-            void refresh();
-          } catch (err) {
-            setNotice(`resolve failed: ${err instanceof Error ? err.message : String(err)}`);
-          }
-        })();
+      // Resolve stays CLI-only — first action is often not the operator intent (cross-review P1).
+      if (input === 'a' || key.return) {
+        const hint = row.actions[0]
+          ? `farmslot decision resolve ${row.id} ${row.actions[0]}`
+          : `farmslot decision list`;
+        setNotice(`resolve via CLI (pick action explicitly): ${hint}`);
       }
     }
 
@@ -565,7 +529,7 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
 
       {surface === 'roadmap' && (
         <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>s:cycle-stage p:promote-from-drafts (refined only)</Text>
+          <Text dimColor>s:cycle-stage · p:show CLI promote command (no in-TUI promote)</Text>
           {(() => {
             const { start, end } = windowFor(roadmapVm.length);
             return roadmapVm.slice(start, end).map((row, sliceIndex) => {
@@ -588,9 +552,16 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
 
       {surface === 'decisions' && (
         <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>a/enter: resolve with first action</Text>
+          <Text dimColor>a/enter: print CLI resolve command (no silent auto-resolve)</Text>
           {(() => {
-            const { start, end } = windowFor(decisionsVm.length);
+            // Each decision renders two lines — budget the window by line cost.
+            const lineCost = 2;
+            const maxItems = Math.max(1, Math.floor(listHeight / lineCost));
+            const start = Math.max(
+              0,
+              Math.min(cursor - maxItems + 1, decisionsVm.length - maxItems),
+            );
+            const end = Math.min(decisionsVm.length, start + maxItems);
             return decisionsVm.slice(start, end).map((row, sliceIndex) => {
               const index = start + sliceIndex;
               return (
