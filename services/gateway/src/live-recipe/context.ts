@@ -62,10 +62,14 @@ async function sha256File(filePath: string): Promise<string> {
 
 async function sha256SlotFile(
   node: NonNullable<ReturnType<typeof getNode>>,
+  root: string,
   fullPath: string,
 ): Promise<{ sha256: string; sizeBytes: number }> {
   try {
-    const hashResult = (await sendNodeRequest(node, 'fs.hash', { path: fullPath })) as {
+    const hashResult = (await sendNodeRequest(node, 'fs.hash', {
+      root,
+      relPath: path.relative(root, fullPath),
+    })) as {
       sha256: string;
       size: number;
     };
@@ -76,7 +80,8 @@ async function sha256SlotFile(
       throw error;
     }
     const fileResult = (await sendNodeRequest(node, 'fs.readBase64', {
-      path: fullPath,
+      root,
+      relPath: path.relative(root, fullPath),
     })) as { content: string; size?: number };
     const bytes = Buffer.from(fileResult.content, 'base64');
     return {
@@ -290,7 +295,10 @@ async function scanSlotArtifactRoot(
     async function walk(dirPath: string, depth = 0): Promise<void> {
       if (depth > MAX_ARTIFACT_TREE_DEPTH)
         throw new Error(`slot artifact scan exceeded max depth under ${dirPath}`);
-      const listResult = (await sendNodeRequest(connectedNode, 'fs.list', { path: dirPath })) as {
+      const listResult = (await sendNodeRequest(connectedNode, 'fs.list', {
+        root: artifactRoot,
+        relPath: path.relative(artifactRoot, dirPath) || '.',
+      })) as {
         entries: Array<{ name: string; type: string; size?: number }>;
       };
       for (const entry of listResult.entries) {
@@ -301,7 +309,7 @@ async function scanSlotArtifactRoot(
           if (!shouldIncludeArtifactFile(relativePath, excludedTopLevel, includedRelativePaths)) {
             continue;
           }
-          const digest = await sha256SlotFile(connectedNode, fullPath);
+          const digest = await sha256SlotFile(connectedNode, artifactRoot, fullPath);
           refs.push({
             path: `artifacts/${relativePath}`,
             purpose: inferArtifactPurpose(relativePath),

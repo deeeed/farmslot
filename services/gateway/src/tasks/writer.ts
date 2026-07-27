@@ -258,7 +258,7 @@ const INTERACTIVE_DEV_CHECKLIST = [
   'Validate — targeted tests, lint and typecheck, or record why validation was skipped',
   'HUMAN GATE — present the diff and validation for review',
   'Write artifacts/report.md and artifacts/learnings.md',
-  'Wait for the operator to choose a completion action in Farmslot',
+  'After explicit publication approval, create/push the PR and hand off with mark complete; otherwise wait for the operator completion action',
 ] as const;
 
 export function checklistForInteractiveDev(run: Run): string[] {

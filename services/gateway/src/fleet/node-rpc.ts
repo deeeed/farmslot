@@ -2,7 +2,7 @@
 
 import { WebSocket } from 'ws';
 
-import type { ExecResult } from '@farmslot/protocol';
+import type { ExecResult, NodeExecParams } from '@farmslot/protocol';
 
 import { isLocal, loadSlotVars } from '../core/index.js';
 
@@ -30,6 +30,7 @@ export function handleNodeResponse(
   ok: boolean,
   payload: unknown,
   errorMsg?: string,
+  errorCode?: string,
 ): void {
   const entry = pending.get(id);
   if (!entry) return;
@@ -39,7 +40,9 @@ export function handleNodeResponse(
   if (ok) {
     entry.resolve(payload);
   } else {
-    entry.reject(new Error(errorMsg || 'Node error'));
+    const error = new Error(errorMsg || 'Node error') as NodeJS.ErrnoException;
+    if (errorCode) error.code = errorCode;
+    entry.reject(error);
   }
 }
 
@@ -155,6 +158,23 @@ export async function nodeExec(
   cwd?: string,
   opts?: NodeExecOpts,
 ): Promise<ExecResult> {
+  return nodeExecRequest(machine, { cmd, cwd }, opts);
+}
+
+export async function nodeExecArgv(
+  machine: string,
+  argv: string[],
+  cwd?: string,
+  opts?: NodeExecOpts,
+): Promise<ExecResult> {
+  return nodeExecRequest(machine, { argv, cwd }, opts);
+}
+
+async function nodeExecRequest(
+  machine: string,
+  request: NodeExecParams,
+  opts?: NodeExecOpts,
+): Promise<ExecResult> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const node = await waitForNode(machine);
     try {
@@ -162,8 +182,7 @@ export async function nodeExec(
         node,
         'exec',
         {
-          cmd,
-          cwd,
+          ...request,
           ...(opts?.timeout != null ? { timeout: opts.timeout } : {}),
           ...(opts?.maxBuffer != null ? { maxBuffer: opts.maxBuffer } : {}),
         },

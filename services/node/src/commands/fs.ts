@@ -1,21 +1,18 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { constants, createReadStream } from 'node:fs';
-import {
-  access,
-  chmod,
-  mkdir,
-  readdir,
-  readFile,
-  realpath,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { constants } from 'node:fs';
+import { access, lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
+import { dirname, isAbsolute, join, posix, resolve, sep } from 'node:path';
 
 import { expandTilde, type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
+import type {
+  NodeFsPathParams,
+  NodeFsReadBase64Params,
+  NodeFsRenameParams,
+  NodeFsWriteFileEntry,
+  NodeFsWriteFilesParams,
+  NodeFsWriteParams,
+} from '@farmslot/protocol';
 
 export interface FsEntry {
   name: string;
@@ -23,13 +20,43 @@ export interface FsEntry {
   size?: number;
 }
 
-export async function fsList(params: { path: string }): Promise<{ entries: FsEntry[] }> {
-  const root = expandTilde(params.path);
-  const dirEntries = await readdir(root, { withFileTypes: true });
+function accessError(message: string): NodeJS.ErrnoException {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = 'EACCES';
+  return error;
+}
+
+function confinedPath(params: NodeFsPathParams): { root: string; target: string } {
+  const root = resolve(expandTilde(params.root));
+  if (isAbsolute(params.relPath)) throw accessError('Path traversal outside root is not allowed');
+  const normalized = posix.normalize(params.relPath.replace(/\\/g, '/'));
+  if (normalized === '..' || normalized.startsWith('../')) {
+    throw accessError('Path traversal outside root is not allowed');
+  }
+  if (normalized.split('/').includes('.git')) {
+    throw accessError('Access to .git is not allowed');
+  }
+  const target = resolve(root, normalized || '.');
+  if (target !== root && !target.startsWith(root + sep)) {
+    throw accessError('Path traversal outside root is not allowed');
+  }
+  return { root, target };
+}
+
+function actionableNoFollowError(error: unknown, relPath: string): never {
+  if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
+    throw accessError(`Refusing final-component symlink: ${relPath}`);
+  }
+  throw error;
+}
+
+export async function fsList(params: NodeFsPathParams): Promise<{ entries: FsEntry[] }> {
+  const { target } = confinedPath(params);
+  const dirEntries = await readdir(target, { withFileTypes: true });
   const entries: FsEntry[] = [];
   for (const entry of dirEntries) {
     if (entry.name === '.git' || entry.name === '.' || entry.name === '..') continue;
-    const fullPath = join(root, entry.name);
+    const fullPath = join(target, entry.name);
     if (entry.isDirectory()) {
       entries.push({ name: entry.name, type: 'directory' });
     } else if (entry.isFile()) {
@@ -62,90 +89,139 @@ export async function fsList(params: { path: string }): Promise<{ entries: FsEnt
   return { entries };
 }
 
-export async function fsRead(params: { path: string }): Promise<{ content: string }> {
-  const content = await readFile(expandTilde(params.path), 'utf-8');
-  return { content };
+export async function fsRead(params: NodeFsPathParams): Promise<{ content: string }> {
+  const { target } = confinedPath(params);
+  let handle;
+  try {
+    handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    return { content: await handle.readFile('utf-8') };
+  } catch (error) {
+    return actionableNoFollowError(error, params.relPath);
+  } finally {
+    await handle?.close();
+  }
 }
 
-export async function fsWrite(params: { path: string; content: string }): Promise<{ ok: true }> {
-  await writeFile(expandTilde(params.path), params.content, 'utf-8');
-  return { ok: true };
+export async function fsWrite(params: NodeFsWriteParams): Promise<{ ok: true }> {
+  const { target } = confinedPath(params);
+  let handle;
+  try {
+    handle = await open(
+      target,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+      0o666,
+    );
+    await handle.writeFile(params.content, 'utf-8');
+    return { ok: true };
+  } catch (error) {
+    return actionableNoFollowError(error, params.relPath);
+  } finally {
+    await handle?.close();
+  }
 }
 
-export interface FsWriteFileEntry {
-  path: string;
-  content: string;
-  mode?: number;
-}
+export type FsWriteFileEntry = NodeFsWriteFileEntry;
 
 // Batch base64 write: materializes a whole bundle (dirs + modes) under baseDir in
 // one RPC instead of one mkdir/write/chmod round-trip per file. Bundles are small
 // helper scripts, so a single frame is fine. Each entry path is contained to
 // baseDir so a malformed relative path can't escape the incoming directory.
-export async function fsWriteFiles(params: {
-  baseDir: string;
-  files: FsWriteFileEntry[];
-}): Promise<{ ok: true; count: number }> {
-  const base = resolve(expandTilde(params.baseDir));
+export async function fsWriteFiles(
+  params: NodeFsWriteFilesParams,
+): Promise<{ ok: true; count: number }> {
+  const { target: base } = confinedPath(params);
   for (const file of params.files) {
-    const dest = resolve(join(base, file.path));
-    if (dest !== base && !dest.startsWith(base + sep)) {
-      throw new Error(`fs.writeFiles refuses path escaping baseDir: ${file.path}`);
-    }
+    const nested = confinedPath({ root: base, relPath: file.path });
+    const dest = nested.target;
     await mkdir(dirname(dest), { recursive: true });
-    await writeFile(dest, Buffer.from(file.content, 'base64'));
-    if (typeof file.mode === 'number') await chmod(dest, file.mode);
+    let handle;
+    try {
+      handle = await open(
+        dest,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+        file.mode ?? 0o666,
+      );
+      await handle.writeFile(Buffer.from(file.content, 'base64'));
+      if (typeof file.mode === 'number') await handle.chmod(file.mode);
+    } catch (error) {
+      actionableNoFollowError(error, join(params.relPath, file.path));
+    } finally {
+      await handle?.close();
+    }
   }
   return { ok: true, count: params.files.length };
 }
 
-export async function fsRename(params: {
-  oldPath: string;
-  newPath: string;
-}): Promise<{ ok: true }> {
-  await rename(expandTilde(params.oldPath), expandTilde(params.newPath));
+export async function fsRename(params: NodeFsRenameParams): Promise<{ ok: true }> {
+  const oldTarget = confinedPath({ root: params.root, relPath: params.oldRelPath }).target;
+  const newTarget = confinedPath({ root: params.root, relPath: params.newRelPath }).target;
+  await rename(oldTarget, newTarget);
   return { ok: true };
 }
 
-export async function fsDelete(params: { path: string }): Promise<{ ok: true }> {
-  await rm(expandTilde(params.path), { recursive: true });
+export async function fsDelete(params: NodeFsPathParams): Promise<{ ok: true }> {
+  const { target } = confinedPath(params);
+  await rm(target, { recursive: true });
   return { ok: true };
 }
 
-export async function fsMkdir(params: { path: string }): Promise<{ ok: true }> {
-  await mkdir(expandTilde(params.path), { recursive: true });
+export async function fsMkdir(params: NodeFsPathParams): Promise<{ ok: true }> {
+  const { target } = confinedPath(params);
+  await mkdir(target, { recursive: true });
   return { ok: true };
 }
 
-export async function fsReadBase64(params: {
-  path: string;
-}): Promise<{ content: string; size: number }> {
-  const buf = await readFile(expandTilde(params.path));
-  return { content: buf.toString('base64'), size: buf.length };
+export async function fsReadBase64(
+  params: NodeFsReadBase64Params,
+): Promise<{ content: string; size: number }> {
+  const { target } = confinedPath(params);
+  let handle;
+  try {
+    handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const info = await handle.stat();
+    if (params.maxBytes != null && info.size > params.maxBytes) {
+      throw new Error(`Remote artifact too large to proxy (${info.size} bytes)`);
+    }
+    const buf = await handle.readFile();
+    return { content: buf.toString('base64'), size: info.size };
+  } catch (error) {
+    return actionableNoFollowError(error, params.relPath);
+  } finally {
+    await handle?.close();
+  }
 }
 
-export async function fsHash(params: { path: string }): Promise<{ sha256: string; size: number }> {
-  const filePath = expandTilde(params.path);
-  const info = await stat(filePath);
+export async function fsHash(params: NodeFsPathParams): Promise<{ sha256: string; size: number }> {
+  const { target } = confinedPath(params);
   const hash = createHash('sha256');
-  await new Promise<void>((resolve, reject) => {
-    const stream = createReadStream(filePath);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('error', reject);
-    stream.on('end', resolve);
-  });
-  return { sha256: hash.digest('hex'), size: info.size };
+  let handle;
+  try {
+    handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const info = await handle.stat();
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      hash.update(chunk);
+    }
+    return { sha256: hash.digest('hex'), size: info.size };
+  } catch (error) {
+    return actionableNoFollowError(error, params.relPath);
+  } finally {
+    await handle?.close();
+  }
 }
 
-export async function fsStat(params: {
-  path: string;
-}): Promise<{ size: number; isFile: boolean; isDirectory: boolean }> {
-  const info = await stat(expandTilde(params.path));
+export async function fsStat(
+  params: NodeFsPathParams,
+): Promise<{ size: number; isFile: boolean; isDirectory: boolean }> {
+  const { target } = confinedPath(params);
+  // This is a metadata probe, not an acting read. lstat preserves the old
+  // ability to inspect unreadable entries while avoiding symlink traversal.
+  const info = await lstat(target);
   return { size: info.size, isFile: info.isFile(), isDirectory: info.isDirectory() };
 }
 
-export async function fsRealpath(params: { path: string }): Promise<{ path: string }> {
-  return { path: await realpath(expandTilde(params.path)) };
+export async function fsRealpath(params: NodeFsPathParams): Promise<{ path: string }> {
+  const { target } = confinedPath(params);
+  return { path: await realpath(target) };
 }
 
 // Gateway calls this to check which entries under `repoPath` are gitignored.
@@ -179,9 +255,12 @@ export async function fsCheckIgnore(params: {
   });
 }
 
-export async function fsExists(params: { path: string }): Promise<{ exists: boolean }> {
+export async function fsExists(params: NodeFsPathParams): Promise<{ exists: boolean }> {
+  // Keep confinement failures actionable, while preserving the historical
+  // "never throws for filesystem probe failures" behavior of fs.exists.
+  const { target } = confinedPath(params);
   try {
-    await access(expandTilde(params.path), constants.F_OK);
+    await access(target, constants.F_OK);
     return { exists: true };
   } catch {
     return { exists: false };

@@ -240,14 +240,20 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function sendResponse(id: string, ok: boolean, payload?: unknown, error?: string): void {
+function sendResponse(
+  id: string,
+  ok: boolean,
+  payload?: unknown,
+  error?: string,
+  errorCode?: string,
+): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const frame: ResponseFrame = {
     type: 'res',
     id,
     ok,
     payload: ok ? payload : undefined,
-    error: ok ? undefined : { code: 'EXEC_ERROR', message: error ?? 'Unknown error' },
+    error: ok ? undefined : { code: errorCode ?? 'EXEC_ERROR', message: error ?? 'Unknown error' },
   };
   ws.send(JSON.stringify(frame));
 }
@@ -292,11 +298,30 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
   try {
     switch (frame.method) {
       case 'exec': {
-        const cmd = requireString(params, 'cmd');
+        const hasCmd = typeof params.cmd === 'string';
+        const hasArgv = Array.isArray(params.argv);
+        if (hasCmd === hasArgv) {
+          throw new Error('exec requires exactly one of cmd or argv');
+        }
+        let command: { cmd: string } | { argv: string[] };
+        if (hasCmd) {
+          command = { cmd: params.cmd as string };
+        } else {
+          const rawArgv = params.argv;
+          if (!Array.isArray(rawArgv)) throw new Error('exec requires exactly one of cmd or argv');
+          const argv = rawArgv.map((arg: unknown) => {
+            if (typeof arg !== 'string') {
+              throw new Error('exec argv must contain only strings');
+            }
+            return arg;
+          });
+          if (argv.length === 0) throw new Error('exec argv must contain at least one element');
+          command = { argv };
+        }
         const cwd = typeof params.cwd === 'string' ? params.cwd : undefined;
         const timeout = typeof params.timeout === 'number' ? params.timeout : undefined;
         const maxBuffer = typeof params.maxBuffer === 'number' ? params.maxBuffer : undefined;
-        const result = await exec({ cmd, cwd, timeout, maxBuffer }, (stream, data) => {
+        const result = await exec({ ...command, cwd, timeout, maxBuffer }, (stream, data) => {
           if (!ws || ws.readyState !== WebSocket.OPEN) return;
           ws.send(
             JSON.stringify({
@@ -371,57 +396,66 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
       }
 
       case 'fs.list': {
-        const path = requireString(params, 'path');
-        const result = await fsList({ path });
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const result = await fsList({ root, relPath });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.read': {
-        const path = requireString(params, 'path');
-        const result = await fsRead({ path });
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const result = await fsRead({ root, relPath });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.readBase64': {
-        const path = requireString(params, 'path');
-        const result = await fsReadBase64({ path });
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const maxBytes = typeof params.maxBytes === 'number' ? params.maxBytes : undefined;
+        const result = await fsReadBase64({ root, relPath, maxBytes });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.hash': {
-        const path = requireString(params, 'path');
-        const result = await fsHash({ path });
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const result = await fsHash({ root, relPath });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.stat': {
-        const path = requireString(params, 'path');
-        const result = await fsStat({ path });
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const result = await fsStat({ root, relPath });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.realpath': {
-        const path = requireString(params, 'path');
-        const result = await fsRealpath({ path });
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const result = await fsRealpath({ root, relPath });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.write': {
-        const path = requireString(params, 'path');
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
         const content = requireString(params, 'content');
-        const result = await fsWrite({ path, content });
+        const result = await fsWrite({ root, relPath, content });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.writeFiles': {
-        const baseDir = requireString(params, 'baseDir');
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
         const rawFiles = params.files;
         if (!Array.isArray(rawFiles)) {
           throw new Error('Missing required array param: files');
@@ -437,36 +471,40 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
             mode: typeof file.mode === 'number' ? file.mode : undefined,
           };
         });
-        const result = await fsWriteFiles({ baseDir, files });
+        const result = await fsWriteFiles({ root, relPath, files });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.rename': {
-        const oldPath = requireString(params, 'oldPath');
-        const newPath = requireString(params, 'newPath');
-        const result = await fsRename({ oldPath, newPath });
+        const root = requireString(params, 'root');
+        const oldRelPath = requireString(params, 'oldRelPath');
+        const newRelPath = requireString(params, 'newRelPath');
+        const result = await fsRename({ root, oldRelPath, newRelPath });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.delete': {
-        const path = requireString(params, 'path');
-        const result = await fsDelete({ path });
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const result = await fsDelete({ root, relPath });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.mkdir': {
-        const path = requireString(params, 'path');
-        const result = await fsMkdir({ path });
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const result = await fsMkdir({ root, relPath });
         sendResponse(frame.id, true, result);
         break;
       }
 
       case 'fs.exists': {
-        const path = requireString(params, 'path');
-        const result = await fsExists({ path });
+        const root = requireString(params, 'root');
+        const relPath = requireString(params, 'relPath');
+        const result = await fsExists({ root, relPath });
         sendResponse(frame.id, true, result);
         break;
       }
@@ -599,7 +637,14 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
         sendResponse(frame.id, false, undefined, `Unknown method: ${frame.method}`);
     }
   } catch (err) {
-    sendResponse(frame.id, false, undefined, err instanceof Error ? err.message : String(err));
+    const error = err as NodeJS.ErrnoException;
+    sendResponse(
+      frame.id,
+      false,
+      undefined,
+      err instanceof Error ? err.message : String(err),
+      typeof error.code === 'string' ? error.code : undefined,
+    );
   }
 }
 

@@ -9,6 +9,7 @@ import {
   Events,
   FLOW_STEPS,
   type FlowType,
+  isLightweightInteractiveDevRun,
   type MonitorSnapshot,
   type MonitorViolation,
   PipelineSteps,
@@ -411,10 +412,13 @@ export async function probeWorkerSignalForRun(
 
     const sig = normalized.signal;
     if (!isTerminalWorkerSignal(sig)) {
+      const message = isLightweightInteractiveDevRun(run)
+        ? `SIGNAL.json exists but status is "${sig.status}". After the operator approves publication, create and push the PR, then run \`./mark complete --mark-last\` to open the Farmslot completion handoff.`
+        : `SIGNAL.json exists but status is "${sig.status}". Run \`./mark complete\` when done.`;
       return {
         ok: false,
         code: 'non_terminal',
-        message: `SIGNAL.json exists but status is "${sig.status}". Run \`./mark complete\` when done.`,
+        message,
         signalFile: displayPath,
         status: sig.status,
         signal: sig,

@@ -56,7 +56,7 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
 
 ### Phase 1: Setup
 
-- [ ] **1. Read requirements** — map acceptance criteria to proof mode (`state`, `visual`, `mixed`) in this TASK file, and record whether any AC has a Command Center surface. This decides step 4 and Phase 2 below, so it comes first.
+- [ ] **1. Read requirements** — map acceptance criteria to proof mode (`state`, `visual`, `mixed`) in this TASK file, and record whether any AC has a Command Center surface. Recipe proof is the default for every mode; the UI classification decides whether browser doctor/video steps apply.
 - [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
 - [ ] **3. Update status** — set `STATUS: working`, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
 - [ ] **4. Confirm recipe runtime** — required only when step 1 found at least one AC with a Command Center surface. When every AC is backend-only, state that reason in this TASK file and skip this step; it gates the UI proof in Phase 2, which is skipped for the same reason.
@@ -68,9 +68,9 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
   If CDP or the sandbox UI is down and any AC needs a Command Center surface, set `STATUS: blocked` with the failing check and stop.
 - [ ] **5. Create branch** — `git checkout -b {{BRANCH}}`
 
-### Phase 2: Baseline recipe (UI/command-center ACs)
+### Phase 2: Baseline recipe (all executable ACs)
 
-Skip Phase 2 only when every AC is backend-only with zero Command Center surface. State the reason in this TASK file.
+Skip Phase 2 only when no declared project recipe action can exercise the changed behavior. State the exact limitation and replacement deterministic validation in this TASK file; backend-only is not by itself a skip reason.
 
 - [ ] **6. Write `{{TASK_DIR}}/artifacts/recipe.json`** — cover all acceptance criteria using manifest actions from `{{recipe_manifest_path}}`. The document must include the required `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, `description`, and `workflow`. For modifications, the recipe should fail on current code before your fix.
 - [ ] **7. Baseline recipe run** — must exit non-zero on unfixed code (or document `Baseline: N/A — purely additive` with rationale):
