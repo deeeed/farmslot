@@ -705,9 +705,11 @@ export async function evalTrialStart(
   emit: (event: string, payload: unknown) => void,
   options: {
     beforeCreate?: () => void;
+    /** Sync stamp immediately after in-memory createRun (before awaitPersist). */
+    afterCreateSync?: (run: import('@farmslot/protocol').Run) => void;
     /** Await run JSON write after create (queue claim handoff). */
     awaitPersist?: boolean;
-    /** Called immediately after durable createRun succeeds, before post-create package writes. */
+    /** Called after durable createRun succeeds, before post-create package writes. */
     afterCreate?: (run: import('@farmslot/protocol').Run) => void | Promise<void>;
   } = {},
 ): Promise<EvalTrialStartResult> {
@@ -893,7 +895,11 @@ export async function evalTrialStart(
         : undefined,
     },
     emit,
-    { beforeCreate: options.beforeCreate, awaitPersist: options.awaitPersist },
+    {
+      beforeCreate: options.beforeCreate,
+      afterCreateSync: options.afterCreateSync,
+      awaitPersist: options.awaitPersist,
+    },
   );
 
   // Handoff complete: drop the queue claim/row before package-manifest awaits so a

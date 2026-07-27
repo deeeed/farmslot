@@ -205,6 +205,16 @@ export async function loadQueue(): Promise<void> {
         continue;
       }
       if (normalized.status === 'dispatching') {
+        // Handoff already completed: row carries runId for a still-live run.
+        if (normalized.runId) {
+          const stamped = getAllRuns().find((run) => run.id === normalized.runId);
+          if (stamped && !isTerminalRunStatus(stamped.status)) {
+            console.log(
+              `[dispatch-queue] reconciled dispatching item ${normalized.id.slice(0, 8)} to stamped run ${stamped.id.slice(0, 8)}`,
+            );
+            continue;
+          }
+        }
         if (normalized.queueKind === 'eval-cell' && normalized.evalCell) {
           const evalCell = normalized.evalCell;
           const matchingRun = getAllRuns().find((run) => {
@@ -242,6 +252,45 @@ export async function loadQueue(): Promise<void> {
             );
             continue;
           }
+        }
+        // Ordinary backlog / work-graph / direct queue rows: match a non-terminal
+        // run that already owns this handoff so restart does not requeue work that
+        // finished create before the queue row was dropped.
+        const ordinaryMatch = getAllRuns().find((run) => {
+          if (isTerminalRunStatus(run.status)) return false;
+          if (
+            normalized.workGraphId &&
+            normalized.workNodeId &&
+            run.workGraphId === normalized.workGraphId &&
+            run.workNodeId === normalized.workNodeId
+          ) {
+            // Launch-plan siblings share graph/node; require matching candidate when present.
+            if (normalized.launchCandidateId) {
+              return (
+                run.launchCandidateId === normalized.launchCandidateId &&
+                run.launchPlanId === normalized.launchPlanId &&
+                run.launchAttempt === normalized.launchAttempt
+              );
+            }
+            return !run.launchCandidateId;
+          }
+          if (normalized.backlogItemId && run.backlogItemId === normalized.backlogItemId) {
+            if (normalized.launchCandidateId) {
+              return (
+                run.launchCandidateId === normalized.launchCandidateId &&
+                run.launchPlanId === normalized.launchPlanId &&
+                run.launchAttempt === normalized.launchAttempt
+              );
+            }
+            return !run.launchCandidateId;
+          }
+          return false;
+        });
+        if (ordinaryMatch) {
+          console.log(
+            `[dispatch-queue] reconciled dispatching item ${normalized.id.slice(0, 8)} to existing run ${ordinaryMatch.id.slice(0, 8)}`,
+          );
+          continue;
         }
         // Gateway shutdown between dequeue and run creation leaves no durable
         // run to reconcile, so reset the item and let normal queue dispatch try
@@ -409,6 +458,18 @@ export async function removeQueueItemInternalNow(
   return true;
 }
 
+/**
+ * Stamp runId on a claimed/dispatching row immediately after createRun, before
+ * awaitPersist. Concurrent replay refuses reclaim when runId is set; restart
+ * reconciliation drops the row when the stamped run is still live.
+ */
+export function stampQueueItemRunId(itemId: string, runId: string): void {
+  const item = queue.find((q) => q.id === itemId);
+  if (!item) return;
+  item.runId = runId;
+  schedulePersist('stamp-run-id');
+}
+
 export function removeItem(itemId: string): void {
   const idx = queue.findIndex((q) => q.id === itemId);
   if (idx < 0) throw new Error(`Queue item not found: ${itemId}`);
@@ -530,10 +591,11 @@ export async function cancelGraphQueuedItem(params: {
       try {
         await enqueuePersist('graph-cancel-dependent-failed');
       } catch (persistErr) {
-        console.error(
-          `[dispatch-queue] failed to re-persist restored queue item after dependent failure: ${(persistErr as Error).message}`,
+        broadcastQueue();
+        throw new Error(
+          `Dependent mutation failed (${(err as Error).message}) and restoring the queue row to disk also failed (${(persistErr as Error).message})`,
+          { cause: err },
         );
-        // Still rethrow the original dependent error; restore is best-effort on disk.
       }
       broadcastQueue();
       throw err;

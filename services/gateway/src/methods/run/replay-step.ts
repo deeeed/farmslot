@@ -726,6 +726,18 @@ export async function runReplayStep(
     // candidate sharing this node is never the one removed.
     const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
     if (replacement) {
+      // If create already stamped runId, a new Run owns this node — reviving the
+      // cancelled run would leave two live owners. Refuse rather than reclaim.
+      if (replacement.runId) {
+        const handedOff = getRun(replacement.runId);
+        if (handedOff && handedOff.status !== 'cancelled' && handedOff.status !== 'failed') {
+          throw new Error(
+            `Run ${params.runId.slice(0, 8)} could not be replayed: its node was redispatched ` +
+              `to run ${replacement.runId.slice(0, 8)} (queue item ${replacement.id.slice(0, 8)}). ` +
+              'The cancelled run is left cancelled. Next: follow the new run for this node.',
+          );
+        }
+      }
       removeQueueItemInternal(replacement.id, `replay-revives-run:${params.runId}`);
       await persistQueueNow();
     }

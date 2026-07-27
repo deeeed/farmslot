@@ -31,6 +31,7 @@ import {
   initDispatchQueue,
   loadQueue,
   removeQueueItemInternalNow,
+  stampQueueItemRunId,
 } from './backlog/dispatch-queue.js';
 import {
   initBacklogStore,
@@ -355,6 +356,7 @@ async function main(): Promise<void> {
         observedBroadcast,
         {
           beforeCreate,
+          afterCreateSync: (created) => stampQueueItemRunId(item.id, created.id),
           awaitPersist: true,
           // Called inside evalTrialStart immediately after createRun is durable,
           // before package-manifest writes that can still fail.
@@ -415,6 +417,7 @@ async function main(): Promise<void> {
     const { run } = await runCreate(runParams, broadcastEvent, {
       expectedExecutionTemplate: item.executionTemplate,
       beforeCreate,
+      afterCreateSync: (created) => stampQueueItemRunId(item.id, created.id),
       awaitPersist: true,
     });
     await dropQueueRowAfterCreate(run.id);

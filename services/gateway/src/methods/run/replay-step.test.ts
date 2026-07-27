@@ -4,7 +4,13 @@ import test from 'node:test';
 
 import { Events, type RunDecision } from '@farmslot/protocol';
 
-import { addItem, claimQueueItem, getQueueSnapshot } from '../../backlog/dispatch-queue.js';
+import {
+  addItem,
+  claimQueueItem,
+  getQueueSnapshot,
+  removeQueueItemInternal,
+  stampQueueItemRunId,
+} from '../../backlog/dispatch-queue.js';
 import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
@@ -241,6 +247,62 @@ test('replay revokes a claimed dispatching row and revives the cancelled run', a
     !getQueueSnapshot().some((item) => item.workNodeId === 'wn_replay_handoff'),
     'claimed replacement row was reclaimed',
   );
+});
+
+test('replay refuses when replacement row already has a stamped runId', async (t) => {
+  const cancelled = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4104-stamped',
+    prNumber: 4104,
+    workGraphId: 'wg_replay_stamped',
+    workNodeId: 'wn_replay_stamped',
+  });
+  updateRun(cancelled.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4104-stamped',
+    workGraphId: 'wg_replay_stamped',
+    workNodeId: 'wn_replay_stamped',
+  });
+  const staged = getQueueSnapshot().find((item) => item.workNodeId === 'wn_replay_stamped');
+  assert.ok(staged);
+  const claim = claimQueueItem(staged.id, 'dispatcher');
+  assert.ok(claim);
+  const handedOff = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4104-stamped',
+    prNumber: 4104,
+    workGraphId: 'wg_replay_stamped',
+    workNodeId: 'wn_replay_stamped',
+  });
+  stampQueueItemRunId(claim.itemId, handedOff.id);
+
+  t.after(async () => {
+    for (const id of [cancelled.id, handedOff.id]) {
+      if (getRun(id)) {
+        updateRun(id, { status: 'cancelled', completedAt: new Date().toISOString() });
+        await deleteRun(id);
+      }
+    }
+    const leftover = getQueueSnapshot().find((item) => item.workNodeId === 'wn_replay_stamped');
+    if (leftover) {
+      removeQueueItemInternal(leftover.id, 'test-cleanup');
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      runReplayStep(
+        { runId: cancelled.id, stepName: 'ci-watch', triggeredBy: 'operator' },
+        () => {},
+      ),
+    /redispatched to run/,
+  );
+  assert.equal(getRun(cancelled.id)?.status, 'cancelled');
+  assert.ok(getRun(handedOff.id));
 });
 
 test('replay does not reclaim a sibling launch-plan candidate sharing the node', async (t) => {

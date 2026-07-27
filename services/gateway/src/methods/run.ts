@@ -212,6 +212,12 @@ interface RunCreateInternalOptions {
    * drop the row only after create is on disk (crash-safe claim protocol).
    */
   awaitPersist?: boolean;
+  /**
+   * Called synchronously immediately after in-memory createRun, before any
+   * awaitPersist. Queue dispatch stamps runId on the claim row here so concurrent
+   * cancel/replay cannot treat the row as reclaimable mid-persist.
+   */
+  afterCreateSync?: (run: import('@farmslot/protocol').Run) => void;
 }
 
 export function assertExpectedExecutionTemplate(
@@ -476,6 +482,9 @@ export async function runCreate(
   // Last ownership check at the durable create boundary (after all awaits above).
   options.beforeCreate?.();
   let run = createRun(createParams);
+  // Stamp runId / handoff marker before any await so concurrent reclaim sees
+  // that create already succeeded (claim re-validation alone is not enough).
+  options.afterCreateSync?.(run);
   if (options.awaitPersist) {
     // Queue claim handoff: ensure the run file is on disk before the caller
     // drops the queue row (otherwise a crash requeues and can double-create).
