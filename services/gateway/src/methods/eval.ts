@@ -703,7 +703,11 @@ function buildEvalReplayTicketData(input: {
 export async function evalTrialStart(
   params: EvalTrialStartParams,
   emit: (event: string, payload: unknown) => void,
-  options: { beforeCreate?: () => void } = {},
+  options: {
+    beforeCreate?: () => void;
+    /** Called immediately after durable createRun succeeds, before post-create package writes. */
+    afterCreate?: (run: import('@farmslot/protocol').Run) => void;
+  } = {},
 ): Promise<EvalTrialStartResult> {
   assertEvalTrialStartParams(params);
   const experimentManifest = await readEvalExperimentManifest(params.experimentManifestPath);
@@ -889,6 +893,10 @@ export async function evalTrialStart(
     emit,
     { beforeCreate: options.beforeCreate },
   );
+
+  // Handoff complete: drop the queue claim/row before package-manifest awaits so a
+  // post-create failure cannot re-release a row and redispatch a second run.
+  options.afterCreate?.(result.run);
 
   const run = updateRun(result.run.id, {
     summary: `${flowType === 'fix-bug' ? 'Bugfix' : 'Dev'} eval replay ${candidateStrategyFingerprint.slice(0, 8)} for ${experimentManifest.experimentId}`,

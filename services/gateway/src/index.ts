@@ -328,6 +328,14 @@ async function main(): Promise<void> {
     // Pass beforeCreate so assertQueueClaimHeld runs synchronously immediately
     // before createRun in the store — after those awaits, not before them.
     const beforeCreate = () => assertQueueClaimHeld(claim, 'pre-durable-createRun');
+    const dropQueueRowAfterCreate = (runId: string) => {
+      item.runId = runId;
+      // Handoff complete at durable create: remove before any further awaits so
+      // replay/reclaim cannot revive a cancelled sibling while this run is live.
+      if (getQueueSnapshot().some((q) => q.id === item.id)) {
+        removeQueueItemInternal(item.id, 'dispatch-created');
+      }
+    };
     if (item.queueKind === 'eval-cell' && item.evalCell) {
       const { evalTrialStart } = await import('./methods/eval.js');
       const params = item.evalCell.trialStartParams as unknown as EvalTrialStartParams;
@@ -344,13 +352,15 @@ async function main(): Promise<void> {
             item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,
         },
         observedBroadcast,
-        { beforeCreate },
+        {
+          beforeCreate,
+          // Called inside evalTrialStart immediately after createRun, before package writes.
+          afterCreate: (run) => dropQueueRowAfterCreate(run.id),
+        },
       );
-      item.runId = result.run?.id;
-      // Durable run exists: drop the queue row before further awaits so a concurrent
-      // replay cannot reclaim a row that already produced work (two live runs).
+      // Defensive: if afterCreate was not invoked (deduped path), still drop when a run id exists.
       if (result.run?.id && getQueueSnapshot().some((q) => q.id === item.id)) {
-        removeQueueItemInternal(item.id, 'dispatch-created');
+        dropQueueRowAfterCreate(result.run.id);
       }
       return;
     }
@@ -401,13 +411,7 @@ async function main(): Promise<void> {
       expectedExecutionTemplate: item.executionTemplate,
       beforeCreate,
     });
-    item.runId = run.id;
-    // Handoff complete at durable create: remove before markBacklogRunStarted
-    // (or any other await) so replay reclaim cannot revive a cancelled sibling
-    // while this new run is already live.
-    if (getQueueSnapshot().some((q) => q.id === item.id)) {
-      removeQueueItemInternal(item.id, 'dispatch-created');
-    }
+    dropQueueRowAfterCreate(run.id);
     try {
       await markBacklogRunStarted(item, run);
     } catch (err) {
