@@ -1253,3 +1253,112 @@ test('a succeeded node is reclaimed once its run is deleted and the item reopene
   await queue.persistQueueNow();
   await new Promise((resolve) => setTimeout(resolve, 25));
 });
+
+test('a merged upstream unblocks its dependent', async () => {
+  // The evidence check used to cast Run to a shape carrying prState/mergedAt.
+  // Run declared neither and nothing wrote them, so this edge stayed pending no
+  // matter what shipped — every `merged` edge in every graph was unsatisfiable.
+  const { backlog, runs, workGraph } = await freshStores();
+  const upstream = await createReadyBacklogItem(backlog, 'Upstream that ships');
+  const downstream = await createReadyBacklogItem(backlog, 'Dependent waiting on the merge');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Merged evidence graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_upstream', backlogItemId: upstream.item.id });
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_downstream',
+    backlogItemId: downstream.item.id,
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_upstream_merged',
+    fromNodeId: 'wn_upstream',
+    toNodeId: 'wn_downstream',
+    condition: { kind: 'merged', targetRef: 'main' },
+    unlock: { kind: 'enqueue' },
+  });
+  await workGraph.activateWorkGraph({ graphId });
+
+  const upstreamRun = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: upstream.item.sourceRef,
+    backlogItemId: upstream.item.id,
+    workGraphId: graphId,
+    workNodeId: 'wn_upstream',
+  });
+
+  runs.updateRun(upstreamRun.id, { status: 'done', completedAt: new Date().toISOString() });
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(
+    workGraph.getWorkGraph({ graphId }).graph.edges.find((e) => e.id === 'we_upstream_merged')
+      ?.status,
+    'pending',
+    'a done run is not evidence of a merge on its own',
+  );
+
+  runs.updateRun(upstreamRun.id, {
+    prNumber: 404,
+    prState: 'MERGED',
+    mergedAt: new Date().toISOString(),
+  });
+  await workGraph.schedulerTick({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  const projection = workGraph.getWorkGraph({ graphId }).graph;
+  const edge = projection.edges.find((e) => e.id === 'we_upstream_merged');
+  assert.equal(edge?.status, 'satisfied');
+  assert.equal(edge?.evidence?.prNumber, 404);
+  assert.notEqual(
+    projection.nodes.find((node) => node.id === 'wn_downstream')?.status,
+    'waiting',
+    'the dependent must not still be waiting on an upstream that merged',
+  );
+});
+
+test('a targeted tick recomputes a graph stranded in needs-attention', async () => {
+  // needs-attention was excluded from every tick, so a graph that reached it
+  // could never be reprocessed — not even after the flagged condition cleared.
+  const { backlog, workGraph } = await freshStores();
+  const upstream = await createReadyBacklogItem(backlog, 'Upstream');
+  const downstream = await createReadyBacklogItem(backlog, 'Dependent');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Stranded graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_upstream', backlogItemId: upstream.item.id });
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_downstream',
+    backlogItemId: downstream.item.id,
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_upstream_gate',
+    fromNodeId: 'wn_upstream',
+    toNodeId: 'wn_downstream',
+    condition: { kind: 'manual', gateId: 'needs-approval' },
+    unlock: { kind: 'enqueue' },
+  });
+  await workGraph.activateWorkGraph({ graphId });
+
+  // Force the regression the scheduler punishes: a blocked node that had already
+  // gone active. This flags both node and graph needs-attention.
+  await workGraph.updateWorkGraphNode({ graphId, nodeId: 'wn_downstream', status: 'ready' });
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(workGraph.getWorkGraph({ graphId }).graph.graph.status, 'needs-attention');
+
+  await workGraph.schedulerTick({ graphId });
+  const stranded = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(
+    stranded.nodes
+      .find((node) => node.id === 'wn_downstream')
+      ?.waitingOn.filter((entry) => entry.kind === 'policy').length,
+    0,
+    'a targeted tick must recompute the node instead of leaving the policy strand pinned',
+  );
+});
