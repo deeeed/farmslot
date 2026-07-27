@@ -88,18 +88,8 @@ function validatePullRequestEvent(event) {
     return;
   }
 
-  let base = '';
-  try {
-    base = git(['merge-base', `origin/${baseRef}`, headSha]);
-  } catch {
-    base = pr.base?.sha ?? '';
-  }
-  if (!base) {
-    fail(`Unable to determine merge base for origin/${baseRef}..${headSha}.`);
-    return;
-  }
-
-  validateRange(`${base}..${headSha}`);
+  // Squash-merge uses the PR title as the final commit subject, so individual
+  // commit subjects on the branch are advisory noise — skip them.
 }
 
 function validatePushEvent(event) {
