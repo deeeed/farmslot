@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- fix(companion): a slow Metro cold boot no longer latches its port into permanent prepare failure. The readiness marker is only written on success, so a boot that outran the wait left Metro running and unmarked, and every later attempt refused it as "unknown or different slot configuration" with the recovery kill unreachable. Our own unconfirmed session is now replaced, a timed-out boot is stopped instead of orphaned, and the wait is 120s and overridable via `METRO_READY_TIMEOUT_SECS`. A Metro this script did not start is still left alone.
 - Align embedded recipes and actions with the strict Action Manifest v1 contract.
 - Migrate embedded automation recipes and recipe UI terminology to parameterized, composable Recipe v1 documents.
 - chore: store-screenshot demo PR data carries the new `skipped` CI check-summary count (protocol `PRStatus.checkSummary` gained the field).

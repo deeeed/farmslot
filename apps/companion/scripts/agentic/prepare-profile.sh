@@ -44,6 +44,7 @@ metro_listening() {
 start_metro_background() {
   local log_file="${APP_DIR}/.agent/metro.log"
   local config_file="${APP_DIR}/.agent/metro-${METRO_PORT}.env"
+  local metro_session="farmslot-companion-metro-${METRO_PORT}"
   local expected_config
   printf -v expected_config 'APP_VARIANT=%s\nGATEWAY_PORT=%s\nGATEWAY_URL=%s\nPACKAGER_HOST=%s' \
     "${APP_VARIANT}" \
@@ -56,11 +57,31 @@ start_metro_background() {
       echo "[prepare-profile] matching Metro already listening on :${METRO_PORT}"
       return 0
     fi
-    echo "[prepare-profile] Metro on :${METRO_PORT} was started with unknown or different slot configuration" >&2
-    return 1
+    # The marker is only written once Metro answers, so a boot that outran the
+    # wait leaves a live Metro and no marker — and every later attempt landed
+    # here and failed, with the recovery kill below unreachable while the port
+    # answered. Replace our own session; anything else is not ours to kill.
+    if tmux has-session -t "=${metro_session}" 2>/dev/null; then
+      echo "[prepare-profile] replacing unconfirmed Metro on :${METRO_PORT} (session ${metro_session})" >&2
+      tmux kill-session -t "=${metro_session}"
+      local released=0
+      while (( released < 15 )) && metro_listening; do
+        sleep 1
+        released=$((released + 1))
+      done
+      if metro_listening; then
+        echo "[prepare-profile] :${METRO_PORT} still answering after stopping ${metro_session}" >&2
+        echo "Next: something else holds this port — stop it, or give this slot another METRO_PORT." >&2
+        return 1
+      fi
+    else
+      echo "[prepare-profile] Metro on :${METRO_PORT} was started with unknown or different slot configuration" >&2
+      echo "Next: it is not a Farmslot-managed session, so stop it yourself, or give this slot" >&2
+      echo "      another METRO_PORT via its slot hooks." >&2
+      return 1
+    fi
   fi
   echo "[prepare-profile] starting Metro on :${METRO_PORT}"
-  local metro_session="farmslot-companion-metro-${METRO_PORT}"
   : >"${log_file}"
   if tmux has-session -t "=${metro_session}" 2>/dev/null; then
     tmux kill-session -t "=${metro_session}"
@@ -78,8 +99,20 @@ start_metro_background() {
     yarn expo start --dev-client --port "${METRO_PORT}" --lan
   printf -v metro_command '%s >>%q 2>&1' "${metro_command}" "${log_file}"
   tmux new-session -d -s "${metro_session}" -c "${APP_DIR}" bash -c "${metro_command}"
+  # A first boot builds its transform cache and legitimately takes longer than a
+  # warm one, so the wait is generous and overridable rather than a flat 45s.
+  # Validate before the loop: a non-numeric value fails the arithmetic test under
+  # `set -u` AFTER Metro has been started, which would exit past the cleanup below
+  # and leave exactly the unconfirmed session this function exists to prevent.
+  local ready_timeout="${METRO_READY_TIMEOUT_SECS:-120}"
+  if [[ ! "$ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
+    echo "[prepare-profile] METRO_READY_TIMEOUT_SECS must be a positive integer, got: ${ready_timeout}" >&2
+    echo "Next: unset it to use the 120s default, or set a whole number of seconds." >&2
+    tmux kill-session -t "=${metro_session}" 2>/dev/null || true
+    return 1
+  fi
   local i=0
-  while (( i < 45 )); do
+  while (( i < ready_timeout )); do
     if metro_listening; then
       printf '%s\n' "${expected_config}" >"${config_file}"
       echo "[prepare-profile] Metro ready on :${METRO_PORT}"
@@ -88,8 +121,15 @@ start_metro_background() {
     sleep 1
     i=$((i + 1))
   done
-  echo "[prepare-profile] Metro did not start — tail ${log_file}" >&2
+  echo "[prepare-profile] Metro did not answer on :${METRO_PORT} within ${ready_timeout}s — tail ${log_file}" >&2
   tail -n 30 "${log_file}" >&2 || true
+  # Stop the boot we started. Left running it would come up unconfirmed, with no
+  # marker, and turn a slow start into a port that fails every future attempt.
+  if tmux has-session -t "=${metro_session}" 2>/dev/null; then
+    tmux kill-session -t "=${metro_session}"
+  fi
+  echo "Next: raise METRO_READY_TIMEOUT_SECS if this machine is slow to boot Metro, or read the" >&2
+  echo "      log above for the real startup failure." >&2
   return 1
 }
 
