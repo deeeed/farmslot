@@ -94,6 +94,25 @@ export interface QueueItem {
   createdAt: string;
   status: 'queued' | 'dispatching' | 'cancelled';
   runId?: string; // set when dispatched
+  /**
+   * Exclusive claim protocol (MANUAL-000053). When status is `dispatching`,
+   * these fields record who holds the right to create a run for this row.
+   * A holder that loses its claim (revoke, remove, or expiry) must stop
+   * before createRun rather than acting on a detached object.
+   */
+  claimHolder?: string;
+  /** Monotonic epoch; bumps on every successful claim and on revoke. */
+  claimEpoch?: number;
+  /** ISO timestamp after which the claim is no longer valid. */
+  claimExpiresAt?: string;
+}
+
+/** Token returned by claimQueueItem — re-validate before createRun. */
+export interface QueueClaim {
+  itemId: string;
+  holderId: string;
+  epoch: number;
+  expiresAt: string;
 }
 
 export interface DispatchRequest {

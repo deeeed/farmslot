@@ -10,6 +10,7 @@ import {
   type DispatchQueueUpdateParams,
   isTerminalRunStatus,
   normalizeRunTags,
+  type QueueClaim,
   type QueueItem,
   type Run,
   type SlotStatus,
@@ -43,10 +44,28 @@ let queuePersistChain: Promise<void> = Promise.resolve();
 const queueProfileFitCache = new Map<string, string | null>();
 const queueProfileFitDeferUntil = new Map<string, number>();
 
+/** Default exclusive-claim TTL. Holders must re-validate before createRun. */
+export const DEFAULT_QUEUE_CLAIM_TTL_MS = 60_000;
+
 type BroadcastFn = (event: string, payload: unknown) => void;
 let _broadcast: BroadcastFn | null = null;
 let _createAndStartRun: ((item: QueueItem) => Promise<void>) | null = null;
 let dispatchInFlight: Promise<void> | null = null;
+
+function clearClaimFields(item: QueueItem): void {
+  item.claimHolder = undefined;
+  item.claimExpiresAt = undefined;
+  // claimEpoch is retained so the next claim still bumps past any prior token.
+}
+
+function claimStillHeld(item: QueueItem, claim: QueueClaim, nowMs = Date.now()): boolean {
+  if (item.id !== claim.itemId) return false;
+  if (item.status !== 'dispatching') return false;
+  if (item.claimHolder !== claim.holderId) return false;
+  if ((item.claimEpoch ?? 0) !== claim.epoch) return false;
+  if (!item.claimExpiresAt || Date.parse(item.claimExpiresAt) <= nowMs) return false;
+  return true;
+}
 
 export function initDispatchQueue(
   broadcast: BroadcastFn,
@@ -172,9 +191,11 @@ export async function loadQueue(): Promise<void> {
         }
         // Gateway shutdown between dequeue and run creation leaves no durable
         // run to reconcile, so reset the item and let normal queue dispatch try
-        // again instead of dropping it on restart.
+        // again instead of dropping it on restart. Clear any stale claim so a
+        // fresh claimQueueItem is required.
         normalized.status = 'queued';
         normalized.runId = undefined;
+        clearClaimFields(normalized);
         queue.push(normalized);
       }
     }
@@ -302,6 +323,9 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
 function removeItemAtIndex(idx: number, reason: string): void {
   const [removed] = queue.splice(idx, 1);
   if (!removed) return;
+  // Bump epoch so any holder still holding a token discovers the loss.
+  removed.claimEpoch = (removed.claimEpoch ?? 0) + 1;
+  clearClaimFields(removed);
   clearQueueProfileFitCache(removed);
   schedulePersist(reason);
   console.log(`[dispatch-queue] removed item ${removed.id.slice(0, 8)} (${reason})`);
@@ -324,21 +348,104 @@ export function removeItem(itemId: string): void {
   removeItemAtIndex(idx, 'remove');
 }
 
+// ─── Exclusive claim protocol (MANUAL-000053) ───
+
+/**
+ * Atomically claim a queued row for exclusive dispatch. Records holder + epoch
+ * and transitions status to `dispatching`. Returns null when the row is gone,
+ * already claimed, or otherwise not claimable.
+ */
+export function claimQueueItem(
+  itemId: string,
+  holderId: string,
+  options?: { ttlMs?: number },
+): QueueClaim | null {
+  if (!holderId.trim()) return null;
+  const item = queue.find((q) => q.id === itemId);
+  if (!item || item.status !== 'queued') return null;
+  const now = Date.now();
+  const ttlMs = options?.ttlMs ?? DEFAULT_QUEUE_CLAIM_TTL_MS;
+  const epoch = (item.claimEpoch ?? 0) + 1;
+  const expiresAt = new Date(now + Math.max(1, ttlMs)).toISOString();
+  item.status = 'dispatching';
+  item.claimHolder = holderId;
+  item.claimEpoch = epoch;
+  item.claimExpiresAt = expiresAt;
+  schedulePersist('claim');
+  broadcastQueue();
+  return { itemId, holderId, epoch, expiresAt };
+}
+
+/** True when the live queue row still holds this exact claim and it has not expired. */
+export function isQueueClaimHeld(claim: QueueClaim, nowMs = Date.now()): boolean {
+  const item = queue.find((q) => q.id === claim.itemId);
+  if (!item) return false;
+  return claimStillHeld(item, claim, nowMs);
+}
+
+/**
+ * Release a held claim back to `queued` so another dispatcher can try.
+ * No-op (returns false) when the claim is already lost.
+ */
+export function releaseQueueClaim(claim: QueueClaim): boolean {
+  const item = queue.find((q) => q.id === claim.itemId);
+  if (!item || !claimStillHeld(item, claim)) return false;
+  item.status = 'queued';
+  item.runId = undefined;
+  clearClaimFields(item);
+  schedulePersist('release-claim');
+  broadcastQueue();
+  return true;
+}
+
+/**
+ * Cancel a graph-linked queue row (queued or claimed/dispatching) and optionally
+ * commit a dependent state change in the same logical unit of work.
+ *
+ * The row is detached from the live queue first (which revokes any claim). Then
+ * `commitDependent` runs; if it throws, the row is restored and the error
+ * propagates so callers never observe a removed row with unfinished dependents.
+ */
 export async function cancelGraphQueuedItem(params: {
   workGraphId: string;
   workNodeId: string;
   reason: string;
+  /**
+   * Dependent mutation that must succeed with the queue removal (e.g. backlog
+   * needs-attention). Invoked after detach, before durable queue persist.
+   */
+  commitDependent?: (item: QueueItem) => void | Promise<void>;
 }): Promise<boolean> {
   const idx = queue.findIndex(
     (item) =>
-      item.status === 'queued' &&
+      (item.status === 'queued' || item.status === 'dispatching') &&
       item.workGraphId === params.workGraphId &&
       item.workNodeId === params.workNodeId,
   );
   if (idx < 0) return false;
   const [item] = queue.splice(idx, 1);
   if (!item) return false;
+  // Revoke claim so any in-flight dispatcher fails re-validation.
+  item.claimEpoch = (item.claimEpoch ?? 0) + 1;
+  clearClaimFields(item);
   clearQueueProfileFitCache(item);
+
+  if (params.commitDependent) {
+    try {
+      await params.commitDependent(item);
+    } catch (err) {
+      // Restore the row so durable state never loses the item while the
+      // dependent mutation failed. Prefer queued so a fresh claim is required.
+      item.status = 'queued';
+      item.runId = undefined;
+      clearClaimFields(item);
+      queue.splice(idx, 0, item);
+      schedulePersist('graph-cancel-dependent-failed');
+      broadcastQueue();
+      throw err;
+    }
+  }
+
   await enqueuePersist('graph-dependency-regressed');
   console.log(
     `[dispatch-queue] cancelled graph queue item ${item.id.slice(0, 8)}: ${params.reason}`,
@@ -576,6 +683,14 @@ function liveQueuedItem(itemId: string): QueueItem | null {
   return item?.status === 'queued' ? item : null;
 }
 
+function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
+  if (isQueueClaimHeld(claim)) return false;
+  console.log(
+    `[dispatch-queue] claim lost for ${claim.itemId.slice(0, 8)} after ${phase}; stopping before createRun`,
+  );
+  return true;
+}
+
 async function tryDispatchNextOnce(): Promise<void> {
   if (!_broadcast || !_createAndStartRun) return;
 
@@ -594,28 +709,42 @@ async function tryDispatchNextOnce(): Promise<void> {
       }
     }
 
+    // Claim exclusively before any further await that commits us to this row.
+    // A concurrent cancel/reclaim revokes the claim; we re-validate after every
+    // await and stop before createRun rather than acting on a detached object.
+    const holderId = `dispatch-${randomUUID()}`;
+    const claim = claimQueueItem(item.id, holderId);
+    if (!claim) continue;
+
     let slot: SlotStatus | undefined;
     try {
       const slotId = await selectQueueDispatchSlot(fleet.slots, item);
+      if (stopIfClaimLost(claim, 'slot-selection')) return;
       slot = fleet.slots.find((s) => s.slot === slotId);
     } catch (error) {
+      if (isQueueClaimHeld(claim)) releaseQueueClaim(claim);
       console.debug(
         `[dispatch-queue] skipping queued item ${item.id.slice(0, 8)}: ${(error as Error).message}`,
       );
       continue;
     }
 
-    if (!slot || !canDispatchQueuedItemToSlot(slot)) continue;
-    item.slotId = slot.slot;
+    if (!slot || !canDispatchQueuedItemToSlot(slot)) {
+      if (isQueueClaimHeld(claim)) releaseQueueClaim(claim);
+      continue;
+    }
+    if (stopIfClaimLost(claim, 'slot-eligibility')) return;
 
-    // Mark as dispatching and create a run
-    item.status = 'dispatching';
+    item.slotId = slot.slot;
     schedulePersist('mark-dispatching');
     console.log(`[dispatch-queue] auto-dispatching ${item.id.slice(0, 8)} → slot ${slot.slot}`);
 
+    // Final re-validation immediately before run creation.
+    if (stopIfClaimLost(claim, 'pre-createRun')) return;
+
     try {
       await _createAndStartRun(item);
-      // Remove from queue on success
+      // Success: remove the row (claim no longer needed).
       const idx = queue.findIndex((q) => q.id === item.id);
       if (idx >= 0) {
         clearQueueProfileFitCache(queue[idx]);
@@ -631,24 +760,27 @@ async function tryDispatchNextOnce(): Promise<void> {
         // Defense-in-depth: addItem validates startRef and eval queue shape before
         // persistence, but queued JSON can outlive code changes or manual edits.
         // Cancel non-retryable items loudly instead of head-of-line retry loops.
-        item.status = 'cancelled';
-        item.runId = undefined;
-        clearQueueProfileFitCache(item);
-        schedulePersist(
-          isStartRefPolicyError(err)
-            ? 'auto-dispatch-start-ref-policy-failure'
-            : 'auto-dispatch-eval-policy-failure',
-        );
-        console.error(
-          `[dispatch-queue] cancelling invalid queued item ${item.id.slice(0, 8)}: ${(err as Error).message}`,
-        );
-        _broadcast('queue.updated', { items: listItems() });
+        if (isQueueClaimHeld(claim)) {
+          item.status = 'cancelled';
+          item.runId = undefined;
+          clearClaimFields(item);
+          clearQueueProfileFitCache(item);
+          schedulePersist(
+            isStartRefPolicyError(err)
+              ? 'auto-dispatch-start-ref-policy-failure'
+              : 'auto-dispatch-eval-policy-failure',
+          );
+          console.error(
+            `[dispatch-queue] cancelling invalid queued item ${item.id.slice(0, 8)}: ${(err as Error).message}`,
+          );
+          _broadcast('queue.updated', { items: listItems() });
+        }
         return;
       }
-      // Revert to queued on failure
-      item.status = 'queued';
-      item.runId = undefined;
-      schedulePersist('auto-dispatch-failure');
+      // Revert to queued on failure when we still own the claim.
+      if (isQueueClaimHeld(claim)) {
+        releaseQueueClaim(claim);
+      }
       console.error(
         `[dispatch-queue] auto-dispatch failed for ${item.id.slice(0, 8)}: ${(err as Error).message}`,
       );

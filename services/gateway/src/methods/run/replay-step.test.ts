@@ -184,7 +184,7 @@ test('a replay that fails validation leaves the re-queued node intact', async (t
   );
 });
 
-test('replay is refused once the node has already been redispatched', async (t) => {
+test('replay revokes a claimed dispatching row and revives the cancelled run', async (t) => {
   const run = createRun({
     flowType: 'update-branch',
     project: 'farmslot-farm',
@@ -193,7 +193,25 @@ test('replay is refused once the node has already been redispatched', async (t) 
     workGraphId: 'wg_replay_handoff',
     workNodeId: 'wn_replay_handoff',
   });
-  updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  const doneBeforeCiWatch = new Set([
+    'write-task',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+    'finalize',
+  ]);
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    steps: run.steps.map((step) =>
+      step.name === 'ci-watch'
+        ? { ...step, status: 'skipped', completedAt: new Date().toISOString() }
+        : doneBeforeCiWatch.has(step.name)
+          ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
   addItem({
     project: 'farmslot-farm',
     flowType: 'update-branch',
@@ -201,11 +219,14 @@ test('replay is refused once the node has already been redispatched', async (t) 
     workGraphId: 'wg_replay_handoff',
     workNodeId: 'wn_replay_handoff',
   });
-  // getQueueSnapshot copies the array but shares the item objects, so this stages
-  // the state a real dispatcher would set on handing the row to a slot.
+  // Stage an exclusive claim (status dispatching + holder). Replay must revoke it
+  // and revive the cancelled run; the dispatcher would fail isQueueClaimHeld.
   const staged = getQueueSnapshot().find((item) => item.workNodeId === 'wn_replay_handoff');
   assert.ok(staged);
   staged.status = 'dispatching';
+  staged.claimHolder = 'stale-dispatcher';
+  staged.claimEpoch = 1;
+  staged.claimExpiresAt = new Date(Date.now() + 60_000).toISOString();
 
   t.after(async () => {
     if (getRun(run.id)) {
@@ -214,13 +235,14 @@ test('replay is refused once the node has already been redispatched', async (t) 
     }
   });
 
-  // A dispatching row cannot be taken back, so the handoff wins and the old run
-  // stays cancelled rather than running the same work a second time.
-  await assert.rejects(
-    () => runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
-    /already been redispatched/,
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
   );
-  assert.equal(getRun(run.id)?.status, 'cancelled');
+  assert.equal(getRun(run.id)?.status, 'ci-watching');
+  assert.ok(
+    !getQueueSnapshot().some((item) => item.workNodeId === 'wn_replay_handoff'),
+    'claimed replacement row was reclaimed',
+  );
 });
 
 test('replay does not reclaim a sibling launch-plan candidate sharing the node', async (t) => {

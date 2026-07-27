@@ -296,21 +296,11 @@ export async function runReplayStep(
     );
   }
   // Replaying a cancelled run is supported (e.g. resuming ci-watch on an
-  // update-branch run). But cancelling released the node, so the graph has since
-  // re-queued its work. If that replacement has already been handed to a slot the
-  // handoff wins: reviving here would put two live runs behind one node, and
-  // unlike a queued row a dispatching one cannot be taken back. Refuse before any
-  // state is touched.
-  if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
-    const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
-    if (replacement && replacement.status === 'dispatching') {
-      throw new Error(
-        `Run ${params.runId.slice(0, 8)} was cancelled and its node has already been ` +
-          'redispatched, so replaying it would run the same work twice. ' +
-          'Next: follow the new run for this node, or cancel that dispatch and replay again.',
-      );
-    }
-  }
+  // update-branch run). Cancelling released the node, so the graph may have
+  // re-queued its work. Claim-aware reclaim (below) revokes any exclusive queue
+  // claim before the run goes live, so a dispatcher that loses the claim stops
+  // before createRun rather than racing a revived run. No entry-time refuse on
+  // `dispatching` — claims replaced that weaker status-flag guard.
   const triggeredBy = params.triggeredBy ?? 'operator';
 
   const flowSteps = FLOW_STEPS[existing.flowType];
@@ -725,6 +715,8 @@ export async function runReplayStep(
   // Reclaim the node here, not at entry: every check that can throw has passed, so
   // the run is about to go live. Dropping the queue row earlier would strand the
   // node — no queued work and a still-cancelled run — whenever replay then failed.
+  // removeQueueItemInternal revokes any exclusive claim (epoch bump); a dispatcher
+  // that still holds a stale token fails isQueueClaimHeld and stops before createRun.
   if (
     currentBeforeReplayUpdate.status === 'cancelled' &&
     existing.workGraphId &&
@@ -733,17 +725,6 @@ export async function runReplayStep(
     // Select the row by id rather than by graph/node, so a sibling launch-plan
     // candidate sharing this node is never the one removed.
     const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
-    // The entry check can go stale: a queued row may reach `dispatching` while the
-    // replay prepares. Reviving alongside a handed-off row would put two live runs
-    // behind one node, and a dispatching row cannot be taken back.
-    if (replacement && replacement.status !== 'queued') {
-      throw new Error(
-        `Run ${params.runId.slice(0, 8)} could not be replayed: its node was redispatched ` +
-          `while this replay was preparing (queue item ${replacement.id.slice(0, 8)} is ` +
-          `${replacement.status}). The run is left cancelled. ` +
-          'Next: follow the new run for this node, or cancel that dispatch and replay again.',
-      );
-    }
     if (replacement) {
       removeQueueItemInternal(replacement.id, `replay-revives-run:${params.runId}`);
       await persistQueueNow();
