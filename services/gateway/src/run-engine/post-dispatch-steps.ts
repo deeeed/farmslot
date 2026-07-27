@@ -331,29 +331,34 @@ export async function executeMonitorStep(
       isLightweightInteractiveDevRun(current) &&
       (workerSignal?.status === 'complete' || workerSignal?.status === 'done')
     ) {
-      // Completion on this flow belongs to the operator, who resolves the run from
-      // Farmslot. Honouring a worker-authored terminal signal ends the session behind
-      // them: run 32909fa2 completed itself with 26 files uncommitted, no branch
-      // commits and no PR, and the backlog item auto-closed on the back of it. The
-      // human gate is skipped for this profile precisely because the operator is
-      // expected to be steering, so there is nothing downstream to catch this.
+      // MONITOR is the only point that can stop this. The dev pipeline runs
+      // MONITOR -> SELF_REVIEW -> COMPLETE -> HUMAN_GATE, so COMPLETE precedes the
+      // gate: returning normally here reaches COMPLETE, which releases the slot and
+      // kills the worker, and the gate then runs against an ownerless slot. Run
+      // 32909fa2 finished exactly that way, with 26 files uncommitted and no PR.
+      //
+      // Park the run instead. `blocked` is non-terminal and documented as a run
+      // parked at a gate the operator can re-engage, so every interactive action
+      // (done-no-pr, blocked, failed, abort, run-self-review) stays available with
+      // the slot and its worker intact.
       console.warn(
-        `[run-engine] run ${runId.slice(0, 8)} — worker '${workerSignal.status}' signal noted; ` +
-          'interactive completion is resolved by the operator at the human gate',
+        `[run-engine] run ${runId.slice(0, 8)} — worker '${workerSignal.status}' signal parked; ` +
+          'interactive completion is operator-owned',
       );
-      // Record the signal and let the pipeline advance to the human gate, which is
-      // no longer skipped for this profile. The gate is what holds the run for its
-      // operator; returning here would otherwise be indistinguishable from the
-      // worker completing the run itself.
-      return {
-        inputs,
-        outputs: {
+      throw monitorTerminalError({
+        status: 'blocked',
+        outcome: 'partial',
+        reason:
+          `Worker signalled ${workerSignal.status}. Completing an interactive dev run is yours: ` +
+          'resolve it in Farmslot ("Done no PR", "PR Complete", "Blocked", "Abort"). ' +
+          'Confirm the branch is committed first — uncommitted work is lost when the slot is reclaimed.',
+        stepInputs: inputs,
+        stepOutputs: {
           ...stepOutputs,
-          workerTerminalSignalNoted: workerSignal.status,
+          workerTerminalSignalParked: workerSignal.status,
           awaitingOperator: true,
-          reason: 'interactive-completion-resolved-at-human-gate',
         },
-      };
+      });
     }
     if (workerSignal?.status === 'complete' || workerSignal?.status === 'done') {
       // Worker-owned-push flows must have the branch published before the run
@@ -577,12 +582,27 @@ export async function executeHumanGateStep(
   const noChangeGate = shouldForceNoChangeHumanGate(current);
   const publicationApprovalGate = requiresPublicationApproval(current);
   const artifactOnly = isArtifactOnlyRun(current);
-  // No lightweight-interactive skip here. `isHumanGateEnabled` already returns true
-  // for every interactive run, and skipping on top of it removed the one place an
-  // operator-owned run stops for its operator: self-review is skipped for this
-  // profile too, so a worker signal ran straight through to `complete`, released
-  // the slot and finished the run (32909fa2, with 26 files uncommitted and no PR).
-  // The gate is where the operator resolves the run and the signal is written.
+  if (isLightweightInteractiveDevRun(current)) {
+    // Kept skipped. In the dev flow HUMAN_GATE runs AFTER COMPLETE
+    // (MONITOR -> SELF_REVIEW -> COMPLETE -> HUMAN_GATE), so it is a publication
+    // gate, not a completion gate — it cannot hold a run that has already
+    // completed and released its slot. The operator hold for this profile is in
+    // MONITOR, which parks a worker-authored terminal signal before COMPLETE can
+    // run. Gating again here would re-prompt an operator who just chose their
+    // completion action.
+    console.log(
+      `[run-engine] run ${runId.slice(0, 8)} — human-gate skipped for interactive lightweight dev policy`,
+    );
+    return {
+      inputs: { gateType, gateEnabled: false, policy: 'interactive-lightweight' },
+      outputs: {
+        skipped: true,
+        reason: 'interactive-lightweight-policy',
+        source: 'operator-policy',
+        externalReview: 'deferred',
+      },
+    };
+  }
   if (artifactOnly) {
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — human-gate skipped for artifact-only completion policy`,
