@@ -1299,7 +1299,16 @@ export function normalizeRawProjectAutoRecovery(
 
 export function getProjectField(projectJson: RawProjectJson, dotpath: string): string {
   const raw = getProjectFieldRaw(projectJson, dotpath);
-  return typeof raw === 'string' ? raw : '';
+  if (typeof raw === 'string') return raw;
+  // Numbers and booleans stringify. Returning '' for them made every numeric
+  // project.json field invisible to shell callers, which read this through
+  // `farmslot internal project-field` and then apply `${VAR:-<default>}` — so a
+  // configured value silently lost to a hardcoded default. metamask-extension-farm
+  // sets timeouts.build_manifest_s=600 and preflight used 180 for every build.
+  // Objects and arrays stay '' on purpose: they have no single shell value.
+  if (typeof raw === 'number') return Number.isFinite(raw) ? String(raw) : '';
+  if (typeof raw === 'boolean') return String(raw);
+  return '';
 }
 
 export function getProjectFieldRaw(projectJson: RawProjectJson, dotpath: string): unknown {
