@@ -327,6 +327,30 @@ export async function executeMonitorStep(
         stepOutputs,
       });
     }
+    if (
+      isLightweightInteractiveDevRun(current) &&
+      (workerSignal?.status === 'complete' || workerSignal?.status === 'done')
+    ) {
+      // Completion on this flow belongs to the operator, who resolves the run from
+      // Farmslot. Honouring a worker-authored terminal signal ends the session behind
+      // them: run 32909fa2 completed itself with 26 files uncommitted, no branch
+      // commits and no PR, and the backlog item auto-closed on the back of it. The
+      // human gate is skipped for this profile precisely because the operator is
+      // expected to be steering, so there is nothing downstream to catch this.
+      console.warn(
+        `[run-engine] run ${runId.slice(0, 8)} — ignoring worker '${workerSignal.status}' signal; ` +
+          'interactive lightweight completion is operator-owned',
+      );
+      return {
+        inputs,
+        outputs: {
+          ...stepOutputs,
+          workerTerminalSignalIgnored: workerSignal.status,
+          reason: 'interactive-lightweight-operator-owned-completion',
+          awaitingOperator: true,
+        },
+      };
+    }
     if (workerSignal?.status === 'complete' || workerSignal?.status === 'done') {
       // Worker-owned-push flows must have the branch published before the run
       // advances — otherwise ci-watch evaluates a stale remote SHA and loops.
