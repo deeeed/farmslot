@@ -714,10 +714,21 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): voi
       node.status === 'needs-attention' ||
       node.status === 'queued' ||
       node.status === 'running' ||
-      node.status === 'gated')
+      node.status === 'gated' ||
+      // `succeeded` belongs here, but only when the node HELD a run that has
+      // since gone. Deleting a run leaves its node succeeded and nothing else
+      // reconsiders it, so reopening the backlog item and dispatching did
+      // nothing but report that the node had succeeded. A node marked succeeded
+      // without ever having a run — set manually, or driven by a reference
+      // condition — has no run to lose and must not be reset.
+      (node.status === 'succeeded' && !!node.latestRunId))
   ) {
     node.status = 'ready';
     delete node.latestRunId;
+    // These point at the same departed run; leaving them makes the node claim a
+    // family that no longer exists.
+    delete node.currentFamilyId;
+    delete node.currentRootRunId;
     node.updatedAt = new Date().toISOString();
   }
 }

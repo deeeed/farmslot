@@ -1205,3 +1205,51 @@ test('active graph removal is rejected', async () => {
     /planning status/,
   );
 });
+
+test('a succeeded node is reclaimed once its run is deleted and the item reopened', async () => {
+  const { backlog, queue, runs, workGraph } = await freshStores();
+  const created = await createReadyBacklogItem(backlog, 'Redispatch after delete');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Redispatch graph',
+  });
+  const graphId = graph.graph.graph.id;
+  const nodeId = 'wn_succeeded_reclaim';
+  await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
+  await workGraph.activateWorkGraph({ graphId });
+
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === nodeId);
+  assert.ok(queued);
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    workGraphId: graphId,
+    workNodeId: nodeId,
+  });
+  await backlog.markBacklogRunStarted(queued, run);
+  queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
+  runs.updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+  await workGraph.schedulerTick({ graphId });
+
+  // The run is deleted and the operator reopens the item to run it again — the
+  // exact recovery after a run that finished wrongly.
+  await runs.deleteRun(run.id);
+  await backlog.markBacklogItemReady({ itemId: created.item.id });
+
+  // Without reclaiming a succeeded node this returns nothing to do, and the UI
+  // reports only that the node succeeded while no run is ever created.
+  const retick = await workGraph.schedulerTick({ graphId });
+  const node = retick.graphs[0]?.nodes.find((n) => n.id === nodeId);
+  assert.notEqual(node?.status, 'succeeded');
+  assert.equal(node?.latestRunId, undefined);
+  assert.equal(node?.currentFamilyId, undefined);
+
+  // The tick's snapshot write is fire-and-forget; let it land before the suite's
+  // after-hook removes the temp dir, or the write races rmdir into ENOTEMPTY.
+  await queue.persistQueueNow();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+});

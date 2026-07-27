@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(work-graph): a node left `succeeded` by a deleted run is reclaimed when its backlog item is reopened, so the item can be dispatched again. Previously the node kept its status, nothing reconsidered it, and redispatching silently did nothing. Narrow by design: it requires the run to be gone and the node to have held one, so a node marked succeeded manually or by a reference condition is untouched.
 - fix(tasks): the interactive checklist renders as `**N. Text**` so the task schema parser keeps each step's label. `**N.** Text` made it strip the first bold group and discard the rest, so Command Center showed eight numbered steps with no titles.
 - fix(run-engine): a dev run's terminal signal is now commit-verified. The push guard covered only pr-complete and update-branch, so a dev worker could finish with its work uncommitted in the slot worktree, where it is destroyed on reclaim. A push is still not required for dev — the publication step performs it — and interactive dev stays exempt, since publishing there is the operator's call.
 - fix(gateway): the interactive dev checklist is an execution plan again, not the ticket's acceptance criteria. ACs are end-state assertions, so a worker could not mark progress against them and the operator could not follow the session; they stay in TASK.md as proof targets.
