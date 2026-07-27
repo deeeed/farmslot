@@ -851,13 +851,18 @@ test('scheduler resets an orphaned running node once its run is gone', async () 
   runs.updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
   await backlog.markBacklogRunReleased(run.id);
 
-  // The orphaned running node must not stay stuck — it reconciles to a
-  // dispatchable state and drops the dead run reference.
+  // The orphaned running node must not stay stuck — it is actually re-enqueued
+  // and drops the dead run reference. Asserting `ready || queued` would pass on
+  // a node that reconciled but never redispatched, which is the stall itself.
   const retick = await workGraph.schedulerTick({ graphId });
   const node = retick.graphs[0]?.nodes.find((n) => n.id === nodeId);
-  assert.notEqual(node?.status, 'running');
-  assert.ok(node?.status === 'ready' || node?.status === 'queued');
+  assert.equal(node?.status, 'queued');
   assert.equal(node?.latestRunId, undefined);
+  assert.ok(
+    queue
+      .getQueueSnapshot()
+      .some((item) => item.workGraphId === graphId && item.workNodeId === nodeId),
+  );
 });
 
 test('manual gate resolution rejects ambiguous gate ids and can disambiguate by graph and edge', async () => {

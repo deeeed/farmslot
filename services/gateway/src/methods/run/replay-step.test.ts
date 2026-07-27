@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { Events, type RunDecision } from '@farmslot/protocol';
 
+import { addItem, getQueueSnapshot } from '../../backlog/dispatch-queue.js';
 import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
@@ -81,6 +82,265 @@ test('runReplayStep rejects read-only imported reference runs', async (t) => {
   await assert.rejects(
     () => runReplayStep({ runId: run.id, stepName: 'prepare' }, () => {}),
     /read-only imported reference and cannot be replayed/,
+  );
+});
+
+test('replaying a cancelled graph run reclaims the node instead of double-dispatching', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4102',
+    prNumber: 4102,
+    workGraphId: 'wg_replay_reclaim',
+    workNodeId: 'wn_replay_reclaim',
+  });
+  const doneBeforeCiWatch = new Set([
+    'write-task',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+    'finalize',
+  ]);
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    error: 'Cancelled by user',
+    steps: run.steps.map((step) =>
+      step.name === 'ci-watch'
+        ? { ...step, status: 'skipped', completedAt: new Date().toISOString() }
+        : doneBeforeCiWatch.has(step.name)
+          ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+
+  // Cancelling releases the node, so the scheduler re-queues its work. That queue
+  // item must not survive the run being revived, or the node dispatches twice.
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4102',
+    workGraphId: 'wg_replay_reclaim',
+    workNodeId: 'wn_replay_reclaim',
+  });
+  assert.ok(
+    getQueueSnapshot().some((item) => item.workNodeId === 'wn_replay_reclaim'),
+    'precondition: the graph has re-queued the node',
+  );
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+  );
+  assert.equal(getRun(run.id)?.status, 'ci-watching');
+  assert.ok(
+    !getQueueSnapshot().some((item) => item.workNodeId === 'wn_replay_reclaim'),
+    'the duplicate queue item was reclaimed by the revived run',
+  );
+});
+
+test('a replay that fails validation leaves the re-queued node intact', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4103',
+    prNumber: 4103,
+    workGraphId: 'wg_replay_strand',
+    workNodeId: 'wn_replay_strand',
+  });
+  updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4103',
+    workGraphId: 'wg_replay_strand',
+    workNodeId: 'wn_replay_strand',
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  // Fails on an unknown step, after the old reclaim point but before the run revives.
+  await assert.rejects(
+    () => runReplayStep({ runId: run.id, stepName: 'not-a-step' }, () => {}),
+    /Step not found: not-a-step/,
+  );
+  // The run never went live, so its replacement work must still be queued.
+  assert.equal(getRun(run.id)?.status, 'cancelled');
+  assert.ok(
+    getQueueSnapshot().some((item) => item.workNodeId === 'wn_replay_strand'),
+    'a failed replay must not strand the node by dropping its queue item',
+  );
+});
+
+test('replay is refused once the node has already been redispatched', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4104',
+    prNumber: 4104,
+    workGraphId: 'wg_replay_handoff',
+    workNodeId: 'wn_replay_handoff',
+  });
+  updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4104',
+    workGraphId: 'wg_replay_handoff',
+    workNodeId: 'wn_replay_handoff',
+  });
+  // getQueueSnapshot copies the array but shares the item objects, so this stages
+  // the state a real dispatcher would set on handing the row to a slot.
+  const staged = getQueueSnapshot().find((item) => item.workNodeId === 'wn_replay_handoff');
+  assert.ok(staged);
+  staged.status = 'dispatching';
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  // A dispatching row cannot be taken back, so the handoff wins and the old run
+  // stays cancelled rather than running the same work a second time.
+  await assert.rejects(
+    () => runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    /already been redispatched/,
+  );
+  assert.equal(getRun(run.id)?.status, 'cancelled');
+});
+
+test('replay does not reclaim a sibling launch-plan candidate sharing the node', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4105',
+    prNumber: 4105,
+    workGraphId: 'wg_replay_sibling',
+    workNodeId: 'wn_replay_sibling',
+  });
+  const doneBeforeCiWatch = new Set([
+    'write-task',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+    'finalize',
+  ]);
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    steps: run.steps.map((step) =>
+      step.name === 'ci-watch'
+        ? { ...step, status: 'skipped', completedAt: new Date().toISOString() }
+        : doneBeforeCiWatch.has(step.name)
+          ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+
+  // Comparison candidates are built with the baseline's graph and node ids, so a
+  // graph/node-only reclaim would delete this row — and the candidate projection
+  // would keep the dead queue id, so the work never comes back.
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4105',
+    workGraphId: 'wg_replay_sibling',
+    workNodeId: 'wn_replay_sibling',
+    launchPlanId: 'lp_1',
+    launchCandidateId: 'cand_comparison',
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+  );
+  assert.equal(getRun(run.id)?.status, 'ci-watching');
+  assert.ok(
+    getQueueSnapshot().some((item) => item.launchCandidateId === 'cand_comparison'),
+    'the comparison candidate must survive the baseline being replayed',
+  );
+});
+
+test('replay does not reclaim a replacement plan reusing the same candidate id', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4106',
+    prNumber: 4106,
+    workGraphId: 'wg_replay_plan',
+    workNodeId: 'wn_replay_plan',
+    launchPlanId: 'lp_superseded',
+    launchCandidateId: 'cand_shared',
+  });
+  const doneBeforeCiWatch = new Set([
+    'write-task',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+    'finalize',
+  ]);
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    steps: run.steps.map((step) =>
+      step.name === 'ci-watch'
+        ? { ...step, status: 'skipped', completedAt: new Date().toISOString() }
+        : doneBeforeCiWatch.has(step.name)
+          ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+
+  // Candidate ids are scoped to their plan (launchCandidateKey keys on
+  // [backlogItemId, launchPlanId, candidateId]), so a replacement plan may reuse
+  // one. This row belongs to the CURRENT plan and must not be taken by a run from
+  // the superseded plan — the current plan would keep a dead queue id, and the
+  // revived run's observations are rejected as foreign-plan.
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4106',
+    workGraphId: 'wg_replay_plan',
+    workNodeId: 'wn_replay_plan',
+    launchPlanId: 'lp_current',
+    launchCandidateId: 'cand_shared',
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+  );
+  assert.ok(
+    getQueueSnapshot().some((item) => item.launchPlanId === 'lp_current'),
+    "the current plan's work must survive a replay from the superseded plan",
   );
 });
 
