@@ -1,6 +1,7 @@
 import type { PromotionDraft, RoadmapItem } from '@farmslot/protocol';
 import {
   isConcreteRoadmapProject,
+  isUnscopedGlobalRoadmapItem,
   parsePromotionDraftAttachment,
   parsePromotionDraftsFromRoadmapBody,
   promotionDraftAttachment,
@@ -29,7 +30,7 @@ export function filterRoadmapItemsByGlobalProjects(
     return (
       projects.has(item.project) ||
       targets.some((project) => projects.has(project)) ||
-      (item.project === 'global' && targets.length === 0)
+      isUnscopedGlobalRoadmapItem(item)
     );
   });
 }

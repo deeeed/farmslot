@@ -59,6 +59,12 @@ export interface RoadmapItem {
   fileHash: string;
 }
 
+export function isUnscopedGlobalRoadmapItem(
+  item: Pick<RoadmapItem, 'project' | 'targetProjects'>,
+): boolean {
+  return item.project === ROADMAP_GLOBAL_PROJECT && (item.targetProjects ?? []).length === 0;
+}
+
 export interface RoadmapItemSaveInput {
   id?: string;
   project?: string;

@@ -16,6 +16,7 @@ import {
   DEFAULT_ROADMAP_REFINEMENT_MODEL,
   DEFAULT_ROADMAP_REFINEMENT_RUNNER,
   isConcreteRoadmapProject,
+  isUnscopedGlobalRoadmapItem,
   Methods,
   parsePromotionDraftsFromRoadmapBody,
   promotionDraftAttachment,
@@ -64,6 +65,14 @@ test('roadmap protocol exports method constants and stages', () => {
   assert.equal(isConcreteRoadmapProject('global'), false);
   assert.equal(isConcreteRoadmapProject('unassigned'), false);
   assert.equal(isConcreteRoadmapProject('  '), false);
+  assert.equal(isUnscopedGlobalRoadmapItem({ project: 'global', targetProjects: [] }), true);
+  assert.equal(
+    isUnscopedGlobalRoadmapItem({
+      project: 'global',
+      targetProjects: ['farmslot-farm'],
+    }),
+    false,
+  );
 });
 
 test('roadmap promotion draft helpers produce attachment-shaped specs', () => {

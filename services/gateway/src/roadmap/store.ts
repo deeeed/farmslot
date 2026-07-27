@@ -10,6 +10,7 @@ import {
   DEFAULT_ROADMAP_REFINEMENT_MODEL,
   DEFAULT_ROADMAP_REFINEMENT_RUNNER,
   isConcreteRoadmapProject,
+  isUnscopedGlobalRoadmapItem,
   normalizeRunTags,
   type PoolConfig,
   ROADMAP_GLOBAL_PROJECT,
@@ -148,7 +149,7 @@ async function withRoadmapMutation<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function normalizeProject(value: string | undefined): string {
-  const project = value?.trim() || 'unassigned';
+  const project = value?.trim() || ROADMAP_UNASSIGNED_PROJECT;
   assertSafePathSegment('roadmap project', project);
   return project;
 }
@@ -161,7 +162,7 @@ function normalizeTargetProjects(value: string[] | undefined): string[] {
         .map((project) => project.trim())
         .filter(Boolean)
         .map((project) => {
-          if (project === 'global' || project === 'unassigned') {
+          if (project === ROADMAP_GLOBAL_PROJECT || project === ROADMAP_UNASSIGNED_PROJECT) {
             throw new Error(`Roadmap target project must be concrete: ${project}`);
           }
           assertSafePathSegment('roadmap target project', project);
@@ -241,8 +242,9 @@ function newRoadmapId(): string {
 }
 
 function targetDirForProject(project: string): string {
-  if (project === 'global' || project === 'unassigned')
+  if (project === ROADMAP_GLOBAL_PROJECT || project === ROADMAP_UNASSIGNED_PROJECT) {
     return path.join(ROADMAP_ROOT, 'inbox', 'items');
+  }
   return path.join(ROADMAP_ROOT, 'projects', project, 'items');
 }
 
@@ -260,7 +262,9 @@ async function allocatePath(project: string, title: string): Promise<string> {
   const dir = targetDirForProject(project);
   await mkdir(dir, { recursive: true });
   const date = new Date().toISOString().slice(0, 10);
-  const base = `${date}-${project === 'unassigned' ? 'unassigned-' : ''}${slugify(title)}`;
+  const base = `${date}-${
+    project === ROADMAP_UNASSIGNED_PROJECT ? 'unassigned-' : ''
+  }${slugify(title)}`;
   for (let i = 0; i < 1000; i += 1) {
     const suffix = i === 0 ? '' : `-${i + 1}`;
     const candidate = path.join(dir, `${base}${suffix}.md`);
@@ -482,10 +486,6 @@ function itemMatchesSearch(item: RoadmapItem, search: string | undefined): boole
     .includes(needle);
 }
 
-function isUnscopedGlobalItem(item: RoadmapItem): boolean {
-  return item.project === ROADMAP_GLOBAL_PROJECT && (item.targetProjects ?? []).length === 0;
-}
-
 export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<RoadmapListResult> {
   const tagFilter = normalizeRunTags(params.tags);
   const all = await loadAllItems();
@@ -494,7 +494,7 @@ export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<
       params.project &&
       item.project !== params.project &&
       !(item.targetProjects ?? []).includes(params.project) &&
-      !(isConcreteRoadmapProject(params.project) && isUnscopedGlobalItem(item))
+      !(isConcreteRoadmapProject(params.project) && isUnscopedGlobalRoadmapItem(item))
     ) {
       return false;
     }
@@ -983,7 +983,7 @@ async function resolveRoadmapRefinementPrompt(
   );
   if (projectTemplate?.trim()) return `${projectTemplate.trimEnd()}\n`;
 
-  if (item.project !== DEFAULT_PROMPT_PROJECT) {
+  if (item.project !== DEFAULT_PROMPT_PROJECT && isConcreteRoadmapProject(item.project)) {
     const fallback = await loadPromptTemplate(
       DEFAULT_PROMPT_PROJECT,
       ROADMAP_REFINEMENT_PROMPT_TEMPLATE,
@@ -1433,6 +1433,11 @@ async function promoteRoadmapItemUnlocked(
     const tags = normalizeRunTags([...(current.tags ?? []), ...(spec.tags ?? [])]);
     return { spec, project, markdown, tags };
   });
+  for (const prepared of preparedSpecs) {
+    if (!(await loadProjectConfig(prepared.project))) {
+      throw new Error(`Unknown backlog spec project: ${prepared.project}`);
+    }
+  }
 
   const backlogItems: RoadmapPromoteResult['backlogItems'] = [];
   const specPaths: string[] = [];
@@ -1508,5 +1513,4 @@ export async function promoteRoadmapItem(
 export const __roadmapStoreTest = {
   buildRefinementShellCommand,
   defaultPromotionRequestCommand,
-  renderBuiltInRefinementPrompt,
 };

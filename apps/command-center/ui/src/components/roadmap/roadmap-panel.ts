@@ -25,7 +25,9 @@ import {
   DEFAULT_ROADMAP_REFINEMENT_RUNNER,
   isConcreteRoadmapProject,
   Methods,
+  ROADMAP_GLOBAL_PROJECT,
   ROADMAP_ITEM_STAGES,
+  ROADMAP_UNASSIGNED_PROJECT,
 } from '@farmslot/protocol';
 
 import './roadmap-graph-composer.js';
@@ -143,7 +145,7 @@ export class RoadmapPanel extends LitElement {
   @state() private _editorMode: RoadmapEditorMode = 'view';
 
   @state() private _newTitle = '';
-  @state() private _newProject = 'unassigned';
+  @state() private _newProject = ROADMAP_UNASSIGNED_PROJECT;
   @state() private _newTargetProjects: string[] = [];
   private _newTargetProjectsTouched = false;
   @state() private _newTags = '';
@@ -762,7 +764,7 @@ export class RoadmapPanel extends LitElement {
         preserveCurrentTargets: this._newTargetProjectsTouched,
       });
       if (globalProjects.length > 1) {
-        this._newProject = 'global';
+        this._newProject = ROADMAP_GLOBAL_PROJECT;
       } else if (globalProjects.length === 1) {
         this._newProject = globalProjects[0]!;
       } else {
@@ -770,7 +772,7 @@ export class RoadmapPanel extends LitElement {
           currentProject: this._newProject,
           availableProjects: this._projects,
           globalProjects,
-          fallbackProjects: ['unassigned'],
+          fallbackProjects: [ROADMAP_UNASSIGNED_PROJECT],
         });
       }
       if (this._allItems.length > 0) {
@@ -786,8 +788,8 @@ export class RoadmapPanel extends LitElement {
   private get _projects(): string[] {
     return [
       ...new Set([
-        'unassigned',
-        'global',
+        ROADMAP_UNASSIGNED_PROJECT,
+        ROADMAP_GLOBAL_PROJECT,
         ...this._slots.map((slot) => slot.project).filter(Boolean),
         ...this._allItems.map((item) => item.project).filter(Boolean),
         ...this._allItems.flatMap((item) => item.targetProjects ?? []),
@@ -1083,7 +1085,7 @@ export class RoadmapPanel extends LitElement {
     try {
       const result = await gateway.request<RoadmapSaveResult>(Methods.ROADMAP_SAVE, {
         item: {
-          project: this._newProject || 'unassigned',
+          project: this._newProject || ROADMAP_UNASSIGNED_PROJECT,
           targetProjects: this._newTargetProjects,
           title: this._newTitleForSubmit(),
           stage: 'rough',
@@ -1510,7 +1512,9 @@ export class RoadmapPanel extends LitElement {
               <p>${attachment.virtualPath}</p>
             </div>
             <div class="badges">
-              ${renderPlanningBadge(this._promotionDrafts[index]?.project || 'unassigned')}
+              ${renderPlanningBadge(
+                this._promotionDrafts[index]?.project || ROADMAP_UNASSIGNED_PROJECT,
+              )}
               ${renderPlanningBadge(this._promotionDrafts[index]?.title || 'Untitled draft')}
             </div>
             <button
@@ -1873,7 +1877,7 @@ export class RoadmapPanel extends LitElement {
             'roadmap-new-target-projects',
             this._newTargetProjects,
             (projects) => {
-              this._newTargetProjectsTouched = projects.length > 0;
+              this._newTargetProjectsTouched = true;
               this._newTargetProjects = projects;
             },
           )}
@@ -2040,7 +2044,7 @@ export class RoadmapPanel extends LitElement {
             <p class="muted">${attachment?.virtualPath ?? `Draft ${index + 1}`}</p>
           </div>
           <div class="badges">
-            ${renderPlanningBadge(spec.project || 'unassigned')}
+            ${renderPlanningBadge(spec.project || ROADMAP_UNASSIGNED_PROJECT)}
             ${renderPlanningBadge(`Draft ${index + 1}`)}
           </div>
           <div class="actions">

@@ -29,7 +29,7 @@ export function syncedDraftProject(input: {
  * owner `project=global` for coordination but must not auto-fan-out every filtered
  * farm into `targetProjects` — that forced N backlog drafts for framework-only ideas.
  * Multi-target fan-out is operator-explicit. Clearing all global filters preserves
- * targets the operator selected in the capture form.
+ * the capture form's current targets, whether auto-filled or operator-selected.
  */
 export function syncedDraftTargetProjects(input: {
   currentTargets: readonly string[];

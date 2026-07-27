@@ -86,6 +86,17 @@ test('draft target projects preserve operator selections', () => {
   );
 });
 
+test('draft target projects preserve an explicit empty selection', () => {
+  assert.deepEqual(
+    syncedDraftTargetProjects({
+      currentTargets: [],
+      concreteGlobalProjects: ['farmslot-farm'],
+      preserveCurrentTargets: true,
+    }),
+    [],
+  );
+});
+
 test('capture reset replaces prior explicit targets with current filter defaults', () => {
   assert.deepEqual(
     syncedDraftTargetProjects({
