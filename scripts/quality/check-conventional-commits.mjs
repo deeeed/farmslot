@@ -3,8 +3,17 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import process from 'node:process';
 
-const CONVENTIONAL_SUBJECT =
-  /^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9][a-z0-9._/-]*\))?!?: \S.+$/;
+// A scope is one or more comma-separated tokens. Conventional Commits v1.0.0
+// only requires "a noun describing a section of the codebase surrounded by
+// parenthesis" and does not forbid commas; comma-separated multi-scope is
+// common practice and commitlint supports it. Rejecting it blocked
+// `feat(gateway,node): ...`, a legitimate subject, on a change that spanned both.
+// Each token keeps the original strict shape, so junk scopes still fail.
+const SCOPE_TOKEN = '[a-z0-9][a-z0-9._/-]*';
+const CONVENTIONAL_SUBJECT = new RegExp(
+  `^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)` +
+    `(\\(${SCOPE_TOKEN}(?: *, *${SCOPE_TOKEN})*\\))?!?: \\S.+$`,
+);
 
 const args = process.argv.slice(2);
 const failures = [];
