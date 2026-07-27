@@ -111,6 +111,9 @@ for (const method of methods) {
   if (entry.surface === 'na' && !nonEmptyString(entry.note)) {
     problems.push(`na without a justification note: ${method}`);
   }
+  if (entry.surface === 'rpc-only' && !nonEmptyString(entry.note)) {
+    problems.push(`rpc-only without a justification note: ${method}`);
+  }
   // Every method must have a dedicated CLI surface, an interim rpc-only entry,
   // or a recorded UI-only exemption (surface=na → cli-exemptions.json).
   if (!CLI_SURFACES.has(entry.surface) && entry.surface !== 'rpc-only' && entry.surface !== 'na') {

@@ -315,6 +315,7 @@ export function registerRoadmapCommand(program: Command): void {
   roadmap
     .command('save')
     .description('Create or update a roadmap item (gateway roadmap.save)')
+    .argument('[id]', 'Existing item id (optional; same as --id)')
     .option('--id <id>', 'Existing item id (required for updates; omit to create)')
     .option('--project <name>', 'Project (required on create)')
     .option('--title <title>', 'Title (required on create)')
@@ -327,6 +328,7 @@ export function registerRoadmapCommand(program: Command): void {
     .option('--expected-hash <hash>', 'Optimistic concurrency hash (defaults to current fileHash)')
     .action(
       async (
+        positionalId: string | undefined,
         opts: {
           id?: string;
           project?: string;
@@ -343,9 +345,10 @@ export function registerRoadmapCommand(program: Command): void {
       ) => {
         const ctx = resolveContext(cmd);
         const emit = createEmitter(ctx.output, cmd);
+        const itemRef = (opts.id ?? positionalId)?.trim() || undefined;
         try {
           const result = await withProgress(
-            opts.id ? `Saving ${opts.id}` : 'Creating roadmap item',
+            itemRef ? `Saving ${itemRef}` : 'Creating roadmap item',
             async () => {
               const stage = parseStage(opts.stage ?? opts.status);
               const body = await loadBody(opts);
@@ -353,8 +356,8 @@ export function registerRoadmapCommand(program: Command): void {
               const targetProjects = parseCsv(opts.targetProjects);
 
               let existing: RoadmapItem | undefined;
-              if (opts.id) {
-                existing = await resolveRoadmapItem(ctx, opts.id);
+              if (itemRef) {
+                existing = await resolveRoadmapItem(ctx, itemRef);
               }
 
               const title = opts.title ?? existing?.title;
@@ -411,13 +414,57 @@ export function registerRoadmapCommand(program: Command): void {
           if (emit.machine) emit.ok({ item: { ...result.item, status: result.item.stage } });
           else
             ctx.output.write(
-              `${green(opts.id ? 'Saved' : 'Created')} ${cyan(result.item.id)}  ${result.item.stage}  ${result.item.title}\n`,
+              `${green(itemRef ? 'Saved' : 'Created')} ${cyan(result.item.id)}  ${result.item.stage}  ${result.item.title}\n`,
             );
         } catch (err) {
           emit.fail(err);
         }
       },
     );
+
+  roadmap
+    .command('set-stage <id> <stage>')
+    .description('Update only the stage/status of a roadmap item')
+    .option('--expected-hash <hash>', 'Optimistic concurrency hash')
+    .action(async (id: string, stageRaw: string, opts: { expectedHash?: string }, cmd: Command) => {
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
+      try {
+        const result = await withProgress(
+          `Setting stage for ${id}`,
+          async () => {
+            const existing = await resolveRoadmapItem(ctx, id);
+            const stage = parseStage(stageRaw);
+            if (!stage) {
+              throw Object.assign(new Error('stage is required'), {
+                code: 'ROADMAP_STAGE_INVALID',
+                userAction: `Use one of: ${ROADMAP_ITEM_STAGES.join(', ')}.`,
+              });
+            }
+            return ctx.client.call<RoadmapSaveResult>('roadmap.save', {
+              item: {
+                id: existing.id,
+                title: existing.title,
+                project: existing.project,
+                stage,
+                tags: existing.tags,
+                targetProjects: existing.targetProjects,
+                body: existing.body,
+                source: existing.source,
+                promotion: existing.promotion,
+                fileHash: existing.fileHash,
+              },
+              expectedHash: opts.expectedHash ?? existing.fileHash,
+            });
+          },
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok({ item: { ...result.item, status: result.item.stage } });
+        else ctx.output.write(`${green('Stage')} ${cyan(result.item.id)} → ${result.item.stage}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
 
   roadmap
     .command('delete <id>')
@@ -666,7 +713,7 @@ export function registerRoadmapCommand(program: Command): void {
     .command('promote <id>')
     .description('Promote a refined roadmap item into backlog specs')
     .option('--specs-json <json>', 'JSON array of {title, body, project?} backlog specs')
-    .option('--from-drafts', 'Load specs from roadmap.promotionDraft.* for this item')
+    .option('--from-drafts', 'Load specs from promotion drafts (default when --specs-json omitted)')
     .option('--expected-hash <hash>', 'Optimistic concurrency hash')
     .action(
       async (
@@ -682,19 +729,11 @@ export function registerRoadmapCommand(program: Command): void {
             async () => {
               const item = await resolveRoadmapItem(ctx, id);
               let specs: RoadmapPromoteSpecInput[];
-              if (opts.fromDrafts) {
-                specs = await loadSpecsFromDrafts(ctx, item.id);
-              } else if (opts.specsJson) {
+              if (opts.specsJson) {
                 specs = parseSpecsJson(opts.specsJson);
               } else {
-                throw Object.assign(
-                  new Error('roadmap promote requires --specs-json or --from-drafts.'),
-                  {
-                    code: 'ROADMAP_PROMOTE_SPECS_REQUIRED',
-                    userAction:
-                      'Pass --from-drafts to use saved promotion drafts, or --specs-json \'[{"title":"…","body":"…"}]\'.',
-                  },
-                );
+                // Default: load promotion drafts (same operator path as Command Center).
+                specs = await loadSpecsFromDrafts(ctx, item.id);
               }
               return ctx.client.call<RoadmapPromoteResult>('roadmap.promote', {
                 itemId: item.id,

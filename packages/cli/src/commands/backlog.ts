@@ -4,12 +4,16 @@
 import type { Command } from 'commander';
 
 import type {
+  BacklogArchiveResult,
   BacklogCloseShippedResult,
   BacklogCreateResult,
+  BacklogDeleteResult,
+  BacklogDequeueResult,
   BacklogEnqueueResult,
   BacklogItem,
   BacklogListResult,
   BacklogSpecGetResult,
+  BacklogUpcomingResult,
   BacklogUpdateResult,
 } from '@farmslot/protocol';
 
@@ -371,6 +375,113 @@ export function registerBacklogCommand(program: Command): void {
           ctx.output.write(
             `${green('Closed as shipped')} ${cyan(item.sourceRef ?? item.id)}${opts.pr ? ` (${opts.pr})` : ''}\n`,
           );
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  backlog
+    .command('delete <ref>')
+    .description('Delete a backlog item (gateway backlog.delete)')
+    .action(async (ref: string, _opts: unknown, cmd: Command) => {
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
+      try {
+        const result = await withProgress(
+          `Deleting ${ref}`,
+          async () => {
+            const item = await resolveItem(ctx, ref);
+            return ctx.client.call<BacklogDeleteResult>('backlog.delete', { itemId: item.id });
+          },
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else ctx.output.write(`${green('Deleted')} ${cyan(ref)}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  backlog
+    .command('archive <ref>')
+    .description('Archive a backlog item')
+    .action(async (ref: string, _opts: unknown, cmd: Command) => {
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
+      try {
+        const { item, result } = await withProgress(
+          `Archiving ${ref}`,
+          async () => {
+            const item = await resolveItem(ctx, ref);
+            const result = await ctx.client.call<BacklogArchiveResult>('backlog.archive', {
+              itemId: item.id,
+            });
+            return { item, result };
+          },
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else ctx.output.write(`${green('Archived')} ${cyan(item.sourceRef ?? item.id)}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  backlog
+    .command('dequeue <ref>')
+    .description('Remove a queued backlog item from the dispatch queue')
+    .action(async (ref: string, _opts: unknown, cmd: Command) => {
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
+      try {
+        const { item, result } = await withProgress(
+          `Dequeuing ${ref}`,
+          async () => {
+            const item = await resolveItem(ctx, ref);
+            const result = await ctx.client.call<BacklogDequeueResult>('backlog.dequeue', {
+              itemId: item.id,
+            });
+            return { item, result };
+          },
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else ctx.output.write(`${green('Dequeued')} ${cyan(item.sourceRef ?? item.id)}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  backlog
+    .command('upcoming')
+    .description('Show ready vs blocked backlog items for auto-dispatch')
+    .option('--project <name>', 'Filter by project')
+    .option('--limit <n>', 'Max items', (v) => Number(v))
+    .action(async (opts: { project?: string; limit?: number }, cmd: Command) => {
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
+      try {
+        const result = await withProgress(
+          'Loading upcoming backlog',
+          () =>
+            ctx.client.call<BacklogUpcomingResult>('backlog.upcoming', {
+              ...(opts.project ? { project: opts.project } : {}),
+              ...(opts.limit ? { limit: opts.limit } : {}),
+            }),
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else {
+          ctx.output.write(`${bold('ready')} (${result.ready.length})\n`);
+          ctx.output.write(`${renderItems(result.ready)}\n`);
+          if (result.blocked.length > 0) {
+            ctx.output.write(`${bold('blocked')} (${result.blocked.length})\n`);
+            for (const blocked of result.blocked) {
+              const ref = blocked.item.sourceRef ?? blocked.item.id.slice(0, 8);
+              ctx.output.write(`  ${cyan(ref)}  ${yellow(blocked.reason)}\n`);
+            }
+          }
+        }
       } catch (err) {
         emit.fail(err);
       }

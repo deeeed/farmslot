@@ -8,13 +8,39 @@
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { BacklogItem, EventFrame, FleetStatus, Run } from '@farmslot/protocol';
+import {
+  type BacklogItem,
+  type EventFrame,
+  type FleetStatus,
+  parsePromotionDraftAttachment,
+  type PendingDecision,
+  type RoadmapItem,
+  type Run,
+} from '@farmslot/protocol';
 
 import type { GatewayConnection } from '../gateway-client.js';
 
-import { backlogViewModel, diagnoseFleet, fleetViewModel, runsViewModel } from './view-models.js';
+import {
+  backlogViewModel,
+  decisionsViewModel,
+  diagnoseFleet,
+  fleetViewModel,
+  roadmapViewModel,
+  runsViewModel,
+} from './view-models.js';
 
-type Surface = 'fleet' | 'backlog' | 'runs' | 'recovery' | 'prepare';
+type Surface = 'fleet' | 'backlog' | 'runs' | 'roadmap' | 'decisions' | 'recovery' | 'prepare';
+
+/** Short tab labels so the header stays one row on 80-col terminals. */
+const SURFACE_TABS: Array<{ id: Surface; label: string }> = [
+  { id: 'fleet', label: 'fleet' },
+  { id: 'backlog', label: 'backlog' },
+  { id: 'runs', label: 'runs' },
+  { id: 'roadmap', label: 'map' },
+  { id: 'decisions', label: 'decide' },
+  { id: 'recovery', label: 'fix' },
+  { id: 'prepare', label: 'prep' },
+];
 
 interface AppProps {
   connection: GatewayConnection;
@@ -27,6 +53,8 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
   const [fleet, setFleet] = useState<FleetStatus | null>(null);
   const [items, setItems] = useState<BacklogItem[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [roadmapItems, setRoadmapItems] = useState<RoadmapItem[]>([]);
+  const [decisions, setDecisions] = useState<PendingDecision[]>([]);
   const [cursor, setCursor] = useState(0);
   const [notice, setNotice] = useState<string>('');
   // False until the first fleet/backlog/runs snapshot lands, so the shell can
@@ -55,15 +83,20 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
     const generation = ++refreshGeneration.current;
     const fleetGen = ++fleetGeneration.current;
     try {
-      const [fleetResult, backlogResult, runsResult] = await Promise.all([
-        connection.call<{ fleet: FleetStatus }>('fleet.status'),
-        connection.call<{ items: BacklogItem[] }>('backlog.list'),
-        connection.call<{ runs: Run[] }>('run.list', { limit: 15 }),
-      ]);
+      const [fleetResult, backlogResult, runsResult, roadmapResult, decisionResult] =
+        await Promise.all([
+          connection.call<{ fleet: FleetStatus }>('fleet.status'),
+          connection.call<{ items: BacklogItem[] }>('backlog.list'),
+          connection.call<{ runs: Run[] }>('run.list', { limit: 15 }),
+          connection.call<{ items: RoadmapItem[] }>('roadmap.list', {}),
+          connection.call<{ decisions: PendingDecision[] }>('decision.list', {}),
+        ]);
       if (fleetGen === fleetGeneration.current) setFleet(fleetResult.fleet);
       if (generation !== refreshGeneration.current) return;
       setItems(backlogResult.items);
       setRuns(runsResult.runs);
+      setRoadmapItems(roadmapResult.items);
+      setDecisions(decisionResult.decisions);
       setSnapshotLoaded(true);
     } catch (err) {
       setNotice(`refresh failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -107,6 +140,8 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
 
   const fleetVm = useMemo(() => (fleet ? fleetViewModel(fleet) : null), [fleet]);
   const backlogVm = useMemo(() => backlogViewModel(items), [items]);
+  const roadmapVm = useMemo(() => roadmapViewModel(roadmapItems), [roadmapItems]);
+  const decisionsVm = useMemo(() => decisionsViewModel(decisions), [decisions]);
   const runsVm = useMemo(() => runsViewModel(runs), [runs]);
   const diagnosis = useMemo(() => (fleet ? diagnoseFleet(fleet) : null), [fleet]);
 
@@ -122,9 +157,11 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
   const rowsForSurface = useMemo(() => {
     if (surface === 'fleet') return fleetVm?.rows.length ?? 0;
     if (surface === 'backlog') return backlogVm.length;
+    if (surface === 'roadmap') return roadmapVm.length;
+    if (surface === 'decisions') return decisionsVm.length;
     if (surface === 'runs') return runsVm.length;
     return 0; // recovery and prepare have no selectable rows
-  }, [surface, fleetVm, backlogVm, runsVm]);
+  }, [surface, fleetVm, backlogVm, roadmapVm, decisionsVm, runsVm]);
 
   // Keep the cursor on a real row when the surface changes or data shrinks.
   useEffect(() => {
@@ -158,8 +195,10 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
     if (input === '1') switchTo('fleet');
     if (input === '2') switchTo('backlog');
     if (input === '3') switchTo('runs');
-    if (input === '4') switchTo('recovery');
-    if (input === '5') switchTo('prepare');
+    if (input === '4') switchTo('roadmap');
+    if (input === '5') switchTo('decisions');
+    if (input === '6') switchTo('recovery');
+    if (input === '7') switchTo('prepare');
     if (input === 'r') void refresh();
 
     if (surface === 'fleet' && input === 'p' && fleetVm) {
@@ -219,6 +258,107 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
             void refresh();
           } catch (err) {
             setNotice(`close failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        })();
+      }
+    }
+
+    if (surface === 'roadmap') {
+      const row = roadmapVm[cursor];
+      if (!row) return;
+      // Cycle common stages: s = set next stage for operator close-loop
+      if (input === 's' && row.canSetStage) {
+        const order = ['rough', 'refining', 'refined', 'parked', 'archived'] as const;
+        const next =
+          order[(order.indexOf(row.stage as (typeof order)[number]) + 1) % order.length] ??
+          'refined';
+        void (async () => {
+          try {
+            setNotice(`setting ${row.shortId} → ${next}…`);
+            const current = await connection.call<{ item: RoadmapItem }>('roadmap.get', {
+              itemId: row.id,
+            });
+            await connection.call('roadmap.save', {
+              item: {
+                id: current.item.id,
+                title: current.item.title,
+                project: current.item.project,
+                stage: next,
+                tags: current.item.tags,
+                targetProjects: current.item.targetProjects,
+                body: current.item.body,
+                source: current.item.source,
+                promotion: current.item.promotion,
+                fileHash: current.item.fileHash,
+              },
+              expectedHash: current.item.fileHash,
+            });
+            setNotice(`stage ${row.shortId} → ${next}`);
+            void refresh();
+          } catch (err) {
+            setNotice(`stage failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        })();
+      }
+      if (input === 'p' && row.canPromote) {
+        void (async () => {
+          try {
+            setNotice(`promoting ${row.shortId} from drafts…`);
+            const listed = await connection.call<{ drafts: Array<{ path: string }> }>(
+              'roadmap.promotionDraft.list',
+              { itemId: row.id },
+            );
+            if (listed.drafts.length === 0) {
+              setNotice(`no promotion drafts for ${row.shortId}`);
+              return;
+            }
+            const specs = [];
+            for (const draft of listed.drafts) {
+              const full = await connection.call<{ path: string; content: string }>(
+                'roadmap.promotionDraft.get',
+                { path: draft.path },
+              );
+              const parsed = parsePromotionDraftAttachment(full.path, full.content);
+              specs.push({
+                title: parsed.title || draft.path.split('/').pop() || row.title,
+                body: parsed.body || full.content,
+                ...(parsed.project ? { project: parsed.project } : {}),
+              });
+            }
+            const current = await connection.call<{ item: RoadmapItem }>('roadmap.get', {
+              itemId: row.id,
+            });
+            await connection.call('roadmap.promote', {
+              itemId: row.id,
+              expectedHash: current.item.fileHash,
+              specs,
+            });
+            setNotice(`promoted ${row.shortId}`);
+            void refresh();
+          } catch (err) {
+            setNotice(`promote failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        })();
+      }
+    }
+
+    if (surface === 'decisions') {
+      const row = decisionsVm[cursor];
+      if (!row) return;
+      // First action on Enter or 'a'
+      if ((input === 'a' || key.return) && row.actions[0]) {
+        const actionId = row.actions[0];
+        void (async () => {
+          try {
+            setNotice(`resolving ${row.shortId} with ${actionId}…`);
+            await connection.call('decision.resolve', {
+              decisionId: row.id,
+              actionId,
+            });
+            setNotice(`resolved ${row.shortId} with ${actionId}`);
+            void refresh();
+          } catch (err) {
+            setNotice(`resolve failed: ${err instanceof Error ? err.message : String(err)}`);
           }
         })();
       }
@@ -284,9 +424,9 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
           farmslot tui
         </Text>
         <Text dimColor>{gatewayUrl}</Text>
-        {(['fleet', 'backlog', 'runs', 'recovery', 'prepare'] as Surface[]).map((name, index) => (
-          <Text key={name} inverse={surface === name}>
-            {` ${index + 1}:${name} `}
+        {SURFACE_TABS.map((tab, index) => (
+          <Text key={tab.id} inverse={surface === tab.id}>
+            {` ${index + 1}:${tab.label} `}
           </Text>
         ))}
         <Text dimColor>r:refresh q:quit</Text>
@@ -420,6 +560,52 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
               {Math.min(cursor + 1, runsVm.length)}/{runsVm.length} — scroll with arrows
             </Text>
           )}
+        </Box>
+      )}
+
+      {surface === 'roadmap' && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>s:cycle-stage p:promote-from-drafts (refined only)</Text>
+          {(() => {
+            const { start, end } = windowFor(roadmapVm.length);
+            return roadmapVm.slice(start, end).map((row, sliceIndex) => {
+              const index = start + sliceIndex;
+              return (
+                <Text key={row.id} inverse={index === cursor}>
+                  {row.shortId.padEnd(14)} {row.stage.padEnd(10)} {row.project.padEnd(16)}{' '}
+                  {row.title.slice(0, 50)}
+                </Text>
+              );
+            });
+          })()}
+          {roadmapVm.length > listHeight && (
+            <Text dimColor>
+              {cursor + 1}/{roadmapVm.length} — scroll with arrows
+            </Text>
+          )}
+        </Box>
+      )}
+
+      {surface === 'decisions' && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>a/enter: resolve with first action</Text>
+          {(() => {
+            const { start, end } = windowFor(decisionsVm.length);
+            return decisionsVm.slice(start, end).map((row, sliceIndex) => {
+              const index = start + sliceIndex;
+              return (
+                <Box key={row.id} flexDirection="column">
+                  <Text inverse={index === cursor}>
+                    {row.shortId.padEnd(12)} {row.type.padEnd(18)} {row.title.slice(0, 40)}
+                  </Text>
+                  <Text color="yellow">
+                    {'  '}slot {row.slotId} [{row.actions.join(', ')}]
+                  </Text>
+                </Box>
+              );
+            });
+          })()}
+          {decisionsVm.length === 0 && <Text dimColor>no pending decisions</Text>}
         </Box>
       )}
 
