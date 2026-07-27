@@ -705,8 +705,10 @@ export async function evalTrialStart(
   emit: (event: string, payload: unknown) => void,
   options: {
     beforeCreate?: () => void;
+    /** Await run JSON write after create (queue claim handoff). */
+    awaitPersist?: boolean;
     /** Called immediately after durable createRun succeeds, before post-create package writes. */
-    afterCreate?: (run: import('@farmslot/protocol').Run) => void;
+    afterCreate?: (run: import('@farmslot/protocol').Run) => void | Promise<void>;
   } = {},
 ): Promise<EvalTrialStartResult> {
   assertEvalTrialStartParams(params);
@@ -891,12 +893,12 @@ export async function evalTrialStart(
         : undefined,
     },
     emit,
-    { beforeCreate: options.beforeCreate },
+    { beforeCreate: options.beforeCreate, awaitPersist: options.awaitPersist },
   );
 
   // Handoff complete: drop the queue claim/row before package-manifest awaits so a
   // post-create failure cannot re-release a row and redispatch a second run.
-  options.afterCreate?.(result.run);
+  await options.afterCreate?.(result.run);
 
   const run = updateRun(result.run.id, {
     summary: `${flowType === 'fix-bug' ? 'Bugfix' : 'Dev'} eval replay ${candidateStrategyFingerprint.slice(0, 8)} for ${experimentManifest.experimentId}`,

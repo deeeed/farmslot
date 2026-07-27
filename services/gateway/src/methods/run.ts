@@ -83,6 +83,7 @@ import {
   getRun,
   listRuns,
   normalizeRunClassification,
+  persistRunNow,
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
@@ -206,6 +207,11 @@ interface RunCreateInternalOptions {
    * ownership after runCreate's own awaits (config/ticket/template work).
    */
   beforeCreate?: () => void;
+  /**
+   * When true, await the run JSON write before returning so queue handoff can
+   * drop the row only after create is on disk (crash-safe claim protocol).
+   */
+  awaitPersist?: boolean;
 }
 
 export function assertExpectedExecutionTemplate(
@@ -470,8 +476,16 @@ export async function runCreate(
   // Last ownership check at the durable create boundary (after all awaits above).
   options.beforeCreate?.();
   let run = createRun(createParams);
+  if (options.awaitPersist) {
+    // Queue claim handoff: ensure the run file is on disk before the caller
+    // drops the queue row (otherwise a crash requeues and can double-create).
+    await persistRunNow(run, 'create-queue-handoff');
+  }
   if (executionTemplateSnapshot) {
     run = updateRun(run.id, { executionTemplate: executionTemplateSnapshot });
+    if (options.awaitPersist) {
+      await persistRunNow(run, 'create-queue-handoff-template');
+    }
   }
   // Set runtime flags (not persisted)
   if (params.skipPrepare) {

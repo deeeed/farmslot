@@ -268,6 +268,21 @@ function persistRunBackground(run: Run, reason: string): void {
   });
 }
 
+/**
+ * Await durable write of a run (atomic tmp+rename). Used by the dispatch-queue
+ * claim handoff so createRun is on disk before the queue row is dropped.
+ */
+export async function persistRunNow(run: Run, reason = 'explicit'): Promise<void> {
+  try {
+    await persist(run);
+  } catch (err) {
+    console.warn(
+      `[run-store] failed to persist run ${run.id} after ${reason}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    throw err;
+  }
+}
+
 // Synthetic-run detector. Test fixtures call createRun() directly, which
 // writes to the shared RUNS_DIR. When `t.after(cleanupRun)` hooks don't fire
 // (test crash, abort, process kill) the fixtures stay on disk forever. The

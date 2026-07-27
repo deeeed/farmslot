@@ -6,7 +6,14 @@ import type { QueueItem, SlotStatus } from '@farmslot/protocol';
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
 import { setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
-import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import {
+  createRun,
+  deleteRun,
+  getAllRuns,
+  getRun,
+  persistRunNow,
+  updateRun,
+} from '../runs/store.js';
 
 import {
   addItem,
@@ -24,6 +31,7 @@ import {
   releaseQueueClaim,
   removeItem,
   removeQueueItemInternal,
+  removeQueueItemInternalNow,
   reorderItems,
   selectQueueDispatchSlot,
   tryDispatchNext,
@@ -1222,53 +1230,127 @@ test('a dispatcher holding a revoked claim creates no Run', async () => {
   assert.equal(createdRuns, 0);
 });
 
-test('concurrent reclaim and dispatch against one row creates exactly one Run', async () => {
-  // Race at the createRun boundary: claim held → await → concurrent reclaim →
-  // assertQueueClaimHeld fails → 0 runs. Companion dual-claim proves exclusivity
-  // yields exactly one successful creation when the claim is held through create.
-  const item = addItem({
+test('concurrent reclaim and dispatch against one row creates exactly one Run', async (t) => {
+  // Production-shaped path: tryDispatchNext → claim → pause → real createRun +
+  // persistRunNow + removeQueueItemInternalNow. Concurrent cancel during the pause
+  // must yield 0 or 1 actual Run records — never two.
+  setCachedFleetForTests(readyFleetSlot('real-race-slot') as any);
+  const _item = addItem({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
     ticketOrPr: 'PROJ-claim-concurrent',
+    allowedSlots: ['real-race-slot'],
     workGraphId: 'wg_concurrent',
     workNodeId: 'wn_concurrent',
+    autoDispatch: false,
   });
-  let createdRuns = 0;
-  const claim = claimQueueItem(item.id, 'holder-a');
-  assert.ok(claim);
+  void _item;
+  const createdRunIds: string[] = [];
+  let releaseGate: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  let enteredCreate = false;
+  let signalEntered: () => void;
+  const entered = new Promise<void>((resolve) => {
+    signalEntered = resolve;
+  });
 
-  // Concurrent reclaim while the holder is still "awaiting" before create.
-  const reclaim = cancelGraphQueuedItem({
+  initDispatchQueue(
+    () => {},
+    async (qi, claim) => {
+      enteredCreate = true;
+      signalEntered();
+      // Pause after claim, before durable create — reclaim races here.
+      await gate;
+      assertQueueClaimHeld(claim, 'pre-durable-createRun');
+      const run = createRun({
+        flowType: qi.flowType,
+        project: qi.project,
+        ticketOrPr: qi.ticketOrPr,
+        workGraphId: qi.workGraphId,
+        workNodeId: qi.workNodeId,
+      });
+      await persistRunNow(run, 'test-claim-race');
+      createdRunIds.push(run.id);
+      qi.runId = run.id;
+      await removeQueueItemInternalNow(qi.id, 'dispatch-created');
+    },
+  );
+
+  t.after(async () => {
+    for (const id of createdRunIds) {
+      await cleanupRun(id);
+    }
+  });
+
+  const dispatch = tryDispatchNext();
+  await Promise.race([entered, new Promise((r) => setTimeout(r, 1000))]);
+  assert.equal(enteredCreate, true, 'create callback must enter (fleet+claim path)');
+
+  // Concurrent reclaim while create is paused after claim.
+  const reclaimPromise = cancelGraphQueuedItem({
     workGraphId: 'wg_concurrent',
     workNodeId: 'wn_concurrent',
     reason: 'concurrent-reclaim',
   });
-  await reclaim;
-  try {
-    assertQueueClaimHeld(claim, 'pre-runCreate');
-    createdRuns += 1;
-  } catch (err) {
-    assert.ok(err instanceof QueueClaimLostError);
-  }
-  assert.equal(createdRuns, 0, 'reclaim during pre-create await creates no Run');
+  releaseGate!();
+  await Promise.all([dispatch, reclaimPromise]);
 
-  // Exclusive claim: only one of two holders can create.
-  const item2 = addItem({
+  assert.ok(createdRunIds.length <= 1, `expected at most one Run, got ${createdRunIds.length}`);
+  // Reclaim during the pre-create gate: claim lost → 0 Runs.
+  assert.equal(createdRunIds.length, 0, 'reclaim before durable create yields no Run');
+  const liveForNode = getAllRuns().filter(
+    (run) =>
+      run.workNodeId === 'wn_concurrent' && !['done', 'cancelled', 'failed'].includes(run.status),
+  );
+  assert.equal(liveForNode.length, 0);
+
+  // Create-wins path: claim, create real Run, then reclaim finds nothing.
+  const _item2 = addItem({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
-    ticketOrPr: 'PROJ-claim-exclusive-run',
+    ticketOrPr: 'PROJ-claim-create-wins',
+    allowedSlots: ['real-race-slot'],
+    workGraphId: 'wg_create_wins',
+    workNodeId: 'wn_create_wins',
+    autoDispatch: false,
   });
-  let runs = 0;
-  const claimA = claimQueueItem(item2.id, 'a');
-  const claimC = claimQueueItem(item2.id, 'c');
-  assert.ok(claimA);
-  assert.equal(claimC, null);
-  if (isQueueClaimHeld(claimA)) {
-    runs += 1;
-    removeQueueItemInternal(item2.id, 'dispatch-success');
-  }
-  if (claimC && isQueueClaimHeld(claimC)) runs += 1;
-  assert.equal(runs, 1, 'exactly one Run from exclusive claim');
+  void _item2;
+  const createdWins: string[] = [];
+  initDispatchQueue(
+    () => {},
+    async (qi, claim) => {
+      assertQueueClaimHeld(claim, 'pre-durable-createRun');
+      const run = createRun({
+        flowType: qi.flowType,
+        project: qi.project,
+        ticketOrPr: qi.ticketOrPr,
+        workGraphId: qi.workGraphId,
+        workNodeId: qi.workNodeId,
+      });
+      await persistRunNow(run, 'test-create-wins');
+      createdWins.push(run.id);
+      qi.runId = run.id;
+      await removeQueueItemInternalNow(qi.id, 'dispatch-created');
+    },
+  );
+  t.after(async () => {
+    for (const id of createdWins) {
+      await cleanupRun(id);
+    }
+  });
+  await tryDispatchNext();
+  assert.equal(createdWins.length, 1, 'dispatch creates exactly one Run');
+  assert.ok(getRun(createdWins[0]));
+  // Reclaim after handoff finds no row.
+  const cancelledAfter = await cancelGraphQueuedItem({
+    workGraphId: 'wg_create_wins',
+    workNodeId: 'wn_create_wins',
+    reason: 'after-create',
+  });
+  assert.equal(cancelledAfter, false);
+  assert.equal(createdWins.length, 1, 'still exactly one Run after late reclaim');
 });
 
 test('tryDispatchNext re-validates claim after await and stops when revoked', async () => {

@@ -30,7 +30,7 @@ import {
   getQueueSnapshot,
   initDispatchQueue,
   loadQueue,
-  removeQueueItemInternal,
+  removeQueueItemInternalNow,
 } from './backlog/dispatch-queue.js';
 import {
   initBacklogStore,
@@ -328,12 +328,13 @@ async function main(): Promise<void> {
     // Pass beforeCreate so assertQueueClaimHeld runs synchronously immediately
     // before createRun in the store — after those awaits, not before them.
     const beforeCreate = () => assertQueueClaimHeld(claim, 'pre-durable-createRun');
-    const dropQueueRowAfterCreate = (runId: string) => {
+    /** After createRun is persisted, drop the queue row and await queue disk write. */
+    const dropQueueRowAfterCreate = async (runId: string) => {
       item.runId = runId;
       // Handoff complete at durable create: remove before any further awaits so
       // replay/reclaim cannot revive a cancelled sibling while this run is live.
       if (getQueueSnapshot().some((q) => q.id === item.id)) {
-        removeQueueItemInternal(item.id, 'dispatch-created');
+        await removeQueueItemInternalNow(item.id, 'dispatch-created');
       }
     };
     if (item.queueKind === 'eval-cell' && item.evalCell) {
@@ -354,13 +355,17 @@ async function main(): Promise<void> {
         observedBroadcast,
         {
           beforeCreate,
-          // Called inside evalTrialStart immediately after createRun, before package writes.
-          afterCreate: (run) => dropQueueRowAfterCreate(run.id),
+          awaitPersist: true,
+          // Called inside evalTrialStart immediately after createRun is durable,
+          // before package-manifest writes that can still fail.
+          afterCreate: async (run) => {
+            await dropQueueRowAfterCreate(run.id);
+          },
         },
       );
       // Defensive: if afterCreate was not invoked (deduped path), still drop when a run id exists.
       if (result.run?.id && getQueueSnapshot().some((q) => q.id === item.id)) {
-        dropQueueRowAfterCreate(result.run.id);
+        await dropQueueRowAfterCreate(result.run.id);
       }
       return;
     }
@@ -410,8 +415,9 @@ async function main(): Promise<void> {
     const { run } = await runCreate(runParams, broadcastEvent, {
       expectedExecutionTemplate: item.executionTemplate,
       beforeCreate,
+      awaitPersist: true,
     });
-    dropQueueRowAfterCreate(run.id);
+    await dropQueueRowAfterCreate(run.id);
     try {
       await markBacklogRunStarted(item, run);
     } catch (err) {

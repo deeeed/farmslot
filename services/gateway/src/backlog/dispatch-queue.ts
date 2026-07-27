@@ -2,7 +2,7 @@
 // Items persist across gateway restarts. Auto-dispatches when slots free up.
 
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -148,7 +148,11 @@ function runMatchesEvalQueueCell(runTrialId: string | undefined, cellTrialId: st
 // ─── Persistence ───
 
 async function persist(): Promise<void> {
-  await writeFile(QUEUE_FILE, JSON.stringify(queue, null, 2), 'utf-8');
+  // Atomic write: tmp + rename so a crash mid-write cannot leave a truncated
+  // queue file that drops items on restart.
+  const tmpPath = `${QUEUE_FILE}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
+  await writeFile(tmpPath, JSON.stringify(queue, null, 2), 'utf-8');
+  await rename(tmpPath, QUEUE_FILE);
 }
 
 function enqueuePersist(reason: string): Promise<void> {
@@ -389,6 +393,22 @@ export function removeQueueItemInternal(itemId: string, reason = 'internal-remov
   removeItemAtIndex(idx, reason);
 }
 
+/**
+ * Remove a queue row and await durable persist. Used by the claim handoff so
+ * createRun is on disk and the queue drop is on disk before further awaits.
+ * Returns false when the row was already gone.
+ */
+export async function removeQueueItemInternalNow(
+  itemId: string,
+  reason = 'internal-remove',
+): Promise<boolean> {
+  const idx = queue.findIndex((q) => q.id === itemId);
+  if (idx < 0) return false;
+  removeItemAtIndex(idx, reason);
+  await persistQueueNow();
+  return true;
+}
+
 export function removeItem(itemId: string): void {
   const idx = queue.findIndex((q) => q.id === itemId);
   if (idx < 0) throw new Error(`Queue item not found: ${itemId}`);
@@ -450,21 +470,24 @@ export function releaseQueueClaim(claim: QueueClaim): boolean {
 
 /**
  * Cancel a graph-linked queue row (queued or claimed/dispatching) and optionally
- * run a dependent mutation before durable queue persist.
+ * run a dependent mutation that must succeed with the removal.
  *
- * The row is detached first (which revokes any claim). Then `commitDependent`
- * runs; if it throws, the row is restored so callers never observe a removed
- * row with an unfinished dependent. This is best-effort same-unit recovery for
- * the dependent throw path — it is not a multi-store transaction (queue persist
- * can still fail after a successful dependent).
+ * Commit order (so queue disk and dependent fail together from the caller's view):
+ * 1. Detach from memory (revokes any claim).
+ * 2. Await durable queue persist without the row.
+ * 3. Run `commitDependent`.
+ * 4. If dependent throws: restore the row, await re-persist, rethrow.
+ *
+ * A crash after step 2 and before step 3 leaves the queue without the row and
+ * the dependent unapplied — restart does not re-dispatch a cancelled graph row.
  */
 export async function cancelGraphQueuedItem(params: {
   workGraphId: string;
   workNodeId: string;
   reason: string;
   /**
-   * Dependent mutation that must succeed with the queue removal (e.g. backlog
-   * needs-attention). Invoked after detach, before durable queue persist.
+   * Dependent mutation that must succeed after the queue removal is durable
+   * (e.g. backlog needs-attention). Invoked after queue persist.
    */
   commitDependent?: (item: QueueItem) => void | Promise<void>;
 }): Promise<boolean> {
@@ -482,23 +505,41 @@ export async function cancelGraphQueuedItem(params: {
   clearClaimFields(item);
   clearQueueProfileFitCache(item);
 
+  // Durable removal first — if this throws, restore memory so the row is not lost.
+  try {
+    await enqueuePersist('graph-dependency-regressed');
+  } catch (err) {
+    item.status = 'queued';
+    item.runId = undefined;
+    clearClaimFields(item);
+    queue.splice(Math.min(idx, queue.length), 0, item);
+    broadcastQueue();
+    throw err;
+  }
+
   if (params.commitDependent) {
     try {
       await params.commitDependent(item);
     } catch (err) {
-      // Restore the row so durable state never loses the item while the
-      // dependent mutation failed. Prefer queued so a fresh claim is required.
+      // Dependent failed after durable remove: put the row back and re-persist
+      // so queue and dependent agree (row present, dependent not applied).
       item.status = 'queued';
       item.runId = undefined;
       clearClaimFields(item);
-      queue.splice(idx, 0, item);
-      schedulePersist('graph-cancel-dependent-failed');
+      queue.splice(Math.min(idx, queue.length), 0, item);
+      try {
+        await enqueuePersist('graph-cancel-dependent-failed');
+      } catch (persistErr) {
+        console.error(
+          `[dispatch-queue] failed to re-persist restored queue item after dependent failure: ${(persistErr as Error).message}`,
+        );
+        // Still rethrow the original dependent error; restore is best-effort on disk.
+      }
       broadcastQueue();
       throw err;
     }
   }
 
-  await enqueuePersist('graph-dependency-regressed');
   console.log(
     `[dispatch-queue] cancelled graph queue item ${item.id.slice(0, 8)}: ${params.reason}`,
   );
