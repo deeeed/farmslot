@@ -56,6 +56,7 @@ import {
   planningBadgeStyles,
   renderPlanningBadge,
   renderTagChips,
+  statusTone,
   tagsFromInput,
 } from '../shared/planning-badges.js';
 import {
@@ -2174,7 +2175,16 @@ export class BacklogPanel extends LitElement {
       }
       return `${prefix}Ready, but not queued. Review slots and dispatch config.`;
     }
-    return `${prefix}Checked: ${node.status}. Open the WorkGraph for details.`;
+    if (node.status === 'succeeded') {
+      // Not a dispatch confirmation: nothing was started. The node keeps this
+      // status after its run finishes — or after that run is deleted — so a
+      // redispatch silently does nothing until the node is reset.
+      return `${prefix}No run started: the graph node already succeeded. Reset it in the WorkGraph to run this item again.`;
+    }
+    if (node.status === 'failed') {
+      return `${prefix}No run started: the graph node is failed. Reset or retry it in the WorkGraph.`;
+    }
+    return `${prefix}No run started: the graph node is ${node.status}. Open the WorkGraph for details.`;
   }
 
   private _workGraphHash(item: BacklogItem): string {
@@ -2328,12 +2338,7 @@ export class BacklogPanel extends LitElement {
 
   private _renderCompactRow(item: BacklogItem) {
     const selected = this._selectedItemId === item.id;
-    const statusTone =
-      item.status === 'ready'
-        ? 'positive'
-        : item.status === 'failed' || item.status === 'needs-attention'
-          ? 'danger'
-          : 'default';
+    const tone = statusTone(item.status);
     return html`<div
       class="compact-row ${selected ? 'selected' : ''} ${item.lastDispatchError ? 'has-error' : ''}"
       role="button"
@@ -2346,7 +2351,7 @@ export class BacklogPanel extends LitElement {
         }
       }}
     >
-      ${renderPlanningBadge(item.status, statusTone)}
+      ${renderPlanningBadge(item.status, tone)}
       <span class="item-ref" title=${item.sourceRef}>${item.sourceRef}</span>
       <div class="title" title=${item.title}>${item.title}</div>
     </div>`;

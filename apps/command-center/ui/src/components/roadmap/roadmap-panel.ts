@@ -41,6 +41,7 @@ import {
   planningBadgeStyles,
   renderPlanningBadge,
   renderTagChips,
+  statusTone,
   tagsFromInput,
   tagsToInput,
 } from '../shared/planning-badges.js';
@@ -1989,10 +1990,7 @@ export class RoadmapPanel extends LitElement {
         }
       }}
     >
-      ${renderPlanningBadge(
-        item.stage,
-        item.stage === 'refined' || item.stage === 'promoted' ? 'positive' : 'default',
-      )}
+      ${renderPlanningBadge(item.stage, statusTone(item.stage))}
       <span class="item-ref" title=${item.id}>${item.id}</span>
       <div class="title" title=${item.title}>${item.title}</div>
       <div class="row-trailing">
