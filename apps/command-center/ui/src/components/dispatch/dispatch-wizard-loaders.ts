@@ -1,8 +1,10 @@
 import type {
   ConfigProjectsResult,
   ConfigTemplateOptionsResult,
+  ConfigTemplatePreviewResult,
   DispatchCandidatesResult,
   DispatchPreviewResult,
+  ExecutionTemplateCatalogOption,
   FlowType,
   ProfileFitSuggestion,
   ProjectConfig,
@@ -38,6 +40,20 @@ export async function requestTemplateOptions(
     project,
     flowType,
     ...filters,
+  });
+}
+
+export async function requestExecutionTemplatePreview(
+  project: string,
+  flowType: FlowType,
+  option: ExecutionTemplateCatalogOption,
+): Promise<ConfigTemplatePreviewResult> {
+  return gateway.request<ConfigTemplatePreviewResult>(Methods.CONFIG_TEMPLATE_PREVIEW, {
+    project,
+    flowType,
+    executionTemplateId: option.id,
+    executionTemplateSourceId: option.sourceId,
+    executionTemplateSha256: option.sha256,
   });
 }
 

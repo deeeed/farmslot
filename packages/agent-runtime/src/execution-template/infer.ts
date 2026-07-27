@@ -126,6 +126,7 @@ export function inferTemplateMetadata(input: {
 
   const titleFromFm = typeof fm?.title === 'string' ? fm.title.trim() : '';
   const title = titleFromFm || parsed.heading || humanizeBasename(basename);
+  const descriptionFromFm = typeof fm?.description === 'string' ? fm.description.trim() : '';
 
   const versionRaw = fm?.version;
   const version = versionRaw == null || versionRaw === '' ? '1' : String(versionRaw);
@@ -149,6 +150,7 @@ export function inferTemplateMetadata(input: {
   return {
     id,
     title,
+    ...(descriptionFromFm ? { description: descriptionFromFm } : {}),
     flow,
     version,
     runMode,

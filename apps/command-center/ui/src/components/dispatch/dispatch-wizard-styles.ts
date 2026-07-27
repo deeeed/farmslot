@@ -4,6 +4,8 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 
 export const dispatchWizardStyles = css`
   :host {
+    /* Preserve the three template selector groups while their catalog refreshes. */
+    --template-selector-min-height: 174px;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -53,11 +55,84 @@ export const dispatchWizardStyles = css`
     line-height: 1.4;
   }
 
+  .template-selector-region {
+    display: flex;
+    min-height: var(--template-selector-min-height);
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: ${unsafeCSS(spacing.xl)};
+    transition: opacity 0.12s ease;
+  }
+
+  .template-selector-region.refreshing {
+    opacity: 0.72;
+  }
+
+  .config-group.refreshing {
+    flex: 0 0 auto;
+    opacity: 0.72;
+    transition: opacity 0.12s ease;
+  }
+
+  .template-selector-loading {
+    min-height: var(--template-selector-min-height);
+    flex: 0 0 auto;
+  }
+
   /* ── Pill row (flow, project, model, runner, effort, slot) ── */
   .pill-row {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+  }
+
+  .template-option {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    align-items: stretch;
+  }
+
+  .pill.template-select {
+    flex: 1 1 auto;
+    min-width: 0;
+    border-radius: 4px 0 0 4px;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .pill .pill-description {
+    display: block;
+    max-width: 440px;
+    margin-top: 3px;
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 10px;
+    font-weight: 400;
+    line-height: 1.35;
+  }
+
+  .template-preview {
+    display: inline-grid;
+    width: 34px;
+    flex: 0 0 34px;
+    place-items: center;
+    border: 1px solid #2a2a44;
+    border-left: 0;
+    border-radius: 0 4px 4px 0;
+    background: ${unsafeCSS(colors.bgCard)};
+    color: ${unsafeCSS(colors.textMuted)};
+    cursor: pointer;
+  }
+
+  .template-preview:hover,
+  .template-preview:focus-visible {
+    border-color: ${unsafeCSS(colors.accent)};
+    color: ${unsafeCSS(colors.accent)};
+    outline: none;
+  }
+
+  .template-selector-region [aria-disabled='true'] {
+    cursor: wait;
   }
 
   .pill {

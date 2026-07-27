@@ -1,7 +1,9 @@
+import { html } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
 import type {
   DispatchCandidatesResult,
+  ExecutionTemplateCatalogOption,
   FlowType,
   PRStatus,
   ReviewRunnerId,
@@ -9,6 +11,8 @@ import type {
   Run,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
+
+import './execution-template-preview-modal.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
@@ -55,6 +59,7 @@ import {
   requestDispatchProfileFit,
   requestDispatchProjectMatch,
   requestDispatchWizardCandidates,
+  requestExecutionTemplatePreview,
   requestProjectConfigs,
   requestTemplateOptions,
 } from './dispatch-wizard-loaders.js';
@@ -84,6 +89,11 @@ import {
   deriveTemplateOptionsState,
   templateOptionsRequestKey,
 } from './dispatch-wizard-template-options.js';
+import {
+  loadDispatchTemplatePreference,
+  persistDispatchTemplatePreference,
+  selectedExecutionTemplatePreference,
+} from './dispatch-wizard-template-preferences.js';
 import { renderDispatchWizardView } from './dispatch-wizard-view-renderer.js';
 
 @customElement('dispatch-wizard')
@@ -175,6 +185,7 @@ export class DispatchWizard extends DispatchWizardState {
     if (fleetView.projectAutoSelected) {
       this._project = fleetView.project;
       this._slotOverride = '';
+      this._restoreTemplatePreference();
       this._syncSelectedAppForProject(this._project);
       void this._fetchCandidates(this._project);
     }
@@ -187,6 +198,7 @@ export class DispatchWizard extends DispatchWizardState {
       this._app = '';
       this._candidates = [];
       this._allProjectSlots = [];
+      this._restoreTemplatePreference();
     }
 
     this._allProjectSlots = fleetView.allProjectSlots;
@@ -305,6 +317,12 @@ export class DispatchWizard extends DispatchWizardState {
       this._selectedTaskTemplateFileName = next.selectedFileName;
       this._executionTemplates = result.executionTemplates ?? null;
       if (result.executionTemplates) {
+        if (this._domain && !result.executionTemplates.availableDomains.includes(this._domain)) {
+          this._domain = '';
+          this._selectedExecutionTemplateId = this._preferredExecutionTemplateId();
+          void this._fetchTemplateOptions();
+          return;
+        }
         const selectedStillValid = result.executionTemplates.options.some(
           (option) => option.id === this._selectedExecutionTemplateId,
         );
@@ -314,6 +332,7 @@ export class DispatchWizard extends DispatchWizardState {
             (result.executionTemplates.options.length === 1
               ? result.executionTemplates.options[0]!.id
               : ''));
+        this._persistTemplatePreference();
       } else {
         this._selectedExecutionTemplateId = '';
         this._domain = '';
@@ -330,13 +349,75 @@ export class DispatchWizard extends DispatchWizardState {
       if (this._templateOptionsKey === key) this._templateOptionsLoading = false;
     }
   }
+
+  private async _previewExecutionTemplate(
+    option: ExecutionTemplateCatalogOption,
+    trigger?: HTMLElement,
+  ): Promise<void> {
+    if (!this._project || !this._flowType) return;
+    const activeElement = trigger ?? this.shadowRoot?.activeElement;
+    if (
+      activeElement instanceof HTMLElement &&
+      activeElement.classList.contains('template-preview')
+    ) {
+      this._executionTemplatePreviewTrigger = activeElement;
+    }
+    const generation = ++this._executionTemplatePreviewGeneration;
+    this._executionTemplatePreviewOption = option;
+    this._executionTemplatePreview = null;
+    this._executionTemplatePreviewError = '';
+    this._executionTemplatePreviewLoading = true;
+    try {
+      const result = await requestExecutionTemplatePreview(this._project, this._flowType, option);
+      if (this._executionTemplatePreviewGeneration !== generation) return;
+      this._executionTemplatePreview = result.template;
+    } catch (error) {
+      if (this._executionTemplatePreviewGeneration !== generation) return;
+      this._executionTemplatePreviewError =
+        error instanceof Error ? error.message : 'Template preview failed to load';
+    } finally {
+      if (this._executionTemplatePreviewGeneration === generation) {
+        this._executionTemplatePreviewLoading = false;
+      }
+    }
+  }
+
+  private _closeExecutionTemplatePreview(restoreFocus = true): void {
+    const trigger = restoreFocus ? this._executionTemplatePreviewTrigger : null;
+    this._executionTemplatePreviewGeneration += 1;
+    this._executionTemplatePreviewOption = null;
+    this._executionTemplatePreview = null;
+    this._executionTemplatePreviewLoading = false;
+    this._executionTemplatePreviewError = '';
+    this._executionTemplatePreviewTrigger = null;
+    if (trigger) void this.updateComplete.then(() => trigger.focus());
+  }
+
+  private async _refreshExecutionTemplatePreview(): Promise<void> {
+    const previous = this._executionTemplatePreviewOption;
+    const trigger = this._executionTemplatePreviewTrigger;
+    this._closeExecutionTemplatePreview(false);
+    await this._fetchTemplateOptions();
+    const refreshed = this._executionTemplates?.options.find(
+      (option) => option.id === previous?.id && option.sourceId === previous.sourceId,
+    );
+    if (refreshed) {
+      this._executionTemplatePreviewTrigger = trigger;
+      await this._previewExecutionTemplate(refreshed, trigger ?? undefined);
+      return;
+    }
+    this._executionTemplatePreviewOption = previous;
+    this._executionTemplatePreviewTrigger = trigger;
+    this._executionTemplatePreviewError =
+      'This template is no longer available. Close the preview and choose another template.';
+  }
+
   private _selectProject(project: string, autoProject = ''): void {
+    this._closeExecutionTemplatePreview(false);
     this._project = project;
     this._autoProject = autoProject;
     this._slotOverride = '';
-    this._domain = '';
-    this._selectedExecutionTemplateId = '';
-    this._executionTemplates = null;
+    this._restoreTemplatePreference();
     this._prepareProfile = '';
     this._syncSelectedAppForProject(project);
     this._syncFleet(getState());
@@ -358,6 +439,7 @@ export class DispatchWizard extends DispatchWizardState {
     if (this.mockInitial.model) this._model = this.mockInitial.model;
     if (this.mockInitial.project && this._project !== this.mockInitial.project) {
       this._project = this.mockInitial.project;
+      this._restoreTemplatePreference();
       this._syncSelectedAppForProject(this._project);
       void this._fetchCandidates(this._project);
     }
@@ -747,6 +829,7 @@ export class DispatchWizard extends DispatchWizardState {
     }
     if (prefill.project) {
       this._project = prefill.project;
+      this._restoreTemplatePreference();
       const machinesActive = getState().globalFilters.machines;
       if (shouldUsePrefillSlot(prefill.slot, machinesActive)) {
         this._slotOverride = prefill.slot ?? '';
@@ -907,15 +990,55 @@ export class DispatchWizard extends DispatchWizardState {
 
   private _selectFlowType(flowType: FlowType): void {
     this._assignFlowType(flowType);
-    this._selectedExecutionTemplateId = '';
-    this._executionTemplates = null;
     this._autoFlowType = false;
     void this._fetchTemplateOptions();
   }
 
   private _assignFlowType(flowType: FlowType): void {
+    if (this._flowType !== flowType) this._closeExecutionTemplatePreview(false);
     this._flowType = flowType;
     this._catalogMode = modeForFlow(flowType);
+    this._restoreTemplatePreference();
+  }
+
+  private _preferredExecutionTemplateId(): string {
+    if (!this._project || !this._flowType) return '';
+    return selectedExecutionTemplatePreference(
+      loadDispatchTemplatePreference(this._project, this._flowType),
+      this._domain,
+      this._catalogMode,
+    );
+  }
+
+  private _restoreTemplatePreference(): void {
+    if (!this._project || !this._flowType) {
+      this._domain = '';
+      this._selectedExecutionTemplateId = '';
+      return;
+    }
+    const preference = loadDispatchTemplatePreference(this._project, this._flowType);
+    if (preference) {
+      this._domain = preference.domain;
+      this._catalogMode = preference.mode;
+    } else {
+      this._domain = '';
+    }
+    this._selectedExecutionTemplateId = selectedExecutionTemplatePreference(
+      preference,
+      this._domain,
+      this._catalogMode,
+    );
+  }
+
+  private _persistTemplatePreference(): void {
+    if (!this._project || !this._flowType || !this._executionTemplates) return;
+    persistDispatchTemplatePreference({
+      project: this._project,
+      flowType: this._flowType,
+      domain: this._domain,
+      mode: this._catalogMode,
+      executionTemplateId: this._selectedExecutionTemplateId,
+    });
   }
 
   private _setRunner(runner: string) {
@@ -973,7 +1096,7 @@ export class DispatchWizard extends DispatchWizardState {
           this._templateOptions,
           this._selectedTaskTemplateFileName,
         );
-    return renderDispatchWizardView({
+    const view = renderDispatchWizardView({
       hydrating: this._hydrating,
       bootstrapFailed: this._bootstrapFailed,
       connectionStale: this._connectionStale,
@@ -1061,15 +1184,23 @@ export class DispatchWizard extends DispatchWizardState {
       },
       setExecutionTemplateId: (id) => {
         this._selectedExecutionTemplateId = id;
+        this._persistTemplatePreference();
+      },
+      previewExecutionTemplate: (option, trigger) => {
+        void this._previewExecutionTemplate(option, trigger);
       },
       setDomain: (domain) => {
+        this._closeExecutionTemplatePreview(false);
         this._domain = domain;
-        this._selectedExecutionTemplateId = '';
+        this._selectedExecutionTemplateId = this._preferredExecutionTemplateId();
+        this._persistTemplatePreference();
         void this._fetchTemplateOptions();
       },
       setMode: (mode) => {
+        this._closeExecutionTemplatePreview(false);
         this._catalogMode = mode;
-        this._selectedExecutionTemplateId = '';
+        this._selectedExecutionTemplateId = this._preferredExecutionTemplateId();
+        this._persistTemplatePreference();
         void this._fetchTemplateOptions();
       },
       setRunner: (runner) => this._setRunner(runner),
@@ -1130,6 +1261,7 @@ export class DispatchWizard extends DispatchWizardState {
       slotSummaryLabel: (slotId) =>
         slotSummaryLabel({ slotId, slots: this._allProjectSlots, runs: getState().runs ?? [] }),
       selectSlot: (slotId) => {
+        this._closeExecutionTemplatePreview(false);
         this._slotOverride = slotId;
         void this._fetchTemplateOptions();
       },
@@ -1144,6 +1276,18 @@ export class DispatchWizard extends DispatchWizardState {
       addToQueue: () => this._addToQueue(),
       cancelConflictingRun: () => this._cancelConflictingRun(),
     });
+    return html`
+      ${view}
+      <execution-template-preview-modal
+        .open=${this._executionTemplatePreviewOption !== null}
+        .option=${this._executionTemplatePreviewOption}
+        .preview=${this._executionTemplatePreview}
+        .loading=${this._executionTemplatePreviewLoading}
+        .error=${this._executionTemplatePreviewError}
+        @preview-close=${() => this._closeExecutionTemplatePreview()}
+        @preview-refresh=${() => void this._refreshExecutionTemplatePreview()}
+      ></execution-template-preview-modal>
+    `;
   }
 }
 

@@ -4,6 +4,7 @@ import { property, state } from 'lit/decorators.js';
 import type {
   DevInteractiveProfile,
   DispatchCandidatesResult,
+  ExecutionTemplateCatalogOption,
   ExecutionTemplateOptions,
   FlowType,
   ProfileFitSuggestion,
@@ -11,6 +12,7 @@ import type {
   QueueItem,
   Run,
   SlotStatus,
+  TemplatePreview,
   WorkerTemplateOption,
 } from '@farmslot/protocol';
 import { DEFAULT_CLAUDE_MODEL } from '@farmslot/protocol';
@@ -55,6 +57,12 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _selectedExecutionTemplateId = '';
   @state() _domain = '';
   @state() _catalogMode: 'interactive' | 'autonomous' = 'autonomous';
+  @state() _executionTemplatePreviewOption: ExecutionTemplateCatalogOption | null = null;
+  @state() _executionTemplatePreview: TemplatePreview | null = null;
+  @state() _executionTemplatePreviewLoading = false;
+  @state() _executionTemplatePreviewError = '';
+  _executionTemplatePreviewGeneration = 0;
+  _executionTemplatePreviewTrigger: HTMLElement | null = null;
   _templateOptionsKey = '';
   @state() _dispatching = false;
   @state() _error = '';

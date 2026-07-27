@@ -3,9 +3,9 @@
 ## Source of truth
 
 - Status: Draft
-- Last refreshed: 2026-06-29
-- Primary product surfaces: Command Center operator UI, especially backlog, roadmap, runs, and work graph views.
-- Evidence reviewed: `CLAUDE.md`, `apps/command-center/CLAUDE.md`, `apps/command-center/ui/src/styles/theme-tokens.ts`, `apps/command-center/ui/src/components/app-shell.ts`, `apps/command-center/ui/src/components/recipe-graph/recipe-graph.ts`, `apps/command-center/ui/src/components/work-graph/work-graph-panel.ts`, `packages/protocol/src/contracts/work-graph.ts`.
+- Last refreshed: 2026-07-26
+- Primary product surfaces: Command Center operator UI, especially dispatch, backlog, roadmap, runs, and work graph views.
+- Evidence reviewed: `CLAUDE.md`, `apps/command-center/CLAUDE.md`, `apps/command-center/ui/src/styles/theme-tokens.ts`, `apps/command-center/ui/src/components/app-shell.ts`, `apps/command-center/ui/src/components/dispatch/dispatch-wizard-view-renderer.ts`, `apps/command-center/ui/src/components/shared/whats-new-modal.ts`, `apps/command-center/ui/src/components/recipe-graph/recipe-graph.ts`, `apps/command-center/ui/src/components/work-graph/work-graph-panel.ts`, `packages/protocol/src/contracts/execution-templates.ts`, `packages/protocol/src/contracts/work-graph.ts`.
 
 ## Brand
 
@@ -15,7 +15,7 @@
 
 ## Product goals
 
-- Goals: help Arthur move from roadmap/backlog planning to dispatchable autonomous work; make dependencies and gates visible before runs start; keep project labels/tags consistent across planning and execution.
+- Goals: help Arthur move from roadmap/backlog planning to dispatchable autonomous work; make dependencies, gates, and the exact selected execution template visible before runs start; keep project labels/tags consistent across planning and execution.
 - Non-goals: replacing markdown specs/ADRs as authoring source of truth; building Jira-scale project management; hiding raw files from power users.
 - Success signals: users can identify what is ready, blocked, running, failed, and what will unlock next without reading JSON.
 
@@ -49,14 +49,14 @@
 ## Components
 
 - Existing components to reuse: app shell route patterns, recipe graph SVG patterns, shared theme tokens.
-- New/changed components: `work-graph-panel` and `work-graph-layout` for dependency visualization.
-- Variants and states: empty graph list, project filter, graph status badges, selected node, waiting/gated/running/succeeded/failed/skipped nodes, pending/satisfied/failed/waived edges.
-- Token/component ownership: Command Center owns UI tokens; protocol owns graph data shape.
+- New/changed components: `work-graph-panel` and `work-graph-layout` for dependency visualization; `execution-template-preview-modal` for exact, read-only dispatch template inspection.
+- Variants and states: empty graph list, project filter, graph status badges, selected node, waiting/gated/running/succeeded/failed/skipped nodes, pending/satisfied/failed/waived edges; execution-template preview loading, content, stale-source error, and closed states.
+- Token/component ownership: Command Center owns UI tokens; protocol owns graph and execution-template data shapes.
 
 ## Accessibility
 
 - Target standard: practical WCAG AA for text contrast and keyboard operation.
-- Keyboard/focus behavior: graph nodes and side-list nodes must be selectable with keyboard/focus-visible states.
+- Keyboard/focus behavior: graph nodes and side-list nodes must be selectable with keyboard/focus-visible states; execution-template preview buttons have explicit labels and the modal closes with Escape.
 - Contrast/readability: dark background with tokenized status colors and text hierarchy.
 - Screen-reader semantics: route titles, project filter labels, diagram labels, and node button labels.
 - Reduced motion and sensory considerations: avoid required animation.
@@ -71,7 +71,7 @@
 
 - Loading: app shell hydration should avoid fake data; work graph empty state is explicit.
 - Empty: explain that graphs appear after backlog work is linked into a graph.
-- Error: gateway errors surface through existing connection/bootstrap UI.
+- Error: gateway errors surface through existing connection/bootstrap UI; template preview errors stay inside the preview modal without changing the dispatch selection.
 - Success: satisfied/ready/succeeded nodes and edges use green badges/lines.
 - Disabled: not currently used for read-only graph visualization.
 - Offline/slow network, if applicable: preserve previous state until reconnect via existing store behavior.

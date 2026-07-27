@@ -51,6 +51,7 @@ import {
 import {
   configuredExecutionTemplateOptions,
   projectUsesExecutionTemplateCatalog,
+  readConfiguredExecutionTemplateSnapshot,
 } from '../tasks/execution-template-catalog.js';
 import { listWorkerTemplateOptions } from '../tasks/worker-template-options.js';
 import { FLOW_TO_TEMPLATE, generateTaskSchema } from '../tasks/writer.js';
@@ -76,6 +77,14 @@ async function buildTemplatePreview(
   const filePath = path.join(templatesDir, 'worker', fileName);
   const content = await readFile(filePath, 'utf-8');
   const flowType = fileNameToFlowType(fileName);
+  return buildTemplatePreviewFromContent(flowType, fileName, content);
+}
+
+function buildTemplatePreviewFromContent(
+  flowType: string,
+  fileName: string,
+  content: string,
+): TemplatePreview {
   const schema = generateTaskSchema(content, flowType);
   const placeholders = extractPlaceholders(content);
   return { flowType, fileName, schema, placeholders, rawMarkdown: content };
@@ -259,6 +268,24 @@ export async function configTemplatePreview(
   params: ConfigTemplatePreviewParams,
 ): Promise<ConfigTemplatePreviewResult> {
   const projectVars = await loadProjectVars(params.project);
+  if (params.executionTemplateId) {
+    if (!params.executionTemplateSourceId || !params.executionTemplateSha256) {
+      throw new Error('Execution-template preview requires its source id and source digest.');
+    }
+    const snapshot = readConfiguredExecutionTemplateSnapshot(projectVars, {
+      flow: params.flowType,
+      id: params.executionTemplateId,
+      sourceId: params.executionTemplateSourceId,
+      sha256: params.executionTemplateSha256,
+    });
+    return {
+      template: buildTemplatePreviewFromContent(
+        params.flowType,
+        snapshot.entry.relativePath,
+        snapshot.markdown,
+      ),
+    };
+  }
   const fileName = FLOW_TO_TEMPLATE[params.flowType] ?? `${params.flowType}.md`;
   const filePath = path.join(projectVars.projectTemplatesDir, 'worker', fileName);
   if (!existsSync(filePath)) {

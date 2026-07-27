@@ -9,6 +9,7 @@ import {
   configProject,
   configProjectAutoRecoveryUpdate,
   configProjectBacklogUpdate,
+  configTemplatePreview,
 } from './config.js';
 
 async function makeProject(
@@ -202,4 +203,19 @@ test('configProject returns empty learnings document when absent', async (t) => 
   assert.equal(result.learnings.content, '');
   assert.equal(result.learnings.updatedAt, null);
   assert.equal(result.learnings.sizeBytes, null);
+});
+
+test('configTemplatePreview requires exact source identity for catalog templates', async (t) => {
+  const project = `config-template-preview-${process.pid}-${Math.random().toString(36).slice(2, 6)}`;
+  await makeProject(t, project);
+
+  await assert.rejects(
+    () =>
+      configTemplatePreview({
+        project,
+        flowType: 'dev',
+        executionTemplateId: 'dev/example',
+      }),
+    /requires its source id and source digest/,
+  );
 });

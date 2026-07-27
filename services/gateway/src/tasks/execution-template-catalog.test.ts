@@ -9,6 +9,7 @@ import type { ProjectVars } from '../core/config.js';
 import {
   availableExecutionTemplateDomains,
   configuredExecutionTemplateOptions,
+  readConfiguredExecutionTemplateSnapshot,
   resolveConfiguredExecutionTemplate,
   resolveConfiguredExecutionTemplateForSlot,
 } from './execution-template-catalog.js';
@@ -25,6 +26,7 @@ function withProject(fn: (projectVars: ProjectVars) => void): void {
       `---
 id: fix-bug/perps-mobile
 title: Perps mobile proof
+description: Choose for autonomous Perps bug reproduction on Mobile.
 flow: fix-bug
 runMode: autonomous
 platforms: [ios]
@@ -101,6 +103,7 @@ test('configured capability lists domains, sources, selection, and unavailable r
         id: option.id,
         sourceId: option.sourceId,
         sourceKind: option.sourceKind,
+        description: option.description,
         labels: option.labels,
       })),
       [
@@ -108,6 +111,7 @@ test('configured capability lists domains, sources, selection, and unavailable r
           id: 'fix-bug/perps-mobile',
           sourceId: 'team:perps',
           sourceKind: 'workspace',
+          description: 'Choose for autonomous Perps bug reproduction on Mobile.',
           labels: ['domain:perps'],
         },
       ],
@@ -137,6 +141,84 @@ test('configured resolution snapshots the same source digest exposed by capabili
     assert.equal(resolved.reference.sha256, capability.options[0]?.sha256);
     assert.match(resolved.markdown, /Validate the issue/);
     assert.equal('path' in resolved.reference, false);
+  });
+});
+
+test('configured preview reads only the exact catalog source and digest', () => {
+  withProject((projectVars) => {
+    const capability = configuredExecutionTemplateOptions(projectVars, {
+      flow: 'fix-bug',
+      platform: 'ios',
+      runMode: 'autonomous',
+      domain: 'perps',
+    });
+    const option = capability.options[0]!;
+    const snapshot = readConfiguredExecutionTemplateSnapshot(projectVars, {
+      flow: 'fix-bug',
+      id: option.id,
+      sourceId: option.sourceId,
+      sha256: option.sha256,
+    });
+
+    assert.equal(snapshot.entry.sourceId, 'team:perps');
+    assert.match(snapshot.markdown, /Validate the issue/);
+    assert.throws(
+      () =>
+        readConfiguredExecutionTemplateSnapshot(projectVars, {
+          flow: 'fix-bug',
+          id: option.id,
+          sourceId: option.sourceId,
+          sha256: 'stale',
+        }),
+      /changed after catalog resolution/,
+    );
+  });
+});
+
+test('configured preview can read an offered source shadowed outside the active domain', () => {
+  withProject((projectVars) => {
+    const root = path.dirname(projectVars.projectConfig);
+    const canonicalRoot = path.join(root, 'canonical', 'checklists', 'fix-bug');
+    mkdirSync(canonicalRoot, { recursive: true });
+    writeFileSync(
+      path.join(canonicalRoot, 'mobile.md'),
+      `---
+id: fix-bug/perps-mobile
+runMode: autonomous
+platforms: [ios]
+---
+
+# Canonical mobile proof
+
+- [ ] Validate the canonical journey.
+`,
+    );
+    (projectVars.projectJson.execution_templates!.sources ??= []).unshift({
+      id: 'package:canonical',
+      kind: 'package',
+      root: { projectPath: 'canonical' },
+      subpath: 'checklists',
+    });
+
+    const capability = configuredExecutionTemplateOptions(projectVars, {
+      flow: 'fix-bug',
+      platform: 'ios',
+      runMode: 'autonomous',
+    });
+    const option = capability.options.find(
+      (candidate) =>
+        candidate.id === 'fix-bug/perps-mobile' && candidate.sourceId === 'package:canonical',
+    );
+    assert.ok(option);
+
+    const snapshot = readConfiguredExecutionTemplateSnapshot(projectVars, {
+      flow: 'fix-bug',
+      id: option.id,
+      sourceId: option.sourceId,
+      sha256: option.sha256,
+    });
+    assert.equal(snapshot.entry.sourceId, 'package:canonical');
+    assert.match(snapshot.markdown, /Validate the canonical journey/);
   });
 });
 

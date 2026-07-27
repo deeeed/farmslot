@@ -12,6 +12,7 @@
 //
 // Env:
 //   FARMSLOT_CDP_PORT   CDP port (default 9323).
+//   FARMSLOT_CDP_HOST   CDP address (default 127.0.0.1); must match debug-chrome.sh.
 //   FARMSLOT_UI_URL     Command Center URL used by `goto` for hash targets (default from .env.ports VITE_PORT, else 5174).
 //   FARMSLOT_GATEWAY    Gateway WS url (default ws://localhost:7777).
 //   FARMSLOT_GATEWAY_TOKEN/PASSWORD are read from process env or nearest .env.local-auth/.env.
@@ -25,6 +26,10 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 const CDP_PORT = process.env.FARMSLOT_CDP_PORT ?? '9323';
+// Must match debug-chrome.sh: it verifies which process owns CDP at this exact
+// address before allowing us to drive it. Connecting to "localhost" here would let
+// resolution pick a different socket than the one that was checked.
+const CDP_HOST = process.env.FARMSLOT_CDP_HOST ?? '127.0.0.1';
 const UI_URL = process.env.FARMSLOT_UI_URL ?? defaultUiUrl();
 const GATEWAY_URL = process.env.FARMSLOT_GATEWAY ?? 'ws://localhost:7777';
 const GATEWAY_CREDENTIAL = resolveGatewayCredential();
@@ -45,7 +50,7 @@ function die(msg, code = 1) {
 }
 
 async function listTabs() {
-  const res = await fetch(`http://localhost:${CDP_PORT}/json`);
+  const res = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json`);
   if (!res.ok) die(`CDP not reachable on :${CDP_PORT} (status ${res.status})`, 2);
   return res.json();
 }
@@ -77,7 +82,7 @@ async function findTab(hash) {
 }
 
 async function createTab(url) {
-  const res = await fetch(`http://localhost:${CDP_PORT}/json/new?${encodeURIComponent(url)}`, {
+  const res = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/new?${encodeURIComponent(url)}`, {
     method: 'PUT',
   });
   if (!res.ok) die(`failed to create CDP tab on :${CDP_PORT} (status ${res.status})`, 2);

@@ -15,8 +15,10 @@ function renderTemplate(input: {
   runMode: ExecutionRunMode | null;
   platforms: string[];
   title: string;
+  description?: string;
 }): string {
   const meta: string[] = [];
+  if (input.description) meta.push(`description: ${JSON.stringify(input.description)}`);
   if (input.runMode) meta.push(`runMode: ${input.runMode}`);
   if (input.platforms.length > 0 && !(input.platforms.length === 1 && input.platforms[0] === '*')) {
     meta.push(`platforms: [${input.platforms.join(', ')}]`);
@@ -75,7 +77,13 @@ export function createExecutionTemplate(options: CreateExecutionTemplateOptions)
   const runMode = options.runMode ?? inferRunModeFromBasename(basename);
   const platforms = options.platforms ?? ['*'];
   const title = options.title ?? defaultTitle(flow, runMode);
-  const body = renderTemplate({ flow, runMode, platforms, title });
+  const body = renderTemplate({
+    flow,
+    runMode,
+    platforms,
+    title,
+    description: options.description?.trim() || undefined,
+  });
 
   // Lint the rendered TEXT before writing — a failed creation must leave no
   // file behind (and must never destroy an existing file via force).

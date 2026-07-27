@@ -41,6 +41,11 @@ export interface ResolvedSlotExecutionTemplate extends ResolvedConfiguredExecuti
   effectiveDomain?: string;
 }
 
+export interface ConfiguredExecutionTemplateSnapshot {
+  entry: ExecutionTemplateEntry;
+  markdown: string;
+}
+
 function projectPackRoot(projectVars: ProjectVars): string {
   return path.dirname(projectVars.projectConfig);
 }
@@ -87,8 +92,8 @@ function catalogOption(entry: ExecutionTemplateEntry): ExecutionTemplateCatalogO
   return {
     ...executionTemplateReference(entry),
     title: entry.title,
+    ...(entry.description ? { description: entry.description } : {}),
     sourceKind: entry.sourceKind,
-    ...(entry.shadowedBy ? { shadowedBy: entry.shadowedBy } : {}),
   };
 }
 
@@ -194,6 +199,36 @@ export function resolveConfiguredExecutionTemplate(
   });
   const snapshot = readExecutionTemplateSnapshot(selected.entry);
   return { ...selected, markdown: snapshot.markdown };
+}
+
+export function readConfiguredExecutionTemplateSnapshot(
+  projectVars: ProjectVars,
+  query: Pick<ExecutionTemplateCatalogQuery, 'flow'> & {
+    id: string;
+    sourceId: string;
+    sha256: string;
+  },
+): ConfiguredExecutionTemplateSnapshot {
+  if (!projectUsesExecutionTemplateCatalog(projectVars)) {
+    throw new Error(`Project "${projectVars.projectName}" has no execution-template catalog.`);
+  }
+  const { sources } = configuredCatalog(projectVars);
+  const entry = listExecutionTemplates({
+    sources,
+    flow: query.flow,
+    includeShadowed: true,
+  }).find((candidate) => candidate.id === query.id && candidate.sourceId === query.sourceId);
+  if (!entry) {
+    throw new Error(
+      `Execution template "${query.id}" from source "${query.sourceId}" is no longer available.`,
+    );
+  }
+  if (entry.sha256 !== query.sha256) {
+    throw new Error(
+      `Execution template "${query.id}" changed after catalog resolution. Refresh the catalog and preview it again.`,
+    );
+  }
+  return { entry, markdown: readExecutionTemplateSnapshot(entry).markdown };
 }
 
 export function resolveConfiguredExecutionTemplateForSlot(
