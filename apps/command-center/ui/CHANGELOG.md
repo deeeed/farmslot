@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(ui): show the backlog/roadmap item ref (`MANUAL-000055`, a Jira key, a PR ref) next to the title in the backlog list and detail, work-graph nodes, the execution overlay and the roadmap composer. Every surface previously rendered the ref only as a fallback for a missing title, so it disappeared exactly when the item was well-formed — and work-graph nodes fell back to the opaque backlogItemId uuid rather than the ref the CLI and specs actually use.
 - feat: preview execution templates as an outline or exact source with provenance and optional selection guidance; keep selectors stable while catalogs refresh and remember domain, mode, and template choices per dispatch context.
 - feat: select compatible execution templates by project, flow, mode, platform, and domain in the dispatch wizard.
 - fix: show namespaced runtime evidence when inspecting nodes from a composed recipe dependency.
