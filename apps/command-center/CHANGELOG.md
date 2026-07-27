@@ -4,22 +4,23 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- fix(debug-chrome): reuse a CDP session only when the browser holding the profile also owns the listening socket at the probed address; refuse otherwise instead of driving an unrelated browser. `cdp.mjs` connects to that same address (`FARMSLOT_CDP_HOST`, default 127.0.0.1).
-- feat(debug-chrome): add `--slot/--pool/--port/--profile/--url/--headless/--timeout/--help`, and key the default profile by port so slots with different CDP ports can run concurrently.
-- Align embedded recipes and actions with the strict Action Manifest v1 contract.
-- feat: run composable Recipe v1 documents with strict manifests, typed parameters, and library dependency resolution.
-- fix: pass only recipe-declared runtime context from Farmslot hooks.
-- fix: resolve adjacent task recipe libraries and propagate invocation trust into their dependencies.
-- fix: defer artifact creation and Chrome capture preparation until after recipe trust preflight.
-
 - chore: type-escape baseline pruned — `fleet/state.ts` no longer contains `as any` casts (RawSlot honest optionality).
-
 - refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the orphan-run backfill flow map.
-- fix: `yarn dev` co-launches the local `@farmslot/node` agent alongside gateway + UI, and `scripts/dev.sh` derives `GATEWAY_URL` from `GATEWAY_PORT` (with a fail-hard guard when the port is already bound), so dev machines no longer sit NODE DEGRADED.
 - chore: recipe operational gate runs the hook-expansion tests from their new `@farmslot/slot-config` home.
 - chore: prune the type-escape baseline entry for `packages/cli/src/gateway-client.ts` (file is now escape-free).
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.4.0 - 2026-07-27
+
+- fix(debug-chrome): reuse a CDP session only when the browser holding the profile also owns the listening socket at the probed address; refuse otherwise instead of driving an unrelated browser. `cdp.mjs` connects to that same address (`FARMSLOT_CDP_HOST`, default 127.0.0.1)
+- feat(debug-chrome): add `--slot/--pool/--port/--profile/--url/--headless/--timeout/--help`, and key the default profile by port so slots with different CDP ports can run concurrently
+- Align embedded recipes and actions with the strict Action Manifest v1 contract
+- feat: run composable Recipe v1 documents with strict manifests, typed parameters, and library dependency resolution
+- fix: pass only recipe-declared runtime context from Farmslot hooks
+- fix: resolve adjacent task recipe libraries and propagate invocation trust into their dependencies
+- fix: defer artifact creation and Chrome capture preparation until after recipe trust preflight
+- fix: `yarn dev` co-launches the local `@farmslot/node` agent alongside gateway + UI, and `scripts/dev.sh` derives `GATEWAY_URL` from `GATEWAY_PORT` (with a fail-hard guard when the port is already bound), so dev machines no longer sit NODE DEGRADED
 
 ## 0.3.0 - 2026-07-13
 

@@ -4,84 +4,57 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(run-engine): a dev run's terminal signal is now commit-verified. The push guard covered only pr-complete and update-branch, so a dev worker could finish with its work uncommitted in the slot worktree, where it is destroyed on reclaim. A push is still not required for dev — the publication step performs it — and interactive dev stays exempt, since publishing there is the operator's call.
-- fix(gateway): the interactive dev checklist is an execution plan again, not the ticket's acceptance criteria. ACs are end-state assertions, so a worker could not mark progress against them and the operator could not follow the session; they stay in TASK.md as proof targets.
-- fix(run-engine): a lightweight interactive dev run is held for its operator instead of completing itself. The dev pipeline runs MONITOR → SELF_REVIEW → COMPLETE → HUMAN_GATE, so the gate is a publication gate and cannot hold a run before completion; a worker terminal signal ran through COMPLETE, released the slot and killed the worker. The signal now pauses the run at MONITOR, which stops the pipeline before any slot cleanup, so the slot stays owned and the worker alive and every interactive action (done-no-pr, blocked, failed, abort, self-review) remains available.
-- feat(gateway): expose template selection guidance and preview a catalog template only when its source id and digest still match.
-- fix(work-graph): re-enqueue a node whose run was cancelled, and surface a node the graph declines to enqueue. Both previously left the node stalled while it read healthy.
-- fix(run): replaying a cancelled run reclaims that run's own queue row, matched on graph, node, launch plan and candidate, so sibling candidates and replacement plans keep their work. Replay is refused once the node has been handed to a slot.
-- feat(gateway): snapshot source-aware execution templates at dispatch and revalidate them before task materialization.
-- Validate remote retained traces against their recipes and artifact attribution.
-- Open a detached `devserver-log` tmux window during prepare, replace it idempotently on re-prepare, and close it on slot release.
-
-- **BREAKING:** Recipe ingestion, task inheritance, and PR-body extraction now use recipe libraries plus exact `recipe-resolution.json` dependency evidence.
-- security: remote dependency evidence reads stay within the run artifact root.
-
-- feat(gateway): `dispatch.candidates` rows carry `ineligibleReason` when FIND_SLOT dispatch validation (branch ownership, companion resources) would reject the slot, so the wizard disables the row instead of advertising a selection that fails after queueing.
-
+- fix(run-engine): gateway restart recovery no longer completes an interactive dev run on the operator's behalf. When a restart found the run `monitoring` with the slot no longer reporting `working`, recovery inferred the worker was finished, marked MONITOR done with no outputs and advanced straight to COMPLETE — bypassing the monitor step where the operator hold lives. Run 6e092aa9 finished `success` that way while its worker was still mid-task (`SIGNAL.json` read `status: running, step 7`), releasing the slot and leaving a PR nobody approved. Interactive runs are now paused for the operator; `paused` is already skipped by recovery, so later restarts leave them alone. Autonomous recovery is unchanged.
 - fix(gateway): harden inline CI-fix dispatch so deferred runner nudges do not create phantom CI-fix contexts (an undelivered nudge refunds the attempt and schedules a retry poll), and prevent Codex shell launch text from being misclassified as an auth blocker.
-
-- fix(gateway): fail PR-bound dispatch before prepare when a linked worktree already has the target branch checked out elsewhere, and block PR bodies/comments that still expose local-only artifact paths.
-
 - fix(gateway): worker-facing template render sinks (dispatch prompts, TASK.md, self-review render + fix, CI-fix, roadmap refinement prompt/command) fail hard on unexpandable `{{...}}` placeholders instead of shipping raw tokens to agents; self-review gains the shared hooks expansion pass, reads the correct `cdp_port` resource key, and reviewer/CI comment text is inserted last so quoted `{{...}}` tokens are never re-expanded.
-
-- feat(gateway): mark PR-derived recipe input untrusted in worker and replay environments.
-
-- fix(gateway): slot claims create the missing status row instead of refusing — fresh pool entries were undispatchable until the first fleet refresh (caught by the scripted-runner E2E). Refresh preserves claimed rows its stale probe never saw; `transformSlot` defaults display fields for minimal rows; decision-card 'pick' requires live-fleet membership.
-
-- feat(gateway): slot lifecycle ownership protocol (MANUAL-000045). `slot_epoch` claim counter (`claimSlotStatusIf`) with CAS'd teardowns guarded on the entry epoch; every claim path refuses releasing slots and foreign handoff reservations; selection and replay-reclaim claims also refuse live foreign owners, while operator-approved live-worker takeovers reserve the handoff instead (dispatch/prepare/activate rebinds may replace non-working foreign owners). Two-phase nudge handoff via a `handoff_run_id` reservation; fresh reuse fences before killing the prior worker. Terminal cleanup is single-transition and ownership-aware: reset only if owned, preserve a pending foreign reservation, escalate to a verified worker kill when the owner is dead (fence stays up on failure). Release coalesces per slot, honors `expectedRunId`, refuses mid-release re-entry. Watcher rebinds/teardowns serialize on a per-key chain with owner-scoped removal. Fleet refresh preserves epoch + reservation through the shared write chain.
-
-- fix(gateway): chained follow-up dispatch survives the parent run's release killing the tmux session mid-launch — the send path recreates the worker once and restarts the full launch prelude, fenced by live ownership so an intentional teardown still aborts the dispatch.
-
-- feat(gateway): restart-durable human-gate supervision — startup recovery ingests reviewer results that finished unwatched, re-enters the gate when its inputs changed, and supersedes (retains) stale pending gate decisions so exactly one live decision can receive approval.
-
-- fix(gateway): Grok directory-trust ready-timeout retries deterministic blocker auto-actions, extends the readiness deadline after resolving one, and requires deterministic confirmation on a fresh pane capture before sending — classifier confidence alone never authorizes a keystroke.
-
-- feat(gateway): per-flow monitor timeout overrides (`monitoring.flows.<flowType>.total_timeout_min` / `stuck_timeout_min`) and interactive-handoff auto-recovery — a pending handoff decision resolves itself on a fresh terminal SIGNAL.json, re-armed across restarts; unattended resolution requires a verifiable signal timestamp.
-
-- feat(gateway): in-flight publication reviews survive gateway restart — a reviewer context with a fresh terminal signal and parseable feedback is ingested on gate re-entry; only cleanly completed signals stamp verdicts; freshness anchors on `AgentContext.attemptStartedAt`.
-
-- feat(gateway): Claude send decisions are hook-only unconditionally — the Phase 3A shadow flag is removed and `isRunnerPaneRetired` becomes intrinsic; `parseClaudeCtxPctFromPane` demoted to a debug helper. Codex keeps its pane fallback; shared monitor pane branches remain pending their hook migration.
-
-- feat(gateway): ADR-032 Phase 3A dark-launch flag `FARMSLOT_OBS_PANE_RETIRED` (MANUAL-000003) — hook-only Claude send path: authoritative idle sends fresh, a prompt-digest match skips the resend, a degraded reading holds the send with an `observability-degraded` attention. Flag off = unchanged.
-
-- fix(gateway): safe-send no longer presses Enter on an empty composer — the submit-existing path requires the pane to actually show the buffered instruction; otherwise the message is typed via the normal busy-aware path.
-
-- feat(gateway): same-run warm review session policy (MANUAL-000009) — `self_review.session_policy: warm-per-reviewer` resumes the same reviewer session within one run's review loop with a fixes-delta prompt. Default `fresh-per-pass` is unchanged; runners without persisted session reload (cursor) always run fresh. Claims are scoped to exact run/task/runner/branch; sessions become forensic-only on gate exit, cancel, or release.
-
 - chore: comment-only sweep — code comments describe rationale inline instead of citing ticket numbers (no behavior change).
-
 - refactor(gateway): ready-gate / publish-package decision labels use independent-review and runner-diversity wording (action ids unchanged for replay compatibility) (MANUAL-000008).
-
-- fix(gateway): launch-plan restart links a `dispatching` candidate queue row to its durable run instead of re-queuing a duplicate; failed-candidate replays pass the candidate-aware observation gate and re-derive item status (MANUAL-000038).
-
-- fix(gateway): launch-plan observations gated by ownership plus a persisted per-candidate `launchAttempt` — late echoes from superseded runs can no longer overwrite projections or steal the baseline run link; a re-enqueued run takes over from its first update (MANUAL-000037). New fields: `QueueItem.launchAttempt`, `Run.launchAttempt`, `RunCreateParams.launchAttempt`, `BacklogLaunchCandidateProjection.attempt`.
-
-- fix(gateway): multi-PR backlog items return to `ready` when a linked run finishes instead of auto-closing on the first merge (MANUAL-000035); `backlog.update` accepts `multiPr`.
-
-- fix(gateway): fix-delivery reliability (MANUAL-000029/000028) — fix sends verify the worker visibly reacted within 60s; workers at ≥90% context relaunch fresh before delivery; usage-limit banners fail launches loudly with the quota named; tmux window size re-enforced before readiness and completion polling; the readiness deadline extends once by half the budget when the pane is still actively painting, and deferred sends retry once with a busy-composer poll.
-
 - fix(gateway): watched CI checks classify skipped jobs as `skipped` (neutral in group aggregates) instead of perpetual `pending`; `PRStatus.checkSummary` gains a `skipped` count.
-
-- feat(gateway): slot helper methods `slot.monitor` / `slot.show` / `slot.softRefresh` / `slot.reopen` / `slot.autoRefresh` — TS ports of the retired shell scripts; ssh/tmux/CDP side-effects via `execOnSlot`.
-
 - fix(gateway): worker-owned-push flows (pr-complete, update-branch) verify the branch is committed and pushed before advancing — one publish nudge, bounded wait, then an honest blocked state instead of ci-watching a stale SHA. Key self-review lifecycle logs are always on.
-
 - feat(gateway): CI-watch merge-conflict follow-ups dispatch as `update-branch` (renamed from `merge-main`; default rebase strategy); the PR ref resolves from CI metadata, so manual/Jira-rooted families no longer throw `Invalid PR reference`; legacy flow names and decision ids migrate at load.
-
 - fix(gateway): self-review issue parsing is scoped to the `## Issues` section (whole-document fallback for legacy artifacts), strips fenced code blocks before section extraction (backtick/tilde, info-string-aware closing, unterminated → EOF), accepts CommonMark 0–3-space indentation and numbered/title-style findings with indent-aware nested-bullet folding, prefers path-looking backtick locations, and skips placeholder bullets — Evidence/Validation bullets no longer leak into fix passes and numbered findings are no longer dropped. An incomplete post-fix re-review now surfaces as skipped instead of silently clearing the reviewer's issues.
-
 - refactor: `runtime/session-usage.ts` consumes the ported `@farmslot/slot-config` core directly instead of shelling out to `scripts/session-usage.sh`; `computePRRecommendation` moved to `@farmslot/protocol` (re-imported) with the bash pr-monitor rules folded in — `PRStatus` gains `workerActive` so formatters can derive the worker-active sub-labels.
-
 - refactor: `core/config.ts` and `core/hooks.ts` moved to the new `@farmslot/slot-config` package (gateway files remain as re-export shims; `SlotConfigError` serializes like `GatewayMethodError` in RPC responses). No behavior change.
-
 - refactor: dispatch `isCdpLive` now delegates to the shared protocol `isCdpLiveValue` (no behavior change).
-
 - fix(gateway): retarget task-local `./mark` via `checklist-target.json` when nested-loop roles activate, so self-review and CI-fix progress marks the active checklist instead of worker `TASK.md`; restore worker target on replay and role completion.
-
 - fix(gateway): use structural try/finally restore for self-review-fix and CI-fix role bodies so new exit paths cannot skip worker checklist-target reset.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.4.0 - 2026-07-27
+
+- fix(work-graph): a node left `succeeded` by a deleted run is reclaimed when its backlog item is reopened, so the item can be dispatched again. Previously the node kept its status, nothing reconsidered it, and redispatching silently did nothing. Narrow by design: it requires the run to be gone and the node to have held one, so a node marked succeeded manually or by a reference condition is untouched
+- fix(tasks): the interactive checklist renders as `**N. Text**` so the task schema parser keeps each step's label. `**N.** Text` made it strip the first bold group and discard the rest, so Command Center showed eight numbered steps with no titles
+- fix(run-engine): a dev run's terminal signal is now commit-verified. The push guard covered only pr-complete and update-branch, so a dev worker could finish with its work uncommitted in the slot worktree, where it is destroyed on reclaim. A push is still not required for dev — the publication step performs it — and interactive dev stays exempt, since publishing there is the operator's call
+- fix(gateway): the interactive dev checklist is an execution plan again, not the ticket's acceptance criteria. ACs are end-state assertions, so a worker could not mark progress against them and the operator could not follow the session; they stay in TASK.md as proof targets
+- fix(run-engine): a lightweight interactive dev run is held for its operator instead of completing itself. The dev pipeline runs MONITOR → SELF_REVIEW → COMPLETE → HUMAN_GATE, so the gate is a publication gate and cannot hold a run before completion; a worker terminal signal ran through COMPLETE, released the slot and killed the worker. The signal now pauses the run at MONITOR, which stops the pipeline before any slot cleanup, so the slot stays owned and the worker alive and every interactive action (done-no-pr, blocked, failed, abort, self-review) remains available
+- feat(gateway): expose template selection guidance and preview a catalog template only when its source id and digest still match
+- fix(work-graph): re-enqueue a node whose run was cancelled, and surface a node the graph declines to enqueue. Both previously left the node stalled while it read healthy
+- fix(run): replaying a cancelled run reclaims that run's own queue row, matched on graph, node, launch plan and candidate, so sibling candidates and replacement plans keep their work. Replay is refused once the node has been handed to a slot
+- feat(gateway): snapshot source-aware execution templates at dispatch and revalidate them before task materialization
+- Validate remote retained traces against their recipes and artifact attribution
+- Open a detached `devserver-log` tmux window during prepare, replace it idempotently on re-prepare, and close it on slot release
+- **BREAKING:** Recipe ingestion, task inheritance, and PR-body extraction now use recipe libraries plus exact `recipe-resolution.json` dependency evidence
+- security: remote dependency evidence reads stay within the run artifact root
+- feat(gateway): `dispatch.candidates` rows carry `ineligibleReason` when FIND_SLOT dispatch validation (branch ownership, companion resources) would reject the slot, so the wizard disables the row instead of advertising a selection that fails after queueing
+- fix(gateway): fail PR-bound dispatch before prepare when a linked worktree already has the target branch checked out elsewhere, and block PR bodies/comments that still expose local-only artifact paths
+- feat(gateway): mark PR-derived recipe input untrusted in worker and replay environments
+- fix(gateway): slot claims create the missing status row instead of refusing — fresh pool entries were undispatchable until the first fleet refresh (caught by the scripted-runner E2E). Refresh preserves claimed rows its stale probe never saw; `transformSlot` defaults display fields for minimal rows; decision-card 'pick' requires live-fleet membership
+- feat(gateway): slot lifecycle ownership protocol (MANUAL-000045). `slot_epoch` claim counter (`claimSlotStatusIf`) with CAS'd teardowns guarded on the entry epoch; every claim path refuses releasing slots and foreign handoff reservations; selection and replay-reclaim claims also refuse live foreign owners, while operator-approved live-worker takeovers reserve the handoff instead (dispatch/prepare/activate rebinds may replace non-working foreign owners). Two-phase nudge handoff via a `handoff_run_id` reservation; fresh reuse fences before killing the prior worker. Terminal cleanup is single-transition and ownership-aware: reset only if owned, preserve a pending foreign reservation, escalate to a verified worker kill when the owner is dead (fence stays up on failure). Release coalesces per slot, honors `expectedRunId`, refuses mid-release re-entry. Watcher rebinds/teardowns serialize on a per-key chain with owner-scoped removal. Fleet refresh preserves epoch + reservation through the shared write chain
+- fix(gateway): chained follow-up dispatch survives the parent run's release killing the tmux session mid-launch — the send path recreates the worker once and restarts the full launch prelude, fenced by live ownership so an intentional teardown still aborts the dispatch
+- feat(gateway): restart-durable human-gate supervision — startup recovery ingests reviewer results that finished unwatched, re-enters the gate when its inputs changed, and supersedes (retains) stale pending gate decisions so exactly one live decision can receive approval
+- fix(gateway): Grok directory-trust ready-timeout retries deterministic blocker auto-actions, extends the readiness deadline after resolving one, and requires deterministic confirmation on a fresh pane capture before sending — classifier confidence alone never authorizes a keystroke
+- feat(gateway): per-flow monitor timeout overrides (`monitoring.flows.<flowType>.total_timeout_min` / `stuck_timeout_min`) and interactive-handoff auto-recovery — a pending handoff decision resolves itself on a fresh terminal SIGNAL.json, re-armed across restarts; unattended resolution requires a verifiable signal timestamp
+- feat(gateway): in-flight publication reviews survive gateway restart — a reviewer context with a fresh terminal signal and parseable feedback is ingested on gate re-entry; only cleanly completed signals stamp verdicts; freshness anchors on `AgentContext.attemptStartedAt`
+- feat(gateway): Claude send decisions are hook-only unconditionally — the Phase 3A shadow flag is removed and `isRunnerPaneRetired` becomes intrinsic; `parseClaudeCtxPctFromPane` demoted to a debug helper. Codex keeps its pane fallback; shared monitor pane branches remain pending their hook migration
+- feat(gateway): ADR-032 Phase 3A dark-launch flag `FARMSLOT_OBS_PANE_RETIRED` (MANUAL-000003) — hook-only Claude send path: authoritative idle sends fresh, a prompt-digest match skips the resend, a degraded reading holds the send with an `observability-degraded` attention. Flag off = unchanged
+- fix(gateway): safe-send no longer presses Enter on an empty composer — the submit-existing path requires the pane to actually show the buffered instruction; otherwise the message is typed via the normal busy-aware path
+- feat(gateway): same-run warm review session policy (MANUAL-000009) — `self_review.session_policy: warm-per-reviewer` resumes the same reviewer session within one run's review loop with a fixes-delta prompt. Default `fresh-per-pass` is unchanged; runners without persisted session reload (cursor) always run fresh. Claims are scoped to exact run/task/runner/branch; sessions become forensic-only on gate exit, cancel, or release
+- fix(gateway): launch-plan restart links a `dispatching` candidate queue row to its durable run instead of re-queuing a duplicate; failed-candidate replays pass the candidate-aware observation gate and re-derive item status (MANUAL-000038)
+- fix(gateway): launch-plan observations gated by ownership plus a persisted per-candidate `launchAttempt` — late echoes from superseded runs can no longer overwrite projections or steal the baseline run link; a re-enqueued run takes over from its first update (MANUAL-000037). New fields: `QueueItem.launchAttempt`, `Run.launchAttempt`, `RunCreateParams.launchAttempt`, `BacklogLaunchCandidateProjection.attempt`
+- fix(gateway): multi-PR backlog items return to `ready` when a linked run finishes instead of auto-closing on the first merge (MANUAL-000035); `backlog.update` accepts `multiPr`
+- fix(gateway): fix-delivery reliability (MANUAL-000029/000028) — fix sends verify the worker visibly reacted within 60s; workers at ≥90% context relaunch fresh before delivery; usage-limit banners fail launches loudly with the quota named; tmux window size re-enforced before readiness and completion polling; the readiness deadline extends once by half the budget when the pane is still actively painting, and deferred sends retry once with a busy-composer poll
+- feat(gateway): slot helper methods `slot.monitor` / `slot.show` / `slot.softRefresh` / `slot.reopen` / `slot.autoRefresh` — TS ports of the retired shell scripts; ssh/tmux/CDP side-effects via `execOnSlot`
 
 ## 0.3.0 - 2026-07-13
 

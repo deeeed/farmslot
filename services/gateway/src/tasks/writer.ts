@@ -745,8 +745,11 @@ export async function writeTaskFile(
     // worker reads in TASK.md are the numbers `mark N` targets. A configured
     // override changes the list; hardcoding steps in the template would leave
     // `mark 3` pointing at a step that no longer exists.
+    // `**N. Text**` — number AND text inside the bold, matching dev.md. The schema
+    // parser strips the first bold group and discards the rest of the line, so
+    // `**N.** Text` yields a step named "N." with no label.
     INTERACTIVE_CHECKLIST: checklistForInteractiveDev(run)
-      .map((item, index) => `- [ ] **${index + 1}.** ${item}`)
+      .map((item, index) => `- [ ] **${index + 1}. ${item}**`)
       .join('\n'),
     AFFECTED_AREA: ticket.affectedArea || '_Not specified_',
     SCREENSHOTS: screenshotsMd,

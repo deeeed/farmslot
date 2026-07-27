@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- fix(slot-config): `getProjectField` returns numbers and booleans instead of an empty string. Shell callers read project fields through `farmslot internal project-field` and fold the result into `${VAR:-<default>}`, so every numeric `project.json` value silently lost to a hardcoded default — `metamask-extension-farm` sets `timeouts.build_manifest_s: 600` and preflight used 180 for every build. Objects and arrays still return empty: they have no single shell value.
 - feat: validate project execution-template sources, defaults, and domain environment.
 - feat: template placeholder guard — `collectTemplatePlaceholders` / `collectPlaceholderTokens` / `knownTemplatePlaceholders` / `assertNoUnknownPlaceholders` / `expandTemplateWithReservedLast`; worker-facing render sinks fail hard on unexpandable `{{...}}` instead of shipping raw tokens to agents.
 - fix: config values substituted verbatim (slot resource values, `paths.*`, project var values) are validated against `{{...}}` smuggling at load; the documented `{{runtime_dir}}/recipes` recipe_dir default now resolves in the loader.

@@ -1,7 +1,14 @@
 // view-models.ts — pure mappings from protocol results to render props.
 // Shared by the Ink TUI (and future formatters); no I/O, no React, no color.
 
-import type { BacklogItem, FleetStatus, Run, SlotStatus } from '@farmslot/protocol';
+import type {
+  BacklogItem,
+  FleetStatus,
+  PendingDecision,
+  RoadmapItem,
+  Run,
+  SlotStatus,
+} from '@farmslot/protocol';
 
 export interface FleetRow {
   slot: string;
@@ -104,6 +111,50 @@ export interface RecoveryDiagnosis {
   kind: 'empty-pool' | 'stale-status' | 'ghost-slots' | 'healthy';
   message: string;
   nextCommands: string[];
+}
+
+export interface RoadmapRow {
+  id: string;
+  shortId: string;
+  stage: string;
+  project: string;
+  title: string;
+  canPromote: boolean;
+  canSetStage: boolean;
+}
+
+export function roadmapViewModel(items: RoadmapItem[]): RoadmapRow[] {
+  return [...items]
+    .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt) * -1)
+    .map((item) => ({
+      id: item.id,
+      shortId: item.id.slice(0, 12),
+      stage: item.stage,
+      project: item.project,
+      title: item.title,
+      canPromote: item.stage === 'refined',
+      canSetStage: item.stage !== 'promoted',
+    }));
+}
+
+export interface DecisionRow {
+  id: string;
+  shortId: string;
+  type: string;
+  title: string;
+  slotId: string;
+  actions: string[];
+}
+
+export function decisionsViewModel(decisions: PendingDecision[]): DecisionRow[] {
+  return decisions.map((decision) => ({
+    id: decision.id,
+    shortId: decision.id.slice(0, 10),
+    type: decision.type,
+    title: decision.title,
+    slotId: decision.slotId ?? '-',
+    actions: (decision.actions ?? []).map((action) => action.id),
+  }));
 }
 
 /** Recovery wizard diagnosis for the incident classes Phase 0 made honest. */

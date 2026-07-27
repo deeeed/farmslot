@@ -4,22 +4,24 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- feat(ui): the roadmap screen lists items as single-line rows (stage, item id, title, backlog links, edit) instead of stacked cards, and the capture form is behind a `New item` button rather than permanently occupying the top of the page. Titles wrap instead of truncating. Project, target projects, tags and file path continue to show in the detail pane.
-- fix(ui): show the backlog/roadmap item ref (`MANUAL-000055`, a Jira key, a PR ref) next to the title in the backlog list and detail, work-graph nodes, the execution overlay and the roadmap composer. Every surface previously rendered the ref only as a fallback for a missing title, so it disappeared exactly when the item was well-formed — and work-graph nodes fell back to the opaque backlogItemId uuid rather than the ref the CLI and specs actually use.
-- feat: preview execution templates as an outline or exact source with provenance and optional selection guidance; keep selectors stable while catalogs refresh and remember domain, mode, and template choices per dispatch context.
-- feat: select compatible execution templates by project, flow, mode, platform, and domain in the dispatch wizard.
-- fix: show namespaced runtime evidence when inspecting nodes from a composed recipe dependency.
-- feat: dispatch wizard candidate rows that FIND_SLOT would reject (branch ownership, missing companion resources) render disabled with a NOT ELIGIBLE badge and reason tooltip, are excluded from auto-pick, and suppress nudge/fresh actions (`DispatchCandidate.ineligibleReason`).
-
 - refactor: unified independent-review language (MANUAL-000008) — review timeline, gate summary, ready-workspace modal/shell, dispatch wizard and dispatch-config surfaces label every automated pass **Independent review** (operator-requested passes as _Independent review (requested)_); runner diversity renders as policy metadata (`runner: <id>` / `runner diversity`) via the new `reviewPolicyLabel` helper instead of the retired _External review_ / _Extra review_ kinds. Persisted decision-action ids are unchanged.
-
-- feat: the backlog panel status filter is a multi-select chip set (was single-select), defaulting to the live view — candidate/ready/queued/dispatching/running/failed/needs-attention visible, done/archived opt-in. The selection round-trips through the `backlogStatus` hash param (comma-separated, canonical order; default writes no param; legacy single-status links still parse).
-
 - fix: PR cards render path-skipped CI checks with the `statusUnknown` dot instead of the pending color, and CI-timeout recovery / auto-resolve no longer require `passed === total` — skipped checks count toward the total but do not block a green verdict. Persisted ci-watch summaries carry the `skipped` count through snapshot reload.
-- feat: flow selector, run filters, and flow-graph executor-lane labels render the renamed `update-branch` branch-maintenance flow (was `merge-main` / "Merge Main").
 - fix: filter nested-loop task progress by active checklist basename so self-review panels do not accept stale events during fix or CI-fix phases; clear progress when `activeTaskFile` changes and label fix vs review progress from the protocol checklist registry.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.4.0 - 2026-07-27
+
+- fix(ui): dispatching a backlog item whose graph node already succeeded now says no run was started and how to reset it, instead of reporting `Checked: succeeded` — which read as a confirmation while nothing had been queued
+- feat(ui): status badges follow an attention order — failure, then work in flight (`running`/`dispatching`/`queued`, amber with a pulse, matching the fleet map's busy colour), then work merely available. `ready` was previously the only coloured status, so an idle item was the loudest badge on the board while a running one fell through to muted grey. Shared by the backlog and roadmap lists via one `statusTone` helper
+- feat(ui): the roadmap screen lists items as single-line rows (stage, item id, title, backlog links, edit) instead of stacked cards, and the capture form is behind a `New item` button rather than permanently occupying the top of the page. Titles wrap instead of truncating. Project, target projects, tags and file path continue to show in the detail pane
+- fix(ui): show the backlog/roadmap item ref (`MANUAL-000055`, a Jira key, a PR ref) next to the title in the backlog list and detail, work-graph nodes, the execution overlay and the roadmap composer. Every surface previously rendered the ref only as a fallback for a missing title, so it disappeared exactly when the item was well-formed — and work-graph nodes fell back to the opaque backlogItemId uuid rather than the ref the CLI and specs actually use
+- feat: preview execution templates as an outline or exact source with provenance and optional selection guidance; keep selectors stable while catalogs refresh and remember domain, mode, and template choices per dispatch context
+- feat: select compatible execution templates by project, flow, mode, platform, and domain in the dispatch wizard
+- fix: show namespaced runtime evidence when inspecting nodes from a composed recipe dependency
+- feat: dispatch wizard candidate rows that FIND_SLOT would reject (branch ownership, missing companion resources) render disabled with a NOT ELIGIBLE badge and reason tooltip, are excluded from auto-pick, and suppress nudge/fresh actions (`DispatchCandidate.ineligibleReason`)
+- feat: the backlog panel status filter is a multi-select chip set (was single-select), defaulting to the live view — candidate/ready/queued/dispatching/running/failed/needs-attention visible, done/archived opt-in. The selection round-trips through the `backlogStatus` hash param (comma-separated, canonical order; default writes no param; legacy single-status links still parse)
+- feat: flow selector, run filters, and flow-graph executor-lane labels render the renamed `update-branch` branch-maintenance flow (was `merge-main` / "Merge Main")
 
 ## 0.3.0 - 2026-07-13
 

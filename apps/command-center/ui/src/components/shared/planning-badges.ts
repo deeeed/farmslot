@@ -30,11 +30,50 @@ export const planningBadgeStyles = css`
     color: ${unsafeCSS(colors.statusFail)};
     border-color: ${unsafeCSS(colors.statusFail)}66;
   }
+  /* Work in flight outranks work merely available. Ready was green and the
+     loudest badge on the board, while running fell through to the muted default
+     — an idle item read as more urgent than one actively being worked. Amber
+     matches the fleet map's busy lifecycle colour, keeping one colour language.
+     The pulse marks it as live rather than just another coloured chip. */
+  .badge.active {
+    color: ${unsafeCSS(colors.lifecycleBusy)};
+    border-color: ${unsafeCSS(colors.lifecycleBusy)}88;
+    background: ${unsafeCSS(colors.lifecycleBusy)}14;
+    animation: badge-pulse 2s ease-in-out infinite;
+  }
+  @keyframes badge-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .badge.active {
+      animation: none;
+    }
+  }
   .badge.tag {
     color: ${unsafeCSS(colors.accent)};
     border-color: ${unsafeCSS(colors.accent)}55;
   }
 `;
+
+/**
+ * Badge tone for a backlog/roadmap item status, in attention order.
+ *
+ * Shared so the backlog list, the roadmap list and any future surface agree:
+ * failure first, then work actually in flight, then merely available. Anything
+ * unlisted (done, archived, candidate) stays muted on purpose.
+ */
+export function statusTone(status: string): 'default' | 'positive' | 'danger' | 'active' {
+  if (status === 'failed' || status === 'needs-attention') return 'danger';
+  if (status === 'running' || status === 'dispatching' || status === 'queued') return 'active';
+  if (status === 'ready' || status === 'refined' || status === 'promoted') return 'positive';
+  return 'default';
+}
 
 export function tagsFromInput(value: string): string[] {
   return normalizeRunTags(value.split(',').map((tag) => tag.trim()));
@@ -46,7 +85,7 @@ export function tagsToInput(tags: readonly string[] | undefined): string {
 
 export function renderPlanningBadge(
   label: string,
-  tone: 'default' | 'positive' | 'danger' = 'default',
+  tone: 'default' | 'positive' | 'danger' | 'active' = 'default',
 ) {
   return html`<span class="badge ${tone === 'default' ? '' : tone}">${label}</span>`;
 }

@@ -26,6 +26,7 @@ import {
   type CommentRow,
   findTaskDirCollisions,
   formatPrTitleSuffix,
+  generateTaskSchema,
   isBotAuthor,
   renderCommentSummary,
   TEMPLATE_PROVENANCE_INPUT,
@@ -824,4 +825,24 @@ test('an explicitly configured interactive checklist still wins', () => {
   } as Run['engineState'];
 
   assert.deepEqual(checklistForInteractiveDev(run), ['Do the one thing', 'Then stop']);
+});
+
+test('the interactive checklist renders in the shape the schema parser reads', () => {
+  // generateTaskSchema strips the FIRST bold group and discards the rest of the
+  // line, so `**1.** Text` parses to a step named "1." with no label — which is
+  // what Command Center rendered: eight numbers and no titles.
+  const run = makeRun(`PROJ-${Date.now()}`, 'interactive-checklist-shape');
+  const rendered = checklistForInteractiveDev(run)
+    .map((item, index) => `- [ ] **${index + 1}. ${item}**`)
+    .join('\n');
+  const markdown = ['# Worker: Interactive Dev', '', '## Checklist', '', rendered, ''].join('\n');
+
+  const schema = generateTaskSchema(markdown, 'dev');
+  assert.equal(schema.totalSteps, checklistForInteractiveDev(run).length);
+  const steps = schema.phases.flatMap((phase) => phase.steps);
+  for (const step of steps) {
+    assert.notEqual(step.name.trim(), `${step.index}.`, 'step lost its label');
+    assert.ok(step.name.length > 4, `step ${step.index} has no meaningful name: ${step.name}`);
+  }
+  assert.match(steps[0].name, /Read the task/);
 });

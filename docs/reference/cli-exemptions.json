@@ -1,0 +1,173 @@
+{
+  "description": "UI-only gateway methods deliberately without a dedicated farmslot subcommand. Generated from surface=na entries in cli-protocol-method-matrix.json by scripts/quality/check-method-matrix.mjs. Every registry method must have a typed CLI surface, an interim rpc-only classification, or an entry here with a reason.",
+  "methods": {
+    "chat.abort": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.clear": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.confirmAction": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.context": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.history": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.listActions": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.new": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.observerEvidence": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.saveMemory": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.screenEvidence": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.send": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.sessionContext": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.sessionCreate": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.sessionDelete": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.sessionPin": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.sessions": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "chat.sessionsBulkDelete": {
+      "reason": "Command Center chat surface (web UI)."
+    },
+    "copilot.formatInstruction": {
+      "reason": "Command Center copilot surface (web UI)."
+    },
+    "fs.delete": {
+      "reason": "Slot Workspace IDE file view (web UI)."
+    },
+    "fs.hash": {
+      "reason": "Slot Workspace IDE file view (web UI)."
+    },
+    "fs.list": {
+      "reason": "Slot Workspace IDE file view (web UI)."
+    },
+    "fs.mkdir": {
+      "reason": "Slot Workspace IDE file view (web UI)."
+    },
+    "fs.read": {
+      "reason": "Slot Workspace IDE file view (web UI)."
+    },
+    "fs.rename": {
+      "reason": "Slot Workspace IDE file view (web UI)."
+    },
+    "fs.reveal": {
+      "reason": "Slot Workspace IDE file view (web UI)."
+    },
+    "fs.write": {
+      "reason": "Slot Workspace IDE file view (web UI)."
+    },
+    "git.branchDiff": {
+      "reason": "Slot Workspace git view (web UI)."
+    },
+    "git.diff": {
+      "reason": "Slot Workspace git view (web UI)."
+    },
+    "git.discard": {
+      "reason": "Slot Workspace git view (web UI)."
+    },
+    "git.files": {
+      "reason": "Slot Workspace git view (web UI)."
+    },
+    "git.log": {
+      "reason": "Slot Workspace git view (web UI)."
+    },
+    "git.show": {
+      "reason": "Slot Workspace git view (web UI)."
+    },
+    "git.stage": {
+      "reason": "Slot Workspace git view (web UI)."
+    },
+    "git.status": {
+      "reason": "Slot Workspace git view (web UI)."
+    },
+    "git.unstage": {
+      "reason": "Slot Workspace git view (web UI)."
+    },
+    "screen.subscribe": {
+      "reason": "Binary screen-capture relay for the web UI."
+    },
+    "screen.thumbnail": {
+      "reason": "Binary screen-capture relay for the web UI."
+    },
+    "screen.unsubscribe": {
+      "reason": "Binary screen-capture relay for the web UI."
+    },
+    "search.query": {
+      "reason": "Slot Workspace code search (web UI)."
+    },
+    "stream.snapshot": {
+      "reason": "Binary stream relay for the web UI."
+    },
+    "stream.subscribe": {
+      "reason": "Binary stream relay for the web UI."
+    },
+    "stream.unsubscribe": {
+      "reason": "Binary stream relay for the web UI."
+    },
+    "terminal.input": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.reinit": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.resize": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.send": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.snapshot": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.subscribe": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.unsubscribe": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.worker.input": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.worker.resize": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.worker.snapshot": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.worker.subscribe": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.worker.unsubscribe": {
+      "reason": "Web terminal PTY surface (Command Center)."
+    },
+    "workspace.metro.subscribe": {
+      "reason": "Slot Workspace IDE view (web UI)."
+    },
+    "workspace.metro.unsubscribe": {
+      "reason": "Slot Workspace IDE view (web UI)."
+    }
+  }
+}

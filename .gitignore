@@ -143,3 +143,6 @@ pool/*.bak.*
 /repos/
 /runs/
 /state.json
+
+# Vendored skills CLI clone (ensure-skills-local.sh); regenerable, never ours to commit.
+.skills-cache/
