@@ -48,9 +48,24 @@ const queueProfileFitDeferUntil = new Map<string, number>();
 export const DEFAULT_QUEUE_CLAIM_TTL_MS = 60_000;
 
 type BroadcastFn = (event: string, payload: unknown) => void;
+/** createAndStartRun receives the exclusive claim so it can re-validate at the
+ * synchronous createRun boundary after its own awaits (imports, ticket fetch, …). */
+export type CreateAndStartRunFn = (item: QueueItem, claim: QueueClaim) => Promise<void>;
 let _broadcast: BroadcastFn | null = null;
-let _createAndStartRun: ((item: QueueItem) => Promise<void>) | null = null;
+let _createAndStartRun: CreateAndStartRunFn | null = null;
 let dispatchInFlight: Promise<void> | null = null;
+
+/** Thrown when a holder loses exclusive ownership before durable run creation. */
+export class QueueClaimLostError extends Error {
+  readonly claim: QueueClaim;
+  constructor(claim: QueueClaim, phase: string) {
+    super(
+      `Queue claim lost for ${claim.itemId.slice(0, 8)} at ${phase}; stopping before createRun`,
+    );
+    this.name = 'QueueClaimLostError';
+    this.claim = claim;
+  }
+}
 
 function clearClaimFields(item: QueueItem): void {
   item.claimHolder = undefined;
@@ -69,10 +84,45 @@ function claimStillHeld(item: QueueItem, claim: QueueClaim, nowMs = Date.now()):
 
 export function initDispatchQueue(
   broadcast: BroadcastFn,
-  createAndStartRun: (item: QueueItem) => Promise<void>,
+  createAndStartRun: CreateAndStartRunFn,
 ): void {
   _broadcast = broadcast;
   _createAndStartRun = createAndStartRun;
+}
+
+/**
+ * Re-validate exclusive ownership immediately before durable run creation.
+ * Call after every await inside createAndStartRun that precedes createRun /
+ * evalTrialStart — a concurrent cancel/replay revokes the claim and must stop
+ * a detached callback from creating a second run for the same node.
+ */
+export function assertQueueClaimHeld(claim: QueueClaim, phase = 'pre-createRun'): void {
+  if (!isQueueClaimHeld(claim)) {
+    throw new QueueClaimLostError(claim, phase);
+  }
+}
+
+/**
+ * Reset expired dispatching claims back to `queued` so a crashed/slow
+ * dispatcher cannot permanently strand a row until gateway restart.
+ */
+export function reclaimExpiredClaims(nowMs = Date.now()): number {
+  let reclaimed = 0;
+  for (const item of queue) {
+    if (item.status !== 'dispatching') continue;
+    if (item.claimExpiresAt && Date.parse(item.claimExpiresAt) > nowMs) continue;
+    // Missing expiresAt is treated as expired: a claim without TTL is invalid.
+    item.status = 'queued';
+    item.runId = undefined;
+    item.claimEpoch = (item.claimEpoch ?? 0) + 1;
+    clearClaimFields(item);
+    reclaimed += 1;
+  }
+  if (reclaimed > 0) {
+    schedulePersist('reclaim-expired');
+    broadcastQueue();
+  }
+  return reclaimed;
 }
 
 function normalizedTrialSuffix(trialId: string): string {
@@ -400,11 +450,13 @@ export function releaseQueueClaim(claim: QueueClaim): boolean {
 
 /**
  * Cancel a graph-linked queue row (queued or claimed/dispatching) and optionally
- * commit a dependent state change in the same logical unit of work.
+ * run a dependent mutation before durable queue persist.
  *
- * The row is detached from the live queue first (which revokes any claim). Then
- * `commitDependent` runs; if it throws, the row is restored and the error
- * propagates so callers never observe a removed row with unfinished dependents.
+ * The row is detached first (which revokes any claim). Then `commitDependent`
+ * runs; if it throws, the row is restored so callers never observe a removed
+ * row with an unfinished dependent. This is best-effort same-unit recovery for
+ * the dependent throw path — it is not a multi-store transaction (queue persist
+ * can still fail after a successful dependent).
  */
 export async function cancelGraphQueuedItem(params: {
   workGraphId: string;
@@ -694,6 +746,10 @@ function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
 async function tryDispatchNextOnce(): Promise<void> {
   if (!_broadcast || !_createAndStartRun) return;
 
+  // Expired claims leave status=dispatching but are no longer held — reset so
+  // listItems can see them again without waiting for a gateway restart.
+  reclaimExpiredClaims();
+
   const pending = listItems();
   if (pending.length === 0) return;
 
@@ -739,11 +795,12 @@ async function tryDispatchNextOnce(): Promise<void> {
     schedulePersist('mark-dispatching');
     console.log(`[dispatch-queue] auto-dispatching ${item.id.slice(0, 8)} → slot ${slot.slot}`);
 
-    // Final re-validation immediately before run creation.
-    if (stopIfClaimLost(claim, 'pre-createRun')) return;
+    // Re-validate before entering createAndStartRun; that callback re-validates
+    // again immediately before the durable createRun / evalTrialStart call.
+    if (stopIfClaimLost(claim, 'pre-createAndStartRun')) return;
 
     try {
-      await _createAndStartRun(item);
+      await _createAndStartRun(item, claim);
       // Success: remove the row (claim no longer needed).
       const idx = queue.findIndex((q) => q.id === item.id);
       if (idx >= 0) {
@@ -753,6 +810,10 @@ async function tryDispatchNextOnce(): Promise<void> {
       schedulePersist('auto-dispatch-success');
       _broadcast('queue.updated', { items: listItems() });
     } catch (err) {
+      if (err instanceof QueueClaimLostError) {
+        console.log(`[dispatch-queue] ${err.message}`);
+        return;
+      }
       if (
         isStartRefPolicyError(err) ||
         (item.queueKind === 'eval-cell' && isNonRetryableEvalQueueError(err))

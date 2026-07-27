@@ -1202,8 +1202,9 @@ export async function schedulerTick(
             const regressionReason =
               'Start dependency regressed after this node became active; review queued/running work manually';
             if (node.backlogItemId && node.status === 'queued') {
-              // Queue removal and backlog needs-attention must commit together:
-              // cancelGraphQueuedItem restores the row if the dependent write fails.
+              // Queue removal + backlog needs-attention via commitDependent:
+              // cancelGraphQueuedItem restores the row if the dependent write throws
+              // (best-effort same-unit recovery, not a multi-store transaction).
               const cancelled = await cancelGraphQueuedItem({
                 workGraphId: snapshot.graph.id,
                 workNodeId: node.id,

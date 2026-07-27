@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { Events, type RunDecision } from '@farmslot/protocol';
 
-import { addItem, getQueueSnapshot } from '../../backlog/dispatch-queue.js';
+import { addItem, claimQueueItem, getQueueSnapshot } from '../../backlog/dispatch-queue.js';
 import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
@@ -219,14 +219,12 @@ test('replay revokes a claimed dispatching row and revives the cancelled run', a
     workGraphId: 'wg_replay_handoff',
     workNodeId: 'wn_replay_handoff',
   });
-  // Stage an exclusive claim (status dispatching + holder). Replay must revoke it
-  // and revive the cancelled run; the dispatcher would fail isQueueClaimHeld.
+  // Claim through the public API (not a direct status mutate) so holder/epoch
+  // persistence matches production. Replay must revoke it and revive the run.
   const staged = getQueueSnapshot().find((item) => item.workNodeId === 'wn_replay_handoff');
   assert.ok(staged);
-  staged.status = 'dispatching';
-  staged.claimHolder = 'stale-dispatcher';
-  staged.claimEpoch = 1;
-  staged.claimExpiresAt = new Date(Date.now() + 60_000).toISOString();
+  const claim = claimQueueItem(staged.id, 'stale-dispatcher');
+  assert.ok(claim);
 
   t.after(async () => {
     if (getRun(run.id)) {

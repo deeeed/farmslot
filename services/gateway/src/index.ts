@@ -25,7 +25,7 @@ import {
 } from './auto-recovery/watcher.js';
 import { initAutoRecycle } from './automation/auto-recycle.js';
 import { onBranchChange, startBranchWatchers } from './automation/branch-watcher.js';
-import { initDispatchQueue, loadQueue } from './backlog/dispatch-queue.js';
+import { assertQueueClaimHeld, initDispatchQueue, loadQueue } from './backlog/dispatch-queue.js';
 import {
   initBacklogStore,
   loadBacklog,
@@ -317,9 +317,12 @@ async function main(): Promise<void> {
     console.error(`[work-graph] startup reconciliation failed: ${(err as Error).message}`);
   });
 
-  initDispatchQueue(observedBroadcast, async (item) => {
+  initDispatchQueue(observedBroadcast, async (item, claim) => {
+    // Dynamic imports and runCreate await below — re-validate at every boundary
+    // before durable create so a concurrent reclaim cannot leave a second run.
     if (item.queueKind === 'eval-cell' && item.evalCell) {
       const { evalTrialStart } = await import('./methods/eval.js');
+      assertQueueClaimHeld(claim, 'pre-evalTrialStart');
       const params = item.evalCell.trialStartParams as unknown as EvalTrialStartParams;
       const result = await evalTrialStart(
         {
@@ -381,6 +384,9 @@ async function main(): Promise<void> {
       reviewDepth: item.reviewDepth,
       pendingReviewPlan: item.pendingReviewPlan,
     } satisfies import('@farmslot/protocol').RunCreateParams;
+    // Last check at the createRun boundary: a revoke after this line races
+    // inside runCreate itself, which is past the ownership handoff.
+    assertQueueClaimHeld(claim, 'pre-runCreate');
     const { run } = await runCreate(runParams, broadcastEvent, {
       expectedExecutionTemplate: item.executionTemplate,
     });

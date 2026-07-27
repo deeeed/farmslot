@@ -10,6 +10,7 @@ import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
   addItem,
+  assertQueueClaimHeld,
   buildQueuePreviewParams,
   cancelGraphQueuedItem,
   canDispatchQueuedItemToSlot,
@@ -18,6 +19,8 @@ import {
   initDispatchQueue,
   isQueueClaimHeld,
   listItems,
+  QueueClaimLostError,
+  reclaimExpiredClaims,
   releaseQueueClaim,
   removeItem,
   removeQueueItemInternal,
@@ -927,7 +930,8 @@ test('tryDispatchNext skips queue items removed while fleet status is loading', 
   let createdRuns = 0;
   initDispatchQueue(
     () => {},
-    async () => {
+    async (_item, claim) => {
+      assertQueueClaimHeld(claim, 'test-create');
       createdRuns += 1;
     },
   );
@@ -1180,7 +1184,8 @@ test('a dispatcher holding a revoked claim creates no Run', async () => {
   let createdRuns = 0;
   initDispatchQueue(
     () => {},
-    async () => {
+    async (_item, claim) => {
+      assertQueueClaimHeld(claim, 'test-create');
       createdRuns += 1;
     },
   );
@@ -1193,15 +1198,11 @@ test('a dispatcher holding a revoked claim creates no Run', async () => {
     workNodeId: 'wn_revoked',
     reason: 'reclaim-wins',
   });
-  // Production path: re-validate after every await preceding createRun.
-  if (isQueueClaimHeld(claim)) {
-    createdRuns += 1;
-  }
+  assert.throws(() => assertQueueClaimHeld(claim, 'test'), QueueClaimLostError);
   assert.equal(createdRuns, 0, 'revoked claim must not create a Run');
   assert.equal(isQueueClaimHeld(claim), false);
 
-  // Integration: tryDispatchNext claims then re-validates; revoke while the row
-  // is still claimed (before create) so createRun never runs.
+  // Integration: pre-claim then revoke so tryDispatchNext cannot create.
   const item2 = addItem({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
@@ -1209,13 +1210,10 @@ test('a dispatcher holding a revoked claim creates no Run', async () => {
     allowedSlots: ['claim-slot'],
     workGraphId: 'wg_revoked2',
     workNodeId: 'wn_revoked2',
-    prepareProfile: 'sandbox',
   });
   createdRuns = 0;
   setCachedFleetForTests(readyFleetSlot('claim-slot') as any);
 
-  // Pre-claim so tryDispatchNext cannot claim (status already dispatching) and
-  // then revoke — proves a holder that lost its claim creates nothing.
   const preClaim = claimQueueItem(item2.id, 'pre-holder');
   assert.ok(preClaim);
   removeQueueItemInternal(item2.id, 'revoke-pre-claim');
@@ -1225,66 +1223,36 @@ test('a dispatcher holding a revoked claim creates no Run', async () => {
 });
 
 test('concurrent reclaim and dispatch against one row creates exactly one Run', async () => {
+  // Race at the createRun boundary: claim held → await → concurrent reclaim →
+  // assertQueueClaimHeld fails → 0 runs. Companion dual-claim proves exclusivity
+  // yields exactly one successful creation when the claim is held through create.
   const item = addItem({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
     ticketOrPr: 'PROJ-claim-concurrent',
-    allowedSlots: ['concurrent-slot'],
     workGraphId: 'wg_concurrent',
     workNodeId: 'wn_concurrent',
-    prepareProfile: 'sandbox',
   });
   let createdRuns = 0;
-  let releaseCreate: () => void;
-  const createGate = new Promise<void>((resolve) => {
-    releaseCreate = resolve;
-  });
-  let enteredCreate = false;
-  let signalEntered: () => void;
-  const entered = new Promise<void>((resolve) => {
-    signalEntered = resolve;
-  });
+  const claim = claimQueueItem(item.id, 'holder-a');
+  assert.ok(claim);
 
-  initDispatchQueue(
-    () => {},
-    async () => {
-      enteredCreate = true;
-      signalEntered();
-      await createGate;
-      createdRuns += 1;
-    },
-  );
-  setCachedFleetForTests(readyFleetSlot('concurrent-slot') as any);
-
-  const dispatch = tryDispatchNext();
-
-  // Wait until exclusive claim is held (status dispatching) or create entered.
-  for (let i = 0; i < 100; i++) {
-    const snap = getQueueSnapshot().find((q) => q.id === item.id);
-    if (enteredCreate || (snap && snap.status === 'dispatching') || !snap) break;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-
-  // Concurrent reclaim: either revokes before createRun (0 runs) or createRun
-  // already passed re-validation (at most 1). Never two.
-  const reclaimPromise = cancelGraphQueuedItem({
+  // Concurrent reclaim while the holder is still "awaiting" before create.
+  const reclaim = cancelGraphQueuedItem({
     workGraphId: 'wg_concurrent',
     workNodeId: 'wn_concurrent',
     reason: 'concurrent-reclaim',
   });
+  await reclaim;
+  try {
+    assertQueueClaimHeld(claim, 'pre-runCreate');
+    createdRuns += 1;
+  } catch (err) {
+    assert.ok(err instanceof QueueClaimLostError);
+  }
+  assert.equal(createdRuns, 0, 'reclaim during pre-create await creates no Run');
 
-  // Allow create path to finish if it already passed the claim gate.
-  await Promise.race([entered, new Promise((r) => setTimeout(r, 100))]);
-  releaseCreate!();
-  await Promise.all([dispatch, reclaimPromise]);
-
-  assert.ok(createdRuns <= 1, `expected at most one Run, got ${createdRuns}`);
-  // Exclusive claim guarantees a second concurrent claimer cannot also create.
-  const claimB = claimQueueItem(item.id, 'late-claimer');
-  assert.equal(claimB, null, 'row is gone or not queued — no second claim/run');
-  assert.equal(createdRuns === 0 || createdRuns === 1, true);
-
-  // Stronger exclusivity proof independent of timing: two holders, one claim, one run.
+  // Exclusive claim: only one of two holders can create.
   const item2 = addItem({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
@@ -1311,31 +1279,82 @@ test('tryDispatchNext re-validates claim after await and stops when revoked', as
     allowedSlots: ['revalidate-slot'],
     workGraphId: 'wg_revalidate',
     workNodeId: 'wn_revalidate',
-    prepareProfile: 'sandbox',
   });
   let createdRuns = 0;
   initDispatchQueue(
     () => {},
-    async () => {
+    async (_item, claim) => {
+      assertQueueClaimHeld(claim, 'test-create');
       createdRuns += 1;
     },
   );
 
-  // Slow slot selection: override via a deferred profile-fit cache miss is heavy;
-  // instead claim externally, then have tryDispatchNext skip (already dispatching)
-  // and prove release + re-validate path with a manual sequence matching the
-  // production re-validate points.
   const claim = claimQueueItem(item.id, 'dispatch-holder');
   assert.ok(claim);
-  // Simulate await, then concurrent revoke.
   removeQueueItemInternal(item.id, 'reclaim-during-await');
   assert.equal(isQueueClaimHeld(claim), false);
-  // Production checks isQueueClaimHeld after every await preceding createRun.
-  if (isQueueClaimHeld(claim)) {
-    createdRuns += 1;
-  }
+  assert.throws(() => assertQueueClaimHeld(claim, 'after-await'), QueueClaimLostError);
   assert.equal(createdRuns, 0);
-
-  // releaseQueueClaim returns false once lost.
   assert.equal(releaseQueueClaim(claim), false);
+});
+
+test('reclaimExpiredClaims restores stranded dispatching rows to queued', () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-expired-strand',
+  });
+  const claim = claimQueueItem(item.id, 'holder-expire', { ttlMs: 1 });
+  assert.ok(claim);
+  assert.equal(item.status, 'dispatching');
+  // Force past expiry without waiting.
+  const n = reclaimExpiredClaims(Date.parse(claim.expiresAt) + 1);
+  assert.ok(n >= 1);
+  assert.equal(item.status, 'queued');
+  assert.equal(isQueueClaimHeld(claim), false);
+  // Fresh claim is possible again.
+  const again = claimQueueItem(item.id, 'holder-retry');
+  assert.ok(again);
+  removeQueueItemInternal(item.id, 'test-cleanup');
+});
+
+test('assertQueueClaimHeld stops create after mid-callback revoke', async () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-mid-callback',
+    allowedSlots: ['mid-slot'],
+    workGraphId: 'wg_mid',
+    workNodeId: 'wn_mid',
+  });
+  let createdRuns = 0;
+  let releaseGate: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  initDispatchQueue(
+    () => {},
+    async (_item, claim) => {
+      // Simulate index.ts awaits (import/ticket work) before createRun.
+      await gate;
+      assertQueueClaimHeld(claim, 'pre-runCreate');
+      createdRuns += 1;
+    },
+  );
+  setCachedFleetForTests(readyFleetSlot('mid-slot') as any);
+
+  const dispatch = tryDispatchNext();
+  // Wait for claim, then revoke while create is paused.
+  for (let i = 0; i < 50; i++) {
+    if (getQueueSnapshot().find((q) => q.id === item.id)?.status === 'dispatching') break;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  await cancelGraphQueuedItem({
+    workGraphId: 'wg_mid',
+    workNodeId: 'wn_mid',
+    reason: 'mid-callback-reclaim',
+  });
+  releaseGate!();
+  await dispatch;
+  assert.equal(createdRuns, 0);
 });
