@@ -1,8 +1,8 @@
 // methods/filesystem.ts — fs.list, fs.read, fs.write, fs.rename, fs.delete, fs.reveal, fs.mkdir, serveFile, serveRunArtifact
 
 import { execFile as execFileCb, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { constants, existsSync } from 'node:fs';
+import { mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -114,7 +114,11 @@ function isPathWithinBase(targetPath: string, basePath: string): boolean {
   return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
-// Validate a caller-supplied relative path doesn't escape the repo. Remote
+// Best-effort fast-fail only: this rejects obvious traversal and .git access.
+// Race-free confinement requires openat2(RESOLVE_BENEATH/RESOLVE_IN_ROOT), which
+// Node does not expose. The residual is dormant while fs.* is not operator-
+// reachable and the in-slot agent already has equivalent same-user access.
+// Remote
 // pool configs can declare repos as `~/...`; path.resolve against those
 // produces a gateway-local absolute path, so a startsWith(repoPath) check on
 // the resolved target gives false negatives. Guard on the relative portion
@@ -126,6 +130,11 @@ function assertRepoRelative(rel: string): void {
   if (normalized === '..' || normalized.startsWith('../')) {
     throw new Error('Path traversal outside repo is not allowed');
   }
+  if (normalized.split('/').includes('.git')) {
+    const error = new Error('Access to .git is not allowed') as NodeJS.ErrnoException;
+    error.code = 'EACCES';
+    throw error;
+  }
 }
 
 function resolveLocalRepoTargetPath(repoPath: string, rel: string): string {
@@ -134,6 +143,16 @@ function resolveLocalRepoTargetPath(repoPath: string, rel: string): string {
     throw new Error('Path traversal outside repo is not allowed');
   }
   return targetPath;
+}
+
+async function openLocalFileForServing(filePath: string) {
+  const handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    return { handle, stats: await handle.stat() };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
 }
 
 async function assertLocalRepoTargetResolvesWithinRepo(
@@ -447,12 +466,13 @@ async function fsListRemote(
   repoPath: string,
   params: FsListParams,
 ): Promise<FsListResult> {
-  const targetDir = params.path === '.' ? repoPath : `${repoPath}/${params.path}`;
-
   // Use native node fs.list — fast, no shell overhead
   const node = getNode(machine);
   if (!node) throw new Error(`No node connected for machine ${machine}`);
-  const result = (await sendNodeRequest(node, 'fs.list', { path: targetDir })) as {
+  const result = (await sendNodeRequest(node, 'fs.list', {
+    root: repoPath,
+    relPath: params.path,
+  })) as {
     entries: Array<{ name: string; type: string; size?: number }>;
   };
 
@@ -500,13 +520,19 @@ export async function fsRead(params: FsReadParams): Promise<FsReadResult> {
   if (isLocal) {
     const targetPath = resolveLocalRepoTargetPath(repoPath, params.path);
     await assertLocalRepoTargetResolvesWithinRepo(targetPath, repoPath);
-    content = await readFile(targetPath, 'utf-8');
+    const handle = await open(targetPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      content = await handle.readFile('utf-8');
+    } finally {
+      await handle.close();
+    }
   } else {
     // Use node's fs.read
     const node = getNode(machine);
     if (!node) throw new Error(`No node connected for machine ${machine}`);
     const result = (await sendNodeRequest(node, 'fs.read', {
-      path: `${repoPath}/${params.path}`,
+      root: repoPath,
+      relPath: params.path,
     })) as { content: string };
     content = result.content;
   }
@@ -529,12 +555,21 @@ export async function fsWrite(params: FsWriteParams): Promise<FsWriteResult> {
   if (isLocal) {
     const targetPath = resolveLocalRepoTargetPath(repoPath, params.path);
     await assertLocalMutationTargetResolvesWithinRepo(targetPath, repoPath);
-    await writeFile(targetPath, params.content, 'utf-8');
+    const handle = await open(
+      targetPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW,
+    );
+    try {
+      await handle.writeFile(params.content, 'utf-8');
+    } finally {
+      await handle.close();
+    }
   } else {
     const node = getNode(machine);
     if (!node) throw new Error(`No node connected for machine ${machine}`);
     await sendNodeRequest(node, 'fs.write', {
-      path: `${repoPath}/${params.path}`,
+      root: repoPath,
+      relPath: params.path,
       content: params.content,
     });
   }
@@ -567,8 +602,9 @@ export async function fsRename(params: FsRenameParams): Promise<OkResult> {
   const node = getNode(machine);
   if (!node) throw new Error(`No node connected for machine ${machine}`);
   await sendNodeRequest(node, 'fs.rename', {
-    oldPath: `${repoPath}/${params.oldPath}`,
-    newPath: `${repoPath}/${params.newPath}`,
+    root: repoPath,
+    oldRelPath: params.oldPath,
+    newRelPath: params.newPath,
   });
   return { ok: true };
 }
@@ -586,7 +622,7 @@ export async function fsDelete(params: FsDeleteParams): Promise<OkResult> {
 
   const node = getNode(machine);
   if (!node) throw new Error(`No node connected for machine ${machine}`);
-  await sendNodeRequest(node, 'fs.delete', { path: `${repoPath}/${params.path}` });
+  await sendNodeRequest(node, 'fs.delete', { root: repoPath, relPath: params.path });
   return { ok: true };
 }
 
@@ -615,7 +651,7 @@ export async function fsMkdir(params: FsMkdirParams): Promise<OkResult> {
 
   const node = getNode(machine);
   if (!node) throw new Error(`No node connected for machine ${machine}`);
-  await sendNodeRequest(node, 'fs.mkdir', { path: `${repoPath}/${params.path}` });
+  await sendNodeRequest(node, 'fs.mkdir', { root: repoPath, relPath: params.path });
   return { ok: true };
 }
 
@@ -648,14 +684,16 @@ export async function serveFile(req: IncomingMessage, res: ServerResponse): Prom
     if (isLocal) {
       const targetPath = resolveLocalRepoTargetPath(repoPath, filePath);
       await assertLocalRepoTargetResolvesWithinRepo(targetPath, repoPath);
-      const stats = await stat(targetPath);
-      serveLocalFileWithRange(req, res, targetPath, mime, stats.size);
+      const { handle, stats } = await openLocalFileForServing(targetPath);
+      await serveLocalFileWithRange(req, res, handle, mime, stats.size);
     } else {
       // Remote: read via node fs.readBase64
       const node = getNode(machine);
       if (!node) throw new Error(`No node connected for machine ${machine}`);
-      const remotePath = `${repoPath}/${filePath}`;
-      const result = (await sendNodeRequest(node, 'fs.readBase64', { path: remotePath })) as {
+      const result = (await sendNodeRequest(node, 'fs.readBase64', {
+        root: repoPath,
+        relPath: filePath,
+      })) as {
         content: string;
       };
       const buf = Buffer.from(result.content, 'base64');
@@ -750,8 +788,8 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
         await assertResolvedBasePathIsConcrete(normalizedServeBasePath, realpath);
       }
       await assertResolvedPathWithinBase(targetPathToServe, normalizedServeBasePath, realpath);
-      const stats = await stat(targetPathToServe);
-      serveLocalFileWithRange(req, res, targetPathToServe, mime, stats.size);
+      const { handle, stats } = await openLocalFileForServing(targetPathToServe);
+      await serveLocalFileWithRange(req, res, handle, mime, stats.size);
     };
 
     if (!recipeRunId) {
@@ -821,8 +859,8 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
           // artifacts dir and could plant a symlink pointing outside the slot
           // root. Mirrors the orchestrator-side serveArtifactFromBase guard.
           await assertResolvedPathWithinBase(slotTarget, slotArtifactsRoot, realpath);
-          const stats = await stat(slotTarget);
-          serveLocalFileWithRange(req, res, slotTarget, mime, stats.size);
+          const { handle, stats } = await openLocalFileForServing(slotTarget);
+          await serveLocalFileWithRange(req, res, handle, mime, stats.size);
           return;
         }
         const node = getNode(machine);
@@ -833,27 +871,11 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
           slotRelativePath,
         );
         if (!remoteTargetPath) throw new Error('Path traversal not allowed');
-        await assertResolvedPathWithinBase(
-          remoteTargetPath,
-          normalizedRemoteBasePath,
-          async (inputPath) => {
-            const result = (await sendNodeRequest(node, 'fs.realpath', { path: inputPath })) as {
-              path: string;
-            };
-            return result.path;
-          },
-        );
-        const statResult = (await sendNodeRequest(node, 'fs.stat', { path: remoteTargetPath })) as {
-          size: number;
-        };
-        if (statResult.size > MAX_REMOTE_RUN_ARTIFACT_BYTES) {
-          res.writeHead(413, { 'Content-Type': 'text/plain' });
-          res.end(`Remote artifact too large to proxy (${statResult.size} bytes)`);
-          return;
-        }
         const result = (await sendNodeRequest(node, 'fs.readBase64', {
-          path: remoteTargetPath,
-        })) as { content: string };
+          root: normalizedRemoteBasePath,
+          relPath: slotRelativePath,
+          maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+        })) as { content: string; size: number };
         const buffer = Buffer.from(result.content, 'base64');
         serveBufferWithRange(req, res, buffer, mime);
       };
@@ -951,33 +973,11 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
       (error as NodeJS.ErrnoException).code = 'EACCES';
       throw error;
     }
-    await assertResolvedBasePathIsConcrete(normalizedRemoteBasePath, async (inputPath) => {
-      const result = (await sendNodeRequest(node, 'fs.realpath', { path: inputPath })) as {
-        path: string;
-      };
-      return result.path;
-    });
-    await assertResolvedPathWithinBase(
-      remoteTargetPath,
-      normalizedRemoteBasePath,
-      async (inputPath) => {
-        const result = (await sendNodeRequest(node, 'fs.realpath', { path: inputPath })) as {
-          path: string;
-        };
-        return result.path;
-      },
-    );
-    const statResult = (await sendNodeRequest(node, 'fs.stat', { path: remoteTargetPath })) as {
-      size: number;
-    };
-    if (statResult.size > MAX_REMOTE_RUN_ARTIFACT_BYTES) {
-      res.writeHead(413, { 'Content-Type': 'text/plain' });
-      res.end(`Remote artifact too large to proxy (${statResult.size} bytes)`);
-      return;
-    }
-    const result = (await sendNodeRequest(node, 'fs.readBase64', { path: remoteTargetPath })) as {
-      content: string;
-    };
+    const result = (await sendNodeRequest(node, 'fs.readBase64', {
+      root: normalizedRemoteBasePath,
+      relPath: relativePath,
+      maxBytes: MAX_REMOTE_RUN_ARTIFACT_BYTES,
+    })) as { content: string; size: number };
     const buffer = Buffer.from(result.content, 'base64');
     serveBufferWithRange(req, res, buffer, mime);
   } catch (err) {
@@ -991,6 +991,11 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
     }
     if (error.code === 'EACCES') {
       res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end(message);
+      return;
+    }
+    if (error.code === 'EFBIG' || message.includes('exceeds maximum size')) {
+      res.writeHead(413, { 'Content-Type': 'text/plain' });
       res.end(message);
       return;
     }

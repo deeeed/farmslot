@@ -1,16 +1,9 @@
 import { spawn } from 'node:child_process';
 import { platform } from 'node:os';
 
-import type { ExecResult } from '@farmslot/protocol';
+import type { ExecResult, NodeExecParams } from '@farmslot/protocol';
 
 export type { ExecResult };
-
-export interface ExecParams {
-  cmd: string;
-  cwd?: string;
-  timeout?: number;
-  maxBuffer?: number;
-}
 
 export type OutputCallback = (stream: 'stdout' | 'stderr', data: string) => void;
 
@@ -23,9 +16,33 @@ const SHELL = platform() === 'darwin' ? 'zsh' : 'bash';
 // so user-preferred toolchains (asdf/homebrew/nvm) still win on ties.
 const SYSTEM_PATH_FALLBACK = '/usr/sbin:/usr/bin:/sbin:/bin';
 
-export function exec(params: ExecParams, onOutput?: OutputCallback): Promise<ExecResult> {
+let loginPathPromise: Promise<string> | undefined;
+
+export function resolveLoginPath(): Promise<string> {
+  loginPathPromise ??= new Promise((resolve) => {
+    const child = spawn(SHELL, ['-lc', 'printf %s "$PATH"'], {
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let output = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    child.on('error', () => resolve(process.env.PATH ?? ''));
+    child.on('close', (code) => resolve(code === 0 && output ? output : (process.env.PATH ?? '')));
+  });
+  return loginPathPromise;
+}
+
+export async function exec(params: NodeExecParams, onOutput?: OutputCallback): Promise<ExecResult> {
+  const hasCmd = typeof params.cmd === 'string';
+  const hasArgv = Array.isArray(params.argv) && params.argv.length > 0;
+  if (hasCmd === hasArgv) {
+    throw new Error('exec requires exactly one of non-empty argv or cmd');
+  }
+  const loginPath = hasArgv ? await resolveLoginPath() : undefined;
   return new Promise((resolve) => {
-    const { cmd, cwd, timeout, maxBuffer } = params;
+    const { cmd, argv, cwd, timeout, maxBuffer } = params;
     let stdout = '';
     let stderr = '';
     let outputBytes = 0;
@@ -34,7 +51,7 @@ export function exec(params: ExecParams, onOutput?: OutputCallback): Promise<Exe
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     let timeoutEscalation: ReturnType<typeof setTimeout> | undefined;
 
-    const wrapped = `export PATH="$PATH:${SYSTEM_PATH_FALLBACK}"; ${cmd}`;
+    const wrapped = `export PATH="$PATH:${SYSTEM_PATH_FALLBACK}"; ${cmd ?? ''}`;
     // Drop FORCE_COLOR so child shells/tools don't emit ANSI escapes when stdout
     // is a pipe. Critical for shell scripts that match command output verbatim —
     // example-mobile's VisionCamera podspec uses `node --print "require.resolve(...)"`
@@ -44,12 +61,22 @@ export function exec(params: ExecParams, onOutput?: OutputCallback): Promise<Exe
     // gateway-side fix in core/exec.ts.
     const { FORCE_COLOR: _droppedForceColor, ...envNoForceColor } = process.env;
     void _droppedForceColor;
-    const proc = spawn(SHELL, ['-lc', wrapped], {
-      cwd: cwd ?? process.cwd(),
-      env: envNoForceColor,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: timeout != null,
-    });
+    const proc = hasArgv
+      ? spawn(argv![0], argv!.slice(1), {
+          cwd: cwd ?? process.cwd(),
+          env: {
+            ...envNoForceColor,
+            PATH: `${loginPath}:${SYSTEM_PATH_FALLBACK}`,
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: timeout != null,
+        })
+      : spawn(SHELL, ['-lc', wrapped], {
+          cwd: cwd ?? process.cwd(),
+          env: envNoForceColor,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: timeout != null,
+        });
 
     const killProcessTree = (sig: NodeJS.Signals) => {
       if (timeout != null && proc.pid) {

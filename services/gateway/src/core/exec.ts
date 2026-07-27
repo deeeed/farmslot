@@ -54,15 +54,22 @@ export interface ExecOptions {
 // ─── execLocal ───
 // Run a command locally via child_process.spawn.
 // When onOutput is provided, invokes it per chunk (streaming).
-export function execLocal(cmd: string, opts?: ExecOptions): Promise<ExecResult> {
+function execSpawn(command: string | string[], opts?: ExecOptions): Promise<ExecResult> {
   return new Promise((resolve) => {
     const useProcessGroup = opts?.signal != null || opts?.timeout != null;
-    const proc = spawn('bash', ['-c', cmd], {
-      cwd: opts?.cwd,
-      env: LOCAL_ENV,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: useProcessGroup,
-    });
+    const proc = Array.isArray(command)
+      ? spawn(command[0], command.slice(1), {
+          cwd: opts?.cwd,
+          env: LOCAL_ENV,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: useProcessGroup,
+        })
+      : spawn('bash', ['-c', command], {
+          cwd: opts?.cwd,
+          env: LOCAL_ENV,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: useProcessGroup,
+        });
 
     let stdout = '';
     let stderr = '';
@@ -197,6 +204,15 @@ export function execLocal(cmd: string, opts?: ExecOptions): Promise<ExecResult> 
   });
 }
 
+export function execLocal(cmd: string, opts?: ExecOptions): Promise<ExecResult> {
+  return execSpawn(cmd, opts);
+}
+
+export function execFileArgv(argv: string[], opts?: ExecOptions): Promise<ExecResult> {
+  if (argv.length === 0) throw new Error('argv must contain an executable');
+  return execSpawn(argv, opts);
+}
+
 // ─── ExecOnSlotOptions ───
 
 export type ExecOnSlotOptions = ExecOptions;
@@ -229,6 +245,23 @@ export async function execOnSlot(
   // For now, aborting a remote exec clears the activeReruns tracking but the
   // remote process may continue until its timeout expires.
   return nodeExec(slotVars.machine, cmd, cwd, {
+    timeout: opts.timeout,
+    onOutput: opts.onOutput,
+    maxBuffer: opts.maxBuffer,
+  });
+}
+
+export async function execArgvOnSlot(
+  slotVars: SlotVars,
+  argv: string[],
+  opts: ExecOnSlotOptions = {},
+): Promise<ExecResult> {
+  if (argv.length === 0) throw new Error('argv must contain an executable');
+  const cwd = opts.cwd ?? slotVars.remoteRepo;
+  if (isLocal(slotVars.host, slotVars.machine)) {
+    return execFileArgv(argv, { ...opts, cwd });
+  }
+  return nodeExec(slotVars.machine, argv, cwd, {
     timeout: opts.timeout,
     onOutput: opts.onOutput,
     maxBuffer: opts.maxBuffer,

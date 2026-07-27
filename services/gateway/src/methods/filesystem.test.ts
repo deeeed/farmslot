@@ -37,13 +37,17 @@ class FakeNodeWebSocket {
       };
       onReadText?: (params: { path: string }) => { content: string };
       onStat?: (params: { path: string }) => { size: number };
-      onRead?: (params: { path: string }) => { content: string };
+      onRead?: (params: { root: string; relPath: string }) => { content: string; size?: number };
       onRealpath?: (params: { path: string }) => { path: string };
     },
   ) {}
 
   send(raw: string) {
-    const frame = JSON.parse(raw) as { id: string; method: string; params: { path: string } };
+    const frame = JSON.parse(raw) as {
+      id: string;
+      method: string;
+      params: { path: string; root: string; relPath: string };
+    };
     queueMicrotask(() => {
       if (frame.method === 'fs.list') {
         this.listCalls += 1;
@@ -376,14 +380,13 @@ test('serveRunArtifact prefers a recipe package when an omitted recipeRunId poin
 test('serveRunArtifact falls back to the remote slot when a local recipe-run mirror is incomplete', async (t) => {
   await withRemoteRun(t, async ({ runId, liveGroupId, remoteArtifactRoot }) => {
     const fakeWs = new FakeNodeWebSocket({
-      onRealpath: ({ path: requestedPath }) => ({ path: requestedPath }),
-      onStat: ({ path: requestedPath }) => {
-        assert.equal(requestedPath, path.join(remoteArtifactRoot, 'video.mp4'));
-        return { size: 'remote-video'.length };
-      },
-      onRead: ({ path: requestedPath }) => {
-        assert.equal(requestedPath, path.join(remoteArtifactRoot, 'video.mp4'));
-        return { content: Buffer.from('remote-video').toString('base64') };
+      onRead: ({ root, relPath }) => {
+        assert.equal(root, remoteArtifactRoot);
+        assert.equal(relPath, 'video.mp4');
+        return {
+          content: Buffer.from('remote-video').toString('base64'),
+          size: 'remote-video'.length,
+        };
       },
     });
     registerNode('remote-machine', 123, fakeWs as any);
@@ -400,7 +403,8 @@ test('serveRunArtifact falls back to the remote slot when a local recipe-run mir
     await new Promise((resolve) => res.on('finish', resolve));
     assert.equal(res.statusCode, 200);
     assert.equal(res.body, 'remote-video');
-    assert.equal(fakeWs.statCalls, 1);
+    assert.equal(fakeWs.realpathCalls, 0);
+    assert.equal(fakeWs.statCalls, 0);
     assert.equal(fakeWs.readCalls, 1);
   });
 });
@@ -569,6 +573,32 @@ test('fsWrite rejects local symlink escapes from slot repos', async (t) => {
   });
 });
 
+test('gateway fs refuses ordinary reads and writes inside .git', async (t) => {
+  await withLocalSlot(t, async ({ slotId, repoDir }) => {
+    await mkdir(path.join(repoDir, '.git'), { recursive: true });
+    await writeFile(path.join(repoDir, '.git', 'config'), 'original', 'utf-8');
+
+    await assert.rejects(() => fsRead({ slotId, path: '.git/config' }), /\.git/);
+    await assert.rejects(
+      () => fsWrite({ slotId, path: '.git/config', content: 'corrupt' }),
+      /\.git/,
+    );
+  });
+});
+
+test('gateway fs refuses final-component symlinks and follows symlinked directories', async (t) => {
+  await withLocalSlot(t, async ({ slotId, repoDir }) => {
+    await mkdir(path.join(repoDir, 'real-dir'));
+    await writeFile(path.join(repoDir, 'real-dir', 'file.txt'), 'original', 'utf-8');
+    await symlink('real-dir/file.txt', path.join(repoDir, 'file-link'));
+    await symlink('real-dir', path.join(repoDir, 'dir-link'));
+
+    await assert.rejects(() => fsRead({ slotId, path: 'file-link' }));
+    await assert.rejects(() => fsWrite({ slotId, path: 'file-link', content: 'changed' }));
+    assert.equal((await fsRead({ slotId, path: 'dir-link/file.txt' })).content, 'original');
+  });
+});
+
 test('fsDelete rejects local symlink-directory escapes from slot repos', async (t) => {
   await withLocalSlot(t, async ({ slotId, repoDir }) => {
     const outsideDir = await mkdtemp(path.join(tmpdir(), 'farmslot-outside-'));
@@ -600,4 +630,46 @@ test('serveFile rejects local symlink escapes from slot repos', async (t) => {
     assert.equal(res.statusCode, 403);
     assert.match(res.body, /Path traversal not allowed/);
   });
+});
+
+test('serveFile maps node-surfaced EACCES confinement denials to HTTP 403', async (t) => {
+  await mkdir(poolDir, { recursive: true });
+  const slotId = `remote-denial-${Date.now()}`;
+  const poolFile = path.join(poolDir, `${slotId}.json`);
+  await writeFile(
+    poolFile,
+    JSON.stringify({
+      machine: 'remote-denial-machine',
+      project: 'demo-project',
+      platform: 'cli',
+      os: 'linux',
+      host: 'remote.example',
+      ssh_user: 'tester',
+      slots: [{ id: slotId, repo: '/repo', session: 'slot' }],
+    }),
+  );
+  const fakeWs = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      const frame = JSON.parse(raw) as { id: string };
+      queueMicrotask(() =>
+        handleNodeResponse(frame.id, false, undefined, 'EACCES: .git access is not allowed'),
+      );
+    },
+  };
+  registerNode('remote-denial-machine', 1, fakeWs as any);
+  t.after(async () => {
+    unregisterByWs(fakeWs as any);
+    await rm(poolFile, { force: true });
+  });
+
+  const req = {
+    url: `/api/file?slotId=${encodeURIComponent(slotId)}&path=config`,
+    headers: { host: 'localhost' },
+  } as any;
+  const res = new MockResponse();
+  await serveFile(req, res as any);
+
+  assert.equal(res.statusCode, 403);
+  assert.match(res.body, /Path traversal not allowed/);
 });

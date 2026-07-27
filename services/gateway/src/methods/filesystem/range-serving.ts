@@ -1,6 +1,6 @@
 // methods/filesystem/range-serving.ts — MIME and HTTP byte-range serving helpers.
 
-import { createReadStream } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 
@@ -124,16 +124,17 @@ export function serveBufferWithRange(
   res.end(buffer);
 }
 
-export function serveLocalFileWithRange(
+export async function serveLocalFileWithRange(
   req: IncomingMessage,
   res: ServerResponse,
-  filePath: string,
+  fileHandle: FileHandle,
   mime: string,
   size: number,
-): void {
+): Promise<void> {
   const range = parseRequestByteRange(req, size);
   if (range === 'unsatisfiable') {
     sendUnsatisfiableRange(res, size);
+    await fileHandle.close();
     return;
   }
   if (range) {
@@ -142,10 +143,10 @@ export function serveLocalFileWithRange(
       ...byteServingHeaders(mime, length),
       'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
     });
-    createReadStream(filePath, { start: range.start, end: range.end }).pipe(res);
+    fileHandle.createReadStream({ start: range.start, end: range.end, autoClose: true }).pipe(res);
     return;
   }
 
   res.writeHead(200, byteServingHeaders(mime, size));
-  createReadStream(filePath).pipe(res);
+  fileHandle.createReadStream({ autoClose: true }).pipe(res);
 }

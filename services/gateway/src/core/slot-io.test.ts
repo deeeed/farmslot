@@ -31,26 +31,29 @@ class FakeNodeWebSocket {
   ) {}
 
   send(raw: string) {
-    const frame = JSON.parse(raw) as { id: string; method: string; params: { path: string } };
+    const frame = JSON.parse(raw) as {
+      id: string;
+      method: string;
+      params: { path?: string; root?: string; relPath?: string };
+    };
+    const params = {
+      path: frame.params.path ?? path.join(frame.params.root ?? '', frame.params.relPath ?? ''),
+    };
     queueMicrotask(() => {
       if (frame.method === 'fs.exists') {
-        handleNodeResponse(
-          frame.id,
-          true,
-          this.handlers.onExists?.(frame.params) ?? { exists: false },
-        );
+        handleNodeResponse(frame.id, true, this.handlers.onExists?.(params) ?? { exists: false });
         return;
       }
       if (frame.method === 'fs.realpath') {
         handleNodeResponse(
           frame.id,
           true,
-          this.handlers.onRealpath?.(frame.params) ?? { path: frame.params.path },
+          this.handlers.onRealpath?.(params) ?? { path: params.path },
         );
         return;
       }
       if (frame.method === 'fs.list') {
-        handleNodeResponse(frame.id, true, this.handlers.onList?.(frame.params) ?? { entries: [] });
+        handleNodeResponse(frame.id, true, this.handlers.onList?.(params) ?? { entries: [] });
         return;
       }
       if (frame.method === 'fs.readBase64') {
@@ -58,7 +61,7 @@ class FakeNodeWebSocket {
           handleNodeResponse(
             frame.id,
             true,
-            this.handlers.onReadBase64?.(frame.params) ?? { content: '' },
+            this.handlers.onReadBase64?.(params) ?? { content: '' },
           );
         } catch (err) {
           handleNodeResponse(

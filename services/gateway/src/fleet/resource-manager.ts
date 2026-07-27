@@ -29,7 +29,7 @@ import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
 import { getAllNodes, getNode } from './machine-registry.js';
-import { getSlotLocality, sendNodeRequest } from './node-rpc.js';
+import { getSlotLocality, nodeFsPath, sendNodeRequest } from './node-rpc.js';
 import { getCachedFleet, loadFleetStatus } from './state.js';
 
 export function findUnresolvedPlaceholders(expanded: string): string[] {
@@ -1203,6 +1203,6 @@ async function writeSidecarMeta(
   // under a preflight-created runtime dir, but for first-boot edge cases or
   // projects that nest the pidfile deeper, skipping mkdir would ENOENT the
   // fs.write and drop the sidecar.
-  await sendNodeRequest(node, 'fs.mkdir', { path: path.dirname(metaPath) });
-  await sendNodeRequest(node, 'fs.write', { path: metaPath, content });
+  await sendNodeRequest(node, 'fs.mkdir', nodeFsPath(path.dirname(metaPath)));
+  await sendNodeRequest(node, 'fs.write', { ...nodeFsPath(metaPath), content });
 }

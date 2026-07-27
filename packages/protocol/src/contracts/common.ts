@@ -8,6 +8,14 @@ export interface ExecResult {
   exitCode: number;
 }
 
+export interface NodeExecParams {
+  cmd?: string;
+  argv?: string[];
+  cwd?: string;
+  timeout?: number;
+  maxBuffer?: number;
+}
+
 export interface CommandOutput {
   stdout: string;
   stderr: string;

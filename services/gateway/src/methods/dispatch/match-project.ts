@@ -4,7 +4,7 @@ import {
   parseGitHubRef,
 } from '@farmslot/protocol';
 
-import { execLocal } from '../../core/index.js';
+import { execFileArgv } from '../../core/index.js';
 import { loadProjectConfigs } from '../../fleet/state.js';
 
 import { normalizeTicketRef } from './ticket-ref.js';
@@ -74,9 +74,18 @@ export async function dispatchMatchProject(
 
     for (const proj of withRepo) {
       try {
-        const result = await execLocal(
-          `gh pr view ${prNum} --repo ${proj.ci.repo} --json number --jq .number 2>/dev/null`,
-        );
+        const result = await execFileArgv([
+          'gh',
+          'pr',
+          'view',
+          prNum,
+          '--repo',
+          proj.ci.repo,
+          '--json',
+          'number',
+          '--jq',
+          '.number',
+        ]);
         if (result.exitCode === 0 && result.stdout.trim() === prNum) {
           return {
             project: proj.name,
@@ -100,9 +109,19 @@ export async function dispatchMatchProject(
     const withRepo = configs.filter((p) => p.ci?.repo);
     for (const proj of withRepo) {
       try {
-        const result = await execLocal(
-          `gh pr list --head ${JSON.stringify(ticketOrPr)} --repo ${proj.ci.repo} --json number --jq '.[0].number' 2>/dev/null`,
-        );
+        const result = await execFileArgv([
+          'gh',
+          'pr',
+          'list',
+          '--head',
+          ticketOrPr,
+          '--repo',
+          proj.ci.repo,
+          '--json',
+          'number',
+          '--jq',
+          '.[0].number',
+        ]);
         const prNum = result.stdout.trim();
         if (result.exitCode === 0 && /^\d+$/.test(prNum)) {
           return {

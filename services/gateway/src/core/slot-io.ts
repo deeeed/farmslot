@@ -18,7 +18,7 @@ import path from 'node:path';
 import { type FSWatcher, watch } from 'chokidar';
 
 import { getNode } from '../fleet/machine-registry.js';
-import { sendNodeRequest } from '../fleet/node-rpc.js';
+import { nodeFsPath, sendNodeRequest } from '../fleet/node-rpc.js';
 
 import { isLocal } from './exec.js';
 
@@ -89,7 +89,7 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
     return readFile(filePath, 'utf-8');
   }
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.read', {
-    path: filePath,
+    ...nodeFsPath(filePath),
   })) as { content: string };
   return result.content;
 }
@@ -97,7 +97,7 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
 export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise<string> {
   if (local(ctx)) return realpath(filePath);
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.realpath', {
-    path: filePath,
+    ...nodeFsPath(filePath),
   })) as { path: string };
   return result.path;
 }
@@ -109,7 +109,7 @@ export async function slotFileExists(ctx: SlotLocality, filePath: string): Promi
     return existsSync(filePath);
   }
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.exists', {
-    path: filePath,
+    ...nodeFsPath(filePath),
   })) as { exists: boolean };
   return result.exists;
 }
@@ -121,7 +121,7 @@ export async function slotListDir(ctx: SlotLocality, dirPath: string): Promise<s
     return readdir(dirPath);
   }
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.list', {
-    path: dirPath,
+    ...nodeFsPath(dirPath),
   })) as { entries: Array<{ name: string }> };
   return result.entries.map((e) => e.name);
 }
@@ -137,7 +137,10 @@ export async function slotWriteFile(
     await fsWriteFile(filePath, data, 'utf-8');
     return;
   }
-  await sendNodeRequest(requireNode(ctx.machine), 'fs.write', { path: filePath, content: data });
+  await sendNodeRequest(requireNode(ctx.machine), 'fs.write', {
+    ...nodeFsPath(filePath),
+    content: data,
+  });
 }
 
 export interface SlotWriteFileEntry {
@@ -166,7 +169,11 @@ export async function slotWriteFiles(
     }
     return;
   }
-  await sendNodeRequest(requireNode(ctx.machine), 'fs.writeFiles', { baseDir, files });
+  await sendNodeRequest(requireNode(ctx.machine), 'fs.writeFiles', {
+    root: path.dirname(baseDir),
+    relPath: path.basename(baseDir),
+    files,
+  });
 }
 
 // ─── slotCopyFile ───
@@ -183,7 +190,7 @@ export async function slotCopyFile(
     return;
   }
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.readBase64', {
-    path: remotePath,
+    ...nodeFsPath(remotePath),
   })) as { content: string };
   await fsWriteFile(localPath, Buffer.from(result.content, 'base64'));
 }
@@ -298,7 +305,7 @@ export async function slotCopyDir(
 
   const node = requireNode(ctx.machine);
   await assertConcreteDirRoot(remoteDir, async (inputPath) => {
-    const result = (await sendNodeRequest(node, 'fs.realpath', { path: inputPath })) as {
+    const result = (await sendNodeRequest(node, 'fs.realpath', nodeFsPath(inputPath))) as {
       path: string;
     };
     return result.path;
@@ -317,7 +324,7 @@ export async function slotCopyDir(
     if (depth > MAX_ARTIFACT_TREE_DEPTH) {
       throw new Error(`slotCopyDir exceeded max recursion depth under ${sourceDir}`);
     }
-    const listResult = (await sendNodeRequest(node, 'fs.list', { path: sourceDir })) as {
+    const listResult = (await sendNodeRequest(node, 'fs.list', nodeFsPath(sourceDir))) as {
       entries: Array<{ name: string; type: string }>;
     };
 
@@ -339,9 +346,11 @@ export async function slotCopyDir(
       }
       if (entry.type === 'file') {
         try {
-          const fileResult = (await sendNodeRequest(node, 'fs.readBase64', {
-            path: sourcePath,
-          })) as { content: string };
+          const fileResult = (await sendNodeRequest(
+            node,
+            'fs.readBase64',
+            nodeFsPath(sourcePath),
+          )) as { content: string };
           await fsWriteFile(targetPath, Buffer.from(fileResult.content, 'base64'));
         } catch (err) {
           const entryError = new SlotCopyDirEntryError(sourcePath, targetPath, err);

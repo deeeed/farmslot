@@ -1,8 +1,5 @@
 // methods/git.ts — git.status, git.diff, git.log, git.show, git.files, git.stage, git.unstage, git.discard
 
-import { execFile as execFileCb } from 'node:child_process';
-import { promisify } from 'node:util';
-
 import type {
   BranchDiffStatus,
   CommandOutput,
@@ -26,10 +23,9 @@ import type {
   OkResult,
 } from '@farmslot/protocol';
 
-import { getSlotLocality, nodeExec } from '../fleet/node-rpc.js';
+import { loadSlotVars } from '../core/config.js';
+import { execArgvOnSlot } from '../core/exec.js';
 import { loadPoolConfigs } from '../fleet/state.js';
-
-const execFile = promisify(execFileCb);
 
 async function resolveRepoPath(slotId: string): Promise<string> {
   const pools = await loadPoolConfigs();
@@ -46,21 +42,17 @@ async function resolveRepoPath(slotId: string): Promise<string> {
 /**
  * Run a git command for a slot — locally via execFile, or remotely via agent exec.
  */
-async function gitExec(
+export async function gitExec(
   slotId: string,
   args: string[],
   opts?: { maxBuffer?: number },
 ): Promise<CommandOutput> {
   const repoPath = await resolveRepoPath(slotId);
-  const { isLocal, machine } = await getSlotLocality(slotId);
-
-  if (isLocal) {
-    return execFile('git', args, { cwd: repoPath, maxBuffer: opts?.maxBuffer ?? 1024 * 1024 });
-  }
-
-  // Remote: run via agent exec
-  const cmd = `git ${args.map((a) => (a.includes(' ') || a.includes('|') ? `'${a}'` : a)).join(' ')}`;
-  const result = await nodeExec(machine, cmd, repoPath);
+  const slotVars = await loadSlotVars(slotId);
+  const result = await execArgvOnSlot(slotVars, ['git', ...args], {
+    cwd: repoPath,
+    maxBuffer: opts?.maxBuffer ?? 1024 * 1024,
+  });
   if (result.exitCode !== 0 && result.stderr) {
     throw new Error(result.stderr.trim());
   }

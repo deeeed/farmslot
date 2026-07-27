@@ -1,8 +1,10 @@
 // node-rpc.ts — send RPC requests to connected nodes and await responses
 
+import path from 'node:path';
+
 import { WebSocket } from 'ws';
 
-import type { ExecResult } from '@farmslot/protocol';
+import type { ExecResult, NodeExecParams } from '@farmslot/protocol';
 
 import { isLocal, loadSlotVars } from '../core/index.js';
 
@@ -39,7 +41,11 @@ export function handleNodeResponse(
   if (ok) {
     entry.resolve(payload);
   } else {
-    entry.reject(new Error(errorMsg || 'Node error'));
+    const message = errorMsg || 'Node error';
+    const error = new Error(message) as NodeJS.ErrnoException;
+    const codeMatch = message.match(/^([A-Z][A-Z0-9_]+):/);
+    if (codeMatch) error.code = codeMatch[1];
+    entry.reject(error);
   }
 }
 
@@ -145,30 +151,34 @@ export interface NodeExecOpts {
   maxBuffer?: number;
 }
 
+export function nodeFsPath(filePath: string): { root: string; relPath: string } {
+  return { root: path.dirname(filePath), relPath: path.basename(filePath) };
+}
+
 /**
  * Run a command on a remote machine via its node's exec handler.
  * Retries once if the node disconnects mid-request (e.g. gateway reload).
  */
 export async function nodeExec(
   machine: string,
-  cmd: string,
+  command: string | string[],
   cwd?: string,
   opts?: NodeExecOpts,
 ): Promise<ExecResult> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const node = await waitForNode(machine);
     try {
-      return (await sendNodeRequestStreaming(
-        node,
-        'exec',
-        {
-          cmd,
-          cwd,
-          ...(opts?.timeout != null ? { timeout: opts.timeout } : {}),
-          ...(opts?.maxBuffer != null ? { maxBuffer: opts.maxBuffer } : {}),
-        },
-        { timeout: opts?.timeout, onOutput: opts?.onOutput },
-      )) as ExecResult;
+      const commandParams = Array.isArray(command) ? { argv: command } : { cmd: command };
+      const params: NodeExecParams = {
+        ...commandParams,
+        ...(cwd != null ? { cwd } : {}),
+        ...(opts?.timeout != null ? { timeout: opts.timeout } : {}),
+        ...(opts?.maxBuffer != null ? { maxBuffer: opts.maxBuffer } : {}),
+      };
+      return (await sendNodeRequestStreaming(node, 'exec', params, {
+        timeout: opts?.timeout,
+        onOutput: opts?.onOutput,
+      })) as ExecResult;
     } catch (err) {
       const msg = (err as Error).message;
       if (attempt === 0 && (msg.includes('not open') || msg.includes('timeout'))) {

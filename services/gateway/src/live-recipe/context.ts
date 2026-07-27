@@ -32,7 +32,7 @@ import {
 } from '../core/recipe-artifacts.js';
 import { MAX_ARTIFACT_TREE_DEPTH, slotReadFile } from '../core/slot-io.js';
 import { getNode } from '../fleet/machine-registry.js';
-import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
+import { getSlotLocality, nodeFsPath, sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
 
 import {
@@ -65,7 +65,7 @@ async function sha256SlotFile(
   fullPath: string,
 ): Promise<{ sha256: string; sizeBytes: number }> {
   try {
-    const hashResult = (await sendNodeRequest(node, 'fs.hash', { path: fullPath })) as {
+    const hashResult = (await sendNodeRequest(node, 'fs.hash', nodeFsPath(fullPath))) as {
       sha256: string;
       size: number;
     };
@@ -76,7 +76,7 @@ async function sha256SlotFile(
       throw error;
     }
     const fileResult = (await sendNodeRequest(node, 'fs.readBase64', {
-      path: fullPath,
+      ...nodeFsPath(fullPath),
     })) as { content: string; size?: number };
     const bytes = Buffer.from(fileResult.content, 'base64');
     return {
@@ -290,7 +290,7 @@ async function scanSlotArtifactRoot(
     async function walk(dirPath: string, depth = 0): Promise<void> {
       if (depth > MAX_ARTIFACT_TREE_DEPTH)
         throw new Error(`slot artifact scan exceeded max depth under ${dirPath}`);
-      const listResult = (await sendNodeRequest(connectedNode, 'fs.list', { path: dirPath })) as {
+      const listResult = (await sendNodeRequest(connectedNode, 'fs.list', nodeFsPath(dirPath))) as {
         entries: Array<{ name: string; type: string; size?: number }>;
       };
       for (const entry of listResult.entries) {
