@@ -32,6 +32,11 @@ export default [
       '.claude/**',
       '.agent/**',
       '.artifact-cache/**',
+      // Vendored clones of other repos (ensure-skills-local.sh caches the skills
+      // CLI here inside worker repos). Their files belong to another project and
+      // must never be autofixed: a `lint:fix` here rewrote three files in a
+      // MetaMask/skills checkout.
+      '.skills-cache/**',
       '**/.yarn/**',
       '**/node_modules/**',
       '**/dist/**',

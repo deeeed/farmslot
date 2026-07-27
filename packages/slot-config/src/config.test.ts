@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   farmslotRoot,
   getOrchestratorTaskRoot,
+  getProjectField,
   isHttpFetchForbiddenPort,
   isIgnoredPoolFile,
   isMockModeProject,
@@ -571,4 +572,30 @@ test('isIgnoredPoolFile hides the demo pool unless FARMSLOT_DEMO_POOL=1', () => 
     if (prev === undefined) delete process.env.FARMSLOT_DEMO_POOL;
     else process.env.FARMSLOT_DEMO_POOL = prev;
   }
+});
+
+test('numeric and boolean project fields reach shell callers', () => {
+  // These are read via `farmslot internal project-field` and then folded into
+  // `${VAR:-<default>}`. Returning '' for a number meant every configured
+  // numeric value silently lost to the hardcoded default —
+  // metamask-extension-farm sets timeouts.build_manifest_s=600 and preflight
+  // used 180 for every build, then reported the resulting timeout as "a real
+  // source/build error".
+  const projectJson = {
+    name: 'demo-farm',
+    timeouts: { build_manifest_s: 600, zero_s: 0 },
+    flags: { enabled: true, disabled: false },
+    nested: { obj: { a: 1 }, list: [1, 2] },
+  } as unknown as Parameters<typeof getProjectField>[0];
+
+  assert.equal(getProjectField(projectJson, 'timeouts.build_manifest_s'), '600');
+  assert.equal(getProjectField(projectJson, 'timeouts.zero_s'), '0');
+  assert.equal(getProjectField(projectJson, 'flags.enabled'), 'true');
+  assert.equal(getProjectField(projectJson, 'flags.disabled'), 'false');
+  assert.equal(getProjectField(projectJson, 'name'), 'demo-farm');
+
+  // Objects and arrays have no single shell value and stay empty.
+  assert.equal(getProjectField(projectJson, 'nested.obj'), '');
+  assert.equal(getProjectField(projectJson, 'nested.list'), '');
+  assert.equal(getProjectField(projectJson, 'missing.path'), '');
 });
