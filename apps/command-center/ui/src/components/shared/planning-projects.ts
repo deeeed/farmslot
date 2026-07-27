@@ -1,17 +1,7 @@
-const GLOBAL_PLANNING_PROJECT = 'global';
-const UNASSIGNED_PLANNING_PROJECT = 'unassigned';
-
-export function isConcretePlanningProject(project: string): boolean {
-  const normalized = project.trim();
-  return (
-    Boolean(normalized) &&
-    normalized !== GLOBAL_PLANNING_PROJECT &&
-    normalized !== UNASSIGNED_PLANNING_PROJECT
-  );
-}
+import { isConcreteRoadmapProject } from '@farmslot/protocol';
 
 export function concretePlanningProjects(projects: readonly string[]): string[] {
-  return [...new Set(projects.map((project) => project.trim()).filter(isConcretePlanningProject))];
+  return [...new Set(projects.map((project) => project.trim()).filter(isConcreteRoadmapProject))];
 }
 
 export function syncedDraftProject(input: {

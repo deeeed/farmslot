@@ -23,6 +23,7 @@ import type {
 import {
   DEFAULT_ROADMAP_REFINEMENT_MODEL,
   DEFAULT_ROADMAP_REFINEMENT_RUNNER,
+  isConcreteRoadmapProject,
   Methods,
   ROADMAP_ITEM_STAGES,
 } from '@farmslot/protocol';
@@ -52,7 +53,6 @@ import {
 } from '../shared/planning-controls.js';
 import {
   concretePlanningProjects,
-  isConcretePlanningProject,
   syncedDraftProject,
   syncedDraftTargetProjects,
 } from '../shared/planning-projects.js';
@@ -769,7 +769,7 @@ export class RoadmapPanel extends LitElement {
         this._newProject = syncedDraftProject({
           currentProject: this._newProject,
           availableProjects: this._projects,
-          globalProjects: state.globalFilters.projects,
+          globalProjects,
           fallbackProjects: ['unassigned'],
         });
       }
@@ -796,7 +796,7 @@ export class RoadmapPanel extends LitElement {
   }
 
   private get _targetProjectOptions(): string[] {
-    return this._projects.filter(isConcretePlanningProject);
+    return this._projects.filter(isConcreteRoadmapProject);
   }
 
   private _newTitleForSubmit(): string {
@@ -1233,7 +1233,7 @@ export class RoadmapPanel extends LitElement {
       {
         project:
           this._editTargetProjects[0] ??
-          (this._selected && isConcretePlanningProject(this._selected.project)
+          (this._selected && isConcreteRoadmapProject(this._selected.project)
             ? this._selected.project
             : ''),
         title: this._selected?.title ?? '',
@@ -1873,7 +1873,7 @@ export class RoadmapPanel extends LitElement {
             'roadmap-new-target-projects',
             this._newTargetProjects,
             (projects) => {
-              this._newTargetProjectsTouched = true;
+              this._newTargetProjectsTouched = projects.length > 0;
               this._newTargetProjects = projects;
             },
           )}

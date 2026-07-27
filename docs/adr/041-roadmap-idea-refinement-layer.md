@@ -189,7 +189,7 @@ The user attaches tags and filters roadmap items by project, stage, tag, and tex
 
 Promotion is the only write path from roadmap to backlog markdown specs.
 
-Promotion to backlog is blocked until every backlog spec has a concrete target project matching a `project.json` `name`. A single-project item may default the target to `RoadmapItem.project` when that value is concrete. A `global` or `unassigned` roadmap owner may still promote when explicit concrete `targetProjects` are present.
+Promotion to backlog is blocked until every backlog spec has a concrete target project matching a `project.json` `name`. A single-project item may default the target to `RoadmapItem.project` when that value is concrete. A `global` or `unassigned` owner may promote without preset targets when every spec explicitly selects a concrete project.
 
 A refined roadmap item can promote to backlog as:
 

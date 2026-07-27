@@ -12,6 +12,18 @@ export type RoadmapItemStage = (typeof ROADMAP_ITEM_STAGES)[number];
 export const ROADMAP_SOURCE_KINDS = ['manual', 'import', 'agent', 'external'] as const;
 export type RoadmapSourceKind = (typeof ROADMAP_SOURCE_KINDS)[number];
 
+export const ROADMAP_GLOBAL_PROJECT = 'global';
+export const ROADMAP_UNASSIGNED_PROJECT = 'unassigned';
+
+export function isConcreteRoadmapProject(project: string): boolean {
+  const normalized = project.trim();
+  return (
+    Boolean(normalized) &&
+    normalized !== ROADMAP_GLOBAL_PROJECT &&
+    normalized !== ROADMAP_UNASSIGNED_PROJECT
+  );
+}
+
 export interface RoadmapSource {
   kind: RoadmapSourceKind;
   ref?: string;

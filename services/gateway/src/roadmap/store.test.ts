@@ -511,8 +511,8 @@ test('roadmap store lists, reads, and saves promotion draft attachments', async 
   );
 });
 
-test('global roadmap refinement uses a project-neutral draft policy', async () => {
-  const { saveRoadmapItem, startRoadmapRefinement } = await store();
+test('built-in roadmap refinement uses a project-neutral draft policy', async () => {
+  const { __roadmapStoreTest, saveRoadmapItem } = await store();
   const created = await saveRoadmapItem({
     item: {
       project: 'global',
@@ -523,16 +523,11 @@ test('global roadmap refinement uses a project-neutral draft policy', async () =
     },
   });
 
-  const refined = await startRoadmapRefinement({
-    itemId: created.item.id,
-    expectedHash: created.item.fileHash,
-    launch: false,
-  });
-  const prompt = await readFile(path.join(farmslotRoot, refined.promptPath), 'utf-8');
+  const prompt = __roadmapStoreTest.renderBuiltInRefinementPrompt(created.item);
 
-  assert.match(prompt, /Draft count follows \*\*deployable objectives\*\*/);
+  assert.match(prompt, /draft count follows deployable objectives/);
   assert.match(prompt, /Cross-project fan-out.*each project needs distinct code or\s+dispatch/s);
-  assert.doesNotMatch(prompt, /this prompt = farmslot-farm|Farmslot framework prompt/);
+  assert.doesNotMatch(prompt, /farmslot-farm/);
 });
 
 test('roadmap refinement runner command clears ambient tmux context', async () => {
@@ -786,6 +781,33 @@ test('roadmap promotion accepts an explicit project for an unscoped global item'
 
   assert.equal(promoted.backlogItems[0]?.project, 'farmslot-farm');
   assert.equal(promoted.roadmapItem.promotion?.[0]?.project, 'farmslot-farm');
+});
+
+test('roadmap promotion accepts an explicit project for an unassigned item', async () => {
+  const { promoteRoadmapItem, saveRoadmapItem } = await store();
+  const roadmap = await saveRoadmapItem({
+    item: {
+      project: 'unassigned',
+      targetProjects: [],
+      title: 'Unassigned idea',
+      stage: 'refined',
+      body: refinedBody('The operator chooses the implementation project during promotion.'),
+    },
+  });
+
+  const promoted = await promoteRoadmapItem({
+    itemId: roadmap.item.id,
+    expectedHash: roadmap.item.fileHash,
+    specs: [
+      {
+        project: 'farmslot-farm',
+        title: 'Implement the idea',
+        body: '## Context\n\nScoped work.\n\n## Acceptance Criteria\n\n- Change ships.',
+      },
+    ],
+  });
+
+  assert.equal(promoted.backlogItems[0]?.project, 'farmslot-farm');
 });
 
 test('roadmap promotion rejects non-concrete projects for an unscoped global item', async () => {

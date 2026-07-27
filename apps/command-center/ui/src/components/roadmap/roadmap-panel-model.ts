@@ -1,11 +1,10 @@
 import type { PromotionDraft, RoadmapItem } from '@farmslot/protocol';
 import {
+  isConcreteRoadmapProject,
   parsePromotionDraftAttachment,
   parsePromotionDraftsFromRoadmapBody,
   promotionDraftAttachment,
 } from '@farmslot/protocol';
-
-import { isConcretePlanningProject } from '../shared/planning-projects.js';
 
 export type { PromotionDraft, PromotionDraftAttachment } from '@farmslot/protocol';
 export {
@@ -19,6 +18,8 @@ export function filterRoadmapItemsByGlobalProjects(
   globalProjects: readonly string[],
 ): RoadmapItem[] {
   const projects = new Set(globalProjects);
+  // Preserve identity for the common no-filter path so Lit does not receive a
+  // new list solely because global filters were cleared.
   if (projects.size === 0) return items;
 
   return items.filter((item) => {
@@ -55,7 +56,7 @@ export function promotionDraftsFromRoadmapItem(item: RoadmapItem): PromotionDraf
 
   const targets = item.targetProjects ?? [];
   const projects =
-    targets.length > 0 ? targets : isConcretePlanningProject(item.project) ? [item.project] : [''];
+    targets.length > 0 ? targets : isConcreteRoadmapProject(item.project) ? [item.project] : [''];
   return projects.map((project) => ({
     project,
     title: item.title,
