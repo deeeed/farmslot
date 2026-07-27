@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- **BREAKING:** carry optional execution-template descriptions, keep catalog options effective-only (removing unused `shadowedBy`), and let `config.templatePreview` identify an exact source-backed template.
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.14.0 - 2026-07-27
+
+- **BREAKING:** carry optional execution-template descriptions, keep catalog options effective-only (removing unused `shadowedBy`), and let `config.templatePreview` identify an exact source-backed template
 
 ## 0.13.0 - 2026-07-26
 
