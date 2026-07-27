@@ -35,6 +35,7 @@ import type {
   DispatchConfigEditorControls,
 } from '../shared/dispatch-config-editor.js';
 import { summarizeBacklogDispatchConfig } from '../shared/dispatch-config-summary.js';
+import { labelWithRef } from '../shared/item-ref.js';
 import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
 
@@ -183,9 +184,11 @@ export class WorkGraphPanel extends LitElement {
 
   private graphTitleForNode(backlogById: Map<string, BacklogItem>, node: WorkNode): string {
     if (node.kind === 'reference') return node.reference?.title ?? node.id;
-    return node.backlogItemId
-      ? (backlogById.get(node.backlogItemId)?.title ?? node.backlogItemId)
-      : node.id;
+    if (!node.backlogItemId) return node.id;
+    const item = backlogById.get(node.backlogItemId);
+    // Show the item's own ref, never the opaque backlogItemId uuid — the ref is
+    // what the CLI, specs and conversation all use to name this node.
+    return labelWithRef(item?.title, item?.sourceRef) || node.backlogItemId;
   }
 
   private projectForNode(backlogById: Map<string, BacklogItem>, node: WorkNode): string {

@@ -673,7 +673,6 @@ export class BacklogPanel extends LitElement {
         flex: 1 1 110px;
       }
       .config-check {
-        grid-template-columns: auto minmax(0, 1fr);
         align-items: center;
         flex: 2 1 260px;
       }
@@ -705,7 +704,9 @@ export class BacklogPanel extends LitElement {
         cursor: pointer;
         display: grid;
         gap: 8px;
-        grid-template-columns: auto minmax(0, 1fr);
+        /* badge, item ref, title — the ref is its own column so the title keeps
+           the remaining width and the row stays a single line. */
+        grid-template-columns: auto auto minmax(0, 1fr);
         min-height: 28px;
         padding: 4px 8px;
       }
@@ -731,6 +732,14 @@ export class BacklogPanel extends LitElement {
       }
       .title {
         font-weight: 700;
+      }
+      /* The id people actually say out loud (MANUAL-000055, TAT-1234). Monospace
+         and dimmed so it reads as an identifier without competing with the title. */
+      .item-ref {
+        color: ${unsafeCSS(colors.textSecondary)};
+        font-family: ${unsafeCSS(fonts.mono)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        white-space: nowrap;
       }
       .badge.failed,
       .error {
@@ -2338,6 +2347,7 @@ export class BacklogPanel extends LitElement {
       }}
     >
       ${renderPlanningBadge(item.status, statusTone)}
+      <span class="item-ref" title=${item.sourceRef}>${item.sourceRef}</span>
       <div class="title" title=${item.title}>${item.title}</div>
     </div>`;
   }
@@ -2484,7 +2494,8 @@ export class BacklogPanel extends LitElement {
           </button>
         </div>
         <p class="muted detail-meta">
-          ${item.project} · ${item.flowType} · ${item.sourceKind}:${item.sourceRef}
+          <strong class="item-ref">${item.sourceRef}</strong> · ${item.project} · ${item.flowType} ·
+          ${item.sourceKind}
         </p>
         <div class="detail-badges">
           ${renderPlanningBadge(

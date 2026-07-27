@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- fix(ui): show the backlog/roadmap item ref (`MANUAL-000055`, a Jira key, a PR ref) next to the title in the backlog list and detail, work-graph nodes, the execution overlay and the roadmap composer. Every surface previously rendered the ref only as a fallback for a missing title, so it disappeared exactly when the item was well-formed — and work-graph nodes fell back to the opaque backlogItemId uuid rather than the ref the CLI and specs actually use.
 - fix(debug-chrome): reuse a CDP session only when the browser holding the profile also owns the listening socket at the probed address; refuse otherwise instead of driving an unrelated browser. `cdp.mjs` connects to that same address (`FARMSLOT_CDP_HOST`, default 127.0.0.1).
 - feat(debug-chrome): add `--slot/--pool/--port/--profile/--url/--headless/--timeout/--help`, and key the default profile by port so slots with different CDP ports can run concurrently.
 - Align embedded recipes and actions with the strict Action Manifest v1 contract.

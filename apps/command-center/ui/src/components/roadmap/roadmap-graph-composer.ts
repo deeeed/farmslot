@@ -16,6 +16,7 @@ import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { labelWithRef } from '../shared/item-ref.js';
 import {
   planningBadgeStyles,
   renderPlanningBadge,
@@ -211,7 +212,8 @@ export class RoadmapGraphComposer extends LitElement {
   }
 
   private backlogTitle(itemId: string): string {
-    return this.backlogItems.find((item) => item.id === itemId)?.title ?? itemId;
+    const item = this.backlogItems.find((candidate) => candidate.id === itemId);
+    return labelWithRef(item?.title, item?.sourceRef) || itemId;
   }
 
   private availableBacklogItems(graph: WorkGraphProjection | null): BacklogItem[] {

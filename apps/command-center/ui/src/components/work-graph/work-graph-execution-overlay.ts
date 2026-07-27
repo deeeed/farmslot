@@ -10,6 +10,8 @@ import type {
 } from '@farmslot/protocol';
 import { isTerminalRunStatus } from '@farmslot/protocol';
 
+import { labelWithRef } from '../shared/item-ref.js';
+
 export type WorkGraphExecutionStatus =
   | 'reference'
   | 'dependency-blocked'
@@ -106,7 +108,7 @@ export interface SlotPendingWork {
 
 function titleForNode(node: WorkNode, backlogItem?: BacklogItem): string {
   if (node.kind === 'reference') return node.reference?.title ?? node.id;
-  return backlogItem?.title ?? node.backlogItemId ?? node.id;
+  return labelWithRef(backlogItem?.title, backlogItem?.sourceRef) || node.backlogItemId || node.id;
 }
 
 function projectForNode(
