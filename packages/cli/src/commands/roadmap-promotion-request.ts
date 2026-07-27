@@ -73,10 +73,7 @@ export async function createRoadmapPromotionRequest(
   const promotionRoute = withRouteParam(route, 'promote', '1');
   // Count materialized drafts, not targetProjects. Targets are the allowed set;
   // one framework ticket can list many targets by mistake and still be one draft.
-  const expectedBacklogItems = Math.max(
-    1,
-    draftSpecPaths.length > 0 ? draftSpecPaths.length : targetProjects.length,
-  );
+  const expectedBacklogItems = Math.max(1, draftSpecPaths.length);
   const decisionDir = path.join(
     root,
     'projects',

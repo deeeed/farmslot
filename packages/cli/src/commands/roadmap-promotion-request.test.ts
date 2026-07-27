@@ -158,6 +158,28 @@ test('createRoadmapPromotionRequest counts drafts not over-broad targetProjects'
   assert.equal(raw.payload.draftSpecPaths.length, 1);
 });
 
+test('createRoadmapPromotionRequest does not use targets as a draft-count fallback', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-roadmap-promotion-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const result = await createRoadmapPromotionRequest(
+    root,
+    {
+      itemId: 'ri_unrefined',
+      title: 'Unrefined roadmap item',
+      targetProjects:
+        'audiolab-farm,echobridge-farm,farmslot-farm,metamask-core-farm,metamask-extension-farm,metamask-mobile-farm',
+    },
+    new Date('2026-07-28T00:00:00.000Z'),
+  );
+
+  const raw = JSON.parse(await readFile(result.decisionPath, 'utf8'));
+  assert.equal(raw.title, 'Review roadmap promotion (1 backlog item)');
+  assert.equal(raw.payload.expectedBacklogItems, 1);
+  assert.equal(raw.actions[0]?.label, 'Review 1 draft');
+  assert.deepEqual(raw.payload.draftSpecPaths, []);
+});
+
 test('createRoadmapPromotionRequest rejects path traversal item ids before draft cleanup', async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-roadmap-promotion-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

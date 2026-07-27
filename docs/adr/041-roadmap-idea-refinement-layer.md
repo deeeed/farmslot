@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 **Date:** 2026-06-28
-**Updated:** 2026-07-03 (multi-project refinement/promotion draft attachment amendment)
+**Updated:** 2026-07-28 (capture fan-out and promotion draft-count policy amendment)
 **Relates to:** [ADR-005](005-state-persistence.md), [ADR-011](011-structured-task-tracking.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-027](027-unified-gateway-state.md), [ADR-039](039-run-portable-bundles.md), [ADR-040](040-work-graph-orchestration.md), PR #95 backlog intake
 
 ## Context

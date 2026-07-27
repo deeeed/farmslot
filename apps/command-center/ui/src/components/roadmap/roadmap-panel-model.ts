@@ -17,18 +17,20 @@ function concreteProject(project: string): boolean {
 }
 
 export function filterRoadmapItemsByGlobalProjects(
-  items: readonly RoadmapItem[],
+  items: RoadmapItem[],
   globalProjects: readonly string[],
 ): RoadmapItem[] {
   const projects = new Set(globalProjects);
-  if (projects.size === 0) return [...items];
+  if (projects.size === 0) return items;
 
-  return items.filter(
-    (item) =>
-      (projects.size > 1 && item.project === 'global') ||
+  return items.filter((item) => {
+    const targets = item.targetProjects ?? [];
+    return (
       projects.has(item.project) ||
-      (item.targetProjects ?? []).some((project) => projects.has(project)),
-  );
+      targets.some((project) => projects.has(project)) ||
+      (item.project === 'global' && targets.length === 0)
+    );
+  });
 }
 
 export function defaultSpecBody(item: RoadmapItem | null): string {

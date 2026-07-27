@@ -9,7 +9,7 @@ import {
   promotionDraftAttachment,
 } from './roadmap-panel-model.js';
 
-test('multi-project filters keep newly captured global items visible', () => {
+test('project filters keep unscoped global items visible', () => {
   const captured = {
     id: 'ri_global_capture',
     kind: 'roadmap-item',
@@ -25,6 +25,7 @@ test('multi-project filters keep newly captured global items visible', () => {
     fileHash: 'global-hash',
   } satisfies RoadmapItem;
 
+  assert.deepEqual(filterRoadmapItemsByGlobalProjects([captured], ['farmslot-farm']), [captured]);
   assert.deepEqual(
     filterRoadmapItemsByGlobalProjects(
       [
@@ -42,6 +43,37 @@ test('multi-project filters keep newly captured global items visible', () => {
     ),
     [captured],
   );
+});
+
+test('project filters only show targeted global items when a target matches', () => {
+  const targeted = {
+    id: 'ri_targeted_global',
+    kind: 'roadmap-item',
+    project: 'global',
+    targetProjects: ['metamask-mobile-farm'],
+    title: 'Mobile follow-up',
+    stage: 'rough',
+    source: { kind: 'manual' },
+    body: 'Raw idea.\n',
+    createdAt: '2026-07-28T00:00:00.000Z',
+    updatedAt: '2026-07-28T00:00:00.000Z',
+    filePath: '.roadmap/items/ri_targeted_global.md',
+    fileHash: 'targeted-hash',
+  } satisfies RoadmapItem;
+
+  assert.deepEqual(
+    filterRoadmapItemsByGlobalProjects([targeted], ['farmslot-farm', 'audiolab-farm']),
+    [],
+  );
+  assert.deepEqual(filterRoadmapItemsByGlobalProjects([targeted], ['metamask-mobile-farm']), [
+    targeted,
+  ]);
+});
+
+test('roadmap filtering preserves the item list when no global projects are active', () => {
+  const items: RoadmapItem[] = [];
+
+  assert.equal(filterRoadmapItemsByGlobalProjects(items, []), items);
 });
 
 test('roadmap promotion parser extracts generated backlog drafts', () => {

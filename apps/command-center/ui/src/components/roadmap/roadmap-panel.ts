@@ -50,10 +50,7 @@ import {
   renderChoiceButtons,
   renderToggleChips,
 } from '../shared/planning-controls.js';
-import {
-  defaultTargetProjectsForGlobalFilters,
-  syncedDraftProject,
-} from '../shared/planning-projects.js';
+import { syncedDraftProject, syncedDraftTargetProjects } from '../shared/planning-projects.js';
 import { encodeWorkerRouteParam } from '../terminal/split-view-model.js';
 
 import {
@@ -752,12 +749,15 @@ export class RoadmapPanel extends LitElement {
       }
     }
     if (previousProjects !== this._globalFilters.projects.join('\0')) {
-      const globalProjects = state.globalFilters.projects.filter(concreteProject);
+      const globalProjects = [...new Set(state.globalFilters.projects.filter(concreteProject))];
       // Multi-project filters set owner to `global` for coordination but do NOT
       // pre-fill every filtered farm as targetProjects — silent multi-target
       // inheritance forced N backlog drafts for framework-only ideas. Fan-out
       // is operator-explicit (or a single concrete filter).
-      this._newTargetProjects = defaultTargetProjectsForGlobalFilters(globalProjects);
+      this._newTargetProjects = syncedDraftTargetProjects({
+        currentTargets: this._newTargetProjects,
+        globalProjects,
+      });
       if (globalProjects.length > 1) {
         this._newProject = 'global';
       } else if (globalProjects.length === 1) {

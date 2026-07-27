@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { defaultTargetProjectsForGlobalFilters, syncedDraftProject } from './planning-projects.js';
+import { syncedDraftProject, syncedDraftTargetProjects } from './planning-projects.js';
 
 test('draft project follows a single global project filter', () => {
   assert.equal(
@@ -38,14 +38,33 @@ test('draft project treats configured fallback projects as unset', () => {
   );
 });
 
-test('default target projects prefill only a single global filter', () => {
-  assert.deepEqual(defaultTargetProjectsForGlobalFilters(['farmslot-farm']), ['farmslot-farm']);
+test('draft target projects follow filters without clearing explicit targets', () => {
   assert.deepEqual(
-    defaultTargetProjectsForGlobalFilters(['farmslot-farm', 'metamask-mobile-farm']),
+    syncedDraftTargetProjects({
+      currentTargets: [],
+      globalProjects: ['farmslot-farm'],
+    }),
+    ['farmslot-farm'],
+  );
+  assert.deepEqual(
+    syncedDraftTargetProjects({
+      currentTargets: ['operator-selected-farm'],
+      globalProjects: ['farmslot-farm', 'metamask-mobile-farm'],
+    }),
     [],
   );
-  assert.deepEqual(defaultTargetProjectsForGlobalFilters([]), []);
-  assert.deepEqual(defaultTargetProjectsForGlobalFilters(['farmslot-farm', 'farmslot-farm']), [
-    'farmslot-farm',
-  ]);
+  assert.deepEqual(
+    syncedDraftTargetProjects({
+      currentTargets: ['operator-selected-farm'],
+      globalProjects: [],
+    }),
+    ['operator-selected-farm'],
+  );
+  assert.deepEqual(
+    syncedDraftTargetProjects({
+      currentTargets: [],
+      globalProjects: ['farmslot-farm', 'farmslot-farm'],
+    }),
+    ['farmslot-farm'],
+  );
 });
