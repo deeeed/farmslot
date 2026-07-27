@@ -157,7 +157,7 @@ export function createWebSocketServer(
             ws.close(1008, 'node authentication required');
             return;
           }
-          handleNodeResponse(peek.id, peek.ok, peek.payload, peek.error?.message);
+          handleNodeResponse(peek.id, peek.ok, peek.payload, peek.error?.message, peek.error?.code);
           return;
         }
         // Route node fs.changed events to task watcher or branch watcher

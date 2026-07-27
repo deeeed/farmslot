@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -32,45 +32,69 @@ class FakeNodeWebSocket {
 
   constructor(
     private readonly handlers: {
-      onList?: (params: { path: string }) => {
+      onList?: (params: { path: string; root?: string; relPath?: string }) => {
         entries: Array<{ name: string; type: string; size?: number }>;
       };
-      onReadText?: (params: { path: string }) => { content: string };
-      onStat?: (params: { path: string }) => { size: number };
-      onRead?: (params: { path: string }) => { content: string };
-      onRealpath?: (params: { path: string }) => { path: string };
+      onReadText?: (params: { path: string; root?: string; relPath?: string }) => {
+        content: string;
+      };
+      onStat?: (params: { path: string; root?: string; relPath?: string }) => { size: number };
+      onRead?: (params: { path: string; root?: string; relPath?: string; maxBytes?: number }) => {
+        content: string;
+      };
+      onRealpath?: (params: { path: string; root?: string; relPath?: string }) => { path: string };
     },
   ) {}
 
   send(raw: string) {
-    const frame = JSON.parse(raw) as { id: string; method: string; params: { path: string } };
+    const frame = JSON.parse(raw) as {
+      id: string;
+      method: string;
+      params: { path?: string; root?: string; relPath?: string; maxBytes?: number };
+    };
+    const handlerParams = {
+      ...frame.params,
+      path:
+        frame.params.path ?? path.resolve(frame.params.root ?? '/', frame.params.relPath ?? '.'),
+    };
     queueMicrotask(() => {
       if (frame.method === 'fs.list') {
         this.listCalls += 1;
-        handleNodeResponse(frame.id, true, this.handlers.onList?.(frame.params) ?? { entries: [] });
+        handleNodeResponse(
+          frame.id,
+          true,
+          this.handlers.onList?.(handlerParams) ?? { entries: [] },
+        );
         return;
       }
       if (frame.method === 'fs.read') {
         this.readTextCalls += 1;
         if (!this.handlers.onReadText) {
-          handleNodeResponse(frame.id, false, null, `ENOENT: ${frame.params.path}`);
+          handleNodeResponse(frame.id, false, null, `ENOENT: ${handlerParams.path}`);
           return;
         }
-        handleNodeResponse(frame.id, true, this.handlers.onReadText(frame.params));
+        handleNodeResponse(frame.id, true, this.handlers.onReadText(handlerParams));
         return;
       }
       if (frame.method === 'fs.stat') {
         this.statCalls += 1;
-        handleNodeResponse(frame.id, true, this.handlers.onStat?.(frame.params) ?? { size: 0 });
+        handleNodeResponse(frame.id, true, this.handlers.onStat?.(handlerParams) ?? { size: 0 });
         return;
       }
       if (frame.method === 'fs.readBase64') {
         this.readCalls += 1;
-        handleNodeResponse(
-          frame.id,
-          true,
-          this.handlers.onRead?.(frame.params) ?? { content: Buffer.from('ok').toString('base64') },
-        );
+        try {
+          handleNodeResponse(
+            frame.id,
+            true,
+            this.handlers.onRead?.(handlerParams) ?? {
+              content: Buffer.from('ok').toString('base64'),
+            },
+          );
+        } catch (error) {
+          const nodeError = error as NodeJS.ErrnoException;
+          handleNodeResponse(frame.id, false, null, nodeError.message, nodeError.code);
+        }
         return;
       }
       if (frame.method === 'fs.realpath') {
@@ -78,7 +102,7 @@ class FakeNodeWebSocket {
         handleNodeResponse(
           frame.id,
           true,
-          this.handlers.onRealpath?.(frame.params) ?? frame.params,
+          this.handlers.onRealpath?.(handlerParams) ?? handlerParams,
         );
         return;
       }
@@ -381,8 +405,11 @@ test('serveRunArtifact falls back to the remote slot when a local recipe-run mir
         assert.equal(requestedPath, path.join(remoteArtifactRoot, 'video.mp4'));
         return { size: 'remote-video'.length };
       },
-      onRead: ({ path: requestedPath }) => {
+      onRead: ({ path: requestedPath, root, relPath, maxBytes }) => {
         assert.equal(requestedPath, path.join(remoteArtifactRoot, 'video.mp4'));
+        assert.equal(root, remoteArtifactRoot);
+        assert.equal(relPath, 'video.mp4');
+        assert.ok(typeof maxBytes === 'number' && maxBytes > 'remote-video'.length);
         return { content: Buffer.from('remote-video').toString('base64') };
       },
     });
@@ -400,8 +427,34 @@ test('serveRunArtifact falls back to the remote slot when a local recipe-run mir
     await new Promise((resolve) => res.on('finish', resolve));
     assert.equal(res.statusCode, 200);
     assert.equal(res.body, 'remote-video');
-    assert.equal(fakeWs.statCalls, 1);
+    assert.equal(fakeWs.statCalls, 0);
     assert.equal(fakeWs.readCalls, 1);
+  });
+});
+
+test('serveRunArtifact maps node confinement denials to HTTP 403', async (t) => {
+  await withRemoteRun(t, async ({ runId, liveGroupId }) => {
+    const fakeWs = new FakeNodeWebSocket({
+      onRead: () => {
+        const error = new Error(
+          'Refusing final-component symlink: video.mp4',
+        ) as NodeJS.ErrnoException;
+        error.code = 'EACCES';
+        throw error;
+      },
+    });
+    registerNode('remote-machine', 123, fakeWs as any);
+    t.after(() => unregisterByWs(fakeWs as any));
+
+    const req = {
+      url: `/api/run-artifact?runId=${encodeURIComponent(runId)}&recipeRunId=${encodeURIComponent(liveGroupId)}&path=${encodeURIComponent('artifacts/video.mp4')}`,
+      headers: { host: 'localhost' },
+    } as any;
+    const res = new MockResponse();
+    await serveRunArtifact(req, res as any);
+
+    assert.equal(res.statusCode, 403);
+    assert.match(res.body, /final-component symlink/);
   });
 });
 
@@ -569,6 +622,37 @@ test('fsWrite rejects local symlink escapes from slot repos', async (t) => {
   });
 });
 
+test('fsRead and fsWrite refuse final-component symlinks inside the repo', async (t) => {
+  await withLocalSlot(t, async ({ slotId, repoDir }) => {
+    const target = path.join(repoDir, 'target.txt');
+    await writeFile(target, 'original', 'utf-8');
+    await symlink(target, path.join(repoDir, 'link.txt'));
+
+    await assert.rejects(() => fsRead({ slotId, path: 'link.txt' }), /final-component symlink/);
+    await assert.rejects(
+      () => fsWrite({ slotId, path: 'link.txt', content: 'changed' }),
+      /final-component symlink/,
+    );
+    assert.equal(await readFile(target, 'utf-8'), 'original');
+  });
+});
+
+test('gateway fs reads and writes refuse ordinary .git paths', async (t) => {
+  await withLocalSlot(t, async ({ slotId, repoDir }) => {
+    await mkdir(path.join(repoDir, '.git'));
+    const configPath = path.join(repoDir, '.git', 'config');
+    await writeFile(configPath, 'safe', 'utf-8');
+
+    await assert.rejects(() => fsRead({ slotId, path: '.git/config' }), /Access to \.git/);
+    await assert.rejects(
+      () => fsWrite({ slotId, path: '.git/config', content: 'corrupt' }),
+      /Access to \.git/,
+    );
+    await assert.rejects(() => fsDelete({ slotId, path: '.git/config' }), /Access to \.git/);
+    assert.equal(await readFile(configPath, 'utf-8'), 'safe');
+  });
+});
+
 test('fsDelete rejects local symlink-directory escapes from slot repos', async (t) => {
   await withLocalSlot(t, async ({ slotId, repoDir }) => {
     const outsideDir = await mkdtemp(path.join(tmpdir(), 'farmslot-outside-'));
@@ -600,4 +684,42 @@ test('serveFile rejects local symlink escapes from slot repos', async (t) => {
     assert.equal(res.statusCode, 403);
     assert.match(res.body, /Path traversal not allowed/);
   });
+});
+
+test('serveFile maps oversized remote reads to HTTP 413', async (t) => {
+  await mkdir(poolDir, { recursive: true });
+  const slotId = `remote-file-${Date.now()}`;
+  const poolFile = path.join(poolDir, `${slotId}.json`);
+  await writeFile(
+    poolFile,
+    JSON.stringify({
+      machine: 'remote-file-machine',
+      project: 'demo-project',
+      platform: 'cli',
+      os: 'linux',
+      host: '203.0.113.11',
+      ssh_user: 'tester',
+      slots: [{ id: slotId, repo: '/tmp/repo', session: 'slot' }],
+    }),
+  );
+  const fakeWs = new FakeNodeWebSocket({
+    onRead: () => {
+      throw new Error('Remote artifact too large to proxy (999999999 bytes)');
+    },
+  });
+  registerNode('remote-file-machine', 123, fakeWs as any);
+  t.after(async () => {
+    unregisterByWs(fakeWs as any);
+    await rm(poolFile, { force: true });
+  });
+
+  const req = {
+    url: `/api/file?slotId=${encodeURIComponent(slotId)}&path=${encodeURIComponent('large.bin')}`,
+    headers: { host: 'localhost' },
+  } as any;
+  const res = new MockResponse();
+  await serveFile(req, res as any);
+
+  assert.equal(res.statusCode, 413);
+  assert.match(res.body, /too large to proxy/);
 });

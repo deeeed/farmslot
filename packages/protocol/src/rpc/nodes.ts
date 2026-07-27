@@ -22,3 +22,13 @@ export interface NodeDeployResult {
   success: boolean;
   output: string;
 }
+
+interface NodeExecCommonParams {
+  cwd?: string;
+  timeout?: number;
+  maxBuffer?: number;
+}
+
+export type NodeExecParams =
+  | (NodeExecCommonParams & { cmd: string; argv?: never })
+  | (NodeExecCommonParams & { argv: string[]; cmd?: never });

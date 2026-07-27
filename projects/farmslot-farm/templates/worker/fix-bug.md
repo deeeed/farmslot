@@ -48,9 +48,10 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
 - [ ] **2. Update status** — set `STATUS: working` in this file, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Read the bug description** — understand the reported issue, affected area, and expected behavior.
-- [ ] **4. Reproduce** — for Command Center UI bugs, write `{{TASK_DIR}}/artifacts/recipe.json` from acceptance criteria using the required `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, `description`, and `workflow`, then run it against current code (must fail before the fix). Read `{{recipe_quality_path}}` first.
+- [ ] **4. Reproduce** — write `{{TASK_DIR}}/artifacts/recipe.json` from acceptance criteria using the required `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, `description`, and `workflow`, then run it against current code (must fail before the fix). Use state/command actions for backend and CLI bugs; browser actions are required only for visual claims. Omit the recipe only when no declared project action can exercise the bug, and record the exact limitation plus replacement deterministic reproduction. Read `{{recipe_quality_path}}` first.
   ```bash
   cd {{REPO}}
+  # UI bugs only:
   bash apps/command-center/scripts/debug-chrome.sh
   bash {{recipe_validate_wrapper}} \
     --recipe {{TASK_DIR}}/artifacts/recipe.json \
@@ -65,7 +66,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
 - [ ] **5. Locate the root cause** — identify the exact file(s) and line(s) causing the issue.
 - [ ] **6. Create branch** — `git checkout -b {{BRANCH}}`
 - [ ] **7. Implement the fix** — make the minimal change needed. No refactoring, no cleanup beyond the fix.
-- [ ] **8. Validate the fix** — recipe must exit 0 when UI/command-center behavior changed; then typecheck/tests:
+- [ ] **8. Validate the fix** — recipe must exit 0 whenever step 4 produced one; then typecheck/tests:
   ```bash
   cd {{REPO}}
   bash {{recipe_validate_wrapper}} \

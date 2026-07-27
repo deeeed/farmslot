@@ -1,6 +1,6 @@
 // run-engine/remote-probes.ts — remote readiness probes used by run-engine prepare/recovery seams.
 
-import { execLocal } from '../core/exec.js';
+import { execFileArgv } from '../core/exec.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 
@@ -44,9 +44,16 @@ export async function probeRemotePath(
   }
   if (!stdout && sshTarget) {
     try {
-      const r = await execLocal(
-        `ssh -n -o BatchMode=yes -o ConnectTimeout=5 ${sshTarget} ${JSON.stringify(cmd)}`,
-      );
+      const r = await execFileArgv([
+        'ssh',
+        '-n',
+        '-o',
+        'BatchMode=yes',
+        '-o',
+        'ConnectTimeout=5',
+        sshTarget,
+        cmd,
+      ]);
       stdout = r.stdout || '';
     } catch (err) {
       return {

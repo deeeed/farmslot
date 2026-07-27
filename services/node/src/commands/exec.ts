@@ -1,16 +1,9 @@
 import { spawn } from 'node:child_process';
 import { platform } from 'node:os';
 
-import type { ExecResult } from '@farmslot/protocol';
+import type { ExecResult, NodeExecParams } from '@farmslot/protocol';
 
 export type { ExecResult };
-
-export interface ExecParams {
-  cmd: string;
-  cwd?: string;
-  timeout?: number;
-  maxBuffer?: number;
-}
 
 export type OutputCallback = (stream: 'stdout' | 'stderr', data: string) => void;
 
@@ -23,9 +16,42 @@ const SHELL = platform() === 'darwin' ? 'zsh' : 'bash';
 // so user-preferred toolchains (asdf/homebrew/nvm) still win on ties.
 const SYSTEM_PATH_FALLBACK = '/usr/sbin:/usr/bin:/sbin:/bin';
 
-export function exec(params: ExecParams, onOutput?: OutputCallback): Promise<ExecResult> {
+let loginPathPromise: Promise<string> | undefined;
+
+export function resolveLoginPath(): Promise<string> {
+  loginPathPromise ??= new Promise((resolve) => {
+    const proc = spawn(SHELL, ['-lc', 'printf %s "$PATH"'], {
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    proc.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    proc.on('close', (code) => {
+      const loginPath = code === 0 && stdout ? stdout : (process.env.PATH ?? '');
+      resolve(`${loginPath}:${SYSTEM_PATH_FALLBACK}`);
+    });
+    proc.on('error', () => {
+      // Falling back to the inherited PATH is correct when the login shell itself
+      // cannot start; the fixed system suffix still keeps core tools reachable.
+      resolve(`${process.env.PATH ?? ''}:${SYSTEM_PATH_FALLBACK}`);
+    });
+  });
+  return loginPathPromise;
+}
+
+export async function exec(params: NodeExecParams, onOutput?: OutputCallback): Promise<ExecResult> {
+  const { cwd, timeout, maxBuffer } = params;
+  const { FORCE_COLOR: _droppedForceColor, ...envNoForceColor } = process.env;
+  void _droppedForceColor;
+  const argvMode = 'argv' in params && params.argv !== undefined;
+  if (argvMode && params.argv.length === 0) {
+    throw new Error('exec argv must contain at least one element');
+  }
+  const env = argvMode ? { ...envNoForceColor, PATH: await resolveLoginPath() } : envNoForceColor;
+
   return new Promise((resolve) => {
-    const { cmd, cwd, timeout, maxBuffer } = params;
     let stdout = '';
     let stderr = '';
     let outputBytes = 0;
@@ -34,7 +60,6 @@ export function exec(params: ExecParams, onOutput?: OutputCallback): Promise<Exe
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     let timeoutEscalation: ReturnType<typeof setTimeout> | undefined;
 
-    const wrapped = `export PATH="$PATH:${SYSTEM_PATH_FALLBACK}"; ${cmd}`;
     // Drop FORCE_COLOR so child shells/tools don't emit ANSI escapes when stdout
     // is a pipe. Critical for shell scripts that match command output verbatim —
     // example-mobile's VisionCamera podspec uses `node --print "require.resolve(...)"`
@@ -42,11 +67,13 @@ export function exec(params: ExecParams, onOutput?: OutputCallback): Promise<Exe
     // set the comparison fails, File.dirname returns ".", and pod install dies
     // looking for an unavailable react-native-worklets-core spec. Mirrors the
     // gateway-side fix in core/exec.ts.
-    const { FORCE_COLOR: _droppedForceColor, ...envNoForceColor } = process.env;
-    void _droppedForceColor;
-    const proc = spawn(SHELL, ['-lc', wrapped], {
+    const executable = argvMode ? params.argv[0] : SHELL;
+    const spawnArgs = argvMode
+      ? params.argv.slice(1)
+      : ['-lc', `export PATH="$PATH:${SYSTEM_PATH_FALLBACK}"; ${params.cmd}`];
+    const proc = spawn(executable, spawnArgs, {
       cwd: cwd ?? process.cwd(),
-      env: envNoForceColor,
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: timeout != null,
     });

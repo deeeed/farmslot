@@ -1,6 +1,6 @@
 import { type FlowType, parseGitHubRef, PR_BOUND_FLOW_TYPES } from '@farmslot/protocol';
 
-import { execLocal } from '../../core/index.js';
+import { execFileArgv } from '../../core/index.js';
 
 /** Extract a standalone ticket key from Jira/GitHub URLs or clean up input. */
 export function normalizeTicketRef(input: string): string {
@@ -46,7 +46,11 @@ export const JIRA_KEY_RE = /^[A-Z][A-Z0-9]*-\d+$/;
  * Needs the project's `ci.repo` (e.g. "example-org/example-browser").
  * Returns the resolved ref, or the original input if resolution fails.
  */
-export async function resolvePrRef(input: string, repo: string): Promise<string> {
+export async function resolvePrRef(
+  input: string,
+  repo: string,
+  runArgv = execFileArgv,
+): Promise<string> {
   const trimmed = input.trim();
   // Already in canonical form
   if (parseGitHubRef(trimmed)) return trimmed;
@@ -54,9 +58,19 @@ export async function resolvePrRef(input: string, repo: string): Promise<string>
   if (/^\d+$/.test(trimmed)) return `${repo}#${trimmed}`;
   // Branch name: look up the PR via gh CLI
   try {
-    const result = await execLocal(
-      `gh pr list --head ${JSON.stringify(trimmed)} --repo ${repo} --json number --jq '.[0].number' 2>/dev/null`,
-    );
+    const result = await runArgv([
+      'gh',
+      'pr',
+      'list',
+      '--head',
+      trimmed,
+      '--repo',
+      repo,
+      '--json',
+      'number',
+      '--jq',
+      '.[0].number',
+    ]);
     const prNum = result.stdout.trim();
     if (result.exitCode === 0 && /^\d+$/.test(prNum)) {
       return `${repo}#${prNum}`;

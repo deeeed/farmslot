@@ -14,30 +14,45 @@ import {
   WORKER_ARTIFACT_COPY_EXCLUDES,
   WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES,
 } from './artifact-copy-policy.js';
-import { slotCopyDir, SlotCopyDirEntryError } from './slot-io.js';
+import { slotCopyDir, SlotCopyDirEntryError, slotFileExists } from './slot-io.js';
 
 class FakeNodeWebSocket {
   readyState = WebSocket.OPEN;
 
   constructor(
     private readonly handlers: {
-      onExists?: (params: { path: string }) => { exists: boolean };
-      onRealpath?: (params: { path: string }) => { path: string };
-      onList?: (params: { path: string }) => {
+      onExists?: (params: { path: string; root?: string; relPath?: string }) => {
+        exists: boolean;
+      };
+      onRealpath?: (params: { path: string; root?: string; relPath?: string }) => {
+        path: string;
+      };
+      onList?: (params: { path: string; root?: string; relPath?: string }) => {
         entries: Array<{ name: string; type: string; size?: number }>;
       };
-      onReadBase64?: (params: { path: string }) => { content: string };
+      onReadBase64?: (params: { path: string; root?: string; relPath?: string }) => {
+        content: string;
+      };
     },
   ) {}
 
   send(raw: string) {
-    const frame = JSON.parse(raw) as { id: string; method: string; params: { path: string } };
+    const frame = JSON.parse(raw) as {
+      id: string;
+      method: string;
+      params: { path?: string; root?: string; relPath?: string };
+    };
+    const handlerParams = {
+      ...frame.params,
+      path:
+        frame.params.path ?? path.resolve(frame.params.root ?? '/', frame.params.relPath ?? '.'),
+    };
     queueMicrotask(() => {
       if (frame.method === 'fs.exists') {
         handleNodeResponse(
           frame.id,
           true,
-          this.handlers.onExists?.(frame.params) ?? { exists: false },
+          this.handlers.onExists?.(handlerParams) ?? { exists: false },
         );
         return;
       }
@@ -45,12 +60,16 @@ class FakeNodeWebSocket {
         handleNodeResponse(
           frame.id,
           true,
-          this.handlers.onRealpath?.(frame.params) ?? { path: frame.params.path },
+          this.handlers.onRealpath?.(handlerParams) ?? { path: handlerParams.path },
         );
         return;
       }
       if (frame.method === 'fs.list') {
-        handleNodeResponse(frame.id, true, this.handlers.onList?.(frame.params) ?? { entries: [] });
+        handleNodeResponse(
+          frame.id,
+          true,
+          this.handlers.onList?.(handlerParams) ?? { entries: [] },
+        );
         return;
       }
       if (frame.method === 'fs.readBase64') {
@@ -58,7 +77,7 @@ class FakeNodeWebSocket {
           handleNodeResponse(
             frame.id,
             true,
-            this.handlers.onReadBase64?.(frame.params) ?? { content: '' },
+            this.handlers.onReadBase64?.(handlerParams) ?? { content: '' },
           );
         } catch (err) {
           handleNodeResponse(
@@ -74,6 +93,30 @@ class FakeNodeWebSocket {
     });
   }
 }
+
+test('remote slot paths preserve .git segments relative to the filesystem root', async (t) => {
+  let observed: { root?: string; relPath?: string } | undefined;
+  const fakeWs = new FakeNodeWebSocket({
+    onExists: (params) => {
+      observed = params;
+      return { exists: false };
+    },
+  });
+  registerNode('slot-path-machine', 123, fakeWs as any);
+  t.after(() => unregisterByWs(fakeWs as any));
+
+  await slotFileExists(
+    {
+      host: '203.0.113.12',
+      machine: 'slot-path-machine',
+      sshTarget: 'tester@203.0.113.12',
+    },
+    '/repo/.git/config',
+  );
+
+  assert.equal(observed?.root, path.parse('/repo/.git/config').root);
+  assert.equal(observed?.relPath, path.join('repo', '.git', 'config'));
+});
 
 test('slotCopyDir skips local symlinks instead of copying them into artifacts', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-slot-io-'));

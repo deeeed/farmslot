@@ -1203,6 +1203,11 @@ async function writeSidecarMeta(
   // under a preflight-created runtime dir, but for first-boot edge cases or
   // projects that nest the pidfile deeper, skipping mkdir would ENOENT the
   // fs.write and drop the sidecar.
-  await sendNodeRequest(node, 'fs.mkdir', { path: path.dirname(metaPath) });
-  await sendNodeRequest(node, 'fs.write', { path: metaPath, content });
+  const metaDir = path.dirname(metaPath);
+  await sendNodeRequest(node, 'fs.mkdir', { root: metaDir, relPath: '.' });
+  await sendNodeRequest(node, 'fs.write', {
+    root: metaDir,
+    relPath: path.basename(metaPath),
+    content,
+  });
 }

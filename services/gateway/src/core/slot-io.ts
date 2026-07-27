@@ -68,6 +68,12 @@ function requireNode(machine: string) {
   return node;
 }
 
+function nodePathParams(fullPath: string): { root: string; relPath: string } {
+  const root = path.parse(fullPath).root;
+  if (!root) throw new Error(`Remote slot path must be absolute: ${fullPath}`);
+  return { root, relPath: path.relative(root, fullPath) };
+}
+
 async function assertConcreteDirRoot(
   dirPath: string,
   resolvePath: (inputPath: string) => Promise<string>,
@@ -89,7 +95,7 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
     return readFile(filePath, 'utf-8');
   }
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.read', {
-    path: filePath,
+    ...nodePathParams(filePath),
   })) as { content: string };
   return result.content;
 }
@@ -97,7 +103,7 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
 export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise<string> {
   if (local(ctx)) return realpath(filePath);
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.realpath', {
-    path: filePath,
+    ...nodePathParams(filePath),
   })) as { path: string };
   return result.path;
 }
@@ -109,7 +115,7 @@ export async function slotFileExists(ctx: SlotLocality, filePath: string): Promi
     return existsSync(filePath);
   }
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.exists', {
-    path: filePath,
+    ...nodePathParams(filePath),
   })) as { exists: boolean };
   return result.exists;
 }
@@ -121,7 +127,7 @@ export async function slotListDir(ctx: SlotLocality, dirPath: string): Promise<s
     return readdir(dirPath);
   }
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.list', {
-    path: dirPath,
+    ...nodePathParams(dirPath),
   })) as { entries: Array<{ name: string }> };
   return result.entries.map((e) => e.name);
 }
@@ -137,7 +143,10 @@ export async function slotWriteFile(
     await fsWriteFile(filePath, data, 'utf-8');
     return;
   }
-  await sendNodeRequest(requireNode(ctx.machine), 'fs.write', { path: filePath, content: data });
+  await sendNodeRequest(requireNode(ctx.machine), 'fs.write', {
+    ...nodePathParams(filePath),
+    content: data,
+  });
 }
 
 export interface SlotWriteFileEntry {
@@ -166,7 +175,11 @@ export async function slotWriteFiles(
     }
     return;
   }
-  await sendNodeRequest(requireNode(ctx.machine), 'fs.writeFiles', { baseDir, files });
+  await sendNodeRequest(requireNode(ctx.machine), 'fs.writeFiles', {
+    root: baseDir,
+    relPath: '.',
+    files,
+  });
 }
 
 // ─── slotCopyFile ───
@@ -183,7 +196,7 @@ export async function slotCopyFile(
     return;
   }
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.readBase64', {
-    path: remotePath,
+    ...nodePathParams(remotePath),
   })) as { content: string };
   await fsWriteFile(localPath, Buffer.from(result.content, 'base64'));
 }
@@ -298,7 +311,9 @@ export async function slotCopyDir(
 
   const node = requireNode(ctx.machine);
   await assertConcreteDirRoot(remoteDir, async (inputPath) => {
-    const result = (await sendNodeRequest(node, 'fs.realpath', { path: inputPath })) as {
+    const result = (await sendNodeRequest(node, 'fs.realpath', {
+      ...nodePathParams(inputPath),
+    })) as {
       path: string;
     };
     return result.path;
@@ -317,7 +332,10 @@ export async function slotCopyDir(
     if (depth > MAX_ARTIFACT_TREE_DEPTH) {
       throw new Error(`slotCopyDir exceeded max recursion depth under ${sourceDir}`);
     }
-    const listResult = (await sendNodeRequest(node, 'fs.list', { path: sourceDir })) as {
+    const listResult = (await sendNodeRequest(node, 'fs.list', {
+      root: remoteDir,
+      relPath: path.relative(remoteDir, sourceDir) || '.',
+    })) as {
       entries: Array<{ name: string; type: string }>;
     };
 
@@ -340,7 +358,8 @@ export async function slotCopyDir(
       if (entry.type === 'file') {
         try {
           const fileResult = (await sendNodeRequest(node, 'fs.readBase64', {
-            path: sourcePath,
+            root: remoteDir,
+            relPath: path.relative(remoteDir, sourcePath),
           })) as { content: string };
           await fsWriteFile(targetPath, Buffer.from(fileResult.content, 'base64'));
         } catch (err) {

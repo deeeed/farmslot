@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- **BREAKING:** `exec` accepts an `argv` array alongside `cmd`, and `fs.*` takes `{root, relPath}` instead of a pre-joined absolute path. Argv carries arguments as data rather than shell text, so no caller value is ever re-parsed by a shell; the split path lets the node confine every filesystem operation under a declared root and refuse `.git` server-side. Bounded remote artifact reads collapse `realpath`/`stat`/`readBase64` into one call with a byte ceiling.
 
 ## 0.14.0 - 2026-07-27
 

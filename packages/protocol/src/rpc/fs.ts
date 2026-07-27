@@ -47,3 +47,32 @@ export interface FsReadResult {
   content: string;
   language: string;
 }
+
+export interface NodeFsPathParams {
+  root: string;
+  relPath: string;
+}
+
+export interface NodeFsWriteParams extends NodeFsPathParams {
+  content: string;
+}
+
+export interface NodeFsRenameParams {
+  root: string;
+  oldRelPath: string;
+  newRelPath: string;
+}
+
+export interface NodeFsWriteFileEntry {
+  path: string;
+  content: string;
+  mode?: number;
+}
+
+export interface NodeFsWriteFilesParams extends NodeFsPathParams {
+  files: NodeFsWriteFileEntry[];
+}
+
+export interface NodeFsReadBase64Params extends NodeFsPathParams {
+  maxBytes?: number;
+}

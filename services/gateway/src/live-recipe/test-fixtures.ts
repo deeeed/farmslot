@@ -23,19 +23,28 @@ export class FakeNodeWebSocket {
   ) {}
 
   send(raw: string) {
-    const frame = JSON.parse(raw) as { id: string; method: string; params: { path: string } };
+    const frame = JSON.parse(raw) as {
+      id: string;
+      method: string;
+      params: { path?: string; root?: string; relPath?: string };
+    };
+    const handlerParams = {
+      ...frame.params,
+      path:
+        frame.params.path ?? path.resolve(frame.params.root ?? '/', frame.params.relPath ?? '.'),
+    };
     queueMicrotask(() => {
       if (frame.method === 'fs.read') {
-        const result = this.handlers.onRead?.(frame.params);
+        const result = this.handlers.onRead?.(handlerParams);
         if (result) {
           handleNodeResponse(frame.id, true, result);
         } else {
-          handleNodeResponse(frame.id, false, null, `ENOENT: ${frame.params.path}`);
+          handleNodeResponse(frame.id, false, null, `ENOENT: ${handlerParams.path}`);
         }
         return;
       }
       if (frame.method === 'fs.readBase64') {
-        const result = this.handlers.onRead?.(frame.params);
+        const result = this.handlers.onRead?.(handlerParams);
         if (result) {
           const bytes = Buffer.from(result.content);
           handleNodeResponse(frame.id, true, {
@@ -43,12 +52,12 @@ export class FakeNodeWebSocket {
             size: bytes.length,
           });
         } else {
-          handleNodeResponse(frame.id, false, null, `ENOENT: ${frame.params.path}`);
+          handleNodeResponse(frame.id, false, null, `ENOENT: ${handlerParams.path}`);
         }
         return;
       }
       if (frame.method === 'fs.hash') {
-        const result = this.handlers.onRead?.(frame.params);
+        const result = this.handlers.onRead?.(handlerParams);
         if (result) {
           const bytes = Buffer.from(result.content);
           handleNodeResponse(frame.id, true, {
@@ -56,16 +65,16 @@ export class FakeNodeWebSocket {
             size: bytes.length,
           });
         } else {
-          handleNodeResponse(frame.id, false, null, `ENOENT: ${frame.params.path}`);
+          handleNodeResponse(frame.id, false, null, `ENOENT: ${handlerParams.path}`);
         }
         return;
       }
       if (frame.method === 'fs.list') {
-        const result = this.handlers.onList?.(frame.params);
+        const result = this.handlers.onList?.(handlerParams);
         if (result) {
           handleNodeResponse(frame.id, true, result);
         } else {
-          handleNodeResponse(frame.id, false, null, `EIO: ${frame.params.path}`);
+          handleNodeResponse(frame.id, false, null, `EIO: ${handlerParams.path}`);
         }
         return;
       }

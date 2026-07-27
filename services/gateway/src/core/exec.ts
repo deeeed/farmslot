@@ -8,7 +8,7 @@ import path from 'node:path';
 
 import type { ExecResult } from '@farmslot/protocol';
 
-import { nodeExec } from '../fleet/node-rpc.js';
+import { nodeExec, nodeExecArgv } from '../fleet/node-rpc.js';
 
 import type { SlotVars } from './config.js';
 
@@ -55,9 +55,18 @@ export interface ExecOptions {
 // Run a command locally via child_process.spawn.
 // When onOutput is provided, invokes it per chunk (streaming).
 export function execLocal(cmd: string, opts?: ExecOptions): Promise<ExecResult> {
+  return execSpawn('bash', ['-c', cmd], opts);
+}
+
+export function execFileArgv(argv: string[], opts?: ExecOptions): Promise<ExecResult> {
+  if (argv.length === 0) throw new Error('exec argv must contain at least one element');
+  return execSpawn(argv[0], argv.slice(1), opts);
+}
+
+function execSpawn(executable: string, argv: string[], opts?: ExecOptions): Promise<ExecResult> {
   return new Promise((resolve) => {
     const useProcessGroup = opts?.signal != null || opts?.timeout != null;
-    const proc = spawn('bash', ['-c', cmd], {
+    const proc = spawn(executable, argv, {
       cwd: opts?.cwd,
       env: LOCAL_ENV,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -82,10 +91,8 @@ export function execLocal(cmd: string, opts?: ExecOptions): Promise<ExecResult> 
             proc.kill(sig);
             return;
           } catch (processError) {
-            // Recovery is intentional: timeout/abort may race process exit, so both the
-            // process group and child process can already be gone by the time this runs.
             console.warn(
-              `[execLocal] ${sig} after process exit: group=${(groupError as Error).message}; process=${(processError as Error).message}`,
+              `[execSpawn] ${sig} after process exit: group=${(groupError as Error).message}; process=${(processError as Error).message}`,
             );
             return;
           }
@@ -93,42 +100,37 @@ export function execLocal(cmd: string, opts?: ExecOptions): Promise<ExecResult> 
       }
       proc.kill(sig);
     };
-
     const terminateWithEscalation = () => {
       killProcessTree('SIGTERM');
       timeoutEscalation = setTimeout(() => killProcessTree('SIGKILL'), 5000);
       timeoutEscalation.unref();
     };
-
     const appendOutput = (stream: 'stdout' | 'stderr', data: Buffer) => {
-      const maxBuffer = opts?.maxBuffer;
-      const nextOutputBytes = outputBytes + data.byteLength;
+      const next = outputBytes + data.byteLength;
       let chunk = data;
-      if (maxBuffer != null && nextOutputBytes > maxBuffer) {
-        const remaining = Math.max(0, maxBuffer - outputBytes);
+      if (opts?.maxBuffer != null && next > opts.maxBuffer) {
+        const remaining = Math.max(0, opts.maxBuffer - outputBytes);
         chunk = remaining > 0 ? data.subarray(0, remaining) : Buffer.alloc(0);
-        outputBytes = maxBuffer;
+        outputBytes = opts.maxBuffer;
         if (!maxBufferExceeded) {
           maxBufferExceeded = true;
-          stderr += `\nmaxBuffer exceeded after ${nextOutputBytes} bytes`;
+          stderr += `\nmaxBuffer exceeded after ${next} bytes`;
           terminateWithEscalation();
         }
       } else {
-        outputBytes = nextOutputBytes;
+        outputBytes = next;
       }
       if (chunk.byteLength === 0) return;
-      const str = chunk.toString();
-      if (stream === 'stdout') stdout += str;
-      else stderr += str;
-      opts?.onOutput?.(stream, str);
+      const text = chunk.toString();
+      if (stream === 'stdout') stdout += text;
+      else stderr += text;
+      opts?.onOutput?.(stream, text);
     };
-
     let stdoutEnded = false;
     let stderrEnded = false;
     let processClosed = false;
     let resolved = false;
     let exitCode = 1;
-
     const tryResolve = () => {
       if (resolved || !processClosed || !stdoutEnded || !stderrEnded) return;
       resolved = true;
@@ -136,42 +138,36 @@ export function execLocal(cmd: string, opts?: ExecOptions): Promise<ExecResult> 
       if (timeoutEscalation) clearTimeout(timeoutEscalation);
       resolve({ stdout, stderr, exitCode: timedOut ? 124 : maxBufferExceeded ? 1 : exitCode });
     };
-
-    const markStreamClosed = (stream: 'stdout' | 'stderr') => {
+    const closeStream = (stream: 'stdout' | 'stderr') => {
       if (stream === 'stdout') stdoutEnded = true;
       else stderrEnded = true;
       tryResolve();
     };
-
     proc.stdout.on('data', (data: Buffer) => appendOutput('stdout', data));
-    proc.stdout.on('end', () => markStreamClosed('stdout'));
-    proc.stdout.on('close', () => markStreamClosed('stdout'));
+    proc.stdout.on('end', () => closeStream('stdout'));
+    proc.stdout.on('close', () => closeStream('stdout'));
     proc.stdout.on('error', (err) => {
       stderr += `\nstdout stream error: ${err.message}`;
-      markStreamClosed('stdout');
+      closeStream('stdout');
     });
-
     proc.stderr.on('data', (data: Buffer) => appendOutput('stderr', data));
-    proc.stderr.on('end', () => markStreamClosed('stderr'));
-    proc.stderr.on('close', () => markStreamClosed('stderr'));
+    proc.stderr.on('end', () => closeStream('stderr'));
+    proc.stderr.on('close', () => closeStream('stderr'));
     proc.stderr.on('error', (err) => {
       stderr += `\nstderr stream error: ${err.message}`;
-      markStreamClosed('stderr');
+      closeStream('stderr');
     });
-
     proc.on('close', (code) => {
       exitCode = code ?? 1;
       processClosed = true;
       tryResolve();
     });
-
     proc.on('error', (err) => {
       resolved = true;
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (timeoutEscalation) clearTimeout(timeoutEscalation);
-      resolve({ stdout, stderr: stderr + `\nspawn error: ${err.message}`, exitCode: 1 });
+      resolve({ stdout, stderr: `${stderr}\nspawn error: ${err.message}`, exitCode: 1 });
     });
-
     if (opts?.timeout != null) {
       timeoutTimer = setTimeout(() => {
         timedOut = true;
@@ -180,19 +176,11 @@ export function execLocal(cmd: string, opts?: ExecOptions): Promise<ExecResult> 
       }, opts.timeout);
       timeoutTimer.unref();
     }
-
     if (opts?.signal) {
-      if (opts.signal.aborted) {
-        terminateWithEscalation();
-      } else {
-        const onAbort = () => {
-          terminateWithEscalation();
-        };
-        opts.signal.addEventListener('abort', onAbort, { once: true });
-        proc.on('close', () => {
-          opts!.signal!.removeEventListener('abort', onAbort);
-        });
-      }
+      const onAbort = () => terminateWithEscalation();
+      if (opts.signal.aborted) onAbort();
+      else opts.signal.addEventListener('abort', onAbort, { once: true });
+      proc.on('close', () => opts.signal?.removeEventListener('abort', onAbort));
     }
   });
 }
@@ -229,6 +217,22 @@ export async function execOnSlot(
   // For now, aborting a remote exec clears the activeReruns tracking but the
   // remote process may continue until its timeout expires.
   return nodeExec(slotVars.machine, cmd, cwd, {
+    timeout: opts.timeout,
+    onOutput: opts.onOutput,
+    maxBuffer: opts.maxBuffer,
+  });
+}
+
+export async function execArgvOnSlot(
+  slotVars: SlotVars,
+  argv: string[],
+  opts: ExecOnSlotOptions = {},
+): Promise<ExecResult> {
+  const cwd = opts.cwd ?? slotVars.remoteRepo;
+  if (isLocal(slotVars.host, slotVars.machine)) {
+    return execFileArgv(argv, { ...opts, cwd });
+  }
+  return nodeExecArgv(slotVars.machine, argv, cwd, {
     timeout: opts.timeout,
     onOutput: opts.onOutput,
     maxBuffer: opts.maxBuffer,
