@@ -33,16 +33,9 @@ STATUS: pending
 
 ## Checklist
 
-These steps are common to every interactive run. The work specific to *this* task is not listed here — you write it into `{{TASK_DIR}}/artifacts/approach.md` at step 2 and the operator approves it at step 3. After each step, run `{{TASK_DIR}}/mark N` with the number shown.
+These steps are common to every interactive run, and are the same list as `{{TASK_DIR}}/CHECKLIST.md`. The work specific to *this* task is not listed here — you write it into `{{TASK_DIR}}/artifacts/approach.md` and the operator approves it at the gate that follows. After each step, run `{{TASK_DIR}}/mark N` with the number shown below.
 
-- [ ] **1. Read the task and repository context** — the sections above, plus `CLAUDE.md` and `{{TASK_DIR}}/inputs/dev-intake.json` when present.
-- [ ] **2. Write `{{TASK_DIR}}/artifacts/approach.md`** — affected files, implementation plan, validation plan, and anything you propose to leave out.
-- [ ] **3. HUMAN GATE — present the approach.** State what you intend to change and how you will prove it. **STOP and wait for the operator.**
-- [ ] **4. Implement the approved change** on `{{BRANCH}}`. Commit as you go — uncommitted work is lost when the slot is reclaimed.
-- [ ] **5. Validate** — targeted tests, lint and typecheck for what you touched. If an acceptance criterion needs Command Center UI proof, run the recipe validation below. If you skip validation, record why in this TASK file.
-- [ ] **6. HUMAN GATE — present the diff and validation.** **STOP and wait for the operator.**
-- [ ] **7. Write `{{TASK_DIR}}/artifacts/report.md` and `{{TASK_DIR}}/artifacts/learnings.md`** — what changed, what was validated, what remains unproven.
-- [ ] **8. Wait for the operator to choose a completion action in Farmslot.** Do not end the session yourself.
+{{INTERACTIVE_CHECKLIST}}
 
 ## Interactive protocol
 

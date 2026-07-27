@@ -741,6 +741,13 @@ export async function writeTaskFile(
     ARTIFACT_DIR: projectVars.artifactDir || '.task',
     DESCRIPTION: description || '_No description_',
     ACCEPTANCE_CRITERIA: ticket.acceptanceCriteria.join('\n') || '_Not specified_',
+    // Rendered from the same list that writes CHECKLIST.md, so the numbers a
+    // worker reads in TASK.md are the numbers `mark N` targets. A configured
+    // override changes the list; hardcoding steps in the template would leave
+    // `mark 3` pointing at a step that no longer exists.
+    INTERACTIVE_CHECKLIST: checklistForInteractiveDev(run)
+      .map((item, index) => `- [ ] **${index + 1}.** ${item}`)
+      .join('\n'),
     AFFECTED_AREA: ticket.affectedArea || '_Not specified_',
     SCREENSHOTS: screenshotsMd,
     COMMENTS:
