@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(run-engine): a dev run's terminal signal is now commit-verified. The push guard covered only pr-complete and update-branch, so a dev worker could finish with its work uncommitted in the slot worktree, where it is destroyed on reclaim. A push is still not required for dev — the publication step performs it — and interactive dev stays exempt, since publishing there is the operator's call.
 - fix(gateway): the interactive dev checklist is an execution plan again, not the ticket's acceptance criteria. ACs are end-state assertions, so a worker could not mark progress against them and the operator could not follow the session; they stay in TASK.md as proof targets.
 - fix(run-engine): a lightweight interactive dev run no longer completes itself on a worker terminal signal. Completion on that flow is operator-owned, and the human gate is skipped for the profile, so a self-signalled completion ended runs with uncommitted work, no branch commits and no PR.
 - feat(gateway): expose template selection guidance and preview a catalog template only when its source id and digest still match.

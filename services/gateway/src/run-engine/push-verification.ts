@@ -4,8 +4,14 @@
 // Flows whose worker OWNS the push (pr-complete, update-branch) repeatedly
 // signaled complete with committed-but-unpushed (or even uncommitted) work;
 // the engine then evaluated a stale remote SHA in ci-watch and looped.
-// Dev-style flows are exempt: their worker commits locally
-// and the publication step performs the push.
+//
+// Dev flows are not push-verified — their worker commits locally and the
+// publication step performs the push, so requiring a push here would fire before
+// the push is meant to happen. They ARE commit-verified: uncommitted work exists
+// only in the slot worktree and is destroyed when the slot is reclaimed, which is
+// a different failure from an unpushed commit and needs its own check.
+
+import { isInteractiveDevRun, type Run } from '@farmslot/protocol';
 
 import { resolveAgentTarget } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
@@ -15,6 +21,11 @@ import { normalizeRunner, sendRunnerInstructionSafely } from '../runners/registr
 import { getRun } from '../runs/store.js';
 
 const WORKER_OWNED_PUSH_FLOWS = new Set(['pr-complete', 'update-branch']);
+// Dev workers commit locally and the publication step performs the push, so a push
+// cannot be required at completion. Uncommitted work is a different matter: it
+// exists only in the slot worktree and is destroyed when the slot is reclaimed.
+// Run 32909fa2 completed with 26 files uncommitted and no commits on its branch.
+const WORKER_OWNED_COMMIT_FLOWS = new Set(['dev']);
 const PUSH_RECHECK_INTERVAL_MS = 20_000;
 const PUSH_NUDGE_WAIT_MS = 5 * 60_000;
 
@@ -97,6 +108,23 @@ async function inspectWorktree(
   return { dirtyFiles, unpushedCommits: parseInt(revList.stdout.trim(), 10) || 0 };
 }
 
+/**
+ * What must hold before a worker's terminal signal is accepted.
+ *
+ * - `push`   — the worker owns publication; committed AND pushed.
+ * - `commit` — the worker commits and a later step publishes; committed only.
+ *              Requiring a push here would fire before the push is meant to happen.
+ * - `none`   — not the worker's to guarantee. Interactive dev is operator-owned:
+ *              the operator decides whether work is saved at all, and the template
+ *              tells the worker to keep changes local. Its completion is guarded in
+ *              the monitor step instead.
+ */
+export function completionVerificationMode(run: Run): 'push' | 'commit' | 'none' {
+  if (WORKER_OWNED_PUSH_FLOWS.has(run.flowType)) return 'push';
+  if (!WORKER_OWNED_COMMIT_FLOWS.has(run.flowType)) return 'none';
+  return isInteractiveDevRun(run) ? 'none' : 'commit';
+}
+
 function describe(state: WorktreePublishState): string {
   const parts: string[] = [];
   if (state.dirtyFiles > 0) parts.push(`${state.dirtyFiles} uncommitted file(s)`);
@@ -118,13 +146,17 @@ export async function verifyWorkerPushedBranch(
 ): Promise<PushVerificationResult> {
   const run = getRun(runId);
   const branch = run?.branch;
-  if (!run || !branch || !WORKER_OWNED_PUSH_FLOWS.has(run.flowType)) {
+  const mode = run ? completionVerificationMode(run) : 'none';
+  if (!run || !branch || mode === 'none') {
     return { verified: true };
   }
+  const requiresPush = mode === 'push';
+  const satisfied = (s: WorktreePublishState): boolean =>
+    s.dirtyFiles === 0 && (!requiresPush || s.unpushedCommits === 0);
   const vars = await loadSlotVars(slotId);
   let state = await inspectWorktree(vars, branch);
-  if (state.dirtyFiles === 0 && state.unpushedCommits === 0) {
-    return { verified: true, dirtyFiles: 0, unpushedCommits: 0 };
+  if (satisfied(state)) {
+    return { verified: true, dirtyFiles: state.dirtyFiles, unpushedCommits: state.unpushedCommits };
   }
 
   console.warn(
@@ -134,11 +166,16 @@ export async function verifyWorkerPushedBranch(
   let nudged = false;
   try {
     const target = await resolveAgentTarget(slotId, { runId, role: 'primary' });
-    const instruction =
-      `Your completion signal was received but the branch is not published. In ${vars.remoteRepo}: ` +
-      `stage and commit the changes that belong to your task (leave any unrelated files alone) ` +
-      `with a Conventional Commit message describing the fix, then publish the branch with: git push. ` +
-      `Verify with git status before finishing.`;
+    const instruction = requiresPush
+      ? `Your completion signal was received but the branch is not published. In ${vars.remoteRepo}: ` +
+        `stage and commit the changes that belong to your task (leave any unrelated files alone) ` +
+        `with a Conventional Commit message describing the fix, then publish the branch with: git push. ` +
+        `Verify with git status before finishing.`
+      : `Your completion signal was received but ${vars.remoteRepo} still has uncommitted changes. ` +
+        `Work left uncommitted lives only in this slot and is destroyed when the slot is reclaimed. ` +
+        `Stage and commit the changes that belong to your task (leave any unrelated files alone) ` +
+        `with a Conventional Commit message. Pushing is not required here. ` +
+        `Verify with git status before finishing.`;
     nudged = await sendRunnerInstructionSafely(
       vars,
       target.target,
@@ -180,7 +217,7 @@ export async function verifyWorkerPushedBranch(
       }
       throw err;
     }
-    if (state.dirtyFiles === 0 && state.unpushedCommits === 0) {
+    if (satisfied(state)) {
       console.log(
         `[push-verification] run ${runId.slice(0, 8)} — branch ${branch} published after nudge`,
       );
