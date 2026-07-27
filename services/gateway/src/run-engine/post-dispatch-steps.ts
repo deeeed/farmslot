@@ -331,34 +331,36 @@ export async function executeMonitorStep(
       isLightweightInteractiveDevRun(current) &&
       (workerSignal?.status === 'complete' || workerSignal?.status === 'done')
     ) {
-      // MONITOR is the only point that can stop this. The dev pipeline runs
-      // MONITOR -> SELF_REVIEW -> COMPLETE -> HUMAN_GATE, so COMPLETE precedes the
-      // gate: returning normally here reaches COMPLETE, which releases the slot and
-      // kills the worker, and the gate then runs against an ownerless slot. Run
-      // 32909fa2 finished exactly that way, with 26 files uncommitted and no PR.
+      // Hold the run for its operator instead of completing it.
       //
-      // Park the run instead. `blocked` is non-terminal and documented as a run
-      // parked at a gate the operator can re-engage, so every interactive action
-      // (done-no-pr, blocked, failed, abort, run-self-review) stays available with
-      // the slot and its worker intact.
+      // MONITOR is the only step that can stop this: FLOW_STEPS.dev runs
+      // MONITOR -> SELF_REVIEW -> COMPLETE -> HUMAN_GATE, so COMPLETE precedes the
+      // gate and would release the slot and kill the worker first.
+      //
+      // `paused`, not `blocked`. Both routes to a terminal-ish status —
+      // MonitorTerminalError's catch and the non-thrown blocked branch — call
+      // cleanupSlotAfterRunFailure, which frees the slot and clears
+      // current_run_id; another run could then claim it and the operator's later
+      // Abort would tear down someone else's work. The orchestrator's post-step
+      // check returns on `paused` before marking the step done and before any
+      // cleanup, so slot ownership and the worker survive. `paused` is
+      // non-terminal, and runInteractiveDevResolve rejects only terminal statuses,
+      // so done-no-pr / blocked / failed / abort / run-self-review all stay
+      // available — as does plain resume.
       console.warn(
-        `[run-engine] run ${runId.slice(0, 8)} — worker '${workerSignal.status}' signal parked; ` +
+        `[run-engine] run ${runId.slice(0, 8)} — worker '${workerSignal.status}' signal held; ` +
           'interactive completion is operator-owned',
       );
-      throw monitorTerminalError({
-        status: 'blocked',
-        outcome: 'partial',
-        reason:
-          `Worker signalled ${workerSignal.status}. Completing an interactive dev run is yours: ` +
-          'resolve it in Farmslot ("Done no PR", "PR Complete", "Blocked", "Abort"). ' +
-          'Confirm the branch is committed first — uncommitted work is lost when the slot is reclaimed.',
-        stepInputs: inputs,
-        stepOutputs: {
+      updateRun(runId, { status: 'paused' });
+      return {
+        inputs,
+        outputs: {
           ...stepOutputs,
-          workerTerminalSignalParked: workerSignal.status,
+          workerTerminalSignalHeld: workerSignal.status,
           awaitingOperator: true,
+          reason: 'interactive-completion-operator-owned',
         },
-      });
+      };
     }
     if (workerSignal?.status === 'complete' || workerSignal?.status === 'done') {
       // Worker-owned-push flows must have the branch published before the run
