@@ -1550,7 +1550,7 @@ test('cancelGraphQueuedItem leaves stamped live handoffs alone', async () => {
   await cleanupRun(run.id);
 });
 
-test('partial create after stamp drops the row instead of requeueing', async (t) => {
+test('partial create after durable stamp drops the row instead of requeueing', async (t) => {
   setCachedFleetForTests(readyFleetSlot('partial-slot') as any);
   const item = addItem({
     flowType: 'fix-bug',
@@ -1571,17 +1571,58 @@ test('partial create after stamp drops the row instead of requeueing', async (t)
       });
       partialRunId = run.id;
       await stampQueueItemRunIdNow(queued.id, run.id);
+      await persistRunNow(run, 'test-durable-before-fail');
       throw new Error('simulated post-stamp failure');
     },
   );
   t.after(async () => {
-    if (partialRunId) await cleanupRun(partialRunId);
+    if (partialRunId && getRun(partialRunId)) await cleanupRun(partialRunId);
   });
   await tryDispatchNext();
   assert.ok(partialRunId, 'callback must create a Run before failing');
   assert.ok(getRun(partialRunId));
   assert.ok(
     !getQueueSnapshot().some((q) => q.id === item.id),
-    'partial create must drop the queue row, not requeue',
+    'durable partial create must drop the queue row, not requeue',
   );
+});
+
+test('memory-only create failure requeues and purges the orphan Run', async (t) => {
+  setCachedFleetForTests(readyFleetSlot('memory-only-slot') as any);
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-memory-only-create',
+    allowedSlots: ['memory-only-slot'],
+    autoDispatch: false,
+  });
+  let orphanId: string | undefined;
+  initDispatchQueue(
+    () => {},
+    async (queued, claim) => {
+      assertQueueClaimHeld(claim, 'memory-only-create');
+      // Defer disk write so the catch path sees a memory-only orphan.
+      const run = createRun(
+        {
+          flowType: 'fix-bug',
+          project: 'farmslot-farm',
+          ticketOrPr: 'PROJ-memory-only-create',
+        },
+        { deferBackgroundPersist: true },
+      );
+      orphanId = run.id;
+      await stampQueueItemRunIdNow(queued.id, run.id);
+      throw new Error('simulated persist failure before run file');
+    },
+  );
+  t.after(async () => {
+    if (orphanId && getRun(orphanId)) await cleanupRun(orphanId);
+  });
+  await tryDispatchNext();
+  assert.ok(orphanId);
+  assert.equal(getRun(orphanId), undefined, 'memory-only orphan must be purged');
+  const requeued = getQueueSnapshot().find((q) => q.id === item.id);
+  assert.ok(requeued, 'row must be requeued for retry');
+  assert.equal(requeued.status, 'queued');
+  assert.equal(requeued.runId, undefined);
 });

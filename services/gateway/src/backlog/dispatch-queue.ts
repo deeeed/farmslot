@@ -2,6 +2,7 @@
 // Items persist across gateway restarts. Auto-dispatches when slots free up.
 
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,7 +24,7 @@ import { resolveDispatchPreviewFromFleet } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { detectProfileFit } from '../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../run-engine/ticket-data.js';
-import { getAllRuns, getRun } from '../runs/store.js';
+import { deleteRun, getAllRuns, getRun, runRecordPath, updateRun } from '../runs/store.js';
 
 function shouldUseIsolatedQueueFile(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
   if (env.FARMSLOT_TEST_TMP === '1' || env.NODE_TEST_CONTEXT) return true;
@@ -1000,19 +1001,40 @@ async function tryDispatchNextOnce(): Promise<void> {
         }
         return;
       }
-      // createRun may have already produced an in-memory (or durable) Run and
-      // stamped runId before a later await failed. Never requeue that handoff —
-      // drop the row so a retry cannot create a second Run for the same work.
+      // createRun may have produced an in-memory Run and stamped runId before a
+      // later await failed. Only drop the row when the Run is durable on disk —
+      // otherwise requeue and purge the memory-only orphan so retry can create.
       if (item.runId) {
         const partial = getRun(item.runId);
         if (partial) {
-          const stillPresent = queue.some((q) => q.id === item.id);
-          if (stillPresent) {
-            await removeQueueItemInternalNow(item.id, 'dispatch-create-partial');
+          const durable = existsSync(runRecordPath(partial.id));
+          if (durable) {
+            const stillPresent = queue.some((q) => q.id === item.id);
+            if (stillPresent) {
+              await removeQueueItemInternalNow(item.id, 'dispatch-create-partial');
+            }
+            console.error(
+              `[dispatch-queue] auto-dispatch partial create for ${item.id.slice(0, 8)} ` +
+                `(durable run ${item.runId.slice(0, 8)} kept, queue row dropped): ${(err as Error).message}`,
+            );
+            return;
+          }
+          // Memory-only orphan: cancel + delete so a retry does not leave two Runs.
+          const orphanId = partial.id;
+          updateRun(orphanId, { status: 'cancelled', completedAt: new Date().toISOString() });
+          await deleteRun(orphanId);
+          if (isQueueClaimHeld(claim)) {
+            releaseQueueClaim(claim);
+          } else if (queue.some((q) => q.id === item.id)) {
+            item.status = 'queued';
+            item.runId = undefined;
+            clearClaimFields(item);
+            schedulePersist('release-memory-only-create');
+            broadcastQueue();
           }
           console.error(
-            `[dispatch-queue] auto-dispatch partial create for ${item.id.slice(0, 8)} ` +
-              `(run ${item.runId.slice(0, 8)} kept, queue row dropped): ${(err as Error).message}`,
+            `[dispatch-queue] auto-dispatch memory-only create for ${item.id.slice(0, 8)} ` +
+              `(orphan ${orphanId.slice(0, 8)} purged, row requeued): ${(err as Error).message}`,
           );
           return;
         }

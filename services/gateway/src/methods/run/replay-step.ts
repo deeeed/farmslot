@@ -409,19 +409,19 @@ export async function runReplayStep(
   const step = existing.steps.find((s) => s.name === replayStepName);
   if (!step) throw new Error(`Step not found: ${params.stepName}`);
 
+  // Ownership refusal for cancelled-run reclaim must run before ANY mutation
+  // (prerequisite normalization, dispatch repair, generation bump, step reset).
+  // Otherwise a rejected replay leaves the cancelled run partially mutated.
+  if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
+    assertCancelledReplayNodeAvailable(existing, params.runId);
+  }
+
   if (replayStepName === PS.MONITOR && isQueuedPromptDispatchFalseNegative(existing)) {
     repairQueuedPromptDispatchFalseNegative(params.runId);
   }
   const replaySnapshot = getRun(params.runId) ?? existing;
   assertReplayAfterDispatchAllowed(replaySnapshot, flowSteps, targetIdx, replayStepName);
   normalizeReplayPrerequisites(params.runId, replaySnapshot, flowSteps, targetIdx, replayStepName);
-
-  // Ownership refusal for cancelled-run reclaim must run before any mutation
-  // (generation bump, step reset, recoveryProposal). Otherwise a rejected
-  // replay leaves the cancelled run partially mutated while reporting failure.
-  if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
-    assertCancelledReplayNodeAvailable(existing, params.runId);
-  }
 
   // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
   // Do this only after replay entry validation so rejected replays do not leave a
