@@ -18,9 +18,12 @@ export FARMSLOT_PROJECTS_DIR="$TMP/projects"
 mkdir -p "$TMP/pool" "$TMP/projects/domain-test-farm/fixtures" "$TMP/repo"
 git init -q "$TMP/repo"
 
+DEV_SERVER_PORT=$((1024 + BASHPID % 30000))
+METRO_PORT=$((DEV_SERVER_PORT + 30000))
 cat > "$TMP/pool/local.json" <<EOF
 {"machine":"shelltest","project":"domain-test-farm","platform":"cli","os":"darwin","host":"localhost","ssh_user":"x",
- "slots":[{"id":"tt-1","project":"domain-test-farm","repo":"$TMP/repo","session":"tt1","enabled":true,"mode":"dispatch"}]}
+ "slots":[{"id":"tt-1","project":"domain-test-farm","repo":"$TMP/repo","session":"tt1","enabled":true,"mode":"dispatch",
+ "resources":{"dev-server":{"port":$DEV_SERVER_PORT,"metro_port":$METRO_PORT}}}]}
 EOF
 cat > "$TMP/projects/domain-test-farm/project.json" <<'EOF'
 {"name":"domain-test-farm",
