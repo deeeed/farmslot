@@ -1000,6 +1000,10 @@
     "run.recipeRunsForRun": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "providerAccounts.snapshot": {
+      "surface": "na",
+      "note": "Command Center fleet Setup / provider seats surface (web UI). Labels and identity only \u2014 never tokens or credential paths."
     }
   }
 }
