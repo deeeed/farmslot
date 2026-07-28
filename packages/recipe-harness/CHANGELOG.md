@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- fix: capture-helper doctor failures report `capture_helper_exec_failed` (spawn/PATH/env) instead of claiming the tool is missing when only execution failed.
+
 ## 0.10.0 - 2026-07-24
 
 - **BREAKING:** Read action support from the keyed manifest allowlist and derive recipe-library identity from configuration or path, removing redundant per-library metadata.
