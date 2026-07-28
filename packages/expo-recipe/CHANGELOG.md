@@ -4,6 +4,8 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+- Require an explicit Metro bridge port only when a recipe executes Metro-backed UI actions.
+
 ## 0.4.0 - 2026-07-24
 
 - Accept root recipe parameters and task-local composed recipes.
