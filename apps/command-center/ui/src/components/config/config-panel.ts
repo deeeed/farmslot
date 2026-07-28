@@ -21,6 +21,7 @@ import './slot-toggle.js';
 import '../flow-graph/flow-graph.js';
 
 import { gateway } from '../../gateway-client.js';
+import { providerAccountsStore } from '../../provider-accounts-store.js';
 import { getState, type GlobalFilters, subscribe } from '../../state.js';
 import { getAlphaFeaturesEnabled, setAlphaFeaturesEnabled } from '../../utils/alpha-features.js';
 import { renderMarkdown } from '../../utils/markdown.js';
@@ -89,6 +90,7 @@ export class ConfigPanel extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this._seatsUnsub = providerAccountsStore.subscribe(() => this.requestUpdate());
     const s = getState();
     this._filters = s.globalFilters;
     this._fleetSlots = s.fleet?.slots ?? [];
@@ -109,6 +111,8 @@ export class ConfigPanel extends LitElement {
   }
 
   disconnectedCallback() {
+    this._seatsUnsub?.();
+    this._seatsUnsub = null;
     super.disconnectedCallback();
     this._connUnsub?.();
     this._stateUnsub?.();
@@ -194,8 +198,15 @@ export class ConfigPanel extends LitElement {
     }
   }
 
+  private _seatsUnsub: (() => void) | null = null;
+
+  private async _fetchSeats(machine: string, forceRefresh = false) {
+    await providerAccountsStore.fetch([machine], forceRefresh);
+  }
+
   private selectPool(machine: string) {
     this._selection = { kind: 'pool', machine };
+    void this._fetchSeats(machine);
     this._poolViewMode = 'structured';
     this._editorDirty = false;
     this._editorError = '';
@@ -450,6 +461,7 @@ export class ConfigPanel extends LitElement {
           ><span class="cp-info-value">${pool.sshUser}</span>
         </div>
       </div>
+      ${this.renderRunnerSeats(pool.machine)}
       <table class="cp-slot-table">
         <thead>
           <tr>
@@ -492,6 +504,56 @@ export class ConfigPanel extends LitElement {
           )}
         </tbody>
       </table>
+    `;
+  }
+
+  /** Same seat data as the fleet map's Setup modal, in the machine's config page. */
+  private renderRunnerSeats(machine: string) {
+    const snap = providerAccountsStore.get(machine);
+    const runners = snap?.runners ?? [];
+    const fetching = providerAccountsStore.isFetching(machine);
+    return html`
+      <div class="cp-pool-info" data-testid="config-runner-seats">
+        <div class="cp-info-row">
+          <span class="cp-info-label">Runner seats</span>
+          <span class="cp-info-value">
+            ${fetching ? 'querying node…' : runners.length ? '' : 'no snapshot'}
+            ${snap?.checkedAt && !fetching
+              ? html`<span style="opacity:.7"
+                  >as of ${new Date(snap.checkedAt).toLocaleTimeString()}</span
+                >`
+              : nothing}
+            <button
+              class="cp-action-btn"
+              data-testid="config-seats-refresh"
+              ?disabled=${fetching}
+              @click=${() => void this._fetchSeats(machine, true)}
+            >
+              Refresh
+            </button>
+          </span>
+        </div>
+        ${providerAccountsStore.error() && !runners.length
+          ? html`<div class="cp-info-row">
+              <span class="cp-info-label"></span>
+              <span class="cp-info-value">fetch failed: ${providerAccountsStore.error()}</span>
+            </div>`
+          : nothing}
+        ${runners.map(
+          (r) => html`
+            <div class="cp-info-row">
+              <span class="cp-info-label">${r.runner}</span>
+              <span class="cp-info-value">
+                ${r.usage?.accountEmail ?? r.activeLabel ?? r.status}
+                ${r.usage?.remainingPercent != null
+                  ? ` · ${Math.round(r.usage.remainingPercent)}% left`
+                  : ''}
+                ${r.cooling?.length ? ` · cooling: ${r.cooling.length}` : ''}
+              </span>
+            </div>
+          `,
+        )}
+      </div>
     `;
   }
 
