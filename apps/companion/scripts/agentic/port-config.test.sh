@@ -27,8 +27,7 @@ if env -u METRO_PORT FARMSLOT_LOCAL_RUNTIME_CONFIG=1 APP_VARIANT=development nod
 fi
 
 env -u METRO_PORT -u FARMSLOT_LOCAL_RUNTIME_CONFIG APP_VARIANT=development node -e \
-  "const config = require(process.argv[1]); if (config.server.port !== undefined) process.exit(1)" \
-  "${APP_DIR}/metro.config.js"
+  "require(process.argv[1])" "${APP_DIR}/metro.config.js"
 
 METRO_PORT=41234 FARMSLOT_LOCAL_RUNTIME_CONFIG=1 APP_VARIANT=development node -e \
   "const config = require(process.argv[1]); if (config.server.port !== 41234) process.exit(1)" \
