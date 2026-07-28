@@ -875,10 +875,17 @@ export async function runReplayStep(
       setRunFlags(params.runId, { skipPrepare: true });
     }
 
-    // Re-drive the engine from the reset step
-    startRun(params.runId).catch((err) => {
-      console.error(`[run] replay failed: ${(err as Error).message}`);
-    });
+    // Re-drive the engine from the reset step. Test contexts can disable the
+    // engine start (same switch runCreate honors) to assert the primed
+    // pipeline state deterministically.
+    if (
+      process.env.NODE_TEST_CONTEXT !== '1' ||
+      process.env.FARMSLOT_DISABLE_RUN_ENGINE_START !== '1'
+    ) {
+      startRun(params.runId).catch((err) => {
+        console.error(`[run] replay failed: ${(err as Error).message}`);
+      });
+    }
 
     console.log(`[run] replaying ${params.runId.slice(0, 8)} from step ${replayStepName}`);
     return { run: getRun(params.runId)! };
