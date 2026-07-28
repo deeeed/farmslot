@@ -74,11 +74,17 @@ function clearClaimFields(item: QueueItem): void {
   // claimEpoch is retained so the next claim still bumps past any prior token.
 }
 
-function claimStillHeld(item: QueueItem, claim: QueueClaim, nowMs = Date.now()): boolean {
+/** Holder + epoch still match (ignore wall-clock TTL). Unchanged epoch ⇒ nobody took over. */
+function claimOwnershipMatches(item: QueueItem, claim: QueueClaim): boolean {
   if (item.id !== claim.itemId) return false;
   if (item.status !== 'dispatching') return false;
   if (item.claimHolder !== claim.holderId) return false;
   if ((item.claimEpoch ?? 0) !== claim.epoch) return false;
+  return true;
+}
+
+function claimStillHeld(item: QueueItem, claim: QueueClaim, nowMs = Date.now()): boolean {
+  if (!claimOwnershipMatches(item, claim)) return false;
   if (!item.claimExpiresAt || Date.parse(item.claimExpiresAt) <= nowMs) return false;
   return true;
 }
@@ -96,9 +102,14 @@ export function initDispatchQueue(
  * Call after every await inside createAndStartRun that precedes createRun /
  * evalTrialStart — a concurrent cancel/replay revokes the claim and must stop
  * a detached callback from creating a second run for the same node.
+ *
+ * Wall-clock TTL expiry alone is not takeover: if holder+epoch still match we
+ * renew the claim and proceed. That avoids a permanent retry cliff when pre-create
+ * work (project vars, remote branch probe, …) exceeds DEFAULT_QUEUE_CLAIM_TTL_MS
+ * with no competitor. reclaimExpiredClaims still frees truly stranded claims.
  */
 export function assertQueueClaimHeld(claim: QueueClaim, phase = 'pre-createRun'): void {
-  if (!isQueueClaimHeld(claim)) {
+  if (!renewQueueClaim(claim)) {
     throw new QueueClaimLostError(claim, phase);
   }
 }
@@ -538,6 +549,15 @@ export function removeItem(itemId: string): void {
 
 // ─── Exclusive claim protocol (MANUAL-000053) ───
 
+export type QueueClaimMutateOptions = {
+  ttlMs?: number;
+  /**
+   * Skip persist + broadcast. Used for transient claim/release while probing
+   * slot eligibility (disk still resets dispatching-without-runId on load).
+   */
+  quiet?: boolean;
+};
+
 /**
  * Atomically claim a queued row for exclusive dispatch. Records holder + epoch
  * and transitions status to `dispatching`. Returns null when the row is gone,
@@ -546,7 +566,7 @@ export function removeItem(itemId: string): void {
 export function claimQueueItem(
   itemId: string,
   holderId: string,
-  options?: { ttlMs?: number },
+  options?: QueueClaimMutateOptions,
 ): QueueClaim | null {
   if (!holderId.trim()) return null;
   const item = queue.find((q) => q.id === itemId);
@@ -559,8 +579,64 @@ export function claimQueueItem(
   item.claimHolder = holderId;
   item.claimEpoch = epoch;
   item.claimExpiresAt = expiresAt;
-  schedulePersist('claim');
-  broadcastQueue();
+  if (!options?.quiet) {
+    schedulePersist('claim');
+    broadcastQueue();
+  }
+  return { itemId, holderId, epoch, expiresAt };
+}
+
+/**
+ * Extend claimExpiresAt for a still-owned claim (holder+epoch match).
+ * Wall-clock expiry alone does not block renew — only a revoke/reclaim that
+ * bumps epoch or clears the holder does. Memory-only by default (no
+ * persist/broadcast per renewal). Returns the updated claim token, or null
+ * when ownership is lost.
+ */
+export function renewQueueClaim(
+  claim: QueueClaim,
+  options?: { ttlMs?: number },
+): QueueClaim | null {
+  const item = queue.find((q) => q.id === claim.itemId);
+  if (!item || !claimOwnershipMatches(item, claim)) return null;
+  const ttlMs = options?.ttlMs ?? DEFAULT_QUEUE_CLAIM_TTL_MS;
+  const expiresAt = new Date(Date.now() + Math.max(1, ttlMs)).toISOString();
+  item.claimExpiresAt = expiresAt;
+  claim.expiresAt = expiresAt;
+  return { itemId: claim.itemId, holderId: claim.holderId, epoch: claim.epoch, expiresAt };
+}
+
+/**
+ * Revoke-and-take exclusive ownership for replay soft-lock. Unlike
+ * claimQueueItem (queued-only), this may take over a dispatching row that has
+ * not yet stamped a live Run — matching prior hand-rolled soft-lock semantics.
+ */
+export function claimQueueItemForReplay(
+  itemId: string,
+  holderId: string,
+  options?: QueueClaimMutateOptions,
+): QueueClaim | null {
+  if (!holderId.trim()) return null;
+  const item = queue.find((q) => q.id === itemId);
+  if (!item) return null;
+  if (item.status !== 'queued' && item.status !== 'dispatching') return null;
+  // Never steal a stamped handoff mid-create.
+  if (item.runId) {
+    const stamped = getRun(item.runId);
+    if (stamped && !isTerminalRunStatus(stamped.status)) return null;
+  }
+  const now = Date.now();
+  const ttlMs = options?.ttlMs ?? 120_000;
+  const epoch = (item.claimEpoch ?? 0) + 1;
+  const expiresAt = new Date(now + Math.max(1, ttlMs)).toISOString();
+  item.status = 'dispatching';
+  item.claimHolder = holderId;
+  item.claimEpoch = epoch;
+  item.claimExpiresAt = expiresAt;
+  if (!options?.quiet) {
+    schedulePersist('claim-replay');
+    broadcastQueue();
+  }
   return { itemId, holderId, epoch, expiresAt };
 }
 
@@ -574,15 +650,18 @@ export function isQueueClaimHeld(claim: QueueClaim, nowMs = Date.now()): boolean
 /**
  * Release a held claim back to `queued` so another dispatcher can try.
  * No-op (returns false) when the claim is already lost.
+ * Ownership match is enough (wall-clock expiry alone does not block release).
  */
-export function releaseQueueClaim(claim: QueueClaim): boolean {
+export function releaseQueueClaim(claim: QueueClaim, options?: { quiet?: boolean }): boolean {
   const item = queue.find((q) => q.id === claim.itemId);
-  if (!item || !claimStillHeld(item, claim)) return false;
+  if (!item || !claimOwnershipMatches(item, claim)) return false;
   item.status = 'queued';
   item.runId = undefined;
   clearClaimFields(item);
-  schedulePersist('release-claim');
-  broadcastQueue();
+  if (!options?.quiet) {
+    schedulePersist('release-claim');
+    broadcastQueue();
+  }
   return true;
 }
 
@@ -907,23 +986,43 @@ function liveQueuedItem(itemId: string): QueueItem | null {
   return item?.status === 'queued' ? item : null;
 }
 
+/** Backoff for claim-loss / retry loops so a slow uncontested path cannot spin. */
+let dispatchRetryBackoffMs = 0;
+const DISPATCH_RETRY_BACKOFF_MIN_MS = 250;
+const DISPATCH_RETRY_BACKOFF_MAX_MS = 30_000;
+
+function resetDispatchRetryBackoff(): void {
+  dispatchRetryBackoffMs = 0;
+}
+
 function scheduleDispatchRetry(reason: string): void {
   // Must run after dispatchInFlight clears (tryDispatchNextOnce finally), or the
-  // retry would join the finishing promise and no-op. setImmediate runs after
-  // the current turn's finally; queueMicrotask can race before finally.
-  setImmediate(() => {
+  // retry would join the finishing promise and no-op. setTimeout(0)/setImmediate
+  // both work; delay grows on repeated retries (claim-loss cliffs, busy fleet).
+  const delayMs = dispatchRetryBackoffMs;
+  dispatchRetryBackoffMs =
+    delayMs === 0
+      ? DISPATCH_RETRY_BACKOFF_MIN_MS
+      : Math.min(delayMs * 2, DISPATCH_RETRY_BACKOFF_MAX_MS);
+  const runRetry = () => {
     tryDispatchNext().catch((err) => {
       console.error(
         `[dispatch-queue] retry after ${reason} failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
-  });
+  };
+  if (delayMs <= 0) {
+    setImmediate(runRetry);
+  } else {
+    setTimeout(runRetry, delayMs);
+  }
 }
 
 function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
-  if (isQueueClaimHeld(claim)) return false;
-  // Claim may have expired while we awaited fleet/slot work — reset expired
-  // dispatching rows to queued so they are not stuck until an unrelated trigger.
+  // Renew if we still own holder+epoch (TTL alone is not takeover). Only a
+  // revoke/reclaim that cleared ownership is a real claim loss.
+  if (renewQueueClaim(claim)) return false;
+  // Ownership lost — reclaim any stranded expired rows and retry with backoff.
   reclaimExpiredClaims();
   console.log(
     `[dispatch-queue] claim lost for ${claim.itemId.slice(0, 8)} after ${phase}; stopping before createRun`,
@@ -960,8 +1059,10 @@ async function tryDispatchNextOnce(): Promise<void> {
     // Claim exclusively before any further await that commits us to this row.
     // A concurrent cancel/reclaim revokes the claim; we re-validate after every
     // await and stop before createRun rather than acting on a detached object.
+    // Quiet until slot eligibility is known — avoids 2N full-queue writes +
+    // queue.updated events per tryDispatchNext tick when the fleet is busy.
     const holderId = `dispatch-${randomUUID()}`;
-    const claim = claimQueueItem(item.id, holderId);
+    const claim = claimQueueItem(item.id, holderId, { quiet: true });
     if (!claim) continue;
 
     let slot: SlotStatus | undefined;
@@ -970,7 +1071,7 @@ async function tryDispatchNextOnce(): Promise<void> {
       if (stopIfClaimLost(claim, 'slot-selection')) return;
       slot = fleet.slots.find((s) => s.slot === slotId);
     } catch (error) {
-      if (isQueueClaimHeld(claim)) releaseQueueClaim(claim);
+      releaseQueueClaim(claim, { quiet: true });
       console.debug(
         `[dispatch-queue] skipping queued item ${item.id.slice(0, 8)}: ${(error as Error).message}`,
       );
@@ -978,21 +1079,29 @@ async function tryDispatchNextOnce(): Promise<void> {
     }
 
     if (!slot || !canDispatchQueuedItemToSlot(slot)) {
-      if (isQueueClaimHeld(claim)) releaseQueueClaim(claim);
+      releaseQueueClaim(claim, { quiet: true });
       continue;
     }
     if (stopIfClaimLost(claim, 'slot-eligibility')) return;
 
     item.slotId = slot.slot;
+    // Promote the quiet claim: one durable write + broadcast for the real dispatch.
+    renewQueueClaim(claim);
     schedulePersist('mark-dispatching');
+    broadcastQueue();
     console.log(`[dispatch-queue] auto-dispatching ${item.id.slice(0, 8)} → slot ${slot.slot}`);
 
-    // Re-validate before entering createAndStartRun; that callback re-validates
-    // again immediately before the durable createRun / evalTrialStart call.
-    if (stopIfClaimLost(claim, 'pre-createAndStartRun')) return;
+    // Re-validate + renew before entering createAndStartRun so long pre-create
+    // work cannot expire an uncontested claim; callback re-validates again
+    // immediately before the durable createRun / evalTrialStart call.
+    if (!renewQueueClaim(claim)) {
+      if (stopIfClaimLost(claim, 'pre-createAndStartRun')) return;
+      return;
+    }
 
     try {
       await _createAndStartRun(item, claim);
+      resetDispatchRetryBackoff();
       // Defensive: createAndStartRun normally drops the row via removeQueueItemInternalNow
       // after durable create. If the callback did not drop it, remove here so a
       // successful handoff never leaves a dispatching row for requeue.
@@ -1017,7 +1126,8 @@ async function tryDispatchNextOnce(): Promise<void> {
         // Defense-in-depth: addItem validates startRef and eval queue shape before
         // persistence, but queued JSON can outlive code changes or manual edits.
         // Cancel non-retryable items loudly instead of head-of-line retry loops.
-        if (isQueueClaimHeld(claim)) {
+        // Ownership match is enough (TTL alone is not takeover).
+        if (renewQueueClaim(claim)) {
           item.status = 'cancelled';
           item.runId = undefined;
           clearClaimFields(item);
@@ -1056,9 +1166,7 @@ async function tryDispatchNextOnce(): Promise<void> {
           // cannot leave a second Run in the map while the row is requeued.
           const orphanId = partial.id;
           await discardUndurableRun(orphanId);
-          if (isQueueClaimHeld(claim)) {
-            releaseQueueClaim(claim);
-          } else if (queue.some((q) => q.id === item.id)) {
+          if (!releaseQueueClaim(claim) && queue.some((q) => q.id === item.id)) {
             item.status = 'queued';
             item.runId = undefined;
             clearClaimFields(item);
@@ -1073,9 +1181,7 @@ async function tryDispatchNextOnce(): Promise<void> {
         }
       }
       // Revert to queued on failure when we still own the claim and no Run exists.
-      if (isQueueClaimHeld(claim)) {
-        releaseQueueClaim(claim);
-      }
+      releaseQueueClaim(claim);
       console.error(
         `[dispatch-queue] auto-dispatch failed for ${item.id.slice(0, 8)}: ${(err as Error).message}`,
       );

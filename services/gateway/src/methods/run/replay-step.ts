@@ -9,6 +9,7 @@ import {
   isTerminalRunStatus,
   PipelineSteps as PS,
   PR_BOUND_FLOW_TYPES,
+  type QueueClaim,
   resolveRunSlotId,
   type RunEngineState,
   type RunReplayStepParams,
@@ -17,9 +18,12 @@ import {
 } from '@farmslot/protocol';
 
 import {
+  claimQueueItemForReplay,
   getQueueSnapshot,
   persistQueueNow,
+  releaseQueueClaim,
   removeQueueItemInternal,
+  renewQueueClaim,
 } from '../../backlog/dispatch-queue.js';
 import { execOnSlot } from '../../core/exec.js';
 import { SLOT_PHASE_RELEASING } from '../../core/index.js';
@@ -423,18 +427,14 @@ export async function runReplayStep(
   assertReplayAfterDispatchAllowed(replaySnapshot, flowSteps, targetIdx, replayStepName);
   normalizeReplayPrerequisites(params.runId, replaySnapshot, flowSteps, targetIdx, replayStepName);
 
-  // Unique holder+epoch so concurrent replays cannot share a soft-lock.
-  let softLock: { id: string; holder: string; epoch: number } | undefined;
+  // Exclusive soft-lock via claim API (revoke-and-take) so replay shares the
+  // same invariants as dispatch and UI gets queue.updated on claim/release.
+  let softLock: QueueClaim | undefined;
   const releaseSoftLockIfHeld = async (): Promise<void> => {
     if (!softLock) return;
-    const item = getQueueSnapshot().find((q) => q.id === softLock!.id);
-    if (!item) return;
-    if (item.claimHolder !== softLock.holder || item.claimEpoch !== softLock.epoch) return;
-    if (item.status !== 'dispatching') return;
-    item.status = 'queued';
-    item.claimHolder = undefined;
-    item.claimExpiresAt = undefined;
-    await persistQueueNow();
+    if (releaseQueueClaim(softLock)) {
+      await persistQueueNow();
+    }
   };
   if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
     // Re-check after sync prep, then durable soft-lock before any further await.
@@ -442,14 +442,16 @@ export async function runReplayStep(
     const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
     if (replacement) {
       const holder = `replay:${params.runId}:${randomUUID()}`;
-      const epoch = (replacement.claimEpoch ?? 0) + 1;
-      // Soft-lock object is recorded before await so a persist failure still
+      // Soft-lock claim is recorded before await so a persist failure still
       // releases in-memory claim fields (failure cleanup cannot race assignment).
-      softLock = { id: replacement.id, holder, epoch };
-      replacement.status = 'dispatching';
-      replacement.claimHolder = holder;
-      replacement.claimEpoch = epoch;
-      replacement.claimExpiresAt = new Date(Date.now() + 120_000).toISOString();
+      const claim = claimQueueItemForReplay(replacement.id, holder, { ttlMs: 120_000 });
+      if (!claim) {
+        throw new Error(
+          `Run ${params.runId.slice(0, 8)} could not be replayed: could not soft-lock ` +
+            `replacement queue item ${replacement.id.slice(0, 8)}.`,
+        );
+      }
+      softLock = claim;
       try {
         await persistQueueNow();
       } catch (err) {
@@ -815,21 +817,20 @@ export async function runReplayStep(
       assertCancelledReplayNodeAvailable(existing, params.runId);
       const held = softLock;
       if (held) {
-        const locked = getQueueSnapshot().find((item) => item.id === held.id);
+        const locked = getQueueSnapshot().find((item) => item.id === held.itemId);
         if (!locked) {
           throw new Error(
             `Run ${params.runId.slice(0, 8)} could not be replayed: its replacement queue work ` +
               `was removed during prep (cancel/reclaim). The cancelled run is left cancelled.`,
           );
         }
-        if (locked.claimHolder !== held.holder || locked.claimEpoch !== held.epoch) {
+        // Renew via claim API — fails when holder/epoch no longer match.
+        if (!renewQueueClaim(held, { ttlMs: 60_000 })) {
           throw new Error(
             `Run ${params.runId.slice(0, 8)} could not be replayed: lost exclusive soft-lock on ` +
               `replacement queue item ${locked.id.slice(0, 8)}. The cancelled run is left cancelled.`,
           );
         }
-        // Renew TTL so drop is not racing reclaimExpiredClaims.
-        locked.claimExpiresAt = new Date(Date.now() + 60_000).toISOString();
       }
     }
     updateRun(params.runId, {
@@ -855,8 +856,8 @@ export async function runReplayStep(
     await persistRunNow(getRun(params.runId)!, 'replay-revive');
     const lockToDrop = softLock;
     if (lockToDrop) {
-      if (getQueueSnapshot().some((item) => item.id === lockToDrop.id)) {
-        removeQueueItemInternal(lockToDrop.id, `replay-revives-run:${params.runId}`);
+      if (getQueueSnapshot().some((item) => item.id === lockToDrop.itemId)) {
+        removeQueueItemInternal(lockToDrop.itemId, `replay-revives-run:${params.runId}`);
         await persistQueueNow();
       }
       softLock = undefined; // dropped — do not re-release in catch

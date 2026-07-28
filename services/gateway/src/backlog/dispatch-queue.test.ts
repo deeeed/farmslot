@@ -1357,7 +1357,10 @@ test('concurrent reclaim and dispatch against one row creates exactly one Run', 
   assert.equal(createdWins.length, 1, 'still exactly one Run after late reclaim');
 });
 
-test('tryDispatchNext re-validates claim after await and stops when revoked', async () => {
+test('assertQueueClaimHeld rejects after claim revoke/remove on the primitives', async () => {
+  // Primitive-level guard: claim + remove + assert. Production tryDispatchNext
+  // re-validation is covered by
+  // `concurrent reclaim and dispatch against one row creates exactly one Run`.
   const item = addItem({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
@@ -1382,6 +1385,30 @@ test('tryDispatchNext re-validates claim after await and stops when revoked', as
   assert.throws(() => assertQueueClaimHeld(claim, 'after-await'), QueueClaimLostError);
   assert.equal(createdRuns, 0);
   assert.equal(releaseQueueClaim(claim), false);
+});
+
+test('assertQueueClaimHeld renews an uncontested claim past wall-clock TTL', () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-renew-ttl',
+  });
+  try {
+    const claim = claimQueueItem(item.id, 'holder-renew', { ttlMs: 1 });
+    assert.ok(claim);
+    // Force past wall-clock expiry without reclaim — ownership still matches.
+    item.claimExpiresAt = new Date(Date.now() - 1_000).toISOString();
+    claim.expiresAt = item.claimExpiresAt;
+    assert.equal(isQueueClaimHeld(claim), false, 'isQueueClaimHeld still honors TTL');
+    // assert renews rather than treating pure expiry as takeover.
+    assert.doesNotThrow(() => assertQueueClaimHeld(claim, 'pre-create'));
+    assert.equal(isQueueClaimHeld(claim), true, 'renew extends TTL');
+    assert.ok(Date.parse(item.claimExpiresAt!) > Date.now());
+  } finally {
+    if (getQueueSnapshot().some((q) => q.id === item.id)) {
+      removeQueueItemInternal(item.id, 'test-cleanup');
+    }
+  }
 });
 
 test('reclaimExpiredClaims restores stranded dispatching rows to queued', () => {
