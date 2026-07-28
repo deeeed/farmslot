@@ -322,3 +322,65 @@ test('connection tests enforce a separate bounded ping timeout after authenticat
     globalThis.WebSocket = OriginalWebSocket;
   }
 });
+
+for (const malformed of [
+  {
+    name: 'null response frame',
+    response: null,
+    error: /malformed response frame.*update Farmslot/i,
+  },
+  {
+    name: 'null authentication payload',
+    response: {
+      type: 'res',
+      id: 'connection-test-auth',
+      ok: true,
+      payload: null,
+    },
+    error: /malformed authentication response.*update Farmslot/i,
+  },
+]) {
+  test(`connection tests control ${malformed.name} failures`, async () => {
+    const OriginalWebSocket = globalThis.WebSocket;
+
+    class MalformedWebSocket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+
+      readyState = MalformedWebSocket.CONNECTING;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+
+      constructor(_url: string) {
+        queueMicrotask(() => {
+          this.readyState = MalformedWebSocket.OPEN;
+          this.onopen?.();
+        });
+      }
+
+      send(_data: string): void {
+        queueMicrotask(() =>
+          this.onmessage?.({
+            data: JSON.stringify(malformed.response),
+          } as MessageEvent),
+        );
+      }
+
+      close(): void {
+        this.readyState = 3;
+      }
+    }
+
+    globalThis.WebSocket = MalformedWebSocket as unknown as typeof WebSocket;
+    try {
+      await assert.rejects(
+        testGatewayConnection('ws://gateway.test/ws', { token: 'test-token' }),
+        malformed.error,
+      );
+    } finally {
+      globalThis.WebSocket = OriginalWebSocket;
+    }
+  });
+}

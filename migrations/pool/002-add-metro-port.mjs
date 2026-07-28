@@ -22,16 +22,10 @@ export function migrate(pool) {
   }
 
   let nextPort = PORT_BLOCK_START;
-  for (const slot of pool.slots ?? []) {
+  const slots = pool.slots ?? [];
+  for (const [slotIndex, slot] of slots.entries()) {
     const devServer = slot.resources?.['dev-server'];
-    if (
-      !devServer ||
-      (Number.isInteger(devServer.metro_port) &&
-        devServer.metro_port >= 1 &&
-        devServer.metro_port <= MAX_PORT)
-    ) {
-      continue;
-    }
+    if (!devServer || isUsableMetroPort(slots, slot, slotIndex, devServer.metro_port)) continue;
     while (used.has(nextPort)) nextPort += 1;
     if (nextPort > MAX_PORT) {
       throw new Error(
@@ -43,4 +37,22 @@ export function migrate(pool) {
     nextPort += 1;
   }
   return pool;
+}
+
+function isUsableMetroPort(slots, slot, slotIndex, value) {
+  if (!Number.isInteger(value) || value < 1 || value > MAX_PORT) return false;
+  for (const [candidateIndex, candidate] of slots.entries()) {
+    for (const [resourceName, resource] of Object.entries(candidate.resources ?? {})) {
+      for (const [key, candidateValue] of Object.entries(resource ?? {})) {
+        if (candidateValue !== value) continue;
+        const isCurrentMetro =
+          candidate === slot && resourceName === 'dev-server' && key === 'metro_port';
+        if (isCurrentMetro) continue;
+        const isLaterMetro =
+          candidateIndex > slotIndex && resourceName === 'dev-server' && key === 'metro_port';
+        if (!isLaterMetro) return false;
+      }
+    }
+  }
+  return true;
 }

@@ -96,6 +96,9 @@ export function connectionProbeTeachingError(error: unknown): string {
   if (normalized.includes('timed out') || normalized.includes('timeout')) {
     return 'Gateway timed out. Check the host and confirm LAN or Tailscale is connected.';
   }
+  if (normalized.includes('transport changed')) {
+    return 'Gateway reconnected while proving liveness. Retry after the socket stabilizes.';
+  }
   return `Gateway did not answer: ${message}`;
 }
 
@@ -123,6 +126,14 @@ export function connectionHealthLabel(status: ConnectionHealthState): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-export function connectionHealthCanRetry(status: ConnectionHealthState): boolean {
-  return status === 'disconnected' || status === 'degraded';
+export function connectionHealthCanRetry(
+  status: ConnectionHealthState,
+  transportState: ConnectionState,
+  hasSideChannelProof: boolean,
+): boolean {
+  return (
+    status === 'disconnected' ||
+    status === 'degraded' ||
+    (status === 'socket-up-not-proven' && transportState !== 'connected' && hasSideChannelProof)
+  );
 }

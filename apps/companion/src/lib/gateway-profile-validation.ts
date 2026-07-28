@@ -22,8 +22,13 @@ export function isLegacyLocalhostGatewayUrl(url: string | null | undefined): boo
   }
 }
 
-export function isMobileGatewayProfileUrl(url: string): boolean {
-  return isValidGatewayUrl(url);
+export function normalizeGatewayProfileUrl(url: string): string {
+  const trimmed = url.trim();
+  try {
+    return new URL(trimmed).toString();
+  } catch {
+    return trimmed;
+  }
 }
 
 export function mobileGatewayProfileUrlError(url: string): string | null {

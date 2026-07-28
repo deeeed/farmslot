@@ -79,11 +79,14 @@ export function applyMigrations(pool: PoolConfig, steps: MigrationStep[]): Migra
     current.schema_version = step.toVersion;
     applied.push(step.id);
   }
-  for (const step of steps) {
-    if (!step.repairsInvariant || pending.includes(step)) continue;
-    const before = JSON.stringify(current);
-    current = step.migrate(current) ?? current;
-    if (JSON.stringify(current) !== before) applied.push(`${step.id}-repair`);
+  const latestSupportedVersion = steps.at(-1)?.toVersion ?? 0;
+  if ((pool.schema_version ?? 0) <= latestSupportedVersion) {
+    for (const step of steps) {
+      if (!step.repairsInvariant || pending.includes(step)) continue;
+      const before = JSON.stringify(current);
+      current = step.migrate(current) ?? current;
+      if (JSON.stringify(current) !== before) applied.push(`${step.id}-repair`);
+    }
   }
   return { pool: current, applied };
 }

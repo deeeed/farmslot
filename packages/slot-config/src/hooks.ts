@@ -62,10 +62,11 @@ function expandTemplateInternal(
   extraVars?: Record<string, string>,
   leaveUnresolvedDomain = false,
 ): string {
-  if (/\{\{(?:metro_port|METRO_PORT)\}\}/u.test(template) && !slotVars.resourceVars.metro_port) {
-    throw new Error(
-      `Slot ${slotVars.slotId} is missing resources.dev-server.metro_port required by template expansion; run farmslot update to migrate the pool.`,
-    );
+  if (
+    /\{\{(?:metro_port|METRO_PORT)\}\}/u.test(template) &&
+    !slotVars.resourceVars.metro_port?.trim()
+  ) {
+    throw new Error(missingMetroPortMessage(slotVars));
   }
   let result = template;
   // Runtime extras (e.g. --domain overlays) take precedence over project vars
@@ -171,6 +172,13 @@ function expandTemplateInternal(
   }
 
   return result;
+}
+
+export function missingMetroPortMessage(slotVars: SlotVars): string {
+  if (!slotVars.resourceVars.port?.trim()) {
+    return `Slot ${slotVars.slotId} is missing resources.dev-server required by Metro configuration; add the resource manually to the pool with distinct port and metro_port values.`;
+  }
+  return `Slot ${slotVars.slotId} is missing resources.dev-server.metro_port required by Metro configuration; run farmslot update to migrate the pool.`;
 }
 
 // ─── Template placeholder guard ───

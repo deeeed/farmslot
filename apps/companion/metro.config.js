@@ -6,8 +6,10 @@ const { createMetroRecipeBridgeMiddleware } = require('./metro-recipe-bridge.cjs
 const projectRoot = __dirname;
 const protocolRoot = path.resolve(projectRoot, '../../packages/protocol');
 const configuredMetroPort = process.env.METRO_PORT;
-const metroPort = configuredMetroPort === undefined ? undefined : Number(configuredMetroPort);
-const requiresConfiguredMetroPort = process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG === '1';
+const metroPort = configuredMetroPort ? Number(configuredMetroPort) : undefined;
+const requiresConfiguredMetroPort =
+  (process.env.APP_VARIANT || 'development') === 'development' &&
+  process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG === '1';
 
 if (requiresConfiguredMetroPort && metroPort === undefined) {
   throw new Error(

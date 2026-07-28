@@ -137,7 +137,11 @@ export function usedPorts(pool: PoolConfig): Set<number> {
   return ports;
 }
 
-/** Allocate the next free port from the onboarding block (9300+). */
+/**
+ * Allocate the next free port from the onboarding block (9300+).
+ * Lower starts intentionally clamp to the canonical high block so onboarding
+ * never allocates privileged or commonly shared development ports.
+ */
 export function allocatePort(pool: PoolConfig, from: number = PORT_BLOCK_START): number {
   const taken = usedPorts(pool);
   if (!Number.isInteger(from) || from > 65_535) {
@@ -162,21 +166,36 @@ export function defaultDevServerResource(pool: PoolConfig): Record<string, numbe
   };
 }
 
-/** Merge-only repair for slots created before Metro had an explicit resource port. */
+/** Merge-only repair for missing, invalid, or within-pool-conflicting Metro ports. */
 export function backfillMetroPort(pool: PoolConfig, slot: PoolSlot): number | null {
   const devServer = slot.resources?.['dev-server'];
-  if (
-    !devServer ||
-    (typeof devServer.metro_port === 'number' &&
-      Number.isInteger(devServer.metro_port) &&
-      devServer.metro_port >= 1 &&
-      devServer.metro_port <= 65_535)
-  ) {
-    return null;
-  }
+  if (!devServer) return null;
+  if (isUsableMetroPort(pool, slot, devServer.metro_port)) return null;
   const metroPort = allocatePort(pool);
   devServer.metro_port = metroPort;
   return metroPort;
+}
+
+function isUsableMetroPort(pool: PoolConfig, slot: PoolSlot, value: unknown): value is number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 65_535) {
+    return false;
+  }
+
+  const slotIndex = pool.slots.indexOf(slot);
+  for (const [candidateIndex, candidate] of pool.slots.entries()) {
+    for (const [resourceName, resource] of Object.entries(candidate.resources ?? {})) {
+      for (const [key, candidateValue] of Object.entries(resource)) {
+        if (candidateValue !== value) continue;
+        const isCurrentMetro =
+          candidate === slot && resourceName === 'dev-server' && key === 'metro_port';
+        if (isCurrentMetro) continue;
+        const isLaterMetro =
+          candidateIndex > slotIndex && resourceName === 'dev-server' && key === 'metro_port';
+        if (!isLaterMetro) return false;
+      }
+    }
+  }
+  return true;
 }
 
 /** First CDP port handed out for browser slots — separate block from dev servers. */

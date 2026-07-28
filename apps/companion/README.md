@@ -101,6 +101,10 @@ checkout-local `.env.ports` by supported local launch and recipe commands.
 Launcher and EAS process variables intentionally override dotenv-flow values;
 this lets each isolated checkout select its own gateway credentials and ports.
 Remote EAS development config can resolve without local port files.
+Because exported values win, a stale `EXPO_PUBLIC_GATEWAY_URL` or
+`FARMSLOT_REMOTE_GATEWAY_URL` can shadow the matching dotenv file and point a
+new checkout at an old gateway. Unset stale gateway variables before launching
+when switching slots or worktrees.
 
 Example for a real Android device on the local Wi-Fi/LAN:
 

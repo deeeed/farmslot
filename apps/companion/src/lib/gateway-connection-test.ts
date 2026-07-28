@@ -1,5 +1,4 @@
 import {
-  type Frame,
   type GatewayAuthConnectResult,
   type GatewayPingResult,
   Methods,
@@ -73,15 +72,40 @@ export function testGatewayConnection(
     };
 
     ws.onmessage = (ev: MessageEvent) => {
-      let frame: Frame;
+      let parsed: unknown;
       try {
-        frame = JSON.parse(ev.data as string) as Frame;
+        parsed = JSON.parse(ev.data as string) as unknown;
       } catch (error) {
         finishWithError(new Error(`Gateway returned malformed JSON: ${errorMessage(error)}`));
         return;
       }
-      if (frame.type !== 'res') return;
-      const response = frame as ResponseFrame;
+      if (!isRecord(parsed)) {
+        finishWithError(
+          new Error(
+            'Gateway returned a malformed response frame. Check the gateway version and update Farmslot.',
+          ),
+        );
+        return;
+      }
+      const frame = parsed;
+      if (frame.type === 'event') return;
+      if (frame.type !== 'res') {
+        finishWithError(
+          new Error(
+            'Gateway returned a malformed response frame. Check the gateway version and update Farmslot.',
+          ),
+        );
+        return;
+      }
+      const response = frame as unknown as ResponseFrame;
+      if (typeof response.id !== 'string' || typeof response.ok !== 'boolean') {
+        finishWithError(
+          new Error(
+            'Gateway returned a malformed response frame. Check the gateway version and update Farmslot.',
+          ),
+        );
+        return;
+      }
       if (response.id !== 'connection-test-auth' && response.id !== 'connection-test-ping') {
         return;
       }
@@ -97,11 +121,19 @@ export function testGatewayConnection(
         return;
       }
       if (response.id === 'connection-test-auth') {
-        authResult = response.payload as GatewayAuthConnectResult;
-        if (!authResult.ok) {
+        if (isRecord(response.payload) && response.payload.ok === false) {
           finishWithError(new Error('Gateway authentication failed'));
           return;
         }
+        if (!isGatewayAuthConnectResult(response.payload)) {
+          finishWithError(
+            new Error(
+              'Gateway returned a malformed authentication response. Check the gateway version and update Farmslot.',
+            ),
+          );
+          return;
+        }
+        authResult = response.payload;
         if (!gatewaySupportsPing(authResult)) {
           if (!finish()) return;
           resolve({
@@ -156,6 +188,22 @@ export function gatewaySupportsPing(result: GatewayAuthConnectResult): boolean {
   return result.capabilities?.gatewayPing === true;
 }
 
+function isGatewayAuthConnectResult(value: unknown): value is GatewayAuthConnectResult {
+  if (!isRecord(value) || value.ok !== true || !isRecord(value.capabilities)) return false;
+  return (
+    (value.clientKind === 'ui' ||
+      value.clientKind === 'companion' ||
+      value.clientKind === 'node') &&
+    (value.authMode === 'none' || value.authMode === 'token' || value.authMode === 'password') &&
+    typeof value.authenticatedAt === 'number' &&
+    Number.isFinite(value.authenticatedAt) &&
+    typeof value.capabilities.httpBearerAuth === 'boolean' &&
+    typeof value.capabilities.voiceInstructionFormatting === 'boolean' &&
+    (value.capabilities.gatewayPing === undefined ||
+      typeof value.capabilities.gatewayPing === 'boolean')
+  );
+}
+
 export function isValidGatewayPingResult(value: unknown): value is GatewayPingResult {
   const result = value as Partial<GatewayPingResult> | undefined;
   return (
@@ -167,4 +215,8 @@ export function isValidGatewayPingResult(value: unknown): value is GatewayPingRe
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

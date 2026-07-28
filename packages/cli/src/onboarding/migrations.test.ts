@@ -89,3 +89,48 @@ test('Metro invariant repair fixes malformed schema-v2 pools', async () => {
   assert.equal(repaired.slots[0].resources?.['dev-server'].metro_port, 9301);
   assert.deepEqual(applied, ['002-add-metro-port-repair']);
 });
+
+test('Metro invariant repair reallocates same-slot and cross-slot conflicts', async () => {
+  const steps = await loadMigrations();
+  const malformed = pool(2);
+  malformed.slots = [
+    {
+      id: 'm-app-1',
+      repo: '/r1',
+      session: 'app-1',
+      resources: { 'dev-server': { port: 9300, metro_port: 9300 } },
+    },
+    {
+      id: 'm-app-2',
+      repo: '/r2',
+      session: 'app-2',
+      resources: { 'dev-server': { port: 9302, metro_port: 9303 } },
+    },
+    {
+      id: 'm-app-3',
+      repo: '/r3',
+      session: 'app-3',
+      resources: { 'dev-server': { port: 9304, metro_port: 9303 } },
+    },
+  ];
+
+  const { pool: repaired } = applyMigrations(malformed, steps);
+  assert.deepEqual(
+    repaired.slots.map((slot) => slot.resources?.['dev-server'].metro_port),
+    [9301, 9303, 9305],
+  );
+});
+
+test('invariant repairs never rewrite a future-schema pool', async () => {
+  const steps = await loadMigrations();
+  const future = pool(999);
+  future.slots[0].resources = {
+    'dev-server': { port: 9300, metro_port: 9300 },
+  };
+  const before = structuredClone(future);
+
+  assert.deepEqual(applyMigrations(future, steps), {
+    pool: before,
+    applied: [],
+  });
+});

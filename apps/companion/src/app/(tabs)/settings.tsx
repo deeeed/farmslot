@@ -431,7 +431,7 @@ export default function SettingsScreen() {
     await saveProfile(profile, authSecret);
     Alert.alert(
       'Profile saved',
-      `${profile.name} was saved. Use “Validate & use” to switch to it.`,
+      `${profile.name} was saved. Use “Switch to this” to switch to it.`,
     );
   };
 

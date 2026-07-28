@@ -145,6 +145,37 @@ test('shared template expansion names missing lowercase and uppercase Metro reso
   }
 });
 
+test('shared template expansion requires manual pool configuration when dev-server is absent', () => {
+  const slotVars: SlotVars = {
+    slotId: 'legacy-farmslot-1',
+    machine: 'legacy',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: 'example',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'farmslot-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/repo',
+    projectName: 'farmslot-farm',
+    resourceVars: {},
+  };
+
+  assert.throws(
+    () => expandTemplate('prepare --metro-port {{METRO_PORT}}', slotVars),
+    /missing resources\.dev-server.*add the resource manually.*distinct port and metro_port/i,
+  );
+});
+
 test('expandDispatchCmd supports Cursor Agent runner path placeholders', () => {
   const slotVars: SlotVars = {
     slotId: 'runner-browser-1',

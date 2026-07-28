@@ -27,12 +27,20 @@ import { ConnectionLivenessController } from '../lib/connection-liveness-control
 import { type ConnectionProbeResult, runConnectionProbe } from '../lib/connection-probe';
 import { isCurrentConnectionProbe } from '../lib/connection-probe-identity';
 import {
+  ConnectionProbeAttemptTracker,
+  connectionProbeInvalidation,
+} from '../lib/connection-store-probe';
+import {
   type ConnectionState,
   type GatewayAuthCredentials,
   GatewayClient,
   type GatewayHttpAuthHeaders,
   gatewayHttpAuthHeaders,
 } from '../lib/gateway-client';
+import {
+  gatewayProfileForConnection,
+  selectInitialGatewayConnection,
+} from '../lib/gateway-profile-selection';
 import {
   parseGatewayProfilesFromStorage,
   sanitizeGatewayProfilesForStorage,
@@ -65,6 +73,7 @@ const LIVENESS_PROBE_TIMEOUT_MS = 8_000;
 
 let livenessController: ConnectionLivenessController | null = null;
 let appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
+const probeAttemptTracker = new ConnectionProbeAttemptTracker();
 
 export type { ConnectionProbeResult } from '../lib/connection-probe';
 
@@ -140,12 +149,12 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       await seedPresetGatewayProfileSecrets(profiles);
       const savedActiveProfileId = await AsyncStorage.getItem(ACTIVE_GATEWAY_PROFILE_KEY);
       const savedUrl = saved && !isLegacyPresetGatewayUrl(saved) ? saved : null;
-      const activeProfile =
-        profiles.find((profile) => profile.id === savedActiveProfileId) ??
-        (savedUrl ? profiles.find((profile) => profile.url === savedUrl) : undefined) ??
-        profiles[0] ??
-        null;
-      const url = savedUrl || activeProfile?.url || DEFAULT_GATEWAY_URL;
+      const { profile: activeProfile, url } = selectInitialGatewayConnection(
+        profiles,
+        savedUrl,
+        savedActiveProfileId,
+        DEFAULT_GATEWAY_URL,
+      );
       const auth = activeProfile ? await authCredentialsForProfile(activeProfile) : {};
       const client = new GatewayClient(url, auth);
 
@@ -319,7 +328,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       set({
         gatewayUrl: url,
         profiles,
-        activeProfileId: profileIdForUrl(profiles, url) ?? activeProfile?.id ?? '',
+        activeProfileId: activeProfile?.id ?? '',
         activeProfileAuthMode: activeProfile?.authMode ?? 'none',
         activeProfileHttpAuthHeaders: gatewayHttpAuthHeaders(auth),
         client,
@@ -336,7 +345,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             get().client?.connectionState ?? 'disconnected',
             error,
           );
-          set({ ...livenessPatch(liveness), probeInProgress: false });
+          set(livenessPatch(liveness));
         },
       });
       livenessController.setAppActive(AppState.currentState === 'active');
@@ -377,7 +386,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       activeProfileHttpAuthHeaders: nextAuthHeaders,
       ...transition.patch,
     });
-    if (transition.changed) livenessController?.reset();
+    if (transition.changed) {
+      probeAttemptTracker.invalidate();
+      livenessController?.reset();
+    }
     state.client?.setConnection(url, auth);
     if (transition.changed) void livenessController?.probeFresh();
   },
@@ -404,7 +416,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       gatewayUrl: profile.url,
       ...transition.patch,
     });
-    if (transition.changed) livenessController?.reset();
+    if (transition.changed) {
+      probeAttemptTracker.invalidate();
+      livenessController?.reset();
+    }
     state.client?.setConnection(profile.url, auth);
     if (transition.changed) void livenessController?.probeFresh();
   },
@@ -465,7 +480,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         activeProfileHttpAuthHeaders: authHeaders,
         ...transition.patch,
       });
-      if (transition.changed) livenessController?.reset();
+      if (transition.changed) {
+        probeAttemptTracker.invalidate();
+        livenessController?.reset();
+      }
       state.client?.setConnection(updated.url, auth);
       if (transition.changed) void livenessController?.probeFresh();
     }
@@ -500,6 +518,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         ...livenessPatch(INITIAL_CONNECTION_LIVENESS),
         gatewayCompatibilityHint: null,
       });
+      probeAttemptTracker.invalidate();
       livenessController?.reset();
       state.client?.setConnection('', {});
       return;
@@ -523,7 +542,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       gatewayUrl: nextProfile.url,
       ...transition.patch,
     });
-    if (transition.changed) livenessController?.reset();
+    if (transition.changed) {
+      probeAttemptTracker.invalidate();
+      livenessController?.reset();
+    }
     state.client?.setConnection(nextProfile.url, auth);
     if (transition.changed) void livenessController?.probeFresh();
   },
@@ -557,6 +579,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         ...livenessPatch(INITIAL_CONNECTION_LIVENESS),
         gatewayCompatibilityHint: null,
       });
+      probeAttemptTracker.invalidate();
       livenessController?.reset();
       state.client?.setConnection('', {});
       return;
@@ -581,7 +604,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       gatewayUrl: nextProfile.url,
       ...transition.patch,
     });
-    if (transition.changed) livenessController?.reset();
+    if (transition.changed) {
+      probeAttemptTracker.invalidate();
+      livenessController?.reset();
+    }
     state.client?.setConnection(nextProfile.url, auth);
     if (transition.changed) void livenessController?.probeFresh();
   },
@@ -612,24 +638,49 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       return { ok: false, error: liveness.lastError ?? 'Gateway is not connected.' };
     }
 
+    const attempt = probeAttemptTracker.begin();
     const profileUrl = get().gatewayUrl;
+    const profileId = get().activeProfileId;
     const connectionGeneration = client.connectionGeneration;
     const startedIdentity = {
       client,
       gatewayUrl: profileUrl,
+      profileId,
       connectionGeneration,
     };
+    const currentIdentity = () => ({
+      client: get().client ?? {},
+      gatewayUrl: get().gatewayUrl,
+      profileId: get().activeProfileId,
+      connectionGeneration: client.connectionGeneration,
+    });
     const probeIsCurrent = () =>
-      isCurrentConnectionProbe(startedIdentity, {
-        client: get().client ?? {},
-        gatewayUrl: get().gatewayUrl,
-        connectionGeneration: client.connectionGeneration,
-      });
+      probeAttemptTracker.isCurrent(attempt) &&
+      isCurrentConnectionProbe(startedIdentity, currentIdentity());
+    const failForInvalidation = (): ConnectionProbeResult | null => {
+      const invalidation = connectionProbeInvalidation(
+        startedIdentity,
+        currentIdentity(),
+        probeAttemptTracker.isCurrent(attempt),
+      );
+      if (!invalidation) return null;
+      if (invalidation.kind === 'transport') {
+        const liveness = livenessAfterFailure(
+          livenessFromStore(get()),
+          client.connectionState,
+          new Error(invalidation.error),
+        );
+        set(livenessPatch(liveness));
+        return {
+          ok: false,
+          error: liveness.lastError ?? invalidation.error,
+        };
+      }
+      return { ok: false, error: invalidation.error };
+    };
     set({ probeInProgress: true });
     try {
-      const activeProfile =
-        get().profiles.find((profile) => profile.id === get().activeProfileId) ??
-        get().profiles.find((profile) => profile.url === profileUrl);
+      const activeProfile = gatewayProfileForConnection(get().profiles, profileUrl, profileId);
       const auth = activeProfile ? await authCredentialsForProfile(activeProfile) : {};
       const outcome = await runConnectionProbe({
         client,
@@ -639,7 +690,20 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         timeoutMs: LIVENESS_PROBE_TIMEOUT_MS,
         isCurrent: probeIsCurrent,
       });
-      if (!outcome.result.ok) return outcome.result;
+      const invalidationFailure = failForInvalidation();
+      if (invalidationFailure) return invalidationFailure;
+      if (!outcome.result.ok) {
+        const liveness = livenessAfterFailure(
+          livenessFromStore(get()),
+          client.connectionState,
+          new Error(outcome.result.error),
+        );
+        set(livenessPatch(liveness));
+        return {
+          ok: false,
+          error: liveness.lastError ?? outcome.result.error,
+        };
+      }
       const liveness = livenessAfterSuccess(
         livenessFromStore(get()),
         Date.now(),
@@ -649,20 +713,22 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         ...livenessPatch(liveness),
         healthStatus: outcome.activeTransportProven ? liveness.status : 'socket-up-not-proven',
         gatewayCompatibilityHint: outcome.compatibilityHint,
-        probeInProgress: false,
       });
       return outcome.result;
     } catch (error) {
-      if (!probeIsCurrent()) {
-        return { ok: false, error: 'Gateway profile changed while testing.' };
-      }
+      const invalidationFailure = failForInvalidation();
+      if (invalidationFailure) return invalidationFailure;
       const liveness = livenessAfterFailure(
         livenessFromStore(get()),
         client.connectionState,
         error,
       );
-      set({ ...livenessPatch(liveness), probeInProgress: false });
+      set(livenessPatch(liveness));
       return { ok: false, error: liveness.lastError ?? 'Gateway did not answer.' };
+    } finally {
+      if (probeAttemptTracker.isCurrent(attempt)) {
+        set({ probeInProgress: false });
+      }
     }
   },
 

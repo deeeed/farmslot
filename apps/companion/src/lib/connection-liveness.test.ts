@@ -61,9 +61,12 @@ test('probe interval backs off after failures and response time is readable', ()
 });
 
 test('manual retry is limited to actionable connection failures', () => {
-  assert.equal(connectionHealthCanRetry('disconnected'), true);
-  assert.equal(connectionHealthCanRetry('degraded'), true);
-  assert.equal(connectionHealthCanRetry('healthy'), false);
-  assert.equal(connectionHealthCanRetry('connecting'), false);
-  assert.equal(connectionHealthCanRetry('socket-up-not-proven'), false);
+  assert.equal(connectionHealthCanRetry('disconnected', 'disconnected', false), true);
+  assert.equal(connectionHealthCanRetry('degraded', 'connected', false), true);
+  assert.equal(connectionHealthCanRetry('healthy', 'connected', false), false);
+  assert.equal(connectionHealthCanRetry('connecting', 'connecting', false), false);
+  assert.equal(connectionHealthCanRetry('socket-up-not-proven', 'connected', true), false);
+  assert.equal(connectionHealthCanRetry('socket-up-not-proven', 'disconnected', false), false);
+  assert.equal(connectionHealthCanRetry('socket-up-not-proven', 'disconnected', true), true);
+  assert.equal(connectionHealthCanRetry('socket-up-not-proven', 'connecting', true), true);
 });

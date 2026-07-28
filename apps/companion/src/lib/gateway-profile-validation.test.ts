@@ -3,8 +3,9 @@ import test from 'node:test';
 
 import {
   isLegacyLocalhostGatewayUrl,
-  isMobileGatewayProfileUrl,
+  isValidGatewayUrl,
   mobileGatewayProfileUrlError,
+  normalizeGatewayProfileUrl,
 } from './gateway-profile-validation';
 
 test('mobile gateway profile URLs allow loopback for USB port-reversal workflows', () => {
@@ -15,7 +16,7 @@ test('mobile gateway profile URLs allow loopback for USB port-reversal workflows
     'ws://[::1]:7777/ws',
   ]) {
     assert.equal(isLegacyLocalhostGatewayUrl(url), true, url);
-    assert.equal(isMobileGatewayProfileUrl(url), true, url);
+    assert.equal(isValidGatewayUrl(url), true, url);
     assert.equal(mobileGatewayProfileUrlError(url), null, url);
   }
 });
@@ -27,15 +28,20 @@ test('mobile gateway profile URLs allow LAN DNS, LAN IP, and WSS remotes', () =>
     'wss://gateway.example/ws',
   ]) {
     assert.equal(isLegacyLocalhostGatewayUrl(url), false, url);
-    assert.equal(isMobileGatewayProfileUrl(url), true, url);
+    assert.equal(isValidGatewayUrl(url), true, url);
     assert.equal(mobileGatewayProfileUrlError(url), null, url);
   }
 });
 
 test('mobile gateway profile URLs require WebSocket protocols', () => {
-  assert.equal(isMobileGatewayProfileUrl('http://my-mac.local:7777/ws'), false);
+  assert.equal(isValidGatewayUrl('http://my-mac.local:7777/ws'), false);
   assert.match(
     mobileGatewayProfileUrlError('http://my-mac.local:7777/ws') ?? '',
     new RegExp('must start with ws:// or wss://'),
   );
+});
+
+test('gateway URL normalization preserves endpoint identity while trimming input', () => {
+  assert.equal(normalizeGatewayProfileUrl(' ws://gateway.test:7777 '), 'ws://gateway.test:7777/');
+  assert.equal(normalizeGatewayProfileUrl('ws://gateway.test:7777/'), 'ws://gateway.test:7777/');
 });

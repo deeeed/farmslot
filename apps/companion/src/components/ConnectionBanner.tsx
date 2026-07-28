@@ -87,6 +87,7 @@ function resolveBannerContent(
 export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   const router = useRouter();
   const healthStatus = useConnectionStore((s) => s.healthStatus);
+  const transportStatus = useConnectionStore((s) => s.status);
   const lastProbeError = useConnectionStore((s) => s.lastProbeError);
   const probeInProgress = useConnectionStore((s) => s.probeInProgress);
   const retryConnection = useConnectionStore((s) => s.retryConnection);
@@ -120,7 +121,11 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   );
 
   if (!banner || banner.tone === 'healthy') return null;
-  const canRetry = connectionHealthCanRetry(healthStatus);
+  const canRetry = connectionHealthCanRetry(
+    healthStatus,
+    transportStatus,
+    gatewayCompatibilityHint !== null,
+  );
 
   const openProfiles = () => {
     router.push('/settings');

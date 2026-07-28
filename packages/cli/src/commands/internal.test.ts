@@ -48,7 +48,7 @@ test('buildFixtureSelectionVars defaults a custom slot to the custom variant onl
 });
 
 test('slotVarsShellLines preserves an explicit slot Metro port', () => {
-  const vars = {
+  const vars: SlotVars = {
     slotId: 'macwork-ff-1',
     machine: 'macwork',
     platform: 'cli',
@@ -73,7 +73,7 @@ test('slotVarsShellLines preserves an explicit slot Metro port', () => {
       port: '8808',
       metro_port: '8878',
     },
-  } satisfies SlotVars;
+  };
 
   assert.deepEqual(
     slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
@@ -81,8 +81,8 @@ test('slotVarsShellLines preserves an explicit slot Metro port', () => {
   );
 });
 
-test('slotVarsShellLines never aliases a missing Metro port to the gateway port', () => {
-  const vars = {
+test('slotVarsShellLines teaches farmslot update for missing or empty Metro ports', () => {
+  const vars: SlotVars = {
     slotId: 'legacy-ff-1',
     machine: 'legacy',
     platform: 'cli',
@@ -104,10 +104,46 @@ test('slotVarsShellLines never aliases a missing Metro port to the gateway port'
     remoteRepo: '/tmp/farmslot-1',
     projectName: 'farmslot-farm',
     resourceVars: { port: '8808' },
+  };
+
+  assert.throws(
+    () => slotVarsShellLines(vars),
+    /missing resources\.dev-server\.metro_port.*farmslot update/i,
+  );
+  vars.resourceVars.metro_port = '';
+  assert.throws(
+    () => slotVarsShellLines(vars),
+    /missing resources\.dev-server\.metro_port.*farmslot update/i,
+  );
+});
+
+test('slotVarsShellLines requires manual pool configuration without dev-server', () => {
+  const vars = {
+    slotId: 'legacy-ff-1',
+    machine: 'legacy',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: '',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/farmslot-1',
+    session: 'ff-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/tmp/farmslot-1',
+    projectName: 'farmslot-farm',
+    resourceVars: {},
   } satisfies SlotVars;
 
-  assert.deepEqual(
-    slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
-    ["METRO_PORT=''"],
+  assert.throws(
+    () => slotVarsShellLines(vars),
+    /missing resources\.dev-server.*add the resource manually.*distinct port and metro_port/i,
   );
 });

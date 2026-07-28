@@ -17,6 +17,11 @@ import { fileURLToPath } from 'node:url';
 
 import WebSocket, { WebSocketServer } from 'ws';
 
+import {
+  companionCaptureSlot,
+  resolveCompanionCapturePorts,
+} from './capture-companion-supervision-config.mjs';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../../..');
 const appRoot = resolve(repoRoot, 'apps/companion');
@@ -45,9 +50,8 @@ const artifactsDir = resolve(
 const copyToDocs = process.argv.includes('--copy-to-docs');
 const captureSeconds = Number(process.env.FARMSLOT_DEMO_CAPTURE_SECONDS || 8);
 const slot = readCompanionSlotConfig();
-const simulator = process.env.IOS_SIMULATOR || slot.simulator || 'fs-2';
-const metroPort = process.env.METRO_PORT || slot.port || '7677';
-const gatewayPort = process.env.GATEWAY_PORT || '7788';
+const simulator = process.env.IOS_SIMULATOR || slot?.simulator || 'fs-2';
+const { metroPort, gatewayPort } = resolveCompanionCapturePorts(process.env, slot);
 const gatewayHost = process.env.COMPANION_GATEWAY_HOST || detectLanHost();
 const gatewayUrl = `ws://${gatewayHost}:${gatewayPort}/ws`;
 const gatewayBindHost = process.env.COMPANION_GATEWAY_BIND_HOST || '0.0.0.0';
@@ -170,19 +174,9 @@ function readCompanionSlotConfig() {
   const poolPath = process.env.FARMSLOT_COMPANION_POOL_JSON || process.env.FARMSLOT_DEMO_POOL_JSON;
   if (poolPath) {
     const pool = JSON.parse(readFileSync(resolve(repoRoot, poolPath), 'utf8'));
-    const poolSlot = (pool.slots || []).find(
-      (candidate) => candidate.project === 'farmslot-farm' || /companion/i.test(candidate.id),
-    );
-    if (poolSlot) {
-      return {
-        simulator: poolSlot.resources?.['ios-sim']?.simulator,
-        port: poolSlot.resources?.['dev-server']?.port
-          ? String(poolSlot.resources['dev-server'].port)
-          : undefined,
-      };
-    }
+    return companionCaptureSlot(pool);
   }
-  return { simulator: 'fs-2', port: '8809' };
+  return null;
 }
 
 function fixtureNow(offsetMs = 0) {
@@ -613,7 +607,7 @@ function appEnv(extra = {}) {
     BUNDLE_ID: expectedBundleId,
     SCHEME: expectedScheme,
     METRO_PORT: metroPort,
-    WATCHER_PORT: metroPort,
+    WATCHER_PORT: gatewayPort,
     GATEWAY_PORT: gatewayPort,
     METRO_CONNECTION: 'localhost',
     EXPO_PUBLIC_GATEWAY_URL: gatewayUrl,

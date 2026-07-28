@@ -91,21 +91,16 @@ export function useGatewayPairingController(options: GatewayPairingControllerOpt
         ? `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported. Connected to ${preferredProfile.name}.`
         : `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported, but none passed validation. The current profile is unchanged.`;
       options.setPairingImportMessage(importMessage);
-      void allReachability
-        .then((reachability) => {
-          options.setProfileConnectionTests(
-            Object.fromEntries(
-              reachability.map((candidate) => [
-                candidate.profile.id,
-                pairingProfileTestState(candidate),
-              ]),
-            ),
-          );
-        })
-        .catch(() => {
-          // Individual reachability checks resolve to failed rows; this is only
-          // a defensive guard against an unexpected aggregate rejection.
-        });
+      void allReachability.then((reachability) => {
+        options.setProfileConnectionTests(
+          Object.fromEntries(
+            reachability.map((candidate) => [
+              candidate.profile.id,
+              pairingProfileTestState(candidate),
+            ]),
+          ),
+        );
+      });
       options.setAdvancedGatewaySetupOpen(false);
       if (preferredProfile) connect();
       setPairingScannerOpen(false);
