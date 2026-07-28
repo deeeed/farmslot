@@ -1524,6 +1524,37 @@ test('loadQueue drops higher-attempt launch row when a live run owns the candida
   await cleanupRun(run.id);
 });
 
+test('loadQueue keeps legacy undefined-attempt launch row against live attempt-bearing run', async () => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-legacy-attempt',
+    workGraphId: 'wg_legacy_attempt',
+    workNodeId: 'wn_legacy_attempt',
+    launchPlanId: 'plan_legacy',
+    launchCandidateId: 'cand_legacy',
+    launchAttempt: 1,
+  });
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-legacy-attempt',
+    workGraphId: 'wg_legacy_attempt',
+    workNodeId: 'wn_legacy_attempt',
+    launchPlanId: 'plan_legacy',
+    launchCandidateId: 'cand_legacy',
+  });
+  // Simulate legacy disk row without launchAttempt.
+  delete (item as { launchAttempt?: number }).launchAttempt;
+  item.status = 'dispatching';
+  await persistQueueNow();
+  await loadQueue();
+  const reloaded = getQueueSnapshot().find((q) => q.id === item.id);
+  assert.ok(reloaded, 'undefined !== 1 must re-queue (restart attempt matrix)');
+  assert.equal(reloaded.status, 'queued');
+  await cleanupRun(run.id);
+});
+
 test('loadQueue drops queued rows whose handoff is already owned by a live Run', async () => {
   const run = createRun({
     flowType: 'fix-bug',
