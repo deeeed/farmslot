@@ -759,6 +759,131 @@ test('runInteractiveDevResolve links PR-complete handoff and closes parent ci-wa
   assert.equal(child.ticketOrPr, 'example-org/example-mobile#123456');
 });
 
+test('runInteractiveDevResolve CI-watch actions resume the pipeline through the publication gate', async (t) => {
+  const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
+  const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  const projectDir = mkdtempSync(path.join(projectsDir, 'run-test-project-'));
+  const project = path.basename(projectDir);
+  writeFileSync(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({
+      name: project,
+      ci: { repo: 'example-org/example-mobile' },
+    }),
+    'utf-8',
+  );
+  const taskDir = mkdtempSync(path.join(tmpdir(), 'run-test-task-'));
+  writeFileSync(path.join(taskDir, 'TASK.md'), '# Task\n\nPR_NUMBER: 411\n', 'utf-8');
+  const localDevSuffix = Date.now().toString(16).toUpperCase().slice(-8);
+  const paused = createRun({
+    flowType: 'dev',
+    project,
+    ticketOrPr: `DEV-CIWATCH-${localDevSuffix}`,
+    mode: 'interactive',
+    initialContext: 'Interactive dev task parked at monitor with a pushed PR',
+    branch: 'feat/interactive-dev-ci-watch',
+  });
+  const preGateSteps = new Set(['find-slot', 'write-task', 'prepare', 'dispatch']);
+  updateRun(paused.id, {
+    status: 'paused',
+    taskFile: path.join(taskDir, 'TASK.md'),
+    steps: paused.steps.map((step) =>
+      preGateSteps.has(step.name)
+        ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+        : step.name === 'monitor'
+          ? { ...step, status: 'running', startedAt: new Date().toISOString() }
+          : step,
+    ),
+    agentContexts: [
+      {
+        id: 'ctx-worker',
+        role: 'primary',
+        label: 'Worker',
+        status: 'working',
+        slotId: '',
+        runId: paused.id,
+        taskFile: 'TASK.md',
+        runner: 'codex',
+      },
+    ],
+  });
+  const blocked = createRun({
+    flowType: 'dev',
+    project,
+    ticketOrPr: `DEV-CIWATCHB-${localDevSuffix}`,
+    mode: 'interactive',
+    initialContext: 'Blocked interactive dev task with a pushed PR',
+    branch: 'feat/interactive-dev-ci-watch-blocked',
+  });
+  updateRun(blocked.id, { status: 'blocked', error: 'operator marked blocked' });
+  t.after(async () => {
+    if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
+    if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
+    invalidateProjectVarsCache(project);
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(taskDir, { recursive: true, force: true });
+    for (const id of [paused.id, blocked.id]) {
+      if (getRun(id)) {
+        updateRun(id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(id);
+      }
+    }
+  });
+
+  const detectResult = await runInteractiveDevResolve(
+    { runId: paused.id, action: 'detect-pr-and-ci-watch' },
+    () => {},
+  );
+  assert.equal(detectResult.ok, true);
+  assert.equal(detectResult.prNumber, 411);
+
+  const resumed = getRun(paused.id)!;
+  assert.equal(resumed.prNumber, 411);
+  // The run must be waiting on the publication gate machinery, not stamped done.
+  assert.notEqual(resumed.status, 'done');
+  const humanGate = resumed.steps.find((step) => step.name === 'human-gate')!;
+  const gateDecision = resumed.decisions.find((decision) => decision.type === 'engine_human_gate');
+  assert.ok(
+    humanGate.status !== 'done' || gateDecision,
+    'human-gate must not complete without a recorded gate decision',
+  );
+  assert.equal(humanGate.status, 'pending');
+  assert.equal(resumed.steps.find((step) => step.name === 'complete')?.status, 'pending');
+  assert.equal(resumed.steps.find((step) => step.name === 'finalize')?.status, 'pending');
+  assert.equal(resumed.steps.find((step) => step.name === 'ci-watch')?.status, 'pending');
+  assert.equal(resumed.steps.find((step) => step.name === 'monitor')?.status, 'done');
+  const selfReview = resumed.steps.find((step) => step.name === 'self-review')!;
+  assert.equal(selfReview.status, 'done');
+  assert.equal(selfReview.outputs?.skipped, true);
+  assert.equal(selfReview.outputs?.source, 'operator');
+  assert.equal(resumed.devInteractiveProfile, 'reviewed');
+  assert.equal(resumed.engineState?.interactiveDev?.profile, 'reviewed');
+  assert.equal(
+    resumed.engineState?.interactiveDev?.terminalActions?.at(-1)?.action,
+    'link-pr-and-ci-watch',
+  );
+  // Worker context survives: agent teardown belongs to post-gate finalize.
+  assert.equal(resumed.agentContexts?.length, 1);
+
+  const linkResult = await runInteractiveDevResolve(
+    { runId: blocked.id, action: 'link-pr-and-ci-watch', prRef: '411' },
+    () => {},
+  );
+  assert.equal(linkResult.ok, true);
+  assert.equal(linkResult.prNumber, 411);
+  const resumedBlocked = getRun(blocked.id)!;
+  assert.equal(resumedBlocked.prNumber, 411);
+  assert.notEqual(resumedBlocked.status, 'done');
+  assert.notEqual(resumedBlocked.status, 'blocked');
+  assert.equal(resumedBlocked.error, undefined);
+  assert.equal(resumedBlocked.steps.find((step) => step.name === 'human-gate')?.status, 'pending');
+  assert.equal(resumedBlocked.devInteractiveProfile, 'reviewed');
+});
+
 test('comparison duplicates are allowed against their explicit production source run', () => {
   assert.doesNotThrow(() =>
     assertDuplicateRunAllowed(
