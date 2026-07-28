@@ -151,7 +151,7 @@ test('expandRecipeProjectHookTemplate expands action manifest, doctor, and run h
   );
 });
 
-test('recipe hook expansion rejects a missing slot Metro resource with migration guidance', () => {
+test('recipe hook expansion rejects a missing slot Metro resource with manual pool guidance', () => {
   const slotVars = createSlotVars();
   const projectVars = {
     projectName: 'demo-project',
@@ -175,7 +175,7 @@ test('recipe hook expansion rejects a missing slot Metro resource with migration
         recipePath: '/repo/recipe.json',
         artifactsDir: '/repo/artifacts',
       }),
-    /runner-browser-1.*resources\.dev-server\.metro_port.*farmslot update/u,
+    /runner-browser-1.*resources\.dev-server.*add the resource manually.*distinct port and metro_port/u,
   );
 });
 
