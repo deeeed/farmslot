@@ -21,6 +21,7 @@ import {
   hostGetActiveProfile,
   hostListEligibleLabels,
   hostResolveProviderAccount,
+  hostSelectProviderAccount,
 } from './provider-account-host.js';
 import { AMBIENT_ACCOUNT_LABEL, type ResolvedProviderAccount } from './provider-accounts.js';
 import { normalizeRunner } from './registry.js';
@@ -471,14 +472,20 @@ export async function resolveRunnerAccountForDispatch(options: {
   runnerId: string;
   slotId: string;
   forcedLabel?: string | null;
+  /** Labels already tried this run (failover). */
+  exclude?: string[];
 }): Promise<{ account: ResolvedProviderAccount; bind: AccountBindSpec } | null> {
   const provider = getRunnerStatusProvider(options.runnerId);
-  if (!provider?.supportsAccountBinding || !provider.resolveAccountForSlot) {
+  if (!provider?.supportsAccountBinding) {
     return null;
   }
-  const account = await provider.resolveAccountForSlot(options.vars, {
+  // Host-local select applies exhaustion ledger + optional quota guard (not bare resolve).
+  const account = await hostSelectProviderAccount({
+    vars: options.vars,
     slotId: options.slotId,
-    forcedLabel: options.forcedLabel,
+    provider: 'codex',
+    preferredLabel: options.forcedLabel,
+    exclude: options.exclude,
   });
   const bind = provider.buildAccountBindSpec?.(account) ?? {
     accountLabel: account.label,

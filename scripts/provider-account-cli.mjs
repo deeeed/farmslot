@@ -11,8 +11,11 @@
  *   node scripts/provider-account-cli.mjs record-success --label L
  *   node scripts/provider-account-cli.mjs get-active --provider codex
  *   node scripts/provider-account-cli.mjs set-active --provider codex --label L
+ *   node scripts/provider-account-cli.mjs select --slot-id S [--provider codex] [--preferred L] [--exclude a,b]
+ *   node scripts/provider-account-cli.mjs probe-identity --provider codex|grok
  */
 
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,6 +23,7 @@ import {
   AMBIENT_ACCOUNT_LABEL,
   earliestExhaustionExpiry,
   farmslotHomeFromEnv,
+  filterEligibleLabels,
   listEligibleLabels,
   loadActiveProviderProfiles,
   loadExhaustionLedger,
@@ -30,6 +34,7 @@ import {
   resolveProviderAccountForSlot,
   saveActiveProviderProfile,
 } from './lib/provider-accounts.mjs';
+import { probeCodexIdentityLocal, probeGrokIdentityLocal } from './lib/provider-identity.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,6 +74,8 @@ function main() {
       help: [
         'resolve --slot-id S [--label L] [--provider codex]',
         'list-eligible --provider codex [--exclude a,b]',
+        'select --slot-id S [--provider codex] [--preferred L] [--exclude a,b]',
+        'probe-identity --provider codex|grok',
         'mark-exhausted --label L [--provider codex]',
         'record-success --label L',
         'get-active --provider codex',
@@ -77,6 +84,106 @@ function main() {
       home,
       cli: path.join(__dirname, 'provider-account-cli.mjs'),
     });
+    return;
+  }
+
+  if (action === 'probe-identity') {
+    const p = String(provider || '').toLowerCase();
+    if (p === 'codex') {
+      emit({ ok: true, action, provider: 'codex', ...probeCodexIdentityLocal() });
+      return;
+    }
+    if (p === 'grok') {
+      emit({ ok: true, action, provider: 'grok', ...probeGrokIdentityLocal() });
+      return;
+    }
+    throw new Error(`probe-identity supports codex|grok, got '${provider}'`);
+  }
+
+  if (action === 'select') {
+    if (!args.slotId) throw new Error('missing --slot-id');
+    const exclude = args.exclude
+      ? String(args.exclude)
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+    const config = loadProviderAccountsConfig(home);
+    const preferred =
+      (args.preferred && String(args.preferred).trim()) ||
+      resolveProviderAccountForSlot({
+        slotId: args.slotId,
+        provider,
+        home,
+        config,
+      }).label;
+    const ordered = [
+      preferred,
+      ...providerFailoverCandidates({ provider, home, config }).filter((l) => l !== preferred),
+    ].filter((l) => !exclude.includes(l));
+    const eligible = filterEligibleLabels(ordered, { home });
+    if (!eligible.length) {
+      emit({
+        ok: false,
+        action,
+        error: 'no-eligible',
+        triedLabels: ordered.length ? ordered : [preferred || AMBIENT_ACCOUNT_LABEL],
+        earliestExpiry: earliestExhaustionExpiry(ordered, { home }),
+      });
+      process.exitCode = 2;
+      return;
+    }
+
+    const guard = config?.guard;
+    const guardEnabled = Boolean(
+      guard?.enabled && Array.isArray(guard.command) && guard.command.length,
+    );
+    let chosen = eligible[0];
+    if (guardEnabled) {
+      for (const label of eligible) {
+        const timeoutMs = Number(guard.timeoutMs) > 0 ? Number(guard.timeoutMs) : 8000;
+        const cmd = guard.command.map((part) =>
+          String(part).replaceAll('{{label}}', label).replaceAll('{{provider}}', provider),
+        );
+        const result = spawnSync(cmd[0], cmd.slice(1), {
+          encoding: 'utf8',
+          timeout: timeoutMs,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let verdict = 'unknown';
+        try {
+          const raw = String(result.stdout || '').trim();
+          if (raw) {
+            const data = JSON.parse(raw);
+            const decision = String(data.decision ?? '').toLowerCase();
+            if (decision === 'safe' || decision === 'ok' || decision === 'pass') verdict = 'ok';
+            else if (
+              decision === 'insufficient' ||
+              decision === 'below-threshold' ||
+              decision === 'block' ||
+              decision === 'deny'
+            ) {
+              verdict = 'below-threshold';
+            }
+          }
+        } catch {
+          verdict = 'unknown';
+        }
+        // Fail-open: only skip on explicit below-threshold.
+        if (verdict === 'below-threshold') continue;
+        chosen = label;
+        break;
+      }
+    }
+
+    const resolved = resolveProviderAccountForSlot({
+      slotId: args.slotId,
+      provider,
+      forcedLabel: chosen,
+      home,
+      config,
+    });
+    emit({ ok: true, action, home, preferred, eligible, chosen, ...resolved });
     return;
   }
 

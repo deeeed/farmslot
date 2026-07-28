@@ -135,7 +135,11 @@ export function nextFailoverLabel(options: {
       home: options.home,
       config,
     });
-  } catch {
+  } catch (err) {
+    // Recoverable: caller treats null as "no failover candidate left".
+    console.warn(
+      `[provider-account-select] nextFailoverLabel resolve failed for slot ${options.slotId}: ${(err as Error).message}`,
+    );
     return null;
   }
 }

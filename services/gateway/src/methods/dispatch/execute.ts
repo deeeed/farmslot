@@ -1094,7 +1094,7 @@ export async function dispatchExecute(
   });
   if (accountBind) {
     console.log(
-      `[dispatch] provider account slot=${params.slotId} machine=${vars.machine} runner=${runner} label=${accountBind.bind.accountLabel} auth=${accountBind.bind.authPath ?? ''}`,
+      `[dispatch] provider account slot=${params.slotId} machine=${vars.machine} runner=${runner} label=${accountBind.bind.accountLabel}`,
     );
   }
 

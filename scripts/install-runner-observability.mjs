@@ -347,10 +347,16 @@ function canonicalCodexPath(filePath) {
  * Never write through the link; never unlink a regular file (may be a real operator credential).
  * existsSync follows symlinks, so use lstat/readlink for correct presence/target checks.
  */
-function linkCodexAuth(destAuth, authSource) {
+function linkCodexAuth(destAuth, authSource, { requireSource = false, label = null } = {}) {
   const source = path.resolve(authSource);
   if (!fs.existsSync(source)) {
-    // Ambient / missing source: leave dest alone when absent; do not create a dangling link.
+    // Forced/bound seats must fail closed so we never stamp label B while still auth'd as A.
+    if (requireSource) {
+      throw new Error(
+        `Provider account auth missing at ${source}${label ? ` for label '${label}'` : ''}; refusing silent bind no-op`,
+      );
+    }
+    // True ambient bootstrap: leave dest alone when source absent; do not create a dangling link.
     return;
   }
 
@@ -450,7 +456,16 @@ async function bootstrapCodexHome({
   fs.writeFileSync(configPath, merged);
   const resolved = await resolveCodexAuthOnThisHost({ slotId, authSource, accountLabel });
   const destAuth = path.join(codexHomeDir, 'auth.json');
-  linkCodexAuth(destAuth, resolved.authPath);
+  const requireSource =
+    Boolean(authSource) ||
+    Boolean(
+      accountLabel && String(accountLabel).trim() && String(accountLabel).trim() !== 'ambient',
+    ) ||
+    Boolean(resolved.label && resolved.label !== 'ambient' && !resolved.ambient);
+  linkCodexAuth(destAuth, resolved.authPath, {
+    requireSource,
+    label: resolved.label || accountLabel || null,
+  });
   return { codexHomeDir, resolvedAuth: resolved };
 }
 
@@ -734,7 +749,7 @@ async function installCodex({ repo, runtimeDir = '.agent', slotId, authSource, a
   });
   if (resolvedAuth.label) {
     console.log(
-      `[farmslot-observability] codex account label=${resolvedAuth.label} source=${resolvedAuth.source} auth=${resolvedAuth.authPath}`,
+      `[farmslot-observability] codex account label=${resolvedAuth.label} source=${resolvedAuth.source}`,
     );
   }
 }

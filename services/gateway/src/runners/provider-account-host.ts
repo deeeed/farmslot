@@ -12,6 +12,7 @@ import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
+import { selectEligibleProviderAccount } from './provider-account-select.js';
 import {
   AMBIENT_ACCOUNT_LABEL,
   loadActiveProviderProfiles,
@@ -113,6 +114,82 @@ export async function hostResolveProviderAccount(options: {
     authPath: String(parsed.authPath || ''),
     ambient: Boolean(parsed.ambient),
     source: typeof parsed.source === 'string' ? parsed.source : undefined,
+  };
+}
+
+/**
+ * Select eligible account on the execution host (ledger + optional quota guard).
+ * Prefer this for dispatch primary/rebind instead of raw resolve.
+ */
+export async function hostSelectProviderAccount(options: {
+  vars: Awaited<ReturnType<typeof loadSlotVars>>;
+  slotId: string;
+  provider?: string;
+  preferredLabel?: string | null;
+  exclude?: string[];
+}): Promise<ResolvedProviderAccount & { source?: string }> {
+  const provider = options.provider ?? 'codex';
+  if (useInProcessLocal(options.vars)) {
+    return selectEligibleProviderAccount({
+      slotId: options.slotId,
+      provider,
+      preferredLabel: options.preferredLabel,
+      exclude: options.exclude,
+    });
+  }
+  const args = ['select', '--slot-id', options.slotId, '--provider', provider];
+  if (options.preferredLabel?.trim()) args.push('--preferred', options.preferredLabel.trim());
+  if (options.exclude?.length) args.push('--exclude', options.exclude.join(','));
+  const parsed = await runHostCli(options.vars, args);
+  return {
+    label: String(parsed.label || AMBIENT_ACCOUNT_LABEL),
+    provider: String(parsed.provider || provider),
+    authPath: String(parsed.authPath || ''),
+    ambient: Boolean(parsed.ambient),
+    source: typeof parsed.source === 'string' ? parsed.source : 'select',
+  };
+}
+
+/** Redacted identity probe on the execution host — never returns tokens. */
+export async function hostProbeIdentity(options: {
+  vars: Awaited<ReturnType<typeof loadSlotVars>>;
+  provider: 'codex' | 'grok';
+}): Promise<{
+  loggedIn: boolean;
+  email: string | null;
+  planType: string | null;
+  authMode: string | null;
+  displayName: string | null;
+  error?: string;
+}> {
+  if (useInProcessLocal(options.vars)) {
+    // Local callers should use in-process parsers; keep for symmetry.
+    const parsed = await runHostCli(options.vars, [
+      'probe-identity',
+      '--provider',
+      options.provider,
+    ]).catch((err: Error) => ({ ok: false, error: err.message }));
+    return normalizeProbeIdentity(parsed);
+  }
+  const parsed = await runHostCli(options.vars, ['probe-identity', '--provider', options.provider]);
+  return normalizeProbeIdentity(parsed);
+}
+
+function normalizeProbeIdentity(parsed: Record<string, unknown>): {
+  loggedIn: boolean;
+  email: string | null;
+  planType: string | null;
+  authMode: string | null;
+  displayName: string | null;
+  error?: string;
+} {
+  return {
+    loggedIn: Boolean(parsed.loggedIn || parsed.email),
+    email: typeof parsed.email === 'string' ? parsed.email : null,
+    planType: typeof parsed.planType === 'string' ? parsed.planType : null,
+    authMode: typeof parsed.authMode === 'string' ? parsed.authMode : null,
+    displayName: typeof parsed.displayName === 'string' ? parsed.displayName : null,
+    ...(typeof parsed.error === 'string' ? { error: parsed.error } : {}),
   };
 }
 

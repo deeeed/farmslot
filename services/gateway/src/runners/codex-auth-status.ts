@@ -210,13 +210,16 @@ export async function probeCodexAuthStatus(options: {
       };
     }
 
-    // Remote: read host auth.json (parse drops secrets), else login status text.
-    const authPathCmd =
-      'AUTH="${CODEX_HOME:-$HOME/.codex}/auth.json"; if [ -f "$AUTH" ]; then cat "$AUTH"; fi';
-    const fileResult = await execOnSlot(options.vars, authPathCmd, { timeout: timeoutMs });
-    if (fileResult.stdout.trim()) {
-      const fromFile = parseCodexAuthJson(fileResult.stdout);
-      if (fromFile.email || fromFile.loggedIn) return fromFile;
+    // Remote: identity-only CLI (never cat full auth.json over the wire).
+    const { hostProbeIdentity } = await import('./provider-account-host.js');
+    const probed = await hostProbeIdentity({ vars: options.vars, provider: 'codex' });
+    if (probed.email || probed.loggedIn) {
+      return {
+        loggedIn: Boolean(probed.loggedIn || probed.email),
+        email: probed.email,
+        planType: probed.planType,
+        authMode: probed.authMode,
+      };
     }
     const binExpr = codexBin === 'codex' ? 'codex' : shellExpressionForRemotePath(codexBin);
     const statusResult = await execOnSlot(options.vars, `${binExpr} login status </dev/null`, {
@@ -225,7 +228,7 @@ export async function probeCodexAuthStatus(options: {
     if (statusResult.stdout.trim()) return parseCodexLoginStatusText(statusResult.stdout);
     return {
       ...EMPTY,
-      error: statusResult.stderr?.trim() || fileResult.stderr?.trim() || 'auth-file-missing',
+      error: probed.error || statusResult.stderr?.trim() || 'auth-file-missing',
     };
   } catch (err) {
     return { ...EMPTY, error: (err as Error).message || 'probe-failed' };

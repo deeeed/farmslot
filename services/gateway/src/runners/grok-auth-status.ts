@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { loadSlotVars } from '../core/config.js';
-import { execOnSlot, isLocal } from '../core/exec.js';
+import { isLocal } from '../core/exec.js';
 
 export interface GrokAuthStatus {
   loggedIn: boolean;
@@ -101,7 +101,6 @@ export async function probeGrokAuthStatus(options: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
   timeoutMs?: number;
 }): Promise<GrokAuthStatus> {
-  const timeoutMs = options.timeoutMs ?? 8_000;
   try {
     if (isLocal(options.vars.host, options.vars.machine)) {
       try {
@@ -116,19 +115,16 @@ export async function probeGrokAuthStatus(options: {
       }
     }
 
-    // Remote: cat host auth cache (identity fields only — we parse and drop secrets).
-    const cmd = 'test -f "$HOME/.grok/auth.json" && cat "$HOME/.grok/auth.json" || true';
-    const result = await execOnSlot(options.vars, cmd, { timeout: timeoutMs });
-    if (!result.stdout.trim()) {
-      return {
-        ...EMPTY,
-        error:
-          result.exitCode !== 0
-            ? result.stderr?.trim() || `exit ${result.exitCode}`
-            : 'auth-file-missing',
-      };
-    }
-    return parseGrokAuthJson(result.stdout);
+    // Remote: identity-only CLI (never cat full auth.json over the wire).
+    const { hostProbeIdentity } = await import('./provider-account-host.js');
+    const probed = await hostProbeIdentity({ vars: options.vars, provider: 'grok' });
+    return {
+      loggedIn: Boolean(probed.loggedIn || probed.email),
+      email: probed.email,
+      displayName: probed.displayName,
+      authMode: probed.authMode,
+      ...(probed.error && !probed.email ? { error: probed.error } : {}),
+    };
   } catch (err) {
     return { ...EMPTY, error: (err as Error).message || 'probe-failed' };
   }

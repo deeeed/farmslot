@@ -499,3 +499,43 @@ test('codex install uses node active profile when no label/binding', () => {
   const destAuth = path.join(repo, '.agent', 'codex-home', 'auth.json');
   assert.equal(path.resolve(fs.readlinkSync(destAuth)), path.resolve(authB));
 });
+
+test('codex install fails closed when bound account auth path is missing', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-missing-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-home-missing-'));
+  const missingAuth = path.join(home, 'accounts', 'gone', 'auth.json');
+  fs.writeFileSync(
+    path.join(home, 'provider-accounts.json'),
+    JSON.stringify({
+      version: 1,
+      accounts: {
+        'codex-gone': { provider: 'codex', authPath: missingAuth },
+      },
+    }),
+  );
+
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [
+          INSTALLER,
+          '--runner',
+          'codex',
+          '--repo',
+          repo,
+          '--runtime-dir',
+          '.agent',
+          '--slot-id',
+          'slot-missing',
+          '--account-label',
+          'codex-gone',
+        ],
+        {
+          stdio: 'pipe',
+          env: { ...process.env, FARMSLOT_HOME: home },
+        },
+      ),
+    /auth missing|refusing silent bind/,
+  );
+});
