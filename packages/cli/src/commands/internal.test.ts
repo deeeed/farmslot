@@ -80,3 +80,34 @@ test('slotVarsShellLines preserves an explicit slot Metro port', () => {
     ["METRO_PORT='8878'"],
   );
 });
+
+test('slotVarsShellLines never aliases a missing Metro port to the gateway port', () => {
+  const vars = {
+    slotId: 'legacy-ff-1',
+    machine: 'legacy',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: '',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/farmslot-1',
+    session: 'ff-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/tmp/farmslot-1',
+    projectName: 'farmslot-farm',
+    resourceVars: { port: '8808' },
+  } satisfies SlotVars;
+
+  assert.deepEqual(
+    slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
+    ["METRO_PORT=''"],
+  );
+});

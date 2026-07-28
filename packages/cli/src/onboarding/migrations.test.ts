@@ -53,3 +53,27 @@ test('applyMigrations is a no-op at latest version', async () => {
   const { applied } = applyMigrations(current, steps);
   assert.deepEqual(applied, []);
 });
+
+test('Metro migration allocates distinct ports and preserves explicit assignments', async () => {
+  const steps = await loadMigrations();
+  const legacy = pool(1);
+  legacy.slots = [
+    {
+      id: 'm-app-1',
+      repo: '/r1',
+      session: 'app-1',
+      resources: { 'dev-server': { port: 8808 } },
+    },
+    {
+      id: 'm-app-2',
+      repo: '/r2',
+      session: 'app-2',
+      resources: { 'dev-server': { port: 8809, metro_port: 8879 } },
+    },
+  ];
+
+  const { pool: migrated } = applyMigrations(legacy, steps);
+  assert.equal(migrated.slots[0].resources?.['dev-server'].port, 8808);
+  assert.equal(migrated.slots[0].resources?.['dev-server'].metro_port, 8880);
+  assert.equal(migrated.slots[1].resources?.['dev-server'].metro_port, 8879);
+});

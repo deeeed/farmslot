@@ -176,6 +176,28 @@ test('Expo config rejects an invalid configured Metro port instead of falling ba
   }
 });
 
+test('Expo config rejects a development build without a slot-derived Metro port', () => {
+  const previousMetroPort = process.env.METRO_PORT;
+  const previousVariant = process.env.APP_VARIANT;
+  delete process.env.METRO_PORT;
+  process.env.APP_VARIANT = 'development';
+  try {
+    assert.throws(
+      () =>
+        createExpoConfig({
+          config: {
+            name: 'FarmDev',
+            slug: 'farmslot',
+          },
+        } as ConfigContext),
+      /METRO_PORT must come from the Farmslot slot\/worktree configuration/,
+    );
+  } finally {
+    restoreEnv('METRO_PORT', previousMetroPort);
+    restoreEnv('APP_VARIANT', previousVariant);
+  }
+});
+
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
     delete process.env[name];

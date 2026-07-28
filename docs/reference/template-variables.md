@@ -19,7 +19,7 @@ Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip 
 
 ## Hooks, fixtures, recipe_run (double-brace var)
 
-- **slot resources:** `port, cdp_port, simulator, avd, adb_serial, headless, snapshot, app, platform` (Missing optional resources render empty.)
+- **slot resources:** `port, metro_port, cdp_port, simulator, avd, adb_serial, headless, snapshot, app, platform` (Missing optional resources render empty.)
 - **auto-injected:** `runtime_dir, artifact_dir, recipe_dir, farmslot_dir, slot_id, session, repo, primary_repo, recipe_path, artifacts_dir`
 - **reference_repos:** `key_repo per entry (e.g. mobile_repo)`
 - **project.json vars:** `same as worker TASK extension`

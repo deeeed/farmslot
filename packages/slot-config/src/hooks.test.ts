@@ -6,6 +6,7 @@ import {
   assertNoUnknownPlaceholders,
   collectTemplatePlaceholders,
   expandDispatchCmd,
+  expandHook,
   expandTemplate,
   expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
@@ -107,8 +108,47 @@ test('expandTemplate renders missing optional resource placeholders as empty str
   };
 
   assert.equal(
-    expandTemplate('{{port}} {{simulator}} {{avd}} {{adb_serial}} {{ADB_SERIAL}}', slotVars),
-    '8061 mm-1   ',
+    expandTemplate(
+      '{{port}} {{metro_port}} {{simulator}} {{avd}} {{adb_serial}} {{ADB_SERIAL}}',
+      slotVars,
+    ),
+    '8061  mm-1   ',
+  );
+});
+
+test('expandHook names the missing Metro resource for a legacy pool slot', () => {
+  const slotVars: SlotVars = {
+    slotId: 'legacy-farmslot-1',
+    machine: 'legacy',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: 'example',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'farmslot-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/repo',
+    projectName: 'farmslot-farm',
+    resourceVars: { port: '8808' },
+  };
+
+  assert.throws(
+    () =>
+      expandHook(
+        'companion-warm',
+        { hooks: { 'companion-warm': 'prepare --metro-port {{metro_port}}' } },
+        slotVars,
+      ),
+    /legacy-farmslot-1.*resources\.dev-server\.metro_port.*farmslot update/,
   );
 });
 

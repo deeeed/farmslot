@@ -23,6 +23,7 @@ import {
   registerProject,
 } from './add.js';
 import type { PackJson, PackProject } from './pack.js';
+import type { PoolConfig } from './pool-config.js';
 import { type Workspace, workspaceAt, type WorkspaceState } from './workspace.js';
 
 /** Init a git repo with a .gitignore so check-ignore reports operator files. */
@@ -329,6 +330,8 @@ printf '{}\\n' > "$repo/$runtime_dir/agentic-runtime.json"
   assert.match(contextArgs, /--machine m/);
   assert.match(contextArgs, /--project app-farm/);
   assert.match(contextArgs, /--watcher-port 9300/);
+  assert.match(contextArgs, /--metro-port 9301/);
+  assert.doesNotMatch(contextArgs, /--metro-port 9300/);
   assert.match(contextArgs, /--runtime-dir temp\/recipe\/runtime/);
   assert.doesNotMatch(contextArgs, /--simulator/);
   assert.doesNotMatch(contextArgs, /--adb-serial/);
@@ -340,6 +343,13 @@ printf '{}\\n' > "$repo/$runtime_dir/agentic-runtime.json"
   writeFileSync(join(runtimeDir, 'context.args'), 'prepared context\n');
 
   let state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
+  const registeredPool = JSON.parse(
+    readFileSync(join(ws.farmslotDir, 'pool', 'm.json'), 'utf-8'),
+  ) as PoolConfig;
+  assert.deepEqual(registeredPool.slots[0].resources?.['dev-server'], {
+    port: 9300,
+    metro_port: 9301,
+  });
   assert.deepEqual(state.packs['team-pack'].projects, ['app-farm']);
   assert.deepEqual(state.packs['team-pack'].slots, ['m-app-1']);
   assert.equal(state.packs['team-pack'].hash, '');

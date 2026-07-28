@@ -9,6 +9,8 @@ import {
   type ResponseFrame,
 } from '@farmslot/protocol';
 
+import { gatewaySupportsPing } from './gateway-connection-test';
+import { connectionWaitTerminalError } from './gateway-connection-wait';
 import type { GatewayAuthCredentials } from './gateway-http-auth';
 
 export { type GatewayConnectionTestResult, testGatewayConnection } from './gateway-connection-test';
@@ -46,6 +48,8 @@ export class GatewayClient {
   private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
   private wasConnectedBeforeBackground = false;
   private lastConnectionError: string | null = null;
+  private pingSupported: boolean | null = null;
+  private generation = 0;
 
   constructor(url: string, auth: GatewayAuthCredentials = {}) {
     this.url = url;
@@ -57,6 +61,14 @@ export class GatewayClient {
     return this.state;
   }
 
+  get gatewayPingSupported(): boolean | null {
+    return this.pingSupported;
+  }
+
+  get connectionGeneration(): number {
+    return this.generation;
+  }
+
   setConnection(url: string, auth: GatewayAuthCredentials = {}): void {
     const changed =
       this.url !== url || this.auth.token !== auth.token || this.auth.password !== auth.password;
@@ -64,6 +76,8 @@ export class GatewayClient {
     this.auth = auth;
     if (!changed) return;
 
+    this.generation += 1;
+    this.pingSupported = null;
     this.cancelReconnect();
     this.rejectAllPending('Gateway profile changed');
     this.closeCurrentSocket();
@@ -151,6 +165,7 @@ export class GatewayClient {
       ...this.auth,
     });
     if (!result.ok) throw new Error('Gateway authentication failed');
+    this.pingSupported = gatewaySupportsPing(result);
     this.backoff = 1000;
     this.lastConnectionError = null;
     this.setState('connected');
@@ -246,17 +261,18 @@ export class GatewayClient {
         resolve();
       };
       const timer = setTimeout(() => {
-        finish(new Error(`Gateway did not connect within ${timeout}ms`));
+        const detail = this.lastConnectionError ? ` Last error: ${this.lastConnectionError}` : '';
+        finish(new Error(`Gateway did not connect within ${timeout}ms.${detail}`));
       }, timeout);
 
       unsubscribe = this.onConnectionChange((state) => {
         if (state === 'connected') finish();
         if (state === 'disconnected') {
-          if (this.pausedForBackground) {
-            finish(new Error('Gateway paused while app is in the background'));
-          } else if (this.lastConnectionError) {
-            finish(new Error(this.lastConnectionError));
-          }
+          const terminalError = connectionWaitTerminalError(
+            this.pausedForBackground,
+            this.lastConnectionError,
+          );
+          if (terminalError) finish(new Error(terminalError));
         }
       });
 

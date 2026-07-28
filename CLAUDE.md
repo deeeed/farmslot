@@ -162,7 +162,7 @@ Hooks use `{{var}}` placeholders substituted from slot resource fields at runtim
 # At runtime, {{port}} is replaced with the slot's dev-server port from resources
 ```
 
-Available variables (from slot resources): `{{port}}`, `{{simulator}}`, `{{avd}}`, `{{adb_serial}}`, `{{cdp_port}}`, `{{headless}}`, `{{snapshot}}`.
+Available variables (from slot resources): `{{port}}`, `{{metro_port}}`, `{{simulator}}`, `{{avd}}`, `{{adb_serial}}`, `{{cdp_port}}`, `{{headless}}`, `{{snapshot}}`.
 Auto-injected: `{{platform}}`, `{{slot_id}}`, `{{runtime_dir}}`, `{{artifact_dir}}`, `{{farmslot_dir}}`.
 
 ## Project Repos (Nested Git)

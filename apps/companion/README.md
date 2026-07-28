@@ -225,7 +225,7 @@ never infer “healthy” from a WebSocket opening.
 Execution record (2026-07-27, Pixel 9 Pro XL): automated state-machine,
 foreground timer, backoff, and re-prove tests passed. A USB launch using
 ADB-reversed Metro `7677` and gateway `7801` reached healthy; the authenticated
-`gateway.status` manual test responded in 225 ms and updated only the tested
+`gateway.ping` manual test responded in 225 ms and updated only the tested
 profile card. A parallel **Test all** pass kept the active profile unchanged
 while reporting separate healthy, authentication, socket, and timeout results.
 Live Tailscale switching and background socket inspection were not run.

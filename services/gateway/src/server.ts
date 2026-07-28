@@ -536,6 +536,7 @@ async function handleMessage(
       capabilities: {
         httpBearerAuth: authRuntime.auth.mode !== 'none',
         voiceInstructionFormatting: true,
+        gatewayPing: true,
       },
     });
     await sendHello(state.ws);

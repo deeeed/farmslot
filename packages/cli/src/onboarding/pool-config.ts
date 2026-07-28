@@ -4,7 +4,7 @@
 // project add use this dependency-free structural check instead.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-export const POOL_SCHEMA_VERSION = 1;
+export const POOL_SCHEMA_VERSION = 2;
 
 /** First port handed out for slot dev servers — high block clear of common dev defaults. */
 export const PORT_BLOCK_START = 9300;
@@ -135,6 +135,24 @@ export function allocatePort(pool: PoolConfig, from: number = PORT_BLOCK_START):
   let port = from;
   while (taken.has(port)) port++;
   return port;
+}
+
+/** Allocate distinct gateway and Metro ports for a slot's dev-server resource. */
+export function defaultDevServerResource(pool: PoolConfig): Record<string, number> {
+  const port = allocatePort(pool);
+  return {
+    port,
+    metro_port: allocatePort(pool, port + 1),
+  };
+}
+
+/** Merge-only repair for slots created before Metro had an explicit resource port. */
+export function backfillMetroPort(pool: PoolConfig, slot: PoolSlot): number | null {
+  const devServer = slot.resources?.['dev-server'];
+  if (!devServer || devServer.metro_port !== undefined) return null;
+  const metroPort = allocatePort(pool);
+  devServer.metro_port = metroPort;
+  return metroPort;
 }
 
 /** First CDP port handed out for browser slots — separate block from dev servers. */

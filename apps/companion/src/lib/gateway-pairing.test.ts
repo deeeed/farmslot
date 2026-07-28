@@ -8,10 +8,7 @@ import {
   inferGatewayProfileKindFromUrl,
   requiresSecureRemoteUrl,
 } from './gateway-profile-kind';
-import {
-  selectPreferredGatewayProfile as selectPreferredGatewayProfileFromSelection,
-  sortGatewayProfilesForAutoConnect as sortGatewayProfilesForAutoConnectFromSelection,
-} from './gateway-profile-selection';
+import { sortGatewayProfilesForAutoConnect as sortGatewayProfilesForAutoConnectFromSelection } from './gateway-profile-selection';
 import type { GatewayProfile } from './gateway-profiles';
 
 test('sortGatewayProfilesForAutoConnect prefers remote-capable profiles before LAN fallback', () => {
@@ -46,10 +43,6 @@ test('sortGatewayProfilesForAutoConnect prefers remote-capable profiles before L
     ),
     ['tailnet', 'remote', 'lan', 'custom'],
   );
-});
-
-test('selectPreferredGatewayProfile returns null when pairing imports no profiles', () => {
-  assert.equal(selectPreferredGatewayProfileFromSelection([]), null);
 });
 
 test('profileFromPairingExchange keeps the QR mobile URL over gateway self URL', () => {

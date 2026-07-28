@@ -82,6 +82,8 @@ function loadEnv(): AppConfigEnv {
     }),
   );
   const rawEnv = {
+    // Slot/worktree launchers intentionally override checked-in dotenv defaults.
+    // app-config.test.ts pins this precedence for isolated native launches.
     ...dotenvEnv,
     ...process.env,
     APP_VARIANT: requestedVariant,
@@ -111,8 +113,15 @@ function appIdentity(env: AppConfigEnv) {
   };
 }
 
-function parseConfiguredPort(value: string | undefined): number | undefined {
-  if (!value) return undefined;
+function parseConfiguredPort(value: string | undefined, required: boolean): number | undefined {
+  if (!value) {
+    if (required) {
+      throw new Error(
+        'METRO_PORT must come from the Farmslot slot/worktree configuration for development builds.',
+      );
+    }
+    return undefined;
+  }
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`METRO_PORT must be a positive integer, received: ${value}`);
@@ -124,7 +133,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const env = loadEnv();
   const { appIdentifier, appScheme, variant, variantInfo } = appIdentity(env);
   const isProduction = variant === 'production';
-  const metroPort = parseConfiguredPort(process.env.METRO_PORT);
+  const metroPort = parseConfiguredPort(process.env.METRO_PORT, variant === 'development');
   const remoteGatewayToken = env.FARMSLOT_REMOTE_GATEWAY_TOKEN || env.FARMSLOT_GATEWAY_TOKEN;
 
   return {

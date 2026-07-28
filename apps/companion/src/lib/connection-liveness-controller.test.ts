@@ -15,6 +15,7 @@ test('foreground probes immediately and schedules a modest interval', async () =
     onForeground: () => {
       foregrounds += 1;
     },
+    onProbeError: () => {},
     setTimer: (_callback, delay) => {
       delays.push(delay);
       return 1 as unknown as ReturnType<typeof setTimeout>;
@@ -39,6 +40,7 @@ test('background cancels the timer and foreground re-proves', async () => {
       return { ok: true };
     },
     onForeground: () => {},
+    onProbeError: () => {},
     setTimer: (callback) => {
       scheduled.callback = callback;
       return 7 as unknown as ReturnType<typeof setTimeout>;
@@ -72,6 +74,7 @@ test('failed probes back off and concurrent manual probes share one request', as
       });
     },
     onForeground: () => {},
+    onProbeError: () => {},
     setTimer: (_callback, delay) => {
       delays.push(delay);
       return 1 as unknown as ReturnType<typeof setTimeout>;
@@ -101,6 +104,7 @@ test('an explicit fresh test waits for the current profile probe, then proves ag
       return new Promise((resolve) => pending.push(resolve));
     },
     onForeground: () => {},
+    onProbeError: () => {},
     setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>,
   });
 
@@ -112,4 +116,69 @@ test('an explicit fresh test waits for the current profile probe, then proves ag
   assert.equal(probes, 2);
   pending.shift()?.({ ok: true });
   assert.deepEqual(await fresh, { ok: true });
+});
+
+test('manual fresh probes run while inactive but scheduled probes remain gated', async () => {
+  let probes = 0;
+  const controller = new ConnectionLivenessController({
+    probe: async () => {
+      probes += 1;
+      return { ok: true };
+    },
+    onForeground: () => {},
+    onProbeError: () => {},
+  });
+
+  assert.deepEqual(await controller.probeNow(), { ok: false });
+  assert.equal(probes, 0);
+  assert.deepEqual(await controller.probeFresh(), { ok: true });
+  assert.equal(probes, 1);
+});
+
+test('scheduled probe failures are surfaced and resolve without unhandled rejection', async () => {
+  const errors: unknown[] = [];
+  let scheduled: (() => void) | undefined;
+  const controller = new ConnectionLivenessController({
+    probe: async () => {
+      throw new Error('probe exploded');
+    },
+    onForeground: () => {},
+    onProbeError: (error) => errors.push(error),
+    setTimer: (callback) => {
+      scheduled = callback;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+  });
+
+  controller.setAppActive(true);
+  assert.deepEqual(await controller.probeNow(), { ok: false });
+  scheduled?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(errors.length, 2);
+  assert.match(String(errors[0]), /probe exploded/);
+});
+
+test('reset prevents an old profile failure from carrying backoff into the new profile', async () => {
+  const pending: Array<(outcome: ProbeOutcome) => void> = [];
+  const delays: number[] = [];
+  const controller = new ConnectionLivenessController({
+    probe: () => new Promise((resolve) => pending.push(resolve)),
+    onForeground: () => {},
+    onProbeError: () => {},
+    setTimer: (_callback, delay) => {
+      delays.push(delay);
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+  });
+
+  controller.setAppActive(true);
+  const oldProbe = controller.probeNow();
+  controller.reset();
+  pending.shift()?.({ ok: false });
+  await oldProbe;
+
+  const freshProbe = controller.probeFresh();
+  pending.shift()?.({ ok: true });
+  await freshProbe;
+  assert.deepEqual(delays, [30_000]);
 });

@@ -28,6 +28,7 @@ import {
   ConnectionLivenessController,
   type ProbeOutcome,
 } from '../lib/connection-liveness-controller';
+import { isCurrentConnectionProbe } from '../lib/connection-probe-identity';
 import {
   type ConnectionState,
   type GatewayAuthCredentials,
@@ -35,6 +36,11 @@ import {
   type GatewayHttpAuthHeaders,
   gatewayHttpAuthHeaders,
 } from '../lib/gateway-client';
+import {
+  isValidGatewayPingResult,
+  LEGACY_GATEWAY_COMPATIBILITY_HINT,
+  testGatewayConnection,
+} from '../lib/gateway-connection-test';
 import {
   parseGatewayProfilesFromStorage,
   sanitizeGatewayProfilesForStorage,
@@ -64,7 +70,7 @@ import { useRunStore } from './runs';
 const GATEWAY_URL_KEY = '@farmslot:gatewayUrl';
 const GATEWAY_PROFILES_KEY = '@farmslot:gatewayProfiles';
 const ACTIVE_GATEWAY_PROFILE_KEY = '@farmslot:activeGatewayProfileId';
-const LIVENESS_PROBE_TIMEOUT_MS = 30_000;
+const LIVENESS_PROBE_TIMEOUT_MS = 8_000;
 
 let livenessController: ConnectionLivenessController | null = null;
 let appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
@@ -90,6 +96,7 @@ interface ConnectionStore {
   lastSuccessfulProbeAt: number | null;
   lastProbeLatencyMs: number | null;
   lastProbeError: string | null;
+  gatewayCompatibilityHint: string | null;
   consecutiveProbeFailures: number;
   probeInProgress: boolean;
   lastSyncError: string | null;
@@ -126,6 +133,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   lastSuccessfulProbeAt: null,
   lastProbeLatencyMs: null,
   lastProbeError: null,
+  gatewayCompatibilityHint: null,
   consecutiveProbeFailures: 0,
   probeInProgress: false,
   lastSyncError: null,
@@ -337,6 +345,14 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           return { ok: result.ok };
         },
         onForeground: () => get().connect(),
+        onProbeError: (error) => {
+          const liveness = livenessAfterFailure(
+            livenessFromStore(get()),
+            get().client?.connectionState ?? 'disconnected',
+            error,
+          );
+          set({ ...livenessPatch(liveness), probeInProgress: false });
+        },
       });
       livenessController.setAppActive(AppState.currentState === 'active');
       appStateSubscription = AppState.addEventListener('change', (nextState) => {
@@ -376,6 +392,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       activeProfileHttpAuthHeaders: nextAuthHeaders,
       ...transition.patch,
     });
+    if (transition.changed) livenessController?.reset();
     state.client?.setConnection(url, auth);
     if (transition.changed) void livenessController?.probeFresh();
   },
@@ -402,6 +419,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       gatewayUrl: profile.url,
       ...transition.patch,
     });
+    if (transition.changed) livenessController?.reset();
     state.client?.setConnection(profile.url, auth);
     if (transition.changed) void livenessController?.probeFresh();
   },
@@ -462,6 +480,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         activeProfileHttpAuthHeaders: authHeaders,
         ...transition.patch,
       });
+      if (transition.changed) livenessController?.reset();
       state.client?.setConnection(updated.url, auth);
       if (transition.changed) void livenessController?.probeFresh();
     }
@@ -494,7 +513,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         activeProfileHttpAuthHeaders: {},
         gatewayUrl: '',
         ...livenessPatch(INITIAL_CONNECTION_LIVENESS),
+        gatewayCompatibilityHint: null,
       });
+      livenessController?.reset();
       state.client?.setConnection('', {});
       return;
     }
@@ -517,6 +538,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       gatewayUrl: nextProfile.url,
       ...transition.patch,
     });
+    if (transition.changed) livenessController?.reset();
     state.client?.setConnection(nextProfile.url, auth);
     if (transition.changed) void livenessController?.probeFresh();
   },
@@ -548,7 +570,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         activeProfileHttpAuthHeaders: {},
         gatewayUrl: '',
         ...livenessPatch(INITIAL_CONNECTION_LIVENESS),
+        gatewayCompatibilityHint: null,
       });
+      livenessController?.reset();
       state.client?.setConnection('', {});
       return;
     }
@@ -572,6 +596,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       gatewayUrl: nextProfile.url,
       ...transition.patch,
     });
+    if (transition.changed) livenessController?.reset();
     state.client?.setConnection(nextProfile.url, auth);
     if (transition.changed) void livenessController?.probeFresh();
   },
@@ -603,31 +628,82 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     }
 
     const profileUrl = get().gatewayUrl;
+    const connectionGeneration = client.connectionGeneration;
+    const startedIdentity = {
+      client,
+      gatewayUrl: profileUrl,
+      connectionGeneration,
+    };
+    const probeIsCurrent = () =>
+      isCurrentConnectionProbe(startedIdentity, {
+        client: get().client ?? {},
+        gatewayUrl: get().gatewayUrl,
+        connectionGeneration: client.connectionGeneration,
+      });
     const startedAt = Date.now();
     set({ probeInProgress: true });
     try {
+      if (AppState.currentState !== 'active') {
+        const activeProfile =
+          get().profiles.find((profile) => profile.id === get().activeProfileId) ??
+          get().profiles.find((profile) => profile.url === profileUrl);
+        const auth = activeProfile ? await authCredentialsForProfile(activeProfile) : {};
+        const result = await testGatewayConnection(profileUrl, auth, {
+          connectMs: LIVENESS_PROBE_TIMEOUT_MS,
+          pingMs: LIVENESS_PROBE_TIMEOUT_MS,
+        });
+        if (!probeIsCurrent()) {
+          set({ probeInProgress: false });
+          return { ok: false, error: 'Gateway profile changed while testing.' };
+        }
+        const liveness = livenessAfterSuccess(
+          livenessFromStore(get()),
+          Date.now(),
+          result.latencyMs,
+        );
+        set({
+          ...livenessPatch(liveness),
+          gatewayCompatibilityHint: result.compatibilityHint ?? null,
+          probeInProgress: false,
+        });
+        return { ok: true, latencyMs: result.latencyMs };
+      }
+      if (client.gatewayPingSupported === false) {
+        const latencyMs = Date.now() - startedAt;
+        if (!probeIsCurrent()) {
+          set({ probeInProgress: false });
+          return { ok: false, error: 'Gateway profile changed while testing.' };
+        }
+        const liveness = livenessAfterSuccess(livenessFromStore(get()), Date.now(), latencyMs);
+        set({
+          ...livenessPatch(liveness),
+          gatewayCompatibilityHint: LEGACY_GATEWAY_COMPATIBILITY_HINT,
+          probeInProgress: false,
+        });
+        return { ok: true, latencyMs };
+      }
       const pingResult = await client.request<GatewayPingResult>(
         Methods.GATEWAY_PING,
         {},
         LIVENESS_PROBE_TIMEOUT_MS,
       );
-      if (
-        pingResult.ok !== true ||
-        typeof pingResult.serverTimeMs !== 'number' ||
-        !Number.isFinite(pingResult.serverTimeMs)
-      ) {
+      if (!isValidGatewayPingResult(pingResult)) {
         throw new Error('Gateway returned an invalid ping response');
       }
       const latencyMs = Date.now() - startedAt;
-      if (get().client !== client || get().gatewayUrl !== profileUrl) {
+      if (!probeIsCurrent()) {
         set({ probeInProgress: false });
         return { ok: false, error: 'Gateway profile changed while testing.' };
       }
       const liveness = livenessAfterSuccess(livenessFromStore(get()), Date.now(), latencyMs);
-      set({ ...livenessPatch(liveness), probeInProgress: false });
+      set({
+        ...livenessPatch(liveness),
+        gatewayCompatibilityHint: null,
+        probeInProgress: false,
+      });
       return { ok: true, latencyMs };
     } catch (error) {
-      if (get().client !== client || get().gatewayUrl !== profileUrl) {
+      if (!probeIsCurrent()) {
         set({ probeInProgress: false });
         return { ok: false, error: 'Gateway profile changed while testing.' };
       }
@@ -768,7 +844,13 @@ function connectionIdentityTransition(
     current.activeProfileHttpAuthHeaders.Authorization !== next.authHeaders.Authorization;
   return {
     changed,
-    patch: changed ? livenessPatch(INITIAL_CONNECTION_LIVENESS) : {},
+    patch: changed
+      ? {
+          ...livenessPatch(INITIAL_CONNECTION_LIVENESS),
+          gatewayCompatibilityHint: null,
+          probeInProgress: false,
+        }
+      : {},
   };
 }
 

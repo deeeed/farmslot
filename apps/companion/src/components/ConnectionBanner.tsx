@@ -23,6 +23,7 @@ function resolveBannerContent(
   lastProbeError: string | null,
   lastSyncError: string | null,
   runsSyncMessage: string | null,
+  gatewayCompatibilityHint: string | null,
   gatewayUrl: string,
   activeProfileAuthMode: string,
 ): BannerContent | null {
@@ -68,6 +69,13 @@ function resolveBannerContent(
       tone: 'syncError',
     };
   }
+  if (gatewayCompatibilityHint) {
+    return {
+      title: 'Connected to an older gateway',
+      detail: gatewayCompatibilityHint,
+      tone: 'syncError',
+    };
+  }
   return {
     title: `Healthy · ${gatewayUrl}`,
     detail: activeProfileAuthMode !== 'none' ? `${activeProfileAuthMode} auth` : 'Ready',
@@ -82,6 +90,7 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   const probeInProgress = useConnectionStore((s) => s.probeInProgress);
   const retryConnection = useConnectionStore((s) => s.retryConnection);
   const lastSyncError = useConnectionStore((s) => s.lastSyncError);
+  const gatewayCompatibilityHint = useConnectionStore((s) => s.gatewayCompatibilityHint);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const profiles = useConnectionStore((s) => s.profiles);
   const activeProfileId = useConnectionStore((s) => s.activeProfileId);
@@ -104,6 +113,7 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
     lastProbeError,
     lastSyncError,
     runsSyncMessage,
+    gatewayCompatibilityHint,
     activeProfile?.name ?? gatewayUrl,
     activeProfileAuthMode ?? 'none',
   );

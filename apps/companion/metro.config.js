@@ -7,7 +7,14 @@ const projectRoot = __dirname;
 const protocolRoot = path.resolve(projectRoot, '../../packages/protocol');
 const configuredMetroPort = process.env.METRO_PORT;
 const metroPort = configuredMetroPort === undefined ? undefined : Number(configuredMetroPort);
+const requiresConfiguredMetroPort =
+  process.env.APP_VARIANT === undefined || process.env.APP_VARIANT === 'development';
 
+if (requiresConfiguredMetroPort && metroPort === undefined) {
+  throw new Error(
+    'METRO_PORT must come from the Farmslot slot/worktree configuration for development.',
+  );
+}
 if (metroPort !== undefined && (!Number.isInteger(metroPort) || metroPort <= 0)) {
   throw new Error(`METRO_PORT must be a positive integer, received: ${configuredMetroPort}`);
 }

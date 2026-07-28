@@ -23,6 +23,8 @@ export interface GatewayAuthConnectResult {
   capabilities: {
     httpBearerAuth: boolean;
     voiceInstructionFormatting: boolean;
+    /** Absent on gateways predating the lightweight liveness method. */
+    gatewayPing?: boolean;
   };
 }
 

@@ -6,10 +6,6 @@ export function sortGatewayProfilesForAutoConnect(profiles: GatewayProfile[]): G
   );
 }
 
-export function selectPreferredGatewayProfile(profiles: GatewayProfile[]): GatewayProfile | null {
-  return sortGatewayProfilesForAutoConnect(profiles)[0] ?? null;
-}
-
 function profileAutoConnectRank(profile: GatewayProfile): number {
   if (profile.kind === 'tailnet') return 0;
   if (profile.kind === 'remote') return 1;

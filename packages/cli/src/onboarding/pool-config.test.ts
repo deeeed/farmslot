@@ -6,7 +6,9 @@ import test from 'node:test';
 
 import {
   allocatePort,
+  backfillMetroPort,
   CDP_PORT_BLOCK_START,
+  defaultDevServerResource,
   defaultResources,
   generatePool,
   type PoolConfig,
@@ -70,6 +72,26 @@ test('allocatePort starts at the high block and skips taken ports', () => {
   ]);
   assert.equal(allocatePort(pool()), PORT_BLOCK_START);
   assert.equal(allocatePort(p), 9302);
+});
+
+test('defaultDevServerResource allocates distinct gateway and Metro ports', () => {
+  assert.deepEqual(defaultDevServerResource(pool()), {
+    port: PORT_BLOCK_START,
+    metro_port: PORT_BLOCK_START + 1,
+  });
+});
+
+test('backfillMetroPort preserves the gateway port and allocates a distinct port', () => {
+  const slot = {
+    id: 'm-a-1',
+    repo: '/a',
+    session: 'a-1',
+    resources: { 'dev-server': { port: 9300 } },
+  };
+  const p = pool([slot]);
+  assert.equal(backfillMetroPort(p, slot), 9301);
+  assert.deepEqual(slot.resources['dev-server'], { port: 9300, metro_port: 9301 });
+  assert.equal(backfillMetroPort(p, slot), null);
 });
 
 test('defaultResources gives platform slots their device/browser resource', () => {

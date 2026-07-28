@@ -130,6 +130,7 @@ function inferSafetyTier(method: string): string {
   }
   if (
     method.includes('list') ||
+    method.includes('ping') ||
     method.includes('status') ||
     method.includes('doctor') ||
     method.includes('get') ||

@@ -22,6 +22,15 @@ import { AppEnvironmentCard } from '../../components/AppEnvironmentCard';
 import { AppUpdateStatusCard } from '../../components/AppUpdateStatusCard';
 import { AppVersionBanner } from '../../components/AppVersionBanner';
 import {
+  connectionHealthNeedsAttention,
+  formatProfileKind,
+  mergeVisibleProfiles,
+  pairingProfileTestState,
+  preferredReachablePairingResult,
+  startImportedPairingProfileTests,
+  useGatewayProfileController,
+} from '../../features/settings/use-gateway-profile-controller';
+import {
   microphonePermissionIsBlocked,
   microphonePermissionSetupState,
 } from '../../lib/audio-permission-state';
@@ -30,18 +39,12 @@ import {
   type MicrophonePermissionState,
   requestMicrophonePermissionState,
 } from '../../lib/audio-permissions';
-import {
-  connectionHealthLabel,
-  connectionProbeTeachingError,
-  formatLastGatewayResponse,
-} from '../../lib/connection-liveness';
-import { type GatewayAuthCredentials, testGatewayConnection } from '../../lib/gateway-client';
+import { connectionHealthLabel, formatLastGatewayResponse } from '../../lib/connection-liveness';
 import {
   exchangeGatewayPairingQr,
   parseGatewayPairingQr,
   profileFromPairingResult,
 } from '../../lib/gateway-pairing';
-import { sortGatewayProfilesForAutoConnect } from '../../lib/gateway-profile-selection';
 import {
   type GatewayProfile,
   type GatewayProfileAuthMode,
@@ -87,18 +90,6 @@ function makeCustomProfileId(): string {
   return `custom-${Date.now()}`;
 }
 
-function formatProfileKind(kind: GatewayProfile['kind']): string {
-  if (kind === 'lan') return 'LAN';
-  if (kind === 'tailnet') return 'Tailnet';
-  if (kind === 'remote') return 'Remote';
-  return 'Custom';
-}
-
-type ProfileConnectionTestState = {
-  status: 'testing' | 'healthy' | 'failed';
-  message: string;
-};
-
 async function smokeTestVoiceModel(modelId: string): Promise<string> {
   const [asset] = await Asset.loadAsync(voiceAsrTestClipAssetModule);
   const fileUri = asset.localUri ?? asset.uri;
@@ -116,12 +107,11 @@ export default function SettingsScreen() {
     setActiveProfile,
     saveProfile,
     deleteProfile,
-    resetSavedProfiles,
-    setGatewayUrl,
     setProfileAuth,
     healthStatus,
     lastSuccessfulProbeAt,
     lastProbeLatencyMs,
+    gatewayCompatibilityHint,
     lastSyncError,
     connect,
   } = useConnectionStore();
@@ -148,15 +138,28 @@ export default function SettingsScreen() {
   const [pairingInProgress, setPairingInProgress] = useState(false);
   const [pairingImportMessage, setPairingImportMessage] = useState<string | null>(null);
   const [advancedGatewaySetupOpen, setAdvancedGatewaySetupOpen] = useState(false);
-  const [manualUrlValidationInProgress, setManualUrlValidationInProgress] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [profileConnectionTests, setProfileConnectionTests] = useState<
-    Record<string, ProfileConnectionTestState>
-  >({});
-  const [testingAllProfiles, setTestingAllProfiles] = useState(false);
-  const connectionTestsInProgress = Object.values(profileConnectionTests).some(
-    (result) => result.status === 'testing',
-  );
+  const {
+    activateProfile: handleActivateProfile,
+    connectionTestsInProgress,
+    manualUrlValidationInProgress,
+    profileConnectionTests,
+    resetProfiles: handleResetSavedProfiles,
+    saveCurrentUrl: handleSaveCurrentUrl,
+    setProfileConnectionTests,
+    testAllProfiles: handleTestAllProfiles,
+    testingAllProfiles,
+    testProfile: handleTestProfile,
+  } = useGatewayProfileController({
+    profiles,
+    displayedProfiles,
+    activeProfile,
+    urlInput,
+    setUrlInput,
+    setAuthMode,
+    setPairingImportMessage,
+    setRecentImportedProfiles,
+  });
   const configuredVoiceModelId = getConfiguredSherpaAsrModelId();
   const voiceModelSelectionLocked = Boolean(configuredVoiceModelId);
   const [selectedVoiceModelId, setSelectedVoiceModelId] = useState(getPreferredVoiceAsrModelId);
@@ -227,8 +230,7 @@ export default function SettingsScreen() {
       isTestingVoiceAsr),
   );
   const activeProfileHasConnectionIssue = Boolean(
-    activeProfile &&
-    (healthStatus === 'disconnected' || healthStatus === 'degraded' || lastSyncError),
+    activeProfile && connectionHealthNeedsAttention(healthStatus, lastSyncError),
   );
   const showProfileAuthSetup = advancedGatewaySetupOpen || activeProfileHasConnectionIssue;
 
@@ -395,164 +397,6 @@ export default function SettingsScreen() {
     };
   }, [activeProfile]);
 
-  const ensureVisibleProfileIsSelectable = async (profile: GatewayProfile) => {
-    if (profiles.some((candidate) => candidate.id === profile.id)) return;
-    await saveProfile(profile);
-  };
-
-  const handleSaveCurrentUrl = async () => {
-    const url = urlInput.trim();
-    const urlError = mobileGatewayProfileUrlError(url);
-    if (urlError) {
-      Alert.alert('Invalid URL', urlError);
-      return;
-    }
-    setManualUrlValidationInProgress(true);
-    try {
-      const matchingProfile = profiles.find((profile) => profile.url === url);
-      const auth = matchingProfile ? await authCredentialsForProfile(matchingProfile) : {};
-      await testGatewayConnection(url, auth);
-      await setGatewayUrl(url);
-      connect();
-    } catch (error) {
-      Alert.alert(
-        'URL not activated',
-        `${connectionProbeTeachingError(error)}\n\nThe current connection is unchanged.`,
-      );
-    } finally {
-      setManualUrlValidationInProgress(false);
-    }
-  };
-
-  const testProfileConnection = async (
-    profile: GatewayProfile,
-  ): Promise<ProfileConnectionTestState> => {
-    try {
-      const auth = await authCredentialsForProfile(profile);
-      if (profile.authMode !== 'none' && Object.keys(auth).length === 0) {
-        throw new Error(`No ${profile.authMode} credential is saved for this profile.`);
-      }
-      const result = await testGatewayConnection(profile.url, auth);
-      return {
-        status: 'healthy',
-        message: `Healthy · authenticated gateway.ping · ${result.latencyMs}ms`,
-      };
-    } catch (error) {
-      return {
-        status: 'failed',
-        message: `Failed · ${connectionProbeTeachingError(error)}`,
-      };
-    }
-  };
-
-  const handleTestProfile = async (
-    profile: GatewayProfile,
-    options: { showAlert?: boolean } = {},
-  ) => {
-    if (connectionTestsInProgress) return;
-    setProfileConnectionTests((current) => ({
-      ...current,
-      [profile.id]: {
-        status: 'testing',
-        message: `Testing ${profile.name} at ${profile.url}…`,
-      },
-    }));
-    const result = await testProfileConnection(profile);
-    setProfileConnectionTests((current) => ({ ...current, [profile.id]: result }));
-    if (options.showAlert) {
-      Alert.alert(
-        result.status === 'healthy' ? 'Gateway profile works' : 'Gateway profile failed',
-        result.message,
-      );
-    }
-  };
-
-  const handleActivateProfile = async (profile: GatewayProfile) => {
-    if (connectionTestsInProgress || profile.id === activeProfile?.id) return;
-    setProfileConnectionTests((current) => ({
-      ...current,
-      [profile.id]: {
-        status: 'testing',
-        message: `Validating ${profile.name} before switching…`,
-      },
-    }));
-    const result = await testProfileConnection(profile);
-    setProfileConnectionTests((current) => ({ ...current, [profile.id]: result }));
-    if (result.status !== 'healthy') {
-      Alert.alert(
-        'Profile not activated',
-        `${result.message}\n\nThe current profile is unchanged.`,
-      );
-      return;
-    }
-    await ensureVisibleProfileIsSelectable(profile);
-    await setActiveProfile(profile.id);
-    setPairingImportMessage(null);
-    setUrlInput(profile.url);
-    setAuthMode(profile.authMode ?? 'none');
-    connect();
-  };
-
-  const handleTestAllProfiles = async () => {
-    if (connectionTestsInProgress || displayedProfiles.length === 0) return;
-    setTestingAllProfiles(true);
-    setProfileConnectionTests(
-      Object.fromEntries(
-        displayedProfiles.map((profile) => [
-          profile.id,
-          {
-            status: 'testing',
-            message: `Testing ${profile.name} at ${profile.url}…`,
-          },
-        ]),
-      ),
-    );
-    const results = await Promise.all(
-      displayedProfiles.map(async (profile) => [profile.id, await testProfileConnection(profile)]),
-    );
-    const resultByProfile = Object.fromEntries(results) as Record<
-      string,
-      ProfileConnectionTestState
-    >;
-    setProfileConnectionTests(resultByProfile);
-    setTestingAllProfiles(false);
-    const healthyCount = Object.values(resultByProfile).filter(
-      (result) => result.status === 'healthy',
-    ).length;
-    Alert.alert(
-      'Profile checks complete',
-      `${healthyCount} healthy · ${displayedProfiles.length - healthyCount} failed`,
-    );
-  };
-
-  const handleResetSavedProfiles = () => {
-    Alert.alert(
-      'Reset saved gateway profiles?',
-      'This removes every paired or custom profile and its credential. The launcher-provided Configured Gateway is preserved.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset profiles',
-          style: 'destructive',
-          onPress: () => {
-            void resetSavedProfiles()
-              .then(() => {
-                setRecentImportedProfiles([]);
-                setProfileConnectionTests({});
-                Alert.alert(
-                  'Saved profiles reset',
-                  'Pair the current Command Center QR to rebuild LAN and Tailscale profiles for this worktree.',
-                );
-              })
-              .catch((error: Error) => {
-                Alert.alert('Profile reset failed', error.message);
-              });
-          },
-        },
-      ],
-    );
-  };
-
   const handleAddProfile = async () => {
     const name = profileName.trim();
     const url = urlInput.trim();
@@ -598,10 +442,27 @@ export default function SettingsScreen() {
     connect();
   };
 
-  const handleDeleteProfile = async (profile: GatewayProfile) => {
+  const handleDeleteProfile = (profile: GatewayProfile) => {
     if (profile.readonly) return;
-    await deleteProfile(profile.id);
-    connect();
+    const isActive = profile.id === activeProfile?.id;
+    Alert.alert(
+      `Delete ${profile.name}?`,
+      isActive
+        ? 'This is the active profile. Farmslot will switch to the next available profile.'
+        : 'The saved profile and its credential will be removed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete profile',
+          style: 'destructive',
+          onPress: () => {
+            void deleteProfile(profile.id)
+              .then(connect)
+              .catch((error: Error) => Alert.alert('Profile delete failed', error.message));
+          },
+        },
+      ],
+    );
   };
 
   const handleOpenExternalUrl = useCallback(async (url: string) => {
@@ -896,6 +757,11 @@ export default function SettingsScreen() {
                 {lastProbeLatencyMs === null ? '' : ` · ${lastProbeLatencyMs}ms`}
               </Text>
             ) : null}
+            {gatewayCompatibilityHint ? (
+              <Text style={[styles.helperTextNoMargin, styles.connectionTestFailed]}>
+                {gatewayCompatibilityHint}
+              </Text>
+            ) : null}
           </View>
           {displayedProfiles.length > 0 ? (
             <Pressable
@@ -983,10 +849,10 @@ export default function SettingsScreen() {
                         {testInProgress ? 'Testing…' : 'Test connection'}
                       </Text>
                     </Pressable>
-                    {!profile.readonly && !selected ? (
+                    {!profile.readonly ? (
                       <Pressable
                         style={styles.deleteButton}
-                        onPress={() => void handleDeleteProfile(profile)}
+                        onPress={() => handleDeleteProfile(profile)}
                       >
                         <Text style={styles.deleteText}>Delete</Text>
                       </Pressable>
@@ -1983,103 +1849,3 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
   },
 });
-
-type ImportedPairingProfile = {
-  profile: GatewayProfile;
-  secret: string;
-};
-
-type PairingProfileReachability = {
-  profile: GatewayProfile;
-  reachable: boolean;
-  latencyMs?: number;
-  error?: string;
-};
-
-const PAIRING_CONNECT_TIMEOUT_MS = 3_500;
-
-function mergeVisibleProfiles(
-  profiles: GatewayProfile[],
-  recentImportedProfiles: GatewayProfile[],
-): GatewayProfile[] {
-  const byId = new Map<string, GatewayProfile>();
-  for (const profile of recentImportedProfiles) byId.set(profile.id, profile);
-  for (const profile of profiles) byId.set(profile.id, profile);
-  return [...byId.values()];
-}
-
-function startImportedPairingProfileTests(
-  importedProfiles: ImportedPairingProfile[],
-): Promise<PairingProfileReachability>[] {
-  return importedProfiles.map(async (importedProfile) => {
-    const auth = authCredentialsForSecret(importedProfile.profile, importedProfile.secret);
-    try {
-      const result = await testGatewayConnection(importedProfile.profile.url, auth, {
-        connectMs: PAIRING_CONNECT_TIMEOUT_MS,
-      });
-      return {
-        profile: importedProfile.profile,
-        reachable: true,
-        latencyMs: result.latencyMs,
-      };
-    } catch (error) {
-      // Pairing commonly contains LAN + remote URLs; at least one can be unreachable
-      // from the current network. Capture the failure so the UI can guide selection.
-      return {
-        profile: importedProfile.profile,
-        reachable: false,
-        error: (error as Error).message,
-      };
-    }
-  });
-}
-
-async function preferredReachablePairingResult(
-  importedProfiles: ImportedPairingProfile[],
-  checks: Promise<PairingProfileReachability>[],
-): Promise<PairingProfileReachability | null> {
-  const checksByProfileId = new Map(
-    importedProfiles.map(({ profile }, index) => [profile.id, checks[index]]),
-  );
-  const profilesByPreference = sortGatewayProfilesForAutoConnect(
-    importedProfiles.map(({ profile }) => profile),
-  );
-  for (const profile of profilesByPreference) {
-    const check = checksByProfileId.get(profile.id);
-    if (!check) continue;
-    const result = await check;
-    if (result.reachable) return result;
-  }
-  return null;
-}
-
-function pairingProfileTestState(result: PairingProfileReachability): ProfileConnectionTestState {
-  if (result.reachable) {
-    return {
-      status: 'healthy',
-      message: `Healthy · authenticated gateway.ping · ${result.latencyMs}ms`,
-    };
-  }
-  return {
-    status: 'failed',
-    message: `Failed · ${result.error ?? 'Gateway did not answer.'}`,
-  };
-}
-
-function authCredentialsForSecret(profile: GatewayProfile, secret: string): GatewayAuthCredentials {
-  if (profile.authMode === 'token') return { token: secret };
-  if (profile.authMode === 'password') return { password: secret };
-  return {};
-}
-
-async function authCredentialsForProfile(profile: GatewayProfile): Promise<GatewayAuthCredentials> {
-  if (profile.authMode === 'token') {
-    const token = await readGatewayProfileSecret(profile);
-    return token ? { token } : {};
-  }
-  if (profile.authMode === 'password') {
-    const password = await readGatewayProfileSecret(profile);
-    return password ? { password } : {};
-  }
-  return {};
-}

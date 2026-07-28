@@ -11,6 +11,8 @@ import type { GatewayAuthCredentials } from './gateway-http-auth';
 
 export interface GatewayConnectionTestResult extends GatewayAuthConnectResult {
   latencyMs: number;
+  gatewayPingSupported: boolean;
+  compatibilityHint?: string;
 }
 
 export interface GatewayConnectionTestTimeouts {
@@ -18,7 +20,11 @@ export interface GatewayConnectionTestTimeouts {
   pingMs?: number;
 }
 
-const CONNECTION_TEST_TIMEOUT = 30_000;
+export const LEGACY_GATEWAY_COMPATIBILITY_HINT =
+  'Connected to an older gateway without gateway.ping; update Farmslot for active liveness checks.';
+
+const CONNECTION_TEST_TIMEOUT = 8_000;
+const PING_TEST_TIMEOUT = 5_000;
 
 export function testGatewayConnection(
   url: string,
@@ -26,7 +32,7 @@ export function testGatewayConnection(
   timeouts: GatewayConnectionTestTimeouts = {},
 ): Promise<GatewayConnectionTestResult> {
   const connectTimeout = timeouts.connectMs ?? CONNECTION_TEST_TIMEOUT;
-  const pingTimeout = timeouts.pingMs ?? CONNECTION_TEST_TIMEOUT;
+  const pingTimeout = timeouts.pingMs ?? PING_TEST_TIMEOUT;
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -96,6 +102,16 @@ export function testGatewayConnection(
           finishWithError(new Error('Gateway authentication failed'));
           return;
         }
+        if (!gatewaySupportsPing(authResult)) {
+          if (!finish()) return;
+          resolve({
+            ...authResult,
+            latencyMs: Date.now() - startedAt,
+            gatewayPingSupported: false,
+            compatibilityHint: LEGACY_GATEWAY_COMPATIBILITY_HINT,
+          });
+          return;
+        }
         clearTimeout(timer);
         timer = setTimeout(() => {
           finishWithError(new Error(`Gateway ping timed out after ${pingTimeout}ms`));
@@ -113,12 +129,7 @@ export function testGatewayConnection(
         finishWithError(new Error('Gateway returned ping before authentication completed'));
         return;
       }
-      const pingResult = response.payload as Partial<GatewayPingResult> | undefined;
-      if (
-        pingResult?.ok !== true ||
-        typeof pingResult.serverTimeMs !== 'number' ||
-        !Number.isFinite(pingResult.serverTimeMs)
-      ) {
+      if (!isValidGatewayPingResult(response.payload)) {
         finishWithError(new Error('Gateway returned an invalid ping response'));
         return;
       }
@@ -126,6 +137,7 @@ export function testGatewayConnection(
       resolve({
         ...authResult,
         latencyMs: Date.now() - startedAt,
+        gatewayPingSupported: true,
       });
     };
 
@@ -138,6 +150,19 @@ export function testGatewayConnection(
       finishWithError(new Error('Gateway closed before authenticated ping completed'));
     };
   });
+}
+
+export function gatewaySupportsPing(result: GatewayAuthConnectResult): boolean {
+  return result.capabilities?.gatewayPing === true;
+}
+
+export function isValidGatewayPingResult(value: unknown): value is GatewayPingResult {
+  const result = value as Partial<GatewayPingResult> | undefined;
+  return (
+    result?.ok === true &&
+    typeof result.serverTimeMs === 'number' &&
+    Number.isFinite(result.serverTimeMs)
+  );
 }
 
 function errorMessage(error: unknown): string {

@@ -1,6 +1,6 @@
 {
   "$schema": "../schemas/pool.schema.json",
-  "schema_version": 1,
+  "schema_version": 2,
   "machine": "my-server",
   "project": "my-app-farm",
   "platform": "android",
@@ -43,7 +43,8 @@
           "adb_serial": "emulator-5554"
         },
         "dev-server": {
-          "port": 8085
+          "port": 8085,
+          "metro_port": 8086
         }
       }
     }
