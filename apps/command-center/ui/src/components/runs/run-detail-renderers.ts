@@ -654,6 +654,17 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             </div>
           </div>`
         : nothing}
+      ${r.metrics.providerAccountLabel
+        ? html`<div class="meta-item">
+            <div class="meta-label">Provider account</div>
+            <div
+              class="meta-value"
+              title="Operator subscription label that funded this run (after any failover). Label only."
+            >
+              ${r.metrics.providerAccountLabel}
+            </div>
+          </div>`
+        : nothing}
       ${r.metrics.sessionTurns
         ? html`<div class="meta-item">
             <div class="meta-label">Turns</div>

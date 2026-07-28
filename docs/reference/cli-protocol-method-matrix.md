@@ -251,6 +251,12 @@ CI fails when a registry method is missing from the matrix or this file is stale
 | `pr.deleteComment`  | rpc-only      |               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `pr.submitReview`   | rpc-only      |               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 
+## providerAccounts.\*
+
+| Method                      | Surface | CLI command | TUI | Note                                                                                                                       |
+| --------------------------- | ------- | ----------- | --- | -------------------------------------------------------------------------------------------------------------------------- |
+| `providerAccounts.snapshot` | na      |             |     | Command Center fleet Setup / provider seats surface (web UI). Labels and identity only — never tokens or credential paths. |
+
 ## recipe.\*
 
 | Method                      | Surface       | CLI command       | TUI | Note                                                                                           |

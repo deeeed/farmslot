@@ -106,6 +106,9 @@
     "git.unstage": {
       "reason": "Slot Workspace git view (web UI)."
     },
+    "providerAccounts.snapshot": {
+      "reason": "Command Center fleet Setup / provider seats surface (web UI). Labels and identity only — never tokens or credential paths."
+    },
     "screen.subscribe": {
       "reason": "Binary screen-capture relay for the web UI."
     },

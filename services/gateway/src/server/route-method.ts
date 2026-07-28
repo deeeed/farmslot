@@ -99,6 +99,7 @@ import {
   type PRForSlotParams,
   type PRListParams,
   PROTOCOL_VERSION,
+  type ProviderAccountsSnapshotParams,
   type PRResolveThreadParams,
   type PRReviewCommentsParams,
   type PRStatusParams,
@@ -308,6 +309,7 @@ import {
   prReviewComments,
   prSubmitReview,
 } from '../methods/pr/review-comments.js';
+import { providerAccountsSnapshot } from '../methods/provider-accounts.js';
 import {
   recipeCancel,
   recipeCommand,
@@ -514,6 +516,8 @@ export async function routeMethod(
       return fleetRefreshSlotsCancel(p as FleetRefreshSlotsCancelParams);
     case Methods.FLEET_PR_SUMMARY:
       return fleetPrSummary(p as FleetPrSummaryParams);
+    case Methods.PROVIDER_ACCOUNTS_SNAPSHOT:
+      return providerAccountsSnapshot(p as ProviderAccountsSnapshotParams);
     case Methods.SLOT_OPEN_EDITOR:
       return slotOpenEditor(p as { slotId: string; editor: string });
     case Methods.SLOT_ACTION_LIST:

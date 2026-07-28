@@ -262,6 +262,12 @@ export interface DispatchExecuteParams {
   app?: string;
   /** Runner execution safety tier (ADR-023). Resolved by run-engine before dispatch. */
   safetyTier?: import('../contracts/index.js').SafetyTier;
+  /**
+   * Optional provider subscription account label for codex (and future bindable
+   * runners). When omitted, dispatch resolves from operator-local config.
+   * Used for in-place failover rebinds inside the DISPATCH step.
+   */
+  providerAccountLabel?: string;
 }
 export interface DispatchPreviewResult {
   preview: DispatchPreview;

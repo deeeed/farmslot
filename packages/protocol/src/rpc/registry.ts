@@ -264,6 +264,9 @@ export const Methods = {
   FINETUNE_EXPORT_SFT: 'finetune.exportSFT',
   FINETUNE_EXPORT_DPO: 'finetune.exportDPO',
 
+  // Provider subscription accounts (operator seats; labels only)
+  PROVIDER_ACCOUNTS_SNAPSHOT: 'providerAccounts.snapshot',
+
   // LLM Auth
   LLM_AUTH_LIST: 'llm.auth.list',
   LLM_AUTH_ADD: 'llm.auth.add',

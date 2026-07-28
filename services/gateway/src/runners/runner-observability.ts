@@ -22,15 +22,29 @@ export function buildRunnerObservabilityInstallCommand(
   runner: string,
   repo: string,
   runtimeDir = '.agent',
+  options: {
+    /** Prefer accountLabel so the execution host expands credential paths. */
+    accountLabel?: string | null;
+    /** Explicit path override (tests / rare); expands on the execution host if relative. */
+    authSource?: string | null;
+  } = {},
 ): string {
   const installer = path.posix.join(farmslotDirForSlot(vars), INSTALLER_RELATIVE_PATH);
-  return [
+  const parts = [
     `node ${shellExpressionForRemotePath(installer)}`,
     `--runner ${shellQuote(runner)}`,
     `--repo ${shellExpressionForRemotePath(repo)}`,
     `--runtime-dir ${shellQuote(runtimeDir)}`,
     `--slot-id ${shellQuote(vars.slotId)}`,
-  ].join(' ');
+  ];
+  // Codex: pass label for node-local resolution; optional auth-source override for tests.
+  if (options.accountLabel?.trim()) {
+    parts.push(`--account-label ${shellQuote(options.accountLabel.trim())}`);
+  }
+  if (options.authSource?.trim()) {
+    parts.push(`--auth-source ${shellQuote(options.authSource.trim())}`);
+  }
+  return parts.join(' ');
 }
 
 export function withRunnerObservabilityInstall(

@@ -121,6 +121,8 @@ export function buildRunnerSessionReloadCommand(
     effort?: string | null;
     safetyTier?: SafetyTier;
     runtimeDir?: string;
+    codexAccountLabel?: string | null;
+    codexAuthSource?: string | null;
   } = {},
 ): string {
   const runner = normalizeRunner(runnerId);
@@ -155,6 +157,7 @@ export function buildRunnerSessionReloadCommand(
       runner,
       repo,
       opts.runtimeDir,
+      { accountLabel: opts.codexAccountLabel, authSource: opts.codexAuthSource },
     );
     const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
     const effortFlag = codexReasoningEffortFlag(opts.effort);
@@ -349,6 +352,16 @@ export interface BuildLaunchOptions {
   safetyTier?: SafetyTier;
   /** Project runtime directory that owns observability files (defaults to .agent). */
   runtimeDir?: string;
+  /**
+   * Provider account label resolved for this launch. Installer expands the
+   * credential path on the execution host (multi-node safe). Does not change
+   * buildCodexHomeSetup output.
+   */
+  codexAccountLabel?: string | null;
+  /**
+   * Optional explicit auth.json path override (tests). Prefer codexAccountLabel.
+   */
+  codexAuthSource?: string | null;
 }
 
 /**
@@ -456,6 +469,7 @@ export function buildLaunchCommand(
       runner,
       repo,
       opts.runtimeDir,
+      { accountLabel: opts.codexAccountLabel, authSource: opts.codexAuthSource },
     );
     if (cmdIsRunnerAware) {
       return withRecipeTrust(

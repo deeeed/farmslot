@@ -15,6 +15,7 @@ export * from './git.js';
 export * from './intelligence.js';
 export * from './nodes.js';
 export * from './pr.js';
+export * from './provider-accounts.js';
 export * from './registry.js';
 export * from './resources.js';
 export * from './roadmap.js';

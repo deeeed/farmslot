@@ -2,8 +2,9 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+
+import { resolveProviderAccountForSlot } from './lib/provider-accounts.mjs';
 
 const HOOK_SCRIPT = `import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -341,7 +342,83 @@ function canonicalCodexPath(filePath) {
   }
 }
 
-function bootstrapCodexHome({ repoPath, runtimeDir, hooksPath }) {
+/**
+ * Bind codex-home/auth.json to the desired credential source via symlink only.
+ * Never write through the link; never unlink a regular file (may be a real operator credential).
+ * existsSync follows symlinks, so use lstat/readlink for correct presence/target checks.
+ */
+function linkCodexAuth(destAuth, authSource, { requireSource = false, label = null } = {}) {
+  const source = path.resolve(authSource);
+  if (!fs.existsSync(source)) {
+    // Forced/bound seats must fail closed so we never stamp label B while still auth'd as A.
+    if (requireSource) {
+      throw new Error(
+        `Provider account auth missing at ${source}${label ? ` for label '${label}'` : ''}; refusing silent bind no-op`,
+      );
+    }
+    // True ambient bootstrap: leave dest alone when source absent; do not create a dangling link.
+    return;
+  }
+
+  let destStat = null;
+  try {
+    destStat = fs.lstatSync(destAuth);
+  } catch {
+    destStat = null;
+  }
+
+  if (destStat?.isSymbolicLink()) {
+    let currentTarget = null;
+    try {
+      currentTarget = fs.readlinkSync(destAuth);
+    } catch {
+      currentTarget = null;
+    }
+    const resolvedCurrent = currentTarget
+      ? path.resolve(path.dirname(destAuth), currentTarget)
+      : null;
+    if (resolvedCurrent === source) return;
+    fs.unlinkSync(destAuth);
+  } else if (destStat) {
+    // Regular file or directory — fail loudly rather than destroy operator credentials.
+    throw new Error(
+      `codex-home auth.json at ${destAuth} is a real file, not a symlink; refusing to replace it. Remove it manually if you intend Farmslot to manage the auth link.`,
+    );
+  }
+
+  fs.symlinkSync(source, destAuth);
+}
+
+function resolveCodexAuthOnThisHost({ slotId, authSource, accountLabel }) {
+  // Explicit path wins (tests / rare overrides). Prefer --account-label so paths
+  // expand on THIS machine (multi-node safe).
+  if (authSource) {
+    return {
+      label: accountLabel || null,
+      authPath: path.resolve(authSource),
+      source: 'auth-source-arg',
+    };
+  }
+  const resolved = resolveProviderAccountForSlot({
+    slotId: slotId || 'unknown-slot',
+    provider: 'codex',
+    forcedLabel: accountLabel || null,
+  });
+  return {
+    label: resolved.label,
+    authPath: resolved.authPath,
+    source: resolved.source,
+  };
+}
+
+async function bootstrapCodexHome({
+  repoPath,
+  runtimeDir,
+  hooksPath,
+  authSource,
+  accountLabel,
+  slotId,
+}) {
   const codexHomeDir = path.join(repoPath, runtimeDir, 'codex-home');
   fs.mkdirSync(codexHomeDir, { recursive: true });
   const hooksDoc = readJsonObject(hooksPath);
@@ -377,12 +454,19 @@ function bootstrapCodexHome({ repoPath, runtimeDir, hooksPath }) {
   const projectBlock = `[projects."${escapeTomlBasicString(canonicalRepoPath)}"]\ntrust_level = "trusted"\n`;
   const merged = [content, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';
   fs.writeFileSync(configPath, merged);
-  const userAuth = path.join(os.homedir(), '.codex', 'auth.json');
+  const resolved = await resolveCodexAuthOnThisHost({ slotId, authSource, accountLabel });
   const destAuth = path.join(codexHomeDir, 'auth.json');
-  if (fs.existsSync(userAuth) && !fs.existsSync(destAuth)) {
-    fs.symlinkSync(userAuth, destAuth);
-  }
-  return codexHomeDir;
+  const requireSource =
+    Boolean(authSource) ||
+    Boolean(
+      accountLabel && String(accountLabel).trim() && String(accountLabel).trim() !== 'ambient',
+    ) ||
+    Boolean(resolved.label && resolved.label !== 'ambient' && !resolved.ambient);
+  linkCodexAuth(destAuth, resolved.authPath, {
+    requireSource,
+    label: resolved.label || accountLabel || null,
+  });
+  return { codexHomeDir, resolvedAuth: resolved };
 }
 
 function parseArgs(argv) {
@@ -629,7 +713,7 @@ function installClaude({ repo, runtimeDir = '.agent', slotId }) {
   });
 }
 
-function installCodex({ repo, runtimeDir = '.agent', slotId }) {
+async function installCodex({ repo, runtimeDir = '.agent', slotId, authSource, accountLabel }) {
   if (!repo) throw new Error('missing --repo');
   if (!slotId) throw new Error('missing --slot-id');
   const { repoPath, obsDir, hookCommand } = installObservabilityBinaries({
@@ -643,7 +727,14 @@ function installCodex({ repo, runtimeDir = '.agent', slotId }) {
   const projectConfigPath = path.join(repoPath, '.codex', 'config.toml');
   mergeCodexHooks(hooksPath, markerPath, hookCommand);
   ensureCodexHooksFeature(projectConfigPath, markerPath);
-  const codexHomeDir = bootstrapCodexHome({ repoPath, runtimeDir, hooksPath });
+  const { codexHomeDir, resolvedAuth } = await bootstrapCodexHome({
+    repoPath,
+    runtimeDir,
+    hooksPath,
+    authSource: authSource || undefined,
+    accountLabel: accountLabel || undefined,
+    slotId,
+  });
   fs.writeFileSync(markerPath, 'farmslot\n');
   writeObservabilityInstallManifest(obsDir, {
     runner: 'codex',
@@ -651,19 +742,27 @@ function installCodex({ repo, runtimeDir = '.agent', slotId }) {
     runtimeDir,
     slotId,
     codexHomeDir,
+    authSource: resolvedAuth.authPath || null,
+    accountLabel: resolvedAuth.label || null,
+    accountSource: resolvedAuth.source || null,
     statusLineInstalled: false,
   });
+  if (resolvedAuth.label) {
+    console.log(
+      `[farmslot-observability] codex account label=${resolvedAuth.label} source=${resolvedAuth.source}`,
+    );
+  }
 }
 
-function install(args) {
+async function install(args) {
   const runner = args.runner || 'claude';
   if (runner === 'claude') installClaude(args);
-  else if (runner === 'codex') installCodex(args);
+  else if (runner === 'codex') await installCodex(args);
   else throw new Error(`unsupported runner for observability install: ${runner}`);
 }
 
 try {
-  install(parseArgs(process.argv.slice(2)));
+  await install(parseArgs(process.argv.slice(2)));
 } catch (error) {
   console.error(`[farmslot-observability] install failed: ${error?.message || String(error)}`);
   process.exitCode = 1;

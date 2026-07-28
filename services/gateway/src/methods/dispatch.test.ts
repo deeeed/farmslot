@@ -1760,3 +1760,40 @@ test('classifyRefreshSlotAction refreshes local slot regardless of node connecti
   );
   assert.equal(action, 'refresh');
 });
+
+test('resolveRunnerLaunchBlockers rejects usage-limit with typed error carrying account label', async () => {
+  const { isProviderUsageLimitError } = await import('../runners/usage-limit-error.js');
+  const pane = [
+    'codex ready',
+    "│ You've reached your usage limit.      │",
+    '│ try again later                       │',
+  ].join('\n');
+
+  await assert.rejects(
+    resolveRunnerLaunchBlockers(makeSlotVars(), 'ff-1:worker', 'codex', 5_000, {
+      providerAccountLabel: 'codex-primary',
+      exec: async () => ({ exitCode: 0, stdout: pane, stderr: '' }),
+    }),
+    (err: unknown) => {
+      assert.equal(isProviderUsageLimitError(err), true);
+      if (isProviderUsageLimitError(err)) {
+        assert.equal(err.accountLabel, 'codex-primary');
+        assert.match(err.message, /codex-primary/);
+      }
+      return true;
+    },
+  );
+});
+
+test('resolveRunnerLaunchBlockers keeps auth-required as untyped hard failure', async () => {
+  await assert.rejects(
+    resolveRunnerLaunchBlockers(makeSlotVars(), 'mme-2:dev', 'cursor', 5_000, {
+      exec: async () => ({
+        exitCode: 0,
+        stdout: 'Authentication expired. Please run cursor-agent login to continue.',
+        stderr: '',
+      }),
+    }),
+    /Launch blocker has no safe automatic action/,
+  );
+});
