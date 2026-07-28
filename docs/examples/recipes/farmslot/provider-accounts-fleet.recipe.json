@@ -1,0 +1,75 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Command Center fleet node Setup (provider seats)",
+  "description": "Opens the fleet map, dismisses What's new, opens the quiet per-machine Setup control, and asserts the node-setup modal lists compact runner seats (bind/ambient + optional CodexBar identity/quota) without dumping detail into the fleet header.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "ui_url": {
+        "type": "string",
+        "default": "http://localhost:5174"
+      }
+    }
+  },
+  "workflow": {
+    "entry": "open-fleet",
+    "nodes": {
+      "open-fleet": {
+        "action": "ui.navigate",
+        "target": "{{params.ui_url}}/#fleet",
+        "next": "dismiss-whats-new",
+        "intent": "Show the operator fleet map with machine groups and a quiet Setup control per node."
+      },
+      "dismiss-whats-new": {
+        "action": "command",
+        "cmd": "node apps/command-center/scripts/agentic/dismiss-whats-new-if-present.mjs",
+        "timeout_ms": 20000,
+        "next": "wait-setup-button",
+        "intent": "Clear the What's new overlay so fleet machine controls stay clickable."
+      },
+      "wait-setup-button": {
+        "action": "ui.wait_for",
+        "selector": "[data-testid=\"machine-accounts-btn\"]",
+        "text_contains": ["Setup"],
+        "timeout_ms": 45000,
+        "next": "open-setup-modal",
+        "intent": "Confirm each machine group exposes a compact Setup control once seats have loaded."
+      },
+      "open-setup-modal": {
+        "action": "ui.press",
+        "test_id": "machine-accounts-btn",
+        "next": "wait-setup-modal",
+        "intent": "Open node setup as a modal so subscription detail stays off the fleet chrome."
+      },
+      "wait-setup-modal": {
+        "action": "ui.wait_for",
+        "selector": "[data-testid=\"machine-accounts-panel\"]",
+        "text_contains": ["Node setup", "Runner seats", "codex"],
+        "timeout_ms": 10000,
+        "next": "assert-runner-seats",
+        "intent": "Confirm the Setup modal shows Node setup and the codex seat for this host."
+      },
+      "assert-runner-seats": {
+        "action": "ui.wait_for",
+        "selector": "[data-testid=\"machine-accounts-panel\"]",
+        "text_contains": ["claude", "cursor"],
+        "timeout_ms": 5000,
+        "next": "capture-setup-modal",
+        "intent": "Confirm the seat list also covers Claude and Cursor without filling the machine header."
+      },
+      "capture-setup-modal": {
+        "action": "ui.screenshot",
+        "path": "screenshots/fleet-accounts-panel.png",
+        "label": "Fleet machine Setup modal with compact runner seats",
+        "note": "Reviewer evidence: quiet Setup button, modal node setup, one-line seats",
+        "next": "done",
+        "intent": "Record reviewer-visible proof of the cleaner node Setup modal UX."
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

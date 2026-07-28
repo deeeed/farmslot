@@ -299,3 +299,203 @@ test('codex install is idempotent for isolated codex-home config.toml', () => {
   assert.equal((homeContent.match(/^\[projects\./gm) || []).length, 1);
   assert.match(homeContent, /\[tui\.model_availability_nux\]/);
 });
+
+test('codex install rebinds auth.json symlink from account A to B without touching source files', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-auth-rebind-'));
+  const accountA = path.join(repo, 'accounts', 'a', 'auth.json');
+  const accountB = path.join(repo, 'accounts', 'b', 'auth.json');
+  fs.mkdirSync(path.dirname(accountA), { recursive: true });
+  fs.mkdirSync(path.dirname(accountB), { recursive: true });
+  const contentA = '{"account":"A","token":"aaa"}';
+  const contentB = '{"account":"B","token":"bbb"}';
+  fs.writeFileSync(accountA, contentA);
+  fs.writeFileSync(accountB, contentB);
+
+  const runInstall = (authSource) => {
+    execFileSync(
+      process.execPath,
+      [
+        INSTALLER,
+        '--runner',
+        'codex',
+        '--repo',
+        repo,
+        '--runtime-dir',
+        '.agent',
+        '--slot-id',
+        'install-test-rebind',
+        '--auth-source',
+        authSource,
+      ],
+      { stdio: 'pipe' },
+    );
+  };
+
+  runInstall(accountA);
+  const destAuth = path.join(repo, '.agent', 'codex-home', 'auth.json');
+  assert.ok(fs.lstatSync(destAuth).isSymbolicLink());
+  assert.equal(path.resolve(fs.readlinkSync(destAuth)), path.resolve(accountA));
+
+  runInstall(accountB);
+  assert.ok(fs.lstatSync(destAuth).isSymbolicLink());
+  assert.equal(path.resolve(fs.readlinkSync(destAuth)), path.resolve(accountB));
+  assert.equal(fs.readFileSync(accountA, 'utf8'), contentA);
+  assert.equal(fs.readFileSync(accountB, 'utf8'), contentB);
+});
+
+test('codex install relinks a dangling auth.json symlink', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-dangling-'));
+  const realAuth = path.join(repo, 'accounts', 'real', 'auth.json');
+  fs.mkdirSync(path.dirname(realAuth), { recursive: true });
+  fs.writeFileSync(realAuth, '{"ok":true}');
+  const codexHome = path.join(repo, '.agent', 'codex-home');
+  fs.mkdirSync(codexHome, { recursive: true });
+  const destAuth = path.join(codexHome, 'auth.json');
+  fs.symlinkSync(path.join(repo, 'accounts', 'missing', 'auth.json'), destAuth);
+
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'codex',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '.agent',
+      '--slot-id',
+      'install-test-dangling',
+      '--auth-source',
+      realAuth,
+    ],
+    { stdio: 'pipe' },
+  );
+
+  assert.ok(fs.lstatSync(destAuth).isSymbolicLink());
+  assert.equal(path.resolve(fs.readlinkSync(destAuth)), path.resolve(realAuth));
+});
+
+test('codex install refuses to unlink a regular auth.json file', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-regular-auth-'));
+  const realAuth = path.join(repo, 'accounts', 'real', 'auth.json');
+  fs.mkdirSync(path.dirname(realAuth), { recursive: true });
+  fs.writeFileSync(realAuth, '{"ok":true}');
+  const codexHome = path.join(repo, '.agent', 'codex-home');
+  fs.mkdirSync(codexHome, { recursive: true });
+  const destAuth = path.join(codexHome, 'auth.json');
+  const regular = '{"placed-by-operator":true}';
+  fs.writeFileSync(destAuth, regular);
+
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [
+          INSTALLER,
+          '--runner',
+          'codex',
+          '--repo',
+          repo,
+          '--runtime-dir',
+          '.agent',
+          '--slot-id',
+          'install-test-regular',
+          '--auth-source',
+          realAuth,
+        ],
+        { stdio: 'pipe' },
+      ),
+    /real file, not a symlink/,
+  );
+  assert.equal(fs.readFileSync(destAuth, 'utf8'), regular);
+  assert.ok(!fs.lstatSync(destAuth).isSymbolicLink());
+});
+
+test('codex install resolves --account-label from FARMSLOT_HOME on this host', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-label-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-home-label-'));
+  const authA = path.join(home, 'accounts', 'a', 'auth.json');
+  const authB = path.join(home, 'accounts', 'b', 'auth.json');
+  fs.mkdirSync(path.dirname(authA), { recursive: true });
+  fs.mkdirSync(path.dirname(authB), { recursive: true });
+  fs.writeFileSync(authA, '{"a":1}');
+  fs.writeFileSync(authB, '{"b":1}');
+  fs.writeFileSync(
+    path.join(home, 'provider-accounts.json'),
+    JSON.stringify({
+      version: 1,
+      accounts: {
+        'codex-a': { provider: 'codex', authPath: authA },
+        'codex-b': { provider: 'codex', authPath: authB },
+      },
+    }),
+  );
+
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'codex',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '.agent',
+      '--slot-id',
+      'slot-label',
+      '--account-label',
+      'codex-b',
+    ],
+    {
+      stdio: 'pipe',
+      env: { ...process.env, FARMSLOT_HOME: home },
+    },
+  );
+
+  const destAuth = path.join(repo, '.agent', 'codex-home', 'auth.json');
+  assert.ok(fs.lstatSync(destAuth).isSymbolicLink());
+  assert.equal(path.resolve(fs.readlinkSync(destAuth)), path.resolve(authB));
+});
+
+test('codex install uses node active profile when no label/binding', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-active-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'farmslot-home-active-'));
+  const authB = path.join(home, 'accounts', 'b', 'auth.json');
+  fs.mkdirSync(path.dirname(authB), { recursive: true });
+  fs.writeFileSync(authB, '{"b":1}');
+  fs.writeFileSync(
+    path.join(home, 'provider-accounts.json'),
+    JSON.stringify({
+      version: 1,
+      accounts: {
+        'codex-b': { provider: 'codex', authPath: authB },
+      },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(home, 'active-provider-accounts.json'),
+    JSON.stringify({ version: 1, profiles: { codex: 'codex-b' } }),
+  );
+
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'codex',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '.agent',
+      '--slot-id',
+      'slot-active',
+    ],
+    {
+      stdio: 'pipe',
+      env: { ...process.env, FARMSLOT_HOME: home },
+    },
+  );
+
+  const destAuth = path.join(repo, '.agent', 'codex-home', 'auth.json');
+  assert.equal(path.resolve(fs.readlinkSync(destAuth)), path.resolve(authB));
+});

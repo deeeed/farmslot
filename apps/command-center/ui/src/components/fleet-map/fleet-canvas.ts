@@ -4,11 +4,13 @@ import { customElement, state } from 'lit/decorators.js';
 import type {
   FleetThumbnailsUpdatedPayload,
   MachineHealth,
+  MachineProviderAccountsSnapshot,
   NodeConnectedPayload,
   NodeDisconnectedPayload,
   NodeHealthUpdatedPayload,
   NodeInfo,
   NodesListResult,
+  ProviderAccountsSnapshotResult,
   ResourceCleanupResult,
   ResourceHealthResult,
   ResourceListResult,
@@ -96,6 +98,9 @@ export class FleetCanvas extends LitElement {
   @state() private resourceActionBusy = false;
   @state() private resourceActionFlash = '';
   @state() private resourceWatchesEnabled = true;
+  /** machine → provider subscription snapshot (labels only). */
+  @state() private providerAccountsByMachine: Map<string, MachineProviderAccountsSnapshot> =
+    new Map();
   private _resourceFetched = false;
   private unsub?: () => void;
   private _unsubConnected?: () => void;
@@ -429,6 +434,28 @@ export class FleetCanvas extends LitElement {
     }
   }
 
+  private async _fetchProviderAccounts() {
+    try {
+      const machines = [...new Set(this.slots.map((s) => s.machine))];
+      if (machines.length === 0) {
+        this.providerAccountsByMachine = new Map();
+        return;
+      }
+      const res = await gateway.request<ProviderAccountsSnapshotResult>(
+        Methods.PROVIDER_ACCOUNTS_SNAPSHOT,
+        { machines },
+      );
+      const next = new Map<string, MachineProviderAccountsSnapshot>();
+      for (const m of res.machines ?? []) next.set(m.machine, m);
+      this.providerAccountsByMachine = next;
+    } catch (err) {
+      console.warn(
+        '[fleet-canvas] provider accounts snapshot failed:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   private syncState(s: AppState) {
     const prev = this.slots;
     this.slots = s.fleet?.slots ?? [];
@@ -441,6 +468,16 @@ export class FleetCanvas extends LitElement {
       const next = new Map(this.machineHealthMap);
       for (const mh of s.fleet.machines) next.set(mh.machine, mh);
       this.machineHealthMap = next;
+    }
+    // Refresh provider subscription chips when fleet machines change
+    const prevMachines = new Set(prev.map((sl) => sl.machine));
+    const nextMachines = new Set(this.slots.map((sl) => sl.machine));
+    if (
+      prevMachines.size !== nextMachines.size ||
+      [...nextMachines].some((m) => !prevMachines.has(m)) ||
+      (this.providerAccountsByMachine.size === 0 && nextMachines.size > 0)
+    ) {
+      void this._fetchProviderAccounts();
     }
     // Refresh progress when working slots change
     const prevWorking = new Set(
@@ -847,6 +884,7 @@ export class FleetCanvas extends LitElement {
           .nodeInfoMap=${this.nodeInfo}
           .gatewayProtocolVersion=${this.gatewayProtocolVersion}
           .viewMode=${this.viewMode}
+          .providerAccounts=${this.providerAccountsByMachine.get(g.key)}
           @slot-selected=${(e: CustomEvent) => {
             location.hash = `slot/${e.detail.slotId}`;
           }}

@@ -915,6 +915,11 @@ export interface RunMetrics {
   runner: string | null;
   runnerSessionId?: string | null;
   runnerSessionPath?: string | null;
+  /**
+   * Operator-local provider subscription label that actually funded this run
+   * (after any in-place failover). Label only — never an email, token, or home path.
+   */
+  providerAccountLabel?: string | null;
   outcome?: 'success' | 'failure' | 'partial' | 'cancelled';
   disposition?: WorkerTerminalDisposition;
   terminalEvidence?: WorkerTerminalEvidence;

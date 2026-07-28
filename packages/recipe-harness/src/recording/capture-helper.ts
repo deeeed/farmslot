@@ -63,12 +63,15 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
         timeoutMs: 10_000,
       });
     } catch (error) {
+      // Do NOT claim "not installed" — this only means spawn/exec failed (PATH, sandbox,
+      // permissions, wrong CAPTURE_HELPER_PATH). Operators often have capture-helper on
+      // PATH in interactive shells while the recipe child process does not.
       return {
         ok: false,
-        code: 'capture_helper_missing',
-        message: `capture-helper is not available: ${errorMessage(error)}`,
+        code: 'capture_helper_exec_failed',
+        message: `capture-helper doctor could not be executed (spawn/exec failed; not proof it is uninstalled): ${errorMessage(error)}`,
         suggestedFix:
-          'Install the external capture-helper tool (for example via Homebrew/npm) and ensure it is on PATH, or set CAPTURE_HELPER_PATH.',
+          'Run `command -v capture-helper && capture-helper doctor --json` in this same environment. Ensure PATH includes the binary (e.g. ~/.npm-global/bin), or set CAPTURE_HELPER_PATH to the real binary. Unset a stale CAPTURE_HELPER_PATH if checksum_mismatch is reported.',
       };
     }
     if (result.exitCode !== 0) {

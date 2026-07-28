@@ -6,7 +6,22 @@ import { shellQuote } from '../core/tmux.js';
 import { dispatchExecute, nudgeDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
-import { runnerNeedsPostLaunchPrompt } from '../runners/registry.js';
+import {
+  hostListEligibleLabels,
+  hostMarkAccountExhausted,
+  hostRecordAccountSuccess,
+} from '../runners/provider-account-host.js';
+import { normalizeRunner, runnerNeedsPostLaunchPrompt } from '../runners/registry.js';
+import {
+  getRunnerStatusProvider,
+  listRunnerFailoverCandidates,
+  resolveRunnerAccountForDispatch,
+} from '../runners/status-provider.js';
+import {
+  createNoEligibleProviderAccountError,
+  createProviderUsageLimitError,
+  isProviderUsageLimitError,
+} from '../runners/usage-limit-error.js';
 import { captureHostLoadSnapshot } from '../runs/analytics.js';
 import { ensureRunSlotBinding } from '../runs/slot-binding.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
@@ -353,25 +368,124 @@ export async function executeDispatchStep(
   // Collect sub-step events instead of discarding them
   const collector = createSubStepCollector();
   const dispatchStart = Date.now();
-  const dispatchResult = await dispatchExecute(
-    {
+
+  // Provider subscription rotation: only when RunnerStatusProvider.supportsAccountBinding.
+  // Eligibility + ledger live on the execution host (node-local multi-node safe).
+  const runnerId = normalizeRunner(current.metrics.runner);
+  const statusProvider = getRunnerStatusProvider(runnerId);
+  const supportsBind = Boolean(statusProvider?.supportsAccountBinding);
+  const triedLabels: string[] = [];
+  let rebindDone = false;
+  let forcedLabel: string | undefined;
+  let dispatchResult: Awaited<ReturnType<typeof dispatchExecute>>;
+  const slotVars = supportsBind ? await loadSlotVars(current.slotId) : null;
+
+  if (supportsBind && slotVars) {
+    const eligible = await listRunnerFailoverCandidates({
+      vars: slotVars,
+      runnerId,
+    });
+    if (!eligible.length) {
+      const listed = await hostListEligibleLabels({ vars: slotVars, provider: runnerId });
+      throw createNoEligibleProviderAccountError({
+        triedLabels: listed.all.length ? listed.all : ['ambient'],
+        earliestExpiry: listed.earliestExpiry,
+        provider: runnerId,
+      });
+    }
+    const preferred = await resolveRunnerAccountForDispatch({
+      vars: slotVars,
+      runnerId,
       slotId: current.slotId,
-      taskFile: current.taskFile,
-      runId,
-      skipPrepare: true,
-      mode: current.mode,
-      model: current.metrics.model || undefined,
-      runner: current.metrics.runner || undefined,
-      scripted: current.scripted,
-      effort: current.effort,
-      app: current.app,
-    },
-    collector.emit,
-  );
+    });
+    const preferredLabel = preferred?.bind.accountLabel;
+    forcedLabel =
+      preferredLabel && eligible.includes(preferredLabel) ? preferredLabel : eligible[0];
+  }
+
+  for (;;) {
+    if (forcedLabel) triedLabels.push(forcedLabel);
+    try {
+      dispatchResult = await dispatchExecute(
+        {
+          slotId: current.slotId,
+          taskFile: current.taskFile,
+          runId,
+          skipPrepare: true,
+          mode: current.mode,
+          model: current.metrics.model || undefined,
+          runner: current.metrics.runner || undefined,
+          scripted: current.scripted,
+          effort: current.effort,
+          app: current.app,
+          providerAccountLabel: forcedLabel,
+        },
+        collector.emit,
+      );
+      if (forcedLabel && slotVars) {
+        await hostRecordAccountSuccess({ vars: slotVars, label: forcedLabel });
+      }
+      break;
+    } catch (err) {
+      if (!supportsBind || !isProviderUsageLimitError(err) || !slotVars) {
+        throw err;
+      }
+      const failedLabel = err.accountLabel || forcedLabel || 'ambient';
+      await hostMarkAccountExhausted({
+        vars: slotVars,
+        label: failedLabel,
+        provider: runnerId,
+      });
+      console.log(
+        `[dispatch] usage-limit on account '${failedLabel}' machine=${slotVars.machine} runner=${runnerId} run=${runId} (rebindDone=${rebindDone})`,
+      );
+
+      if (rebindDone) {
+        const listed = await hostListEligibleLabels({
+          vars: slotVars,
+          provider: runnerId,
+          exclude: [],
+        });
+        throw createProviderUsageLimitError({
+          accountLabel: failedLabel,
+          provider: runnerId,
+          summary: `Provider usage limit after one rebind. Second account also exhausted.`,
+          triedLabels: [...new Set(triedLabels)],
+          earliestExpiry: listed.earliestExpiry,
+        });
+      }
+
+      const eligible = await listRunnerFailoverCandidates({
+        vars: slotVars,
+        runnerId,
+        exclude: triedLabels,
+      });
+      const nextLabel = eligible.find((l) => l !== failedLabel) ?? eligible[0];
+      if (!nextLabel) {
+        const tried = [...new Set(triedLabels)];
+        const listed = await hostListEligibleLabels({
+          vars: slotVars,
+          provider: runnerId,
+          exclude: [],
+        });
+        throw createNoEligibleProviderAccountError({
+          triedLabels: tried,
+          earliestExpiry: listed.earliestExpiry,
+          provider: runnerId,
+        });
+      }
+
+      rebindDone = true;
+      forcedLabel = nextLabel;
+      console.log(
+        `[dispatch] rebinding slot ${current.slotId} run ${runId} runner=${runnerId} to provider account '${forcedLabel}' on ${slotVars.machine}`,
+      );
+    }
+  }
 
   stepPartialIO.delete(runId);
   const subSteps = collector.finish();
-  const launchCommand = dispatchResult.launchCommand;
+  const launchCommand = dispatchResult!.launchCommand;
 
   // Mark TASK.md as the active task file for progress tracking
   updateRun(runId, { activeTaskFile: current.taskFile ?? undefined });
@@ -385,6 +499,8 @@ export async function executeDispatchStep(
       promptSent: runnerNeedsPostLaunchPrompt(current.metrics.runner),
       launchCommand,
       cliCommand,
+      providerAccountLabel: forcedLabel,
+      providerAccountTried: triedLabels,
     },
   };
 }

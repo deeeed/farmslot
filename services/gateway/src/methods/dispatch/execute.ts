@@ -71,6 +71,8 @@ import {
   isRunnerAliveUnderPane,
   listRunnerSessionFiles,
 } from '../../runners/session-process.js';
+import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.js';
+import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
 import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
@@ -393,10 +395,12 @@ async function assertRunnerProcessStarted(
   );
 }
 
-type RunnerLaunchBlockerResolverDeps = {
+export type RunnerLaunchBlockerResolverDeps = {
   exec?: typeof execOnSlot;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Bound provider account label (for typed usage-limit errors). */
+  providerAccountLabel?: string | null;
 };
 
 export async function resolveRunnerLaunchBlockers(
@@ -449,6 +453,13 @@ export async function resolveRunnerLaunchBlockers(
         );
         loggedExhaustedAutoActions.add(blocker.kind);
       }
+    } else if (blocker.kind === 'usage-limit') {
+      const accountLabel = deps.providerAccountLabel?.trim() || 'ambient';
+      throw createProviderUsageLimitError({
+        accountLabel,
+        provider: normalizeRunner(runner) === 'codex' ? 'codex' : normalizeRunner(runner),
+        summary: `${blocker.summary} Provider account '${accountLabel}' hit a usage limit.`,
+      });
     } else if (!runnerPaneHasDeferredLaunchBlocker(pane, runner, blocker)) {
       throw new Error(
         `${blocker.summary} Launch blocker has no safe automatic action; dispatch cannot continue.`,
@@ -1074,6 +1085,19 @@ export async function dispatchExecute(
     runTier: currentRun?.safetyTier,
     projectDefaultRaw: projectJson.default_safety_tier,
   });
+  // Account bind via RunnerStatusProvider (supportsAccountBinding) — multi-node safe labels.
+  const accountBind = await resolveRunnerAccountForDispatch({
+    vars,
+    runnerId: runner,
+    slotId: params.slotId,
+    forcedLabel: params.providerAccountLabel ?? null,
+  });
+  if (accountBind) {
+    console.log(
+      `[dispatch] provider account slot=${params.slotId} machine=${vars.machine} runner=${runner} label=${accountBind.bind.accountLabel} auth=${accountBind.bind.authPath ?? ''}`,
+    );
+  }
+
   let agentLaunch = buildLaunchCommand(vars, runner, model, taskPrompt, {
     taskFile: `${workerTaskDir}/TASK.md`,
     taskDir: workerTaskDir,
@@ -1083,6 +1107,8 @@ export async function dispatchExecute(
     effort,
     safetyTier,
     runtimeDir: projectVars?.runtimeDir,
+    // Label only — installer expands credential path on the slot host.
+    codexAccountLabel: accountBind?.bind.launchAccountLabel ?? null,
   });
 
   const effectiveDomain = resolveEffectiveDomain(currentRun?.domain, vars.domain);
@@ -1177,7 +1203,9 @@ export async function dispatchExecute(
     await assertRunnerProcessStarted(vars, workerTarget, runner);
     runnerProcessStarted = true;
     if (runnerResolvesPreTaskLaunchBlockers(runner)) {
-      await resolveRunnerLaunchBlockers(vars, workerTarget, runner);
+      await resolveRunnerLaunchBlockers(vars, workerTarget, runner, 60_000, {
+        providerAccountLabel: accountBind?.bind.accountLabel ?? null,
+      });
       // Cursor receives the task prompt on argv, so resolving a launch blocker
       // is the last gate before monitor starts; verify the runner survived it.
       await assertRunnerProcessStarted(vars, workerTarget, runner, 5_000);
@@ -1225,6 +1253,7 @@ export async function dispatchExecute(
           launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,
           handoffAckSinceMs,
           softAcceptOnHandoffAck: true,
+          providerAccountLabel: accountBind?.bind.accountLabel ?? null,
         },
       );
       step('task', 'Task prompt delivered and verified');
@@ -1256,12 +1285,24 @@ export async function dispatchExecute(
   if (params.runId) {
     const latestRun = getRun(params.runId);
     if (latestRun) {
-      if (sessionMeta.runnerSessionId || sessionMeta.runnerSessionPath) {
+      // Stamp the account that actually reached launch (label only — never email/path).
+      if (
+        sessionMeta.runnerSessionId ||
+        sessionMeta.runnerSessionPath ||
+        accountBind?.bind.accountLabel
+      ) {
         updateRunStore(params.runId, {
           metrics: {
             ...latestRun.metrics,
-            runnerSessionId: sessionMeta.runnerSessionId,
-            runnerSessionPath: sessionMeta.runnerSessionPath,
+            ...(sessionMeta.runnerSessionId || sessionMeta.runnerSessionPath
+              ? {
+                  runnerSessionId: sessionMeta.runnerSessionId,
+                  runnerSessionPath: sessionMeta.runnerSessionPath,
+                }
+              : {}),
+            ...(accountBind?.bind.accountLabel
+              ? { providerAccountLabel: accountBind.bind.accountLabel }
+              : {}),
           },
         });
       }

@@ -395,13 +395,15 @@ async function resolveWebVideoRecorder(cdpPort, captureHelperPath) {
   const cdpRecorder = createCdpVideoRecorder({ cdpPort, urlIncludes: '#fleet' });
   const cdpDoctor = await cdpRecorder.doctor();
   if (cdpDoctor.ok) {
+    // Be precise: doctor failure is not "not installed". Common causes: PATH in the
+    // recipe child, stale CAPTURE_HELPER_PATH, off-screen window at record time.
     console.warn(
-      `[run-recipe] capture-helper unavailable (${captureDoctor?.code ?? 'unknown'}); using ${cdpRecorder.name}`,
+      `[run-recipe] capture-helper video doctor not ok (code=${captureDoctor?.code ?? 'unknown'}; ${captureDoctor?.message ?? 'no message'}). Falling back to ${cdpRecorder.name}. This does NOT mean capture-helper is uninstalled — verify with: command -v capture-helper && capture-helper doctor --json`,
     );
     return cdpRecorder;
   }
   throw new Error(
-    `No web video recorder available: capture-helper (${captureDoctor?.message ?? 'unknown'}); CDP (${cdpDoctor.message})`,
+    `No web video recorder available. capture-helper doctor: code=${captureDoctor?.code ?? 'unknown'} message=${captureDoctor?.message ?? 'unknown'}. CDP: ${cdpDoctor.message}. Verify capture-helper with: command -v capture-helper && capture-helper doctor --json`,
   );
 }
 

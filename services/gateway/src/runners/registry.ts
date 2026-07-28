@@ -2068,6 +2068,8 @@ export async function sendRunnerPostLaunchPrompt(
     requirePromptDigest?: boolean;
     softAcceptOnHandoffAck?: boolean;
     handoffAckSinceMs?: number;
+    /** Bound provider subscription label for typed usage-limit errors. */
+    providerAccountLabel?: string | null;
   } = {},
 ): Promise<void> {
   const runner = normalizeRunner(runnerId);
@@ -2212,6 +2214,16 @@ export async function sendRunnerPostLaunchPrompt(
       continue;
     }
     if (blocker) {
+      if (blocker.kind === 'usage-limit') {
+        const { createProviderUsageLimitError } = await import('./usage-limit-error.js');
+        throw createProviderUsageLimitError({
+          accountLabel: opts.providerAccountLabel?.trim() || 'ambient',
+          provider: runner === 'codex' ? 'codex' : runner,
+          summary:
+            `${blocker.summary} Provider account '${opts.providerAccountLabel?.trim() || 'ambient'}' hit a usage limit. ` +
+            `Snapshot: ${opts.blockerSnapshotPath ?? 'not configured'}.`,
+        });
+      }
       throw new Error(
         `${blocker.summary} Snapshot: ${opts.blockerSnapshotPath ?? 'not configured'}. ` +
           `Prompt delivery aborted before the ${readyTimeoutMs / 1000}s readiness timeout.`,
