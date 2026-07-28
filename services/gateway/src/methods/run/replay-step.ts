@@ -409,9 +409,9 @@ export async function runReplayStep(
   const step = existing.steps.find((s) => s.name === replayStepName);
   if (!step) throw new Error(`Step not found: ${params.stepName}`);
 
-  // Ownership refusal for cancelled-run reclaim must run before ANY mutation
-  // (prerequisite normalization, dispatch repair, generation bump, step reset).
-  // Otherwise a rejected replay leaves the cancelled run partially mutated.
+  // Ownership refuse before any mutation. Sync repair/normalize run next (no
+  // await). Durable soft-lock is taken immediately before the first long await
+  // (engine cancel / slot reclaim) so concurrent claim cannot win mid-replay.
   if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
     assertCancelledReplayNodeAvailable(existing, params.runId);
   }
@@ -422,6 +422,21 @@ export async function runReplayStep(
   const replaySnapshot = getRun(params.runId) ?? existing;
   assertReplayAfterDispatchAllowed(replaySnapshot, flowSteps, targetIdx, replayStepName);
   normalizeReplayPrerequisites(params.runId, replaySnapshot, flowSteps, targetIdx, replayStepName);
+
+  let replacementToDrop: { id: string } | undefined;
+  if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
+    // Re-check after sync prep, then durable soft-lock before any further await.
+    assertCancelledReplayNodeAvailable(existing, params.runId);
+    const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
+    if (replacement) {
+      replacement.status = 'dispatching';
+      replacement.claimHolder = `replay:${params.runId}`;
+      replacement.claimEpoch = (replacement.claimEpoch ?? 0) + 1;
+      replacement.claimExpiresAt = new Date(Date.now() + 120_000).toISOString();
+      await persistQueueNow();
+      replacementToDrop = { id: replacement.id };
+    }
+  }
 
   // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
   // Do this only after replay entry validation so rejected replays do not leave a
@@ -763,27 +778,15 @@ export async function runReplayStep(
   const engineStateForReplay = replaysCompletionOrGate
     ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
     : currentBeforeReplayUpdate.engineState;
-  // Reclaim the node here: ownership was refused before mutations. Soft-lock is
-  // durable so a crash after revive still leaves a dispatching row that loadQueue
-  // reconciles to the live owner (and claimQueueItem cannot race mid-revive).
-  // Order: durable soft-lock → revive + persistRunNow → drop + persistQueueNow.
-  let replacementToDrop: { id: string } | undefined;
+  // Soft-lock was taken at entry (before awaits). Re-check live ownership before
+  // revive in case a direct create (no queue row) raced us; then durable revive
+  // and drop the replacement row.
   if (
     currentBeforeReplayUpdate.status === 'cancelled' &&
     existing.workGraphId &&
     existing.workNodeId
   ) {
-    // Re-check ownership immediately before soft-lock (race after entry check).
     assertCancelledReplayNodeAvailable(existing, params.runId);
-    const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
-    if (replacement) {
-      replacement.status = 'dispatching';
-      replacement.claimHolder = `replay:${params.runId}`;
-      replacement.claimEpoch = (replacement.claimEpoch ?? 0) + 1;
-      replacement.claimExpiresAt = new Date(Date.now() + 60_000).toISOString();
-      await persistQueueNow();
-      replacementToDrop = { id: replacement.id };
-    }
   }
   updateRun(params.runId, {
     status: activeStatusForReplayStep(replayStepName),

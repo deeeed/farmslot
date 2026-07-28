@@ -24,7 +24,7 @@ import { resolveDispatchPreviewFromFleet } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { detectProfileFit } from '../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../run-engine/ticket-data.js';
-import { deleteRun, getAllRuns, getRun, runRecordPath, updateRun } from '../runs/store.js';
+import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
 
 function shouldUseIsolatedQueueFile(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
   if (env.FARMSLOT_TEST_TMP === '1' || env.NODE_TEST_CONTEXT) return true;
@@ -1019,10 +1019,10 @@ async function tryDispatchNextOnce(): Promise<void> {
             );
             return;
           }
-          // Memory-only orphan: cancel + delete so a retry does not leave two Runs.
+          // Memory-only orphan: hard-discard (no analytics gate) so a retry
+          // cannot leave a second Run in the map while the row is requeued.
           const orphanId = partial.id;
-          updateRun(orphanId, { status: 'cancelled', completedAt: new Date().toISOString() });
-          await deleteRun(orphanId);
+          await discardUndurableRun(orphanId);
           if (isQueueClaimHeld(claim)) {
             releaseQueueClaim(claim);
           } else if (queue.some((q) => q.id === item.id)) {

@@ -231,7 +231,10 @@ async function ensureDir(): Promise<void> {
   await mkdir(RUNS_DIR, { recursive: true });
 }
 
-async function persist(run: Run): Promise<void> {
+/** Per-run write chain so background and awaitable persists cannot reorder renames. */
+const runPersistChains = new Map<string, Promise<void>>();
+
+async function persistBody(run: Run): Promise<void> {
   if (isProductionRunsDir() && (isLeakedGatewayTestRun(run) || isSyntheticLeak(run))) {
     console.warn(
       `[run-store] refusing to persist leaked test fixture run ${run.id} to production .runs/`,
@@ -246,7 +249,11 @@ async function persist(run: Run): Promise<void> {
   // Tmp suffix includes pid + random to avoid collisions across concurrent writers
   // (same reason ea0e8f6 scoped fleet-cache tmp files).
   const tmpPath = `${filePath}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
-  await writeFile(tmpPath, JSON.stringify(run, null, 2), 'utf-8');
+  // Snapshot at write time so a later in-memory mutation cannot land an older
+  // serialized body after a newer persistRunNow (chain still serializes, but
+  // capture the object state this call intends to flush).
+  const payload = JSON.stringify(run, null, 2);
+  await writeFile(tmpPath, payload, 'utf-8');
   if (runs.get(run.id) !== run) {
     try {
       await unlink(tmpPath);
@@ -260,8 +267,24 @@ async function persist(run: Run): Promise<void> {
   await rename(tmpPath, filePath);
 }
 
+async function enqueueRunPersist(run: Run): Promise<void> {
+  const prev = runPersistChains.get(run.id) ?? Promise.resolve();
+  const next = prev.then(
+    () => persistBody(run),
+    () => persistBody(run),
+  );
+  runPersistChains.set(run.id, next);
+  try {
+    await next;
+  } finally {
+    if (runPersistChains.get(run.id) === next) {
+      runPersistChains.delete(run.id);
+    }
+  }
+}
+
 function persistRunBackground(run: Run, reason: string): void {
-  void persist(run).catch((err) => {
+  void enqueueRunPersist(run).catch((err) => {
     console.warn(
       `[run-store] failed to persist run ${run.id} after ${reason}: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -271,15 +294,31 @@ function persistRunBackground(run: Run, reason: string): void {
 /**
  * Await durable write of a run (atomic tmp+rename). Used by the dispatch-queue
  * claim handoff so createRun is on disk before the queue row is dropped.
+ * Serialized per run id with background persists.
  */
 export async function persistRunNow(run: Run, reason = 'explicit'): Promise<void> {
   try {
-    await persist(run);
+    await enqueueRunPersist(run);
   } catch (err) {
     console.warn(
       `[run-store] failed to persist run ${run.id} after ${reason}: ${err instanceof Error ? err.message : String(err)}`,
     );
     throw err;
+  }
+}
+
+/**
+ * Drop a never-durable (or abandonable) in-memory Run without analytics gating.
+ * Used when queue handoff fails after create but before the run file lands.
+ */
+export async function discardUndurableRun(id: string): Promise<void> {
+  const run = runs.get(id);
+  if (!run) return;
+  runs.delete(id);
+  try {
+    await unlink(path.join(RUNS_DIR, `${id}.json`));
+  } catch {
+    /* file may not exist — expected for memory-only orphans */
   }
 }
 
