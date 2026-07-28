@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 
 const STEPS = [
   ['format', ['yarn', 'format:check']],
+  ['ESLint cache guard tests', ['node', '--test', 'scripts/quality/check-eslint-ratchet.test.mjs']],
   ['lint', ['yarn', 'lint']],
   ['workspace structure', ['yarn', 'quality:structure']],
   ['workspace changelogs', ['yarn', 'quality:changelogs']],

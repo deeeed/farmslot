@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, sep } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+
+import { buildEslintArgs, repoEslintCacheLocation } from './eslint-cache.mjs';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const commandCenterRequire = createRequire(join(repoRoot, 'apps/command-center/package.json'));
@@ -16,8 +18,13 @@ const writeBaseline = process.argv.includes('--write-baseline');
 const strictStale = process.argv.includes('--strict-stale');
 
 function runEslint() {
-  const args = ['.', '--format', 'json'];
-  if (fix) args.push('--fix');
+  const cacheLocation = repoEslintCacheLocation({
+    repoRoot,
+    eslintPackagePath,
+    runtimeVersion: process.version,
+  });
+  mkdirSync(dirname(cacheLocation), { recursive: true });
+  const args = buildEslintArgs({ cacheLocation, fix });
   const result = spawnSync(process.execPath, [eslintBin, ...args], {
     cwd: repoRoot,
     encoding: 'utf8',
