@@ -50,6 +50,8 @@ export class MachineGroup extends LitElement {
   @property({ attribute: false }) providerAccounts?: MachineProviderAccountsSnapshot;
   /** Last snapshot-fetch failure from the canvas; shown in the Setup modal's empty state. */
   @property({ attribute: false }) providerAccountsError?: string;
+  /** True while the canvas has a seat-snapshot fetch in flight for this machine. */
+  @property({ type: Boolean }) providerAccountsFetching = false;
   @state() private expandedSlotId: string | null = null;
   /** Accounts panel open (subscription matrix lives under a button, not header clutter). */
   @state() private accountsOpen = false;
@@ -511,6 +513,42 @@ export class MachineGroup extends LitElement {
     .setup-empty-error {
       color: ${unsafeCSS(colors.statusFail)};
     }
+    .setup-age {
+      margin-left: 8px;
+      opacity: 0.8;
+    }
+    .setup-foot button {
+      margin-left: 8px;
+    }
+    .setup-loading {
+      margin-left: 8px;
+      font-size: 10px;
+      font-weight: 400;
+      letter-spacing: 0.4px;
+      color: ${unsafeCSS(colors.textMuted)};
+      animation: setup-loading-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes setup-loading-pulse {
+      0%,
+      100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.4;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .setup-age {
+        margin-left: 8px;
+        opacity: 0.8;
+      }
+      .setup-foot button {
+        margin-left: 8px;
+      }
+      .setup-loading {
+        animation: none;
+      }
+    }
     .setup-foot a {
       color: ${unsafeCSS(colors.accent)};
       text-decoration: none;
@@ -621,7 +659,11 @@ export class MachineGroup extends LitElement {
           // the last fetch would otherwise show stale/empty seats forever.
           if (this.accountsOpen) {
             this.dispatchEvent(
-              new CustomEvent('provider-accounts-refresh', { bubbles: true, composed: true }),
+              new CustomEvent('provider-accounts-refresh', {
+                bubbles: true,
+                composed: true,
+                detail: { machine: this.machine },
+              }),
             );
           }
         }}
@@ -662,37 +704,69 @@ export class MachineGroup extends LitElement {
             <button type="button" class="setup-close" @click=${this.closeSetup}>Close</button>
           </header>
           <div class="setup-body">
-            <div class="setup-section-label">Runner seats</div>
+            <div class="setup-section-label">
+              Runner seats
+              ${this.providerAccountsFetching
+                ? html`<span class="setup-loading" data-testid="machine-accounts-loading"
+                    >querying node…</span
+                  >`
+                : nothing}
+            </div>
             ${runners.length
               ? runners.map((r) => this.renderSetupRow(r))
-              : html`<div class="setup-empty" data-testid="machine-accounts-empty">
-                  No provider-account snapshot for <strong>${this.machine}</strong> yet.
-                  ${this.providerAccountsError
-                    ? html`<div class="setup-empty-error">
-                        Last fetch failed: ${this.providerAccountsError}
-                      </div>`
-                    : html`<div>
-                        Usual cause: the machine's node service is not connected, so runner seats
-                        cannot be probed.
-                      </div>`}
-                  <button
-                    type="button"
-                    class="setup-close"
-                    @click=${() =>
-                      this.dispatchEvent(
-                        new CustomEvent('provider-accounts-refresh', {
-                          bubbles: true,
-                          composed: true,
-                        }),
-                      )}
-                  >
-                    Retry
-                  </button>
-                </div>`}
+              : this.providerAccountsFetching
+                ? html`<div class="setup-empty" data-testid="machine-accounts-empty">
+                    Querying the node for runner seats…
+                  </div>`
+                : html`<div class="setup-empty" data-testid="machine-accounts-empty">
+                    No provider-account snapshot for <strong>${this.machine}</strong> yet.
+                    ${this.providerAccountsError
+                      ? html`<div class="setup-empty-error">
+                          Last fetch failed: ${this.providerAccountsError}
+                        </div>`
+                      : html`<div>
+                          Usual cause: the machine's node service is not connected, so runner seats
+                          cannot be probed.
+                        </div>`}
+                    <button
+                      type="button"
+                      class="setup-close"
+                      @click=${() =>
+                        this.dispatchEvent(
+                          new CustomEvent('provider-accounts-refresh', {
+                            bubbles: true,
+                            composed: true,
+                            detail: { machine: this.machine },
+                          }),
+                        )}
+                    >
+                      Retry
+                    </button>
+                  </div>`}
           </div>
           <div class="setup-foot">
             Bind labels are farmslot-owned; identity &amp; quota mirror CodexBar when available.
             <a href="#config/${this.machine}">Machine config →</a>
+            ${this.providerAccounts?.checkedAt
+              ? html`<span class="setup-age"
+                  >snapshot ${new Date(this.providerAccounts.checkedAt).toLocaleTimeString()}</span
+                >`
+              : nothing}
+            <button
+              type="button"
+              class="setup-close"
+              data-testid="machine-accounts-refresh"
+              @click=${() =>
+                this.dispatchEvent(
+                  new CustomEvent('provider-accounts-refresh', {
+                    bubbles: true,
+                    composed: true,
+                    detail: { machine: this.machine, force: true },
+                  }),
+                )}
+            >
+              Refresh
+            </button>
           </div>
         </section>
       </div>

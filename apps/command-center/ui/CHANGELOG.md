@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(fleet): the Setup modal fetches seats for ITS machine only — the all-machines snapshot probes remote nodes and blew the 15s request budget, which is exactly the timeout the modal surfaced. Snapshots live in one client store shared by the fleet map and the machine config page (open either surface, the other renders instantly; concurrent fetches collapse), kept on failure, with a "querying node…" loading state, snapshot-age display, and Refresh buttons that force a live probe with a 45s budget. The config page gains the same runner-seats section (email, remaining quota — rounded, cooling) on pool selection.
 - fix(fleet): the machine Setup button renders even when the provider-accounts snapshot is empty or failed — hiding it made a merged feature invisible with no trace. The modal now explains an empty seats list (usual cause: node service not connected), shows the last fetch error, offers Retry, and refetches on every open so a node that reconnected after the last fetch shows fresh seats.
 - fix(roadmap): stop multi-project filters from silently pre-filling every capture target. Unscoped global captures stay visible, and explicit targets survive filter changes.
 - feat(ui): fleet machine headers gain a quiet **Setup** control that opens a Node setup modal with per-runner seats (identity/quota, bind/ambient) from `providerAccounts.snapshot` — no header chip dump; run detail shows the funding provider account label when present.

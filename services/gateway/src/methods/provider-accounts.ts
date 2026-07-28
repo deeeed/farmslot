@@ -133,8 +133,10 @@ async function snapshotMachine(
     };
   }
 
-  const subs = await getHostRunnerSubscriptions(vars, { machineId: machine });
-  const cooling = await coolingForCodex(vars);
+  const [subs, cooling] = await Promise.all([
+    getHostRunnerSubscriptions(vars, { machineId: machine }),
+    coolingForCodex(vars),
+  ]);
 
   const runners: ProviderRunnerAccountStatus[] = subs.map((sub) => ({
     runner: sub.runner,
@@ -152,6 +154,45 @@ async function snapshotMachine(
     reachable: true,
     runners,
   };
+}
+
+// Probing one machine can take ~20s (identity + CodexBar CLI invocations, plus
+// remote hosts over SSH) — far past interactive request budgets. Serve the last
+// snapshot immediately and refresh in the background; `forceRefresh` waits for
+// a live probe (the operator's explicit Refresh). In-flight probes are deduped
+// so a UI poll cannot stack CLI invocations on a slow host.
+const SNAPSHOT_TTL_MS = 60_000;
+const snapshotCache = new Map<string, MachineProviderAccountsSnapshot>();
+const snapshotInflight = new Map<string, Promise<MachineProviderAccountsSnapshot>>();
+
+function refreshMachineSnapshot(
+  machine: string,
+  slotId: string | null,
+): Promise<MachineProviderAccountsSnapshot> {
+  const running = snapshotInflight.get(machine);
+  if (running) return running;
+  const probe = snapshotMachine(machine, slotId)
+    .then((snap) => {
+      snapshotCache.set(machine, snap);
+      return snap;
+    })
+    .finally(() => {
+      snapshotInflight.delete(machine);
+    });
+  snapshotInflight.set(machine, probe);
+  return probe;
+}
+
+async function snapshotMachineCached(
+  machine: string,
+  slotId: string | null,
+  forceRefresh: boolean,
+): Promise<MachineProviderAccountsSnapshot> {
+  const cached = snapshotCache.get(machine);
+  if (forceRefresh || !cached) return refreshMachineSnapshot(machine, slotId);
+  const age = Date.now() - Date.parse(cached.checkedAt);
+  if (Number.isNaN(age) || age > SNAPSHOT_TTL_MS) void refreshMachineSnapshot(machine, slotId);
+  return cached;
 }
 
 export async function providerAccountsSnapshot(
@@ -173,7 +214,9 @@ export async function providerAccountsSnapshot(
   }
 
   const snapshots = await Promise.all(
-    machines.map((machine) => snapshotMachine(machine, byMachine.get(machine) ?? null)),
+    machines.map((machine) =>
+      snapshotMachineCached(machine, byMachine.get(machine) ?? null, params.forceRefresh === true),
+    ),
   );
 
   return {

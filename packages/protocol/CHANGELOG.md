@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `ProviderAccountsSnapshotParams.forceRefresh` — wait for a live probe instead of accepting the gateway's cached snapshot (additive; default stays cache-first).
 - Export canonical roadmap project sentinels and shared concrete/unscoped predicates so clients and the gateway use the same scoping rules.
 - Add the authenticated `gateway.ping` liveness contract for cheap client health checks.
 - feat(protocol): `QueueItem` claim fields (`claimHolder`, `claimEpoch`, `claimExpiresAt`) and `QueueClaim` token type for exclusive dispatch-queue ownership (MANUAL-000053).

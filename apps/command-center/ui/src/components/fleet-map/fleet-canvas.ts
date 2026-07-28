@@ -4,13 +4,11 @@ import { customElement, state } from 'lit/decorators.js';
 import type {
   FleetThumbnailsUpdatedPayload,
   MachineHealth,
-  MachineProviderAccountsSnapshot,
   NodeConnectedPayload,
   NodeDisconnectedPayload,
   NodeHealthUpdatedPayload,
   NodeInfo,
   NodesListResult,
-  ProviderAccountsSnapshotResult,
   ResourceCleanupResult,
   ResourceHealthResult,
   ResourceListResult,
@@ -33,6 +31,7 @@ import '../slot-actions/fleet-refresh-modal.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
+import { providerAccountsStore } from '../../provider-accounts-store.js';
 import {
   type AppState,
   getProjectSlotTrackingConfigs,
@@ -99,9 +98,7 @@ export class FleetCanvas extends LitElement {
   @state() private resourceActionFlash = '';
   @state() private resourceWatchesEnabled = true;
   /** machine → provider subscription snapshot (labels only). */
-  @state() private providerAccountsError: string | null = null;
-  @state() private providerAccountsByMachine: Map<string, MachineProviderAccountsSnapshot> =
-    new Map();
+  private _providerAccountsUnsub: (() => void) | null = null;
   private _resourceFetched = false;
   private unsub?: () => void;
   private _unsubConnected?: () => void;
@@ -257,6 +254,7 @@ export class FleetCanvas extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this._providerAccountsUnsub = providerAccountsStore.subscribe(() => this.requestUpdate());
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
 
@@ -403,6 +401,8 @@ export class FleetCanvas extends LitElement {
   }
 
   disconnectedCallback() {
+    this._providerAccountsUnsub?.();
+    this._providerAccountsUnsub = null;
     super.disconnectedCallback();
     this.unsub?.();
     this._unsubConnected?.();
@@ -435,27 +435,10 @@ export class FleetCanvas extends LitElement {
     }
   }
 
-  private async _fetchProviderAccounts() {
-    try {
-      const machines = [...new Set(this.slots.map((s) => s.machine))];
-      if (machines.length === 0) {
-        this.providerAccountsByMachine = new Map();
-        return;
-      }
-      const res = await gateway.request<ProviderAccountsSnapshotResult>(
-        Methods.PROVIDER_ACCOUNTS_SNAPSHOT,
-        { machines },
-      );
-      const next = new Map<string, MachineProviderAccountsSnapshot>();
-      for (const m of res.machines ?? []) next.set(m.machine, m);
-      this.providerAccountsByMachine = next;
-      this.providerAccountsError = null;
-    } catch (err) {
-      // Keep the failure: the machine-group Setup modal shows it instead of
-      // rendering an unexplained empty seats list.
-      this.providerAccountsError = err instanceof Error ? err.message : String(err);
-      console.warn('[fleet-canvas] provider accounts snapshot failed:', this.providerAccountsError);
-    }
+  private async _fetchProviderAccounts(only?: string[], forceRefresh = false) {
+    const machines = only ?? [...new Set(this.slots.map((s) => s.machine))];
+    if (machines.length === 0) return;
+    await providerAccountsStore.fetch(machines, forceRefresh);
   }
 
   private syncState(s: AppState) {
@@ -477,7 +460,7 @@ export class FleetCanvas extends LitElement {
     if (
       prevMachines.size !== nextMachines.size ||
       [...nextMachines].some((m) => !prevMachines.has(m)) ||
-      (this.providerAccountsByMachine.size === 0 && nextMachines.size > 0)
+      ([...nextMachines].some((m) => !providerAccountsStore.get(m)) && nextMachines.size > 0)
     ) {
       void this._fetchProviderAccounts();
     }
@@ -886,9 +869,14 @@ export class FleetCanvas extends LitElement {
           .nodeInfoMap=${this.nodeInfo}
           .gatewayProtocolVersion=${this.gatewayProtocolVersion}
           .viewMode=${this.viewMode}
-          .providerAccounts=${this.providerAccountsByMachine.get(g.key)}
-          .providerAccountsError=${this.providerAccountsError ?? undefined}
-          @provider-accounts-refresh=${() => void this._fetchProviderAccounts()}
+          .providerAccounts=${providerAccountsStore.get(g.key)}
+          .providerAccountsError=${providerAccountsStore.error() ?? undefined}
+          .providerAccountsFetching=${providerAccountsStore.isFetching(g.key)}
+          @provider-accounts-refresh=${(e: CustomEvent<{ machine?: string; force?: boolean }>) =>
+            void this._fetchProviderAccounts(
+              e.detail?.machine ? [e.detail.machine] : undefined,
+              e.detail?.force === true,
+            )}
           @slot-selected=${(e: CustomEvent) => {
             location.hash = `slot/${e.detail.slotId}`;
           }}
