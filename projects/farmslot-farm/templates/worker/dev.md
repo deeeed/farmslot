@@ -50,6 +50,10 @@ WRAPPER="{{recipe_validate_wrapper}}"
 
 Read `{{recipe_quality_path}}` before writing any recipe.
 
+### Repo boundaries — where proof artifacts live
+
+Everything this run produces to PROVE the work — `recipe.json`, evidence, reports — lives in `{{TASK_DIR}}/artifacts/`, never scattered into the repository. Reusable recipes go only into the repo's existing recipe homes (follow current conventions for the surface you changed); never invent a new proof folder. If a ticket asks for "repeatable" validation without naming a home, keep the script in `{{TASK_DIR}}/artifacts/` and raise the destination question in your report.
+
 ## Checklist
 
 Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failures — fix before proceeding.

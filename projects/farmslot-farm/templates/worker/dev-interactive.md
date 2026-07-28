@@ -1,7 +1,11 @@
 # Worker: Interactive Dev — {{TICKET_ID}}
 
 > **Signal file:** `./mark N` records progress. After the operator explicitly approves publication and the worker has created/pushed the PR, `./mark complete --mark-last` hands the run back to Farmslot for the operator-owned completion action.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item in `## Checklist`, run `{{TASK_DIR}}/mark N` with the number shown. TASK.md `STATUS: working` is not SIGNAL `status` — `./mark` owns `SIGNAL.json` during the run. If unsure, run `{{TASK_DIR}}/mark --help`. Never hand-write `SIGNAL.json`, and never signal completion while approved work is still local or unpublished.
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item in `### Repo boundaries — where proof artifacts live
+
+Everything this run produces to PROVE the work — `recipe.json`, evidence, reports — lives in `{{TASK_DIR}}/artifacts/`, never scattered into the repository. Reusable recipes go only into the repo's existing recipe homes (follow current conventions for the surface you changed); never invent a new proof folder. If a ticket asks for "repeatable" validation without naming a home, keep the script in `{{TASK_DIR}}/artifacts/` and raise the destination question in your report.
+
+## Checklist`, run `{{TASK_DIR}}/mark N` with the number shown. TASK.md `STATUS: working` is not SIGNAL `status` — `./mark` owns `SIGNAL.json` during the run. If unsure, run `{{TASK_DIR}}/mark --help`. Never hand-write `SIGNAL.json`, and never signal completion while approved work is still local or unpublished.
 
 ---
 
