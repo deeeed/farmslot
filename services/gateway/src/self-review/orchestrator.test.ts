@@ -7,6 +7,7 @@ import { parseSelfReviewIssueBullets } from './issues.js';
 import {
   canRecoverSelfReviewFixPass,
   resolveSelfReviewRunnerModel,
+  retryDeferredFixDelivery,
   runSelfReviewRetryLoop,
   type SelfReviewRetryDeps,
   shouldSkipForDisabledSelfReviewConfig,
@@ -812,4 +813,101 @@ test('runSelfReviewRetryLoop threads sessionPolicy into every re-review launch',
     deps: dflt.deps,
   });
   assert.deepEqual(dflt.calls.sessionPolicies, ['fresh-per-pass']);
+});
+
+test('retryDeferredFixDelivery adopts the re-resolved pane when the stored target is dead', async () => {
+  // Stored target points at a bare pane; the live accepting runner sits in a
+  // different window of the same session. Every send to the stored target
+  // defers, so delivery must succeed via re-resolution.
+  const sends: string[] = [];
+  const persisted: Array<{ target: string; window: string | null }> = [];
+  const result = await retryDeferredFixDelivery({
+    runId: 'run-rediscovery-1',
+    target: 'coredev-1:dev',
+    send: async (target) => {
+      sends.push(target);
+      return target === 'coredev-1:zsh.0';
+    },
+    rediscover: async () => ({
+      target: 'coredev-1:zsh.0',
+      window: 'zsh',
+      seenWindows: ['1:dev pane 0 (zsh)', '2:zsh pane 0 (claude)'],
+    }),
+    persistTarget: async (target, window) => {
+      persisted.push({ target, window });
+    },
+    getRun: (() => ({ status: 'working' })) as any,
+    retryIntervalMs: 1,
+    retryWindowMs: 5_000,
+  });
+  assert.equal(result.sent, true);
+  assert.equal(result.target, 'coredev-1:zsh.0');
+  assert.deepEqual(sends, ['coredev-1:zsh.0']);
+  assert.deepEqual(persisted, [{ target: 'coredev-1:zsh.0', window: 'zsh' }]);
+});
+
+test('retryDeferredFixDelivery keeps the stored target when re-resolution confirms it', async () => {
+  const sends: string[] = [];
+  let persistCalls = 0;
+  const result = await retryDeferredFixDelivery({
+    runId: 'run-rediscovery-2',
+    target: 'coredev-1:dev',
+    send: async (target) => {
+      sends.push(target);
+      return sends.length >= 2;
+    },
+    rediscover: async (storedTarget) => ({
+      target: storedTarget,
+      window: 'dev',
+      seenWindows: ['1:dev pane 0 (claude)'],
+    }),
+    persistTarget: async () => {
+      persistCalls += 1;
+    },
+    getRun: (() => ({ status: 'working' })) as any,
+    retryIntervalMs: 1,
+    retryWindowMs: 5_000,
+  });
+  assert.equal(result.sent, true);
+  assert.deepEqual(sends, ['coredev-1:dev', 'coredev-1:dev']);
+  assert.equal(persistCalls, 0);
+});
+
+test('retryDeferredFixDelivery reports the inspected windows when no pane ever accepts', async () => {
+  const result = await retryDeferredFixDelivery({
+    runId: 'run-rediscovery-3',
+    target: 'coredev-1:dev',
+    send: async () => false,
+    rediscover: async () => ({
+      target: null,
+      window: null,
+      seenWindows: ['1:dev pane 0 (zsh)', '2:zsh pane 0 (zsh)'],
+    }),
+    persistTarget: async () => {},
+    getRun: (() => ({ status: 'working' })) as any,
+    retryIntervalMs: 1,
+    retryWindowMs: 30,
+  });
+  assert.equal(result.sent, false);
+  assert.equal(result.target, 'coredev-1:dev');
+  assert.deepEqual(result.seenWindows, ['1:dev pane 0 (zsh)', '2:zsh pane 0 (zsh)']);
+});
+
+test('retryDeferredFixDelivery bails when the run reaches a terminal status', async () => {
+  let sendCalls = 0;
+  const result = await retryDeferredFixDelivery({
+    runId: 'run-rediscovery-4',
+    target: 'coredev-1:dev',
+    send: async () => {
+      sendCalls += 1;
+      return false;
+    },
+    rediscover: async () => ({ target: null, window: null, seenWindows: [] }),
+    persistTarget: async () => {},
+    getRun: (() => ({ status: 'cancelled' })) as any,
+    retryIntervalMs: 1,
+    retryWindowMs: 5_000,
+  });
+  assert.equal(result.sent, false);
+  assert.equal(sendCalls, 0);
 });

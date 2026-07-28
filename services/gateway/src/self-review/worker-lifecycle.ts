@@ -1,17 +1,18 @@
 // self-review/worker-lifecycle.ts — worker liveness and relaunch target helpers for self-review fixes.
 
-import { agentRoleWindow, primaryRoleForFlow } from '@farmslot/protocol';
+import { agentRoleWindow, isReviewerWindowName, primaryRoleForFlow } from '@farmslot/protocol';
 
 import { resolveAgentTarget } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { firstWindowTarget, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
-import { resolvePrimaryWorkerTarget, runnerProcessPatternSource } from '../runners/registry.js';
+import {
+  resolvePrimaryWorkerTarget,
+  runnerPaneLooksIdle,
+  runnerProcessPatternSource,
+} from '../runners/registry.js';
 
-function recreateRoleWindowName(
-  roleWindowName?: string | null,
-  flowType?: string | null,
-): string {
+function recreateRoleWindowName(roleWindowName?: string | null, flowType?: string | null): string {
   const named = roleWindowName?.trim();
   if (named) return named;
   if (flowType) return agentRoleWindow(primaryRoleForFlow(flowType)) ?? '';
@@ -100,6 +101,37 @@ export async function ensureTmuxTargetReadyForRelaunch(
   return `${session}:${recreateWindow}`;
 }
 
+async function paneHostsRunnerProcess(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+): Promise<boolean> {
+  const paneCommand = (
+    await execOnSlot(
+      vars,
+      tmuxShellSnippet(
+        `display-message -p -t ${shellQuote(target)} '#{pane_current_command}' 2>/dev/null`,
+      ),
+    )
+  ).stdout
+    .trim()
+    .toLowerCase();
+  const matcherParts = runnerProcessPatternSource(runner)
+    .split('|')
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+  if (paneCommand && matcherParts.some((part) => paneCommand.includes(part))) {
+    return true;
+  }
+  const result = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1 | xargs -I{} pgrep -P {} -f '${runnerProcessPatternSource(runner)}' 2>/dev/null | head -1`,
+    ),
+  );
+  return result.stdout.trim().length > 0;
+}
+
 export async function isWorkerAlive(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
@@ -110,34 +142,93 @@ export async function isWorkerAlive(
     workerTarget = runId
       ? (await resolveAgentTarget(vars.slotId, { runId, role: 'primary' })).target
       : await resolvePrimaryWorkerTarget(vars);
-    const paneCommand = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `display-message -p -t ${shellQuote(workerTarget)} '#{pane_current_command}' 2>/dev/null`,
-        ),
-      )
-    ).stdout
-      .trim()
-      .toLowerCase();
-    const matcherParts = runnerProcessPatternSource(runner)
-      .split('|')
-      .map((part) => part.trim().toLowerCase())
-      .filter(Boolean);
-    if (paneCommand && matcherParts.some((part) => paneCommand.includes(part))) {
-      return true;
-    }
-    const result = await execOnSlot(
-      vars,
-      tmuxShellSnippet(
-        `list-panes -t ${shellQuote(workerTarget)} -F '#{pane_pid}' 2>/dev/null | head -1 | xargs -I{} pgrep -P {} -f '${runnerProcessPatternSource(runner)}' 2>/dev/null | head -1`,
-      ),
-    );
-    return result.stdout.trim().length > 0;
+    return await paneHostsRunnerProcess(vars, workerTarget, runner);
   } catch (err) {
     console.warn(
       `[self-review] failed to check worker liveness for ${workerTarget}: ${(err as Error).message}`,
     );
     return false;
+  }
+}
+
+export interface WorkerPaneRediscovery {
+  /** Delivery target: the stored one while it still hosts the runner, else a discovered accepting pane, else null. */
+  target: string | null;
+  /** Window name (or index) of the adopted target, for agent-context persistence. */
+  window: string | null;
+  /** Per-pane inventory of the session (window, name, pane, command) for delivery-failure errors. */
+  seenWindows: string[];
+}
+
+/**
+ * Re-resolve which pane in the slot's session should receive worker prompts.
+ * A stored target can outlive its pane — the runner may come back in a
+ * different window with a bare shell left at the recorded one. Keep the
+ * stored target while its pane still hosts the runner process; otherwise
+ * scan the session's non-reviewer panes for one whose runner is at an
+ * accepting prompt. Errors degrade to keeping the stored target.
+ */
+export async function rediscoverAcceptingWorkerPane(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  session: string,
+  runner: string,
+  storedTarget: string,
+): Promise<WorkerPaneRediscovery> {
+  try {
+    const listed = (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(
+          `list-panes -s -t ${shellQuote(session)} -F '#{window_index}|#{window_name}|#{pane_index}|#{pane_current_command}' 2>/dev/null`,
+        ),
+      )
+    ).stdout.trim();
+    const panes = listed
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [windowIndex, windowName, paneIndex, command] = line.split('|');
+        return { windowIndex, windowName, paneIndex, command };
+      })
+      .filter((pane) => pane.windowIndex && pane.paneIndex);
+    const seenWindows = panes.map(
+      (pane) =>
+        `${pane.windowIndex}:${pane.windowName || '(unnamed)'} pane ${pane.paneIndex} (${pane.command || 'unknown'})`,
+    );
+
+    if (await paneHostsRunnerProcess(vars, storedTarget, runner)) {
+      const storedWindow = storedTarget.includes(':')
+        ? storedTarget.slice(storedTarget.indexOf(':') + 1).split('.', 1)[0] || null
+        : null;
+      return { target: storedTarget, window: storedWindow, seenWindows };
+    }
+
+    const storedWindowPart = storedTarget.includes(':')
+      ? storedTarget.slice(storedTarget.indexOf(':') + 1).split('.', 1)[0]
+      : '';
+    for (const pane of panes) {
+      if (isReviewerWindowName(pane.windowName)) continue;
+      const windowRef = pane.windowName || pane.windowIndex;
+      // The stored target's window already failed the liveness check above.
+      if (windowRef === storedWindowPart || pane.windowIndex === storedWindowPart) continue;
+      const candidate = `${session}:${windowRef}.${pane.paneIndex}`;
+      if (!(await paneHostsRunnerProcess(vars, candidate, runner))) continue;
+      const content = (
+        await execOnSlot(
+          vars,
+          tmuxShellSnippet(`capture-pane -p -t ${shellQuote(candidate)} 2>/dev/null`),
+        )
+      ).stdout;
+      if (runnerPaneLooksIdle(content.split('\n'), runner)) {
+        return { target: candidate, window: windowRef, seenWindows };
+      }
+    }
+    return { target: null, window: null, seenWindows };
+  } catch (err) {
+    console.warn(
+      `[self-review] worker pane re-resolution failed for ${session}: ${(err as Error).message}`,
+    );
+    return { target: storedTarget, window: null, seenWindows: [] };
   }
 }

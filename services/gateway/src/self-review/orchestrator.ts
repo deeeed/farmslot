@@ -81,7 +81,12 @@ import {
   reviewAttemptFromResult,
 } from './snapshots.js';
 import { getSelfReviewConfig, resolveWorkerTaskDir } from './templates.js';
-import { ensureTmuxTargetReadyForRelaunch, isWorkerAlive } from './worker-lifecycle.js';
+import {
+  ensureTmuxTargetReadyForRelaunch,
+  isWorkerAlive,
+  rediscoverAcceptingWorkerPane,
+  type WorkerPaneRediscovery,
+} from './worker-lifecycle.js';
 export { handleSelfReviewFsChanged } from './progress.js';
 
 export interface SelfReviewResult {
@@ -945,6 +950,74 @@ async function recoverSelfReviewFixPass({
 
 // ─── Feedback to worker ───
 
+export interface FixDeliveryRetryResult {
+  sent: boolean;
+  /** Target the last send went to — may differ from the stored one after re-resolution. */
+  target: string;
+  /** Total send attempts including the initial deferred one. */
+  attempts: number;
+  /** Session pane inventory from the last re-resolution, for terminal errors. */
+  seenWindows: string[];
+}
+
+/**
+ * Retry a deferred fix-task send until it lands or the window closes. Before
+ * each retry the worker pane is re-resolved: the stored target is kept while
+ * it still hosts the runner, otherwise the session's accepting runner pane is
+ * adopted and persisted so later sends follow the same pane. Bails early when
+ * the run reaches a terminal status underneath the loop.
+ */
+export async function retryDeferredFixDelivery({
+  runId,
+  target,
+  send,
+  rediscover,
+  persistTarget,
+  getRun: getRunDep,
+  retryIntervalMs = SELF_REVIEW_DELIVERY_RETRY_INTERVAL_MS,
+  retryWindowMs = SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS,
+}: {
+  runId: string;
+  target: string;
+  send: (target: string) => Promise<boolean>;
+  rediscover: (storedTarget: string) => Promise<WorkerPaneRediscovery>;
+  persistTarget: (target: string, window: string | null) => Promise<void>;
+  getRun: typeof getRun;
+  retryIntervalMs?: number;
+  retryWindowMs?: number;
+}): Promise<FixDeliveryRetryResult> {
+  const deadline = Date.now() + retryWindowMs;
+  let currentTarget = target;
+  let sent = false;
+  let attempt = 1;
+  let seenWindows: string[] = [];
+  while (!sent && Date.now() < deadline) {
+    const current = getRunDep(runId);
+    if (!current || isTerminalRunStatus(current.status)) {
+      console.warn(
+        `[self-review] run ${runId.slice(0, 8)} — abandoning fix delivery retries: run is ${current?.status ?? 'gone'}`,
+      );
+      break;
+    }
+    attempt += 1;
+    console.warn(
+      `[self-review] run ${runId.slice(0, 8)} — fix task send deferred (attempt ${attempt - 1}); worker busy, retrying in ${retryIntervalMs / 1000}s`,
+    );
+    await new Promise((r) => setTimeout(r, retryIntervalMs));
+    const rediscovery = await rediscover(currentTarget);
+    if (rediscovery.seenWindows.length > 0) seenWindows = rediscovery.seenWindows;
+    if (rediscovery.target && rediscovery.target !== currentTarget) {
+      console.warn(
+        `[self-review] run ${runId.slice(0, 8)} — fix delivery target ${currentTarget} no longer hosts the runner; adopting ${rediscovery.target}`,
+      );
+      currentTarget = rediscovery.target;
+      await persistTarget(currentTarget, rediscovery.window);
+    }
+    sent = await send(currentTarget);
+  }
+  return { sent, target: currentTarget, attempts: attempt, seenWindows };
+}
+
 async function sendFeedbackToWorker(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   issues: SelfReviewIssue[],
@@ -1026,7 +1099,7 @@ async function sendFeedbackToWorker(
     const roleWindowName =
       getRun(runId)?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run?.flowType))
         ?.target?.window ?? null;
-    const workerTarget = await ensureTmuxTargetReadyForRelaunch(
+    let workerTarget = await ensureTmuxTargetReadyForRelaunch(
       vars,
       session,
       primaryTarget.target,
@@ -1066,41 +1139,54 @@ async function sendFeedbackToWorker(
       // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
       { recovery: { runId } },
     );
+    let deliverySeenWindows: string[] = [];
     if (!sent) {
       // A busy worker is the NORMAL state of a healthy worker — it is usually
       // busy doing this very run's work when the review lands. Two immediate
       // probes failed the same run three times in one day (02866fe6) while the
       // worker was mid-merge and picked the task up instantly once idle. So:
       // keep retrying on an interval until the worker accepts or the window
-      // closes, bailing early if the run is cancelled underneath us.
-      const deadline = Date.now() + SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS;
-      let attempt = 1;
-      while (!sent && Date.now() < deadline) {
-        const current = getRun(runId);
-        if (!current || isTerminalRunStatus(current.status)) {
-          console.warn(
-            `[self-review] run ${runId.slice(0, 8)} — abandoning fix delivery retries: run is ${current?.status ?? 'gone'}`,
-          );
-          break;
-        }
-        attempt += 1;
-        console.warn(
-          `[self-review] run ${runId.slice(0, 8)} — fix task send deferred (attempt ${attempt - 1}); worker busy, retrying in ${SELF_REVIEW_DELIVERY_RETRY_INTERVAL_MS / 1000}s`,
-        );
-        await new Promise((r) => setTimeout(r, SELF_REVIEW_DELIVERY_RETRY_INTERVAL_MS));
-        sent = await sendRunnerInstructionSafely(
-          vars,
-          workerTarget,
-          normalizeRunner(run?.metrics.runner),
-          cmd,
-          'self-review',
-          undefined,
-          // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-          { forceBusyPoll: true, recovery: { runId } },
-        );
-      }
+      // closes, bailing early if the run is cancelled underneath us. Each
+      // retry re-resolves the worker pane first: a revived worker can sit in
+      // a different window than the recorded target.
+      const retry = await retryDeferredFixDelivery({
+        runId,
+        target: workerTarget,
+        send: (retryTarget) =>
+          sendRunnerInstructionSafely(
+            vars,
+            retryTarget,
+            normalizeRunner(run?.metrics.runner),
+            cmd,
+            'self-review',
+            undefined,
+            // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
+            { forceBusyPoll: true, recovery: { runId } },
+          ),
+        rediscover: (storedTarget) =>
+          rediscoverAcceptingWorkerPane(
+            vars,
+            session,
+            normalizeRunner(run?.metrics.runner),
+            storedTarget,
+          ),
+        persistTarget: async (adopted, window) => {
+          const corrected = { session, window, pane: null, target: adopted };
+          await upsertAgentContext(runId, 'self-review-fix', { target: corrected });
+          // Route later role-targeted sends to the same pane — but never
+          // fabricate a primary context that dispatch did not create.
+          const workerRole = primaryRoleForFlow(getRun(runId)?.flowType);
+          if (getRun(runId)?.agentContexts?.some((ctx) => ctx.role === workerRole)) {
+            await upsertAgentContext(runId, workerRole, { target: corrected });
+          }
+        },
+        getRun,
+      });
+      sent = retry.sent;
+      workerTarget = retry.target;
+      deliverySeenWindows = retry.seenWindows;
       console.log(
-        `[self-review] run ${runId.slice(0, 8)} — fix task ${sent ? `sent after ${attempt} attempt(s)` : `NOT delivered after ${attempt} attempt(s) over ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min`}: ${fixTaskFile}`,
+        `[self-review] run ${runId.slice(0, 8)} — fix task ${sent ? `sent after ${retry.attempts} attempt(s)` : `NOT delivered after ${retry.attempts} attempt(s) over ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min`}: ${fixTaskFile}`,
       );
     } else {
       // Always-on: delivery state is the first question when a fix loop stalls.
@@ -1113,8 +1199,10 @@ async function sendFeedbackToWorker(
       // below restores the worker checklist target and active task file.
       await markAgentContextStatus(runId, 'self-review-fix', 'failed');
       await unwatchContext(vars.slotId, 'self-review-fix');
+      const seenSummary =
+        deliverySeenWindows.length > 0 ? deliverySeenWindows.join('; ') : 'none inspected';
       throw new Error(
-        `self-review fix task delivery kept deferring for ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt (${fixTaskFile}). Escape: deliver it manually (tell the worker to read that file in its session), then replay the self-review step.`,
+        `self-review fix task delivery kept deferring for ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt (${fixTaskFile}). Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: deliver it manually (tell the worker to read that file in its session), then replay the self-review step.`,
       );
     }
     // sent=true only proves keystrokes were injected and Enter pressed. A
