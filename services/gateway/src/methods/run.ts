@@ -612,30 +612,18 @@ async function releaseInteractiveDevSlot(run: Run): Promise<string> {
   return 'released-keep-work';
 }
 
-async function holdInteractiveDevSlotForCiHandoff(run: Run): Promise<string> {
-  if (!run.slotId) return 'none';
-  const { markSlotHeld } = await import('../core/index.js');
-  await markSlotHeld(run.slotId, 'ci-watch');
-  return 'held-for-ci-watch';
-}
-
 async function markInteractiveDevDoneWithoutPr(
   run: Run,
   params: RunInteractiveDevResolveParams,
   emit: Emit,
-  handoff?: 'ci-watch' | 'pr-complete',
-  options: { emitDone?: boolean } = {},
+  handoff?: 'pr-complete',
 ): Promise<RunInteractiveDevResolveResult> {
   cancelRunEngine(run.id);
   bumpRunGeneration(run.id);
   const reason = params.reason?.trim() || 'operator marked interactive dev done without PR';
   completeStepAsOperator(run.id, 'monitor', reason, { operatorAction: params.action, reason });
   if (handoff) {
-    const handoffSteps =
-      handoff === 'pr-complete'
-        ? ['self-review', 'human-gate', 'finalize', 'ci-watch']
-        : ['self-review', 'human-gate', 'finalize'];
-    for (const stepName of handoffSteps) {
+    for (const stepName of ['self-review', 'human-gate', 'finalize', 'ci-watch']) {
       completeStepAsOperator(run.id, stepName, reason, {
         operatorAction: params.action,
         reason,
@@ -648,10 +636,7 @@ async function markInteractiveDevDoneWithoutPr(
       skipStepAsOperator(run.id, stepName, 'operator-completed-without-pr');
     }
   }
-  const slotDisposition =
-    handoff === 'ci-watch'
-      ? await holdInteractiveDevSlotForCiHandoff(run)
-      : await releaseInteractiveDevSlot(run);
+  const slotDisposition = await releaseInteractiveDevSlot(run);
   const current = getRun(run.id) ?? run;
   const updated = updateRun(run.id, {
     status: 'done',
@@ -669,7 +654,7 @@ async function markInteractiveDevDoneWithoutPr(
     handoff: handoff ?? 'none',
   });
   const finalRun = getRun(run.id) ?? updated;
-  if (options.emitDone ?? true) emit(Events.RUN_UPDATED, { run: finalRun });
+  emit(Events.RUN_UPDATED, { run: finalRun });
   return { ok: true, run: finalRun };
 }
 
@@ -698,17 +683,54 @@ async function linkInteractiveDevPrAndStartCiWatch(
   emit: Emit,
 ): Promise<RunInteractiveDevResolveResult> {
   const pr = await resolveInteractiveDevPrRef(run, params.prRef);
-  await markInteractiveDevDoneWithoutPr(
-    run,
-    { ...params, reason: params.reason ?? `Linked PR ${pr.ref} and started CI watch` },
+  // Stop any live engine loop before mutating steps; the replay below owns the
+  // run from here on.
+  cancelRunEngine(run.id);
+  bumpRunGeneration(run.id);
+  const { persistRunPrNumber } = await import('../integrations/pr-linkage.js');
+  await persistRunPrNumber(run.id, pr.number);
+  // Linking a PR is a publication decision: route the rest of the run through
+  // the reviewed pipeline so COMPLETE packages the linked PR's work, the
+  // publication ready gate rises and waits for operator approval, and agent
+  // teardown stays where FINALIZE performs it — after the gate, never before.
+  const engineState = appendInteractiveDevAction(run.id, params, run);
+  updateRun(run.id, {
+    devInteractiveProfile: 'reviewed',
+    engineState: {
+      ...engineState,
+      interactiveDev: {
+        ...engineState?.interactiveDev,
+        profile: 'reviewed',
+      },
+    },
+  });
+  const reason =
+    params.reason?.trim() || `Linked PR ${pr.ref}; resuming pipeline to the publication gate`;
+  completeStepAsOperator(run.id, 'monitor', reason, {
+    operatorAction: params.action,
+    reason,
+    prNumber: pr.number,
+    source: 'operator',
+  });
+  // Self-review is an explicit operator skip on this path — the operator chose
+  // CI watch over another review pass. Recorded as a settled step so the
+  // engine resumes at COMPLETE instead of re-running the review.
+  completeStepAsOperator(run.id, 'self-review', `Skipped: operator linked PR ${pr.ref}`, {
+    skipped: true,
+    reason: 'operator-linked-pr-resolution',
+    source: 'operator',
+    operatorAction: params.action,
+  });
+  const replay = await runReplayStep(
+    { runId: run.id, stepName: 'complete', triggeredBy: 'operator' },
     emit,
-    'ci-watch',
-    { emitDone: false },
   );
-  const replay = await runRehydratePrNumber({ runId: run.id, prRef: pr.ref }, emit);
-  if (!replay.ok)
-    return { ok: true, run: getRun(run.id)!, prNumber: pr.number, reason: replay.reason };
-  return { ok: true, run: replay.run, prNumber: replay.prNumber, reason: replay.reason };
+  return {
+    ok: true,
+    run: replay.run,
+    prNumber: pr.number,
+    reason: 'pipeline resumed; the publication gate must be approved before CI watch starts',
+  };
 }
 
 export async function runInteractiveDevResolve(
