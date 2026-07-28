@@ -476,7 +476,17 @@ export async function loadAllRuns(): Promise<void> {
   console.log(`[run-store] loaded ${runs.size} runs from disk`);
 }
 
-export function createRun(params: RunCreateParams): Run {
+export function createRun(
+  params: RunCreateParams,
+  options?: {
+    /**
+     * When true, skip fire-and-forget persist so the caller can await a
+     * durable write after related handoff work (e.g. queue stamp) completes.
+     * Used by queue claim create so the Run file cannot land before the stamp.
+     */
+    deferBackgroundPersist?: boolean;
+  },
+): Run {
   if (Array.isArray(params.allowedSlots) && params.allowedSlots.length === 0) {
     throw new Error('Cannot create run: active slot filters resolved to no matching slots');
   }
@@ -622,7 +632,9 @@ export function createRun(params: RunCreateParams): Run {
   };
   run.agentContexts = initialAgentContextsForRun(run);
   runs.set(run.id, run);
-  persistRunBackground(run, 'create');
+  if (!options?.deferBackgroundPersist) {
+    persistRunBackground(run, 'create');
+  }
   return run;
 }
 

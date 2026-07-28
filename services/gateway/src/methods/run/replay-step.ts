@@ -94,6 +94,49 @@ function isReplacementFor(
   );
 }
 
+/**
+ * Refuse cancelled-run reclaim when another live Run already owns the node
+ * (queue row may already be gone after handoff) or the replacement row has a
+ * stamped live runId. Must run before any replay mutation.
+ */
+function assertCancelledReplayNodeAvailable(
+  existing: NonNullable<ReturnType<typeof getRun>>,
+  runId: string,
+): void {
+  const liveOwner = getAllRuns().find(
+    (run) =>
+      run.id !== runId &&
+      !isTerminalRunStatus(run.status) &&
+      isReplacementFor(
+        {
+          workGraphId: run.workGraphId,
+          workNodeId: run.workNodeId,
+          launchPlanId: run.launchPlanId,
+          launchCandidateId: run.launchCandidateId,
+        },
+        existing,
+      ),
+  );
+  if (liveOwner) {
+    throw new Error(
+      `Run ${runId.slice(0, 8)} could not be replayed: its node is already owned by ` +
+        `live run ${liveOwner.id.slice(0, 8)}. The cancelled run is left cancelled. ` +
+        'Next: follow the live run for this node.',
+    );
+  }
+  const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
+  if (replacement?.runId) {
+    const handedOff = getRun(replacement.runId);
+    if (handedOff && !isTerminalRunStatus(handedOff.status)) {
+      throw new Error(
+        `Run ${runId.slice(0, 8)} could not be replayed: its node was redispatched ` +
+          `to run ${replacement.runId.slice(0, 8)} (queue item ${replacement.id.slice(0, 8)}). ` +
+          'The cancelled run is left cancelled. Next: follow the new run for this node.',
+      );
+    }
+  }
+}
+
 function resetPublishGateApprovalForReplay(
   engineState: RunEngineState | undefined,
 ): RunEngineState | undefined {
@@ -372,6 +415,13 @@ export async function runReplayStep(
   const replaySnapshot = getRun(params.runId) ?? existing;
   assertReplayAfterDispatchAllowed(replaySnapshot, flowSteps, targetIdx, replayStepName);
   normalizeReplayPrerequisites(params.runId, replaySnapshot, flowSteps, targetIdx, replayStepName);
+
+  // Ownership refusal for cancelled-run reclaim must run before any mutation
+  // (generation bump, step reset, recoveryProposal). Otherwise a rejected
+  // replay leaves the cancelled run partially mutated while reporting failure.
+  if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
+    assertCancelledReplayNodeAvailable(existing, params.runId);
+  }
 
   // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
   // Do this only after replay entry validation so rejected replays do not leave a
@@ -713,65 +763,25 @@ export async function runReplayStep(
   const engineStateForReplay = replaysCompletionOrGate
     ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
     : currentBeforeReplayUpdate.engineState;
-  // Reclaim the node here, not at entry: every check that can throw has passed, so
-  // the run is about to go live. Crash-safe order:
-  // 1) refuse if another live Run already owns this node (queue row may be gone)
-  // 2) soft-lock / refuse stamped replacement, but keep queue row until revive is durable
-  // 3) revive run + await persistRunNow
-  // 4) then drop replacement + await persistQueueNow
-  // removeQueueItemInternal revokes any exclusive claim (epoch bump); a dispatcher
-  // that still holds a stale token fails isQueueClaimHeld and stops before createRun.
+  // Reclaim the node here: ownership was refused before mutations. Soft-lock is
+  // durable so a crash after revive still leaves a dispatching row that loadQueue
+  // reconciles to the live owner (and claimQueueItem cannot race mid-revive).
+  // Order: durable soft-lock → revive + persistRunNow → drop + persistQueueNow.
   let replacementToDrop: { id: string } | undefined;
   if (
     currentBeforeReplayUpdate.status === 'cancelled' &&
     existing.workGraphId &&
     existing.workNodeId
   ) {
-    // Queue row may already be gone after a successful handoff — still refuse when
-    // another non-terminal run owns the same graph/node/plan/candidate identity.
-    const liveOwner = getAllRuns().find(
-      (run) =>
-        run.id !== params.runId &&
-        !isTerminalRunStatus(run.status) &&
-        isReplacementFor(
-          {
-            workGraphId: run.workGraphId,
-            workNodeId: run.workNodeId,
-            launchPlanId: run.launchPlanId,
-            launchCandidateId: run.launchCandidateId,
-          },
-          existing,
-        ),
-    );
-    if (liveOwner) {
-      throw new Error(
-        `Run ${params.runId.slice(0, 8)} could not be replayed: its node is already owned by ` +
-          `live run ${liveOwner.id.slice(0, 8)}. The cancelled run is left cancelled. ` +
-          'Next: follow the live run for this node.',
-      );
-    }
-    // Select the row by id rather than by graph/node, so a sibling launch-plan
-    // candidate sharing this node is never the one removed.
+    // Re-check ownership immediately before soft-lock (race after entry check).
+    assertCancelledReplayNodeAvailable(existing, params.runId);
     const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
     if (replacement) {
-      // If create already stamped runId, a new Run owns this node — reviving the
-      // cancelled run would leave two live owners. Refuse rather than reclaim.
-      if (replacement.runId) {
-        const handedOff = getRun(replacement.runId);
-        if (handedOff && !isTerminalRunStatus(handedOff.status)) {
-          throw new Error(
-            `Run ${params.runId.slice(0, 8)} could not be replayed: its node was redispatched ` +
-              `to run ${replacement.runId.slice(0, 8)} (queue item ${replacement.id.slice(0, 8)}). ` +
-              'The cancelled run is left cancelled. Next: follow the new run for this node.',
-          );
-        }
-      }
-      // Soft-lock the row so claimQueueItem cannot race while we revive.
-      // Keep it in memory until the revived run is durable, then drop.
       replacement.status = 'dispatching';
       replacement.claimHolder = `replay:${params.runId}`;
       replacement.claimEpoch = (replacement.claimEpoch ?? 0) + 1;
       replacement.claimExpiresAt = new Date(Date.now() + 60_000).toISOString();
+      await persistQueueNow();
       replacementToDrop = { id: replacement.id };
     }
   }

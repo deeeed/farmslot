@@ -259,6 +259,10 @@ test('replay refuses when a live Run owns the node even without a queue row', as
     workNodeId: 'wn_replay_live_owner',
   });
   updateRun(cancelled.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  const genBefore = getRun(cancelled.id)?.engineState?.generation ?? 0;
+  const stepsBefore = getRun(cancelled.id)
+    ?.steps.map((s) => s.status)
+    .join(',');
   // Successful handoff already dropped the queue row; a later replacement Run is live.
   const live = createRun({
     flowType: 'update-branch',
@@ -288,6 +292,15 @@ test('replay refuses when a live Run owns the node even without a queue row', as
   );
   assert.equal(getRun(cancelled.id)?.status, 'cancelled');
   assert.equal(getRun(live.id)?.status, 'created');
+  // Rejection must not mutate the cancelled run (generation / step reset).
+  assert.equal(getRun(cancelled.id)?.engineState?.generation ?? 0, genBefore);
+  assert.equal(
+    getRun(cancelled.id)
+      ?.steps.map((s) => s.status)
+      .join(','),
+    stepsBefore,
+  );
+  assert.equal(getRun(cancelled.id)?.recoveryProposal, undefined);
 });
 
 test('replay refuses when replacement row already has a stamped runId', async (t) => {

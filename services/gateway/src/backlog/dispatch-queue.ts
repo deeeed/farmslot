@@ -203,6 +203,40 @@ export async function persistQueueNow(): Promise<void> {
   await enqueuePersist('explicit');
 }
 
+/** Non-terminal run that already owns this queue handoff identity (restart reconcile). */
+function findNonTerminalHandoffOwner(item: QueueItem): Run | undefined {
+  return getAllRuns().find((run) => {
+    if (isTerminalRunStatus(run.status)) return false;
+    if (
+      item.workGraphId &&
+      item.workNodeId &&
+      run.workGraphId === item.workGraphId &&
+      run.workNodeId === item.workNodeId
+    ) {
+      // Launch-plan siblings share graph/node; require matching candidate when present.
+      if (item.launchCandidateId) {
+        return (
+          run.launchCandidateId === item.launchCandidateId &&
+          run.launchPlanId === item.launchPlanId &&
+          run.launchAttempt === item.launchAttempt
+        );
+      }
+      return !run.launchCandidateId;
+    }
+    if (item.backlogItemId && run.backlogItemId === item.backlogItemId) {
+      if (item.launchCandidateId) {
+        return (
+          run.launchCandidateId === item.launchCandidateId &&
+          run.launchPlanId === item.launchPlanId &&
+          run.launchAttempt === item.launchAttempt
+        );
+      }
+      return !run.launchCandidateId;
+    }
+    return false;
+  });
+}
+
 export async function loadQueue(): Promise<void> {
   queue.length = 0;
   try {
@@ -214,6 +248,15 @@ export async function loadQueue(): Promise<void> {
         queueKind: item.queueKind ?? 'dispatch',
       };
       if (normalized.status === 'queued') {
+        // Crash after create/revive can leave a still-queued disk row while a
+        // live Run already owns the work — drop rather than double-dispatch.
+        const liveOwner = findNonTerminalHandoffOwner(normalized);
+        if (liveOwner) {
+          console.log(
+            `[dispatch-queue] reconciled queued item ${normalized.id.slice(0, 8)} to existing run ${liveOwner.id.slice(0, 8)}`,
+          );
+          continue;
+        }
         queue.push(normalized);
         continue;
       }
@@ -271,36 +314,7 @@ export async function loadQueue(): Promise<void> {
         // Ordinary backlog / work-graph / direct queue rows: match a non-terminal
         // run that already owns this handoff so restart does not requeue work that
         // finished create before the queue row was dropped.
-        const ordinaryMatch = getAllRuns().find((run) => {
-          if (isTerminalRunStatus(run.status)) return false;
-          if (
-            normalized.workGraphId &&
-            normalized.workNodeId &&
-            run.workGraphId === normalized.workGraphId &&
-            run.workNodeId === normalized.workNodeId
-          ) {
-            // Launch-plan siblings share graph/node; require matching candidate when present.
-            if (normalized.launchCandidateId) {
-              return (
-                run.launchCandidateId === normalized.launchCandidateId &&
-                run.launchPlanId === normalized.launchPlanId &&
-                run.launchAttempt === normalized.launchAttempt
-              );
-            }
-            return !run.launchCandidateId;
-          }
-          if (normalized.backlogItemId && run.backlogItemId === normalized.backlogItemId) {
-            if (normalized.launchCandidateId) {
-              return (
-                run.launchCandidateId === normalized.launchCandidateId &&
-                run.launchPlanId === normalized.launchPlanId &&
-                run.launchAttempt === normalized.launchAttempt
-              );
-            }
-            return !run.launchCandidateId;
-          }
-          return false;
-        });
+        const ordinaryMatch = findNonTerminalHandoffOwner(normalized);
         if (ordinaryMatch) {
           console.log(
             `[dispatch-queue] reconciled dispatching item ${normalized.id.slice(0, 8)} to existing run ${ordinaryMatch.id.slice(0, 8)}`,
@@ -587,6 +601,18 @@ export async function cancelGraphQueuedItem(params: {
       item.workNodeId === params.workNodeId,
   );
   if (idx < 0) return false;
+  const candidate = queue[idx];
+  // Handoff already won: create stamped a live Run. Do not tear down the row
+  // (or its claim epoch) out from under the dispatcher that just created it.
+  if (candidate?.runId) {
+    const stamped = getRun(candidate.runId);
+    if (stamped && !isTerminalRunStatus(stamped.status)) {
+      console.log(
+        `[dispatch-queue] skip cancel of ${candidate.id.slice(0, 8)}: stamped live run ${stamped.id.slice(0, 8)}`,
+      );
+      return false;
+    }
+  }
   const [item] = queue.splice(idx, 1);
   if (!item) return false;
   // Revoke claim so any in-flight dispatcher fails re-validation.

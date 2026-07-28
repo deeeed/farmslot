@@ -487,7 +487,12 @@ export async function runCreate(
   };
   // Last ownership check at the durable create boundary (after all awaits above).
   options.beforeCreate?.();
-  let run = createRun(createParams);
+  // Defer background persist on the claim handoff path so the Run file cannot
+  // appear on disk before durableStamp writes the queue runId (restart would
+  // otherwise redispatch an unstamped row while the Run already exists).
+  let run = createRun(createParams, {
+    deferBackgroundPersist: Boolean(options.awaitPersist),
+  });
   // Stamp runId / handoff marker before any await so concurrent reclaim sees
   // that create already succeeded (claim re-validation alone is not enough).
   options.afterCreateSync?.(run);

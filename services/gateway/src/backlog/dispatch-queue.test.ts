@@ -1493,6 +1493,63 @@ test('reclaimExpiredClaims drops stamped rows whose Run still exists', async () 
   await cleanupRun(run.id);
 });
 
+test('loadQueue drops queued rows whose handoff is already owned by a live Run', async () => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-queued-live-owner',
+    workGraphId: 'wg_queued_live',
+    workNodeId: 'wn_queued_live',
+  });
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-queued-live-owner',
+    workGraphId: 'wg_queued_live',
+    workNodeId: 'wn_queued_live',
+  });
+  assert.equal(item.status, 'queued');
+  await persistQueueNow();
+  await loadQueue();
+  assert.ok(
+    !getQueueSnapshot().some((q) => q.id === item.id),
+    'queued row with live owner must not survive restart',
+  );
+  await cleanupRun(run.id);
+});
+
+test('cancelGraphQueuedItem leaves stamped live handoffs alone', async () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-cancel-stamped-live',
+    workGraphId: 'wg_cancel_stamp',
+    workNodeId: 'wn_cancel_stamp',
+  });
+  const claim = claimQueueItem(item.id, 'holder-stamp');
+  assert.ok(claim);
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-cancel-stamped-live',
+    workGraphId: 'wg_cancel_stamp',
+    workNodeId: 'wn_cancel_stamp',
+  });
+  stampQueueItemRunId(item.id, run.id);
+  const cancelled = await cancelGraphQueuedItem({
+    workGraphId: 'wg_cancel_stamp',
+    workNodeId: 'wn_cancel_stamp',
+    reason: 'should-skip-stamped-live',
+  });
+  assert.equal(cancelled, false);
+  assert.ok(
+    getQueueSnapshot().some((q) => q.id === item.id),
+    'stamped live row remains',
+  );
+  await removeQueueItemInternalNow(item.id, 'test-cleanup');
+  await cleanupRun(run.id);
+});
+
 test('partial create after stamp drops the row instead of requeueing', async (t) => {
   setCachedFleetForTests(readyFleetSlot('partial-slot') as any);
   const item = addItem({
