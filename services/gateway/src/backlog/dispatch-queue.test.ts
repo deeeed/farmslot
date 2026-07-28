@@ -26,6 +26,8 @@ import {
   initDispatchQueue,
   isQueueClaimHeld,
   listItems,
+  loadQueue,
+  persistQueueNow,
   QueueClaimLostError,
   reclaimExpiredClaims,
   releaseQueueClaim,
@@ -34,6 +36,8 @@ import {
   removeQueueItemInternalNow,
   reorderItems,
   selectQueueDispatchSlot,
+  stampQueueItemRunId,
+  stampQueueItemRunIdNow,
   tryDispatchNext,
   updateItem,
 } from './dispatch-queue.js';
@@ -1437,4 +1441,90 @@ test('assertQueueClaimHeld stops create after mid-callback revoke', async () => 
   releaseGate!();
   await assert.rejects(() => createPath, QueueClaimLostError);
   assert.equal(createdRuns, 0);
+});
+
+test('loadQueue drops dispatching rows stamped with a terminal Run', async () => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-stamp-terminal-reconcile',
+  });
+  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-stamp-terminal-reconcile',
+  });
+  const claim = claimQueueItem(item.id, 'holder-terminal');
+  assert.ok(claim);
+  stampQueueItemRunId(item.id, run.id);
+  await persistQueueNow();
+
+  // Simulate restart: clear in-memory queue and reload from disk.
+  // loadQueue reads the same isolated test queue file.
+  await loadQueue();
+  assert.ok(
+    !getQueueSnapshot().some((q) => q.id === item.id),
+    'terminal stamped handoff must not requeue',
+  );
+  await cleanupRun(run.id);
+});
+
+test('reclaimExpiredClaims drops stamped rows whose Run still exists', async () => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-stamp-expire-drop',
+  });
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-stamp-expire-drop',
+  });
+  const claim = claimQueueItem(item.id, 'holder-stamp-expire', { ttlMs: 1 });
+  assert.ok(claim);
+  await stampQueueItemRunIdNow(item.id, run.id);
+  const n = reclaimExpiredClaims(Date.parse(claim.expiresAt) + 1);
+  assert.ok(n >= 1);
+  assert.ok(
+    !getQueueSnapshot().some((q) => q.id === item.id),
+    'stamped expired claim must drop, not requeue',
+  );
+  await cleanupRun(run.id);
+});
+
+test('partial create after stamp drops the row instead of requeueing', async (t) => {
+  setCachedFleetForTests(readyFleetSlot('partial-slot') as any);
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-partial-create-drop',
+    allowedSlots: ['partial-slot'],
+    autoDispatch: false,
+  });
+  let partialRunId: string | undefined;
+  initDispatchQueue(
+    () => {},
+    async (queued, claim) => {
+      assertQueueClaimHeld(claim, 'partial-create');
+      const run = createRun({
+        flowType: 'fix-bug',
+        project: 'farmslot-farm',
+        ticketOrPr: 'PROJ-partial-create-drop',
+      });
+      partialRunId = run.id;
+      await stampQueueItemRunIdNow(queued.id, run.id);
+      throw new Error('simulated post-stamp failure');
+    },
+  );
+  t.after(async () => {
+    if (partialRunId) await cleanupRun(partialRunId);
+  });
+  await tryDispatchNext();
+  assert.ok(partialRunId, 'callback must create a Run before failing');
+  assert.ok(getRun(partialRunId));
+  assert.ok(
+    !getQueueSnapshot().some((q) => q.id === item.id),
+    'partial create must drop the queue row, not requeue',
+  );
 });

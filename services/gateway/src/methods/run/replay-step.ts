@@ -6,6 +6,7 @@ import {
   FLOW_STEPS,
   type FlowType,
   isInteractiveDevRun,
+  isTerminalRunStatus,
   PipelineSteps as PS,
   PR_BOUND_FLOW_TYPES,
   resolveRunSlotId,
@@ -34,7 +35,7 @@ import {
   setRunFlags,
   startRun,
 } from '../../run-engine/orchestrator.js';
-import { getRun, updateRun, updateRunStep } from '../../runs/store.js';
+import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../../runs/store.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 
 import {
@@ -713,15 +714,42 @@ export async function runReplayStep(
     ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
     : currentBeforeReplayUpdate.engineState;
   // Reclaim the node here, not at entry: every check that can throw has passed, so
-  // the run is about to go live. Dropping the queue row earlier would strand the
-  // node — no queued work and a still-cancelled run — whenever replay then failed.
+  // the run is about to go live. Crash-safe order:
+  // 1) refuse if another live Run already owns this node (queue row may be gone)
+  // 2) soft-lock / refuse stamped replacement, but keep queue row until revive is durable
+  // 3) revive run + await persistRunNow
+  // 4) then drop replacement + await persistQueueNow
   // removeQueueItemInternal revokes any exclusive claim (epoch bump); a dispatcher
   // that still holds a stale token fails isQueueClaimHeld and stops before createRun.
+  let replacementToDrop: { id: string } | undefined;
   if (
     currentBeforeReplayUpdate.status === 'cancelled' &&
     existing.workGraphId &&
     existing.workNodeId
   ) {
+    // Queue row may already be gone after a successful handoff — still refuse when
+    // another non-terminal run owns the same graph/node/plan/candidate identity.
+    const liveOwner = getAllRuns().find(
+      (run) =>
+        run.id !== params.runId &&
+        !isTerminalRunStatus(run.status) &&
+        isReplacementFor(
+          {
+            workGraphId: run.workGraphId,
+            workNodeId: run.workNodeId,
+            launchPlanId: run.launchPlanId,
+            launchCandidateId: run.launchCandidateId,
+          },
+          existing,
+        ),
+    );
+    if (liveOwner) {
+      throw new Error(
+        `Run ${params.runId.slice(0, 8)} could not be replayed: its node is already owned by ` +
+          `live run ${liveOwner.id.slice(0, 8)}. The cancelled run is left cancelled. ` +
+          'Next: follow the live run for this node.',
+      );
+    }
     // Select the row by id rather than by graph/node, so a sibling launch-plan
     // candidate sharing this node is never the one removed.
     const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
@@ -730,7 +758,7 @@ export async function runReplayStep(
       // cancelled run would leave two live owners. Refuse rather than reclaim.
       if (replacement.runId) {
         const handedOff = getRun(replacement.runId);
-        if (handedOff && handedOff.status !== 'cancelled' && handedOff.status !== 'failed') {
+        if (handedOff && !isTerminalRunStatus(handedOff.status)) {
           throw new Error(
             `Run ${params.runId.slice(0, 8)} could not be replayed: its node was redispatched ` +
               `to run ${replacement.runId.slice(0, 8)} (queue item ${replacement.id.slice(0, 8)}). ` +
@@ -738,8 +766,13 @@ export async function runReplayStep(
           );
         }
       }
-      removeQueueItemInternal(replacement.id, `replay-revives-run:${params.runId}`);
-      await persistQueueNow();
+      // Soft-lock the row so claimQueueItem cannot race while we revive.
+      // Keep it in memory until the revived run is durable, then drop.
+      replacement.status = 'dispatching';
+      replacement.claimHolder = `replay:${params.runId}`;
+      replacement.claimEpoch = (replacement.claimEpoch ?? 0) + 1;
+      replacement.claimExpiresAt = new Date(Date.now() + 60_000).toISOString();
+      replacementToDrop = { id: replacement.id };
     }
   }
   updateRun(params.runId, {
@@ -759,6 +792,15 @@ export async function runReplayStep(
     },
     recoveryAttempts: [...(existing.recoveryAttempts ?? []), attempt],
   });
+  // Durable revive before dropping replacement work — crash between these two
+  // leaves a live owner on disk so restart will not requeue the replacement.
+  await persistRunNow(getRun(params.runId)!, 'replay-revive');
+  if (replacementToDrop) {
+    if (getQueueSnapshot().some((item) => item.id === replacementToDrop!.id)) {
+      removeQueueItemInternal(replacementToDrop.id, `replay-revives-run:${params.runId}`);
+      await persistQueueNow();
+    }
+  }
   emit(Events.RUN_UPDATED, { run: getRun(params.runId) });
 
   // Retry-with-profile: persist the selection so the replayed PREPARE (and any

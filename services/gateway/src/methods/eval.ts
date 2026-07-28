@@ -707,6 +707,8 @@ export async function evalTrialStart(
     beforeCreate?: () => void;
     /** Sync stamp immediately after in-memory createRun (before awaitPersist). */
     afterCreateSync?: (run: import('@farmslot/protocol').Run) => void;
+    /** Await durable queue stamp after afterCreateSync, before run JSON persist. */
+    durableStamp?: (run: import('@farmslot/protocol').Run) => void | Promise<void>;
     /** Await run JSON write after create (queue claim handoff). */
     awaitPersist?: boolean;
     /** Called after durable createRun succeeds, before post-create package writes. */
@@ -898,6 +900,7 @@ export async function evalTrialStart(
     {
       beforeCreate: options.beforeCreate,
       afterCreateSync: options.afterCreateSync,
+      durableStamp: options.durableStamp,
       awaitPersist: options.awaitPersist,
     },
   );

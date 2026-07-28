@@ -218,6 +218,12 @@ interface RunCreateInternalOptions {
    * cancel/replay cannot treat the row as reclaimable mid-persist.
    */
   afterCreateSync?: (run: import('@farmslot/protocol').Run) => void;
+  /**
+   * Optional async barrier after afterCreateSync and before persistRunNow when
+   * awaitPersist is set. Queue handoff uses this to await a durable queue stamp
+   * so a crash mid-run-persist still leaves a stamped row for restart reconcile.
+   */
+  durableStamp?: (run: import('@farmslot/protocol').Run) => void | Promise<void>;
 }
 
 export function assertExpectedExecutionTemplate(
@@ -486,6 +492,9 @@ export async function runCreate(
   // that create already succeeded (claim re-validation alone is not enough).
   options.afterCreateSync?.(run);
   if (options.awaitPersist) {
+    // Durable queue stamp before run file: crash between these two still leaves
+    // a stamped row that restart drops against the Run (live or terminal).
+    await options.durableStamp?.(run);
     // Queue claim handoff: ensure the run file is on disk before the caller
     // drops the queue row (otherwise a crash requeues and can double-create).
     await persistRunNow(run, 'create-queue-handoff');

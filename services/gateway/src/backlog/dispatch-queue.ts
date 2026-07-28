@@ -23,7 +23,7 @@ import { resolveDispatchPreviewFromFleet } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { detectProfileFit } from '../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../run-engine/ticket-data.js';
-import { getAllRuns } from '../runs/store.js';
+import { getAllRuns, getRun } from '../runs/store.js';
 
 function shouldUseIsolatedQueueFile(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
   if (env.FARMSLOT_TEST_TMP === '1' || env.NODE_TEST_CONTEXT) return true;
@@ -108,8 +108,21 @@ export function assertQueueClaimHeld(claim: QueueClaim, phase = 'pre-createRun')
  */
 export function reclaimExpiredClaims(nowMs = Date.now()): number {
   let reclaimed = 0;
-  for (const item of queue) {
-    if (item.status !== 'dispatching') continue;
+  let dropped = 0;
+  for (let i = queue.length - 1; i >= 0; i--) {
+    const item = queue[i];
+    if (!item || item.status !== 'dispatching') continue;
+    // Handoff already produced a Run: never reclaim/requeue even if the claim TTL
+    // expired mid-persist. Drop the row when the stamped run still exists.
+    if (item.runId) {
+      const stamped = getRun(item.runId);
+      if (stamped) {
+        clearQueueProfileFitCache(item);
+        queue.splice(i, 1);
+        dropped += 1;
+        continue;
+      }
+    }
     if (item.claimExpiresAt && Date.parse(item.claimExpiresAt) > nowMs) continue;
     // Missing expiresAt is treated as expired: a claim without TTL is invalid.
     item.status = 'queued';
@@ -118,11 +131,11 @@ export function reclaimExpiredClaims(nowMs = Date.now()): number {
     clearClaimFields(item);
     reclaimed += 1;
   }
-  if (reclaimed > 0) {
+  if (reclaimed > 0 || dropped > 0) {
     schedulePersist('reclaim-expired');
     broadcastQueue();
   }
-  return reclaimed;
+  return reclaimed + dropped;
 }
 
 function normalizedTrialSuffix(trialId: string): string {
@@ -205,12 +218,14 @@ export async function loadQueue(): Promise<void> {
         continue;
       }
       if (normalized.status === 'dispatching') {
-        // Handoff already completed: row carries runId for a still-live run.
+        // Handoff already completed: row carries runId for a Run that exists
+        // (live or already terminal). Never requeue completed handoffs — a
+        // terminal stamped run means create finished and the work already ran.
         if (normalized.runId) {
           const stamped = getAllRuns().find((run) => run.id === normalized.runId);
-          if (stamped && !isTerminalRunStatus(stamped.status)) {
+          if (stamped) {
             console.log(
-              `[dispatch-queue] reconciled dispatching item ${normalized.id.slice(0, 8)} to stamped run ${stamped.id.slice(0, 8)}`,
+              `[dispatch-queue] reconciled dispatching item ${normalized.id.slice(0, 8)} to stamped run ${stamped.id.slice(0, 8)} (status=${stamped.status})`,
             );
             continue;
           }
@@ -459,15 +474,28 @@ export async function removeQueueItemInternalNow(
 }
 
 /**
- * Stamp runId on a claimed/dispatching row immediately after createRun, before
- * awaitPersist. Concurrent replay refuses reclaim when runId is set; restart
- * reconciliation drops the row when the stamped run is still live.
+ * Stamp runId on a claimed/dispatching row immediately after createRun (in
+ * memory + schedulePersist). Concurrent replay refuses reclaim when runId is
+ * set. Prefer {@link stampQueueItemRunIdNow} on the queue handoff path so the
+ * stamp is durable before the run file write.
  */
 export function stampQueueItemRunId(itemId: string, runId: string): void {
   const item = queue.find((q) => q.id === itemId);
   if (!item) return;
   item.runId = runId;
   schedulePersist('stamp-run-id');
+}
+
+/**
+ * Stamp runId and await durable queue persist. Used by the claim handoff so a
+ * crash between createRun and run-file persist still leaves a stamped row that
+ * restart reconciliation can drop against the (possibly still-writing) Run.
+ */
+export async function stampQueueItemRunIdNow(itemId: string, runId: string): Promise<void> {
+  const item = queue.find((q) => q.id === itemId);
+  if (!item) return;
+  item.runId = runId;
+  await persistQueueNow();
 }
 
 export function removeItem(itemId: string): void {
@@ -907,14 +935,16 @@ async function tryDispatchNextOnce(): Promise<void> {
 
     try {
       await _createAndStartRun(item, claim);
-      // Success: remove the row (claim no longer needed).
+      // Defensive: createAndStartRun normally drops the row via removeQueueItemInternalNow
+      // after durable create. If the callback did not drop it, remove here so a
+      // successful handoff never leaves a dispatching row for requeue.
       const idx = queue.findIndex((q) => q.id === item.id);
       if (idx >= 0) {
         clearQueueProfileFitCache(queue[idx]);
         queue.splice(idx, 1);
+        schedulePersist('auto-dispatch-success');
+        _broadcast('queue.updated', { items: listItems() });
       }
-      schedulePersist('auto-dispatch-success');
-      _broadcast('queue.updated', { items: listItems() });
     } catch (err) {
       if (err instanceof QueueClaimLostError) {
         console.log(`[dispatch-queue] ${err.message}`);
@@ -944,7 +974,24 @@ async function tryDispatchNextOnce(): Promise<void> {
         }
         return;
       }
-      // Revert to queued on failure when we still own the claim.
+      // createRun may have already produced an in-memory (or durable) Run and
+      // stamped runId before a later await failed. Never requeue that handoff —
+      // drop the row so a retry cannot create a second Run for the same work.
+      if (item.runId) {
+        const partial = getRun(item.runId);
+        if (partial) {
+          const stillPresent = queue.some((q) => q.id === item.id);
+          if (stillPresent) {
+            await removeQueueItemInternalNow(item.id, 'dispatch-create-partial');
+          }
+          console.error(
+            `[dispatch-queue] auto-dispatch partial create for ${item.id.slice(0, 8)} ` +
+              `(run ${item.runId.slice(0, 8)} kept, queue row dropped): ${(err as Error).message}`,
+          );
+          return;
+        }
+      }
+      // Revert to queued on failure when we still own the claim and no Run exists.
       if (isQueueClaimHeld(claim)) {
         releaseQueueClaim(claim);
       }

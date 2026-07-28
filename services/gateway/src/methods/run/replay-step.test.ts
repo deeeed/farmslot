@@ -249,6 +249,47 @@ test('replay revokes a claimed dispatching row and revives the cancelled run', a
   );
 });
 
+test('replay refuses when a live Run owns the node even without a queue row', async (t) => {
+  const cancelled = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4104-live-owner',
+    prNumber: 4104,
+    workGraphId: 'wg_replay_live_owner',
+    workNodeId: 'wn_replay_live_owner',
+  });
+  updateRun(cancelled.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  // Successful handoff already dropped the queue row; a later replacement Run is live.
+  const live = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4104-live-owner',
+    prNumber: 4104,
+    workGraphId: 'wg_replay_live_owner',
+    workNodeId: 'wn_replay_live_owner',
+  });
+
+  t.after(async () => {
+    for (const id of [cancelled.id, live.id]) {
+      if (getRun(id)) {
+        updateRun(id, { status: 'cancelled', completedAt: new Date().toISOString() });
+        await deleteRun(id);
+      }
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      runReplayStep(
+        { runId: cancelled.id, stepName: 'ci-watch', triggeredBy: 'operator' },
+        () => {},
+      ),
+    /already owned by live run/,
+  );
+  assert.equal(getRun(cancelled.id)?.status, 'cancelled');
+  assert.equal(getRun(live.id)?.status, 'created');
+});
+
 test('replay refuses when replacement row already has a stamped runId', async (t) => {
   const cancelled = createRun({
     flowType: 'update-branch',
@@ -299,7 +340,8 @@ test('replay refuses when replacement row already has a stamped runId', async (t
         { runId: cancelled.id, stepName: 'ci-watch', triggeredBy: 'operator' },
         () => {},
       ),
-    /redispatched to run/,
+    // Live owner check (no queue required) or stamped-row check both refuse.
+    /already owned by live run|redispatched to run/,
   );
   assert.equal(getRun(cancelled.id)?.status, 'cancelled');
   assert.ok(getRun(handedOff.id));
