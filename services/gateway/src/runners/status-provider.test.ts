@@ -93,7 +93,10 @@ describe('RunnerStatusProvider subscription + bind surface', () => {
     assert.equal(codex.runner, 'codex');
     assert.equal(codex.supportsAccountBinding, true);
     assert.ok(
-      ['farmslot-bind', 'active-profile', 'ambient', 'error', 'codexbar'].includes(codex.source),
+      ['farmslot-bind', 'active-profile', 'ambient', 'error', 'codexbar', 'codex-auth'].includes(
+        codex.source,
+      ),
+      `unexpected codex source ${codex.source}`,
     );
 
     const claude = await getRunnerStatusProvider('claude')!.getActiveSubscription(vars);
