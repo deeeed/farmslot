@@ -518,7 +518,11 @@ export function stampQueueItemRunId(itemId: string, runId: string): void {
  */
 export async function stampQueueItemRunIdNow(itemId: string, runId: string): Promise<void> {
   const item = queue.find((q) => q.id === itemId);
-  if (!item) return;
+  if (!item) {
+    throw new Error(
+      `stampQueueItemRunIdNow: queue item ${itemId.slice(0, 8)} missing — cannot stamp run ${runId.slice(0, 8)}`,
+    );
+  }
   item.runId = runId;
   await persistQueueNow();
 }
@@ -905,12 +909,22 @@ function liveQueuedItem(itemId: string): QueueItem | null {
 
 function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
   if (isQueueClaimHeld(claim)) return false;
+  // Claim may have expired while we awaited fleet/slot work — reset expired
+  // dispatching rows to queued so they are not stuck until an unrelated trigger.
+  reclaimExpiredClaims();
   console.log(
     `[dispatch-queue] claim lost for ${claim.itemId.slice(0, 8)} after ${phase}; stopping before createRun`,
   );
   // Returning true ends this dispatch cycle (tryDispatchNextOnce returns).
-  // Other queued rows are picked up on the next tryDispatchNext trigger —
-  // intentional: one claim loss should not continue scanning under stale fleet.
+  // Schedule another cycle so the reclaimed row (and siblings) get another try
+  // without waiting for an external fleet/event trigger.
+  queueMicrotask(() => {
+    tryDispatchNext().catch((err) => {
+      console.error(
+        `[dispatch-queue] retry after claim loss failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  });
   return true;
 }
 

@@ -493,6 +493,12 @@ export async function runCreate(
   let run = createRun(createParams, {
     deferBackgroundPersist: Boolean(options.awaitPersist),
   });
+  // Apply the resolved execution-template snapshot before the first durable
+  // handoff write so a crash cannot leave a stamped Run without the queue-time
+  // template hash (find-slot would then accept a later template change).
+  if (executionTemplateSnapshot) {
+    run = updateRun(run.id, { executionTemplate: executionTemplateSnapshot });
+  }
   // Stamp runId / handoff marker before any await so concurrent reclaim sees
   // that create already succeeded (claim re-validation alone is not enough).
   options.afterCreateSync?.(run);
@@ -500,15 +506,9 @@ export async function runCreate(
     // Durable queue stamp before run file: crash between these two still leaves
     // a stamped row that restart drops against the Run (live or terminal).
     await options.durableStamp?.(run);
-    // Queue claim handoff: ensure the run file is on disk before the caller
-    // drops the queue row (otherwise a crash requeues and can double-create).
+    // Queue claim handoff: ensure the run file (including template snapshot) is
+    // on disk before the caller drops the queue row.
     await persistRunNow(run, 'create-queue-handoff');
-  }
-  if (executionTemplateSnapshot) {
-    run = updateRun(run.id, { executionTemplate: executionTemplateSnapshot });
-    if (options.awaitPersist) {
-      await persistRunNow(run, 'create-queue-handoff-template');
-    }
   }
   // Set runtime flags (not persisted)
   if (params.skipPrepare) {

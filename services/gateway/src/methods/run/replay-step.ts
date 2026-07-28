@@ -423,434 +423,459 @@ export async function runReplayStep(
   assertReplayAfterDispatchAllowed(replaySnapshot, flowSteps, targetIdx, replayStepName);
   normalizeReplayPrerequisites(params.runId, replaySnapshot, flowSteps, targetIdx, replayStepName);
 
-  let replacementToDrop: { id: string } | undefined;
+  // Unique holder+epoch so concurrent replays cannot share a soft-lock.
+  let softLock: { id: string; holder: string; epoch: number } | undefined;
   if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
     // Re-check after sync prep, then durable soft-lock before any further await.
     assertCancelledReplayNodeAvailable(existing, params.runId);
     const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
     if (replacement) {
+      const holder = `replay:${params.runId}:${randomUUID()}`;
+      const epoch = (replacement.claimEpoch ?? 0) + 1;
       replacement.status = 'dispatching';
-      replacement.claimHolder = `replay:${params.runId}`;
-      replacement.claimEpoch = (replacement.claimEpoch ?? 0) + 1;
+      replacement.claimHolder = holder;
+      replacement.claimEpoch = epoch;
       replacement.claimExpiresAt = new Date(Date.now() + 120_000).toISOString();
       await persistQueueNow();
-      replacementToDrop = { id: replacement.id };
+      softLock = { id: replacement.id, holder, epoch };
     }
   }
 
-  // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
-  // Do this only after replay entry validation so rejected replays do not leave a
-  // synthetic in-progress recovery lane behind.
-  cancelRunEngine(params.runId);
-  bumpRunGeneration(params.runId);
+  const releaseSoftLockIfHeld = async (): Promise<void> => {
+    if (!softLock) return;
+    const item = getQueueSnapshot().find((q) => q.id === softLock!.id);
+    if (!item) return;
+    if (item.claimHolder !== softLock.holder || item.claimEpoch !== softLock.epoch) return;
+    if (item.status !== 'dispatching') return;
+    item.status = 'queued';
+    item.claimHolder = undefined;
+    item.claimExpiresAt = undefined;
+    await persistQueueNow();
+  };
 
-  const replaysCompletionOrGate =
-    targetIdx >= 0 &&
-    completeIdx >= 0 &&
-    humanGateIdx >= 0 &&
-    targetIdx >= completeIdx &&
-    targetIdx <= humanGateIdx;
-  const replaysPostGate = targetIdx >= 0 && humanGateIdx >= 0 && targetIdx > humanGateIdx;
-  const replaysTaskGeneration = targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx <= writeTaskIdx;
-  // Supersede pending human-gate decisions NOW, before any awaited work: the
-  // engine loop was just cancelled, so a stale decision resolving during the
-  // slot/artifact awaits below would trigger runResolveDecision's restart
-  // fallback and start a competing engine loop at this replay's generation.
-  // Persisting the supersession synchronously closes that window — the
-  // resolver rejects already-resolved decisions from here on. Retained (not
-  // deleted) for audit; 'superseded' is not an approval action so
-  // decision-replay can never mistake it for an operator verdict. Scoped to
-  // the gate/task-generation replay paths only — a no-human-gate finalize
-  // retry must keep its pending decisions actionable.
-  const supersededGateAudit =
-    replaysTaskGeneration || replaysCompletionOrGate
-      ? existing.decisions.filter((d) => d.type === 'engine_human_gate' && !d.resolvedAt)
-      : [];
-  if (supersedeStaleHumanGateDecisions(supersededGateAudit) > 0) {
-    updateRun(params.runId, { decisions: existing.decisions });
-  }
+  try {
+    // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
+    // Do this only after replay entry validation so rejected replays do not leave a
+    // synthetic in-progress recovery lane behind.
+    cancelRunEngine(params.runId);
+    bumpRunGeneration(params.runId);
 
-  let replayTaskFile = existing.taskFile ?? null;
-  let effectiveSlotId = existing.slotId;
-
-  if (targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx > writeTaskIdx && !replayTaskFile) {
-    const writeTaskStep = existing.steps.find((candidate) => candidate.name === PS.WRITE_TASK);
-    const taskFile = writeTaskStep?.outputs?.taskFile;
-    if (typeof taskFile === 'string' && taskFile.trim()) {
-      replayTaskFile = taskFile;
-      console.log(`[run] replay from ${replayStepName} — restored taskFile from write-task output`);
+    const replaysCompletionOrGate =
+      targetIdx >= 0 &&
+      completeIdx >= 0 &&
+      humanGateIdx >= 0 &&
+      targetIdx >= completeIdx &&
+      targetIdx <= humanGateIdx;
+    const replaysPostGate = targetIdx >= 0 && humanGateIdx >= 0 && targetIdx > humanGateIdx;
+    const replaysTaskGeneration = targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx <= writeTaskIdx;
+    // Supersede pending human-gate decisions NOW, before any awaited work: the
+    // engine loop was just cancelled, so a stale decision resolving during the
+    // slot/artifact awaits below would trigger runResolveDecision's restart
+    // fallback and start a competing engine loop at this replay's generation.
+    // Persisting the supersession synchronously closes that window — the
+    // resolver rejects already-resolved decisions from here on. Retained (not
+    // deleted) for audit; 'superseded' is not an approval action so
+    // decision-replay can never mistake it for an operator verdict. Scoped to
+    // the gate/task-generation replay paths only — a no-human-gate finalize
+    // retry must keep its pending decisions actionable.
+    const supersededGateAudit =
+      replaysTaskGeneration || replaysCompletionOrGate
+        ? existing.decisions.filter((d) => d.type === 'engine_human_gate' && !d.resolvedAt)
+        : [];
+    if (supersedeStaleHumanGateDecisions(supersededGateAudit) > 0) {
+      updateRun(params.runId, { decisions: existing.decisions });
     }
-  }
 
-  // If replaying from find-slot or earlier, clear slot so it picks fresh
-  if (targetIdx >= 0 && targetIdx <= findSlotIdx) {
-    replayTaskFile = null;
-    effectiveSlotId = null;
-    updateRun(params.runId, { slotId: null, taskFile: null });
-    console.log(`[run] replay from ${replayStepName} — cleared slotId + taskFile for re-selection`);
-  } else if (targetIdx >= 0 && targetIdx <= writeTaskIdx) {
-    // Replaying from write-task: clear taskFile so it regenerates with current slot
-    replayTaskFile = null;
-    updateRun(params.runId, { taskFile: null });
-    console.log(`[run] replay from ${replayStepName} — cleared taskFile for regeneration`);
-  } else {
-    const replaySlotId = recoverReplaySlotId(replaySnapshot, targetIdx, prepareIdx);
-    if (replaySlotId) {
-      // Re-claim only when the slot is free or still owned by this run. A released run
-      // can keep stale agentContext.slotId history after its slot is reassigned; blindly
-      // writing slot status here would steal that physical worker from the new run.
-      try {
-        // Claim-type write: bumps the ownership epoch so a teardown racing this
-        // reclaim aborts its remaining writes instead of clobbering it.
-        const { claimSlotStatusIf } = await import('../../core/index.js');
-        const { claimed } = await claimSlotStatusIf(
-          replaySlotId,
-          (slot) =>
-            replaySlotReclaimCheck(slot, params.runId, {
-              ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
-            }).ok,
-          {
-            lifecycle: 'busy',
-            phase: 'preparing',
-            agent: 'orchestrator',
-            current_run_id: params.runId,
-            current_flow_type: existing.flowType || null,
-            current_ticket_or_pr: existing.ticketOrPr,
-            current_mode: existing.mode ?? null,
-            current_family_id: existing.familyId ?? null,
-            current_lane: existing.lane ?? null,
-            current_variant: existing.variant ?? null,
-          },
+    let replayTaskFile = existing.taskFile ?? null;
+    let effectiveSlotId = existing.slotId;
+
+    if (targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx > writeTaskIdx && !replayTaskFile) {
+      const writeTaskStep = existing.steps.find((candidate) => candidate.name === PS.WRITE_TASK);
+      const taskFile = writeTaskStep?.outputs?.taskFile;
+      if (typeof taskFile === 'string' && taskFile.trim()) {
+        replayTaskFile = taskFile;
+        console.log(
+          `[run] replay from ${replayStepName} — restored taskFile from write-task output`,
         );
-        if (!claimed) {
-          throw new Error(
-            `slot ${replaySlotId} is no longer safely reclaimable; replay from find-slot to select a fresh worker`,
+      }
+    }
+
+    // If replaying from find-slot or earlier, clear slot so it picks fresh
+    if (targetIdx >= 0 && targetIdx <= findSlotIdx) {
+      replayTaskFile = null;
+      effectiveSlotId = null;
+      updateRun(params.runId, { slotId: null, taskFile: null });
+      console.log(
+        `[run] replay from ${replayStepName} — cleared slotId + taskFile for re-selection`,
+      );
+    } else if (targetIdx >= 0 && targetIdx <= writeTaskIdx) {
+      // Replaying from write-task: clear taskFile so it regenerates with current slot
+      replayTaskFile = null;
+      updateRun(params.runId, { taskFile: null });
+      console.log(`[run] replay from ${replayStepName} — cleared taskFile for regeneration`);
+    } else {
+      const replaySlotId = recoverReplaySlotId(replaySnapshot, targetIdx, prepareIdx);
+      if (replaySlotId) {
+        // Re-claim only when the slot is free or still owned by this run. A released run
+        // can keep stale agentContext.slotId history after its slot is reassigned; blindly
+        // writing slot status here would steal that physical worker from the new run.
+        try {
+          // Claim-type write: bumps the ownership epoch so a teardown racing this
+          // reclaim aborts its remaining writes instead of clobbering it.
+          const { claimSlotStatusIf } = await import('../../core/index.js');
+          const { claimed } = await claimSlotStatusIf(
+            replaySlotId,
+            (slot) =>
+              replaySlotReclaimCheck(slot, params.runId, {
+                ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
+              }).ok,
+            {
+              lifecycle: 'busy',
+              phase: 'preparing',
+              agent: 'orchestrator',
+              current_run_id: params.runId,
+              current_flow_type: existing.flowType || null,
+              current_ticket_or_pr: existing.ticketOrPr,
+              current_mode: existing.mode ?? null,
+              current_family_id: existing.familyId ?? null,
+              current_lane: existing.lane ?? null,
+              current_variant: existing.variant ?? null,
+            },
+          );
+          if (!claimed) {
+            throw new Error(
+              `slot ${replaySlotId} is no longer safely reclaimable; replay from find-slot to select a fresh worker`,
+            );
+          }
+          effectiveSlotId = replaySlotId;
+          updateRun(params.runId, { slotId: replaySlotId });
+          console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
+        } catch (err) {
+          console.warn(`[run] slot re-claim failed (${(err as Error).message})`);
+          throw err;
+        }
+      }
+    }
+
+    // Drop branch-affinity nudge hints on any replay. The flags were set at run.create time
+    // against a slot snapshot that's now stale — the re-claim above flips agent to
+    // 'orchestrator', which fails `verifyBranchAffinityNudgeStillEligible`'s `agent==='working'`
+    // gate. Retrying with the same nudge hint hits the same dead end. Engine routes through
+    // fresh `dispatchExecute` instead, which is what replay semantics actually want: rebuild
+    // the slot from a known state rather than rely on the original busy-worker assumption.
+    // Regression introduced by PR #41 (d2442088, 2026-05-01); replays of pre-PR runs always
+    // worked because every DISPATCH was fresh.
+    //
+    // CI-watch chained follow-ups (parentRunId + pr-complete/review-pr/update-branch) set
+    // skipPrepare because the parent just finished on a keep-warm slot. Clearing that flag
+    // on write-task replay forces a full PREPARE and tears down the hot workspace the chain
+    // was meant to reuse — preserve it; only nudgeReuse is always stale after replay.
+    const isChainedFollowUp = Boolean(existing.parentRunId) && isFollowUpFlow(existing.flowType);
+    const willRerunPrepare = targetIdx >= 0 && prepareIdx >= 0 && targetIdx <= prepareIdx;
+    const keepHotSlotSkipPrepare = isChainedFollowUp && Boolean(effectiveSlotId);
+    if (existing.engineState?.flags?.nudgeReuse || existing.engineState?.flags?.skipPrepare) {
+      const newFlags = { ...existing.engineState.flags };
+      delete newFlags.nudgeReuse;
+      if (!keepHotSlotSkipPrepare) {
+        delete newFlags.skipPrepare;
+      }
+      const currentEngineState = getRun(params.runId)?.engineState ?? existing.engineState;
+      updateRun(params.runId, {
+        engineState: { ...currentEngineState, flags: newFlags },
+      });
+      console.log(
+        keepHotSlotSkipPrepare
+          ? `[run] replay from ${replayStepName} — cleared nudgeReuse; preserved skipPrepare (CI-watch chained follow-up)`
+          : `[run] replay from ${replayStepName} — cleared nudgeReuse/skipPrepare flags (fresh dispatch)`,
+      );
+    } else if (keepHotSlotSkipPrepare && willRerunPrepare) {
+      // Prior replay may have already cleared skipPrepare — restore hot-slot semantics.
+      setRunFlags(params.runId, { skipPrepare: true });
+      console.log(
+        `[run] replay from ${replayStepName} — restored skipPrepare (CI-watch chained follow-up)`,
+      );
+    }
+
+    // Replaying from self-review or later must clear nested-loop artifacts and active task variants.
+    if (
+      effectiveSlotId &&
+      existing.taskFile &&
+      targetIdx >= 0 &&
+      selfReviewIdx >= 0 &&
+      targetIdx >= selfReviewIdx
+    ) {
+      try {
+        const {
+          loadSlotVars,
+          loadProjectVars,
+          getOrchestratorTaskRoot,
+          resolveProjectTaskDirName,
+          resolveTaskRelDir,
+        } = await import('../../core/config.js');
+        const vars = await loadSlotVars(effectiveSlotId);
+        const pv = await loadProjectVars(existing.project).catch(() => null);
+        const taskRelDir = resolveTaskRelDir(
+          existing.taskFile,
+          getOrchestratorTaskRoot(existing.project, pv?.projectJson ?? null),
+        );
+        if (taskRelDir !== null) {
+          const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
+          const taskDirRel = `${taskDirName}/${taskRelDir}`;
+          const workerTaskDir = `${vars.remoteRepo}/${taskDirRel}`;
+          const preserveSelfReviewFix =
+            existing.agentContexts?.some(
+              (ctx) => ctx.role === 'self-review-fix' && ctx.status === 'working',
+            ) ?? false;
+          const {
+            CHECKLIST_TARGET_BY_AGENT_ROLE,
+            restoreWorkerChecklistTargetFromSlot,
+            syncChecklistTargetForRole,
+          } = await import('../../tasks/checklist-target.js');
+          const selfReviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
+          const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
+          const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
+          const nestedFiles = [
+            `${workerTaskDir}/${selfReviewTarget.checklist}`,
+            `${workerTaskDir}/${selfReviewTarget.signal}`,
+            ...(preserveSelfReviewFix
+              ? []
+              : [
+                  `${workerTaskDir}/${selfReviewFixTarget.checklist}`,
+                  `${workerTaskDir}/${selfReviewFixTarget.signal}`,
+                ]),
+            `${workerTaskDir}/${ciFixTarget.checklist}`,
+            `${workerTaskDir}/${ciFixTarget.signal}`,
+          ];
+          await execOnSlot(
+            vars,
+            `rm -f ${nestedFiles.map(shellQuote).join(' ')} 2>/dev/null`,
+            vars.remoteRepo,
+          );
+          if (preserveSelfReviewFix) {
+            await syncChecklistTargetForRole(vars, taskDirRel, 'self-review-fix');
+          } else {
+            await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel);
+          }
+          console.log(
+            `[run] replay from ${replayStepName} — cleared nested-loop task artifacts in ${workerTaskDir}${preserveSelfReviewFix ? ' (preserved active self-review-fix)' : ''}`,
           );
         }
-        effectiveSlotId = replaySlotId;
-        updateRun(params.runId, { slotId: replaySlotId });
-        console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
       } catch (err) {
-        console.warn(`[run] slot re-claim failed (${(err as Error).message})`);
-        throw err;
+        console.warn(`[run] nested-loop cleanup failed (${(err as Error).message})`);
       }
     }
-  }
 
-  // Drop branch-affinity nudge hints on any replay. The flags were set at run.create time
-  // against a slot snapshot that's now stale — the re-claim above flips agent to
-  // 'orchestrator', which fails `verifyBranchAffinityNudgeStillEligible`'s `agent==='working'`
-  // gate. Retrying with the same nudge hint hits the same dead end. Engine routes through
-  // fresh `dispatchExecute` instead, which is what replay semantics actually want: rebuild
-  // the slot from a known state rather than rely on the original busy-worker assumption.
-  // Regression introduced by PR #41 (d2442088, 2026-05-01); replays of pre-PR runs always
-  // worked because every DISPATCH was fresh.
-  //
-  // CI-watch chained follow-ups (parentRunId + pr-complete/review-pr/update-branch) set
-  // skipPrepare because the parent just finished on a keep-warm slot. Clearing that flag
-  // on write-task replay forces a full PREPARE and tears down the hot workspace the chain
-  // was meant to reuse — preserve it; only nudgeReuse is always stale after replay.
-  const isChainedFollowUp = Boolean(existing.parentRunId) && isFollowUpFlow(existing.flowType);
-  const willRerunPrepare = targetIdx >= 0 && prepareIdx >= 0 && targetIdx <= prepareIdx;
-  const keepHotSlotSkipPrepare = isChainedFollowUp && Boolean(effectiveSlotId);
-  if (existing.engineState?.flags?.nudgeReuse || existing.engineState?.flags?.skipPrepare) {
-    const newFlags = { ...existing.engineState.flags };
-    delete newFlags.nudgeReuse;
-    if (!keepHotSlotSkipPrepare) {
-      delete newFlags.skipPrepare;
-    }
-    const currentEngineState = getRun(params.runId)?.engineState ?? existing.engineState;
-    updateRun(params.runId, {
-      engineState: { ...currentEngineState, flags: newFlags },
-    });
-    console.log(
-      keepHotSlotSkipPrepare
-        ? `[run] replay from ${replayStepName} — cleared nudgeReuse; preserved skipPrepare (CI-watch chained follow-up)`
-        : `[run] replay from ${replayStepName} — cleared nudgeReuse/skipPrepare flags (fresh dispatch)`,
-    );
-  } else if (keepHotSlotSkipPrepare && willRerunPrepare) {
-    // Prior replay may have already cleared skipPrepare — restore hot-slot semantics.
-    setRunFlags(params.runId, { skipPrepare: true });
-    console.log(
-      `[run] replay from ${replayStepName} — restored skipPrepare (CI-watch chained follow-up)`,
-    );
-  }
+    const replaysWorkerLaunch =
+      targetIdx >= 0 &&
+      prepareIdx >= 0 &&
+      monitorIdx >= 0 &&
+      targetIdx >= prepareIdx &&
+      targetIdx <= monitorIdx;
 
-  // Replaying from self-review or later must clear nested-loop artifacts and active task variants.
-  if (
-    effectiveSlotId &&
-    existing.taskFile &&
-    targetIdx >= 0 &&
-    selfReviewIdx >= 0 &&
-    targetIdx >= selfReviewIdx
-  ) {
-    try {
-      const {
-        loadSlotVars,
-        loadProjectVars,
-        getOrchestratorTaskRoot,
-        resolveProjectTaskDirName,
-        resolveTaskRelDir,
-      } = await import('../../core/config.js');
-      const vars = await loadSlotVars(effectiveSlotId);
-      const pv = await loadProjectVars(existing.project).catch(() => null);
-      const taskRelDir = resolveTaskRelDir(
-        existing.taskFile,
-        getOrchestratorTaskRoot(existing.project, pv?.projectJson ?? null),
-      );
-      if (taskRelDir !== null) {
-        const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
-        const taskDirRel = `${taskDirName}/${taskRelDir}`;
-        const workerTaskDir = `${vars.remoteRepo}/${taskDirRel}`;
-        const preserveSelfReviewFix =
-          existing.agentContexts?.some(
-            (ctx) => ctx.role === 'self-review-fix' && ctx.status === 'working',
-          ) ?? false;
+    if (replaysWorkerLaunch && effectiveSlotId && existing.taskFile) {
+      try {
         const {
-          CHECKLIST_TARGET_BY_AGENT_ROLE,
-          restoreWorkerChecklistTargetFromSlot,
-          syncChecklistTargetForRole,
-        } = await import('../../tasks/checklist-target.js');
-        const selfReviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
-        const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
-        const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
-        const nestedFiles = [
-          `${workerTaskDir}/${selfReviewTarget.checklist}`,
-          `${workerTaskDir}/${selfReviewTarget.signal}`,
-          ...(preserveSelfReviewFix
-            ? []
-            : [
-                `${workerTaskDir}/${selfReviewFixTarget.checklist}`,
-                `${workerTaskDir}/${selfReviewFixTarget.signal}`,
-              ]),
-          `${workerTaskDir}/${ciFixTarget.checklist}`,
-          `${workerTaskDir}/${ciFixTarget.signal}`,
-        ];
-        await execOnSlot(
-          vars,
-          `rm -f ${nestedFiles.map(shellQuote).join(' ')} 2>/dev/null`,
-          vars.remoteRepo,
+          loadSlotVars,
+          loadProjectVars,
+          getOrchestratorTaskRoot,
+          resolveProjectTaskDirName,
+          resolveTaskRelDir,
+        } = await import('../../core/config.js');
+        const vars = await loadSlotVars(effectiveSlotId);
+        const pv = await loadProjectVars(existing.project).catch(() => null);
+        const taskRelDir = resolveTaskRelDir(
+          existing.taskFile,
+          getOrchestratorTaskRoot(existing.project, pv?.projectJson ?? null),
         );
-        if (preserveSelfReviewFix) {
-          await syncChecklistTargetForRole(vars, taskDirRel, 'self-review-fix');
-        } else {
-          await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel);
+        if (taskRelDir !== null) {
+          const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
+          const workerTaskDir = `${vars.remoteRepo}/${taskDirName}/${taskRelDir}`;
+          const { CHECKLIST_TARGET_BY_AGENT_ROLE, WORKER_SIGNAL_FILE } =
+            await import('../../tasks/checklist-target.js');
+          const selfReviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
+          const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
+          const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
+          await execOnSlot(
+            vars,
+            `rm -f ${shellQuote(`${workerTaskDir}/${WORKER_SIGNAL_FILE}`)} ` +
+              `${shellQuote(`${workerTaskDir}/${selfReviewTarget.signal}`)} ` +
+              `${shellQuote(`${workerTaskDir}/${selfReviewFixTarget.signal}`)} ` +
+              `${shellQuote(`${workerTaskDir}/${ciFixTarget.signal}`)} 2>/dev/null`,
+            vars.remoteRepo,
+          );
+          console.log(
+            `[run] replay from ${replayStepName} — cleared worker terminal signals in ${workerTaskDir}`,
+          );
         }
-        console.log(
-          `[run] replay from ${replayStepName} — cleared nested-loop task artifacts in ${workerTaskDir}${preserveSelfReviewFix ? ' (preserved active self-review-fix)' : ''}`,
-        );
+      } catch (err) {
+        console.warn(`[run] worker signal cleanup failed (${(err as Error).message})`);
       }
-    } catch (err) {
-      console.warn(`[run] nested-loop cleanup failed (${(err as Error).message})`);
     }
-  }
 
-  const replaysWorkerLaunch =
-    targetIdx >= 0 &&
-    prepareIdx >= 0 &&
-    monitorIdx >= 0 &&
-    targetIdx >= prepareIdx &&
-    targetIdx <= monitorIdx;
+    // Reset this step and all subsequent steps to pending
+    const stepIdx = existing.steps.indexOf(step);
+    for (let i = stepIdx; i < existing.steps.length; i++) {
+      updateRunStep(params.runId, existing.steps[i].name, {
+        status: 'pending',
+        startedAt: undefined,
+        completedAt: undefined,
+        durationMs: undefined,
+        inputs: undefined,
+        outputs: undefined,
+        detail: undefined,
+      });
+    }
 
-  if (replaysWorkerLaunch && effectiveSlotId && existing.taskFile) {
-    try {
-      const {
-        loadSlotVars,
-        loadProjectVars,
-        getOrchestratorTaskRoot,
-        resolveProjectTaskDirName,
-        resolveTaskRelDir,
-      } = await import('../../core/config.js');
-      const vars = await loadSlotVars(effectiveSlotId);
-      const pv = await loadProjectVars(existing.project).catch(() => null);
-      const taskRelDir = resolveTaskRelDir(
-        existing.taskFile,
-        getOrchestratorTaskRoot(existing.project, pv?.projectJson ?? null),
-      );
-      if (taskRelDir !== null) {
-        const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
-        const workerTaskDir = `${vars.remoteRepo}/${taskDirName}/${taskRelDir}`;
-        const { CHECKLIST_TARGET_BY_AGENT_ROLE, WORKER_SIGNAL_FILE } =
-          await import('../../tasks/checklist-target.js');
-        const selfReviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
-        const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
-        const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
-        await execOnSlot(
-          vars,
-          `rm -f ${shellQuote(`${workerTaskDir}/${WORKER_SIGNAL_FILE}`)} ` +
-            `${shellQuote(`${workerTaskDir}/${selfReviewTarget.signal}`)} ` +
-            `${shellQuote(`${workerTaskDir}/${selfReviewFixTarget.signal}`)} ` +
-            `${shellQuote(`${workerTaskDir}/${ciFixTarget.signal}`)} 2>/dev/null`,
-          vars.remoteRepo,
-        );
-        console.log(
-          `[run] replay from ${replayStepName} — cleared worker terminal signals in ${workerTaskDir}`,
-        );
+    // Clear decisions when replaying the completion/gate path so stale CI/review
+    // decisions do not short-circuit or re-block it. Preserve resolved human-gate
+    // approvals when replaying post-gate steps (finalize/ci-watch): those replays
+    // are publish retries for an already-approved package, and clearing the
+    // approval makes recovery impossible without forcing a redundant re-review.
+    // Flows without a human gate keep the default behavior below: preserve only
+    // unresolved decisions rather than inventing a gate boundary they do not have.
+    // The supersession itself already happened synchronously right after the
+    // generation bump (before the first awaited operation); this just selects
+    // which decisions the reset below carries forward.
+    const clearedDecisions =
+      replaysTaskGeneration || replaysCompletionOrGate
+        ? supersededGateAudit
+        : replaysPostGate
+          ? existing.decisions
+          : existing.decisions.filter((d) => {
+              if (d.resolvedAt) return false;
+              // Drop an unresolved decision whose owning step is being replayed
+              // (targetIdx onward re-runs and regenerates it). Preserve ones owned
+              // by steps before the target — still actionable — or of unknown
+              // ownership (prior default behavior).
+              const ownerIdx = decisionOwningStepIndex(d.type, flowSteps);
+              return ownerIdx < 0 || ownerIdx < targetIdx;
+            });
+
+    // Reset run status, clear error and stale outcome
+    const {
+      outcome: _outcome,
+      disposition: _disposition,
+      terminalEvidence: _terminalEvidence,
+      durationMs: _durationMs,
+      costEstimate: _costEstimate,
+      sessionTurns: _sessionTurns,
+      sessionInputTokens: _sessionInputTokens,
+      sessionOutputTokens: _sessionOutputTokens,
+      sessionCacheCreation: _sessionCacheCreation,
+      sessionCacheRead: _sessionCacheRead,
+      sessionTotalTokens: _sessionTotalTokens,
+      actualModel: _actualModel,
+      ...metricsWithoutTerminalOutcome
+    } = existing.metrics;
+    const resetMetrics = replaysWorkerLaunch
+      ? {
+          ...metricsWithoutTerminalOutcome,
+          nudgeCount: 0,
+          runnerSessionId: null,
+          runnerSessionPath: null,
+        }
+      : { ...metricsWithoutTerminalOutcome };
+    const attemptCount =
+      (existing.recoveryAttempts ?? []).filter(
+        (attempt) => attempt.stepName === replayStepName && attempt.triggeredBy === triggeredBy,
+      ).length + 1;
+    const attempt = {
+      id: randomUUID(),
+      attempt: attemptCount,
+      stepName: replayStepName,
+      startedAt: new Date().toISOString(),
+      status: 'started' as const,
+      triggeredBy,
+      ...(params.intelligenceActionId ? { intelligenceActionId: params.intelligenceActionId } : {}),
+    };
+    const proposalStatus =
+      triggeredBy === 'auto-recovery'
+        ? ('auto-in-progress' as const)
+        : ('manual-in-progress' as const);
+    const replayGeneration =
+      getRun(params.runId)?.engineState?.generation ?? existing.engineState?.generation ?? 0;
+    const currentBeforeReplayUpdate = getRun(params.runId) ?? existing;
+    const engineStateForReplay = replaysCompletionOrGate
+      ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
+      : currentBeforeReplayUpdate.engineState;
+    // Soft-lock was taken before long awaits. Re-validate holder+epoch and live
+    // ownership before revive: expiry reclaim or concurrent replay may have stolen it.
+    if (
+      currentBeforeReplayUpdate.status === 'cancelled' &&
+      existing.workGraphId &&
+      existing.workNodeId
+    ) {
+      assertCancelledReplayNodeAvailable(existing, params.runId);
+      const held = softLock;
+      if (held) {
+        const locked = getQueueSnapshot().find((item) => item.id === held.id);
+        if (!locked) {
+          throw new Error(
+            `Run ${params.runId.slice(0, 8)} could not be replayed: its replacement queue work ` +
+              `was removed during prep (cancel/reclaim). The cancelled run is left cancelled.`,
+          );
+        }
+        if (locked.claimHolder !== held.holder || locked.claimEpoch !== held.epoch) {
+          throw new Error(
+            `Run ${params.runId.slice(0, 8)} could not be replayed: lost exclusive soft-lock on ` +
+              `replacement queue item ${locked.id.slice(0, 8)}. The cancelled run is left cancelled.`,
+          );
+        }
+        // Renew TTL so drop is not racing reclaimExpiredClaims.
+        locked.claimExpiresAt = new Date(Date.now() + 60_000).toISOString();
       }
-    } catch (err) {
-      console.warn(`[run] worker signal cleanup failed (${(err as Error).message})`);
     }
-  }
-
-  // Reset this step and all subsequent steps to pending
-  const stepIdx = existing.steps.indexOf(step);
-  for (let i = stepIdx; i < existing.steps.length; i++) {
-    updateRunStep(params.runId, existing.steps[i].name, {
-      status: 'pending',
-      startedAt: undefined,
+    updateRun(params.runId, {
+      status: activeStatusForReplayStep(replayStepName),
+      error: undefined,
       completedAt: undefined,
-      durationMs: undefined,
-      inputs: undefined,
-      outputs: undefined,
-      detail: undefined,
+      taskFile: replayTaskFile,
+      decisions: clearedDecisions,
+      engineState: engineStateForReplay,
+      metrics: resetMetrics,
+      monitorState: undefined,
+      activeTaskFile: undefined,
+      recoveryProposal: {
+        status: proposalStatus,
+        proposalId: params.intelligenceActionId,
+        generation: replayGeneration,
+      },
+      recoveryAttempts: [...(existing.recoveryAttempts ?? []), attempt],
     });
-  }
-
-  // Clear decisions when replaying the completion/gate path so stale CI/review
-  // decisions do not short-circuit or re-block it. Preserve resolved human-gate
-  // approvals when replaying post-gate steps (finalize/ci-watch): those replays
-  // are publish retries for an already-approved package, and clearing the
-  // approval makes recovery impossible without forcing a redundant re-review.
-  // Flows without a human gate keep the default behavior below: preserve only
-  // unresolved decisions rather than inventing a gate boundary they do not have.
-  // The supersession itself already happened synchronously right after the
-  // generation bump (before the first awaited operation); this just selects
-  // which decisions the reset below carries forward.
-  const clearedDecisions =
-    replaysTaskGeneration || replaysCompletionOrGate
-      ? supersededGateAudit
-      : replaysPostGate
-        ? existing.decisions
-        : existing.decisions.filter((d) => {
-            if (d.resolvedAt) return false;
-            // Drop an unresolved decision whose owning step is being replayed
-            // (targetIdx onward re-runs and regenerates it). Preserve ones owned
-            // by steps before the target — still actionable — or of unknown
-            // ownership (prior default behavior).
-            const ownerIdx = decisionOwningStepIndex(d.type, flowSteps);
-            return ownerIdx < 0 || ownerIdx < targetIdx;
-          });
-
-  // Reset run status, clear error and stale outcome
-  const {
-    outcome: _outcome,
-    disposition: _disposition,
-    terminalEvidence: _terminalEvidence,
-    durationMs: _durationMs,
-    costEstimate: _costEstimate,
-    sessionTurns: _sessionTurns,
-    sessionInputTokens: _sessionInputTokens,
-    sessionOutputTokens: _sessionOutputTokens,
-    sessionCacheCreation: _sessionCacheCreation,
-    sessionCacheRead: _sessionCacheRead,
-    sessionTotalTokens: _sessionTotalTokens,
-    actualModel: _actualModel,
-    ...metricsWithoutTerminalOutcome
-  } = existing.metrics;
-  const resetMetrics = replaysWorkerLaunch
-    ? {
-        ...metricsWithoutTerminalOutcome,
-        nudgeCount: 0,
-        runnerSessionId: null,
-        runnerSessionPath: null,
+    // Durable revive before dropping replacement work — crash between these two
+    // leaves a live owner on disk; loadQueue drops any same-candidate row even when
+    // launchAttempt differs (N vs N+1 requeue).
+    await persistRunNow(getRun(params.runId)!, 'replay-revive');
+    const lockToDrop = softLock;
+    if (lockToDrop) {
+      if (getQueueSnapshot().some((item) => item.id === lockToDrop.id)) {
+        removeQueueItemInternal(lockToDrop.id, `replay-revives-run:${params.runId}`);
+        await persistQueueNow();
       }
-    : { ...metricsWithoutTerminalOutcome };
-  const attemptCount =
-    (existing.recoveryAttempts ?? []).filter(
-      (attempt) => attempt.stepName === replayStepName && attempt.triggeredBy === triggeredBy,
-    ).length + 1;
-  const attempt = {
-    id: randomUUID(),
-    attempt: attemptCount,
-    stepName: replayStepName,
-    startedAt: new Date().toISOString(),
-    status: 'started' as const,
-    triggeredBy,
-    ...(params.intelligenceActionId ? { intelligenceActionId: params.intelligenceActionId } : {}),
-  };
-  const proposalStatus =
-    triggeredBy === 'auto-recovery'
-      ? ('auto-in-progress' as const)
-      : ('manual-in-progress' as const);
-  const replayGeneration =
-    getRun(params.runId)?.engineState?.generation ?? existing.engineState?.generation ?? 0;
-  const currentBeforeReplayUpdate = getRun(params.runId) ?? existing;
-  const engineStateForReplay = replaysCompletionOrGate
-    ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
-    : currentBeforeReplayUpdate.engineState;
-  // Soft-lock was taken before long awaits. Re-validate it and live ownership
-  // before revive: expiry reclaim or cancelGraphQueuedItem may have removed the
-  // row while we were awaiting remote slot/artifact work.
-  const replayLockHolder = `replay:${params.runId}`;
-  if (
-    currentBeforeReplayUpdate.status === 'cancelled' &&
-    existing.workGraphId &&
-    existing.workNodeId
-  ) {
-    assertCancelledReplayNodeAvailable(existing, params.runId);
-    if (replacementToDrop) {
-      const locked = getQueueSnapshot().find((item) => item.id === replacementToDrop!.id);
-      if (!locked) {
-        throw new Error(
-          `Run ${params.runId.slice(0, 8)} could not be replayed: its replacement queue work ` +
-            `was removed during prep (cancel/reclaim). The cancelled run is left cancelled.`,
-        );
-      }
-      if (locked.claimHolder !== replayLockHolder) {
-        throw new Error(
-          `Run ${params.runId.slice(0, 8)} could not be replayed: lost exclusive soft-lock on ` +
-            `replacement queue item ${locked.id.slice(0, 8)}. The cancelled run is left cancelled.`,
-        );
-      }
-      // Renew TTL so drop is not racing reclaimExpiredClaims.
-      locked.claimExpiresAt = new Date(Date.now() + 60_000).toISOString();
+      softLock = undefined; // dropped — do not re-release in catch
     }
-  }
-  updateRun(params.runId, {
-    status: activeStatusForReplayStep(replayStepName),
-    error: undefined,
-    completedAt: undefined,
-    taskFile: replayTaskFile,
-    decisions: clearedDecisions,
-    engineState: engineStateForReplay,
-    metrics: resetMetrics,
-    monitorState: undefined,
-    activeTaskFile: undefined,
-    recoveryProposal: {
-      status: proposalStatus,
-      proposalId: params.intelligenceActionId,
-      generation: replayGeneration,
-    },
-    recoveryAttempts: [...(existing.recoveryAttempts ?? []), attempt],
-  });
-  // Durable revive before dropping replacement work — crash between these two
-  // leaves a live owner on disk; loadQueue drops any same-candidate row even when
-  // launchAttempt differs (N vs N+1 requeue).
-  await persistRunNow(getRun(params.runId)!, 'replay-revive');
-  if (replacementToDrop) {
-    if (getQueueSnapshot().some((item) => item.id === replacementToDrop!.id)) {
-      removeQueueItemInternal(replacementToDrop.id, `replay-revives-run:${params.runId}`);
-      await persistQueueNow();
+    emit(Events.RUN_UPDATED, { run: getRun(params.runId) });
+
+    // Retry-with-profile: persist the selection so the replayed PREPARE (and any
+    // later replay) uses it — profile choice is run state, not a one-shot flag.
+    if (params.prepareProfile) {
+      updateRun(params.runId, { prepareProfile: params.prepareProfile });
     }
+
+    // Binary operator skip — no health gating (ADR-037 §5)
+    if (params.skipPrepare) {
+      setRunFlags(params.runId, { skipPrepare: true });
+    }
+
+    // Re-drive the engine from the reset step
+    startRun(params.runId).catch((err) => {
+      console.error(`[run] replay failed: ${(err as Error).message}`);
+    });
+
+    console.log(`[run] replaying ${params.runId.slice(0, 8)} from step ${replayStepName}`);
+    return { run: getRun(params.runId)! };
+  } catch (err) {
+    await releaseSoftLockIfHeld();
+    throw err;
   }
-  emit(Events.RUN_UPDATED, { run: getRun(params.runId) });
-
-  // Retry-with-profile: persist the selection so the replayed PREPARE (and any
-  // later replay) uses it — profile choice is run state, not a one-shot flag.
-  if (params.prepareProfile) {
-    updateRun(params.runId, { prepareProfile: params.prepareProfile });
-  }
-
-  // Binary operator skip — no health gating (ADR-037 §5)
-  if (params.skipPrepare) {
-    setRunFlags(params.runId, { skipPrepare: true });
-  }
-
-  // Re-drive the engine from the reset step
-  startRun(params.runId).catch((err) => {
-    console.error(`[run] replay failed: ${(err as Error).message}`);
-  });
-
-  console.log(`[run] replaying ${params.runId.slice(0, 8)} from step ${replayStepName}`);
-  return { run: getRun(params.runId)! };
 }

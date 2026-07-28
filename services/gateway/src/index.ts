@@ -427,15 +427,16 @@ async function main(): Promise<void> {
       },
       awaitPersist: true,
     });
-    await dropQueueRowAfterCreate(run.id);
+    // Link backlog before dropping the queue row so a crash/link-persist failure
+    // still leaves item.runId for startup heal (needs-attention can observe the Run).
     try {
       await markBacklogRunStarted(item, run);
     } catch (err) {
-      // The run is already durable at this point. Re-throwing would make the
-      // queue retry and create a duplicate run for the same backlog item, so
-      // surface the linkage error while treating queue handoff as complete.
+      // The run is already durable. Do not rethrow — that would requeue and
+      // double-create — but still drop the queue row after logging.
       console.error(`[backlog] failed to link started run: ${(err as Error).message}`);
     }
+    await dropQueueRowAfterCreate(run.id);
   });
 
   // Shared request handler for the plaintext HTTP server and (when TLS is
