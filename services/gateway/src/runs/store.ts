@@ -317,8 +317,11 @@ export async function discardUndurableRun(id: string): Promise<void> {
   runs.delete(id);
   try {
     await unlink(path.join(RUNS_DIR, `${id}.json`));
-  } catch {
-    /* file may not exist — expected for memory-only orphans */
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return;
+    // Surface real I/O failures — a leftover file would resurrect on restart.
+    throw err;
   }
 }
 

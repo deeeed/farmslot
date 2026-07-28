@@ -215,11 +215,13 @@ function findNonTerminalHandoffOwner(item: QueueItem): Run | undefined {
       run.workNodeId === item.workNodeId
     ) {
       // Launch-plan siblings share graph/node; require matching candidate when present.
+      // Do not require launchAttempt equality: a live owner must drop a higher-attempt
+      // requeue left after crash between revive and queue-row deletion (attempt N live
+      // vs replacement row attempt N+1). Terminal prior attempts still allow a true
+      // retry row because this matcher only considers non-terminal runs.
       if (item.launchCandidateId) {
         return (
-          run.launchCandidateId === item.launchCandidateId &&
-          run.launchPlanId === item.launchPlanId &&
-          run.launchAttempt === item.launchAttempt
+          run.launchCandidateId === item.launchCandidateId && run.launchPlanId === item.launchPlanId
         );
       }
       return !run.launchCandidateId;
@@ -227,9 +229,7 @@ function findNonTerminalHandoffOwner(item: QueueItem): Run | undefined {
     if (item.backlogItemId && run.backlogItemId === item.backlogItemId) {
       if (item.launchCandidateId) {
         return (
-          run.launchCandidateId === item.launchCandidateId &&
-          run.launchPlanId === item.launchPlanId &&
-          run.launchAttempt === item.launchAttempt
+          run.launchCandidateId === item.launchCandidateId && run.launchPlanId === item.launchPlanId
         );
       }
       return !run.launchCandidateId;

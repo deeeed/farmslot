@@ -778,15 +778,33 @@ export async function runReplayStep(
   const engineStateForReplay = replaysCompletionOrGate
     ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
     : currentBeforeReplayUpdate.engineState;
-  // Soft-lock was taken at entry (before awaits). Re-check live ownership before
-  // revive in case a direct create (no queue row) raced us; then durable revive
-  // and drop the replacement row.
+  // Soft-lock was taken before long awaits. Re-validate it and live ownership
+  // before revive: expiry reclaim or cancelGraphQueuedItem may have removed the
+  // row while we were awaiting remote slot/artifact work.
+  const replayLockHolder = `replay:${params.runId}`;
   if (
     currentBeforeReplayUpdate.status === 'cancelled' &&
     existing.workGraphId &&
     existing.workNodeId
   ) {
     assertCancelledReplayNodeAvailable(existing, params.runId);
+    if (replacementToDrop) {
+      const locked = getQueueSnapshot().find((item) => item.id === replacementToDrop!.id);
+      if (!locked) {
+        throw new Error(
+          `Run ${params.runId.slice(0, 8)} could not be replayed: its replacement queue work ` +
+            `was removed during prep (cancel/reclaim). The cancelled run is left cancelled.`,
+        );
+      }
+      if (locked.claimHolder !== replayLockHolder) {
+        throw new Error(
+          `Run ${params.runId.slice(0, 8)} could not be replayed: lost exclusive soft-lock on ` +
+            `replacement queue item ${locked.id.slice(0, 8)}. The cancelled run is left cancelled.`,
+        );
+      }
+      // Renew TTL so drop is not racing reclaimExpiredClaims.
+      locked.claimExpiresAt = new Date(Date.now() + 60_000).toISOString();
+    }
   }
   updateRun(params.runId, {
     status: activeStatusForReplayStep(replayStepName),
@@ -806,7 +824,8 @@ export async function runReplayStep(
     recoveryAttempts: [...(existing.recoveryAttempts ?? []), attempt],
   });
   // Durable revive before dropping replacement work — crash between these two
-  // leaves a live owner on disk so restart will not requeue the replacement.
+  // leaves a live owner on disk; loadQueue drops any same-candidate row even when
+  // launchAttempt differs (N vs N+1 requeue).
   await persistRunNow(getRun(params.runId)!, 'replay-revive');
   if (replacementToDrop) {
     if (getQueueSnapshot().some((item) => item.id === replacementToDrop!.id)) {

@@ -1493,6 +1493,37 @@ test('reclaimExpiredClaims drops stamped rows whose Run still exists', async () 
   await cleanupRun(run.id);
 });
 
+test('loadQueue drops higher-attempt launch row when a live run owns the candidate', async () => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-attempt-mismatch',
+    workGraphId: 'wg_attempt_mismatch',
+    workNodeId: 'wn_attempt_mismatch',
+    launchPlanId: 'plan_attempt',
+    launchCandidateId: 'cand_attempt',
+    launchAttempt: 1,
+  });
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-attempt-mismatch',
+    workGraphId: 'wg_attempt_mismatch',
+    workNodeId: 'wn_attempt_mismatch',
+    launchPlanId: 'plan_attempt',
+    launchCandidateId: 'cand_attempt',
+    launchAttempt: 2,
+  });
+  assert.equal(item.status, 'queued');
+  await persistQueueNow();
+  await loadQueue();
+  assert.ok(
+    !getQueueSnapshot().some((q) => q.id === item.id),
+    'live attempt-1 owner must drop attempt-2 requeue row after crash between revive and drop',
+  );
+  await cleanupRun(run.id);
+});
+
 test('loadQueue drops queued rows whose handoff is already owned by a live Run', async () => {
   const run = createRun({
     flowType: 'fix-bug',
