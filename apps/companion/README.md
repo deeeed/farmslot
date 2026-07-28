@@ -96,8 +96,11 @@ local file:
 cp scripts/agentic/agentic.local.conf.example scripts/agentic/agentic.local.conf
 ```
 
-`METRO_PORT` is the canonical Expo/RN port variable. `WATCHER_PORT` is accepted
-only as a legacy alias for older Farmslot/project scripts.
+`METRO_PORT` is the canonical Expo/RN port variable and is loaded from the
+checkout-local `.env.ports` by supported local launch and recipe commands.
+Launcher and EAS process variables intentionally override dotenv-flow values;
+this lets each isolated checkout select its own gateway credentials and ports.
+Remote EAS development config can resolve without local port files.
 
 Example for a real Android device on the local Wi-Fi/LAN:
 

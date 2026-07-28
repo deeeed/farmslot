@@ -1,6 +1,6 @@
 import { nextConnectionProbeDelay } from './connection-liveness';
 
-export type ProbeOutcome = { ok: true } | { ok: false };
+export type ProbeOutcome = { ok: true; latencyMs?: number } | { ok: false; error?: string };
 
 interface ConnectionLivenessControllerOptions {
   probe: () => Promise<ProbeOutcome>;

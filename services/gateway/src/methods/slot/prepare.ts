@@ -15,7 +15,6 @@ import { resolveEffectiveDomain } from '@farmslot/slot-config';
 import {
   applyProjectCommandEnv,
   execOnSlot,
-  expandHook,
   expandTemplate,
   farmslotRoot,
   getProjectField,
@@ -68,6 +67,7 @@ import { openDevServerLogTailWindow, resolveDevServerLogPath } from './prepare-d
 import {
   buildDepsSentinelWriteCommand,
   checkPrepareRequirement,
+  expandPrepareProfileHook,
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
@@ -437,10 +437,7 @@ async function slotPrepareInner(
     `( export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}; ${cmd} )`;
 
   const expandPrepareHook = (hookName: string): string => {
-    const override = prepareProfile?.hooks[hookName];
-    const cmd = override
-      ? expandTemplate(override, vars, projectVars)
-      : expandHook(hookName, projectJson, vars, projectVars);
+    const cmd = expandPrepareProfileHook(hookName, prepareProfile, projectJson, vars, projectVars);
     return remapHookSupport(cmd);
   };
 

@@ -114,7 +114,6 @@ export function mergeGatewayProfiles(saved: GatewayProfile[]): GatewayProfile[] 
   for (const profile of saved) {
     if (!profile.id || !profile.name || !isMobileGatewayProfileUrl(profile.url)) continue;
     if (isLegacyPresetGatewayProfile(profile)) continue;
-    if (profile.id === 'localhost' || isLegacyLocalhostGatewayUrl(profile.url)) continue;
     const defaultProfile = byId.get(profile.id);
     const authMode =
       profile.authMode === 'token' || profile.authMode === 'password' ? profile.authMode : 'none';

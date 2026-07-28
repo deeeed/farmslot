@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { connectionHealthCanRetry } from '../lib/connection-liveness';
 import { colors, fonts, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
 import { useRunStore } from '../store/runs';
@@ -119,6 +120,7 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   );
 
   if (!banner || banner.tone === 'healthy') return null;
+  const canRetry = connectionHealthCanRetry(healthStatus);
 
   const openProfiles = () => {
     router.push('/settings');
@@ -161,13 +163,15 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
           )}
         </View>
         <View style={styles.actions}>
-          <Pressable
-            style={styles.actionButton}
-            onPress={() => void retryConnection()}
-            disabled={probeInProgress}
-          >
-            <Text style={styles.actionText}>{probeInProgress ? 'Testing…' : 'Retry'}</Text>
-          </Pressable>
+          {canRetry ? (
+            <Pressable
+              style={styles.actionButton}
+              onPress={() => void retryConnection()}
+              disabled={probeInProgress}
+            >
+              <Text style={styles.actionText}>{probeInProgress ? 'Testing…' : 'Retry'}</Text>
+            </Pressable>
+          ) : null}
           <Pressable style={styles.actionButton} onPress={openProfiles}>
             <Text style={styles.actionText}>{compact ? 'Profiles' : 'Switch profile'}</Text>
           </Pressable>

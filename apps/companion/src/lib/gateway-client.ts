@@ -121,6 +121,7 @@ export class GatewayClient {
     socket.onclose = () => {
       if (this.ws !== socket) return;
       this.ws = null;
+      this.invalidateTransportCapability();
       if (this.state === 'connecting' && !this.lastConnectionError) {
         this.lastConnectionError = 'Gateway connection closed before authentication completed';
       }
@@ -151,6 +152,7 @@ export class GatewayClient {
 
   reconnect(): void {
     if (this.disposed || this.pausedForBackground) return;
+    this.invalidateTransportCapability();
     this.cancelReconnect();
     this.rejectAllPending('Gateway reconnect requested');
     this.closeCurrentSocket();
@@ -354,6 +356,11 @@ export class GatewayClient {
     }
   }
 
+  private invalidateTransportCapability(): void {
+    this.generation += 1;
+    this.pingSupported = null;
+  }
+
   private setupAppStateListener(): void {
     this.appStateSubscription = AppState.addEventListener('change', this.handleAppStateChange);
   }
@@ -365,6 +372,7 @@ export class GatewayClient {
       // instead of leaving workspace screens stuck with a stale client.
       this.wasConnectedBeforeBackground = this.state !== 'disconnected';
       this.pausedForBackground = true;
+      this.invalidateTransportCapability();
       this.cancelReconnect();
       this.rejectAllPending('Gateway paused while app is in the background');
       this.closeCurrentSocket();

@@ -122,7 +122,15 @@ export function usedPorts(pool: PoolConfig): Set<number> {
   for (const slot of pool.slots) {
     for (const resource of Object.values(slot.resources ?? {})) {
       for (const [key, value] of Object.entries(resource)) {
-        if (/(^|_)port$/.test(key) && typeof value === 'number') ports.add(value);
+        if (
+          /(^|_)port$/.test(key) &&
+          typeof value === 'number' &&
+          Number.isInteger(value) &&
+          value >= 1 &&
+          value <= 65_535
+        ) {
+          ports.add(value);
+        }
       }
     }
   }
@@ -132,8 +140,16 @@ export function usedPorts(pool: PoolConfig): Set<number> {
 /** Allocate the next free port from the onboarding block (9300+). */
 export function allocatePort(pool: PoolConfig, from: number = PORT_BLOCK_START): number {
   const taken = usedPorts(pool);
-  let port = from;
+  if (!Number.isInteger(from) || from > 65_535) {
+    throw new Error(
+      `Port allocation start must be an integer at or below 65535, received: ${from}`,
+    );
+  }
+  let port = Math.max(PORT_BLOCK_START, from);
   while (taken.has(port)) port++;
+  if (port > 65_535) {
+    throw new Error(`No free port remains in the canonical ${PORT_BLOCK_START}-65535 block`);
+  }
   return port;
 }
 
@@ -149,7 +165,15 @@ export function defaultDevServerResource(pool: PoolConfig): Record<string, numbe
 /** Merge-only repair for slots created before Metro had an explicit resource port. */
 export function backfillMetroPort(pool: PoolConfig, slot: PoolSlot): number | null {
   const devServer = slot.resources?.['dev-server'];
-  if (!devServer || devServer.metro_port !== undefined) return null;
+  if (
+    !devServer ||
+    (typeof devServer.metro_port === 'number' &&
+      Number.isInteger(devServer.metro_port) &&
+      devServer.metro_port >= 1 &&
+      devServer.metro_port <= 65_535)
+  ) {
+    return null;
+  }
   const metroPort = allocatePort(pool);
   devServer.metro_port = metroPort;
   return metroPort;

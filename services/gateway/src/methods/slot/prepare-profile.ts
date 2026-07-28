@@ -5,6 +5,7 @@ import { PREPARE_PHASES, type PreparePhase, type PrepareRequirement } from '@far
 import {
   execOnSlot,
   expandHook,
+  expandTemplate,
   getProjectField,
   type ProjectVars,
   type RawProjectJson,
@@ -32,6 +33,19 @@ export interface PrepareProfileFallback {
 export interface PrepareProfileSelection {
   profile: ResolvedPrepareProfile;
   fallbacks: PrepareProfileFallback[];
+}
+
+export function expandPrepareProfileHook(
+  hookName: string,
+  profile: ResolvedPrepareProfile | undefined,
+  projectJson: RawProjectJson,
+  vars: SlotVars,
+  projectVars?: ProjectVars,
+): string {
+  const override = profile?.hooks[hookName];
+  return override
+    ? expandTemplate(override, vars, projectVars)
+    : expandHook(hookName, projectJson, vars, projectVars);
 }
 
 const IMPLICIT_FULL = 'full';

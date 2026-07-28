@@ -6,7 +6,6 @@ import {
   assertNoUnknownPlaceholders,
   collectTemplatePlaceholders,
   expandDispatchCmd,
-  expandHook,
   expandTemplate,
   expandTemplateWithReservedLast,
   knownTemplatePlaceholders,
@@ -108,15 +107,12 @@ test('expandTemplate renders missing optional resource placeholders as empty str
   };
 
   assert.equal(
-    expandTemplate(
-      '{{port}} {{metro_port}} {{simulator}} {{avd}} {{adb_serial}} {{ADB_SERIAL}}',
-      slotVars,
-    ),
-    '8061  mm-1   ',
+    expandTemplate('{{port}} {{simulator}} {{avd}} {{adb_serial}} {{ADB_SERIAL}}', slotVars),
+    '8061 mm-1   ',
   );
 });
 
-test('expandHook names the missing Metro resource for a legacy pool slot', () => {
+test('shared template expansion names missing lowercase and uppercase Metro resources', () => {
   const slotVars: SlotVars = {
     slotId: 'legacy-farmslot-1',
     machine: 'legacy',
@@ -141,15 +137,12 @@ test('expandHook names the missing Metro resource for a legacy pool slot', () =>
     resourceVars: { port: '8808' },
   };
 
-  assert.throws(
-    () =>
-      expandHook(
-        'companion-warm',
-        { hooks: { 'companion-warm': 'prepare --metro-port {{metro_port}}' } },
-        slotVars,
-      ),
-    /legacy-farmslot-1.*resources\.dev-server\.metro_port.*farmslot update/,
-  );
+  for (const placeholder of ['{{metro_port}}', '{{METRO_PORT}}']) {
+    assert.throws(
+      () => expandTemplate(`prepare --metro-port ${placeholder}`, slotVars),
+      /legacy-farmslot-1.*resources\.dev-server\.metro_port.*farmslot update/,
+    );
+  }
 });
 
 test('expandDispatchCmd supports Cursor Agent runner path placeholders', () => {

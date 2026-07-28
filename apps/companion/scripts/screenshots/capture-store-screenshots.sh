@@ -6,7 +6,6 @@ APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RAW_DIR="${APP_DIR}/store-assets/raw"
 # shellcheck source=../agentic/agentic.conf
 source "${SCRIPT_DIR}/../agentic/agentic.conf"
-APP_VARIANT="${APP_VARIANT:-development}"
 OPEN_DEV_CLIENT="${OPEN_DEV_CLIENT:-1}"
 case "${APP_VARIANT}" in
   development)

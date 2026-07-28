@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Asset } from 'expo-asset';
-import { type BarcodeScanningResult, CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView } from 'expo-camera';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,13 +21,11 @@ import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-statu
 import { AppEnvironmentCard } from '../../components/AppEnvironmentCard';
 import { AppUpdateStatusCard } from '../../components/AppUpdateStatusCard';
 import { AppVersionBanner } from '../../components/AppVersionBanner';
+import { useGatewayPairingController } from '../../features/settings/use-gateway-pairing-controller';
 import {
   connectionHealthNeedsAttention,
   formatProfileKind,
   mergeVisibleProfiles,
-  pairingProfileTestState,
-  preferredReachablePairingResult,
-  startImportedPairingProfileTests,
   useGatewayProfileController,
 } from '../../features/settings/use-gateway-profile-controller';
 import {
@@ -40,11 +38,6 @@ import {
   requestMicrophonePermissionState,
 } from '../../lib/audio-permissions';
 import { connectionHealthLabel, formatLastGatewayResponse } from '../../lib/connection-liveness';
-import {
-  exchangeGatewayPairingQr,
-  parseGatewayPairingQr,
-  profileFromPairingResult,
-} from '../../lib/gateway-pairing';
 import {
   type GatewayProfile,
   type GatewayProfileAuthMode,
@@ -104,7 +97,6 @@ export default function SettingsScreen() {
     gatewayUrl,
     profiles,
     activeProfileId,
-    setActiveProfile,
     saveProfile,
     deleteProfile,
     setProfileAuth,
@@ -133,9 +125,6 @@ export default function SettingsScreen() {
     activeProfile?.authMode ?? 'none',
   );
   const [authSecret, setAuthSecret] = useState('');
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const [pairingScannerOpen, setPairingScannerOpen] = useState(false);
-  const [pairingInProgress, setPairingInProgress] = useState(false);
   const [pairingImportMessage, setPairingImportMessage] = useState<string | null>(null);
   const [advancedGatewaySetupOpen, setAdvancedGatewaySetupOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -159,6 +148,20 @@ export default function SettingsScreen() {
     setAuthMode,
     setPairingImportMessage,
     setRecentImportedProfiles,
+  });
+  const {
+    closePairingScanner,
+    handlePairingBarcodeScanned,
+    openPairingScanner: handleOpenPairingScanner,
+    pairingInProgress,
+    pairingScannerOpen,
+  } = useGatewayPairingController({
+    setAuthMode,
+    setPairingImportMessage,
+    setProfileConnectionTests,
+    setRecentImportedProfiles,
+    setUrlInput,
+    setAdvancedGatewaySetupOpen,
   });
   const configuredVoiceModelId = getConfiguredSherpaAsrModelId();
   const voiceModelSelectionLocked = Boolean(configuredVoiceModelId);
@@ -562,83 +565,6 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleOpenPairingScanner = async () => {
-    if (!cameraPermission?.granted) {
-      const result = await requestCameraPermission();
-      if (!result.granted) {
-        Alert.alert('Camera permission required', 'Allow camera access to scan a pairing QR.');
-        return;
-      }
-    }
-    setPairingInProgress(false);
-    setPairingScannerOpen(true);
-  };
-
-  const handlePairingBarcodeScanned = async (result: BarcodeScanningResult) => {
-    if (pairingInProgress) return;
-    setPairingInProgress(true);
-    try {
-      const payload = parseGatewayPairingQr(result.data);
-      const pairedProfileResults = await exchangeGatewayPairingQr(payload);
-      const importedProfiles = pairedProfileResults.map((pairedProfileResult) => ({
-        profile: profileFromPairingResult(pairedProfileResult),
-        secret: pairedProfileResult.secret,
-      }));
-      setRecentImportedProfiles(importedProfiles.map((importedProfile) => importedProfile.profile));
-      for (const importedProfile of importedProfiles) {
-        await saveProfile(importedProfile.profile, importedProfile.secret);
-      }
-      setProfileConnectionTests(
-        Object.fromEntries(
-          importedProfiles.map(({ profile }) => [
-            profile.id,
-            {
-              status: 'testing',
-              message: `Testing ${profile.url}…`,
-            },
-          ]),
-        ),
-      );
-      const reachabilityChecks = startImportedPairingProfileTests(importedProfiles);
-      const allReachability = Promise.all(reachabilityChecks);
-      const preferredReachable = await preferredReachablePairingResult(
-        importedProfiles,
-        reachabilityChecks,
-      );
-      const preferredProfile = preferredReachable?.profile;
-      if (preferredProfile) {
-        await setActiveProfile(preferredProfile.id);
-        setUrlInput(preferredProfile.url);
-        setAuthMode(preferredProfile.authMode ?? 'none');
-        setProfileConnectionTests((current) => ({
-          ...current,
-          [preferredProfile.id]: pairingProfileTestState(preferredReachable),
-        }));
-      }
-      const importMessage = preferredProfile
-        ? `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported. Connected to ${preferredProfile.name}.`
-        : `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported, but none passed validation. The current profile is unchanged.`;
-      setPairingImportMessage(importMessage);
-      void allReachability.then((reachability) => {
-        setProfileConnectionTests(
-          Object.fromEntries(
-            reachability.map((candidate) => [
-              candidate.profile.id,
-              pairingProfileTestState(candidate),
-            ]),
-          ),
-        );
-      });
-      setAdvancedGatewaySetupOpen(false);
-      if (preferredProfile) connect();
-      setPairingScannerOpen(false);
-      Alert.alert('Companion paired', importMessage);
-    } catch (error) {
-      setPairingInProgress(false);
-      Alert.alert('Pairing failed', (error as Error).message);
-    }
-  };
-
   return (
     <ScrollView
       style={baseStyles.container}
@@ -864,7 +790,9 @@ export default function SettingsScreen() {
                         styles.profileConnectionTestResult,
                         connectionTest.status === 'failed'
                           ? styles.connectionTestFailed
-                          : styles.connectionTestOk,
+                          : connectionTest.status === 'healthy'
+                            ? styles.connectionTestOk
+                            : styles.connectionTestTesting,
                       ]}
                     >
                       {connectionTest.message}
@@ -1279,7 +1207,7 @@ export default function SettingsScreen() {
       <Modal
         visible={pairingScannerOpen}
         animationType="slide"
-        onRequestClose={() => setPairingScannerOpen(false)}
+        onRequestClose={closePairingScanner}
       >
         <SafeAreaView style={styles.scannerContainer}>
           <CameraView
@@ -1302,7 +1230,7 @@ export default function SettingsScreen() {
             ) : null}
             <Pressable
               style={[styles.button, styles.scannerCancelButton]}
-              onPress={() => setPairingScannerOpen(false)}
+              onPress={closePairingScanner}
             >
               <Text style={styles.buttonText}>Cancel</Text>
             </Pressable>
@@ -1538,6 +1466,9 @@ const styles = StyleSheet.create({
   },
   connectionTestFailed: {
     color: colors.statusFail,
+  },
+  connectionTestTesting: {
+    color: colors.statusWarn,
   },
   helperText: {
     color: colors.textMuted,

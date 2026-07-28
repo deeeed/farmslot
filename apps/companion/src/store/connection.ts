@@ -6,7 +6,6 @@ import {
   type DecisionListResult,
   Events,
   type FleetStatusResult,
-  type GatewayPingResult,
   Methods,
   type MonitorViolationPayload,
   type PendingDecision,
@@ -24,10 +23,8 @@ import {
   livenessAfterSuccess,
   livenessForTransportState,
 } from '../lib/connection-liveness';
-import {
-  ConnectionLivenessController,
-  type ProbeOutcome,
-} from '../lib/connection-liveness-controller';
+import { ConnectionLivenessController } from '../lib/connection-liveness-controller';
+import { type ConnectionProbeResult, runConnectionProbe } from '../lib/connection-probe';
 import { isCurrentConnectionProbe } from '../lib/connection-probe-identity';
 import {
   type ConnectionState,
@@ -37,11 +34,6 @@ import {
   gatewayHttpAuthHeaders,
 } from '../lib/gateway-client';
 import {
-  isValidGatewayPingResult,
-  LEGACY_GATEWAY_COMPATIBILITY_HINT,
-  testGatewayConnection,
-} from '../lib/gateway-connection-test';
-import {
   parseGatewayProfilesFromStorage,
   sanitizeGatewayProfilesForStorage,
 } from '../lib/gateway-profile-storage';
@@ -50,7 +42,6 @@ import {
   DEFAULT_GATEWAY_URL,
   type GatewayProfile,
   type GatewayProfileAuthMode,
-  isLegacyLocalhostGatewayUrl,
   isLegacyPresetGatewayUrl,
   mergeGatewayProfiles,
   profileIdForUrl,
@@ -75,7 +66,7 @@ const LIVENESS_PROBE_TIMEOUT_MS = 8_000;
 let livenessController: ConnectionLivenessController | null = null;
 let appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
 
-export type ConnectionProbeResult = { ok: true; latencyMs: number } | { ok: false; error: string };
+export type { ConnectionProbeResult } from '../lib/connection-probe';
 
 type DecisionNewEventPayload = {
   decision?: PendingDecision | RunDecision;
@@ -148,10 +139,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       const profiles = mergeGatewayProfiles(savedProfiles);
       await seedPresetGatewayProfileSecrets(profiles);
       const savedActiveProfileId = await AsyncStorage.getItem(ACTIVE_GATEWAY_PROFILE_KEY);
-      const savedUrl =
-        saved && !isLegacyLocalhostGatewayUrl(saved) && !isLegacyPresetGatewayUrl(saved)
-          ? saved
-          : null;
+      const savedUrl = saved && !isLegacyPresetGatewayUrl(saved) ? saved : null;
       const activeProfile =
         profiles.find((profile) => profile.id === savedActiveProfileId) ??
         (savedUrl ? profiles.find((profile) => profile.url === savedUrl) : undefined) ??
@@ -281,7 +269,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
         // Fetch all state on connect/reconnect
         if (status === 'connected') {
-          void livenessController?.probeNow();
+          void livenessController?.probeFresh();
           useFleetStore.getState().setLoading(true);
           useRunStore.getState().resetHistorySync();
           useRunStore.getState().setActiveLoading(true);
@@ -340,10 +328,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       livenessController?.stop();
       appStateSubscription?.remove();
       livenessController = new ConnectionLivenessController({
-        probe: async (): Promise<ProbeOutcome> => {
-          const result = await get().probeConnection();
-          return { ok: result.ok };
-        },
+        probe: () => get().probeConnection(),
         onForeground: () => get().connect(),
         onProbeError: (error) => {
           const liveness = livenessAfterFailure(
@@ -640,71 +625,35 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         gatewayUrl: get().gatewayUrl,
         connectionGeneration: client.connectionGeneration,
       });
-    const startedAt = Date.now();
     set({ probeInProgress: true });
     try {
-      if (AppState.currentState !== 'active') {
-        const activeProfile =
-          get().profiles.find((profile) => profile.id === get().activeProfileId) ??
-          get().profiles.find((profile) => profile.url === profileUrl);
-        const auth = activeProfile ? await authCredentialsForProfile(activeProfile) : {};
-        const result = await testGatewayConnection(profileUrl, auth, {
-          connectMs: LIVENESS_PROBE_TIMEOUT_MS,
-          pingMs: LIVENESS_PROBE_TIMEOUT_MS,
-        });
-        if (!probeIsCurrent()) {
-          set({ probeInProgress: false });
-          return { ok: false, error: 'Gateway profile changed while testing.' };
-        }
-        const liveness = livenessAfterSuccess(
-          livenessFromStore(get()),
-          Date.now(),
-          result.latencyMs,
-        );
-        set({
-          ...livenessPatch(liveness),
-          gatewayCompatibilityHint: result.compatibilityHint ?? null,
-          probeInProgress: false,
-        });
-        return { ok: true, latencyMs: result.latencyMs };
-      }
-      if (client.gatewayPingSupported === false) {
-        const latencyMs = Date.now() - startedAt;
-        if (!probeIsCurrent()) {
-          set({ probeInProgress: false });
-          return { ok: false, error: 'Gateway profile changed while testing.' };
-        }
-        const liveness = livenessAfterSuccess(livenessFromStore(get()), Date.now(), latencyMs);
-        set({
-          ...livenessPatch(liveness),
-          gatewayCompatibilityHint: LEGACY_GATEWAY_COMPATIBILITY_HINT,
-          probeInProgress: false,
-        });
-        return { ok: true, latencyMs };
-      }
-      const pingResult = await client.request<GatewayPingResult>(
-        Methods.GATEWAY_PING,
-        {},
-        LIVENESS_PROBE_TIMEOUT_MS,
+      const activeProfile =
+        get().profiles.find((profile) => profile.id === get().activeProfileId) ??
+        get().profiles.find((profile) => profile.url === profileUrl);
+      const auth = activeProfile ? await authCredentialsForProfile(activeProfile) : {};
+      const outcome = await runConnectionProbe({
+        client,
+        gatewayUrl: profileUrl,
+        auth,
+        appActive: AppState.currentState === 'active',
+        timeoutMs: LIVENESS_PROBE_TIMEOUT_MS,
+        isCurrent: probeIsCurrent,
+      });
+      if (!outcome.result.ok) return outcome.result;
+      const liveness = livenessAfterSuccess(
+        livenessFromStore(get()),
+        Date.now(),
+        outcome.result.latencyMs,
       );
-      if (!isValidGatewayPingResult(pingResult)) {
-        throw new Error('Gateway returned an invalid ping response');
-      }
-      const latencyMs = Date.now() - startedAt;
-      if (!probeIsCurrent()) {
-        set({ probeInProgress: false });
-        return { ok: false, error: 'Gateway profile changed while testing.' };
-      }
-      const liveness = livenessAfterSuccess(livenessFromStore(get()), Date.now(), latencyMs);
       set({
         ...livenessPatch(liveness),
-        gatewayCompatibilityHint: null,
+        healthStatus: outcome.activeTransportProven ? liveness.status : 'socket-up-not-proven',
+        gatewayCompatibilityHint: outcome.compatibilityHint,
         probeInProgress: false,
       });
-      return { ok: true, latencyMs };
+      return outcome.result;
     } catch (error) {
       if (!probeIsCurrent()) {
-        set({ probeInProgress: false });
         return { ok: false, error: 'Gateway profile changed while testing.' };
       }
       const liveness = livenessAfterFailure(
@@ -718,10 +667,17 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   },
 
   testConnection: async () => {
-    if (livenessController)
-      return livenessController.probeFresh().then(() => probeResultFromStore(get()));
-    await get().probeConnection();
-    return probeResultFromStore(get());
+    if (livenessController) {
+      const result = await livenessController.probeFresh();
+      if (result.ok && 'latencyMs' in result && result.latencyMs !== undefined) {
+        return { ok: true, latencyMs: result.latencyMs };
+      }
+      return {
+        ok: false,
+        error: (!result.ok && result.error) || 'Gateway did not answer.',
+      };
+    }
+    return get().probeConnection();
   },
 
   syncRunHistory: async () => {
@@ -852,11 +808,4 @@ function connectionIdentityTransition(
         }
       : {},
   };
-}
-
-function probeResultFromStore(state: ConnectionStore): ConnectionProbeResult {
-  if (state.healthStatus === 'healthy' && state.lastProbeLatencyMs !== null) {
-    return { ok: true, latencyMs: state.lastProbeLatencyMs };
-  }
-  return { ok: false, error: state.lastProbeError ?? 'Gateway is not proven responsive.' };
 }

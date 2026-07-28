@@ -6,7 +6,6 @@ APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUTPUT_DIR="${FARMSLOT_UX_SCREENSHOT_DIR:-${APP_DIR}/.agent/ux-baseline-screenshots}"
 # shellcheck source=../agentic/agentic.conf
 source "${SCRIPT_DIR}/../agentic/agentic.conf"
-APP_VARIANT="${APP_VARIANT:-development}"
 OPEN_DEV_CLIENT="${OPEN_DEV_CLIENT:-1}"
 START_METRO="${START_METRO:-1}"
 CAPTURE_IOS="${CAPTURE_IOS:-1}"

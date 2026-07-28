@@ -74,6 +74,18 @@ test('Metro migration allocates distinct ports and preserves explicit assignment
 
   const { pool: migrated } = applyMigrations(legacy, steps);
   assert.equal(migrated.slots[0].resources?.['dev-server'].port, 8808);
-  assert.equal(migrated.slots[0].resources?.['dev-server'].metro_port, 8880);
+  assert.equal(migrated.slots[0].resources?.['dev-server'].metro_port, 9300);
   assert.equal(migrated.slots[1].resources?.['dev-server'].metro_port, 8879);
+});
+
+test('Metro invariant repair fixes malformed schema-v2 pools', async () => {
+  const steps = await loadMigrations();
+  const malformed = pool(2);
+  malformed.slots[0].resources = {
+    'dev-server': { port: 9300, metro_port: 70_000 },
+  };
+
+  const { pool: repaired, applied } = applyMigrations(malformed, steps);
+  assert.equal(repaired.slots[0].resources?.['dev-server'].metro_port, 9301);
+  assert.deepEqual(applied, ['002-add-metro-port-repair']);
 });

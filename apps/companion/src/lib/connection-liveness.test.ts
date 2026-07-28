@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  connectionHealthCanRetry,
   connectionHealthLabel,
   connectionProbeTeachingError,
   formatLastGatewayResponse,
@@ -57,4 +58,12 @@ test('probe interval backs off after failures and response time is readable', ()
   assert.equal(formatLastGatewayResponse(5_000, 10_000), '5s ago');
   assert.equal(connectionHealthLabel('socket-up-not-proven'), 'Socket connected · proving');
   assert.equal(connectionHealthLabel('healthy'), 'Healthy');
+});
+
+test('manual retry is limited to actionable connection failures', () => {
+  assert.equal(connectionHealthCanRetry('disconnected'), true);
+  assert.equal(connectionHealthCanRetry('degraded'), true);
+  assert.equal(connectionHealthCanRetry('healthy'), false);
+  assert.equal(connectionHealthCanRetry('connecting'), false);
+  assert.equal(connectionHealthCanRetry('socket-up-not-proven'), false);
 });

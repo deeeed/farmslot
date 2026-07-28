@@ -122,3 +122,7 @@ export function connectionHealthLabel(status: ConnectionHealthState): string {
   if (status === 'socket-up-not-proven') return 'Socket connected · proving';
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
+
+export function connectionHealthCanRetry(status: ConnectionHealthState): boolean {
+  return status === 'disconnected' || status === 'degraded';
+}

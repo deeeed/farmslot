@@ -71,7 +71,9 @@ test('allocatePort starts at the high block and skips taken ports', () => {
     { id: 'm-a-2', repo: '/b', session: 'a-2', resources: { 'dev-server': { port: 9301 } } },
   ]);
   assert.equal(allocatePort(pool()), PORT_BLOCK_START);
+  assert.equal(allocatePort(pool(), 1), PORT_BLOCK_START);
   assert.equal(allocatePort(p), 9302);
+  assert.throws(() => allocatePort(pool(), 65_536), /at or below 65535/);
 });
 
 test('defaultDevServerResource allocates distinct gateway and Metro ports', () => {
@@ -92,6 +94,17 @@ test('backfillMetroPort preserves the gateway port and allocates a distinct port
   assert.equal(backfillMetroPort(p, slot), 9301);
   assert.deepEqual(slot.resources['dev-server'], { port: 9300, metro_port: 9301 });
   assert.equal(backfillMetroPort(p, slot), null);
+});
+
+test('backfillMetroPort repairs invalid explicit values', () => {
+  const slot = {
+    id: 'm-a-1',
+    repo: '/a',
+    session: 'a-1',
+    resources: { 'dev-server': { port: 9300, metro_port: 70_000 } },
+  };
+  const p = pool([slot]);
+  assert.equal(backfillMetroPort(p, slot), 9301);
 });
 
 test('defaultResources gives platform slots their device/browser resource', () => {

@@ -16,6 +16,15 @@ test('resolveMetroRecipeBridgePort prefers FARMSLOT_RECIPE_METRO_PORT', () => {
   );
 });
 
+test('resolveMetroRecipeBridgePort requires an explicit recipe or Metro port', () => {
+  assert.throws(
+    () => resolveMetroRecipeBridgePort({ WATCHER_PORT: '7677' }),
+    /checkout-local \.env\.ports/u,
+  );
+  assert.equal(resolveMetroRecipeBridgePort({ METRO_PORT: '65535' }), 65_535);
+  assert.throws(() => resolveMetroRecipeBridgePort({ METRO_PORT: '65536' }), /Invalid Metro port/u);
+});
+
 test('createMetroRecipeBridge posts commands to Metro relay and surfaces bridge failures', async () => {
   const calls: Array<{ url: string; body: unknown }> = [];
   const bridge = createMetroRecipeBridge({

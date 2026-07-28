@@ -62,6 +62,11 @@ function expandTemplateInternal(
   extraVars?: Record<string, string>,
   leaveUnresolvedDomain = false,
 ): string {
+  if (/\{\{(?:metro_port|METRO_PORT)\}\}/u.test(template) && !slotVars.resourceVars.metro_port) {
+    throw new Error(
+      `Slot ${slotVars.slotId} is missing resources.dev-server.metro_port required by template expansion; run farmslot update to migrate the pool.`,
+    );
+  }
   let result = template;
   // Runtime extras (e.g. --domain overlays) take precedence over project vars
   // and resource fields — apply them first so later passes see no placeholder.
@@ -82,7 +87,6 @@ function expandTemplateInternal(
   // shell fixture-sync path by rendering missing optional resources as empty.
   for (const field of [
     'port',
-    'metro_port',
     'cdp_port',
     'simulator',
     'avd',
@@ -326,11 +330,6 @@ export function expandHook(
 ): string {
   const cmd = projectJson.hooks?.[hookName];
   if (!cmd || typeof cmd !== 'string') return '';
-  if (cmd.includes('{{metro_port}}') && !slotVars.resourceVars.metro_port) {
-    throw new Error(
-      `Slot ${slotVars.slotId} is missing resources.dev-server.metro_port required by hook ${hookName}; run farmslot update to migrate the pool.`,
-    );
-  }
   return expandTemplate(cmd, slotVars, projectVars, extraVars);
 }
 

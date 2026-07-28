@@ -13,25 +13,18 @@ const { AndroidConfig, withAndroidManifest, withGradleProperties } = require('ex
  * remote profiles must use wss://.
  */
 module.exports = function withMetroPort(config, { port, usesCleartextTraffic = false } = {}) {
+  let normalizedPort;
   if (port !== undefined) {
-    const normalizedPort = Number(port);
-    if (!Number.isInteger(normalizedPort) || normalizedPort <= 0) {
-      throw new Error(`withMetroPort expected a positive integer port, received: ${port}`);
+    normalizedPort = Number(port);
+    if (!Number.isInteger(normalizedPort) || normalizedPort <= 0 || normalizedPort > 65_535) {
+      throw new Error(`withMetroPort expected a port from 1 to 65535, received: ${port}`);
     }
-
-    config = withGradleProperties(config, (config) => {
-      const portString = String(normalizedPort);
-      config.modResults = config.modResults.filter(
-        (item) => item.type !== 'property' || item.key !== 'reactNativeDevServerPort',
-      );
-      config.modResults.push({
-        type: 'property',
-        key: 'reactNativeDevServerPort',
-        value: portString,
-      });
-      return config;
-    });
   }
+
+  config = withGradleProperties(config, (config) => {
+    config.modResults = updateMetroPortGradleProperties(config.modResults, normalizedPort);
+    return config;
+  });
 
   if (!usesCleartextTraffic) return config;
   return withAndroidManifest(config, (config) => {
@@ -44,6 +37,22 @@ module.exports = function withMetroPort(config, { port, usesCleartextTraffic = f
     return config;
   });
 };
+
+function updateMetroPortGradleProperties(properties, port) {
+  const updated = properties.filter(
+    (item) => item.type !== 'property' || item.key !== 'reactNativeDevServerPort',
+  );
+  if (port !== undefined) {
+    updated.push({
+      type: 'property',
+      key: 'reactNativeDevServerPort',
+      value: String(port),
+    });
+  }
+  return updated;
+}
+
+module.exports.updateMetroPortGradleProperties = updateMetroPortGradleProperties;
 
 function mergeToolsReplace(existing, value) {
   const values = new Set(

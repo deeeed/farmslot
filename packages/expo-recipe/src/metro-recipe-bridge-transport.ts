@@ -15,9 +15,14 @@ export interface MetroRecipeBridgeTransportOptions {
 export function resolveMetroRecipeBridgePort(
   env: Record<string, string | undefined> = process.env,
 ): number {
-  const raw = env.FARMSLOT_RECIPE_METRO_PORT ?? env.METRO_PORT ?? env.WATCHER_PORT ?? '7677';
+  const raw = env.FARMSLOT_RECIPE_METRO_PORT ?? env.METRO_PORT;
+  if (!raw) {
+    throw new Error(
+      'Metro recipe bridge port is missing; load the checkout-local .env.ports configuration.',
+    );
+  }
   const port = Number(raw);
-  if (!Number.isInteger(port) || port <= 0) {
+  if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
     throw new Error(`Invalid Metro port for recipe bridge transport: ${raw}`);
   }
   return port;

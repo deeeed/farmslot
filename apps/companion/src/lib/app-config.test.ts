@@ -169,18 +169,20 @@ test('Expo config rejects an invalid configured Metro port instead of falling ba
             slug: 'farmslot',
           },
         } as ConfigContext),
-      /METRO_PORT must be a positive integer/,
+      /METRO_PORT must be an integer from 1 to 65535/,
     );
   } finally {
     restoreEnv('METRO_PORT', previousMetroPort);
   }
 });
 
-test('Expo config rejects a development build without a slot-derived Metro port', () => {
+test('Expo config rejects a local Farmslot development build without a slot-derived Metro port', () => {
   const previousMetroPort = process.env.METRO_PORT;
   const previousVariant = process.env.APP_VARIANT;
+  const previousLocalRuntime = process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG;
   delete process.env.METRO_PORT;
   process.env.APP_VARIANT = 'development';
+  process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG = '1';
   try {
     assert.throws(
       () =>
@@ -195,6 +197,57 @@ test('Expo config rejects a development build without a slot-derived Metro port'
   } finally {
     restoreEnv('METRO_PORT', previousMetroPort);
     restoreEnv('APP_VARIANT', previousVariant);
+    restoreEnv('FARMSLOT_LOCAL_RUNTIME_CONFIG', previousLocalRuntime);
+  }
+});
+
+test('Expo config allows remote EAS development resolution without local slot ports', () => {
+  const previousMetroPort = process.env.METRO_PORT;
+  const previousVariant = process.env.APP_VARIANT;
+  const previousLocalRuntime = process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG;
+  delete process.env.METRO_PORT;
+  delete process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG;
+  process.env.APP_VARIANT = 'development';
+  try {
+    const config = createExpoConfig({
+      config: {
+        name: 'FarmDev',
+        slug: 'farmslot',
+      },
+    } as ConfigContext);
+    const metroPlugin = (config.plugins ?? []).find(
+      (plugin) => Array.isArray(plugin) && plugin[0] === './plugins/withMetroPort.cjs',
+    );
+
+    assert.ok(Array.isArray(metroPlugin));
+    assert.equal(metroPlugin[1]?.port, undefined);
+    assert.equal(config.extra?.metroPort, undefined);
+  } finally {
+    restoreEnv('METRO_PORT', previousMetroPort);
+    restoreEnv('APP_VARIANT', previousVariant);
+    restoreEnv('FARMSLOT_LOCAL_RUNTIME_CONFIG', previousLocalRuntime);
+  }
+});
+
+test('Expo config accepts port 65535 and rejects values above the TCP range', () => {
+  const previousMetroPort = process.env.METRO_PORT;
+  process.env.METRO_PORT = '65535';
+  try {
+    assert.doesNotThrow(() =>
+      createExpoConfig({
+        config: { name: 'FarmDev', slug: 'farmslot' },
+      } as ConfigContext),
+    );
+    process.env.METRO_PORT = '65536';
+    assert.throws(
+      () =>
+        createExpoConfig({
+          config: { name: 'FarmDev', slug: 'farmslot' },
+        } as ConfigContext),
+      /METRO_PORT must be an integer from 1 to 65535/,
+    );
+  } finally {
+    restoreEnv('METRO_PORT', previousMetroPort);
   }
 });
 
