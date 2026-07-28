@@ -153,9 +153,17 @@ test('localPrBodyPathResidues flags local media paths before approved publicatio
     'artifacts/before.png',
   ]);
   assert.deepEqual(localPrBodyPathResidues('See artifacts/report.md'), ['artifacts/report.md']);
-  assert.deepEqual(localPrBodyPathResidues('See `artifacts/recipe.json`.'), [
-    'artifacts/recipe.json',
-  ]);
+  // Inline code is provenance narration for non-media paths: worker reports cite
+  // `artifacts/recipe-run/` and quote upstream breakage like `require("file:///…")`,
+  // and both killed FINALIZE on real runs (fcf4f0f7, 4f488307). Media stays
+  // flagged even in backticks — quoting a screenshot does not make it visible.
+  assert.deepEqual(localPrBodyPathResidues('See `artifacts/recipe.json`.'), []);
+  assert.deepEqual(localPrBodyPathResidues('Re-run at tip: `artifacts/recipe-run/` results.'), []);
+  assert.deepEqual(
+    localPrBodyPathResidues('ts-bridge emits `require("file:///home/runner/work/hl/mod.ts")`.'),
+    [],
+  );
+  assert.deepEqual(localPrBodyPathResidues('See `artifacts/after.png`.'), ['artifacts/after.png']);
   assert.deepEqual(localPrBodyPathResidues('See `/Users/me/task/artifacts/after.png`.'), [
     '/Users/me/task/artifacts/after.png',
   ]);

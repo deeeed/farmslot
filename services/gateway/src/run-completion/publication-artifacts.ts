@@ -409,16 +409,48 @@ function stripCodeBlocks(body: string): string {
   return body.replace(/```[\s\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
 }
 
-export function localPrBodyPathResidues(body: string): string[] {
-  const scanned = stripCodeBlocks(body);
+// A path a reader must be able to SEE (screenshots, recordings) is evidence: it
+// has to be uploaded, and quoting it in backticks does not make it visible.
+// Everything else in inline code is provenance narration — worker reports cite
+// `artifacts/recipe-run/` and quote broken upstream paths like
+// `require("file:///…/mod.ts")`, and both killed FINALIZE on real runs even
+// though nothing was linked. So: media residues are flagged everywhere; other
+// local paths are flagged only outside code spans.
+const MEDIA_RESIDUE_RE = /\.(?:png|jpe?g|gif|mp4|mov|webm)$/i;
+
+function extractInlineCodeSpans(body: string): { prose: string; spans: string } {
+  const collected: string[] = [];
+  const prose = body.replace(/``[^`\n]+``|`[^`\n]+`/g, (span) => {
+    collected.push(span.replace(/^`+|`+$/g, ''));
+    return ' ';
+  });
+  // Spans are re-joined with spaces so the patterns' boundary prefixes match.
+  return { prose, spans: ` ${collected.join(' \n ')} ` };
+}
+
+function matchResidues(scanned: string, mediaOnly: boolean): string[] {
   const residues: string[] = [];
   for (const pattern of LOCAL_PR_BODY_PATH_PATTERNS) {
     pattern.lastIndex = 0;
     for (const match of scanned.matchAll(pattern)) {
-      const value = match[0].trim().replace(/^[('\"=`]+/, '');
-      if (value) residues.push(value);
+      const value = match[0].trim().replace(/^[('"=`]+/, '');
+      if (!value) continue;
+      if (mediaOnly) {
+        const cleaned = value.replace(/[`).,;]+$/, '');
+        // Only media PATHS count inside code spans: `artifacts/after.png` is
+        // un-uploaded evidence, but a bare `evidence-ac1.png` is discussing a
+        // filename (recipe docs do this constantly; asserted below in tests).
+        if (!MEDIA_RESIDUE_RE.test(cleaned) || !cleaned.includes('/')) continue;
+      }
+      residues.push(value);
     }
   }
+  return residues;
+}
+
+export function localPrBodyPathResidues(body: string): string[] {
+  const { prose, spans } = extractInlineCodeSpans(stripCodeBlocks(body));
+  const residues = [...matchResidues(prose, false), ...matchResidues(spans, true)];
   return [...new Set(residues)].slice(0, 10);
 }
 
