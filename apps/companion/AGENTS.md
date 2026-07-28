@@ -72,13 +72,13 @@ yarn typecheck
 yarn test:lib
 ```
 
-Connected Android/iOS dev builds expose React Native CDP through Metro (`GET /json/list` on `METRO_PORT`, default `7677`). For in-app state probes:
+Connected Android/iOS dev builds expose React Native CDP through Metro (`GET /json/list` on the slot/worktree-configured `METRO_PORT`). For in-app state probes:
 
 ```bash
-node scripts/agentic/cdp-eval.mjs '({ dev: __DEV__ })'
+bash -c 'source scripts/agentic/agentic.conf && exec node scripts/agentic/cdp-eval.mjs "$@"' _ '({ dev: __DEV__ })'
 ```
 
-For physical devices, the helper auto-tries loopback and LAN origins; override with `FARMSLOT_METRO_ORIGIN=http://<lan-ip>:7677` when needed.
+For physical devices, the helper auto-tries loopback and LAN origins; override with `FARMSLOT_METRO_ORIGIN=http://<lan-ip>:$METRO_PORT` when needed.
 
 For navigation/workspace changes, run the relevant expo recipe smoke (see plan verification matrix).
 

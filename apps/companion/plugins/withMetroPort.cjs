@@ -12,27 +12,26 @@ const { AndroidConfig, withAndroidManifest, withGradleProperties } = require('ex
  * Companion still validates remote profiles separately: non-LAN/non-tailnet
  * remote profiles must use wss://.
  */
-module.exports = function withMetroPort(
-  config,
-  { port = 7677, usesCleartextTraffic = false } = {},
-) {
-  const normalizedPort = Number(port);
-  if (!Number.isInteger(normalizedPort) || normalizedPort <= 0) {
-    throw new Error(`withMetroPort expected a positive integer port, received: ${port}`);
-  }
+module.exports = function withMetroPort(config, { port, usesCleartextTraffic = false } = {}) {
+  if (port !== undefined) {
+    const normalizedPort = Number(port);
+    if (!Number.isInteger(normalizedPort) || normalizedPort <= 0) {
+      throw new Error(`withMetroPort expected a positive integer port, received: ${port}`);
+    }
 
-  config = withGradleProperties(config, (config) => {
-    const portString = String(normalizedPort);
-    config.modResults = config.modResults.filter(
-      (item) => item.type !== 'property' || item.key !== 'reactNativeDevServerPort',
-    );
-    config.modResults.push({
-      type: 'property',
-      key: 'reactNativeDevServerPort',
-      value: portString,
+    config = withGradleProperties(config, (config) => {
+      const portString = String(normalizedPort);
+      config.modResults = config.modResults.filter(
+        (item) => item.type !== 'property' || item.key !== 'reactNativeDevServerPort',
+      );
+      config.modResults.push({
+        type: 'property',
+        key: 'reactNativeDevServerPort',
+        value: portString,
+      });
+      return config;
     });
-    return config;
-  });
+  }
 
   if (!usesCleartextTraffic) return config;
   return withAndroidManifest(config, (config) => {

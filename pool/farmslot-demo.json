@@ -13,7 +13,8 @@
       "session": "demo-work-1",
       "resources": {
         "dev-server": {
-          "port": 7778
+          "port": 7778,
+          "metro_port": 7848
         }
       }
     },
@@ -24,7 +25,8 @@
       "session": "demo-1",
       "resources": {
         "dev-server": {
-          "port": 7777
+          "port": 7777,
+          "metro_port": 7847
         }
       }
     },
@@ -37,6 +39,7 @@
       "resources": {
         "dev-server": {
           "port": 7779,
+          "metro_port": 7849,
           "cdp_port": 9325
         },
         "ios-sim": {

@@ -30,16 +30,18 @@ import {
   type MicrophonePermissionState,
   requestMicrophonePermissionState,
 } from '../../lib/audio-permissions';
+import {
+  connectionHealthLabel,
+  connectionProbeTeachingError,
+  formatLastGatewayResponse,
+} from '../../lib/connection-liveness';
 import { type GatewayAuthCredentials, testGatewayConnection } from '../../lib/gateway-client';
 import {
   exchangeGatewayPairingQr,
   parseGatewayPairingQr,
   profileFromPairingResult,
 } from '../../lib/gateway-pairing';
-import {
-  selectPreferredGatewayProfile,
-  sortGatewayProfilesForAutoConnect,
-} from '../../lib/gateway-profile-selection';
+import { sortGatewayProfilesForAutoConnect } from '../../lib/gateway-profile-selection';
 import {
   type GatewayProfile,
   type GatewayProfileAuthMode,
@@ -85,6 +87,18 @@ function makeCustomProfileId(): string {
   return `custom-${Date.now()}`;
 }
 
+function formatProfileKind(kind: GatewayProfile['kind']): string {
+  if (kind === 'lan') return 'LAN';
+  if (kind === 'tailnet') return 'Tailnet';
+  if (kind === 'remote') return 'Remote';
+  return 'Custom';
+}
+
+type ProfileConnectionTestState = {
+  status: 'testing' | 'healthy' | 'failed';
+  message: string;
+};
+
 async function smokeTestVoiceModel(modelId: string): Promise<string> {
   const [asset] = await Asset.loadAsync(voiceAsrTestClipAssetModule);
   const fileUri = asset.localUri ?? asset.uri;
@@ -102,16 +116,19 @@ export default function SettingsScreen() {
     setActiveProfile,
     saveProfile,
     deleteProfile,
+    resetSavedProfiles,
     setGatewayUrl,
     setProfileAuth,
-    status,
+    healthStatus,
+    lastSuccessfulProbeAt,
+    lastProbeLatencyMs,
     lastSyncError,
     connect,
   } = useConnectionStore();
   const tmuxPrefix = useTerminalPrefsStore((s) => s.tmuxPrefix);
   const setTmuxPrefix = useTerminalPrefsStore((s) => s.setTmuxPrefix);
   const activeProfile = useMemo(
-    () => profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0],
+    () => profiles.find((profile) => profile.id === activeProfileId),
     [activeProfileId, profiles],
   );
   const [recentImportedProfiles, setRecentImportedProfiles] = useState<GatewayProfile[]>([]);
@@ -131,10 +148,15 @@ export default function SettingsScreen() {
   const [pairingInProgress, setPairingInProgress] = useState(false);
   const [pairingImportMessage, setPairingImportMessage] = useState<string | null>(null);
   const [advancedGatewaySetupOpen, setAdvancedGatewaySetupOpen] = useState(false);
+  const [manualUrlValidationInProgress, setManualUrlValidationInProgress] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [connectionTestInProgress, setConnectionTestInProgress] = useState(false);
-  const [connectionTestStatus, setConnectionTestStatus] = useState<string | null>(null);
-  const [connectionTestFailed, setConnectionTestFailed] = useState(false);
+  const [profileConnectionTests, setProfileConnectionTests] = useState<
+    Record<string, ProfileConnectionTestState>
+  >({});
+  const [testingAllProfiles, setTestingAllProfiles] = useState(false);
+  const connectionTestsInProgress = Object.values(profileConnectionTests).some(
+    (result) => result.status === 'testing',
+  );
   const configuredVoiceModelId = getConfiguredSherpaAsrModelId();
   const voiceModelSelectionLocked = Boolean(configuredVoiceModelId);
   const [selectedVoiceModelId, setSelectedVoiceModelId] = useState(getPreferredVoiceAsrModelId);
@@ -205,7 +227,8 @@ export default function SettingsScreen() {
       isTestingVoiceAsr),
   );
   const activeProfileHasConnectionIssue = Boolean(
-    activeProfile && (status === 'disconnected' || lastSyncError),
+    activeProfile &&
+    (healthStatus === 'disconnected' || healthStatus === 'degraded' || lastSyncError),
   );
   const showProfileAuthSetup = advancedGatewaySetupOpen || activeProfileHasConnectionIssue;
 
@@ -372,57 +395,162 @@ export default function SettingsScreen() {
     };
   }, [activeProfile]);
 
-  const handleSelectProfile = async (profile: GatewayProfile) => {
-    setPairingImportMessage(null);
-    setUrlInput(profile.url);
-    await ensureVisibleProfileIsSelectable(profile);
-    await setActiveProfile(profile.id);
-    connect();
-  };
-
   const ensureVisibleProfileIsSelectable = async (profile: GatewayProfile) => {
     if (profiles.some((candidate) => candidate.id === profile.id)) return;
     await saveProfile(profile);
   };
 
   const handleSaveCurrentUrl = async () => {
-    const urlError = mobileGatewayProfileUrlError(urlInput.trim());
+    const url = urlInput.trim();
+    const urlError = mobileGatewayProfileUrlError(url);
     if (urlError) {
       Alert.alert('Invalid URL', urlError);
       return;
     }
-    await setGatewayUrl(urlInput.trim());
-    connect();
+    setManualUrlValidationInProgress(true);
+    try {
+      const matchingProfile = profiles.find((profile) => profile.url === url);
+      const auth = matchingProfile ? await authCredentialsForProfile(matchingProfile) : {};
+      await testGatewayConnection(url, auth);
+      await setGatewayUrl(url);
+      connect();
+    } catch (error) {
+      Alert.alert(
+        'URL not activated',
+        `${connectionProbeTeachingError(error)}\n\nThe current connection is unchanged.`,
+      );
+    } finally {
+      setManualUrlValidationInProgress(false);
+    }
   };
 
-  const handleTestProfile = async (
+  const testProfileConnection = async (
     profile: GatewayProfile,
-    options: { showAlert?: boolean } = {},
-  ) => {
-    if (connectionTestInProgress) return;
-    setConnectionTestInProgress(true);
-    setConnectionTestFailed(false);
-    setConnectionTestStatus(`Testing ${profile.name} at ${profile.url}…`);
+  ): Promise<ProfileConnectionTestState> => {
     try {
       const auth = await authCredentialsForProfile(profile);
       if (profile.authMode !== 'none' && Object.keys(auth).length === 0) {
         throw new Error(`No ${profile.authMode} credential is saved for this profile.`);
       }
       const result = await testGatewayConnection(profile.url, auth);
-      const message = `${profile.name} works. Authenticated as companion with ${result.authMode} auth in ${result.latencyMs}ms.`;
-      await ensureVisibleProfileIsSelectable(profile);
-      await setActiveProfile(profile.id);
-      connect();
-      setConnectionTestStatus(message);
-      if (options.showAlert) Alert.alert('Gateway profile works', message);
+      return {
+        status: 'healthy',
+        message: `Healthy · authenticated gateway.ping · ${result.latencyMs}ms`,
+      };
     } catch (error) {
-      const message = `${profile.name} failed: ${(error as Error).message}`;
-      setConnectionTestFailed(true);
-      setConnectionTestStatus(message);
-      if (options.showAlert) Alert.alert('Gateway profile failed', message);
-    } finally {
-      setConnectionTestInProgress(false);
+      return {
+        status: 'failed',
+        message: `Failed · ${connectionProbeTeachingError(error)}`,
+      };
     }
+  };
+
+  const handleTestProfile = async (
+    profile: GatewayProfile,
+    options: { showAlert?: boolean } = {},
+  ) => {
+    if (connectionTestsInProgress) return;
+    setProfileConnectionTests((current) => ({
+      ...current,
+      [profile.id]: {
+        status: 'testing',
+        message: `Testing ${profile.name} at ${profile.url}…`,
+      },
+    }));
+    const result = await testProfileConnection(profile);
+    setProfileConnectionTests((current) => ({ ...current, [profile.id]: result }));
+    if (options.showAlert) {
+      Alert.alert(
+        result.status === 'healthy' ? 'Gateway profile works' : 'Gateway profile failed',
+        result.message,
+      );
+    }
+  };
+
+  const handleActivateProfile = async (profile: GatewayProfile) => {
+    if (connectionTestsInProgress || profile.id === activeProfile?.id) return;
+    setProfileConnectionTests((current) => ({
+      ...current,
+      [profile.id]: {
+        status: 'testing',
+        message: `Validating ${profile.name} before switching…`,
+      },
+    }));
+    const result = await testProfileConnection(profile);
+    setProfileConnectionTests((current) => ({ ...current, [profile.id]: result }));
+    if (result.status !== 'healthy') {
+      Alert.alert(
+        'Profile not activated',
+        `${result.message}\n\nThe current profile is unchanged.`,
+      );
+      return;
+    }
+    await ensureVisibleProfileIsSelectable(profile);
+    await setActiveProfile(profile.id);
+    setPairingImportMessage(null);
+    setUrlInput(profile.url);
+    setAuthMode(profile.authMode ?? 'none');
+    connect();
+  };
+
+  const handleTestAllProfiles = async () => {
+    if (connectionTestsInProgress || displayedProfiles.length === 0) return;
+    setTestingAllProfiles(true);
+    setProfileConnectionTests(
+      Object.fromEntries(
+        displayedProfiles.map((profile) => [
+          profile.id,
+          {
+            status: 'testing',
+            message: `Testing ${profile.name} at ${profile.url}…`,
+          },
+        ]),
+      ),
+    );
+    const results = await Promise.all(
+      displayedProfiles.map(async (profile) => [profile.id, await testProfileConnection(profile)]),
+    );
+    const resultByProfile = Object.fromEntries(results) as Record<
+      string,
+      ProfileConnectionTestState
+    >;
+    setProfileConnectionTests(resultByProfile);
+    setTestingAllProfiles(false);
+    const healthyCount = Object.values(resultByProfile).filter(
+      (result) => result.status === 'healthy',
+    ).length;
+    Alert.alert(
+      'Profile checks complete',
+      `${healthyCount} healthy · ${displayedProfiles.length - healthyCount} failed`,
+    );
+  };
+
+  const handleResetSavedProfiles = () => {
+    Alert.alert(
+      'Reset saved gateway profiles?',
+      'This removes every paired or custom profile and its credential. The launcher-provided Configured Gateway is preserved.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset profiles',
+          style: 'destructive',
+          onPress: () => {
+            void resetSavedProfiles()
+              .then(() => {
+                setRecentImportedProfiles([]);
+                setProfileConnectionTests({});
+                Alert.alert(
+                  'Saved profiles reset',
+                  'Pair the current Command Center QR to rebuild LAN and Tailscale profiles for this worktree.',
+                );
+              })
+              .catch((error: Error) => {
+                Alert.alert('Profile reset failed', error.message);
+              });
+          },
+        },
+      ],
+    );
   };
 
   const handleAddProfile = async () => {
@@ -454,8 +582,10 @@ export default function SettingsScreen() {
       return;
     }
     await saveProfile(profile, authSecret);
-    await setActiveProfile(profile.id);
-    connect();
+    Alert.alert(
+      'Profile saved',
+      `${profile.name} was saved. Use “Validate & use” to switch to it.`,
+    );
   };
 
   const handleSaveAuth = async () => {
@@ -597,36 +727,49 @@ export default function SettingsScreen() {
       for (const importedProfile of importedProfiles) {
         await saveProfile(importedProfile.profile, importedProfile.secret);
       }
-      const reachability = await testImportedPairingProfiles(importedProfiles);
-      const reachableProfileIds = new Set(
-        reachability
-          .filter((candidate) => candidate.reachable)
-          .map((candidate) => candidate.profile.id),
+      setProfileConnectionTests(
+        Object.fromEntries(
+          importedProfiles.map(({ profile }) => [
+            profile.id,
+            {
+              status: 'testing',
+              message: `Testing ${profile.url}…`,
+            },
+          ]),
+        ),
       );
-      const preferredProfile =
-        sortGatewayProfilesForAutoConnect(
-          importedProfiles.map((candidate) => candidate.profile),
-        ).find((profile) => reachableProfileIds.has(profile.id)) ??
-        selectPreferredGatewayProfile(importedProfiles.map((candidate) => candidate.profile));
-      if (!preferredProfile) throw new Error('Pairing did not return a gateway profile.');
-      await setActiveProfile(preferredProfile.id);
-      setUrlInput(preferredProfile.url);
-      setAuthMode(preferredProfile.authMode ?? 'none');
-      const connectedProfile = reachability.find(
-        (candidate) => candidate.profile.id === preferredProfile.id && candidate.reachable,
+      const reachabilityChecks = startImportedPairingProfileTests(importedProfiles);
+      const allReachability = Promise.all(reachabilityChecks);
+      const preferredReachable = await preferredReachablePairingResult(
+        importedProfiles,
+        reachabilityChecks,
       );
-      const importMessage = connectedProfile
+      const preferredProfile = preferredReachable?.profile;
+      if (preferredProfile) {
+        await setActiveProfile(preferredProfile.id);
+        setUrlInput(preferredProfile.url);
+        setAuthMode(preferredProfile.authMode ?? 'none');
+        setProfileConnectionTests((current) => ({
+          ...current,
+          [preferredProfile.id]: pairingProfileTestState(preferredReachable),
+        }));
+      }
+      const importMessage = preferredProfile
         ? `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported. Connected to ${preferredProfile.name}.`
-        : `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported. Choose a reachable profile below if ${preferredProfile.name} stays disconnected.`;
+        : `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported, but none passed validation. The current profile is unchanged.`;
       setPairingImportMessage(importMessage);
-      setConnectionTestFailed(!connectedProfile);
-      setConnectionTestStatus(
-        connectedProfile
-          ? `Pairing test succeeded for ${preferredProfile.name}.`
-          : firstPairingReachabilityError(reachability),
-      );
+      void allReachability.then((reachability) => {
+        setProfileConnectionTests(
+          Object.fromEntries(
+            reachability.map((candidate) => [
+              candidate.profile.id,
+              pairingProfileTestState(candidate),
+            ]),
+          ),
+        );
+      });
       setAdvancedGatewaySetupOpen(false);
-      connect();
+      if (preferredProfile) connect();
       setPairingScannerOpen(false);
       Alert.alert('Companion paired', importMessage);
     } catch (error) {
@@ -655,15 +798,19 @@ export default function SettingsScreen() {
               styles.statusDot,
               {
                 backgroundColor:
-                  status === 'connected'
+                  healthStatus === 'healthy'
                     ? colors.statusOk
-                    : status === 'connecting'
-                      ? colors.statusWarn
-                      : colors.statusFail,
+                    : healthStatus === 'disconnected'
+                      ? colors.statusFail
+                      : healthStatus === 'connecting' ||
+                          healthStatus === 'socket-up-not-proven' ||
+                          healthStatus === 'degraded'
+                        ? colors.statusWarn
+                        : colors.statusFail,
               },
             ]}
           />
-          <Text style={baseStyles.textPrimary}>{status}</Text>
+          <Text style={baseStyles.textPrimary}>{connectionHealthLabel(healthStatus)}</Text>
         </View>
       </View>
 
@@ -730,13 +877,37 @@ export default function SettingsScreen() {
       <View style={styles.infoSection}>
         <View style={styles.gatewayActionHeader}>
           <View style={styles.gatewayActionCopy}>
-            <Text style={[styles.sectionTitle, styles.gatewayActionTitle]}>Gateway profiles</Text>
+            <Text style={[styles.sectionTitle, styles.gatewayActionTitle]}>
+              Connection profiles
+            </Text>
             <Text style={styles.helperTextNoMargin}>
               {activeProfile
-                ? `Active: ${activeProfile.name} · ${status}`
-                : 'No gateway profile selected.'}
+                ? `${healthStatus === 'healthy' ? 'Active & connected' : 'Active'}: ${activeProfile.name} · ${formatProfileKind(activeProfile.kind)} · ${connectionHealthLabel(healthStatus)}`
+                : gatewayUrl
+                  ? `${healthStatus === 'healthy' ? 'Active & connected' : 'Active'}: Manual URL · ${connectionHealthLabel(healthStatus)}`
+                  : 'No gateway profile selected.'}
             </Text>
+            <Text style={styles.helperTextNoMargin}>
+              Testing never switches. Switching validates first.
+            </Text>
+            {activeProfile ? (
+              <Text style={styles.helperTextNoMargin}>
+                Last successful response: {formatLastGatewayResponse(lastSuccessfulProbeAt)}
+                {lastProbeLatencyMs === null ? '' : ` · ${lastProbeLatencyMs}ms`}
+              </Text>
+            ) : null}
           </View>
+          {displayedProfiles.length > 0 ? (
+            <Pressable
+              style={styles.profileTestAllButton}
+              onPress={() => void handleTestAllProfiles()}
+              disabled={connectionTestsInProgress}
+            >
+              <Text style={styles.profileActionButtonText}>
+                {testingAllProfiles ? 'Testing…' : 'Test all profiles'}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
 
         <View style={styles.profileList}>
@@ -748,58 +919,71 @@ export default function SettingsScreen() {
           ) : (
             displayedProfiles.map((profile) => {
               const selected = profile.id === activeProfile?.id;
+              const connectionTest = profileConnectionTests[profile.id];
+              const testInProgress = connectionTest?.status === 'testing';
+              const activeBadge =
+                healthStatus === 'healthy'
+                  ? 'Active · Connected'
+                  : `Active · ${connectionHealthLabel(healthStatus)}`;
               return (
                 <View
                   key={profile.id}
                   style={[styles.profileCard, selected && styles.profileCardActive]}
                 >
-                  <Pressable
-                    style={styles.profileButton}
-                    onPress={() => void handleSelectProfile(profile)}
-                  >
+                  <View style={styles.profileButton}>
                     <View style={styles.profileHeader}>
                       <Text style={styles.profileName}>{profile.name}</Text>
-                      <Text style={[styles.profileBadge, selected && styles.profileBadgeActive]}>
-                        {selected ? 'Active' : profile.kind}
-                      </Text>
+                      <View style={styles.profileBadges}>
+                        <Text style={styles.profileBadge}>{formatProfileKind(profile.kind)}</Text>
+                        {selected ? (
+                          <Text
+                            style={[
+                              styles.profileBadge,
+                              {
+                                color:
+                                  healthStatus === 'healthy'
+                                    ? colors.statusOk
+                                    : healthStatus === 'disconnected'
+                                      ? colors.statusFail
+                                      : colors.statusWarn,
+                              },
+                            ]}
+                          >
+                            {activeBadge}
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
                     <Text style={styles.profileUrl}>{profile.url}</Text>
                     <Text style={styles.profileAuth}>
                       Auth:{' '}
                       {profile.authMode && profile.authMode !== 'none' ? profile.authMode : 'none'}
                     </Text>
-                  </Pressable>
+                  </View>
                   <View style={styles.profileActions}>
-                    <Pressable
-                      style={[
-                        styles.profileActionButton,
-                        selected && styles.profileActionButtonActive,
-                      ]}
-                      onPress={() => void handleSelectProfile(profile)}
-                    >
-                      <Text
-                        style={[
-                          styles.profileActionButtonText,
-                          selected && styles.profileActionButtonTextActive,
-                        ]}
+                    {selected ? (
+                      <View style={[styles.profileActionButton, styles.profileActionButtonActive]}>
+                        <Text style={styles.profileActionButtonTextActive}>Current profile</Text>
+                      </View>
+                    ) : (
+                      <Pressable
+                        style={styles.profileActionButton}
+                        onPress={() => void handleActivateProfile(profile)}
+                        disabled={connectionTestsInProgress}
                       >
-                        {selected
-                          ? status === 'connected'
-                            ? 'Connected'
-                            : 'Connect'
-                          : 'Use profile'}
-                      </Text>
-                    </Pressable>
+                        <Text style={styles.profileActionButtonText}>Switch to this</Text>
+                      </Pressable>
+                    )}
                     <Pressable
                       style={styles.profileTestButton}
                       onPress={() => void handleTestProfile(profile, { showAlert: true })}
-                      disabled={connectionTestInProgress}
+                      disabled={connectionTestsInProgress}
                     >
                       <Text style={styles.profileActionButtonText}>
-                        {connectionTestInProgress ? 'Testing…' : 'Test'}
+                        {testInProgress ? 'Testing…' : 'Test connection'}
                       </Text>
                     </Pressable>
-                    {!profile.readonly ? (
+                    {!profile.readonly && !selected ? (
                       <Pressable
                         style={styles.deleteButton}
                         onPress={() => void handleDeleteProfile(profile)}
@@ -808,22 +992,28 @@ export default function SettingsScreen() {
                       </Pressable>
                     ) : null}
                   </View>
+                  {connectionTest ? (
+                    <Text
+                      style={[
+                        styles.profileConnectionTestResult,
+                        connectionTest.status === 'failed'
+                          ? styles.connectionTestFailed
+                          : styles.connectionTestOk,
+                      ]}
+                    >
+                      {connectionTest.message}
+                    </Text>
+                  ) : null}
                 </View>
               );
             })
           )}
         </View>
 
-        {connectionTestStatus ? (
-          <Text
-            style={[
-              styles.connectionTestText,
-              styles.connectionTestInline,
-              connectionTestFailed ? styles.connectionTestFailed : styles.connectionTestOk,
-            ]}
-          >
-            {connectionTestStatus}
-          </Text>
+        {displayedProfiles.some((profile) => !profile.readonly) ? (
+          <Pressable style={styles.profileResetButton} onPress={handleResetSavedProfiles}>
+            <Text style={styles.deleteText}>Reset saved profiles</Text>
+          </Pressable>
         ) : null}
 
         <Pressable
@@ -843,7 +1033,7 @@ export default function SettingsScreen() {
                 style={styles.input}
                 value={urlInput}
                 onChangeText={setUrlInput}
-                placeholder="ws://your-mac.local:7777/ws or wss://your-gateway.example/ws"
+                placeholder="ws://your-mac.local:<port>/ws or wss://your-gateway.example/ws"
                 placeholderTextColor={colors.textMuted}
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -854,9 +1044,12 @@ export default function SettingsScreen() {
             <View style={styles.buttonRow}>
               <Pressable
                 style={[styles.button, styles.secondaryButton]}
-                onPress={handleSaveCurrentUrl}
+                onPress={() => void handleSaveCurrentUrl()}
+                disabled={manualUrlValidationInProgress}
               >
-                <Text style={styles.buttonText}>Use URL</Text>
+                <Text style={styles.buttonText}>
+                  {manualUrlValidationInProgress ? 'Validating…' : 'Validate & use URL'}
+                </Text>
               </Pressable>
             </View>
           </>
@@ -1175,16 +1368,15 @@ export default function SettingsScreen() {
                 Advanced diagnostics
               </Text>
               <Text style={styles.helperTextNoMargin}>
-                Environment, update status, and raw troubleshooting live here so pairing stays first.
+                Environment, update status, and raw troubleshooting live here so pairing stays
+                first.
               </Text>
             </View>
             <Pressable
               style={styles.advancedToggle}
               onPress={() => setDiagnosticsOpen((open) => !open)}
             >
-              <Text style={styles.advancedToggleText}>
-                {diagnosticsOpen ? 'Hide' : 'Show'}
-              </Text>
+              <Text style={styles.advancedToggleText}>{diagnosticsOpen ? 'Hide' : 'Show'}</Text>
             </Pressable>
           </View>
           {diagnosticsOpen ? (
@@ -1314,6 +1506,10 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     marginBottom: spacing.sm,
   },
+  profileBadges: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
   profileName: {
     color: colors.textPrimary,
     fontSize: fonts.sizeMd,
@@ -1363,6 +1559,28 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1,
     borderLeftColor: colors.bgSurface,
     paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  profileTestAllButton: {
+    borderColor: colors.bgCardHover,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  profileConnectionTestResult: {
+    borderTopColor: colors.bgSurface,
+    borderTopWidth: 1,
+    fontSize: fonts.sizeSm,
+    lineHeight: 18,
+    padding: spacing.md,
+  },
+  profileResetButton: {
+    alignItems: 'center',
+    borderColor: colors.statusFail + '80',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    marginBottom: spacing.md,
     paddingVertical: spacing.md,
   },
   deleteButton: {
@@ -1774,10 +1992,11 @@ type ImportedPairingProfile = {
 type PairingProfileReachability = {
   profile: GatewayProfile;
   reachable: boolean;
+  latencyMs?: number;
   error?: string;
 };
 
-const PAIRING_PROFILE_TEST_TIMEOUT_MS = 3_500;
+const PAIRING_CONNECT_TIMEOUT_MS = 3_500;
 
 function mergeVisibleProfiles(
   profiles: GatewayProfile[],
@@ -1789,37 +2008,62 @@ function mergeVisibleProfiles(
   return [...byId.values()];
 }
 
-async function testImportedPairingProfiles(
+function startImportedPairingProfileTests(
   importedProfiles: ImportedPairingProfile[],
-): Promise<PairingProfileReachability[]> {
-  return Promise.all(
-    importedProfiles.map(async (importedProfile) => {
-      const auth = authCredentialsForSecret(importedProfile.profile, importedProfile.secret);
-      try {
-        await testGatewayConnection(
-          importedProfile.profile.url,
-          auth,
-          PAIRING_PROFILE_TEST_TIMEOUT_MS,
-        );
-        return { profile: importedProfile.profile, reachable: true };
-      } catch (error) {
-        // Pairing commonly contains LAN + remote URLs; at least one can be unreachable
-        // from the current network. Capture the failure so the UI can guide selection.
-        return {
-          profile: importedProfile.profile,
-          reachable: false,
-          error: (error as Error).message,
-        };
-      }
-    }),
-  );
+): Promise<PairingProfileReachability>[] {
+  return importedProfiles.map(async (importedProfile) => {
+    const auth = authCredentialsForSecret(importedProfile.profile, importedProfile.secret);
+    try {
+      const result = await testGatewayConnection(importedProfile.profile.url, auth, {
+        connectMs: PAIRING_CONNECT_TIMEOUT_MS,
+      });
+      return {
+        profile: importedProfile.profile,
+        reachable: true,
+        latencyMs: result.latencyMs,
+      };
+    } catch (error) {
+      // Pairing commonly contains LAN + remote URLs; at least one can be unreachable
+      // from the current network. Capture the failure so the UI can guide selection.
+      return {
+        profile: importedProfile.profile,
+        reachable: false,
+        error: (error as Error).message,
+      };
+    }
+  });
 }
 
-function firstPairingReachabilityError(reachability: PairingProfileReachability[]): string {
-  const firstError = reachability.find((candidate) => candidate.error);
-  return firstError
-    ? `Imported profiles, but ${firstError.profile.name} did not connect: ${firstError.error}`
-    : 'Imported profiles, but none connected from this device yet.';
+async function preferredReachablePairingResult(
+  importedProfiles: ImportedPairingProfile[],
+  checks: Promise<PairingProfileReachability>[],
+): Promise<PairingProfileReachability | null> {
+  const checksByProfileId = new Map(
+    importedProfiles.map(({ profile }, index) => [profile.id, checks[index]]),
+  );
+  const profilesByPreference = sortGatewayProfilesForAutoConnect(
+    importedProfiles.map(({ profile }) => profile),
+  );
+  for (const profile of profilesByPreference) {
+    const check = checksByProfileId.get(profile.id);
+    if (!check) continue;
+    const result = await check;
+    if (result.reachable) return result;
+  }
+  return null;
+}
+
+function pairingProfileTestState(result: PairingProfileReachability): ProfileConnectionTestState {
+  if (result.reachable) {
+    return {
+      status: 'healthy',
+      message: `Healthy · authenticated gateway.ping · ${result.latencyMs}ms`,
+    };
+  }
+  return {
+    status: 'failed',
+    message: `Failed · ${result.error ?? 'Gateway did not answer.'}`,
+  };
 }
 
 function authCredentialsForSecret(profile: GatewayProfile, secret: string): GatewayAuthCredentials {

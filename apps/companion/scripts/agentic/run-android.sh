@@ -326,7 +326,26 @@ main() {
 parse_android_cli_args "$@"
 DEVICE_MODE="${DEVICE_MODE:-device}"
 companion_load_local_auth_env
+
+ANDROID_TARGET="$(select_android_device)"
+ANDROID_LINE=""
+ANDROID_EXPO_TARGET=""
+if command -v adb >/dev/null 2>&1; then
+  ANDROID_LINE="$(adb devices -l | awk -v serial="${ANDROID_TARGET}" '$1 == serial && $2 == "device" { print; exit }')"
+  ANDROID_EXPO_TARGET="$(android_model_token_from_adb_line "${ANDROID_LINE}")"
+fi
+
+# USB-connected Android devices use adb reverse for Metro. Advertising the
+# Mac's LAN address breaks when the phone is on a different Wi-Fi network.
+if [[ "${METRO_CONNECTION:-auto}" == "auto" ]] &&
+  { [[ "${ANDROID_LINE}" == *" usb:"* ]] || [[ "${ANDROID_TARGET}" == emulator-* ]]; }; then
+  METRO_CONNECTION=localhost
+fi
 companion_configure_network_env
+if [[ "${METRO_CONNECTION}" == "localhost" ]] && command -v adb >/dev/null 2>&1; then
+  adb -s "${ANDROID_TARGET}" reverse "tcp:${METRO_PORT}" "tcp:${METRO_PORT}" >/dev/null
+  adb -s "${ANDROID_TARGET}" reverse "tcp:${GATEWAY_PORT}" "tcp:${GATEWAY_PORT}" >/dev/null
+fi
 
 cd "${APP_DIR}"
 
@@ -350,13 +369,6 @@ RUN_ENV=(
 assert_android_identity_matches_expo_config "${RUN_ENV[@]}"
 ensure_android_native_identity "${RUN_ENV[@]}"
 
-ANDROID_TARGET="$(select_android_device)"
-ANDROID_LINE=""
-ANDROID_EXPO_TARGET=""
-if command -v adb >/dev/null 2>&1; then
-  ANDROID_LINE="$(adb devices -l | awk -v serial="${ANDROID_TARGET}" '$1 == serial && $2 == "device" { print; exit }')"
-  ANDROID_EXPO_TARGET="$(android_model_token_from_adb_line "${ANDROID_LINE}")"
-fi
 RUN_ENV+=(ANDROID_SERIAL="${ANDROID_TARGET}" ADB_SERIAL="${ANDROID_TARGET}")
 
 args=(expo run:android --port "${METRO_PORT}" --app-id "${BUNDLE_ID}")

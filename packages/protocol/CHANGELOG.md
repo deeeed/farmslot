@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Export canonical roadmap project sentinels and shared concrete/unscoped predicates so clients and the gateway use the same scoping rules.
+- Add the authenticated `gateway.ping` liveness contract for cheap client health checks.
 - `Run` declares `prState` and `mergedAt`. Work-graph `merged` edges gate on merge state read off the run, but `Run` declared no such field — the graph code cast the run to a shape that did not exist, so the condition read `undefined` and no `merged` edge could ever be satisfied.
 - **BREAKING:** `exec` accepts an `argv` array alongside `cmd`, and `fs.*` takes `{root, relPath}` instead of a pre-joined absolute path. Argv carries arguments as data rather than shell text, so no caller value is ever re-parsed by a shell; the split path lets the node confine every filesystem operation under a declared root and refuse `.git` server-side. Bounded remote artifact reads collapse `realpath`/`stat`/`readBase64` into one call with a byte ceiling.
 

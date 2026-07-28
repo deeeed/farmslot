@@ -15,7 +15,7 @@ Each worktree/slot should have its own:
 | Var | Source | Example (ff-2) |
 |-----|--------|----------------|
 | Gateway | slot `dev-server.port` | `8809` |
-| Metro | companion-dedicated port (pool or `.env.ports`) | `8879` (derive; never 8081 shared) |
+| Metro | slot `dev-server.metro_port` or operator `.env.ports` | `8879` (explicit; never shared 8081) |
 | iOS sim | pool `ios-sim.simulator` or worktree `agentic.local.conf` | `ff-2` sim name |
 | Android | pool `adb_serial` / `avd` or `agentic.local.conf` | `emulator-5582` |
 
@@ -23,7 +23,8 @@ Gateway URL for the app must match **this checkout's gateway port**, not hardcod
 
 ```bash
 export GATEWAY_PORT=8809   # from slot
-export EXPO_PUBLIC_GATEWAY_URL="http://127.0.0.1:${GATEWAY_PORT}"
+export METRO_PORT=8879     # from slot
+export EXPO_PUBLIC_GATEWAY_URL="ws://127.0.0.1:${GATEWAY_PORT}/ws"
 ```
 
 Per-worktree device pins live in gitignored `apps/companion/scripts/agentic/agentic.local.conf`
@@ -45,7 +46,7 @@ Per-worktree device pins live in gitignored `apps/companion/scripts/agentic/agen
      IOS_SIMULATOR='<simulator-name>' \
      METRO_PORT=<metro-port> \
      GATEWAY_PORT=<gateway-port> \
-     EXPO_PUBLIC_GATEWAY_URL="http://127.0.0.1:<gateway-port>" \
+     EXPO_PUBLIC_GATEWAY_URL="ws://127.0.0.1:<gateway-port>/ws" \
      bash scripts/agentic/start.sh --ios
    ```
 
@@ -64,7 +65,7 @@ Per-worktree device pins live in gitignored `apps/companion/scripts/agentic/agen
      ADB_SERIAL='<serial>' \
      METRO_PORT=<metro-port> \
      GATEWAY_PORT=<gateway-port> \
-     EXPO_PUBLIC_GATEWAY_URL="http://127.0.0.1:<gateway-port>" \
+     EXPO_PUBLIC_GATEWAY_URL="ws://127.0.0.1:<gateway-port>/ws" \
      bash scripts/agentic/start.sh --android
    ```
 

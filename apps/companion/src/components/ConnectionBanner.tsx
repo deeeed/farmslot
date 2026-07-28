@@ -10,7 +10,7 @@ interface ConnectionBannerProps {
   compact?: boolean;
 }
 
-type BannerTone = 'connected' | 'connecting' | 'syncError' | 'disconnected';
+type BannerTone = 'healthy' | 'connecting' | 'syncError' | 'disconnected';
 
 interface BannerContent {
   title: string;
@@ -19,24 +19,39 @@ interface BannerContent {
 }
 
 function resolveBannerContent(
-  status: ReturnType<typeof useConnectionStore.getState>['status'],
+  healthStatus: ReturnType<typeof useConnectionStore.getState>['healthStatus'],
+  lastProbeError: string | null,
   lastSyncError: string | null,
   runsSyncMessage: string | null,
   gatewayUrl: string,
   activeProfileAuthMode: string,
 ): BannerContent | null {
-  if (status === 'disconnected') {
+  if (healthStatus === 'disconnected') {
     return {
       title: 'Disconnected from gateway',
-      detail: 'Tap to open connection settings',
+      detail: lastProbeError ?? 'Retry, or switch to another LAN, tailnet, or remote profile.',
       tone: 'disconnected',
     };
   }
-  if (status === 'connecting') {
+  if (healthStatus === 'connecting') {
     return {
       title: 'Connecting to gateway…',
       detail: 'Waiting for authentication',
       tone: 'connecting',
+    };
+  }
+  if (healthStatus === 'socket-up-not-proven') {
+    return {
+      title: 'Gateway socket connected — proving response…',
+      detail: 'Waiting for an authenticated gateway.ping response.',
+      tone: 'connecting',
+    };
+  }
+  if (healthStatus === 'degraded') {
+    return {
+      title: 'Gateway connection degraded',
+      detail: lastProbeError ?? 'The socket is open, but the gateway did not answer.',
+      tone: 'syncError',
     };
   }
   if (runsSyncMessage) {
@@ -54,15 +69,18 @@ function resolveBannerContent(
     };
   }
   return {
-    title: `Connected · ${gatewayUrl}`,
+    title: `Healthy · ${gatewayUrl}`,
     detail: activeProfileAuthMode !== 'none' ? `${activeProfileAuthMode} auth` : 'Ready',
-    tone: 'connected',
+    tone: 'healthy',
   };
 }
 
 export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   const router = useRouter();
-  const status = useConnectionStore((s) => s.status);
+  const healthStatus = useConnectionStore((s) => s.healthStatus);
+  const lastProbeError = useConnectionStore((s) => s.lastProbeError);
+  const probeInProgress = useConnectionStore((s) => s.probeInProgress);
+  const retryConnection = useConnectionStore((s) => s.retryConnection);
   const lastSyncError = useConnectionStore((s) => s.lastSyncError);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const profiles = useConnectionStore((s) => s.profiles);
@@ -82,21 +100,22 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
       : null;
 
   const banner = resolveBannerContent(
-    status,
+    healthStatus,
+    lastProbeError,
     lastSyncError,
     runsSyncMessage,
     activeProfile?.name ?? gatewayUrl,
     activeProfileAuthMode ?? 'none',
   );
 
-  if (!banner || banner.tone === 'connected') return null;
+  if (!banner || banner.tone === 'healthy') return null;
 
-  const onPress = () => {
+  const openProfiles = () => {
     router.push('/settings');
   };
 
   return (
-    <Pressable
+    <View
       style={[
         styles.banner,
         compact && styles.compactBanner,
@@ -106,7 +125,6 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
             ? styles.syncError
             : styles.disconnected,
       ]}
-      onPress={onPress}
     >
       <View style={styles.contentRow}>
         <View
@@ -132,9 +150,20 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
             </Text>
           )}
         </View>
-        <Text style={styles.actionText}>{compact ? 'Edit' : 'Settings'}</Text>
+        <View style={styles.actions}>
+          <Pressable
+            style={styles.actionButton}
+            onPress={() => void retryConnection()}
+            disabled={probeInProgress}
+          >
+            <Text style={styles.actionText}>{probeInProgress ? 'Testing…' : 'Retry'}</Text>
+          </Pressable>
+          <Pressable style={styles.actionButton} onPress={openProfiles}>
+            <Text style={styles.actionText}>{compact ? 'Profiles' : 'Switch profile'}</Text>
+          </Pressable>
+        </View>
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -168,6 +197,14 @@ const styles = StyleSheet.create({
   textBlock: {
     flex: 1,
     minWidth: 0,
+  },
+  actions: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
+  actionButton: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
   },
   text: {
     color: colors.textPrimary,

@@ -56,8 +56,11 @@ if [ -f "$AUTH_ENV_FILE" ]; then
   echo "[dev] Loaded gateway auth from $AUTH_ENV_FILE"
 fi
 
-export GATEWAY_PORT="${GATEWAY_PORT:-7777}"
-export VITE_PORT="${VITE_PORT:-5174}"
+if [[ ! "${GATEWAY_PORT:-}" =~ ^[0-9]+$ || ! "${VITE_PORT:-}" =~ ^[0-9]+$ ]]; then
+  echo "[dev] ERROR: GATEWAY_PORT and VITE_PORT must come from .env.ports or explicit environment values." >&2
+  exit 1
+fi
+export GATEWAY_PORT VITE_PORT
 # The dev stack co-launches the local node agent (yarn dev runs it via
 # concurrently); point it at this stack's gateway so the machine is not
 # NODE DEGRADED (no device feed / file-watch / metrics). MACHINE_NAME
@@ -66,8 +69,8 @@ export VITE_PORT="${VITE_PORT:-5174}"
 # the operator gateway) must not leak the parent stack's address in.
 export GATEWAY_URL="ws://127.0.0.1:$GATEWAY_PORT"
 
-# Fail hard if another gateway already owns the port (e.g. a `farmslot up`
-# prod stack on the default 7777): the gateway would fail to bind and the
+# Fail hard if another gateway already owns the configured port (e.g. a
+# `farmslot up` prod stack): the gateway would fail to bind and the
 # co-launched node would register onto the OTHER gateway under this
 # machine's identity, flapping its node registration.
 if (exec 3<>"/dev/tcp/127.0.0.1/$GATEWAY_PORT") 2>/dev/null; then

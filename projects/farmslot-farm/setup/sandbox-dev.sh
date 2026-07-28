@@ -112,8 +112,8 @@ if [[ -f "$PORT_ENV" ]]; then
 fi
 
 # Canonical operator ports for the primary worktree (see docs/operations/worktree-operator-model.md).
-OPERATOR_GATEWAY_PORT="${GATEWAY_PORT:-7777}"
-OPERATOR_VITE_PORT="${VITE_PORT:-5174}"
+OPERATOR_GATEWAY_PORT="${GATEWAY_PORT:-}"
+OPERATOR_VITE_PORT="${VITE_PORT:-}"
 
 read_primary_repo() {
   local project_json="$REPO_ROOT/projects/farmslot-farm/project.json"
@@ -135,6 +135,10 @@ PRIMARY_CHECKOUT=0
 if is_primary_checkout; then
   PRIMARY_CHECKOUT=1
   # Main worktree: operator gateway + Command Center UI — never an isolated slot port.
+  if [[ ! "$OPERATOR_GATEWAY_PORT" =~ ^[0-9]+$ || ! "$OPERATOR_VITE_PORT" =~ ^[0-9]+$ ]]; then
+    echo "[sandbox-dev] primary worktree must set GATEWAY_PORT and VITE_PORT in .env.ports" >&2
+    exit 1
+  fi
   GATEWAY_PORT="$OPERATOR_GATEWAY_PORT"
   VITE_PORT="$OPERATOR_VITE_PORT"
 else

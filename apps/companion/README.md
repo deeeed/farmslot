@@ -42,9 +42,10 @@ are grouped by responsibility:
 
 ## Custom Metro port
 
-Every Farmslot-managed React Native app should run Metro on an explicit, app- or slot-owned port. Do not rely on React Native's default port when multiple Expo/RN apps may run side by side.
-
-This app defaults to `METRO_PORT=7677`, but the port is intentionally configurable per worktree/slot through `scripts/agentic/agentic.local.conf` or the environment.
+Every Farmslot-managed React Native app runs Metro on an explicit, slot- or
+worktree-owned port. There is no port fallback: Farmslot slots provide `port`
+and `metro_port` from `pool/*.json`; the operator worktree provides
+`GATEWAY_PORT` and `METRO_PORT` through its ignored `.env.ports`.
 
 ### How the port is wired
 
@@ -116,7 +117,7 @@ METRO_CONNECTION=localhost
 With `METRO_CONNECTION=auto`, the scripts choose localhost for simulator/emulator
 flows and LAN for physical-device flows. With `METRO_CONNECTION=lan`, scripts
 auto-detect the Mac's LAN IP, advertise Metro on that host, and derive
-`EXPO_PUBLIC_GATEWAY_URL=ws://<LAN-IP>:7777/ws` unless you set it explicitly.
+`EXPO_PUBLIC_GATEWAY_URL=ws://<LAN-IP>:$GATEWAY_PORT/ws` unless you set it explicitly.
 Use LAN when the phone and Mac are on the same network and you want to QA without
 relying on USB port reversal.
 
@@ -180,18 +181,59 @@ yarn install                    # honors packageManager field in package.json
 ## Architecture
 
 ```
-@farmslot/protocol (file: dep)  --+
-                                   +--> GatewayClient ----> Zustand stores ----> Expo Router screens
-gateway (ws://<host>:7777/ws) ----+
+@farmslot/protocol (file: dep)          --+
+                                         +--> GatewayClient ----> Zustand stores ----> Expo Router screens
+gateway (ws://<host>:<gateway-port>/ws) --+
 ```
 
 - **`src/lib/gateway-client.ts`** — WebSocket client adapted from the web UI. AppState-aware: disconnects on background, reconnects on foreground.
+- **`src/lib/connection-liveness*.ts`** — foreground-only authenticated `gateway.ping` probes and the connection health state machine.
 - **`src/store/`** — Zustand stores (`connection`, `fleet`, `runs`, `decisions`, `filters`).
 - **`src/app/`** — Expo Router file-based routes (tabs + stack).
 - **`src/components/`** — Shared cards, viewer, banners.
 - **`src/lib/artifact-url.ts`** — Builds gateway artifact HTTP URLs from the WS URL.
 
 The app is **online-only**. There's no offline cache, no pull-to-refresh — every list updates live via WS events (`fleet.updated`, `run.updated`, `slot.changed`, `decision.new`, etc.).
+
+### Real-device LAN and Tailscale checklist
+
+Run this matrix before shipping connection changes. Record pass/fail in the PR;
+never infer “healthy” from a WebSocket opening.
+
+- Pair a LAN profile, open Settings, and confirm the active profile name,
+  `LAN` kind, healthy state, last successful response, and probe latency.
+- Tap **Test connection** and confirm it reports an authenticated
+  `gateway.ping` latency. Break the host or credential and confirm the error
+  teaches host/network or authentication recovery.
+- Confirm profile cards are informational: **Test connection** never switches,
+  and **Switch to this** switches only after that exact profile passes an
+  authenticated `gateway.ping` check. The active card must say whether it is
+  connected.
+- Tap **Test all** and confirm every profile reports its own result while the
+  active profile remains unchanged.
+- Use **Reset saved profiles** to remove stale paired/custom profiles and
+  credentials while preserving the launcher-provided Configured Gateway, then
+  pair the current Command Center QR again.
+- Pair a tailnet profile and disable Wi-Fi/LAN access. Confirm the profile
+  becomes healthy over Tailscale, then switch LAN → tailnet → LAN.
+- Background the app for at least one normal probe interval. Confirm no probes
+  are sent while backgrounded, then foreground it and observe
+  connecting/not-proven → healthy (or an honest degraded/disconnected state).
+- During profile switches and reconnects, inspect gateway connections and
+  confirm only one Companion WebSocket remains.
+
+Execution record (2026-07-27, Pixel 9 Pro XL): automated state-machine,
+foreground timer, backoff, and re-prove tests passed. A USB launch using
+ADB-reversed Metro `7677` and gateway `7801` reached healthy; the authenticated
+`gateway.status` manual test responded in 225 ms and updated only the tested
+profile card. A parallel **Test all** pass kept the active profile unchanged
+while reporting separate healthy, authentication, socket, and timeout results.
+Live Tailscale switching and background socket inspection were not run.
+
+Implementation note: periodic and manual liveness now use the dedicated
+authenticated `gateway.ping` RPC. `gateway.status` was rejected as the heartbeat
+because an expired update cache can trigger Git/network freshness work; the ping
+path performs no filesystem or external network I/O.
 
 ## Variants
 
@@ -272,7 +314,11 @@ URL, app variant, store metadata, and review evidence for the build being shippe
 
 ## Troubleshooting
 
-**Black screen on launch.** Metro isn't reachable on the port the binary expects. Check `lsof -ti:${METRO_PORT:-7677}` — if empty, run `yarn start`. If Metro is up on a different port, rebuild with `yarn ios` or `yarn android` to rebake the configured port.
+**Black screen on launch.** Metro isn't reachable on the port the binary
+expects. Check the configured listener with
+`bash -c 'source scripts/agentic/agentic.conf && lsof -ti:"$METRO_PORT"'`. If
+empty, run `yarn start`. If the slot allocation changed, rebuild with `yarn ios`
+or `yarn android` to rebake the configured port.
 
 **`Unable to resolve module ./node_modules/expo-router/entry`.** Stale Metro/Watchman cache after a `yarn install`. Fix:
 

@@ -167,20 +167,22 @@ preview or run idle-resource cleanup through configured project shutdown hooks.
 
 1. Install deps in the worktree checkout (`yarn install` at repo root). Each worktree has its own `node_modules` — do not symlink from another checkout.
 2. Copy `.env.ports.example` to `.env.ports` at the repo root
-3. Set unique ports per worktree (main worktree uses defaults, no file needed):
+3. Set unique ports per worktree. The main worktree also requires this explicit
+   configuration; local launchers do not fall back to shared ports:
    ```bash
    GATEWAY_PORT=7778
+   METRO_PORT=7848
    VITE_PORT=5175
    ```
 4. Start: `bash scripts/dev.sh` (required — running `yarn dev` directly won't load port overrides)
 
 **Port allocation:**
 
-| Worktree | Gateway | Vite UI |
-| -------- | ------- | ------- |
-| main     | 7777    | 5174    |
-| farm     | 7778    | 5175    |
-| (next)   | 7779    | 5176    |
+| Worktree | Gateway | Metro | Vite UI |
+| -------- | ------- | ----- | ------- |
+| main     | 7777    | 7677  | 5174    |
+| farm     | 7778    | 7848  | 5175    |
+| (next)   | 7779    | 7849  | 5176    |
 
 **Limitations:** Remote node agents connect to one gateway only (the main one on 7777). The worktree gateway gets fleet data via SSH-based refresh on first boot, but won't have real-time node connections — so live exec and tmux streaming only work on the main gateway.
 

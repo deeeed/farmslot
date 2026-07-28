@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.10.0`
+Protocol version: `0.14.0`
 
 ## WebSocket frame shape
 
@@ -130,6 +130,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `fs.reveal`                          | fs           | bounded-write | —      | —      | Fs Reveal gateway method.                          |
 | `fs.write`                           | fs           | bounded-write | —      | —      | Fs Write gateway method.                           |
 | `gateway.doctor`                     | gateway      | read-only     | —      | —      | Gateway Doctor gateway method.                     |
+| `gateway.ping`                       | gateway      | bounded-write | —      | —      | Gateway Ping gateway method.                       |
 | `gateway.status`                     | gateway      | read-only     | —      | —      | Gateway Status gateway method.                     |
 | `git.branchDiff`                     | git          | bounded-write | —      | —      | Git BranchDiff gateway method.                     |
 | `git.diff`                           | git          | bounded-write | —      | —      | Git Diff gateway method.                           |

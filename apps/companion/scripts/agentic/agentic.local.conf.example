@@ -4,8 +4,10 @@
 # Optional variant override for local native builds.
 # APP_VARIANT=development
 
-# METRO_PORT is canonical for Expo/RN. WATCHER_PORT is accepted only as a legacy alias.
-# METRO_PORT=7677
+# Ports are required and should be copied from this checkout's slot/worktree
+# configuration. METRO_PORT is canonical; WATCHER_PORT is a legacy alias.
+# GATEWAY_PORT=<slot gateway port>
+# METRO_PORT=<slot Metro port>
 
 # Android real device serial from `adb devices`, host-only wireless ADB IP,
 # or full wireless ADB host:port. Prefer the stable USB serial: when Wireless
@@ -26,5 +28,6 @@ METRO_CONNECTION=auto
 # Optional. If omitted in lan mode, scripts auto-detect the Mac's active LAN IP.
 # REACT_NATIVE_PACKAGER_HOSTNAME=<mac-lan-ip>
 
-# Optional. If omitted in lan mode, scripts use ws://<detected-lan-ip>:7777/ws.
-# EXPO_PUBLIC_GATEWAY_URL=ws://<mac-lan-ip>:7777/ws
+# Optional. If omitted in lan mode, scripts use
+# ws://<detected-lan-ip>:$GATEWAY_PORT/ws.
+# EXPO_PUBLIC_GATEWAY_URL=ws://<mac-lan-ip>:<slot-gateway-port>/ws

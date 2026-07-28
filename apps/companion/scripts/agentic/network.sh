@@ -52,7 +52,7 @@ companion_detect_lan_host() {
 
 companion_load_local_auth_env() {
   local repo_dir
-  repo_dir="$(cd "${APP_DIR}/.." && pwd)"
+  repo_dir="$(cd "${APP_DIR}/../.." && pwd)"
   local auth_env="${repo_dir}/.env.local-auth"
   if [[ -f "${auth_env}" ]]; then
     set -a
@@ -82,7 +82,7 @@ companion_default_metro_connection() {
 
 companion_configure_network_env() {
   local metro_connection="${METRO_CONNECTION:-auto}"
-  local gateway_port="${GATEWAY_PORT:-7777}"
+  local gateway_port="${GATEWAY_PORT:?GATEWAY_PORT must come from slot/worktree config}"
   COMPANION_PACKAGER_HOSTNAME="${REACT_NATIVE_PACKAGER_HOSTNAME:-}"
   COMPANION_GATEWAY_URL="${EXPO_PUBLIC_GATEWAY_URL:-}"
 

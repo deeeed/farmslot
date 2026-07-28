@@ -47,6 +47,8 @@ function shellQuote(value: string): string {
  */
 export function slotVarsShellLines(vars: SlotVars): string[] {
   const resource = (key: string) => vars.resourceVars[key] ?? '';
+  const metroPortAlias: Array<[string, string]> =
+    vars.resourceVars.metro_port === undefined ? [['METRO_PORT', resource('port')]] : [];
   const pairs: Array<[string, string]> = [
     ['MACHINE', vars.machine],
     ['PLATFORM', vars.platform],
@@ -67,7 +69,7 @@ export function slotVarsShellLines(vars: SlotVars): string[] {
       ([key, value]) => [key.toUpperCase(), value] as [string, string],
     ),
     ['WATCHER_PORT', resource('port')],
-    ['METRO_PORT', resource('port')],
+    ...metroPortAlias,
     ['IOS_SIMULATOR', resource('simulator')],
     ['ANDROID_AVD', resource('avd')],
     ['AVD_NAME', resource('avd')],

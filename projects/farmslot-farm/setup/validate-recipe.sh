@@ -21,8 +21,8 @@ ARTIFACTS_DIR=""
 RUNTIME_DIR=""
 PLATFORM_VALUE="${PLATFORM:-cli}"
 CDP_PORT_VALUE="${CDP_PORT:-${FARMSLOT_CDP_PORT:-9323}}"
-GATEWAY_PORT_VALUE="${GATEWAY_PORT:-${WATCHER_PORT:-}}"
-METRO_PORT_VALUE="${METRO_PORT:-${WATCHER_PORT:-7677}}"
+GATEWAY_PORT_VALUE="${GATEWAY_PORT:-}"
+METRO_PORT_VALUE="${METRO_PORT:-}"
 SIMULATOR_VALUE="${IOS_SIMULATOR:-${SIMULATOR:-}}"
 ADB_SERIAL_VALUE="${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}"
 SLOW_MS=""
@@ -147,12 +147,19 @@ MANIFEST_PATH="${PRIMARY_REPO}/docs/examples/recipes/farmslot-v1.action-manifest
 
 case "${PLATFORM_VALUE}" in
   ios|android)
+    if [[ ! "${GATEWAY_PORT_VALUE}" =~ ^[0-9]+$ || ! "${METRO_PORT_VALUE}" =~ ^[0-9]+$ ]]; then
+      echo "ERROR: --gateway-port and --metro-port must come from the slot configuration for ${PLATFORM_VALUE} recipes." >&2
+      exit 1
+    fi
     COMPANION_SCRIPT="${REPO_ROOT}/apps/companion/scripts/agentic/validate-recipe.sh"
     if [[ ! -f "${COMPANION_SCRIPT}" ]]; then
       echo "ERROR: companion recipe runner missing at ${COMPANION_SCRIPT}" >&2
       exit 1
     fi
     ARGS=(
+      env
+      "GATEWAY_PORT=${GATEWAY_PORT_VALUE}"
+      "METRO_PORT=${METRO_PORT_VALUE}"
       bash "${COMPANION_SCRIPT}"
       --recipe "${RECIPE_PATH}"
       --artifacts-dir "${ARTIFACTS_DIR}"

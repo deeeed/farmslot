@@ -27,7 +27,9 @@ export type GatewayProfile = {
 const CONFIGURED_GATEWAY_URL = Constants.expoConfig?.extra?.gatewayUrl;
 const CONFIGURED_GATEWAY_AUTH_TOKEN = Constants.expoConfig?.extra?.gatewayAuthToken;
 function isUsableConfiguredGatewayUrl(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && isMobileGatewayProfileUrl(value);
+  // Launcher-provided loopback URLs are valid when USB uses `adb reverse`.
+  // User-created mobile profiles still reject loopback below.
+  return typeof value === 'string' && value.length > 0 && isValidGatewayUrl(value);
 }
 
 export const DEFAULT_GATEWAY_URL = isUsableConfiguredGatewayUrl(CONFIGURED_GATEWAY_URL)

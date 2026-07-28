@@ -510,10 +510,7 @@ test('import clears stale taskFile when bundle has no task tree', () => {
       mode: 'seed',
     });
     const persisted = JSON.parse(
-      readFileSync(
-        path.join(targetRoot, '.runs', `${imported.importedRunIds[0]}.json`),
-        'utf-8',
-      ),
+      readFileSync(path.join(targetRoot, '.runs', `${imported.importedRunIds[0]}.json`), 'utf-8'),
     ) as Run;
     assert.equal(persisted.taskFile, null);
     assert.equal(persisted.activeTaskFile, undefined);

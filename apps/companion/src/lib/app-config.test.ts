@@ -114,6 +114,68 @@ test('Expo config uses script-provided bundle id and scheme for local native lau
   }
 });
 
+test('Expo config lets isolated launcher gateway settings override local dotenv defaults', () => {
+  const previousGatewayUrl = process.env.EXPO_PUBLIC_GATEWAY_URL;
+  const previousGatewayToken = process.env.FARMSLOT_GATEWAY_TOKEN;
+  process.env.EXPO_PUBLIC_GATEWAY_URL = 'ws://localhost:7801/ws';
+  process.env.FARMSLOT_GATEWAY_TOKEN = 'isolated-token';
+  try {
+    const config = createExpoConfig({
+      config: {
+        name: 'FarmDev',
+        slug: 'farmslot',
+      },
+    } as ConfigContext);
+
+    assert.equal(config.extra?.gatewayUrl, 'ws://localhost:7801/ws');
+    assert.equal(config.extra?.gatewayAuthToken, 'isolated-token');
+  } finally {
+    restoreEnv('EXPO_PUBLIC_GATEWAY_URL', previousGatewayUrl);
+    restoreEnv('FARMSLOT_GATEWAY_TOKEN', previousGatewayToken);
+  }
+});
+
+test('Expo config uses the Metro port supplied by slot or worktree configuration', () => {
+  const previousMetroPort = process.env.METRO_PORT;
+  process.env.METRO_PORT = '41234';
+  try {
+    const config = createExpoConfig({
+      config: {
+        name: 'FarmDev',
+        slug: 'farmslot',
+      },
+    } as ConfigContext);
+    const metroPlugin = (config.plugins ?? []).find(
+      (plugin) => Array.isArray(plugin) && plugin[0] === './plugins/withMetroPort.cjs',
+    );
+
+    assert.ok(Array.isArray(metroPlugin));
+    assert.equal(metroPlugin[1]?.port, 41234);
+    assert.equal(config.extra?.metroPort, 41234);
+  } finally {
+    restoreEnv('METRO_PORT', previousMetroPort);
+  }
+});
+
+test('Expo config rejects an invalid configured Metro port instead of falling back', () => {
+  const previousMetroPort = process.env.METRO_PORT;
+  process.env.METRO_PORT = 'not-a-port';
+  try {
+    assert.throws(
+      () =>
+        createExpoConfig({
+          config: {
+            name: 'FarmDev',
+            slug: 'farmslot',
+          },
+        } as ConfigContext),
+      /METRO_PORT must be a positive integer/,
+    );
+  } finally {
+    restoreEnv('METRO_PORT', previousMetroPort);
+  }
+});
+
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
     delete process.env[name];

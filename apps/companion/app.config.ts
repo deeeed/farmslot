@@ -82,8 +82,8 @@ function loadEnv(): AppConfigEnv {
     }),
   );
   const rawEnv = {
-    ...process.env,
     ...dotenvEnv,
+    ...process.env,
     APP_VARIANT: requestedVariant,
   };
 
@@ -111,17 +111,20 @@ function appIdentity(env: AppConfigEnv) {
   };
 }
 
-function parsePositivePort(value: string | undefined, fallback: number): number {
-  if (!value) return fallback;
+function parseConfiguredPort(value: string | undefined): number | undefined {
+  if (!value) return undefined;
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`METRO_PORT must be a positive integer, received: ${value}`);
+  }
+  return parsed;
 }
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const env = loadEnv();
   const { appIdentifier, appScheme, variant, variantInfo } = appIdentity(env);
   const isProduction = variant === 'production';
-  const metroPort = parsePositivePort(process.env.METRO_PORT ?? process.env.WATCHER_PORT, 7677);
+  const metroPort = parseConfiguredPort(process.env.METRO_PORT);
   const remoteGatewayToken = env.FARMSLOT_REMOTE_GATEWAY_TOKEN || env.FARMSLOT_GATEWAY_TOKEN;
 
   return {
@@ -232,7 +235,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       appSlug: APP_SLUG,
       appDisplayName: variantInfo.displayName,
       appAccentColor: variantInfo.accentColor,
-      metroPort: metroPort,
+      metroPort,
     },
   };
 };

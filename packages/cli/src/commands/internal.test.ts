@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildFixtureSelectionVars } from './internal.js';
+import type { SlotVars } from '@farmslot/slot-config';
+
+import { buildFixtureSelectionVars, slotVarsShellLines } from './internal.js';
 
 test('buildFixtureSelectionVars picks up an env var named by a non-standard compose.var', () => {
   // A project with `compose.var: "TARGET"` relies on bash `${!TARGET}` reach:
@@ -42,5 +44,39 @@ test('buildFixtureSelectionVars defaults a custom slot to the custom variant onl
   assert.equal(
     buildFixtureSelectionVars({ env: { FLOW_TYPE: 'fix-bug' }, slotMode: 'custom' }).FLOW_TYPE,
     'fix-bug',
+  );
+});
+
+test('slotVarsShellLines preserves an explicit slot Metro port', () => {
+  const vars = {
+    slotId: 'macwork-ff-1',
+    machine: 'macwork',
+    platform: 'cli',
+    host: 'macwork.local',
+    sshUser: '',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/farmslot-1',
+    session: 'ff-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'macwork.local',
+    remoteRepo: '/tmp/farmslot-1',
+    projectName: 'farmslot-farm',
+    resourceVars: {
+      port: '8808',
+      metro_port: '8878',
+    },
+  } satisfies SlotVars;
+
+  assert.deepEqual(
+    slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
+    ["METRO_PORT='8878'"],
   );
 });
