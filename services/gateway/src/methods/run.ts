@@ -83,6 +83,7 @@ import {
   getRun,
   listRuns,
   normalizeRunClassification,
+  persistRunNow,
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
@@ -200,6 +201,29 @@ function buildInteractiveDevTicketData(
 
 interface RunCreateInternalOptions {
   expectedExecutionTemplate?: ExecutionTemplateReference;
+  /**
+   * Called synchronously immediately before durable store createRun.
+   * Used by the dispatch queue claim protocol to re-validate exclusive
+   * ownership after runCreate's own awaits (config/ticket/template work).
+   */
+  beforeCreate?: () => void;
+  /**
+   * When true, await the run JSON write before returning so queue handoff can
+   * drop the row only after create is on disk (crash-safe claim protocol).
+   */
+  awaitPersist?: boolean;
+  /**
+   * Called synchronously immediately after in-memory createRun, before any
+   * awaitPersist. Queue dispatch stamps runId on the claim row here so concurrent
+   * cancel/replay cannot treat the row as reclaimable mid-persist.
+   */
+  afterCreateSync?: (run: import('@farmslot/protocol').Run) => void;
+  /**
+   * Optional async barrier after afterCreateSync and before persistRunNow when
+   * awaitPersist is set. Queue handoff uses this to await a durable queue stamp
+   * so a crash mid-run-persist still leaves a stamped row for restart reconcile.
+   */
+  durableStamp?: (run: import('@farmslot/protocol').Run) => void | Promise<void>;
 }
 
 export function assertExpectedExecutionTemplate(
@@ -461,9 +485,37 @@ export async function runCreate(
     ...(normalizedTaskTemplate ? { ...params, taskTemplate: normalizedTaskTemplate } : params),
     ...(startRefSkipPrepareVerified ? { startRefSkipPrepareVerified: true as const } : {}),
   };
-  let run = createRun(createParams);
+  // Last ownership check at the durable create boundary (after all awaits above).
+  options.beforeCreate?.();
+  // Defer background persist on the claim handoff path so the Run file cannot
+  // appear on disk before durableStamp writes the queue runId (restart would
+  // otherwise redispatch an unstamped row while the Run already exists).
+  let run = createRun(createParams, {
+    deferBackgroundPersist: Boolean(options.awaitPersist),
+  });
+  // Apply the resolved execution-template snapshot before the first durable
+  // handoff write so a crash cannot leave a stamped Run without the queue-time
+  // template hash (find-slot would then accept a later template change).
+  // On the awaitPersist path, mutate in-memory only — do not use updateRun,
+  // which schedules a background persist that can land before the queue stamp.
   if (executionTemplateSnapshot) {
-    run = updateRun(run.id, { executionTemplate: executionTemplateSnapshot });
+    if (options.awaitPersist) {
+      run.executionTemplate = executionTemplateSnapshot;
+      run.updatedAt = new Date().toISOString();
+    } else {
+      run = updateRun(run.id, { executionTemplate: executionTemplateSnapshot });
+    }
+  }
+  // Stamp runId / handoff marker before any await so concurrent reclaim sees
+  // that create already succeeded (claim re-validation alone is not enough).
+  options.afterCreateSync?.(run);
+  if (options.awaitPersist) {
+    // Durable queue stamp before run file: crash between these two still leaves
+    // a stamped row that restart drops against the Run (live or terminal).
+    await options.durableStamp?.(run);
+    // Queue claim handoff: ensure the run file (including template snapshot) is
+    // on disk before the caller drops the queue row.
+    await persistRunNow(run, 'create-queue-handoff');
   }
   // Set runtime flags (not persisted)
   if (params.skipPrepare) {

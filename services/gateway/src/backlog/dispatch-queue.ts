@@ -2,7 +2,8 @@
 // Items persist across gateway restarts. Auto-dispatches when slots free up.
 
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -10,6 +11,7 @@ import {
   type DispatchQueueUpdateParams,
   isTerminalRunStatus,
   normalizeRunTags,
+  type QueueClaim,
   type QueueItem,
   type Run,
   type SlotStatus,
@@ -22,7 +24,7 @@ import { resolveDispatchPreviewFromFleet } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import { detectProfileFit } from '../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../run-engine/ticket-data.js';
-import { getAllRuns } from '../runs/store.js';
+import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
 
 function shouldUseIsolatedQueueFile(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
   if (env.FARMSLOT_TEST_TMP === '1' || env.NODE_TEST_CONTEXT) return true;
@@ -43,17 +45,109 @@ let queuePersistChain: Promise<void> = Promise.resolve();
 const queueProfileFitCache = new Map<string, string | null>();
 const queueProfileFitDeferUntil = new Map<string, number>();
 
+/** Default exclusive-claim TTL. Holders must re-validate before createRun. */
+export const DEFAULT_QUEUE_CLAIM_TTL_MS = 60_000;
+
 type BroadcastFn = (event: string, payload: unknown) => void;
+/** createAndStartRun receives the exclusive claim so it can re-validate at the
+ * synchronous createRun boundary after its own awaits (imports, ticket fetch, …). */
+export type CreateAndStartRunFn = (item: QueueItem, claim: QueueClaim) => Promise<void>;
 let _broadcast: BroadcastFn | null = null;
-let _createAndStartRun: ((item: QueueItem) => Promise<void>) | null = null;
+let _createAndStartRun: CreateAndStartRunFn | null = null;
 let dispatchInFlight: Promise<void> | null = null;
+
+/** Thrown when a holder loses exclusive ownership before durable run creation. */
+export class QueueClaimLostError extends Error {
+  readonly claim: QueueClaim;
+  constructor(claim: QueueClaim, phase: string) {
+    super(
+      `Queue claim lost for ${claim.itemId.slice(0, 8)} at ${phase}; stopping before createRun`,
+    );
+    this.name = 'QueueClaimLostError';
+    this.claim = claim;
+  }
+}
+
+function clearClaimFields(item: QueueItem): void {
+  item.claimHolder = undefined;
+  item.claimExpiresAt = undefined;
+  // claimEpoch is retained so the next claim still bumps past any prior token.
+}
+
+/** Holder + epoch still match (ignore wall-clock TTL). Unchanged epoch ⇒ nobody took over. */
+function claimOwnershipMatches(item: QueueItem, claim: QueueClaim): boolean {
+  if (item.id !== claim.itemId) return false;
+  if (item.status !== 'dispatching') return false;
+  if (item.claimHolder !== claim.holderId) return false;
+  if ((item.claimEpoch ?? 0) !== claim.epoch) return false;
+  return true;
+}
+
+function claimStillHeld(item: QueueItem, claim: QueueClaim, nowMs = Date.now()): boolean {
+  if (!claimOwnershipMatches(item, claim)) return false;
+  if (!item.claimExpiresAt || Date.parse(item.claimExpiresAt) <= nowMs) return false;
+  return true;
+}
 
 export function initDispatchQueue(
   broadcast: BroadcastFn,
-  createAndStartRun: (item: QueueItem) => Promise<void>,
+  createAndStartRun: CreateAndStartRunFn,
 ): void {
   _broadcast = broadcast;
   _createAndStartRun = createAndStartRun;
+}
+
+/**
+ * Re-validate exclusive ownership immediately before durable run creation.
+ * Call after every await inside createAndStartRun that precedes createRun /
+ * evalTrialStart — a concurrent cancel/replay revokes the claim and must stop
+ * a detached callback from creating a second run for the same node.
+ *
+ * Wall-clock TTL expiry alone is not takeover: if holder+epoch still match we
+ * renew the claim and proceed. That avoids a permanent retry cliff when pre-create
+ * work (project vars, remote branch probe, …) exceeds DEFAULT_QUEUE_CLAIM_TTL_MS
+ * with no competitor. reclaimExpiredClaims still frees truly stranded claims.
+ */
+export function assertQueueClaimHeld(claim: QueueClaim, phase = 'pre-createRun'): void {
+  if (!renewQueueClaim(claim)) {
+    throw new QueueClaimLostError(claim, phase);
+  }
+}
+
+/**
+ * Reset expired dispatching claims back to `queued` so a crashed/slow
+ * dispatcher cannot permanently strand a row until gateway restart.
+ */
+export function reclaimExpiredClaims(nowMs = Date.now()): number {
+  let reclaimed = 0;
+  let dropped = 0;
+  for (let i = queue.length - 1; i >= 0; i--) {
+    const item = queue[i];
+    if (!item || item.status !== 'dispatching') continue;
+    // Handoff already produced a Run: never reclaim/requeue even if the claim TTL
+    // expired mid-persist. Drop the row when the stamped run still exists.
+    if (item.runId) {
+      const stamped = getRun(item.runId);
+      if (stamped) {
+        clearQueueProfileFitCache(item);
+        queue.splice(i, 1);
+        dropped += 1;
+        continue;
+      }
+    }
+    if (item.claimExpiresAt && Date.parse(item.claimExpiresAt) > nowMs) continue;
+    // Missing expiresAt is treated as expired: a claim without TTL is invalid.
+    item.status = 'queued';
+    item.runId = undefined;
+    item.claimEpoch = (item.claimEpoch ?? 0) + 1;
+    clearClaimFields(item);
+    reclaimed += 1;
+  }
+  if (reclaimed > 0 || dropped > 0) {
+    schedulePersist('reclaim-expired');
+    broadcastQueue();
+  }
+  return reclaimed + dropped;
 }
 
 function normalizedTrialSuffix(trialId: string): string {
@@ -79,7 +173,11 @@ function runMatchesEvalQueueCell(runTrialId: string | undefined, cellTrialId: st
 // ─── Persistence ───
 
 async function persist(): Promise<void> {
-  await writeFile(QUEUE_FILE, JSON.stringify(queue, null, 2), 'utf-8');
+  // Atomic write: tmp + rename so a crash mid-write cannot leave a truncated
+  // queue file that drops items on restart.
+  const tmpPath = `${QUEUE_FILE}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
+  await writeFile(tmpPath, JSON.stringify(queue, null, 2), 'utf-8');
+  await rename(tmpPath, QUEUE_FILE);
 }
 
 function enqueuePersist(reason: string): Promise<void> {
@@ -117,6 +215,50 @@ export async function persistQueueNow(): Promise<void> {
   await enqueuePersist('explicit');
 }
 
+/** Non-terminal run that already owns this queue handoff identity (restart reconcile). */
+function findNonTerminalHandoffOwner(item: QueueItem): Run | undefined {
+  return getAllRuns().find((run) => {
+    if (isTerminalRunStatus(run.status)) return false;
+    if (
+      item.workGraphId &&
+      item.workNodeId &&
+      run.workGraphId === item.workGraphId &&
+      run.workNodeId === item.workNodeId
+    ) {
+      // Launch-plan siblings share graph/node; require matching candidate when present.
+      // Attempt rules (non-terminal runs only — terminal priors still allow true retries):
+      // - equal attempt (including both undefined) → drop (handoff complete)
+      // - both defined and unequal (N live vs N+1 row) → drop (revive/drop crash)
+      // - mixed defined/undefined → keep row (legacy restart matrix)
+      if (item.launchCandidateId) {
+        if (
+          run.launchCandidateId !== item.launchCandidateId ||
+          run.launchPlanId !== item.launchPlanId
+        ) {
+          return false;
+        }
+        if (run.launchAttempt === item.launchAttempt) return true;
+        return run.launchAttempt !== undefined && item.launchAttempt !== undefined;
+      }
+      return !run.launchCandidateId;
+    }
+    if (item.backlogItemId && run.backlogItemId === item.backlogItemId) {
+      if (item.launchCandidateId) {
+        if (
+          run.launchCandidateId !== item.launchCandidateId ||
+          run.launchPlanId !== item.launchPlanId
+        ) {
+          return false;
+        }
+        if (run.launchAttempt === item.launchAttempt) return true;
+        return run.launchAttempt !== undefined && item.launchAttempt !== undefined;
+      }
+      return !run.launchCandidateId;
+    }
+    return false;
+  });
+}
+
 export async function loadQueue(): Promise<void> {
   queue.length = 0;
   try {
@@ -128,10 +270,31 @@ export async function loadQueue(): Promise<void> {
         queueKind: item.queueKind ?? 'dispatch',
       };
       if (normalized.status === 'queued') {
+        // Crash after create/revive can leave a still-queued disk row while a
+        // live Run already owns the work — drop rather than double-dispatch.
+        const liveOwner = findNonTerminalHandoffOwner(normalized);
+        if (liveOwner) {
+          console.log(
+            `[dispatch-queue] reconciled queued item ${normalized.id.slice(0, 8)} to existing run ${liveOwner.id.slice(0, 8)}`,
+          );
+          continue;
+        }
         queue.push(normalized);
         continue;
       }
       if (normalized.status === 'dispatching') {
+        // Handoff already completed: row carries runId for a Run that exists
+        // (live or already terminal). Never requeue completed handoffs — a
+        // terminal stamped run means create finished and the work already ran.
+        if (normalized.runId) {
+          const stamped = getAllRuns().find((run) => run.id === normalized.runId);
+          if (stamped) {
+            console.log(
+              `[dispatch-queue] reconciled dispatching item ${normalized.id.slice(0, 8)} to stamped run ${stamped.id.slice(0, 8)} (status=${stamped.status})`,
+            );
+            continue;
+          }
+        }
         if (normalized.queueKind === 'eval-cell' && normalized.evalCell) {
           const evalCell = normalized.evalCell;
           const matchingRun = getAllRuns().find((run) => {
@@ -170,11 +333,23 @@ export async function loadQueue(): Promise<void> {
             continue;
           }
         }
+        // Ordinary backlog / work-graph / direct queue rows: match a non-terminal
+        // run that already owns this handoff so restart does not requeue work that
+        // finished create before the queue row was dropped.
+        const ordinaryMatch = findNonTerminalHandoffOwner(normalized);
+        if (ordinaryMatch) {
+          console.log(
+            `[dispatch-queue] reconciled dispatching item ${normalized.id.slice(0, 8)} to existing run ${ordinaryMatch.id.slice(0, 8)}`,
+          );
+          continue;
+        }
         // Gateway shutdown between dequeue and run creation leaves no durable
         // run to reconcile, so reset the item and let normal queue dispatch try
-        // again instead of dropping it on restart.
+        // again instead of dropping it on restart. Clear any stale claim so a
+        // fresh claimQueueItem is required.
         normalized.status = 'queued';
         normalized.runId = undefined;
+        clearClaimFields(normalized);
         queue.push(normalized);
       }
     }
@@ -302,6 +477,9 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
 function removeItemAtIndex(idx: number, reason: string): void {
   const [removed] = queue.splice(idx, 1);
   if (!removed) return;
+  // Bump epoch so any holder still holding a token discovers the loss.
+  removed.claimEpoch = (removed.claimEpoch ?? 0) + 1;
+  clearClaimFields(removed);
   clearQueueProfileFitCache(removed);
   schedulePersist(reason);
   console.log(`[dispatch-queue] removed item ${removed.id.slice(0, 8)} (${reason})`);
@@ -315,6 +493,51 @@ export function removeQueueItemInternal(itemId: string, reason = 'internal-remov
   removeItemAtIndex(idx, reason);
 }
 
+/**
+ * Remove a queue row and await durable persist. Used by the claim handoff so
+ * createRun is on disk and the queue drop is on disk before further awaits.
+ * Returns false when the row was already gone.
+ */
+export async function removeQueueItemInternalNow(
+  itemId: string,
+  reason = 'internal-remove',
+): Promise<boolean> {
+  const idx = queue.findIndex((q) => q.id === itemId);
+  if (idx < 0) return false;
+  removeItemAtIndex(idx, reason);
+  await persistQueueNow();
+  return true;
+}
+
+/**
+ * Stamp runId on a claimed/dispatching row immediately after createRun (in
+ * memory + schedulePersist). Concurrent replay refuses reclaim when runId is
+ * set. Prefer {@link stampQueueItemRunIdNow} on the queue handoff path so the
+ * stamp is durable before the run file write.
+ */
+export function stampQueueItemRunId(itemId: string, runId: string): void {
+  const item = queue.find((q) => q.id === itemId);
+  if (!item) return;
+  item.runId = runId;
+  schedulePersist('stamp-run-id');
+}
+
+/**
+ * Stamp runId and await durable queue persist. Used by the claim handoff so a
+ * crash between createRun and run-file persist still leaves a stamped row that
+ * restart reconciliation can drop against the (possibly still-writing) Run.
+ */
+export async function stampQueueItemRunIdNow(itemId: string, runId: string): Promise<void> {
+  const item = queue.find((q) => q.id === itemId);
+  if (!item) {
+    throw new Error(
+      `stampQueueItemRunIdNow: queue item ${itemId.slice(0, 8)} missing — cannot stamp run ${runId.slice(0, 8)}`,
+    );
+  }
+  item.runId = runId;
+  await persistQueueNow();
+}
+
 export function removeItem(itemId: string): void {
   const idx = queue.findIndex((q) => q.id === itemId);
   if (idx < 0) throw new Error(`Queue item not found: ${itemId}`);
@@ -324,22 +547,209 @@ export function removeItem(itemId: string): void {
   removeItemAtIndex(idx, 'remove');
 }
 
+// ─── Exclusive claim protocol (MANUAL-000053) ───
+
+export type QueueClaimMutateOptions = {
+  ttlMs?: number;
+  /**
+   * Skip persist + broadcast. Used for transient claim/release while probing
+   * slot eligibility (disk still resets dispatching-without-runId on load).
+   */
+  quiet?: boolean;
+};
+
+/**
+ * Atomically claim a queued row for exclusive dispatch. Records holder + epoch
+ * and transitions status to `dispatching`. Returns null when the row is gone,
+ * already claimed, or otherwise not claimable.
+ */
+export function claimQueueItem(
+  itemId: string,
+  holderId: string,
+  options?: QueueClaimMutateOptions,
+): QueueClaim | null {
+  if (!holderId.trim()) return null;
+  const item = queue.find((q) => q.id === itemId);
+  if (!item || item.status !== 'queued') return null;
+  const now = Date.now();
+  const ttlMs = options?.ttlMs ?? DEFAULT_QUEUE_CLAIM_TTL_MS;
+  const epoch = (item.claimEpoch ?? 0) + 1;
+  const expiresAt = new Date(now + Math.max(1, ttlMs)).toISOString();
+  item.status = 'dispatching';
+  item.claimHolder = holderId;
+  item.claimEpoch = epoch;
+  item.claimExpiresAt = expiresAt;
+  if (!options?.quiet) {
+    schedulePersist('claim');
+    broadcastQueue();
+  }
+  return { itemId, holderId, epoch, expiresAt };
+}
+
+/**
+ * Extend claimExpiresAt for a still-owned claim (holder+epoch match).
+ * Wall-clock expiry alone does not block renew — only a revoke/reclaim that
+ * bumps epoch or clears the holder does. Memory-only by default (no
+ * persist/broadcast per renewal). Returns the updated claim token, or null
+ * when ownership is lost.
+ */
+export function renewQueueClaim(
+  claim: QueueClaim,
+  options?: { ttlMs?: number },
+): QueueClaim | null {
+  const item = queue.find((q) => q.id === claim.itemId);
+  if (!item || !claimOwnershipMatches(item, claim)) return null;
+  const ttlMs = options?.ttlMs ?? DEFAULT_QUEUE_CLAIM_TTL_MS;
+  const expiresAt = new Date(Date.now() + Math.max(1, ttlMs)).toISOString();
+  item.claimExpiresAt = expiresAt;
+  claim.expiresAt = expiresAt;
+  return { itemId: claim.itemId, holderId: claim.holderId, epoch: claim.epoch, expiresAt };
+}
+
+/**
+ * Revoke-and-take exclusive ownership for replay soft-lock. Unlike
+ * claimQueueItem (queued-only), this may take over a dispatching row that has
+ * not yet stamped a live Run — matching prior hand-rolled soft-lock semantics.
+ */
+export function claimQueueItemForReplay(
+  itemId: string,
+  holderId: string,
+  options?: QueueClaimMutateOptions,
+): QueueClaim | null {
+  if (!holderId.trim()) return null;
+  const item = queue.find((q) => q.id === itemId);
+  if (!item) return null;
+  if (item.status !== 'queued' && item.status !== 'dispatching') return null;
+  // Never steal a stamped handoff mid-create.
+  if (item.runId) {
+    const stamped = getRun(item.runId);
+    if (stamped && !isTerminalRunStatus(stamped.status)) return null;
+  }
+  const now = Date.now();
+  const ttlMs = options?.ttlMs ?? 120_000;
+  const epoch = (item.claimEpoch ?? 0) + 1;
+  const expiresAt = new Date(now + Math.max(1, ttlMs)).toISOString();
+  item.status = 'dispatching';
+  item.claimHolder = holderId;
+  item.claimEpoch = epoch;
+  item.claimExpiresAt = expiresAt;
+  if (!options?.quiet) {
+    schedulePersist('claim-replay');
+    broadcastQueue();
+  }
+  return { itemId, holderId, epoch, expiresAt };
+}
+
+/** True when the live queue row still holds this exact claim and it has not expired. */
+export function isQueueClaimHeld(claim: QueueClaim, nowMs = Date.now()): boolean {
+  const item = queue.find((q) => q.id === claim.itemId);
+  if (!item) return false;
+  return claimStillHeld(item, claim, nowMs);
+}
+
+/**
+ * Release a held claim back to `queued` so another dispatcher can try.
+ * No-op (returns false) when the claim is already lost.
+ * Ownership match is enough (wall-clock expiry alone does not block release).
+ */
+export function releaseQueueClaim(claim: QueueClaim, options?: { quiet?: boolean }): boolean {
+  const item = queue.find((q) => q.id === claim.itemId);
+  if (!item || !claimOwnershipMatches(item, claim)) return false;
+  item.status = 'queued';
+  item.runId = undefined;
+  clearClaimFields(item);
+  if (!options?.quiet) {
+    schedulePersist('release-claim');
+    broadcastQueue();
+  }
+  return true;
+}
+
+/**
+ * Cancel a graph-linked queue row (queued or claimed/dispatching) and optionally
+ * run a dependent mutation that must succeed with the removal.
+ *
+ * Commit order (so queue disk and dependent fail together from the caller's view):
+ * 1. Detach from memory (revokes any claim).
+ * 2. Await durable queue persist without the row.
+ * 3. Run `commitDependent`.
+ * 4. If dependent throws: restore the row, await re-persist, rethrow.
+ *
+ * A crash after step 2 and before step 3 leaves the queue without the row and
+ * the dependent unapplied — restart does not re-dispatch a cancelled graph row.
+ */
 export async function cancelGraphQueuedItem(params: {
   workGraphId: string;
   workNodeId: string;
   reason: string;
+  /**
+   * Dependent mutation that must succeed after the queue removal is durable
+   * (e.g. backlog needs-attention). Invoked after queue persist.
+   */
+  commitDependent?: (item: QueueItem) => void | Promise<void>;
 }): Promise<boolean> {
   const idx = queue.findIndex(
     (item) =>
-      item.status === 'queued' &&
+      (item.status === 'queued' || item.status === 'dispatching') &&
       item.workGraphId === params.workGraphId &&
       item.workNodeId === params.workNodeId,
   );
   if (idx < 0) return false;
+  const candidate = queue[idx];
+  // Handoff already won: create stamped a live Run. Do not tear down the row
+  // (or its claim epoch) out from under the dispatcher that just created it.
+  if (candidate?.runId) {
+    const stamped = getRun(candidate.runId);
+    if (stamped && !isTerminalRunStatus(stamped.status)) {
+      console.log(
+        `[dispatch-queue] skip cancel of ${candidate.id.slice(0, 8)}: stamped live run ${stamped.id.slice(0, 8)}`,
+      );
+      return false;
+    }
+  }
   const [item] = queue.splice(idx, 1);
   if (!item) return false;
+  // Revoke claim so any in-flight dispatcher fails re-validation.
+  item.claimEpoch = (item.claimEpoch ?? 0) + 1;
+  clearClaimFields(item);
   clearQueueProfileFitCache(item);
-  await enqueuePersist('graph-dependency-regressed');
+
+  // Durable removal first — if this throws, restore memory so the row is not lost.
+  try {
+    await enqueuePersist('graph-dependency-regressed');
+  } catch (err) {
+    item.status = 'queued';
+    item.runId = undefined;
+    clearClaimFields(item);
+    queue.splice(Math.min(idx, queue.length), 0, item);
+    broadcastQueue();
+    throw err;
+  }
+
+  if (params.commitDependent) {
+    try {
+      await params.commitDependent(item);
+    } catch (err) {
+      // Dependent failed after durable remove: put the row back and re-persist
+      // so queue and dependent agree (row present, dependent not applied).
+      item.status = 'queued';
+      item.runId = undefined;
+      clearClaimFields(item);
+      queue.splice(Math.min(idx, queue.length), 0, item);
+      try {
+        await enqueuePersist('graph-cancel-dependent-failed');
+      } catch (persistErr) {
+        broadcastQueue();
+        throw new Error(
+          `Dependent mutation failed (${(err as Error).message}) and restoring the queue row to disk also failed (${(persistErr as Error).message})`,
+          { cause: err },
+        );
+      }
+      broadcastQueue();
+      throw err;
+    }
+  }
+
   console.log(
     `[dispatch-queue] cancelled graph queue item ${item.id.slice(0, 8)}: ${params.reason}`,
   );
@@ -576,8 +986,60 @@ function liveQueuedItem(itemId: string): QueueItem | null {
   return item?.status === 'queued' ? item : null;
 }
 
+/** Backoff for claim-loss / retry loops so a slow uncontested path cannot spin. */
+let dispatchRetryBackoffMs = 0;
+const DISPATCH_RETRY_BACKOFF_MIN_MS = 250;
+const DISPATCH_RETRY_BACKOFF_MAX_MS = 30_000;
+
+function resetDispatchRetryBackoff(): void {
+  dispatchRetryBackoffMs = 0;
+}
+
+function scheduleDispatchRetry(reason: string): void {
+  // Must run after dispatchInFlight clears (tryDispatchNextOnce finally), or the
+  // retry would join the finishing promise and no-op. setTimeout(0)/setImmediate
+  // both work; delay grows on repeated retries (claim-loss cliffs, busy fleet).
+  const delayMs = dispatchRetryBackoffMs;
+  dispatchRetryBackoffMs =
+    delayMs === 0
+      ? DISPATCH_RETRY_BACKOFF_MIN_MS
+      : Math.min(delayMs * 2, DISPATCH_RETRY_BACKOFF_MAX_MS);
+  const runRetry = () => {
+    tryDispatchNext().catch((err) => {
+      console.error(
+        `[dispatch-queue] retry after ${reason} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  };
+  if (delayMs <= 0) {
+    setImmediate(runRetry);
+  } else {
+    setTimeout(runRetry, delayMs);
+  }
+}
+
+function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
+  // Renew if we still own holder+epoch (TTL alone is not takeover). Only a
+  // revoke/reclaim that cleared ownership is a real claim loss.
+  if (renewQueueClaim(claim)) return false;
+  // Ownership lost — reclaim any stranded expired rows and retry with backoff.
+  reclaimExpiredClaims();
+  console.log(
+    `[dispatch-queue] claim lost for ${claim.itemId.slice(0, 8)} after ${phase}; stopping before createRun`,
+  );
+  // Returning true ends this dispatch cycle (tryDispatchNextOnce returns).
+  // Schedule another cycle so the reclaimed row (and siblings) get another try
+  // without waiting for an external fleet/event trigger.
+  scheduleDispatchRetry(`claim-loss-${phase}`);
+  return true;
+}
+
 async function tryDispatchNextOnce(): Promise<void> {
   if (!_broadcast || !_createAndStartRun) return;
+
+  // Expired claims leave status=dispatching but are no longer held — reset so
+  // listItems can see them again without waiting for a gateway restart.
+  reclaimExpiredClaims();
 
   const pending = listItems();
   if (pending.length === 0) return;
@@ -594,36 +1056,69 @@ async function tryDispatchNextOnce(): Promise<void> {
       }
     }
 
+    // Claim exclusively before any further await that commits us to this row.
+    // A concurrent cancel/reclaim revokes the claim; we re-validate after every
+    // await and stop before createRun rather than acting on a detached object.
+    // Quiet until slot eligibility is known — avoids 2N full-queue writes +
+    // queue.updated events per tryDispatchNext tick when the fleet is busy.
+    const holderId = `dispatch-${randomUUID()}`;
+    const claim = claimQueueItem(item.id, holderId, { quiet: true });
+    if (!claim) continue;
+
     let slot: SlotStatus | undefined;
     try {
       const slotId = await selectQueueDispatchSlot(fleet.slots, item);
+      if (stopIfClaimLost(claim, 'slot-selection')) return;
       slot = fleet.slots.find((s) => s.slot === slotId);
     } catch (error) {
+      releaseQueueClaim(claim, { quiet: true });
       console.debug(
         `[dispatch-queue] skipping queued item ${item.id.slice(0, 8)}: ${(error as Error).message}`,
       );
       continue;
     }
 
-    if (!slot || !canDispatchQueuedItemToSlot(slot)) continue;
-    item.slotId = slot.slot;
+    if (!slot || !canDispatchQueuedItemToSlot(slot)) {
+      releaseQueueClaim(claim, { quiet: true });
+      continue;
+    }
+    if (stopIfClaimLost(claim, 'slot-eligibility')) return;
 
-    // Mark as dispatching and create a run
-    item.status = 'dispatching';
+    item.slotId = slot.slot;
+    // Promote the quiet claim: one durable write + broadcast for the real dispatch.
+    renewQueueClaim(claim);
     schedulePersist('mark-dispatching');
+    broadcastQueue();
     console.log(`[dispatch-queue] auto-dispatching ${item.id.slice(0, 8)} → slot ${slot.slot}`);
 
+    // Re-validate + renew before entering createAndStartRun so long pre-create
+    // work cannot expire an uncontested claim; callback re-validates again
+    // immediately before the durable createRun / evalTrialStart call.
+    if (!renewQueueClaim(claim)) {
+      if (stopIfClaimLost(claim, 'pre-createAndStartRun')) return;
+      return;
+    }
+
     try {
-      await _createAndStartRun(item);
-      // Remove from queue on success
+      await _createAndStartRun(item, claim);
+      resetDispatchRetryBackoff();
+      // Defensive: createAndStartRun normally drops the row via removeQueueItemInternalNow
+      // after durable create. If the callback did not drop it, remove here so a
+      // successful handoff never leaves a dispatching row for requeue.
       const idx = queue.findIndex((q) => q.id === item.id);
       if (idx >= 0) {
         clearQueueProfileFitCache(queue[idx]);
         queue.splice(idx, 1);
+        schedulePersist('auto-dispatch-success');
+        _broadcast('queue.updated', { items: listItems() });
       }
-      schedulePersist('auto-dispatch-success');
-      _broadcast('queue.updated', { items: listItems() });
     } catch (err) {
+      if (err instanceof QueueClaimLostError) {
+        console.log(`[dispatch-queue] ${err.message}`);
+        reclaimExpiredClaims();
+        scheduleDispatchRetry('queue-claim-lost-error');
+        return;
+      }
       if (
         isStartRefPolicyError(err) ||
         (item.queueKind === 'eval-cell' && isNonRetryableEvalQueueError(err))
@@ -631,24 +1126,62 @@ async function tryDispatchNextOnce(): Promise<void> {
         // Defense-in-depth: addItem validates startRef and eval queue shape before
         // persistence, but queued JSON can outlive code changes or manual edits.
         // Cancel non-retryable items loudly instead of head-of-line retry loops.
-        item.status = 'cancelled';
-        item.runId = undefined;
-        clearQueueProfileFitCache(item);
-        schedulePersist(
-          isStartRefPolicyError(err)
-            ? 'auto-dispatch-start-ref-policy-failure'
-            : 'auto-dispatch-eval-policy-failure',
-        );
-        console.error(
-          `[dispatch-queue] cancelling invalid queued item ${item.id.slice(0, 8)}: ${(err as Error).message}`,
-        );
-        _broadcast('queue.updated', { items: listItems() });
+        // Ownership match is enough (TTL alone is not takeover).
+        if (renewQueueClaim(claim)) {
+          item.status = 'cancelled';
+          item.runId = undefined;
+          clearClaimFields(item);
+          clearQueueProfileFitCache(item);
+          schedulePersist(
+            isStartRefPolicyError(err)
+              ? 'auto-dispatch-start-ref-policy-failure'
+              : 'auto-dispatch-eval-policy-failure',
+          );
+          console.error(
+            `[dispatch-queue] cancelling invalid queued item ${item.id.slice(0, 8)}: ${(err as Error).message}`,
+          );
+          _broadcast('queue.updated', { items: listItems() });
+        }
         return;
       }
-      // Revert to queued on failure
-      item.status = 'queued';
-      item.runId = undefined;
-      schedulePersist('auto-dispatch-failure');
+      // createRun may have produced an in-memory Run and stamped runId before a
+      // later await failed. Only drop the row when the Run is durable on disk —
+      // otherwise requeue and purge the memory-only orphan so retry can create.
+      if (item.runId) {
+        const partial = getRun(item.runId);
+        if (partial) {
+          const durable = existsSync(runRecordPath(partial.id));
+          if (durable) {
+            const stillPresent = queue.some((q) => q.id === item.id);
+            if (stillPresent) {
+              await removeQueueItemInternalNow(item.id, 'dispatch-create-partial');
+            }
+            console.error(
+              `[dispatch-queue] auto-dispatch partial create for ${item.id.slice(0, 8)} ` +
+                `(durable run ${item.runId.slice(0, 8)} kept, queue row dropped): ${(err as Error).message}`,
+            );
+            return;
+          }
+          // Memory-only orphan: hard-discard (no analytics gate) so a retry
+          // cannot leave a second Run in the map while the row is requeued.
+          const orphanId = partial.id;
+          await discardUndurableRun(orphanId);
+          if (!releaseQueueClaim(claim) && queue.some((q) => q.id === item.id)) {
+            item.status = 'queued';
+            item.runId = undefined;
+            clearClaimFields(item);
+            schedulePersist('release-memory-only-create');
+            broadcastQueue();
+          }
+          console.error(
+            `[dispatch-queue] auto-dispatch memory-only create for ${item.id.slice(0, 8)} ` +
+              `(orphan ${orphanId.slice(0, 8)} purged, row requeued): ${(err as Error).message}`,
+          );
+          return;
+        }
+      }
+      // Revert to queued on failure when we still own the claim and no Run exists.
+      releaseQueueClaim(claim);
       console.error(
         `[dispatch-queue] auto-dispatch failed for ${item.id.slice(0, 8)}: ${(err as Error).message}`,
       );

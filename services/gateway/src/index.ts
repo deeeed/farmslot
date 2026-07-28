@@ -25,7 +25,15 @@ import {
 } from './auto-recovery/watcher.js';
 import { initAutoRecycle } from './automation/auto-recycle.js';
 import { onBranchChange, startBranchWatchers } from './automation/branch-watcher.js';
-import { initDispatchQueue, loadQueue } from './backlog/dispatch-queue.js';
+import {
+  assertQueueClaimHeld,
+  getQueueSnapshot,
+  initDispatchQueue,
+  loadQueue,
+  removeQueueItemInternalNow,
+  stampQueueItemRunId,
+  stampQueueItemRunIdNow,
+} from './backlog/dispatch-queue.js';
 import {
   initBacklogStore,
   loadBacklog,
@@ -317,7 +325,20 @@ async function main(): Promise<void> {
     console.error(`[work-graph] startup reconciliation failed: ${(err as Error).message}`);
   });
 
-  initDispatchQueue(observedBroadcast, async (item) => {
+  initDispatchQueue(observedBroadcast, async (item, claim) => {
+    // runCreate/evalTrialStart await substantially before the durable store write.
+    // Pass beforeCreate so assertQueueClaimHeld runs synchronously immediately
+    // before createRun in the store — after those awaits, not before them.
+    const beforeCreate = () => assertQueueClaimHeld(claim, 'pre-durable-createRun');
+    /** After createRun is persisted, drop the queue row and await queue disk write. */
+    const dropQueueRowAfterCreate = async (runId: string) => {
+      item.runId = runId;
+      // Handoff complete at durable create: remove before any further awaits so
+      // replay/reclaim cannot revive a cancelled sibling while this run is live.
+      if (getQueueSnapshot().some((q) => q.id === item.id)) {
+        await removeQueueItemInternalNow(item.id, 'dispatch-created');
+      }
+    };
     if (item.queueKind === 'eval-cell' && item.evalCell) {
       const { evalTrialStart } = await import('./methods/eval.js');
       const params = item.evalCell.trialStartParams as unknown as EvalTrialStartParams;
@@ -334,8 +355,24 @@ async function main(): Promise<void> {
             item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,
         },
         observedBroadcast,
+        {
+          beforeCreate,
+          afterCreateSync: (created) => stampQueueItemRunId(item.id, created.id),
+          durableStamp: async (created) => {
+            await stampQueueItemRunIdNow(item.id, created.id);
+          },
+          awaitPersist: true,
+          // Called inside evalTrialStart immediately after createRun is durable,
+          // before package-manifest writes that can still fail.
+          afterCreate: async (run) => {
+            await dropQueueRowAfterCreate(run.id);
+          },
+        },
       );
-      item.runId = result.run?.id;
+      // Defensive: if afterCreate was not invoked (deduped path), still drop when a run id exists.
+      if (result.run?.id && getQueueSnapshot().some((q) => q.id === item.id)) {
+        await dropQueueRowAfterCreate(result.run.id);
+      }
       return;
     }
     const { runCreate } = await import('./methods/run.js');
@@ -383,16 +420,23 @@ async function main(): Promise<void> {
     } satisfies import('@farmslot/protocol').RunCreateParams;
     const { run } = await runCreate(runParams, broadcastEvent, {
       expectedExecutionTemplate: item.executionTemplate,
+      beforeCreate,
+      afterCreateSync: (created) => stampQueueItemRunId(item.id, created.id),
+      durableStamp: async (created) => {
+        await stampQueueItemRunIdNow(item.id, created.id);
+      },
+      awaitPersist: true,
     });
-    item.runId = run.id;
+    // Link backlog before dropping the queue row so a crash/link-persist failure
+    // still leaves item.runId for startup heal (needs-attention can observe the Run).
     try {
       await markBacklogRunStarted(item, run);
     } catch (err) {
-      // The run is already durable at this point. Re-throwing would make the
-      // queue retry and create a duplicate run for the same backlog item, so
-      // surface the linkage error while treating queue handoff as complete.
+      // The run is already durable. Do not rethrow — that would requeue and
+      // double-create — but still drop the queue row after logging.
       console.error(`[backlog] failed to link started run: ${(err as Error).message}`);
     }
+    await dropQueueRowAfterCreate(run.id);
   });
 
   // Shared request handler for the plaintext HTTP server and (when TLS is

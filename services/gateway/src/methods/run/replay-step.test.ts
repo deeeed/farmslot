@@ -4,7 +4,13 @@ import test from 'node:test';
 
 import { Events, type RunDecision } from '@farmslot/protocol';
 
-import { addItem, getQueueSnapshot } from '../../backlog/dispatch-queue.js';
+import {
+  addItem,
+  claimQueueItem,
+  getQueueSnapshot,
+  removeQueueItemInternal,
+  stampQueueItemRunId,
+} from '../../backlog/dispatch-queue.js';
 import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
@@ -184,7 +190,7 @@ test('a replay that fails validation leaves the re-queued node intact', async (t
   );
 });
 
-test('replay is refused once the node has already been redispatched', async (t) => {
+test('replay revokes a claimed dispatching row and revives the cancelled run', async (t) => {
   const run = createRun({
     flowType: 'update-branch',
     project: 'farmslot-farm',
@@ -193,7 +199,25 @@ test('replay is refused once the node has already been redispatched', async (t) 
     workGraphId: 'wg_replay_handoff',
     workNodeId: 'wn_replay_handoff',
   });
-  updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  const doneBeforeCiWatch = new Set([
+    'write-task',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+    'finalize',
+  ]);
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    steps: run.steps.map((step) =>
+      step.name === 'ci-watch'
+        ? { ...step, status: 'skipped', completedAt: new Date().toISOString() }
+        : doneBeforeCiWatch.has(step.name)
+          ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
   addItem({
     project: 'farmslot-farm',
     flowType: 'update-branch',
@@ -201,11 +225,12 @@ test('replay is refused once the node has already been redispatched', async (t) 
     workGraphId: 'wg_replay_handoff',
     workNodeId: 'wn_replay_handoff',
   });
-  // getQueueSnapshot copies the array but shares the item objects, so this stages
-  // the state a real dispatcher would set on handing the row to a slot.
+  // Claim through the public API (not a direct status mutate) so holder/epoch
+  // persistence matches production. Replay must revoke it and revive the run.
   const staged = getQueueSnapshot().find((item) => item.workNodeId === 'wn_replay_handoff');
   assert.ok(staged);
-  staged.status = 'dispatching';
+  const claim = claimQueueItem(staged.id, 'stale-dispatcher');
+  assert.ok(claim);
 
   t.after(async () => {
     if (getRun(run.id)) {
@@ -214,13 +239,125 @@ test('replay is refused once the node has already been redispatched', async (t) 
     }
   });
 
-  // A dispatching row cannot be taken back, so the handoff wins and the old run
-  // stays cancelled rather than running the same work a second time.
-  await assert.rejects(
-    () => runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
-    /already been redispatched/,
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
   );
-  assert.equal(getRun(run.id)?.status, 'cancelled');
+  assert.equal(getRun(run.id)?.status, 'ci-watching');
+  assert.ok(
+    !getQueueSnapshot().some((item) => item.workNodeId === 'wn_replay_handoff'),
+    'claimed replacement row was reclaimed',
+  );
+});
+
+test('replay refuses when a live Run owns the node even without a queue row', async (t) => {
+  const cancelled = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4104-live-owner',
+    prNumber: 4104,
+    workGraphId: 'wg_replay_live_owner',
+    workNodeId: 'wn_replay_live_owner',
+  });
+  updateRun(cancelled.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  const genBefore = getRun(cancelled.id)?.engineState?.generation ?? 0;
+  const stepsBefore = getRun(cancelled.id)
+    ?.steps.map((s) => s.status)
+    .join(',');
+  // Successful handoff already dropped the queue row; a later replacement Run is live.
+  const live = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4104-live-owner',
+    prNumber: 4104,
+    workGraphId: 'wg_replay_live_owner',
+    workNodeId: 'wn_replay_live_owner',
+  });
+
+  t.after(async () => {
+    for (const id of [cancelled.id, live.id]) {
+      if (getRun(id)) {
+        updateRun(id, { status: 'cancelled', completedAt: new Date().toISOString() });
+        await deleteRun(id);
+      }
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      runReplayStep(
+        { runId: cancelled.id, stepName: 'ci-watch', triggeredBy: 'operator' },
+        () => {},
+      ),
+    /already owned by live run/,
+  );
+  assert.equal(getRun(cancelled.id)?.status, 'cancelled');
+  assert.equal(getRun(live.id)?.status, 'created');
+  // Rejection must not mutate the cancelled run (generation / step reset).
+  assert.equal(getRun(cancelled.id)?.engineState?.generation ?? 0, genBefore);
+  assert.equal(
+    getRun(cancelled.id)
+      ?.steps.map((s) => s.status)
+      .join(','),
+    stepsBefore,
+  );
+  assert.equal(getRun(cancelled.id)?.recoveryProposal, undefined);
+});
+
+test('replay refuses when replacement row already has a stamped runId', async (t) => {
+  const cancelled = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4104-stamped',
+    prNumber: 4104,
+    workGraphId: 'wg_replay_stamped',
+    workNodeId: 'wn_replay_stamped',
+  });
+  updateRun(cancelled.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  addItem({
+    project: 'farmslot-farm',
+    flowType: 'update-branch',
+    ticketOrPr: 'PROJ-4104-stamped',
+    workGraphId: 'wg_replay_stamped',
+    workNodeId: 'wn_replay_stamped',
+  });
+  const staged = getQueueSnapshot().find((item) => item.workNodeId === 'wn_replay_stamped');
+  assert.ok(staged);
+  const claim = claimQueueItem(staged.id, 'dispatcher');
+  assert.ok(claim);
+  const handedOff = createRun({
+    flowType: 'update-branch',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-4104-stamped',
+    prNumber: 4104,
+    workGraphId: 'wg_replay_stamped',
+    workNodeId: 'wn_replay_stamped',
+  });
+  stampQueueItemRunId(claim.itemId, handedOff.id);
+
+  t.after(async () => {
+    for (const id of [cancelled.id, handedOff.id]) {
+      if (getRun(id)) {
+        updateRun(id, { status: 'cancelled', completedAt: new Date().toISOString() });
+        await deleteRun(id);
+      }
+    }
+    const leftover = getQueueSnapshot().find((item) => item.workNodeId === 'wn_replay_stamped');
+    if (leftover) {
+      removeQueueItemInternal(leftover.id, 'test-cleanup');
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      runReplayStep(
+        { runId: cancelled.id, stepName: 'ci-watch', triggeredBy: 'operator' },
+        () => {},
+      ),
+    // Live owner check (no queue required) or stamped-row check both refuse.
+    /already owned by live run|redispatched to run/,
+  );
+  assert.equal(getRun(cancelled.id)?.status, 'cancelled');
+  assert.ok(getRun(handedOff.id));
 });
 
 test('replay does not reclaim a sibling launch-plan candidate sharing the node', async (t) => {

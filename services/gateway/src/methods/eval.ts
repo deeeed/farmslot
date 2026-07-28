@@ -703,6 +703,17 @@ function buildEvalReplayTicketData(input: {
 export async function evalTrialStart(
   params: EvalTrialStartParams,
   emit: (event: string, payload: unknown) => void,
+  options: {
+    beforeCreate?: () => void;
+    /** Sync stamp immediately after in-memory createRun (before awaitPersist). */
+    afterCreateSync?: (run: import('@farmslot/protocol').Run) => void;
+    /** Await durable queue stamp after afterCreateSync, before run JSON persist. */
+    durableStamp?: (run: import('@farmslot/protocol').Run) => void | Promise<void>;
+    /** Await run JSON write after create (queue claim handoff). */
+    awaitPersist?: boolean;
+    /** Called after durable createRun succeeds, before post-create package writes. */
+    afterCreate?: (run: import('@farmslot/protocol').Run) => void | Promise<void>;
+  } = {},
 ): Promise<EvalTrialStartResult> {
   assertEvalTrialStartParams(params);
   const experimentManifest = await readEvalExperimentManifest(params.experimentManifestPath);
@@ -886,7 +897,17 @@ export async function evalTrialStart(
         : undefined,
     },
     emit,
+    {
+      beforeCreate: options.beforeCreate,
+      afterCreateSync: options.afterCreateSync,
+      durableStamp: options.durableStamp,
+      awaitPersist: options.awaitPersist,
+    },
   );
+
+  // Handoff complete: drop the queue claim/row before package-manifest awaits so a
+  // post-create failure cannot re-release a row and redispatch a second run.
+  await options.afterCreate?.(result.run);
 
   const run = updateRun(result.run.id, {
     summary: `${flowType === 'fix-bug' ? 'Bugfix' : 'Dev'} eval replay ${candidateStrategyFingerprint.slice(0, 8)} for ${experimentManifest.experimentId}`,

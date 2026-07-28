@@ -6,18 +6,38 @@ import type { QueueItem, SlotStatus } from '@farmslot/protocol';
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
 import { setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
-import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import {
+  createRun,
+  deleteRun,
+  getAllRuns,
+  getRun,
+  persistRunNow,
+  updateRun,
+} from '../runs/store.js';
 
 import {
   addItem,
+  assertQueueClaimHeld,
   buildQueuePreviewParams,
+  cancelGraphQueuedItem,
   canDispatchQueuedItemToSlot,
+  claimQueueItem,
   getQueueSnapshot,
   initDispatchQueue,
+  isQueueClaimHeld,
   listItems,
+  loadQueue,
+  persistQueueNow,
+  QueueClaimLostError,
+  reclaimExpiredClaims,
+  releaseQueueClaim,
   removeItem,
+  removeQueueItemInternal,
+  removeQueueItemInternalNow,
   reorderItems,
   selectQueueDispatchSlot,
+  stampQueueItemRunId,
+  stampQueueItemRunIdNow,
   tryDispatchNext,
   updateItem,
 } from './dispatch-queue.js';
@@ -922,7 +942,8 @@ test('tryDispatchNext skips queue items removed while fleet status is loading', 
   let createdRuns = 0;
   initDispatchQueue(
     () => {},
-    async () => {
+    async (_item, claim) => {
+      assertQueueClaimHeld(claim, 'test-create');
       createdRuns += 1;
     },
   );
@@ -981,4 +1002,716 @@ test('tryDispatchNext skips queue items removed while fleet status is loading', 
     getQueueSnapshot().some((candidate) => candidate.id === item.id),
     false,
   );
+});
+
+// ─── Exclusive claim protocol (MANUAL-000053) ───
+
+const readyFleetSlot = (slotId: string) =>
+  ({
+    checkedAt: '2026-07-02T00:00:00.000Z',
+    slots: [
+      {
+        slot: slotId,
+        machine: 'demo',
+        platform: 'cli',
+        project: 'farmslot-farm',
+        health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+        branch: 'main',
+        agent: 'idle',
+        enabled: true,
+        dispatchable: true,
+        lifecycle: 'ready',
+        phase: null,
+        warm: false,
+        taskId: null,
+        taskFile: null,
+        currentRunId: null,
+        currentFlowType: null,
+        currentTicketOrPr: null,
+        currentMode: null,
+        currentFamilyId: null,
+        currentLane: null,
+        currentVariant: null,
+        dispatchedAt: null,
+        completedAt: null,
+        runner: null,
+        model: null,
+        deviceName: null,
+        taskPhase: null,
+        taskStepProgress: null,
+      },
+    ],
+    summary: {
+      total: 1,
+      ready: 1,
+      busy: 0,
+      held: 0,
+      manual: 0,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
+  }) as const;
+
+test('claimQueueItem records exclusive holder and rejects a second claimer', () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-exclusive',
+  });
+  try {
+    const claimA = claimQueueItem(item.id, 'holder-a');
+    assert.ok(claimA);
+    assert.equal(claimA.holderId, 'holder-a');
+    assert.equal(claimA.epoch, 1);
+    assert.equal(item.status, 'dispatching');
+    assert.equal(item.claimHolder, 'holder-a');
+    assert.equal(item.claimEpoch, 1);
+    assert.ok(item.claimExpiresAt);
+    assert.equal(isQueueClaimHeld(claimA), true);
+
+    const claimB = claimQueueItem(item.id, 'holder-b');
+    assert.equal(claimB, null, 'second claimer must not steal a held claim');
+    assert.equal(isQueueClaimHeld(claimA), true);
+  } finally {
+    if (getQueueSnapshot().some((q) => q.id === item.id)) {
+      removeQueueItemInternal(item.id, 'test-cleanup');
+    }
+  }
+});
+
+test('isQueueClaimHeld is false after revoke/remove and after expiry', () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-revoke',
+  });
+  const claim = claimQueueItem(item.id, 'holder-revoke', { ttlMs: 60_000 });
+  assert.ok(claim);
+  removeQueueItemInternal(item.id, 'test-revoke');
+  assert.equal(isQueueClaimHeld(claim), false);
+
+  const item2 = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-expire',
+  });
+  try {
+    const short = claimQueueItem(item2.id, 'holder-expire', { ttlMs: 1 });
+    assert.ok(short);
+    // Force expiry without waiting on a timer.
+    assert.equal(isQueueClaimHeld(short, Date.parse(short.expiresAt) + 1), false);
+    assert.equal(isQueueClaimHeld(short, Date.parse(short.expiresAt) - 1), true);
+  } finally {
+    if (getQueueSnapshot().some((q) => q.id === item2.id)) {
+      removeQueueItemInternal(item2.id, 'test-cleanup');
+    }
+  }
+});
+
+test('cancelGraphQueuedItem commits dependent with removal and restores on dependent failure', async () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-atomic',
+    workGraphId: 'wg_atomic',
+    workNodeId: 'wn_atomic',
+  });
+  let dependentRan = false;
+  const cancelled = await cancelGraphQueuedItem({
+    workGraphId: 'wg_atomic',
+    workNodeId: 'wn_atomic',
+    reason: 'test-atomic-ok',
+    commitDependent: async () => {
+      dependentRan = true;
+    },
+  });
+  assert.equal(cancelled, true);
+  assert.equal(dependentRan, true);
+  assert.equal(
+    getQueueSnapshot().some((q) => q.id === item.id),
+    false,
+  );
+
+  const item2 = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-atomic-fail',
+    workGraphId: 'wg_atomic_fail',
+    workNodeId: 'wn_atomic_fail',
+  });
+  await assert.rejects(
+    () =>
+      cancelGraphQueuedItem({
+        workGraphId: 'wg_atomic_fail',
+        workNodeId: 'wn_atomic_fail',
+        reason: 'test-atomic-fail',
+        commitDependent: async () => {
+          throw new Error('dependent failed');
+        },
+      }),
+    /dependent failed/,
+  );
+  assert.ok(
+    getQueueSnapshot().some((q) => q.id === item2.id && q.status === 'queued'),
+    'row restored when dependent fails',
+  );
+  removeItem(item2.id);
+});
+
+test('cancelGraphQueuedItem revokes a claimed dispatching row', async () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-cancel-dispatching',
+    workGraphId: 'wg_cancel_claim',
+    workNodeId: 'wn_cancel_claim',
+  });
+  const claim = claimQueueItem(item.id, 'holder-cancel');
+  assert.ok(claim);
+  assert.equal(item.status, 'dispatching');
+
+  const cancelled = await cancelGraphQueuedItem({
+    workGraphId: 'wg_cancel_claim',
+    workNodeId: 'wn_cancel_claim',
+    reason: 'test-cancel-claimed',
+  });
+  assert.equal(cancelled, true);
+  assert.equal(isQueueClaimHeld(claim), false);
+  assert.equal(
+    getQueueSnapshot().some((q) => q.id === item.id),
+    false,
+  );
+});
+
+test('a dispatcher holding a revoked claim creates no Run', async () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-revoked-no-run',
+    allowedSlots: ['claim-slot'],
+    workGraphId: 'wg_revoked',
+    workNodeId: 'wn_revoked',
+  });
+  let createdRuns = 0;
+  initDispatchQueue(
+    () => {},
+    async (_item, claim) => {
+      assertQueueClaimHeld(claim, 'test-create');
+      createdRuns += 1;
+    },
+  );
+
+  // Claim, then concurrent reclaim revokes before createRun re-validation.
+  const claim = claimQueueItem(item.id, 'holder-revoked');
+  assert.ok(claim);
+  await cancelGraphQueuedItem({
+    workGraphId: 'wg_revoked',
+    workNodeId: 'wn_revoked',
+    reason: 'reclaim-wins',
+  });
+  assert.throws(() => assertQueueClaimHeld(claim, 'test'), QueueClaimLostError);
+  assert.equal(createdRuns, 0, 'revoked claim must not create a Run');
+  assert.equal(isQueueClaimHeld(claim), false);
+
+  // Integration: pre-claim then revoke so tryDispatchNext cannot create.
+  const item2 = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-revoked-dispatch',
+    allowedSlots: ['claim-slot'],
+    workGraphId: 'wg_revoked2',
+    workNodeId: 'wn_revoked2',
+  });
+  createdRuns = 0;
+  setCachedFleetForTests(readyFleetSlot('claim-slot') as any);
+
+  const preClaim = claimQueueItem(item2.id, 'pre-holder');
+  assert.ok(preClaim);
+  removeQueueItemInternal(item2.id, 'revoke-pre-claim');
+  assert.equal(isQueueClaimHeld(preClaim), false);
+  await tryDispatchNext();
+  assert.equal(createdRuns, 0);
+});
+
+test('concurrent reclaim and dispatch against one row creates exactly one Run', async (t) => {
+  // Production-shaped path: tryDispatchNext → claim → pause → real createRun +
+  // persistRunNow + removeQueueItemInternalNow. Concurrent cancel during the pause
+  // must yield 0 or 1 actual Run records — never two.
+  setCachedFleetForTests(readyFleetSlot('real-race-slot') as any);
+  const _item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-concurrent',
+    allowedSlots: ['real-race-slot'],
+    workGraphId: 'wg_concurrent',
+    workNodeId: 'wn_concurrent',
+    autoDispatch: false,
+  });
+  void _item;
+  const createdRunIds: string[] = [];
+  let releaseGate: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  let enteredCreate = false;
+  let signalEntered: () => void;
+  const entered = new Promise<void>((resolve) => {
+    signalEntered = resolve;
+  });
+
+  initDispatchQueue(
+    () => {},
+    async (qi, claim) => {
+      enteredCreate = true;
+      signalEntered();
+      // Pause after claim, before durable create — reclaim races here.
+      await gate;
+      assertQueueClaimHeld(claim, 'pre-durable-createRun');
+      const run = createRun({
+        flowType: qi.flowType,
+        project: qi.project,
+        ticketOrPr: qi.ticketOrPr,
+        workGraphId: qi.workGraphId,
+        workNodeId: qi.workNodeId,
+      });
+      await persistRunNow(run, 'test-claim-race');
+      createdRunIds.push(run.id);
+      qi.runId = run.id;
+      await removeQueueItemInternalNow(qi.id, 'dispatch-created');
+    },
+  );
+
+  t.after(async () => {
+    for (const id of createdRunIds) {
+      await cleanupRun(id);
+    }
+  });
+
+  const dispatch = tryDispatchNext();
+  await Promise.race([entered, new Promise((r) => setTimeout(r, 1000))]);
+  assert.equal(enteredCreate, true, 'create callback must enter (fleet+claim path)');
+
+  // Concurrent reclaim while create is paused after claim.
+  const reclaimPromise = cancelGraphQueuedItem({
+    workGraphId: 'wg_concurrent',
+    workNodeId: 'wn_concurrent',
+    reason: 'concurrent-reclaim',
+  });
+  releaseGate!();
+  await Promise.all([dispatch, reclaimPromise]);
+
+  assert.ok(createdRunIds.length <= 1, `expected at most one Run, got ${createdRunIds.length}`);
+  // Reclaim during the pre-create gate: claim lost → 0 Runs.
+  assert.equal(createdRunIds.length, 0, 'reclaim before durable create yields no Run');
+  const liveForNode = getAllRuns().filter(
+    (run) =>
+      run.workNodeId === 'wn_concurrent' && !['done', 'cancelled', 'failed'].includes(run.status),
+  );
+  assert.equal(liveForNode.length, 0);
+
+  // Create-wins path: claim, create real Run, then reclaim finds nothing.
+  const _item2 = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-create-wins',
+    allowedSlots: ['real-race-slot'],
+    workGraphId: 'wg_create_wins',
+    workNodeId: 'wn_create_wins',
+    autoDispatch: false,
+  });
+  void _item2;
+  const createdWins: string[] = [];
+  initDispatchQueue(
+    () => {},
+    async (qi, claim) => {
+      assertQueueClaimHeld(claim, 'pre-durable-createRun');
+      const run = createRun({
+        flowType: qi.flowType,
+        project: qi.project,
+        ticketOrPr: qi.ticketOrPr,
+        workGraphId: qi.workGraphId,
+        workNodeId: qi.workNodeId,
+      });
+      await persistRunNow(run, 'test-create-wins');
+      createdWins.push(run.id);
+      qi.runId = run.id;
+      await removeQueueItemInternalNow(qi.id, 'dispatch-created');
+    },
+  );
+  t.after(async () => {
+    for (const id of createdWins) {
+      await cleanupRun(id);
+    }
+  });
+  await tryDispatchNext();
+  assert.equal(createdWins.length, 1, 'dispatch creates exactly one Run');
+  assert.ok(getRun(createdWins[0]));
+  // Reclaim after handoff finds no row.
+  const cancelledAfter = await cancelGraphQueuedItem({
+    workGraphId: 'wg_create_wins',
+    workNodeId: 'wn_create_wins',
+    reason: 'after-create',
+  });
+  assert.equal(cancelledAfter, false);
+  assert.equal(createdWins.length, 1, 'still exactly one Run after late reclaim');
+});
+
+test('assertQueueClaimHeld rejects after claim revoke/remove on the primitives', async () => {
+  // Primitive-level guard: claim + remove + assert. Production tryDispatchNext
+  // re-validation is covered by
+  // `concurrent reclaim and dispatch against one row creates exactly one Run`.
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-revalidate',
+    allowedSlots: ['revalidate-slot'],
+    workGraphId: 'wg_revalidate',
+    workNodeId: 'wn_revalidate',
+  });
+  let createdRuns = 0;
+  initDispatchQueue(
+    () => {},
+    async (_item, claim) => {
+      assertQueueClaimHeld(claim, 'test-create');
+      createdRuns += 1;
+    },
+  );
+
+  const claim = claimQueueItem(item.id, 'dispatch-holder');
+  assert.ok(claim);
+  removeQueueItemInternal(item.id, 'reclaim-during-await');
+  assert.equal(isQueueClaimHeld(claim), false);
+  assert.throws(() => assertQueueClaimHeld(claim, 'after-await'), QueueClaimLostError);
+  assert.equal(createdRuns, 0);
+  assert.equal(releaseQueueClaim(claim), false);
+});
+
+test('assertQueueClaimHeld renews an uncontested claim past wall-clock TTL', () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-renew-ttl',
+  });
+  try {
+    const claim = claimQueueItem(item.id, 'holder-renew', { ttlMs: 1 });
+    assert.ok(claim);
+    // Force past wall-clock expiry without reclaim — ownership still matches.
+    item.claimExpiresAt = new Date(Date.now() - 1_000).toISOString();
+    claim.expiresAt = item.claimExpiresAt;
+    assert.equal(isQueueClaimHeld(claim), false, 'isQueueClaimHeld still honors TTL');
+    // assert renews rather than treating pure expiry as takeover.
+    assert.doesNotThrow(() => assertQueueClaimHeld(claim, 'pre-create'));
+    assert.equal(isQueueClaimHeld(claim), true, 'renew extends TTL');
+    assert.ok(Date.parse(item.claimExpiresAt!) > Date.now());
+  } finally {
+    if (getQueueSnapshot().some((q) => q.id === item.id)) {
+      removeQueueItemInternal(item.id, 'test-cleanup');
+    }
+  }
+});
+
+test('reclaimExpiredClaims restores stranded dispatching rows to queued', () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-expired-strand',
+  });
+  const claim = claimQueueItem(item.id, 'holder-expire', { ttlMs: 1 });
+  assert.ok(claim);
+  assert.equal(item.status, 'dispatching');
+  // Force past expiry without waiting.
+  const n = reclaimExpiredClaims(Date.parse(claim.expiresAt) + 1);
+  assert.ok(n >= 1);
+  assert.equal(item.status, 'queued');
+  assert.equal(isQueueClaimHeld(claim), false);
+  // Fresh claim is possible again.
+  const again = claimQueueItem(item.id, 'holder-retry');
+  assert.ok(again);
+  removeQueueItemInternal(item.id, 'test-cleanup');
+});
+
+test('assertQueueClaimHeld stops create after mid-callback revoke', async () => {
+  // Does not rely on fleet/slot selection: claim first, then drive the
+  // production createAndStartRun-shaped callback with a pause before the
+  // durable-create guard (mirrors runCreate's beforeCreate hook).
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-claim-mid-callback',
+    workGraphId: 'wg_mid',
+    workNodeId: 'wn_mid',
+  });
+  let createdRuns = 0;
+  let enteredCallback = false;
+  let releaseGate: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  const claim = claimQueueItem(item.id, 'mid-holder');
+  assert.ok(claim);
+
+  // Simulate createAndStartRun body: await work, then beforeCreate guard.
+  const createPath = (async () => {
+    enteredCallback = true;
+    await gate;
+    assertQueueClaimHeld(claim, 'pre-durable-createRun');
+    createdRuns += 1;
+  })();
+
+  assert.equal(enteredCallback, true);
+  await cancelGraphQueuedItem({
+    workGraphId: 'wg_mid',
+    workNodeId: 'wn_mid',
+    reason: 'mid-callback-reclaim',
+  });
+  releaseGate!();
+  await assert.rejects(() => createPath, QueueClaimLostError);
+  assert.equal(createdRuns, 0);
+});
+
+test('loadQueue drops dispatching rows stamped with a terminal Run', async () => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-stamp-terminal-reconcile',
+  });
+  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-stamp-terminal-reconcile',
+  });
+  const claim = claimQueueItem(item.id, 'holder-terminal');
+  assert.ok(claim);
+  stampQueueItemRunId(item.id, run.id);
+  await persistQueueNow();
+
+  // Simulate restart: clear in-memory queue and reload from disk.
+  // loadQueue reads the same isolated test queue file.
+  await loadQueue();
+  assert.ok(
+    !getQueueSnapshot().some((q) => q.id === item.id),
+    'terminal stamped handoff must not requeue',
+  );
+  await cleanupRun(run.id);
+});
+
+test('reclaimExpiredClaims drops stamped rows whose Run still exists', async () => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-stamp-expire-drop',
+  });
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-stamp-expire-drop',
+  });
+  const claim = claimQueueItem(item.id, 'holder-stamp-expire', { ttlMs: 1 });
+  assert.ok(claim);
+  await stampQueueItemRunIdNow(item.id, run.id);
+  const n = reclaimExpiredClaims(Date.parse(claim.expiresAt) + 1);
+  assert.ok(n >= 1);
+  assert.ok(
+    !getQueueSnapshot().some((q) => q.id === item.id),
+    'stamped expired claim must drop, not requeue',
+  );
+  await cleanupRun(run.id);
+});
+
+test('loadQueue drops higher-attempt launch row when a live run owns the candidate', async () => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-attempt-mismatch',
+    workGraphId: 'wg_attempt_mismatch',
+    workNodeId: 'wn_attempt_mismatch',
+    launchPlanId: 'plan_attempt',
+    launchCandidateId: 'cand_attempt',
+    launchAttempt: 1,
+  });
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-attempt-mismatch',
+    workGraphId: 'wg_attempt_mismatch',
+    workNodeId: 'wn_attempt_mismatch',
+    launchPlanId: 'plan_attempt',
+    launchCandidateId: 'cand_attempt',
+    launchAttempt: 2,
+  });
+  assert.equal(item.status, 'queued');
+  await persistQueueNow();
+  await loadQueue();
+  assert.ok(
+    !getQueueSnapshot().some((q) => q.id === item.id),
+    'live attempt-1 owner must drop attempt-2 requeue row after crash between revive and drop',
+  );
+  await cleanupRun(run.id);
+});
+
+test('loadQueue keeps legacy undefined-attempt launch row against live attempt-bearing run', async () => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-legacy-attempt',
+    workGraphId: 'wg_legacy_attempt',
+    workNodeId: 'wn_legacy_attempt',
+    launchPlanId: 'plan_legacy',
+    launchCandidateId: 'cand_legacy',
+    launchAttempt: 1,
+  });
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-legacy-attempt',
+    workGraphId: 'wg_legacy_attempt',
+    workNodeId: 'wn_legacy_attempt',
+    launchPlanId: 'plan_legacy',
+    launchCandidateId: 'cand_legacy',
+  });
+  // Simulate legacy disk row without launchAttempt.
+  delete (item as { launchAttempt?: number }).launchAttempt;
+  item.status = 'dispatching';
+  await persistQueueNow();
+  await loadQueue();
+  const reloaded = getQueueSnapshot().find((q) => q.id === item.id);
+  assert.ok(reloaded, 'undefined !== 1 must re-queue (restart attempt matrix)');
+  assert.equal(reloaded.status, 'queued');
+  await cleanupRun(run.id);
+});
+
+test('loadQueue drops queued rows whose handoff is already owned by a live Run', async () => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-queued-live-owner',
+    workGraphId: 'wg_queued_live',
+    workNodeId: 'wn_queued_live',
+  });
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-queued-live-owner',
+    workGraphId: 'wg_queued_live',
+    workNodeId: 'wn_queued_live',
+  });
+  assert.equal(item.status, 'queued');
+  await persistQueueNow();
+  await loadQueue();
+  assert.ok(
+    !getQueueSnapshot().some((q) => q.id === item.id),
+    'queued row with live owner must not survive restart',
+  );
+  await cleanupRun(run.id);
+});
+
+test('cancelGraphQueuedItem leaves stamped live handoffs alone', async () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-cancel-stamped-live',
+    workGraphId: 'wg_cancel_stamp',
+    workNodeId: 'wn_cancel_stamp',
+  });
+  const claim = claimQueueItem(item.id, 'holder-stamp');
+  assert.ok(claim);
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-cancel-stamped-live',
+    workGraphId: 'wg_cancel_stamp',
+    workNodeId: 'wn_cancel_stamp',
+  });
+  stampQueueItemRunId(item.id, run.id);
+  const cancelled = await cancelGraphQueuedItem({
+    workGraphId: 'wg_cancel_stamp',
+    workNodeId: 'wn_cancel_stamp',
+    reason: 'should-skip-stamped-live',
+  });
+  assert.equal(cancelled, false);
+  assert.ok(
+    getQueueSnapshot().some((q) => q.id === item.id),
+    'stamped live row remains',
+  );
+  await removeQueueItemInternalNow(item.id, 'test-cleanup');
+  await cleanupRun(run.id);
+});
+
+test('partial create after durable stamp drops the row instead of requeueing', async (t) => {
+  setCachedFleetForTests(readyFleetSlot('partial-slot') as any);
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-partial-create-drop',
+    allowedSlots: ['partial-slot'],
+    autoDispatch: false,
+  });
+  let partialRunId: string | undefined;
+  initDispatchQueue(
+    () => {},
+    async (queued, claim) => {
+      assertQueueClaimHeld(claim, 'partial-create');
+      const run = createRun({
+        flowType: 'fix-bug',
+        project: 'farmslot-farm',
+        ticketOrPr: 'PROJ-partial-create-drop',
+      });
+      partialRunId = run.id;
+      await stampQueueItemRunIdNow(queued.id, run.id);
+      await persistRunNow(run, 'test-durable-before-fail');
+      throw new Error('simulated post-stamp failure');
+    },
+  );
+  t.after(async () => {
+    if (partialRunId && getRun(partialRunId)) await cleanupRun(partialRunId);
+  });
+  await tryDispatchNext();
+  assert.ok(partialRunId, 'callback must create a Run before failing');
+  assert.ok(getRun(partialRunId));
+  assert.ok(
+    !getQueueSnapshot().some((q) => q.id === item.id),
+    'durable partial create must drop the queue row, not requeue',
+  );
+});
+
+test('memory-only create failure requeues and purges the orphan Run', async (t) => {
+  setCachedFleetForTests(readyFleetSlot('memory-only-slot') as any);
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-memory-only-create',
+    allowedSlots: ['memory-only-slot'],
+    autoDispatch: false,
+  });
+  let orphanId: string | undefined;
+  initDispatchQueue(
+    () => {},
+    async (queued, claim) => {
+      assertQueueClaimHeld(claim, 'memory-only-create');
+      // Defer disk write so the catch path sees a memory-only orphan.
+      const run = createRun(
+        {
+          flowType: 'fix-bug',
+          project: 'farmslot-farm',
+          ticketOrPr: 'PROJ-memory-only-create',
+        },
+        { deferBackgroundPersist: true },
+      );
+      orphanId = run.id;
+      await stampQueueItemRunIdNow(queued.id, run.id);
+      throw new Error('simulated persist failure before run file');
+    },
+  );
+  t.after(async () => {
+    if (orphanId && getRun(orphanId)) await cleanupRun(orphanId);
+  });
+  await tryDispatchNext();
+  assert.ok(orphanId);
+  assert.equal(getRun(orphanId), undefined, 'memory-only orphan must be purged');
+  const requeued = getQueueSnapshot().find((q) => q.id === item.id);
+  assert.ok(requeued, 'row must be requeued for retry');
+  assert.equal(requeued.status, 'queued');
+  assert.equal(requeued.runId, undefined);
 });
