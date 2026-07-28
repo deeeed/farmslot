@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(fleet): the machine Setup button renders even when the provider-accounts snapshot is empty or failed — hiding it made a merged feature invisible with no trace. The modal now explains an empty seats list (usual cause: node service not connected), shows the last fetch error, offers Retry, and refetches on every open so a node that reconnected after the last fetch shows fresh seats.
 - fix(roadmap): stop multi-project filters from silently pre-filling every capture target. Unscoped global captures stay visible, and explicit targets survive filter changes.
 - feat(ui): fleet machine headers gain a quiet **Setup** control that opens a Node setup modal with per-runner seats (identity/quota, bind/ambient) from `providerAccounts.snapshot` — no header chip dump; run detail shows the funding provider account label when present.
 - refactor: unified independent-review language (MANUAL-000008) — review timeline, gate summary, ready-workspace modal/shell, dispatch wizard and dispatch-config surfaces label every automated pass **Independent review** (operator-requested passes as _Independent review (requested)_); runner diversity renders as policy metadata (`runner: <id>` / `runner diversity`) via the new `reviewPolicyLabel` helper instead of the retired _External review_ / _Extra review_ kinds. Persisted decision-action ids are unchanged.

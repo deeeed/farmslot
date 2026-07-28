@@ -99,6 +99,7 @@ export class FleetCanvas extends LitElement {
   @state() private resourceActionFlash = '';
   @state() private resourceWatchesEnabled = true;
   /** machine → provider subscription snapshot (labels only). */
+  @state() private providerAccountsError: string | null = null;
   @state() private providerAccountsByMachine: Map<string, MachineProviderAccountsSnapshot> =
     new Map();
   private _resourceFetched = false;
@@ -448,11 +449,12 @@ export class FleetCanvas extends LitElement {
       const next = new Map<string, MachineProviderAccountsSnapshot>();
       for (const m of res.machines ?? []) next.set(m.machine, m);
       this.providerAccountsByMachine = next;
+      this.providerAccountsError = null;
     } catch (err) {
-      console.warn(
-        '[fleet-canvas] provider accounts snapshot failed:',
-        err instanceof Error ? err.message : String(err),
-      );
+      // Keep the failure: the machine-group Setup modal shows it instead of
+      // rendering an unexplained empty seats list.
+      this.providerAccountsError = err instanceof Error ? err.message : String(err);
+      console.warn('[fleet-canvas] provider accounts snapshot failed:', this.providerAccountsError);
     }
   }
 
@@ -885,6 +887,8 @@ export class FleetCanvas extends LitElement {
           .gatewayProtocolVersion=${this.gatewayProtocolVersion}
           .viewMode=${this.viewMode}
           .providerAccounts=${this.providerAccountsByMachine.get(g.key)}
+          .providerAccountsError=${this.providerAccountsError ?? undefined}
+          @provider-accounts-refresh=${() => void this._fetchProviderAccounts()}
           @slot-selected=${(e: CustomEvent) => {
             location.hash = `slot/${e.detail.slotId}`;
           }}

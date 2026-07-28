@@ -9,6 +9,7 @@ import path from 'node:path';
 import {
   type AgentContext,
   type IndependentReviewAttempt,
+  isTerminalRunStatus,
   primaryRoleForFlow,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
@@ -1066,27 +1067,45 @@ async function sendFeedbackToWorker(
       { recovery: { runId } },
     );
     if (!sent) {
-      // A deferred send never retries on its own — the fix wait would burn its
-      // whole timeout against a worker that never received the task. Retry
-      // once forcing the busy-composer poll before giving up.
-      console.warn(
-        `[self-review] run ${runId.slice(0, 8)} — fix task send deferred; retrying with busy-poll`,
+      // A busy worker is the NORMAL state of a healthy worker — it is usually
+      // busy doing this very run's work when the review lands. Two immediate
+      // probes failed the same run three times in one day (02866fe6) while the
+      // worker was mid-merge and picked the task up instantly once idle. So:
+      // keep retrying on an interval until the worker accepts or the window
+      // closes, bailing early if the run is cancelled underneath us.
+      const deadline = Date.now() + SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS;
+      let attempt = 1;
+      while (!sent && Date.now() < deadline) {
+        const current = getRun(runId);
+        if (!current || isTerminalRunStatus(current.status)) {
+          console.warn(
+            `[self-review] run ${runId.slice(0, 8)} — abandoning fix delivery retries: run is ${current?.status ?? 'gone'}`,
+          );
+          break;
+        }
+        attempt += 1;
+        console.warn(
+          `[self-review] run ${runId.slice(0, 8)} — fix task send deferred (attempt ${attempt - 1}); worker busy, retrying in ${SELF_REVIEW_DELIVERY_RETRY_INTERVAL_MS / 1000}s`,
+        );
+        await new Promise((r) => setTimeout(r, SELF_REVIEW_DELIVERY_RETRY_INTERVAL_MS));
+        sent = await sendRunnerInstructionSafely(
+          vars,
+          workerTarget,
+          normalizeRunner(run?.metrics.runner),
+          cmd,
+          'self-review',
+          undefined,
+          // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
+          { forceBusyPoll: true, recovery: { runId } },
+        );
+      }
+      console.log(
+        `[self-review] run ${runId.slice(0, 8)} — fix task ${sent ? `sent after ${attempt} attempt(s)` : `NOT delivered after ${attempt} attempt(s) over ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min`}: ${fixTaskFile}`,
       );
-      sent = await sendRunnerInstructionSafely(
-        vars,
-        workerTarget,
-        normalizeRunner(run?.metrics.runner),
-        cmd,
-        'self-review',
-        undefined,
-        // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-        { forceBusyPoll: true, recovery: { runId } },
-      );
+    } else {
+      // Always-on: delivery state is the first question when a fix loop stalls.
+      console.log(`[self-review] run ${runId.slice(0, 8)} — fix task sent: ${fixTaskFile}`);
     }
-    // Always-on: delivery state is the first question when a fix loop stalls.
-    console.log(
-      `[self-review] run ${runId.slice(0, 8)} — fix task ${sent ? 'sent' : 'NOT delivered (deferred twice)'}: ${fixTaskFile}`,
-    );
     if (!sent) {
       // Waiting on a fix the worker never received would burn the whole
       // FEEDBACK_TIMEOUT; fail loudly instead. Clear the fix context created
@@ -1095,7 +1114,7 @@ async function sendFeedbackToWorker(
       await markAgentContextStatus(runId, 'self-review-fix', 'failed');
       await unwatchContext(vars.slotId, 'self-review-fix');
       throw new Error(
-        `self-review fix task delivery deferred twice — worker is not accepting prompts (${fixTaskFile})`,
+        `self-review fix task delivery kept deferring for ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt (${fixTaskFile}). Escape: deliver it manually (tell the worker to read that file in its session), then replay the self-review step.`,
       );
     }
     // sent=true only proves keystrokes were injected and Enter pressed. A
@@ -1137,6 +1156,11 @@ async function sendFeedbackToWorker(
 // ─── Helpers ───
 
 const SELF_REVIEW_DELIVERY_PROBE_TIMEOUT_MS = 60_000;
+// Fix-task delivery retry: a worker mid-task is busy for minutes, not seconds.
+// 30s spacing over a 15min window rides out a long merge/validation turn; the
+// loop bails early when the run is cancelled underneath it.
+const SELF_REVIEW_DELIVERY_RETRY_INTERVAL_MS = 30_000;
+const SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS = 15 * 60_000;
 const SELF_REVIEW_DELIVERY_PROBE_POLL_MS = 5_000;
 // Observed wedges hit at ~90%+ context usage (260–292k tokens); relaunch below that.
 const SELF_REVIEW_FIX_RELAUNCH_CTX_PCT = 90;

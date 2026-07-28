@@ -48,6 +48,8 @@ export class MachineGroup extends LitElement {
   @property() viewMode: 'card' | 'list' = 'card';
   /** Per-machine provider subscription seats (bind + CodexBar mirror). */
   @property({ attribute: false }) providerAccounts?: MachineProviderAccountsSnapshot;
+  /** Last snapshot-fetch failure from the canvas; shown in the Setup modal's empty state. */
+  @property({ attribute: false }) providerAccountsError?: string;
   @state() private expandedSlotId: string | null = null;
   /** Accounts panel open (subscription matrix lives under a button, not header clutter). */
   @state() private accountsOpen = false;
@@ -496,6 +498,19 @@ export class MachineGroup extends LitElement {
       color: ${unsafeCSS(colors.textMuted)};
       line-height: 1.35;
     }
+    .setup-empty {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: flex-start;
+      font-size: 11px;
+      color: ${unsafeCSS(colors.textMuted)};
+      line-height: 1.4;
+      padding: 4px 0 8px;
+    }
+    .setup-empty-error {
+      color: ${unsafeCSS(colors.statusFail)};
+    }
     .setup-foot a {
       color: ${unsafeCSS(colors.accent)};
       text-decoration: none;
@@ -588,8 +603,10 @@ export class MachineGroup extends LitElement {
   private renderProviderAccounts() {
     this.syncProviderAccountAttrs();
     const runners = this.orderedRunners();
-    if (!runners.length) return nothing;
-
+    // The button renders even with no snapshot. Hiding it when the fetch failed
+    // (or hadn't run) made a merged feature invisible with no trace — the modal
+    // is where an empty/failed snapshot gets explained and retried, and a modal
+    // nobody can open explains nothing.
     return html`
       <button
         type="button"
@@ -599,6 +616,14 @@ export class MachineGroup extends LitElement {
         @click=${(e: Event) => {
           e.stopPropagation();
           this.accountsOpen = !this.accountsOpen;
+          // Every open asks the canvas for a fresh snapshot: the map is only
+          // fetched on machine-set changes, so a node that reconnected after
+          // the last fetch would otherwise show stale/empty seats forever.
+          if (this.accountsOpen) {
+            this.dispatchEvent(
+              new CustomEvent('provider-accounts-refresh', { bubbles: true, composed: true }),
+            );
+          }
         }}
       >
         <span class="dot ${this.accountsSummaryDotClass()}"></span>
@@ -638,7 +663,32 @@ export class MachineGroup extends LitElement {
           </header>
           <div class="setup-body">
             <div class="setup-section-label">Runner seats</div>
-            ${runners.map((r) => this.renderSetupRow(r))}
+            ${runners.length
+              ? runners.map((r) => this.renderSetupRow(r))
+              : html`<div class="setup-empty" data-testid="machine-accounts-empty">
+                  No provider-account snapshot for <strong>${this.machine}</strong> yet.
+                  ${this.providerAccountsError
+                    ? html`<div class="setup-empty-error">
+                        Last fetch failed: ${this.providerAccountsError}
+                      </div>`
+                    : html`<div>
+                        Usual cause: the machine's node service is not connected, so runner seats
+                        cannot be probed.
+                      </div>`}
+                  <button
+                    type="button"
+                    class="setup-close"
+                    @click=${() =>
+                      this.dispatchEvent(
+                        new CustomEvent('provider-accounts-refresh', {
+                          bubbles: true,
+                          composed: true,
+                        }),
+                      )}
+                  >
+                    Retry
+                  </button>
+                </div>`}
           </div>
           <div class="setup-foot">
             Bind labels are farmslot-owned; identity &amp; quota mirror CodexBar when available.
