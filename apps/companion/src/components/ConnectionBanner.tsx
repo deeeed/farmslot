@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { connectionHealthCanRetry } from '../lib/connection-liveness';
 import { colors, fonts, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
 import { useRunStore } from '../store/runs';
@@ -10,7 +11,7 @@ interface ConnectionBannerProps {
   compact?: boolean;
 }
 
-type BannerTone = 'connected' | 'connecting' | 'syncError' | 'disconnected';
+type BannerTone = 'healthy' | 'connecting' | 'syncError' | 'disconnected';
 
 interface BannerContent {
   title: string;
@@ -19,24 +20,40 @@ interface BannerContent {
 }
 
 function resolveBannerContent(
-  status: ReturnType<typeof useConnectionStore.getState>['status'],
+  healthStatus: ReturnType<typeof useConnectionStore.getState>['healthStatus'],
+  lastProbeError: string | null,
   lastSyncError: string | null,
   runsSyncMessage: string | null,
+  gatewayCompatibilityHint: string | null,
   gatewayUrl: string,
   activeProfileAuthMode: string,
 ): BannerContent | null {
-  if (status === 'disconnected') {
+  if (healthStatus === 'disconnected') {
     return {
       title: 'Disconnected from gateway',
-      detail: 'Tap to open connection settings',
+      detail: lastProbeError ?? 'Retry, or switch to another LAN, tailnet, or remote profile.',
       tone: 'disconnected',
     };
   }
-  if (status === 'connecting') {
+  if (healthStatus === 'connecting') {
     return {
       title: 'Connecting to gateway…',
       detail: 'Waiting for authentication',
       tone: 'connecting',
+    };
+  }
+  if (healthStatus === 'socket-up-not-proven') {
+    return {
+      title: 'Gateway socket connected — proving response…',
+      detail: 'Waiting for an authenticated gateway.ping response.',
+      tone: 'connecting',
+    };
+  }
+  if (healthStatus === 'degraded') {
+    return {
+      title: 'Gateway connection degraded',
+      detail: lastProbeError ?? 'The socket is open, but the gateway did not answer.',
+      tone: 'syncError',
     };
   }
   if (runsSyncMessage) {
@@ -53,17 +70,29 @@ function resolveBannerContent(
       tone: 'syncError',
     };
   }
+  if (gatewayCompatibilityHint) {
+    return {
+      title: 'Connected to an older gateway',
+      detail: gatewayCompatibilityHint,
+      tone: 'syncError',
+    };
+  }
   return {
-    title: `Connected · ${gatewayUrl}`,
+    title: `Healthy · ${gatewayUrl}`,
     detail: activeProfileAuthMode !== 'none' ? `${activeProfileAuthMode} auth` : 'Ready',
-    tone: 'connected',
+    tone: 'healthy',
   };
 }
 
 export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   const router = useRouter();
-  const status = useConnectionStore((s) => s.status);
+  const healthStatus = useConnectionStore((s) => s.healthStatus);
+  const transportStatus = useConnectionStore((s) => s.status);
+  const lastProbeError = useConnectionStore((s) => s.lastProbeError);
+  const probeInProgress = useConnectionStore((s) => s.probeInProgress);
+  const retryConnection = useConnectionStore((s) => s.retryConnection);
   const lastSyncError = useConnectionStore((s) => s.lastSyncError);
+  const gatewayCompatibilityHint = useConnectionStore((s) => s.gatewayCompatibilityHint);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
   const profiles = useConnectionStore((s) => s.profiles);
   const activeProfileId = useConnectionStore((s) => s.activeProfileId);
@@ -82,21 +111,28 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
       : null;
 
   const banner = resolveBannerContent(
-    status,
+    healthStatus,
+    lastProbeError,
     lastSyncError,
     runsSyncMessage,
+    gatewayCompatibilityHint,
     activeProfile?.name ?? gatewayUrl,
     activeProfileAuthMode ?? 'none',
   );
 
-  if (!banner || banner.tone === 'connected') return null;
+  if (!banner || banner.tone === 'healthy') return null;
+  const canRetry = connectionHealthCanRetry(
+    healthStatus,
+    transportStatus,
+    gatewayCompatibilityHint !== null,
+  );
 
-  const onPress = () => {
+  const openProfiles = () => {
     router.push('/settings');
   };
 
   return (
-    <Pressable
+    <View
       style={[
         styles.banner,
         compact && styles.compactBanner,
@@ -106,7 +142,6 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
             ? styles.syncError
             : styles.disconnected,
       ]}
-      onPress={onPress}
     >
       <View style={styles.contentRow}>
         <View
@@ -132,9 +167,22 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
             </Text>
           )}
         </View>
-        <Text style={styles.actionText}>{compact ? 'Edit' : 'Settings'}</Text>
+        <View style={styles.actions}>
+          {canRetry ? (
+            <Pressable
+              style={styles.actionButton}
+              onPress={() => void retryConnection()}
+              disabled={probeInProgress}
+            >
+              <Text style={styles.actionText}>{probeInProgress ? 'Testing…' : 'Retry'}</Text>
+            </Pressable>
+          ) : null}
+          <Pressable style={styles.actionButton} onPress={openProfiles}>
+            <Text style={styles.actionText}>{compact ? 'Profiles' : 'Switch profile'}</Text>
+          </Pressable>
+        </View>
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -168,6 +216,14 @@ const styles = StyleSheet.create({
   textBlock: {
     flex: 1,
     minWidth: 0,
+  },
+  actions: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
+  actionButton: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
   },
   text: {
     color: colors.textPrimary,

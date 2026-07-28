@@ -6,7 +6,9 @@ import test from 'node:test';
 
 import {
   allocatePort,
+  backfillMetroPort,
   CDP_PORT_BLOCK_START,
+  defaultDevServerResource,
   defaultResources,
   generatePool,
   type PoolConfig,
@@ -69,7 +71,69 @@ test('allocatePort starts at the high block and skips taken ports', () => {
     { id: 'm-a-2', repo: '/b', session: 'a-2', resources: { 'dev-server': { port: 9301 } } },
   ]);
   assert.equal(allocatePort(pool()), PORT_BLOCK_START);
+  assert.equal(allocatePort(pool(), 1), PORT_BLOCK_START);
   assert.equal(allocatePort(p), 9302);
+  assert.throws(() => allocatePort(pool(), 65_536), /at or below 65535/);
+});
+
+test('defaultDevServerResource allocates distinct gateway and Metro ports', () => {
+  assert.deepEqual(defaultDevServerResource(pool()), {
+    port: PORT_BLOCK_START,
+    metro_port: PORT_BLOCK_START + 1,
+  });
+});
+
+test('backfillMetroPort preserves the gateway port and allocates a distinct port', () => {
+  const slot = {
+    id: 'm-a-1',
+    repo: '/a',
+    session: 'a-1',
+    resources: { 'dev-server': { port: 9300 } },
+  };
+  const p = pool([slot]);
+  assert.equal(backfillMetroPort(p, slot), 9301);
+  assert.deepEqual(slot.resources['dev-server'], { port: 9300, metro_port: 9301 });
+  assert.equal(backfillMetroPort(p, slot), null);
+});
+
+test('backfillMetroPort repairs invalid explicit values', () => {
+  const slot = {
+    id: 'm-a-1',
+    repo: '/a',
+    session: 'a-1',
+    resources: { 'dev-server': { port: 9300, metro_port: 70_000 } },
+  };
+  const p = pool([slot]);
+  assert.equal(backfillMetroPort(p, slot), 9301);
+});
+
+test('backfillMetroPort repairs same-slot and cross-slot Metro conflicts deterministically', () => {
+  const sameSlot = {
+    id: 'm-a-1',
+    repo: '/a',
+    session: 'a-1',
+    resources: { 'dev-server': { port: 9300, metro_port: 9300 } },
+  };
+  const firstDuplicate = {
+    id: 'm-a-2',
+    repo: '/b',
+    session: 'a-2',
+    resources: { 'dev-server': { port: 9302, metro_port: 9303 } },
+  };
+  const secondDuplicate = {
+    id: 'm-a-3',
+    repo: '/c',
+    session: 'a-3',
+    resources: { 'dev-server': { port: 9304, metro_port: 9303 } },
+  };
+  const p = pool([sameSlot, firstDuplicate, secondDuplicate]);
+
+  assert.equal(backfillMetroPort(p, sameSlot), 9301);
+  assert.equal(backfillMetroPort(p, firstDuplicate), null);
+  assert.equal(backfillMetroPort(p, secondDuplicate), 9305);
+  assert.equal(sameSlot.resources['dev-server'].metro_port, 9301);
+  assert.equal(firstDuplicate.resources['dev-server'].metro_port, 9303);
+  assert.equal(secondDuplicate.resources['dev-server'].metro_port, 9305);
 });
 
 test('defaultResources gives platform slots their device/browser resource', () => {

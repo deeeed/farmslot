@@ -7,6 +7,10 @@
     "na": "Not a CLI target (web-UI-internal or transport-level); note explains why."
   },
   "methods": {
+    "gateway.ping": {
+      "surface": "rpc-only",
+      "note": "Interim: lightweight authenticated liveness probe; use `farmslot rpc gateway.ping`."
+    },
     "gateway.status": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."

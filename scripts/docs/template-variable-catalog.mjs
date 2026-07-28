@@ -49,7 +49,7 @@ export const HOOKS_AND_RECIPE = {
   groups: [
     {
       scope: 'slot resources',
-      vars: 'port, cdp_port, simulator, avd, adb_serial, headless, snapshot, app, platform',
+      vars: 'port, metro_port, cdp_port, simulator, avd, adb_serial, headless, snapshot, app, platform',
       note: 'Missing optional resources render empty.',
     },
     {

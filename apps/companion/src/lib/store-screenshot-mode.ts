@@ -44,6 +44,7 @@ export function seedStoreScreenshotMode(): void {
   useFilterStore.getState().setAvailable(fixtures.fleet.slots);
   useConnectionStore.setState({
     status: 'connected',
+    healthStatus: 'healthy',
     gatewayUrl: DEMO_PROFILE.url,
     profiles: [DEMO_PROFILE],
     activeProfileId: DEMO_PROFILE.id,
@@ -51,6 +52,10 @@ export function seedStoreScreenshotMode(): void {
     activeProfileHttpAuthHeaders: {},
     client: createScreenshotGatewayClient(fixtures),
     lastConnectedAt: Date.now(),
+    lastSuccessfulProbeAt: Date.now(),
+    lastProbeLatencyMs: 0,
+    lastProbeError: null,
+    consecutiveProbeFailures: 0,
     lastSyncError: null,
   });
 }

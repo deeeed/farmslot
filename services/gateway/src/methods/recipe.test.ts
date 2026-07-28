@@ -151,6 +151,34 @@ test('expandRecipeProjectHookTemplate expands action manifest, doctor, and run h
   );
 });
 
+test('recipe hook expansion rejects a missing slot Metro resource with manual pool guidance', () => {
+  const slotVars = createSlotVars();
+  const projectVars = {
+    projectName: 'demo-project',
+    projectConfig: '/project.json',
+    projectFixturesDir: '/fixtures',
+    projectTemplatesDir: '/templates',
+    runtimeDir: '.agent',
+    artifactDir: '.task',
+    recipeDir: '.agent/recipes',
+    projectJson: {
+      hooks: {
+        recipe_run:
+          'runner --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --metro {{METRO_PORT}}',
+      },
+    },
+  };
+
+  assert.throws(
+    () =>
+      expandRecipeProjectHookTemplate('recipe_run', projectVars, slotVars, {
+        recipePath: '/repo/recipe.json',
+        artifactsDir: '/repo/artifacts',
+      }),
+    /runner-browser-1.*resources\.dev-server.*add the resource manually.*distinct port and metro_port/u,
+  );
+});
+
 test('assertSlotProjectMatchesRequestedProject rejects hook execution against another project slot', () => {
   assert.doesNotThrow(() =>
     assertSlotProjectMatchesRequestedProject(createSlotVars(), 'demo-project'),

@@ -1,6 +1,7 @@
 // RPC method name constants. Keep values stable: they are the public JSON-RPC contract.
 export const Methods = {
   // Gateway self-status
+  GATEWAY_PING: 'gateway.ping',
   GATEWAY_STATUS: 'gateway.status',
   GATEWAY_DOCTOR: 'gateway.doctor',
 

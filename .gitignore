@@ -38,6 +38,7 @@ projects/*/runs/
 /node_modules
 **/node_modules
 /.yarn
+/.cache/eslint/
 
 **.DS_Store
 .claude/scheduled_tasks.lock

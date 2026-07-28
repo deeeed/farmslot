@@ -82,8 +82,10 @@ function loadEnv(): AppConfigEnv {
     }),
   );
   const rawEnv = {
-    ...process.env,
+    // Process values intentionally win over dotenv-flow for EAS and isolated
+    // slot/worktree launchers; app-config.test.ts pins this precedence.
     ...dotenvEnv,
+    ...process.env,
     APP_VARIANT: requestedVariant,
   };
 
@@ -111,17 +113,31 @@ function appIdentity(env: AppConfigEnv) {
   };
 }
 
-function parsePositivePort(value: string | undefined, fallback: number): number {
-  if (!value) return fallback;
+function parseConfiguredPort(value: string | undefined, required: boolean): number | undefined {
+  if (!value) {
+    if (required) {
+      throw new Error(
+        'METRO_PORT must come from the Farmslot slot/worktree configuration for development builds.',
+      );
+    }
+    return undefined;
+  }
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65_535) {
+    throw new Error(`METRO_PORT must be an integer from 1 to 65535, received: ${value}`);
+  }
+  return parsed;
 }
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const env = loadEnv();
   const { appIdentifier, appScheme, variant, variantInfo } = appIdentity(env);
   const isProduction = variant === 'production';
-  const metroPort = parsePositivePort(process.env.METRO_PORT ?? process.env.WATCHER_PORT, 7677);
+  const localFarmslotRuntime = process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG === '1';
+  const metroPort = parseConfiguredPort(
+    process.env.METRO_PORT,
+    variant === 'development' && localFarmslotRuntime,
+  );
   const remoteGatewayToken = env.FARMSLOT_REMOTE_GATEWAY_TOKEN || env.FARMSLOT_GATEWAY_TOKEN;
 
   return {
@@ -232,7 +248,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       appSlug: APP_SLUG,
       appDisplayName: variantInfo.displayName,
       appAccentColor: variantInfo.accentColor,
-      metroPort: metroPort,
+      metroPort,
     },
   };
 };

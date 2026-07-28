@@ -251,17 +251,30 @@ function createExpoUiTransport(options: ExpoRecipeRunOptions): CloseableUiTransp
   if (options.dryRun === true) {
     return dryRunUiTransport(true);
   }
-  const metro = createMetroRecipeBridgeUiTransport({
-    host: options.metroHost ?? process.env.FARMSLOT_RECIPE_METRO_HOST ?? '127.0.0.1',
-    port: options.metroPort ?? resolveMetroRecipeBridgePort(),
-  });
+  let metro: UiActionTransport | undefined;
+  const resolveMetro = (): UiActionTransport => {
+    metro ??= createMetroRecipeBridgeUiTransport({
+      host: options.metroHost ?? process.env.FARMSLOT_RECIPE_METRO_HOST ?? '127.0.0.1',
+      port: options.metroPort ?? resolveMetroRecipeBridgePort(),
+    });
+    return metro;
+  };
   const native = resolveAgentDeviceTransport();
-  if (!native) return metro;
+  if (!native) {
+    return {
+      execute(action, node, context) {
+        return resolveMetro().execute(action, node, context);
+      },
+      observe(refs, node, context) {
+        return resolveMetro().observe!(refs, node, context);
+      },
+    };
+  }
   return {
     execute(action, node, context) {
       return isNativeUiAction(action)
         ? native.execute(action, node, context)
-        : metro.execute(action, node, context);
+        : resolveMetro().execute(action, node, context);
     },
     observe(refs, node, context) {
       return native.observe!(refs, node, context);

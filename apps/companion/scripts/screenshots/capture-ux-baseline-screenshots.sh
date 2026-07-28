@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUTPUT_DIR="${FARMSLOT_UX_SCREENSHOT_DIR:-${APP_DIR}/.agent/ux-baseline-screenshots}"
-METRO_PORT="${METRO_PORT:-7677}"
-APP_VARIANT="${APP_VARIANT:-development}"
+# shellcheck source=../agentic/agentic.conf
+source "${SCRIPT_DIR}/../agentic/agentic.conf"
 OPEN_DEV_CLIENT="${OPEN_DEV_CLIENT:-1}"
 START_METRO="${START_METRO:-1}"
 CAPTURE_IOS="${CAPTURE_IOS:-1}"

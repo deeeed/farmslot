@@ -4,7 +4,7 @@
 // project add use this dependency-free structural check instead.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-export const POOL_SCHEMA_VERSION = 1;
+export const POOL_SCHEMA_VERSION = 2;
 
 /** First port handed out for slot dev servers — high block clear of common dev defaults. */
 export const PORT_BLOCK_START = 9300;
@@ -122,19 +122,80 @@ export function usedPorts(pool: PoolConfig): Set<number> {
   for (const slot of pool.slots) {
     for (const resource of Object.values(slot.resources ?? {})) {
       for (const [key, value] of Object.entries(resource)) {
-        if (/(^|_)port$/.test(key) && typeof value === 'number') ports.add(value);
+        if (
+          /(^|_)port$/.test(key) &&
+          typeof value === 'number' &&
+          Number.isInteger(value) &&
+          value >= 1 &&
+          value <= 65_535
+        ) {
+          ports.add(value);
+        }
       }
     }
   }
   return ports;
 }
 
-/** Allocate the next free port from the onboarding block (9300+). */
+/**
+ * Allocate the next free port from the onboarding block (9300+).
+ * Lower starts intentionally clamp to the canonical high block so onboarding
+ * never allocates privileged or commonly shared development ports.
+ */
 export function allocatePort(pool: PoolConfig, from: number = PORT_BLOCK_START): number {
   const taken = usedPorts(pool);
-  let port = from;
+  if (!Number.isInteger(from) || from > 65_535) {
+    throw new Error(
+      `Port allocation start must be an integer at or below 65535, received: ${from}`,
+    );
+  }
+  let port = Math.max(PORT_BLOCK_START, from);
   while (taken.has(port)) port++;
+  if (port > 65_535) {
+    throw new Error(`No free port remains in the canonical ${PORT_BLOCK_START}-65535 block`);
+  }
   return port;
+}
+
+/** Allocate distinct gateway and Metro ports for a slot's dev-server resource. */
+export function defaultDevServerResource(pool: PoolConfig): Record<string, number> {
+  const port = allocatePort(pool);
+  return {
+    port,
+    metro_port: allocatePort(pool, port + 1),
+  };
+}
+
+/** Merge-only repair for missing, invalid, or within-pool-conflicting Metro ports. */
+export function backfillMetroPort(pool: PoolConfig, slot: PoolSlot): number | null {
+  const devServer = slot.resources?.['dev-server'];
+  if (!devServer) return null;
+  if (isUsableMetroPort(pool, slot, devServer.metro_port)) return null;
+  const metroPort = allocatePort(pool);
+  devServer.metro_port = metroPort;
+  return metroPort;
+}
+
+function isUsableMetroPort(pool: PoolConfig, slot: PoolSlot, value: unknown): value is number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 65_535) {
+    return false;
+  }
+
+  const slotIndex = pool.slots.indexOf(slot);
+  for (const [candidateIndex, candidate] of pool.slots.entries()) {
+    for (const [resourceName, resource] of Object.entries(candidate.resources ?? {})) {
+      for (const [key, candidateValue] of Object.entries(resource)) {
+        if (candidateValue !== value) continue;
+        const isCurrentMetro =
+          candidate === slot && resourceName === 'dev-server' && key === 'metro_port';
+        if (isCurrentMetro) continue;
+        const isLaterMetro =
+          candidateIndex > slotIndex && resourceName === 'dev-server' && key === 'metro_port';
+        if (!isLaterMetro) return false;
+      }
+    }
+  }
+  return true;
 }
 
 /** First CDP port handed out for browser slots — separate block from dev servers. */

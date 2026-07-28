@@ -128,6 +128,8 @@ test('farmslot-farm mobile recipe route targets Companion expo recipe with the s
       path.join(root, 'runtime'),
       '--platform',
       'ios',
+      '--gateway-port',
+      '7777',
       '--metro-port',
       '8081',
       '--simulator',
@@ -135,7 +137,7 @@ test('farmslot-farm mobile recipe route targets Companion expo recipe with the s
       '--record-video=full-run',
     ]);
 
-    assert.match(output, /^bash /);
+    assert.match(output, /^env GATEWAY_PORT=7777 METRO_PORT=8081 bash /);
     assert.match(output, /apps\/companion\/scripts\/agentic\/validate-recipe\.sh/);
     assert.doesNotMatch(output, /apps\/command-center\/scripts\/agentic\/run-recipe\.mjs/);
     assert.match(output, /--artifacts-dir /);
@@ -161,13 +163,15 @@ test('farmslot-farm mobile recipe route tolerates omitted optional device resour
       path.join(root, 'runtime'),
       '--platform',
       'ios',
+      '--gateway-port',
+      '7777',
       '--metro-port',
       '8081',
       '--simulator',
       '--adb-serial',
     ]);
 
-    assert.match(output, /^bash /);
+    assert.match(output, /^env GATEWAY_PORT=7777 METRO_PORT=8081 bash /);
     assert.match(output, /apps\/companion\/scripts\/agentic\/validate-recipe\.sh/);
     assert.match(output, /--artifacts-dir /);
     assert.match(output, new RegExp(escapeRegExp(artifactsDir)));

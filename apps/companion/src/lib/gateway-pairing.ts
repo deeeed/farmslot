@@ -12,7 +12,7 @@ import { sortPairingExchangeUrls } from './gateway-pairing-urls';
 import { inferGatewayProfileKindFromUrl } from './gateway-profile-kind';
 import {
   type GatewayProfile,
-  isMobileGatewayProfileUrl,
+  isValidGatewayUrl,
   profileSecretStorageKey,
 } from './gateway-profiles';
 
@@ -99,7 +99,7 @@ export function profileFromPairingResult(
 
 function normalizePairingProfile(profile: unknown, index: number): GatewayPairingQrProfile {
   const candidate = profile as Partial<GatewayPairingQrProfile>;
-  if (typeof candidate.url !== 'string' || !isMobileGatewayProfileUrl(candidate.url)) {
+  if (typeof candidate.url !== 'string' || !isValidGatewayUrl(candidate.url)) {
     throw new Error(`Pairing QR profile ${index + 1} has an invalid gateway URL`);
   }
   if (typeof candidate.code !== 'string' || candidate.code.trim().length === 0) {

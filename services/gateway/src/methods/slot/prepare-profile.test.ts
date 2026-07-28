@@ -10,6 +10,7 @@ import {
   buildDepsSentinelWriteCommand,
   checkPrepareRequirement,
   depsSentinelPath,
+  expandPrepareProfileHook,
   probeFailureReason,
   resolvePrepareProfile,
   selectPrepareProfile,
@@ -56,6 +57,30 @@ test('resolvePrepareProfile materializes hooks/requires/fallback', () => {
   assert.deepEqual(profile.hooks, { preflight: 'bash relaunch.sh' });
   assert.deepEqual(profile.requires, ['dev_server_up']);
   assert.equal(profile.fallback, 'full');
+});
+
+test('prepare profile override expansion rejects a missing Metro resource', () => {
+  const profile = resolvePrepareProfile(
+    {
+      prepare: {
+        profiles: {
+          full: {
+            phases: ['preflight'],
+            hooks: { preflight: 'prepare --metro-port {{metro_port}}' },
+          },
+        },
+      },
+    },
+    'full',
+  );
+  assert.throws(
+    () =>
+      expandPrepareProfileHook('preflight', profile, {}, {
+        slotId: 'legacy-farmslot-1',
+        resourceVars: { port: '8808' },
+      } as never),
+    /legacy-farmslot-1.*resources\.dev-server\.metro_port.*farmslot update/u,
+  );
 });
 
 test('resolvePrepareProfile rejects unknown profile names', () => {
@@ -199,8 +224,14 @@ test('selectPrepareProfile walks an artifact_available profile to its declared f
 });
 
 test('probeFailureReason prefers stdout but falls back to stderr', () => {
-  assert.equal(probeFailureReason('resolving...\nno artifact for ios@main\n', ''), 'no artifact for ios@main');
-  assert.equal(probeFailureReason('', 'gh not authenticated — run gh auth login\n'), 'gh not authenticated — run gh auth login');
+  assert.equal(
+    probeFailureReason('resolving...\nno artifact for ios@main\n', ''),
+    'no artifact for ios@main',
+  );
+  assert.equal(
+    probeFailureReason('', 'gh not authenticated — run gh auth login\n'),
+    'gh not authenticated — run gh auth login',
+  );
   assert.equal(probeFailureReason('stdout wins\n', 'stderr ignored\n'), 'stdout wins');
   assert.equal(probeFailureReason('', '  \n \n'), undefined);
 });

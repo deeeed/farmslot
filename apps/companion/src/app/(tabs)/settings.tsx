@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Asset } from 'expo-asset';
-import { type BarcodeScanningResult, CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView } from 'expo-camera';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,6 +21,13 @@ import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-statu
 import { AppEnvironmentCard } from '../../components/AppEnvironmentCard';
 import { AppUpdateStatusCard } from '../../components/AppUpdateStatusCard';
 import { AppVersionBanner } from '../../components/AppVersionBanner';
+import { useGatewayPairingController } from '../../features/settings/use-gateway-pairing-controller';
+import {
+  connectionHealthNeedsAttention,
+  formatProfileKind,
+  mergeVisibleProfiles,
+  useGatewayProfileController,
+} from '../../features/settings/use-gateway-profile-controller';
 import {
   microphonePermissionIsBlocked,
   microphonePermissionSetupState,
@@ -30,16 +37,7 @@ import {
   type MicrophonePermissionState,
   requestMicrophonePermissionState,
 } from '../../lib/audio-permissions';
-import { type GatewayAuthCredentials, testGatewayConnection } from '../../lib/gateway-client';
-import {
-  exchangeGatewayPairingQr,
-  parseGatewayPairingQr,
-  profileFromPairingResult,
-} from '../../lib/gateway-pairing';
-import {
-  selectPreferredGatewayProfile,
-  sortGatewayProfilesForAutoConnect,
-} from '../../lib/gateway-profile-selection';
+import { connectionHealthLabel, formatLastGatewayResponse } from '../../lib/connection-liveness';
 import {
   type GatewayProfile,
   type GatewayProfileAuthMode,
@@ -99,19 +97,20 @@ export default function SettingsScreen() {
     gatewayUrl,
     profiles,
     activeProfileId,
-    setActiveProfile,
     saveProfile,
     deleteProfile,
-    setGatewayUrl,
     setProfileAuth,
-    status,
+    healthStatus,
+    lastSuccessfulProbeAt,
+    lastProbeLatencyMs,
+    gatewayCompatibilityHint,
     lastSyncError,
     connect,
   } = useConnectionStore();
   const tmuxPrefix = useTerminalPrefsStore((s) => s.tmuxPrefix);
   const setTmuxPrefix = useTerminalPrefsStore((s) => s.setTmuxPrefix);
   const activeProfile = useMemo(
-    () => profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0],
+    () => profiles.find((profile) => profile.id === activeProfileId),
     [activeProfileId, profiles],
   );
   const [recentImportedProfiles, setRecentImportedProfiles] = useState<GatewayProfile[]>([]);
@@ -126,15 +125,44 @@ export default function SettingsScreen() {
     activeProfile?.authMode ?? 'none',
   );
   const [authSecret, setAuthSecret] = useState('');
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const [pairingScannerOpen, setPairingScannerOpen] = useState(false);
-  const [pairingInProgress, setPairingInProgress] = useState(false);
   const [pairingImportMessage, setPairingImportMessage] = useState<string | null>(null);
   const [advancedGatewaySetupOpen, setAdvancedGatewaySetupOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [connectionTestInProgress, setConnectionTestInProgress] = useState(false);
-  const [connectionTestStatus, setConnectionTestStatus] = useState<string | null>(null);
-  const [connectionTestFailed, setConnectionTestFailed] = useState(false);
+  const {
+    activateProfile: handleActivateProfile,
+    connectionTestsInProgress,
+    manualUrlValidationInProgress,
+    profileConnectionTests,
+    resetProfiles: handleResetSavedProfiles,
+    saveCurrentUrl: handleSaveCurrentUrl,
+    setProfileConnectionTests,
+    testAllProfiles: handleTestAllProfiles,
+    testingAllProfiles,
+    testProfile: handleTestProfile,
+  } = useGatewayProfileController({
+    profiles,
+    displayedProfiles,
+    activeProfile,
+    urlInput,
+    setUrlInput,
+    setAuthMode,
+    setPairingImportMessage,
+    setRecentImportedProfiles,
+  });
+  const {
+    closePairingScanner,
+    handlePairingBarcodeScanned,
+    openPairingScanner: handleOpenPairingScanner,
+    pairingInProgress,
+    pairingScannerOpen,
+  } = useGatewayPairingController({
+    setAuthMode,
+    setPairingImportMessage,
+    setProfileConnectionTests,
+    setRecentImportedProfiles,
+    setUrlInput,
+    setAdvancedGatewaySetupOpen,
+  });
   const configuredVoiceModelId = getConfiguredSherpaAsrModelId();
   const voiceModelSelectionLocked = Boolean(configuredVoiceModelId);
   const [selectedVoiceModelId, setSelectedVoiceModelId] = useState(getPreferredVoiceAsrModelId);
@@ -205,7 +233,7 @@ export default function SettingsScreen() {
       isTestingVoiceAsr),
   );
   const activeProfileHasConnectionIssue = Boolean(
-    activeProfile && (status === 'disconnected' || lastSyncError),
+    activeProfile && connectionHealthNeedsAttention(healthStatus, lastSyncError),
   );
   const showProfileAuthSetup = advancedGatewaySetupOpen || activeProfileHasConnectionIssue;
 
@@ -372,59 +400,6 @@ export default function SettingsScreen() {
     };
   }, [activeProfile]);
 
-  const handleSelectProfile = async (profile: GatewayProfile) => {
-    setPairingImportMessage(null);
-    setUrlInput(profile.url);
-    await ensureVisibleProfileIsSelectable(profile);
-    await setActiveProfile(profile.id);
-    connect();
-  };
-
-  const ensureVisibleProfileIsSelectable = async (profile: GatewayProfile) => {
-    if (profiles.some((candidate) => candidate.id === profile.id)) return;
-    await saveProfile(profile);
-  };
-
-  const handleSaveCurrentUrl = async () => {
-    const urlError = mobileGatewayProfileUrlError(urlInput.trim());
-    if (urlError) {
-      Alert.alert('Invalid URL', urlError);
-      return;
-    }
-    await setGatewayUrl(urlInput.trim());
-    connect();
-  };
-
-  const handleTestProfile = async (
-    profile: GatewayProfile,
-    options: { showAlert?: boolean } = {},
-  ) => {
-    if (connectionTestInProgress) return;
-    setConnectionTestInProgress(true);
-    setConnectionTestFailed(false);
-    setConnectionTestStatus(`Testing ${profile.name} at ${profile.url}…`);
-    try {
-      const auth = await authCredentialsForProfile(profile);
-      if (profile.authMode !== 'none' && Object.keys(auth).length === 0) {
-        throw new Error(`No ${profile.authMode} credential is saved for this profile.`);
-      }
-      const result = await testGatewayConnection(profile.url, auth);
-      const message = `${profile.name} works. Authenticated as companion with ${result.authMode} auth in ${result.latencyMs}ms.`;
-      await ensureVisibleProfileIsSelectable(profile);
-      await setActiveProfile(profile.id);
-      connect();
-      setConnectionTestStatus(message);
-      if (options.showAlert) Alert.alert('Gateway profile works', message);
-    } catch (error) {
-      const message = `${profile.name} failed: ${(error as Error).message}`;
-      setConnectionTestFailed(true);
-      setConnectionTestStatus(message);
-      if (options.showAlert) Alert.alert('Gateway profile failed', message);
-    } finally {
-      setConnectionTestInProgress(false);
-    }
-  };
-
   const handleAddProfile = async () => {
     const name = profileName.trim();
     const url = urlInput.trim();
@@ -454,8 +429,10 @@ export default function SettingsScreen() {
       return;
     }
     await saveProfile(profile, authSecret);
-    await setActiveProfile(profile.id);
-    connect();
+    Alert.alert(
+      'Profile saved',
+      `${profile.name} was saved. Use “Switch to this” to switch to it.`,
+    );
   };
 
   const handleSaveAuth = async () => {
@@ -468,10 +445,27 @@ export default function SettingsScreen() {
     connect();
   };
 
-  const handleDeleteProfile = async (profile: GatewayProfile) => {
+  const handleDeleteProfile = (profile: GatewayProfile) => {
     if (profile.readonly) return;
-    await deleteProfile(profile.id);
-    connect();
+    const isActive = profile.id === activeProfile?.id;
+    Alert.alert(
+      `Delete ${profile.name}?`,
+      isActive
+        ? 'This is the active profile. Farmslot will switch to the next available profile.'
+        : 'The saved profile and its credential will be removed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete profile',
+          style: 'destructive',
+          onPress: () => {
+            void deleteProfile(profile.id)
+              .then(connect)
+              .catch((error: Error) => Alert.alert('Profile delete failed', error.message));
+          },
+        },
+      ],
+    );
   };
 
   const handleOpenExternalUrl = useCallback(async (url: string) => {
@@ -571,70 +565,6 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleOpenPairingScanner = async () => {
-    if (!cameraPermission?.granted) {
-      const result = await requestCameraPermission();
-      if (!result.granted) {
-        Alert.alert('Camera permission required', 'Allow camera access to scan a pairing QR.');
-        return;
-      }
-    }
-    setPairingInProgress(false);
-    setPairingScannerOpen(true);
-  };
-
-  const handlePairingBarcodeScanned = async (result: BarcodeScanningResult) => {
-    if (pairingInProgress) return;
-    setPairingInProgress(true);
-    try {
-      const payload = parseGatewayPairingQr(result.data);
-      const pairedProfileResults = await exchangeGatewayPairingQr(payload);
-      const importedProfiles = pairedProfileResults.map((pairedProfileResult) => ({
-        profile: profileFromPairingResult(pairedProfileResult),
-        secret: pairedProfileResult.secret,
-      }));
-      setRecentImportedProfiles(importedProfiles.map((importedProfile) => importedProfile.profile));
-      for (const importedProfile of importedProfiles) {
-        await saveProfile(importedProfile.profile, importedProfile.secret);
-      }
-      const reachability = await testImportedPairingProfiles(importedProfiles);
-      const reachableProfileIds = new Set(
-        reachability
-          .filter((candidate) => candidate.reachable)
-          .map((candidate) => candidate.profile.id),
-      );
-      const preferredProfile =
-        sortGatewayProfilesForAutoConnect(
-          importedProfiles.map((candidate) => candidate.profile),
-        ).find((profile) => reachableProfileIds.has(profile.id)) ??
-        selectPreferredGatewayProfile(importedProfiles.map((candidate) => candidate.profile));
-      if (!preferredProfile) throw new Error('Pairing did not return a gateway profile.');
-      await setActiveProfile(preferredProfile.id);
-      setUrlInput(preferredProfile.url);
-      setAuthMode(preferredProfile.authMode ?? 'none');
-      const connectedProfile = reachability.find(
-        (candidate) => candidate.profile.id === preferredProfile.id && candidate.reachable,
-      );
-      const importMessage = connectedProfile
-        ? `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported. Connected to ${preferredProfile.name}.`
-        : `${importedProfiles.length} profile${importedProfiles.length === 1 ? '' : 's'} imported. Choose a reachable profile below if ${preferredProfile.name} stays disconnected.`;
-      setPairingImportMessage(importMessage);
-      setConnectionTestFailed(!connectedProfile);
-      setConnectionTestStatus(
-        connectedProfile
-          ? `Pairing test succeeded for ${preferredProfile.name}.`
-          : firstPairingReachabilityError(reachability),
-      );
-      setAdvancedGatewaySetupOpen(false);
-      connect();
-      setPairingScannerOpen(false);
-      Alert.alert('Companion paired', importMessage);
-    } catch (error) {
-      setPairingInProgress(false);
-      Alert.alert('Pairing failed', (error as Error).message);
-    }
-  };
-
   return (
     <ScrollView
       style={baseStyles.container}
@@ -655,15 +585,19 @@ export default function SettingsScreen() {
               styles.statusDot,
               {
                 backgroundColor:
-                  status === 'connected'
+                  healthStatus === 'healthy'
                     ? colors.statusOk
-                    : status === 'connecting'
-                      ? colors.statusWarn
-                      : colors.statusFail,
+                    : healthStatus === 'disconnected'
+                      ? colors.statusFail
+                      : healthStatus === 'connecting' ||
+                          healthStatus === 'socket-up-not-proven' ||
+                          healthStatus === 'degraded'
+                        ? colors.statusWarn
+                        : colors.statusFail,
               },
             ]}
           />
-          <Text style={baseStyles.textPrimary}>{status}</Text>
+          <Text style={baseStyles.textPrimary}>{connectionHealthLabel(healthStatus)}</Text>
         </View>
       </View>
 
@@ -730,13 +664,42 @@ export default function SettingsScreen() {
       <View style={styles.infoSection}>
         <View style={styles.gatewayActionHeader}>
           <View style={styles.gatewayActionCopy}>
-            <Text style={[styles.sectionTitle, styles.gatewayActionTitle]}>Gateway profiles</Text>
+            <Text style={[styles.sectionTitle, styles.gatewayActionTitle]}>
+              Connection profiles
+            </Text>
             <Text style={styles.helperTextNoMargin}>
               {activeProfile
-                ? `Active: ${activeProfile.name} · ${status}`
-                : 'No gateway profile selected.'}
+                ? `${healthStatus === 'healthy' ? 'Active & connected' : 'Active'}: ${activeProfile.name} · ${formatProfileKind(activeProfile.kind)} · ${connectionHealthLabel(healthStatus)}`
+                : gatewayUrl
+                  ? `${healthStatus === 'healthy' ? 'Active & connected' : 'Active'}: Manual URL · ${connectionHealthLabel(healthStatus)}`
+                  : 'No gateway profile selected.'}
             </Text>
+            <Text style={styles.helperTextNoMargin}>
+              Testing never switches. Switching validates first.
+            </Text>
+            {activeProfile ? (
+              <Text style={styles.helperTextNoMargin}>
+                Last successful response: {formatLastGatewayResponse(lastSuccessfulProbeAt)}
+                {lastProbeLatencyMs === null ? '' : ` · ${lastProbeLatencyMs}ms`}
+              </Text>
+            ) : null}
+            {gatewayCompatibilityHint ? (
+              <Text style={[styles.helperTextNoMargin, styles.connectionTestFailed]}>
+                {gatewayCompatibilityHint}
+              </Text>
+            ) : null}
           </View>
+          {displayedProfiles.length > 0 ? (
+            <Pressable
+              style={styles.profileTestAllButton}
+              onPress={() => void handleTestAllProfiles()}
+              disabled={connectionTestsInProgress}
+            >
+              <Text style={styles.profileActionButtonText}>
+                {testingAllProfiles ? 'Testing…' : 'Test all profiles'}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
 
         <View style={styles.profileList}>
@@ -748,82 +711,103 @@ export default function SettingsScreen() {
           ) : (
             displayedProfiles.map((profile) => {
               const selected = profile.id === activeProfile?.id;
+              const connectionTest = profileConnectionTests[profile.id];
+              const testInProgress = connectionTest?.status === 'testing';
+              const activeBadge =
+                healthStatus === 'healthy'
+                  ? 'Active · Connected'
+                  : `Active · ${connectionHealthLabel(healthStatus)}`;
               return (
                 <View
                   key={profile.id}
                   style={[styles.profileCard, selected && styles.profileCardActive]}
                 >
-                  <Pressable
-                    style={styles.profileButton}
-                    onPress={() => void handleSelectProfile(profile)}
-                  >
+                  <View style={styles.profileButton}>
                     <View style={styles.profileHeader}>
                       <Text style={styles.profileName}>{profile.name}</Text>
-                      <Text style={[styles.profileBadge, selected && styles.profileBadgeActive]}>
-                        {selected ? 'Active' : profile.kind}
-                      </Text>
+                      <View style={styles.profileBadges}>
+                        <Text style={styles.profileBadge}>{formatProfileKind(profile.kind)}</Text>
+                        {selected ? (
+                          <Text
+                            style={[
+                              styles.profileBadge,
+                              {
+                                color:
+                                  healthStatus === 'healthy'
+                                    ? colors.statusOk
+                                    : healthStatus === 'disconnected'
+                                      ? colors.statusFail
+                                      : colors.statusWarn,
+                              },
+                            ]}
+                          >
+                            {activeBadge}
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
                     <Text style={styles.profileUrl}>{profile.url}</Text>
                     <Text style={styles.profileAuth}>
                       Auth:{' '}
                       {profile.authMode && profile.authMode !== 'none' ? profile.authMode : 'none'}
                     </Text>
-                  </Pressable>
+                  </View>
                   <View style={styles.profileActions}>
-                    <Pressable
-                      style={[
-                        styles.profileActionButton,
-                        selected && styles.profileActionButtonActive,
-                      ]}
-                      onPress={() => void handleSelectProfile(profile)}
-                    >
-                      <Text
-                        style={[
-                          styles.profileActionButtonText,
-                          selected && styles.profileActionButtonTextActive,
-                        ]}
+                    {selected ? (
+                      <View style={[styles.profileActionButton, styles.profileActionButtonActive]}>
+                        <Text style={styles.profileActionButtonTextActive}>Current profile</Text>
+                      </View>
+                    ) : (
+                      <Pressable
+                        style={styles.profileActionButton}
+                        onPress={() => void handleActivateProfile(profile)}
+                        disabled={connectionTestsInProgress}
                       >
-                        {selected
-                          ? status === 'connected'
-                            ? 'Connected'
-                            : 'Connect'
-                          : 'Use profile'}
-                      </Text>
-                    </Pressable>
+                        <Text style={styles.profileActionButtonText}>Switch to this</Text>
+                      </Pressable>
+                    )}
                     <Pressable
                       style={styles.profileTestButton}
                       onPress={() => void handleTestProfile(profile, { showAlert: true })}
-                      disabled={connectionTestInProgress}
+                      disabled={connectionTestsInProgress}
                     >
                       <Text style={styles.profileActionButtonText}>
-                        {connectionTestInProgress ? 'Testing…' : 'Test'}
+                        {testInProgress ? 'Testing…' : 'Test connection'}
                       </Text>
                     </Pressable>
                     {!profile.readonly ? (
                       <Pressable
                         style={styles.deleteButton}
-                        onPress={() => void handleDeleteProfile(profile)}
+                        onPress={() => handleDeleteProfile(profile)}
                       >
                         <Text style={styles.deleteText}>Delete</Text>
                       </Pressable>
                     ) : null}
                   </View>
+                  {connectionTest ? (
+                    <Text
+                      style={[
+                        styles.profileConnectionTestResult,
+                        connectionTest.status === 'failed'
+                          ? styles.connectionTestFailed
+                          : connectionTest.status === 'healthy'
+                            ? styles.connectionTestOk
+                            : styles.connectionTestTesting,
+                      ]}
+                    >
+                      {connectionTest.message}
+                    </Text>
+                  ) : null}
                 </View>
               );
             })
           )}
         </View>
 
-        {connectionTestStatus ? (
-          <Text
-            style={[
-              styles.connectionTestText,
-              styles.connectionTestInline,
-              connectionTestFailed ? styles.connectionTestFailed : styles.connectionTestOk,
-            ]}
-          >
-            {connectionTestStatus}
-          </Text>
+        {displayedProfiles.some((profile) => !profile.readonly) ? (
+          <Pressable style={styles.profileResetButton} onPress={handleResetSavedProfiles}>
+            <Text style={styles.deleteText}>Reset saved profiles</Text>
+          </Pressable>
         ) : null}
 
         <Pressable
@@ -843,7 +827,7 @@ export default function SettingsScreen() {
                 style={styles.input}
                 value={urlInput}
                 onChangeText={setUrlInput}
-                placeholder="ws://your-mac.local:7777/ws or wss://your-gateway.example/ws"
+                placeholder="ws://your-mac.local:<port>/ws or wss://your-gateway.example/ws"
                 placeholderTextColor={colors.textMuted}
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -854,9 +838,12 @@ export default function SettingsScreen() {
             <View style={styles.buttonRow}>
               <Pressable
                 style={[styles.button, styles.secondaryButton]}
-                onPress={handleSaveCurrentUrl}
+                onPress={() => void handleSaveCurrentUrl()}
+                disabled={manualUrlValidationInProgress}
               >
-                <Text style={styles.buttonText}>Use URL</Text>
+                <Text style={styles.buttonText}>
+                  {manualUrlValidationInProgress ? 'Validating…' : 'Validate & use URL'}
+                </Text>
               </Pressable>
             </View>
           </>
@@ -1175,16 +1162,15 @@ export default function SettingsScreen() {
                 Advanced diagnostics
               </Text>
               <Text style={styles.helperTextNoMargin}>
-                Environment, update status, and raw troubleshooting live here so pairing stays first.
+                Environment, update status, and raw troubleshooting live here so pairing stays
+                first.
               </Text>
             </View>
             <Pressable
               style={styles.advancedToggle}
               onPress={() => setDiagnosticsOpen((open) => !open)}
             >
-              <Text style={styles.advancedToggleText}>
-                {diagnosticsOpen ? 'Hide' : 'Show'}
-              </Text>
+              <Text style={styles.advancedToggleText}>{diagnosticsOpen ? 'Hide' : 'Show'}</Text>
             </Pressable>
           </View>
           {diagnosticsOpen ? (
@@ -1221,7 +1207,7 @@ export default function SettingsScreen() {
       <Modal
         visible={pairingScannerOpen}
         animationType="slide"
-        onRequestClose={() => setPairingScannerOpen(false)}
+        onRequestClose={closePairingScanner}
       >
         <SafeAreaView style={styles.scannerContainer}>
           <CameraView
@@ -1244,7 +1230,7 @@ export default function SettingsScreen() {
             ) : null}
             <Pressable
               style={[styles.button, styles.scannerCancelButton]}
-              onPress={() => setPairingScannerOpen(false)}
+              onPress={closePairingScanner}
             >
               <Text style={styles.buttonText}>Cancel</Text>
             </Pressable>
@@ -1314,6 +1300,10 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     marginBottom: spacing.sm,
   },
+  profileBadges: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
   profileName: {
     color: colors.textPrimary,
     fontSize: fonts.sizeMd,
@@ -1363,6 +1353,28 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1,
     borderLeftColor: colors.bgSurface,
     paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  profileTestAllButton: {
+    borderColor: colors.bgCardHover,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  profileConnectionTestResult: {
+    borderTopColor: colors.bgSurface,
+    borderTopWidth: 1,
+    fontSize: fonts.sizeSm,
+    lineHeight: 18,
+    padding: spacing.md,
+  },
+  profileResetButton: {
+    alignItems: 'center',
+    borderColor: colors.statusFail + '80',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    marginBottom: spacing.md,
     paddingVertical: spacing.md,
   },
   deleteButton: {
@@ -1454,6 +1466,9 @@ const styles = StyleSheet.create({
   },
   connectionTestFailed: {
     color: colors.statusFail,
+  },
+  connectionTestTesting: {
+    color: colors.statusWarn,
   },
   helperText: {
     color: colors.textMuted,
@@ -1765,77 +1780,3 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
   },
 });
-
-type ImportedPairingProfile = {
-  profile: GatewayProfile;
-  secret: string;
-};
-
-type PairingProfileReachability = {
-  profile: GatewayProfile;
-  reachable: boolean;
-  error?: string;
-};
-
-const PAIRING_PROFILE_TEST_TIMEOUT_MS = 3_500;
-
-function mergeVisibleProfiles(
-  profiles: GatewayProfile[],
-  recentImportedProfiles: GatewayProfile[],
-): GatewayProfile[] {
-  const byId = new Map<string, GatewayProfile>();
-  for (const profile of recentImportedProfiles) byId.set(profile.id, profile);
-  for (const profile of profiles) byId.set(profile.id, profile);
-  return [...byId.values()];
-}
-
-async function testImportedPairingProfiles(
-  importedProfiles: ImportedPairingProfile[],
-): Promise<PairingProfileReachability[]> {
-  return Promise.all(
-    importedProfiles.map(async (importedProfile) => {
-      const auth = authCredentialsForSecret(importedProfile.profile, importedProfile.secret);
-      try {
-        await testGatewayConnection(
-          importedProfile.profile.url,
-          auth,
-          PAIRING_PROFILE_TEST_TIMEOUT_MS,
-        );
-        return { profile: importedProfile.profile, reachable: true };
-      } catch (error) {
-        // Pairing commonly contains LAN + remote URLs; at least one can be unreachable
-        // from the current network. Capture the failure so the UI can guide selection.
-        return {
-          profile: importedProfile.profile,
-          reachable: false,
-          error: (error as Error).message,
-        };
-      }
-    }),
-  );
-}
-
-function firstPairingReachabilityError(reachability: PairingProfileReachability[]): string {
-  const firstError = reachability.find((candidate) => candidate.error);
-  return firstError
-    ? `Imported profiles, but ${firstError.profile.name} did not connect: ${firstError.error}`
-    : 'Imported profiles, but none connected from this device yet.';
-}
-
-function authCredentialsForSecret(profile: GatewayProfile, secret: string): GatewayAuthCredentials {
-  if (profile.authMode === 'token') return { token: secret };
-  if (profile.authMode === 'password') return { password: secret };
-  return {};
-}
-
-async function authCredentialsForProfile(profile: GatewayProfile): Promise<GatewayAuthCredentials> {
-  if (profile.authMode === 'token') {
-    const token = await readGatewayProfileSecret(profile);
-    return token ? { token } : {};
-  }
-  if (profile.authMode === 'password') {
-    const password = await readGatewayProfileSecret(profile);
-    return password ? { password } : {};
-  }
-  return {};
-}

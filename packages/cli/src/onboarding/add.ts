@@ -35,7 +35,8 @@ import {
   validatePackDir,
 } from './pack.js';
 import {
-  allocatePort,
+  backfillMetroPort,
+  defaultDevServerResource,
   defaultResources,
   platformResourceKeys,
   readPool,
@@ -384,8 +385,9 @@ function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress)
 function numericResourcePort(
   slot: { resources?: Record<string, Record<string, unknown>> } | undefined,
   resource: string,
+  field = 'port',
 ): number | null {
-  const port = slot?.resources?.[resource]?.port;
+  const port = slot?.resources?.[resource]?.[field];
   return typeof port === 'number' ? port : null;
 }
 
@@ -395,7 +397,8 @@ function writeBaselineRuntimeContext(
   slotId: string,
   machine: string,
   repoPath: string,
-  port: number | null,
+  gatewayPort: number | null,
+  metroPort: number | null,
   progress: AddProgress,
 ): void {
   const writer = join(ws.farmslotDir, 'scripts', 'write-runtime-context.sh');
@@ -424,9 +427,12 @@ function writeBaselineRuntimeContext(
     '--strict',
     'true',
   ];
-  if (port !== null) {
-    const value = String(port);
-    args.push('--watcher-port', value, '--metro-port', value, '--dev-server-port', value);
+  if (gatewayPort !== null) {
+    const value = String(gatewayPort);
+    args.push('--watcher-port', value, '--dev-server-port', value);
+  }
+  if (metroPort !== null) {
+    args.push('--metro-port', String(metroPort));
   }
   run('bash', args, { cwd: ws.farmslotDir, stdio: childStdio(progress) });
   progress.step({ label: `slot ${slotId} runtime context wrote`, detail: registered.runtimeDir });
@@ -675,7 +681,7 @@ export function projectAdd(
             session,
             branch: registered.defaultBranch,
             resources: {
-              'dev-server': { port: allocatePort(pool) },
+              'dev-server': defaultDevServerResource(pool),
               ...defaultResources(registered.platform, registered.short, n, pool),
             },
           });
@@ -685,16 +691,20 @@ export function projectAdd(
           } else if (existing) {
             // Backfill platform resources missing on slots created before
             // defaultResources existed. Merge-only: user-edited values win.
+            const metroPort = backfillMetroPort(pool, existing);
             const defaults = defaultResources(registered.platform, registered.short, n, pool);
             const backfill = Object.fromEntries(
               Object.entries(defaults).filter(([key]) => !existing.resources?.[key]),
             );
-            if (Object.keys(backfill).length > 0) {
+            if (Object.keys(backfill).length > 0 || metroPort !== null) {
               existing.resources = { ...backfill, ...existing.resources };
               writePool(poolPath, pool);
               progress.step({
                 label: `slot ${slotId} resources backfilled`,
-                detail: Object.keys(backfill).join(', '),
+                detail: [
+                  ...(metroPort === null ? [] : ['dev-server.metro_port']),
+                  ...Object.keys(backfill),
+                ].join(', '),
               });
             } else {
               progress.info(`slot ${slotId} already in pool — left untouched`);
@@ -717,6 +727,7 @@ export function projectAdd(
             pool.machine,
             repoPath,
             numericResourcePort(slot, 'dev-server'),
+            numericResourcePort(slot, 'dev-server', 'metro_port'),
             progress,
           );
           if (options.noSetup) {

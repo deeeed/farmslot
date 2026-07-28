@@ -19,6 +19,7 @@ export interface MigrationStep {
   id: string;
   toVersion: number;
   description: string;
+  repairsInvariant?: boolean;
   migrate: (pool: PoolConfig) => PoolConfig | void;
 }
 
@@ -43,6 +44,7 @@ export async function loadMigrations(dir: string = poolMigrationsDir()): Promise
       id: mod.id,
       toVersion: mod.toVersion,
       description: mod.description ?? '',
+      repairsInvariant: mod.repairsInvariant === true,
       migrate: mod.migrate,
     });
   }
@@ -71,10 +73,20 @@ export interface MigrationResult {
 export function applyMigrations(pool: PoolConfig, steps: MigrationStep[]): MigrationResult {
   let current = pool;
   const applied: string[] = [];
-  for (const step of pendingMigrations(pool, steps)) {
+  const pending = pendingMigrations(pool, steps);
+  for (const step of pending) {
     current = step.migrate(current) ?? current;
     current.schema_version = step.toVersion;
     applied.push(step.id);
+  }
+  const latestSupportedVersion = steps.at(-1)?.toVersion ?? 0;
+  if ((pool.schema_version ?? 0) <= latestSupportedVersion) {
+    for (const step of steps) {
+      if (!step.repairsInvariant || pending.includes(step)) continue;
+      const before = JSON.stringify(current);
+      current = step.migrate(current) ?? current;
+      if (JSON.stringify(current) !== before) applied.push(`${step.id}-repair`);
+    }
   }
   return { pool: current, applied };
 }

@@ -9,8 +9,11 @@ import {
   type ResponseFrame,
 } from '@farmslot/protocol';
 
+import { gatewaySupportsPing } from './gateway-connection-test';
+import { connectionWaitTerminalError } from './gateway-connection-wait';
 import type { GatewayAuthCredentials } from './gateway-http-auth';
 
+export { type GatewayConnectionTestResult, testGatewayConnection } from './gateway-connection-test';
 export {
   type GatewayAuthCredentials,
   type GatewayHttpAuthHeaders,
@@ -21,10 +24,6 @@ export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 type EventCallback = (payload: unknown) => void;
 type ConnectionCallback = (state: ConnectionState) => void;
 
-export interface GatewayConnectionTestResult extends GatewayAuthConnectResult {
-  latencyMs: number;
-}
-
 interface PendingRequest {
   resolve: (payload: unknown) => void;
   reject: (err: Error) => void;
@@ -33,81 +32,6 @@ interface PendingRequest {
 
 const DEFAULT_TIMEOUT = 15_000;
 const MAX_BACKOFF = 30_000;
-const CONNECTION_TEST_TIMEOUT = 8_000;
-
-export function testGatewayConnection(
-  url: string,
-  auth: GatewayAuthCredentials = {},
-  timeout = CONNECTION_TEST_TIMEOUT,
-): Promise<GatewayConnectionTestResult> {
-  const startedAt = Date.now();
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const ws = new WebSocket(url);
-    const timer = setTimeout(() => {
-      finishWithError(new Error(`Gateway connection test timed out after ${timeout}ms`));
-    }, timeout);
-
-    const finish = () => {
-      if (settled) return false;
-      settled = true;
-      clearTimeout(timer);
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      }
-      return true;
-    };
-
-    const finishWithError = (error: Error) => {
-      if (!finish()) return;
-      reject(error);
-    };
-
-    ws.onopen = () => {
-      const frame: RequestFrame = {
-        type: 'req',
-        id: 'connection-test',
-        method: Methods.AUTH_CONNECT,
-        params: {
-          clientKind: 'companion',
-          ...auth,
-        },
-      };
-      ws.send(JSON.stringify(frame));
-    };
-
-    ws.onmessage = (ev: MessageEvent) => {
-      let frame: Frame;
-      try {
-        frame = JSON.parse(ev.data as string) as Frame;
-      } catch (error) {
-        finishWithError(new Error(`Gateway returned malformed JSON: ${getErrorMessage(error)}`));
-        return;
-      }
-      if (frame.type !== 'res' || frame.id !== 'connection-test') return;
-      const response = frame as ResponseFrame;
-      if (!response.ok) {
-        finishWithError(new Error(response.error?.message ?? 'Gateway authentication failed'));
-        return;
-      }
-      if (!finish()) return;
-      resolve({
-        ...(response.payload as GatewayAuthConnectResult),
-        latencyMs: Date.now() - startedAt,
-      });
-    };
-
-    ws.onerror = () => {
-      finishWithError(new Error('Gateway socket error during connection test'));
-    };
-
-    ws.onclose = () => {
-      if (settled) return;
-      finishWithError(new Error('Gateway closed before authentication completed'));
-    };
-  });
-}
-
 export class GatewayClient {
   private ws: WebSocket | null = null;
   private state: ConnectionState = 'disconnected';
@@ -123,6 +47,9 @@ export class GatewayClient {
   private pausedForBackground = false;
   private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
   private wasConnectedBeforeBackground = false;
+  private lastConnectionError: string | null = null;
+  private pingSupported: boolean | null = null;
+  private generation = 0;
 
   constructor(url: string, auth: GatewayAuthCredentials = {}) {
     this.url = url;
@@ -134,15 +61,29 @@ export class GatewayClient {
     return this.state;
   }
 
+  get gatewayPingSupported(): boolean | null {
+    return this.pingSupported;
+  }
+
+  get connectionGeneration(): number {
+    return this.generation;
+  }
+
   setConnection(url: string, auth: GatewayAuthCredentials = {}): void {
     const changed =
       this.url !== url || this.auth.token !== auth.token || this.auth.password !== auth.password;
     this.url = url;
     this.auth = auth;
-    if (changed && this.state !== 'disconnected') {
-      this.ws?.close();
-      this.connect();
-    }
+    if (!changed) return;
+
+    this.generation += 1;
+    this.pingSupported = null;
+    this.cancelReconnect();
+    this.rejectAllPending('Gateway profile changed');
+    this.closeCurrentSocket();
+    this.setState('disconnected');
+    this.backoff = 1000;
+    this.connect();
   }
 
   setUrl(url: string): void {
@@ -161,27 +102,40 @@ export class GatewayClient {
     )
       return;
 
+    this.cancelReconnect();
+    this.lastConnectionError = null;
     this.setState('connecting');
-    this.ws = new WebSocket(this.url);
+    const socket = new WebSocket(this.url);
+    this.ws = socket;
 
-    this.ws.onopen = () => {
+    socket.onopen = () => {
+      if (this.ws !== socket) return;
       this.authenticate().catch((error: Error) => {
-        this.rejectAllPending(`Authentication failed: ${error.message}`);
-        this.ws?.close();
+        if (this.ws !== socket) return;
+        this.lastConnectionError = `Authentication failed: ${error.message}`;
+        this.rejectAllPending(this.lastConnectionError);
+        socket.close();
       });
     };
 
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (this.ws !== socket) return;
+      this.ws = null;
+      this.invalidateTransportCapability();
+      if (this.state === 'connecting' && !this.lastConnectionError) {
+        this.lastConnectionError = 'Gateway connection closed before authentication completed';
+      }
       this.setState('disconnected');
       this.rejectAllPending('Connection closed');
       this.scheduleReconnect();
     };
 
-    this.ws.onerror = () => {
+    socket.onerror = () => {
       // onclose fires after onerror
     };
 
-    this.ws.onmessage = (ev: MessageEvent) => {
+    socket.onmessage = (ev: MessageEvent) => {
+      if (this.ws !== socket) return;
       try {
         const frame: Frame = JSON.parse(ev.data as string);
         if (frame.type === 'res') {
@@ -191,9 +145,20 @@ export class GatewayClient {
         }
       } catch (error) {
         this.rejectAllPending(`Malformed gateway frame: ${getErrorMessage(error)}`);
-        this.ws?.close();
+        socket.close();
       }
     };
+  }
+
+  reconnect(): void {
+    if (this.disposed || this.pausedForBackground) return;
+    this.invalidateTransportCapability();
+    this.cancelReconnect();
+    this.rejectAllPending('Gateway reconnect requested');
+    this.closeCurrentSocket();
+    this.setState('disconnected');
+    this.backoff = 1000;
+    this.connect();
   }
 
   private async authenticate(): Promise<void> {
@@ -202,17 +167,18 @@ export class GatewayClient {
       ...this.auth,
     });
     if (!result.ok) throw new Error('Gateway authentication failed');
+    this.pingSupported = gatewaySupportsPing(result);
     this.backoff = 1000;
+    this.lastConnectionError = null;
     this.setState('connected');
   }
 
   disconnect(): void {
     this.disposed = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.cancelReconnect();
     this.pausedForBackground = false;
     this.rejectAllPending('Client disconnected');
-    this.ws?.close();
-    this.ws = null;
+    this.closeCurrentSocket();
     this.setState('disconnected');
     this.appStateSubscription?.remove();
     this.appStateSubscription = null;
@@ -297,11 +263,19 @@ export class GatewayClient {
         resolve();
       };
       const timer = setTimeout(() => {
-        finish(new Error(`Gateway did not connect within ${timeout}ms`));
+        const detail = this.lastConnectionError ? ` Last error: ${this.lastConnectionError}` : '';
+        finish(new Error(`Gateway did not connect within ${timeout}ms.${detail}`));
       }, timeout);
 
       unsubscribe = this.onConnectionChange((state) => {
         if (state === 'connected') finish();
+        if (state === 'disconnected') {
+          const terminalError = connectionWaitTerminalError(
+            this.pausedForBackground,
+            this.lastConnectionError,
+          );
+          if (terminalError) finish(new Error(terminalError));
+        }
       });
 
       if (this.state === 'connected' && this.ws?.readyState === WebSocket.OPEN) finish();
@@ -347,8 +321,9 @@ export class GatewayClient {
 
   private scheduleReconnect(): void {
     if (this.disposed || this.pausedForBackground) return;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.cancelReconnect();
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       this.connect();
     }, this.backoff);
     this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF);
@@ -362,6 +337,30 @@ export class GatewayClient {
     this.pending.clear();
   }
 
+  private cancelReconnect(): void {
+    if (!this.reconnectTimer) return;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+  }
+
+  private closeCurrentSocket(): void {
+    const socket = this.ws;
+    this.ws = null;
+    if (!socket) return;
+    socket.onopen = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    socket.onmessage = null;
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+      socket.close();
+    }
+  }
+
+  private invalidateTransportCapability(): void {
+    this.generation += 1;
+    this.pingSupported = null;
+  }
+
   private setupAppStateListener(): void {
     this.appStateSubscription = AppState.addEventListener('change', this.handleAppStateChange);
   }
@@ -373,11 +372,10 @@ export class GatewayClient {
       // instead of leaving workspace screens stuck with a stale client.
       this.wasConnectedBeforeBackground = this.state !== 'disconnected';
       this.pausedForBackground = true;
-      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-      if (this.ws) {
-        this.ws.close();
-        this.ws = null;
-      }
+      this.invalidateTransportCapability();
+      this.cancelReconnect();
+      this.rejectAllPending('Gateway paused while app is in the background');
+      this.closeCurrentSocket();
       this.setState('disconnected');
     } else if (nextState === 'active') {
       this.pausedForBackground = false;

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the authenticated `gateway.ping` liveness method as read-only and regenerate the Gateway API reference.
 - Document shared execution-template sources, selection, and domain configuration.
 - Publish the Action Manifest v1 schema and concise runtime contract.
 - Document direct learning destination overrides.

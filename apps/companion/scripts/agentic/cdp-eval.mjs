@@ -6,7 +6,7 @@
 //   node scripts/agentic/cdp-eval.mjs --file probes/example.js
 //
 // Env:
-//   METRO_PORT (default 7677)
+//   METRO_PORT (required; supplied by slot/worktree configuration)
 //   FARMSLOT_METRO_ORIGIN (optional; auto-detects loopback + LAN when unset)
 
 import { execSync } from 'node:child_process';
@@ -14,14 +14,17 @@ import { readFileSync } from 'node:fs';
 
 import WebSocket from 'ws';
 
-const metroPort = process.env.METRO_PORT ?? '7677';
+const metroPort = process.env.METRO_PORT;
+if (!/^[1-9]\d*$/.test(metroPort ?? '')) {
+  throw new Error('METRO_PORT must come from the Farmslot slot/worktree port configuration.');
+}
 
 function detectLanHost() {
   if (process.env.REACT_NATIVE_PACKAGER_HOSTNAME?.trim()) {
     return process.env.REACT_NATIVE_PACKAGER_HOSTNAME.trim();
   }
   try {
-    const iface = execSync('route get default 2>/dev/null | awk \'/interface:/{print $2; exit}\'', {
+    const iface = execSync("route get default 2>/dev/null | awk '/interface:/{print $2; exit}'", {
       encoding: 'utf8',
     }).trim();
     if (iface) {
@@ -44,10 +47,7 @@ function metroOriginCandidates() {
   if (process.env.FARMSLOT_METRO_ORIGIN?.trim()) {
     return [process.env.FARMSLOT_METRO_ORIGIN.trim()];
   }
-  const candidates = [
-    `http://127.0.0.1:${metroPort}`,
-    `http://localhost:${metroPort}`,
-  ];
+  const candidates = [`http://127.0.0.1:${metroPort}`, `http://localhost:${metroPort}`];
   const lanHost = detectLanHost();
   if (lanHost) candidates.push(`http://${lanHost}:${metroPort}`);
   return [...new Set(candidates)];
@@ -88,7 +88,9 @@ async function evalInTarget(target, expression, metroOrigin) {
     if (msg.id && pending.has(msg.id)) {
       const { resolve, reject } = pending.get(msg.id);
       pending.delete(msg.id);
-      msg.error ? reject(new Error(msg.error.message ?? JSON.stringify(msg.error))) : resolve(msg.result);
+      msg.error
+        ? reject(new Error(msg.error.message ?? JSON.stringify(msg.error)))
+        : resolve(msg.result);
     }
   });
 
@@ -108,8 +110,7 @@ async function evalInTarget(target, expression, metroOrigin) {
     await call('Runtime.enable');
     const trimmed = expression.trim();
     const useStatementForm =
-      trimmed.includes('\n') ||
-      /\b(const|let|var|return|await|require\()\b/.test(trimmed);
+      trimmed.includes('\n') || /\b(const|let|var|return|await|require\()\b/.test(trimmed);
     const wrapped = useStatementForm
       ? `(async () => { ${trimmed} })()`
       : `(async () => (${trimmed}))()`;

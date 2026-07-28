@@ -6,6 +6,8 @@ import {
   resolveMetroRecipeBridgePort,
 } from './metro-recipe-bridge-transport.js';
 
+const TEST_METRO_PORT = 9_300;
+
 test('resolveMetroRecipeBridgePort prefers FARMSLOT_RECIPE_METRO_PORT', () => {
   assert.equal(
     resolveMetroRecipeBridgePort({
@@ -14,6 +16,15 @@ test('resolveMetroRecipeBridgePort prefers FARMSLOT_RECIPE_METRO_PORT', () => {
     }),
     9001,
   );
+});
+
+test('resolveMetroRecipeBridgePort requires an explicit recipe or Metro port', () => {
+  assert.throws(
+    () => resolveMetroRecipeBridgePort({ WATCHER_PORT: '7677' }),
+    /checkout-local \.env\.ports/u,
+  );
+  assert.equal(resolveMetroRecipeBridgePort({ METRO_PORT: '65535' }), 65_535);
+  assert.throws(() => resolveMetroRecipeBridgePort({ METRO_PORT: '65536' }), /Invalid Metro port/u);
 });
 
 test('createMetroRecipeBridge posts commands to Metro relay and surfaces bridge failures', async () => {
@@ -51,6 +62,7 @@ test('createMetroRecipeBridge posts commands to Metro relay and surfaces bridge 
 test('createMetroRecipeBridge honors node timeout_ms above transport default', async () => {
   const calls: Array<{ body: unknown }> = [];
   const bridge = createMetroRecipeBridge({
+    port: TEST_METRO_PORT,
     fetchImpl: async (_url, init) => {
       calls.push({ body: JSON.parse(String(init?.body ?? '{}')) });
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
@@ -73,6 +85,7 @@ test('createMetroRecipeBridge honors node timeout_ms above transport default', a
 
 test('createMetroRecipeBridge throws when Metro relay returns ok:false', async () => {
   const bridge = createMetroRecipeBridge({
+    port: TEST_METRO_PORT,
     fetchImpl: async () =>
       new Response(JSON.stringify({ ok: false, error: 'bridge missing' }), { status: 200 }),
   });

@@ -114,9 +114,18 @@ export async function farmslotUpdate(
   const steps = await loadMigrations(join(clone, 'migrations', 'pool'));
   const poolPath = join(clone, state.pool_file);
   const pool = readPool(poolPath);
+  const previousMetroPorts = new Map(
+    pool.slots.map((slot) => [slot.id, slot.resources?.['dev-server']?.metro_port]),
+  );
   const { pool: migrated, applied } = applyMigrations(pool, steps);
   if (applied.length > 0) {
     writePool(poolPath, migrated);
+    for (const slot of migrated.slots) {
+      const metroPort = slot.resources?.['dev-server']?.metro_port;
+      if (metroPort !== undefined && metroPort !== previousMetroPorts.get(slot.id)) {
+        progress.info(`slot ${slot.id} → resources.dev-server.metro_port ${metroPort}`);
+      }
+    }
     // Persist the migration record immediately — a pack-sync failure later
     // must not leave a migrated pool with no bookkeeping.
     state.pool_migrations = {

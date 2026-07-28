@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RAW_DIR="${APP_DIR}/store-assets/raw"
-METRO_PORT="${METRO_PORT:-7677}"
-APP_VARIANT="${APP_VARIANT:-development}"
+# shellcheck source=../agentic/agentic.conf
+source "${SCRIPT_DIR}/../agentic/agentic.conf"
 OPEN_DEV_CLIENT="${OPEN_DEV_CLIENT:-1}"
 case "${APP_VARIANT}" in
   development)

@@ -114,6 +114,143 @@ test('Expo config uses script-provided bundle id and scheme for local native lau
   }
 });
 
+test('Expo config lets isolated launcher gateway settings override local dotenv defaults', () => {
+  const previousGatewayUrl = process.env.EXPO_PUBLIC_GATEWAY_URL;
+  const previousGatewayToken = process.env.FARMSLOT_GATEWAY_TOKEN;
+  process.env.EXPO_PUBLIC_GATEWAY_URL = 'ws://localhost:7801/ws';
+  process.env.FARMSLOT_GATEWAY_TOKEN = 'isolated-token';
+  try {
+    const config = createExpoConfig({
+      config: {
+        name: 'FarmDev',
+        slug: 'farmslot',
+      },
+    } as ConfigContext);
+
+    assert.equal(config.extra?.gatewayUrl, 'ws://localhost:7801/ws');
+    assert.equal(config.extra?.gatewayAuthToken, 'isolated-token');
+  } finally {
+    restoreEnv('EXPO_PUBLIC_GATEWAY_URL', previousGatewayUrl);
+    restoreEnv('FARMSLOT_GATEWAY_TOKEN', previousGatewayToken);
+  }
+});
+
+test('Expo config uses the Metro port supplied by slot or worktree configuration', () => {
+  const previousMetroPort = process.env.METRO_PORT;
+  process.env.METRO_PORT = '41234';
+  try {
+    const config = createExpoConfig({
+      config: {
+        name: 'FarmDev',
+        slug: 'farmslot',
+      },
+    } as ConfigContext);
+    const metroPlugin = (config.plugins ?? []).find(
+      (plugin) => Array.isArray(plugin) && plugin[0] === './plugins/withMetroPort.cjs',
+    );
+
+    assert.ok(Array.isArray(metroPlugin));
+    assert.equal(metroPlugin[1]?.port, 41234);
+    assert.equal(config.extra?.metroPort, 41234);
+  } finally {
+    restoreEnv('METRO_PORT', previousMetroPort);
+  }
+});
+
+test('Expo config rejects an invalid configured Metro port instead of falling back', () => {
+  const previousMetroPort = process.env.METRO_PORT;
+  process.env.METRO_PORT = 'not-a-port';
+  try {
+    assert.throws(
+      () =>
+        createExpoConfig({
+          config: {
+            name: 'FarmDev',
+            slug: 'farmslot',
+          },
+        } as ConfigContext),
+      /METRO_PORT must be an integer from 1 to 65535/,
+    );
+  } finally {
+    restoreEnv('METRO_PORT', previousMetroPort);
+  }
+});
+
+test('Expo config rejects a local Farmslot development build without a slot-derived Metro port', () => {
+  const previousMetroPort = process.env.METRO_PORT;
+  const previousVariant = process.env.APP_VARIANT;
+  const previousLocalRuntime = process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG;
+  delete process.env.METRO_PORT;
+  process.env.APP_VARIANT = 'development';
+  process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG = '1';
+  try {
+    assert.throws(
+      () =>
+        createExpoConfig({
+          config: {
+            name: 'FarmDev',
+            slug: 'farmslot',
+          },
+        } as ConfigContext),
+      /METRO_PORT must come from the Farmslot slot\/worktree configuration/,
+    );
+  } finally {
+    restoreEnv('METRO_PORT', previousMetroPort);
+    restoreEnv('APP_VARIANT', previousVariant);
+    restoreEnv('FARMSLOT_LOCAL_RUNTIME_CONFIG', previousLocalRuntime);
+  }
+});
+
+test('Expo config allows remote EAS development resolution without local slot ports', () => {
+  const previousMetroPort = process.env.METRO_PORT;
+  const previousVariant = process.env.APP_VARIANT;
+  const previousLocalRuntime = process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG;
+  delete process.env.METRO_PORT;
+  delete process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG;
+  process.env.APP_VARIANT = 'development';
+  try {
+    const config = createExpoConfig({
+      config: {
+        name: 'FarmDev',
+        slug: 'farmslot',
+      },
+    } as ConfigContext);
+    const metroPlugin = (config.plugins ?? []).find(
+      (plugin) => Array.isArray(plugin) && plugin[0] === './plugins/withMetroPort.cjs',
+    );
+
+    assert.ok(Array.isArray(metroPlugin));
+    assert.equal(metroPlugin[1]?.port, undefined);
+    assert.equal(config.extra?.metroPort, undefined);
+  } finally {
+    restoreEnv('METRO_PORT', previousMetroPort);
+    restoreEnv('APP_VARIANT', previousVariant);
+    restoreEnv('FARMSLOT_LOCAL_RUNTIME_CONFIG', previousLocalRuntime);
+  }
+});
+
+test('Expo config accepts port 65535 and rejects values above the TCP range', () => {
+  const previousMetroPort = process.env.METRO_PORT;
+  process.env.METRO_PORT = '65535';
+  try {
+    assert.doesNotThrow(() =>
+      createExpoConfig({
+        config: { name: 'FarmDev', slug: 'farmslot' },
+      } as ConfigContext),
+    );
+    process.env.METRO_PORT = '65536';
+    assert.throws(
+      () =>
+        createExpoConfig({
+          config: { name: 'FarmDev', slug: 'farmslot' },
+        } as ConfigContext),
+      /METRO_PORT must be an integer from 1 to 65535/,
+    );
+  } finally {
+    restoreEnv('METRO_PORT', previousMetroPort);
+  }
+});
+
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
     delete process.env[name];

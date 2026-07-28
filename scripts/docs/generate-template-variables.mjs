@@ -25,7 +25,6 @@ function renderSection(section) {
     const note = group.note ? ` (${group.note})` : '';
     lines.push(`- **${group.scope}:** \`${group.vars}\`${note}`);
   }
-  lines.push('');
   return lines.join('\n');
 }
 

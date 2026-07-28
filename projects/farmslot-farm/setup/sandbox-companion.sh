@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Gateway sandbox + companion warm prepare for cross-surface first-party work.
 #
-#   bash projects/farmslot-farm/setup/sandbox-companion.sh --gateway-port 8809
+#   bash projects/farmslot-farm/setup/sandbox-companion.sh --gateway-port <port> --metro-port <port>
 set -euo pipefail
 
 GATEWAY_PORT=""
@@ -10,7 +10,7 @@ SIMULATOR=""
 ADB_SERIAL=""
 
 usage() {
-  echo "usage: $0 --gateway-port <port> [--metro-port <port>] [--simulator <name>] [--adb-serial <serial>]" >&2
+  echo "usage: $0 --gateway-port <port> --metro-port <port> [--simulator <name>] [--adb-serial <serial>]" >&2
   exit 1
 }
 
@@ -61,11 +61,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$GATEWAY_PORT" =~ ^[0-9]+$ ]] || usage
+[[ "$GATEWAY_PORT" =~ ^[0-9]+$ && "$METRO_PORT" =~ ^[0-9]+$ ]] || usage
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
-METRO_PORT="${METRO_PORT:-$((GATEWAY_PORT + 70))}"
 
 echo "[sandbox-companion] gateway :${GATEWAY_PORT} metro :${METRO_PORT}"
 bash "${SCRIPT_DIR}/sandbox-dev.sh" start --gateway-port "${GATEWAY_PORT}"

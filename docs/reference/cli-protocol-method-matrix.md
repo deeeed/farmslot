@@ -163,6 +163,7 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 | Method           | Surface  | CLI command | TUI | Note                                                                                           |
 | ---------------- | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------- |
+| `gateway.ping`   | rpc-only |             |     | Interim: lightweight authenticated liveness probe; use `farmslot rpc gateway.ping`.            |
 | `gateway.status` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 | `gateway.doctor` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
 

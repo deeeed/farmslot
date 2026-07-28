@@ -4,6 +4,12 @@
 // origin's default branch). There is no semver release stream, so "a new version
 // is available" is expressed as the local HEAD being behind origin/<branch>.
 
+/** Lightweight authenticated liveness response with no filesystem or network I/O. */
+export interface GatewayPingResult {
+  ok: true;
+  serverTimeMs: number;
+}
+
 export interface GatewayStatusParams {
   /** Force a fresh `git fetch` instead of returning the cached freshness snapshot. */
   refresh?: boolean;

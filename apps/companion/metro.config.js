@@ -5,6 +5,25 @@ const { createMetroRecipeBridgeMiddleware } = require('./metro-recipe-bridge.cjs
 
 const projectRoot = __dirname;
 const protocolRoot = path.resolve(projectRoot, '../../packages/protocol');
+const configuredMetroPort = process.env.METRO_PORT;
+const metroPort = configuredMetroPort ? Number(configuredMetroPort) : undefined;
+const requiresConfiguredMetroPort =
+  (process.env.APP_VARIANT || 'development') === 'development' &&
+  process.env.FARMSLOT_LOCAL_RUNTIME_CONFIG === '1';
+
+if (requiresConfiguredMetroPort && metroPort === undefined) {
+  throw new Error(
+    'METRO_PORT must come from the Farmslot slot/worktree configuration for development.',
+  );
+}
+if (
+  metroPort !== undefined &&
+  (!Number.isInteger(metroPort) || metroPort <= 0 || metroPort > 65_535)
+) {
+  throw new Error(
+    `METRO_PORT must be an integer from 1 to 65535, received: ${configuredMetroPort}`,
+  );
+}
 
 function isProtocolModule(modulePath) {
   if (!modulePath) return false;
@@ -22,7 +41,7 @@ const config = getDefaultConfig(projectRoot);
 // Isolated metro port
 config.server = {
   ...config.server,
-  port: 7677,
+  ...(metroPort === undefined ? {} : { port: metroPort }),
   enhanceMiddleware: (middleware) => {
     const recipeBridge = createMetroRecipeBridgeMiddleware();
     return (req, res, next) => {

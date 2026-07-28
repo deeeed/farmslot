@@ -3,11 +3,12 @@ import * as SecureStore from 'expo-secure-store';
 
 import type { GatewayProfileKind } from './gateway-profile-kind';
 import { isLegacyPresetGatewayProfile } from './gateway-profile-legacy';
+import { gatewayProfileForUrl } from './gateway-profile-selection';
 import {
   isLegacyLocalhostGatewayUrl,
-  isMobileGatewayProfileUrl,
   isValidGatewayUrl,
   mobileGatewayProfileUrlError,
+  normalizeGatewayProfileUrl,
 } from './gateway-profile-validation';
 
 export type { GatewayProfileKind } from './gateway-profile-kind';
@@ -27,7 +28,8 @@ export type GatewayProfile = {
 const CONFIGURED_GATEWAY_URL = Constants.expoConfig?.extra?.gatewayUrl;
 const CONFIGURED_GATEWAY_AUTH_TOKEN = Constants.expoConfig?.extra?.gatewayAuthToken;
 function isUsableConfiguredGatewayUrl(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && isMobileGatewayProfileUrl(value);
+  // Loopback URLs are valid for launcher, saved-profile, and USB adb-reverse flows.
+  return typeof value === 'string' && value.length > 0 && isValidGatewayUrl(value);
 }
 
 export const DEFAULT_GATEWAY_URL = isUsableConfiguredGatewayUrl(CONFIGURED_GATEWAY_URL)
@@ -60,9 +62,9 @@ export const DEFAULT_GATEWAY_PROFILES: GatewayProfile[] = DEFAULT_GATEWAY_URL
 
 export {
   isLegacyLocalhostGatewayUrl,
-  isMobileGatewayProfileUrl,
   isValidGatewayUrl,
   mobileGatewayProfileUrlError,
+  normalizeGatewayProfileUrl,
 };
 
 export { gatewayProfileKindUrlError, requiresSecureRemoteUrl } from './gateway-profile-kind';
@@ -110,9 +112,8 @@ export function mergeGatewayProfiles(saved: GatewayProfile[]): GatewayProfile[] 
   const byId = new Map<string, GatewayProfile>();
   for (const profile of DEFAULT_GATEWAY_PROFILES) byId.set(profile.id, profile);
   for (const profile of saved) {
-    if (!profile.id || !profile.name || !isMobileGatewayProfileUrl(profile.url)) continue;
+    if (!profile.id || !profile.name || !isValidGatewayUrl(profile.url)) continue;
     if (isLegacyPresetGatewayProfile(profile)) continue;
-    if (profile.id === 'localhost' || isLegacyLocalhostGatewayUrl(profile.url)) continue;
     const defaultProfile = byId.get(profile.id);
     const authMode =
       profile.authMode === 'token' || profile.authMode === 'password' ? profile.authMode : 'none';
@@ -135,5 +136,5 @@ export function mergeGatewayProfiles(saved: GatewayProfile[]): GatewayProfile[] 
 }
 
 export function profileIdForUrl(profiles: GatewayProfile[], url: string): string | null {
-  return profiles.find((profile) => profile.url === url)?.id ?? null;
+  return gatewayProfileForUrl(profiles, url)?.id ?? null;
 }

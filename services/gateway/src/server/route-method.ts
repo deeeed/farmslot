@@ -472,6 +472,8 @@ export async function routeMethod(
 
   switch (method) {
     // Gateway self-status
+    case Methods.GATEWAY_PING:
+      return { ok: true, serverTimeMs: Date.now() };
     case Methods.GATEWAY_STATUS:
       return gatewayStatus(p as GatewayStatusParams);
     case Methods.GATEWAY_DOCTOR:

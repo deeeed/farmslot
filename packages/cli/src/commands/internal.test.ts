@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildFixtureSelectionVars } from './internal.js';
+import type { SlotVars } from '@farmslot/slot-config';
+
+import { buildFixtureSelectionVars, slotVarsShellLines } from './internal.js';
 
 test('buildFixtureSelectionVars picks up an env var named by a non-standard compose.var', () => {
   // A project with `compose.var: "TARGET"` relies on bash `${!TARGET}` reach:
@@ -42,5 +44,106 @@ test('buildFixtureSelectionVars defaults a custom slot to the custom variant onl
   assert.equal(
     buildFixtureSelectionVars({ env: { FLOW_TYPE: 'fix-bug' }, slotMode: 'custom' }).FLOW_TYPE,
     'fix-bug',
+  );
+});
+
+test('slotVarsShellLines preserves an explicit slot Metro port', () => {
+  const vars: SlotVars = {
+    slotId: 'macwork-ff-1',
+    machine: 'macwork',
+    platform: 'cli',
+    host: 'macwork.local',
+    sshUser: '',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/farmslot-1',
+    session: 'ff-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'macwork.local',
+    remoteRepo: '/tmp/farmslot-1',
+    projectName: 'farmslot-farm',
+    resourceVars: {
+      port: '8808',
+      metro_port: '8878',
+    },
+  };
+
+  assert.deepEqual(
+    slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
+    ["METRO_PORT='8878'"],
+  );
+});
+
+test('slotVarsShellLines teaches farmslot update for missing or empty Metro ports', () => {
+  const vars: SlotVars = {
+    slotId: 'legacy-ff-1',
+    machine: 'legacy',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: '',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/farmslot-1',
+    session: 'ff-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/tmp/farmslot-1',
+    projectName: 'farmslot-farm',
+    resourceVars: { port: '8808' },
+  };
+
+  assert.throws(
+    () => slotVarsShellLines(vars),
+    /missing resources\.dev-server\.metro_port.*farmslot update/i,
+  );
+  vars.resourceVars.metro_port = '';
+  assert.throws(
+    () => slotVarsShellLines(vars),
+    /missing resources\.dev-server\.metro_port.*farmslot update/i,
+  );
+});
+
+test('slotVarsShellLines requires manual pool configuration without dev-server', () => {
+  const vars = {
+    slotId: 'legacy-ff-1',
+    machine: 'legacy',
+    platform: 'cli',
+    host: 'localhost',
+    sshUser: '',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/farmslot-1',
+    session: 'ff-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/tmp/farmslot-1',
+    projectName: 'farmslot-farm',
+    resourceVars: {},
+  } satisfies SlotVars;
+
+  assert.throws(
+    () => slotVarsShellLines(vars),
+    /missing resources\.dev-server.*add the resource manually.*distinct port and metro_port/i,
   );
 });

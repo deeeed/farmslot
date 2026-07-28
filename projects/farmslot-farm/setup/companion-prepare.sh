@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
-# Companion prepare helper — derives Metro vs gateway ports from slot context.
+# Companion prepare helper — receives Metro and gateway ports from slot context.
 #
-#   bash projects/farmslot-farm/setup/companion-prepare.sh warm --slot-port 8809 --platform cli
-#   bash projects/farmslot-farm/setup/companion-prepare.sh health --slot-port 8871 --platform ios
+#   bash projects/farmslot-farm/setup/companion-prepare.sh warm --gateway-port <port> --metro-port <port> --platform cli
 set -euo pipefail
 
 MODE=""
-SLOT_PORT=""
 PLATFORM=""
 SIMULATOR=""
 ADB_SERIAL=""
-METRO_OFFSET="${COMPANION_METRO_OFFSET:-70}"
-GATEWAY_PORT_OVERRIDE=""
+GATEWAY_PORT=""
+METRO_PORT=""
 
 usage() {
-  echo "usage: $0 warm|full|health --slot-port <port> --platform <cli|ios|android> [--simulator <name>] [--adb-serial <serial>] [--gateway-port <port>]" >&2
+  echo "usage: $0 warm|full|health --gateway-port <port> --metro-port <port> --platform <cli|ios|android> [--simulator <name>] [--adb-serial <serial>]" >&2
   exit 1
 }
 
@@ -39,8 +37,12 @@ while [[ $# -gt 0 ]]; do
       MODE="$1"
       shift
       ;;
-    --slot-port)
-      SLOT_PORT="$(require_value "$1" "${2:-}")"
+    --gateway-port)
+      GATEWAY_PORT="$(require_value "$1" "${2:-}")"
+      shift 2
+      ;;
+    --metro-port)
+      METRO_PORT="$(require_value "$1" "${2:-}")"
       shift 2
       ;;
     --platform)
@@ -63,34 +65,18 @@ while [[ $# -gt 0 ]]; do
         shift
       fi
       ;;
-    --gateway-port)
-      GATEWAY_PORT_OVERRIDE="$(require_value "$1" "${2:-}")"
-      shift 2
-      ;;
     *)
       usage
       ;;
   esac
 done
 
-[[ -n "$MODE" && "$SLOT_PORT" =~ ^[0-9]+$ && -n "$PLATFORM" ]] || usage
-
-derive_ports() {
-  if [[ "$PLATFORM" == "ios" || "$PLATFORM" == "android" ]]; then
-    METRO_PORT="$SLOT_PORT"
-    GATEWAY_PORT="${GATEWAY_PORT_OVERRIDE:-${COMPANION_GATEWAY_PORT:-7777}}"
-  else
-    GATEWAY_PORT="${GATEWAY_PORT_OVERRIDE:-$SLOT_PORT}"
-    METRO_PORT=$((SLOT_PORT + METRO_OFFSET))
-  fi
-  export METRO_PORT GATEWAY_PORT
-}
+[[ -n "$MODE" && "$GATEWAY_PORT" =~ ^[0-9]+$ && "$METRO_PORT" =~ ^[0-9]+$ && -n "$PLATFORM" ]] || usage
+export METRO_PORT GATEWAY_PORT
 
 metro_health() {
   lsof -nP -iTCP:"${METRO_PORT}" -sTCP:LISTEN -t >/dev/null 2>&1
 }
-
-derive_ports
 
 case "$MODE" in
   health)
