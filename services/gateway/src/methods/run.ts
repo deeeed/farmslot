@@ -496,8 +496,15 @@ export async function runCreate(
   // Apply the resolved execution-template snapshot before the first durable
   // handoff write so a crash cannot leave a stamped Run without the queue-time
   // template hash (find-slot would then accept a later template change).
+  // On the awaitPersist path, mutate in-memory only — do not use updateRun,
+  // which schedules a background persist that can land before the queue stamp.
   if (executionTemplateSnapshot) {
-    run = updateRun(run.id, { executionTemplate: executionTemplateSnapshot });
+    if (options.awaitPersist) {
+      run.executionTemplate = executionTemplateSnapshot;
+      run.updatedAt = new Date().toISOString();
+    } else {
+      run = updateRun(run.id, { executionTemplate: executionTemplateSnapshot });
+    }
   }
   // Stamp runId / handoff marker before any await so concurrent reclaim sees
   // that create already succeeded (claim re-validation alone is not enough).

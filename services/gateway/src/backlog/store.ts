@@ -2000,7 +2000,9 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
       }
       rollUpLaunchPlanStatus(item);
       item.updatedAt = new Date().toISOString();
-      schedulePersist('launch-run-started');
+      // Await durable backlog write so queue-row drop after handoff cannot race
+      // a crash that leaves needs-attention without item.runId.
+      await persistNow('launch-run-started');
       broadcastBacklog();
       return;
     }
@@ -2009,7 +2011,7 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
     item.lastObservedRunStatus = 'monitoring';
     delete item.queuedQueueItemId;
     item.updatedAt = new Date().toISOString();
-    schedulePersist('run-started');
+    await persistNow('run-started');
     broadcastBacklog();
   });
 }

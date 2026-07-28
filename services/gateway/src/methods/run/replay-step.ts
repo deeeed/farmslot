@@ -425,22 +425,6 @@ export async function runReplayStep(
 
   // Unique holder+epoch so concurrent replays cannot share a soft-lock.
   let softLock: { id: string; holder: string; epoch: number } | undefined;
-  if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
-    // Re-check after sync prep, then durable soft-lock before any further await.
-    assertCancelledReplayNodeAvailable(existing, params.runId);
-    const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
-    if (replacement) {
-      const holder = `replay:${params.runId}:${randomUUID()}`;
-      const epoch = (replacement.claimEpoch ?? 0) + 1;
-      replacement.status = 'dispatching';
-      replacement.claimHolder = holder;
-      replacement.claimEpoch = epoch;
-      replacement.claimExpiresAt = new Date(Date.now() + 120_000).toISOString();
-      await persistQueueNow();
-      softLock = { id: replacement.id, holder, epoch };
-    }
-  }
-
   const releaseSoftLockIfHeld = async (): Promise<void> => {
     if (!softLock) return;
     const item = getQueueSnapshot().find((q) => q.id === softLock!.id);
@@ -452,6 +436,29 @@ export async function runReplayStep(
     item.claimExpiresAt = undefined;
     await persistQueueNow();
   };
+  if (existing.status === 'cancelled' && existing.workGraphId && existing.workNodeId) {
+    // Re-check after sync prep, then durable soft-lock before any further await.
+    assertCancelledReplayNodeAvailable(existing, params.runId);
+    const replacement = getQueueSnapshot().find((item) => isReplacementFor(item, existing));
+    if (replacement) {
+      const holder = `replay:${params.runId}:${randomUUID()}`;
+      const epoch = (replacement.claimEpoch ?? 0) + 1;
+      // Soft-lock object is recorded before await so a persist failure still
+      // releases in-memory claim fields (failure cleanup cannot race assignment).
+      softLock = { id: replacement.id, holder, epoch };
+      replacement.status = 'dispatching';
+      replacement.claimHolder = holder;
+      replacement.claimEpoch = epoch;
+      replacement.claimExpiresAt = new Date(Date.now() + 120_000).toISOString();
+      try {
+        await persistQueueNow();
+      } catch (err) {
+        await releaseSoftLockIfHeld();
+        softLock = undefined;
+        throw err;
+      }
+    }
+  }
 
   try {
     // Invalidate any in-flight engine loop so it bails instead of overwriting our state.

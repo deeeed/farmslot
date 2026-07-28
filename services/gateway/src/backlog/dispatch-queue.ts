@@ -907,6 +907,19 @@ function liveQueuedItem(itemId: string): QueueItem | null {
   return item?.status === 'queued' ? item : null;
 }
 
+function scheduleDispatchRetry(reason: string): void {
+  // Must run after dispatchInFlight clears (tryDispatchNextOnce finally), or the
+  // retry would join the finishing promise and no-op. setImmediate runs after
+  // the current turn's finally; queueMicrotask can race before finally.
+  setImmediate(() => {
+    tryDispatchNext().catch((err) => {
+      console.error(
+        `[dispatch-queue] retry after ${reason} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  });
+}
+
 function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
   if (isQueueClaimHeld(claim)) return false;
   // Claim may have expired while we awaited fleet/slot work — reset expired
@@ -918,13 +931,7 @@ function stopIfClaimLost(claim: QueueClaim, phase: string): boolean {
   // Returning true ends this dispatch cycle (tryDispatchNextOnce returns).
   // Schedule another cycle so the reclaimed row (and siblings) get another try
   // without waiting for an external fleet/event trigger.
-  queueMicrotask(() => {
-    tryDispatchNext().catch((err) => {
-      console.error(
-        `[dispatch-queue] retry after claim loss failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
-  });
+  scheduleDispatchRetry(`claim-loss-${phase}`);
   return true;
 }
 
@@ -999,6 +1006,8 @@ async function tryDispatchNextOnce(): Promise<void> {
     } catch (err) {
       if (err instanceof QueueClaimLostError) {
         console.log(`[dispatch-queue] ${err.message}`);
+        reclaimExpiredClaims();
+        scheduleDispatchRetry('queue-claim-lost-error');
         return;
       }
       if (
