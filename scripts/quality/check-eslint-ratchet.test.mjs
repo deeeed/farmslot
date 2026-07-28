@@ -5,9 +5,15 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-import { buildEslintArgs, eslintCacheFingerprint } from './eslint-cache.mjs';
+import {
+  buildEslintArgs,
+  eslintCacheFingerprint,
+  repoEslintCacheLocation,
+} from './eslint-cache.mjs';
 
+const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const requireFromCommandCenter = createRequire(
   new URL('../../apps/command-center/package.json', import.meta.url),
 );
@@ -34,17 +40,30 @@ test('ESLint cache arguments use an explicit content-strategy cache and preserve
   );
 });
 
-test('ESLint cache fingerprint changes with config, lockfile, or tool version', () => {
+test('ESLint cache location is independent of the invoking Node runtime', () => {
+  const cacheLocationForSimulatedInvoker = (_runtimeVersion) =>
+    repoEslintCacheLocation({ repoRoot, eslintPackagePath });
+
+  assert.equal(
+    cacheLocationForSimulatedInvoker('v22.15.0'),
+    cacheLocationForSimulatedInvoker('v26.4.0'),
+  );
+});
+
+test('ESLint cache fingerprint changes with .tool-versions, ESLint, config, or lockfile', () => {
   const base = {
     eslintVersion: '10.0.0',
-    runtimeVersion: 'v22.0.0',
+    toolVersionsContent: 'nodejs 22.15.0\n',
     configContent: 'config-a',
     lockfileContent: 'lock-a',
   };
   const fingerprint = eslintCacheFingerprint(base);
 
   assert.notEqual(fingerprint, eslintCacheFingerprint({ ...base, eslintVersion: '10.0.1' }));
-  assert.notEqual(fingerprint, eslintCacheFingerprint({ ...base, runtimeVersion: 'v24.0.0' }));
+  assert.notEqual(
+    fingerprint,
+    eslintCacheFingerprint({ ...base, toolVersionsContent: 'nodejs 22.16.0\n' }),
+  );
   assert.notEqual(fingerprint, eslintCacheFingerprint({ ...base, configContent: 'config-b' }));
   assert.notEqual(fingerprint, eslintCacheFingerprint({ ...base, lockfileContent: 'lock-b' }));
 });

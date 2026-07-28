@@ -4,14 +4,14 @@ import { join } from 'node:path';
 
 export function eslintCacheFingerprint({
   eslintVersion,
-  runtimeVersion,
+  toolVersionsContent,
   configContent,
   lockfileContent,
 }) {
   return createHash('sha256')
     .update(eslintVersion)
     .update('\0')
-    .update(runtimeVersion)
+    .update(toolVersionsContent)
     .update('\0')
     .update(configContent)
     .update('\0')
@@ -35,11 +35,11 @@ export function buildEslintArgs({ cacheLocation, fix = false, target = '.' }) {
   return args;
 }
 
-export function repoEslintCacheLocation({ repoRoot, eslintPackagePath, runtimeVersion }) {
+export function repoEslintCacheLocation({ repoRoot, eslintPackagePath }) {
   const eslintPackage = JSON.parse(readFileSync(eslintPackagePath, 'utf8'));
   const fingerprint = eslintCacheFingerprint({
     eslintVersion: eslintPackage.version,
-    runtimeVersion,
+    toolVersionsContent: readFileSync(join(repoRoot, '.tool-versions'), 'utf8'),
     configContent: readFileSync(join(repoRoot, 'eslint.config.mjs'), 'utf8'),
     lockfileContent: readFileSync(join(repoRoot, 'yarn.lock'), 'utf8'),
   });

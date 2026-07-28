@@ -21,7 +21,6 @@ function runEslint() {
   const cacheLocation = repoEslintCacheLocation({
     repoRoot,
     eslintPackagePath,
-    runtimeVersion: process.version,
   });
   mkdirSync(dirname(cacheLocation), { recursive: true });
   const args = buildEslintArgs({ cacheLocation, fix });
