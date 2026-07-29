@@ -4,4 +4,5 @@ All notable changes to `@farmslot/node` are tracked here.
 
 ## Unreleased
 
+- fix(fs): path confinement no longer rejects every path under a root that already ends with the separator (`root='/'` demanded a `//` prefix). Any absolute remote path the gateway decomposes to `{root:'/', relPath}` hit this — remote-slot support-bundle writes failed as `Path traversal outside root is not allowed`.
 - **BREAKING:** `exec` runs argv arrays without a shell (login-shell PATH resolved once per node and reused), and `fs.*` resolves `{root, relPath}` under the declared root instead of trusting a pre-joined absolute path. Opens use `O_NOFOLLOW` and act on the returned handle, so a path cannot be swapped between check and use; `.git` is refused outright. Callers see `EACCES` for a refused path and a bounded-size error for an oversized read rather than a silent full read.
