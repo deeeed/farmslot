@@ -37,7 +37,10 @@ function confinedPath(params: NodeFsPathParams): { root: string; target: string 
     throw accessError('Access to .git is not allowed');
   }
   const target = resolve(root, normalized || '.');
-  if (target !== root && !target.startsWith(root + sep)) {
+  // root may already end with the separator (e.g. '/', the root the gateway
+  // derives for any absolute path) — naive `root + sep` would demand '//'.
+  const rootPrefix = root.endsWith(sep) ? root : root + sep;
+  if (target !== root && !target.startsWith(rootPrefix)) {
     throw accessError('Path traversal outside root is not allowed');
   }
   return { root, target };
