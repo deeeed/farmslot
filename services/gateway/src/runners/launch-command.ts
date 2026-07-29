@@ -1,7 +1,9 @@
 import path from 'node:path';
 
 import {
+  DEFAULT_CODEX_EFFORT,
   DEFAULT_CURSOR_MODEL,
+  DEFAULT_GROK_EFFORT,
   DEFAULT_GROK_MODEL,
   type SafetyTier,
   type ScriptedRunnerConfig,
@@ -24,6 +26,23 @@ import {
 } from './runner-observability.js';
 
 const CODEX_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
+
+/**
+ * Resolve reasoning effort for runners that support it.
+ * - empty/omitted → runner default (Codex/Grok: xhigh)
+ * - `auto` → leave unset so the CLI/config default applies
+ * - any other non-empty value → pass through
+ */
+export function resolveRunnerEffort(runnerId: string, effort?: string | null): string | undefined {
+  const runner = normalizeRunner(runnerId);
+  const trimmed = effort?.trim();
+  if (trimmed?.toLowerCase() === 'auto') return undefined;
+  if (trimmed) return trimmed;
+  if (runner === 'codex') return DEFAULT_CODEX_EFFORT;
+  if (runner === 'grok') return DEFAULT_GROK_EFFORT;
+  return undefined;
+}
+
 const RECIPE_SOURCE_ENV_NAMES = [
   'FARMSLOT_RECIPE_SOURCE_TRUST',
   'FARMSLOT_RECIPE_SOURCE_KIND',
@@ -95,7 +114,7 @@ export function buildGrokLaunch(options: {
     options.model && options.model !== 'unknown' ? options.model : DEFAULT_GROK_MODEL;
   const flagList = runnerFlagsForTier('grok', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
-  const effortFlag = options.effort?.trim() ? ` --effort ${options.effort.trim()}` : '';
+  const effortFlag = grokEffortFlag(options.effort);
   return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment}${effortFlag} --model ${effectiveModel}`;
 }
 
@@ -179,7 +198,7 @@ export function buildRunnerSessionReloadCommand(
 
   if (runner === 'grok') {
     const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
-    const effortFlag = opts.effort?.trim() ? ` --effort ${opts.effort.trim()}` : '';
+    const effortFlag = grokEffortFlag(opts.effort);
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     return withTaskRecipeTrustEnvironment(
@@ -246,11 +265,21 @@ export function buildCodexExecLaunch(options: {
 
 function codexReasoningEffortFlag(effort?: string | null): string {
   const normalized = effort?.trim().toLowerCase();
-  if (!normalized || normalized === 'auto') return '';
-  if (!CODEX_REASONING_EFFORTS.has(normalized)) {
+  // Explicit `auto` leaves Codex config untouched (CLI / config.toml default).
+  if (normalized === 'auto') return '';
+  const effective = normalized || DEFAULT_CODEX_EFFORT;
+  if (!CODEX_REASONING_EFFORTS.has(effective)) {
     throw new Error(`Invalid Codex reasoning effort: ${effort}`);
   }
-  return ` --config ${shellQuote(`model_reasoning_effort="${normalized}"`)}`;
+  return ` --config ${shellQuote(`model_reasoning_effort="${effective}"`)}`;
+}
+
+function grokEffortFlag(effort?: string | null): string {
+  const normalized = effort?.trim();
+  // Explicit `auto` leaves Grok config untouched.
+  if (normalized?.toLowerCase() === 'auto') return '';
+  const effective = normalized || DEFAULT_GROK_EFFORT;
+  return ` --effort ${effective}`;
 }
 
 function codexWorkerConfigFlags(): string {
@@ -418,13 +447,16 @@ export function buildLaunchCommand(
   }
 
   const safetyFlagsString = runnerFlagsForTier(runner, tier).join(' ');
+  // Resolve defaults before template expansion so `{effort}` placeholders get xhigh
+  // for codex/grok when the operator left effort unset.
+  const resolvedEffort = resolveRunnerEffort(runner, opts.effort);
   const expanded = hasDispatchCmd
     ? expandDispatchCmd(vars, {
         runner,
         model: model ?? undefined,
         taskFile: opts.taskFile,
         taskPrompt: launchPrompt,
-        effort: opts.effort,
+        effort: resolvedEffort,
         safetyFlags: safetyFlagsString,
       })
     : '';
@@ -487,7 +519,7 @@ export function buildLaunchCommand(
         buildCodexExecLaunch({
           binary: resolveCodexBinary(vars.codexPath),
           model,
-          effort: opts.effort,
+          effort: opts.effort, // buildCodexExecLaunch applies DEFAULT_CODEX_EFFORT when omitted
           prompt: launchPrompt,
           repo,
           runtimeDir: opts.runtimeDir,

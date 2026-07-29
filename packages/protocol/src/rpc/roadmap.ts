@@ -21,7 +21,7 @@ export const RoadmapMethods = {
 } as const;
 
 export const DEFAULT_ROADMAP_REFINEMENT_RUNNER = 'codex';
-export const DEFAULT_ROADMAP_REFINEMENT_MODEL = 'gpt-5.5';
+export const DEFAULT_ROADMAP_REFINEMENT_MODEL = 'gpt-5.6-sol';
 
 export interface RoadmapListParams {
   project?: string;

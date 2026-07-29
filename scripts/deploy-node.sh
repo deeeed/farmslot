@@ -155,7 +155,7 @@ echo "[deploy] workspace packages to bundle: $(echo "$FARMSLOT_DEPS" | cut -f1 |
 while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   [[ -z "$pkg_name" || "$needs_build" != "1" ]] && continue
   echo "[deploy] building $pkg_name (dist/ missing)..."
-  if ! (cd "$REPO_ROOT" && yarn workspace "$pkg_name" build); then
+  if ! (cd "$REPO_ROOT" && yarn workspace "$pkg_name" build < /dev/null); then
     echo "[deploy] ERROR: failed to build $pkg_name — refusing to deploy a distless package" >&2
     exit 1
   fi
@@ -373,7 +373,8 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
   "dependencies": {
     "ws": "^8.18.0",
     "tsx": "^4.19.0",
-    "@siteed/capture-helper": "^0.2.1"
+    "@siteed/capture-helper": "^0.2.1",
+    "@noble/hashes": "1.4.0"
   }
 }
 PKGJSON
@@ -386,7 +387,8 @@ else
   "type": "module",
   "dependencies": {
     "ws": "^8.18.0",
-    "tsx": "^4.19.0"
+    "tsx": "^4.19.0",
+    "@noble/hashes": "1.4.0"
   }
 }
 PKGJSON
@@ -416,7 +418,10 @@ while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   [[ -z "$pkg_name" ]] && continue
   PKG_SRC="$PACKAGES_DIR/$pkg_dir"
   PKG_DEST="$REMOTE_DIR/node_modules/$pkg_name"
-  run "mkdir -p $PKG_DEST"
+  # </dev/null: run() may be ssh, which otherwise consumes the loop's stdin
+  # (the remaining FARMSLOT_DEPS rows) and silently drops every package after
+  # the first — the node then crashes with ERR_MODULE_NOT_FOUND at startup.
+  run "mkdir -p $PKG_DEST" < /dev/null
   # Source-based packages (e.g. @farmslot/capabilities) ship no dist/; built
   # packages (e.g. @farmslot/protocol) ship both — sync whichever exist.
   [[ -d "$PKG_SRC/src" ]] && rsync -a --delete "$PKG_SRC/src/" "${RSYNC_PREFIX}$PKG_DEST/src/"

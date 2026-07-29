@@ -42,23 +42,26 @@ type Emit = (event: string, payload: unknown) => void;
 // doc comment there for design intent.
 
 /** OAuth provider id → pi-ai login function. Centralised so adding a provider
- * is a single-file change instead of a switch in `llmAuthLogin`. */
-type OAuthLoginFn = (typeof import('@earendil-works/pi-ai/oauth'))['loginOpenAICodex'];
+ * is a single-file change instead of a switch in `llmAuthLogin`.
+ * pi-ai ≥0.82 hangs login off the provider's `auth.oauth` implementation. */
+type OAuthLoginFn = (
+  interaction: import('@earendil-works/pi-ai').AuthInteraction,
+) => Promise<import('@earendil-works/pi-ai').OAuthCredentials>;
 const OAUTH_LOGIN_HANDLERS: Record<string, () => Promise<OAuthLoginFn>> = {
-  'openai-codex': async () => (await import('@earendil-works/pi-ai/oauth')).loginOpenAICodex,
+  'openai-codex': async () => {
+    const { openaiCodexProvider } = await import('@earendil-works/pi-ai/providers/openai-codex');
+    const oauth = openaiCodexProvider().auth.oauth;
+    if (!oauth) {
+      throw new Error('pi-ai openai-codex provider exposes no oauth handler — library mismatch');
+    }
+    return (interaction) => oauth.login(interaction);
+  },
 };
 
 /**
- * Default timeout for the entire OAuth login flow.
- *
- * IMPORTANT: this is an advisory cap on the **caller's wait**, not a hard
- * cancellation. pi-ai 0.74.x exposes no AbortSignal on `loginOpenAICodex`,
- * so when this timeout fires the underlying loginFn promise stays pending
- * and pi-ai's local callback server remains bound to port 1455 until the
- * gateway process exits or the browser callback eventually arrives. The
- * timeout error message instructs the user to restart the gateway daemon
- * before retrying so port 1455 frees. Wire `onManualCodeInput` /
- * AbortSignal here when pi-ai gains support.
+ * Default timeout for the entire OAuth login flow. The timeout aborts the
+ * underlying pi-ai login via the interaction's AbortSignal, so the local
+ * callback server releases port 1455 when it fires.
  */
 const OAUTH_LOGIN_TIMEOUT_MS = Number(process.env.LLM_AUTH_LOGIN_TIMEOUT_MS ?? 5 * 60 * 1000);
 
@@ -242,36 +245,47 @@ export async function llmAuthLogin(
     emit(Events.LLM_AUTH_LOGIN_PROGRESS, progress);
   };
 
-  // Cap the caller's wait. NOTE: this does NOT cancel pi-ai's underlying
-  // login work — the local callback server keeps port 1455 bound until
-  // either the browser callback arrives or the gateway exits. The error
-  // message tells the user how to recover (restart the gateway daemon).
-  // No need to thread reject handlers down to onPrompt: that callback
-  // rejects synchronously today, so pi-ai never has an unresolved prompt
-  // promise to free.
+  // Cap the caller's wait. pi-ai ≥0.82 accepts an AbortSignal on the login
+  // interaction, so the timeout now also cancels the underlying flow — the
+  // local callback server releases port 1455 instead of holding it until the
+  // gateway exits (the pre-0.82 failure mode this comment used to document).
+  const loginAbort = new AbortController();
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(
-      () =>
-        reject(
-          new Error(
-            `OAuth login timed out after ${OAUTH_LOGIN_TIMEOUT_MS}ms. ` +
-              `pi-ai's callback server may still be holding port 1455 — ` +
-              `restart the gateway daemon before retrying login.`,
-          ),
+    timeoutHandle = setTimeout(() => {
+      loginAbort.abort();
+      reject(
+        new Error(
+          `OAuth login timed out after ${OAUTH_LOGIN_TIMEOUT_MS}ms. ` +
+            `The login flow was aborted; retry when ready.`,
         ),
-      OAUTH_LOGIN_TIMEOUT_MS,
-    );
+      );
+    }, OAUTH_LOGIN_TIMEOUT_MS);
   });
 
   try {
     const credentials = await Promise.race([
       loginFn({
-        onAuth: ({ url, instructions }) => {
-          emitProgress({ provider: params.provider, url, message: instructions });
+        signal: loginAbort.signal,
+        notify: (event) => {
+          if (event.type === 'auth_url') {
+            emitProgress({
+              provider: params.provider,
+              url: event.url,
+              message: event.instructions,
+            });
+          } else if (event.type === 'device_code') {
+            emitProgress({
+              provider: params.provider,
+              url: event.verificationUri,
+              message: `Enter code ${event.userCode} at ${event.verificationUri}`,
+            });
+          } else if (event.type === 'info' || event.type === 'progress') {
+            emitProgress({ provider: params.provider, message: event.message });
+          }
         },
         // The browser-callback flow is the only OAuth completion path the
-        // gateway supports today. pi-ai falls through to onPrompt when the
+        // gateway supports today. pi-ai falls through to prompt() when the
         // local callback server can't bind to localhost:1455 OR when the
         // browser can't reach it (corporate proxy / remote-only login). We
         // don't have a UI affordance to accept a pasted code yet (no
@@ -282,11 +296,14 @@ export async function llmAuthLogin(
         // observability (logs / future UI) but reject the promise immediately
         // so pi-ai unwinds and the caller sees a useful error.
         // TODO: when the UI grows a `llm.auth.login.complete-manual` RPC,
-        // pipe it through onManualCodeInput and unwire this fail-fast.
-        onPrompt: (prompt) => {
+        // resolve prompt() from it and unwire this fail-fast.
+        prompt: (prompt) => {
           emitProgress({
             provider: params.provider,
-            manualPrompt: { message: prompt.message, placeholder: prompt.placeholder },
+            manualPrompt: {
+              message: prompt.message,
+              placeholder: 'placeholder' in prompt ? prompt.placeholder : undefined,
+            },
           });
           return Promise.reject(
             new Error(
@@ -296,9 +313,6 @@ export async function llmAuthLogin(
                 'browser can hit http://localhost:1455, or use the codex CLI directly.',
             ),
           );
-        },
-        onProgress: (message) => {
-          emitProgress({ provider: params.provider, message });
         },
       }),
       timeoutPromise,

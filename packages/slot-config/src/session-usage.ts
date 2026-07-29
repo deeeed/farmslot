@@ -34,6 +34,12 @@ const CLAUDE_PRICING: Record<string, ClaudePricing> = {
 };
 
 const OPENAI_PRICING: Record<string, OpenaiPricing> = {
+  // GPT-5.6 family (preview GA pricing, USD per 1M tokens).
+  'gpt-5.6-sol': { input: 5.0, output: 30.0 },
+  'gpt-5.6-terra': { input: 2.5, output: 15.0 },
+  'gpt-5.6-luna': { input: 1.0, output: 6.0 },
+  'gpt-5.6': { input: 5.0, output: 30.0 }, // bare alias → Sol
+  'gpt-5.5': { input: 5.0, output: 15.0 },
   'gpt-5.4': { input: 5.0, output: 15.0 },
 };
 

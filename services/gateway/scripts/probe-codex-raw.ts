@@ -8,7 +8,7 @@ import { resolveAuth } from '../src/llm/auth-resolve.js';
 
 async function main() {
   const provider = 'openai-codex';
-  const model = process.env.MODEL ?? 'gpt-5.5';
+  const model = process.env.MODEL ?? 'gpt-5.6-sol';
   const auth = await resolveAuth(provider);
   if (!auth) {
     console.error(`no auth resolved for ${provider}`);

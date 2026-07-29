@@ -195,8 +195,8 @@ export class RunnerModelEffortPicker extends LitElement {
             : html`<div class="hint">Choose a runner to set a model.</div>`}
           ${this.runner === 'cursor'
             ? html`<div class="hint">
-                Pilot UI exposes the default only; gateway/admin dispatch may pass any Cursor
-                account model.
+                Curated Cursor models (Composer + Grok-on-Cursor). Custom or gateway/admin dispatch
+                may pass any account-available model.
               </div>`
             : this.runner === 'claude' && this.model === 'fable'
               ? html`<div class="hint warning">

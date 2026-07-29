@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat(runners): export `DEFAULT_CODEX_MODEL` (`gpt-5.6-sol`), `DEFAULT_CODEX_EFFORT` / `DEFAULT_GROK_EFFORT` (`xhigh`), and bump the roadmap refinement default model to Sol so dispatch/UI/gateway share one catalog.
 - `ProviderAccountsSnapshotParams.forceRefresh` — wait for a live probe instead of accepting the gateway's cached snapshot (additive; default stays cache-first).
 - Export canonical roadmap project sentinels and shared concrete/unscoped predicates so clients and the gateway use the same scoping rules.
 - Add the authenticated `gateway.ping` liveness contract for cheap client health checks.

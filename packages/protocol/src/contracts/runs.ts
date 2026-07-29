@@ -1832,11 +1832,21 @@ export const DEFAULT_TASK_DIR = '.task';
  * dispatch path — verify all `DEFAULT_CLAUDE_MODEL` callers when touching it. */
 export const DEFAULT_CLAUDE_MODEL = 'opus';
 
+/** Default Codex model used when no slot/task/project/user override is set.
+ * GPT-5.6 family uses tiered slugs (sol/terra/luna); Sol is the flagship. */
+export const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol';
+
+/** Default Codex reasoning effort when dispatch/launch omits effort. */
+export const DEFAULT_CODEX_EFFORT = 'xhigh';
+
 /** Default Cursor Agent model used when no slot/task/project/user override is set. */
 export const DEFAULT_CURSOR_MODEL = 'composer-2.5';
 
 /** Default Grok model used when no slot/task/project/user override is set. */
 export const DEFAULT_GROK_MODEL = 'grok-build';
+
+/** Default Grok reasoning effort when dispatch/launch omits effort. */
+export const DEFAULT_GROK_EFFORT = 'xhigh';
 export type DecisionType =
   | 'collision_check'
   | 'plan_confirmation'

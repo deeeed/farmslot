@@ -37,7 +37,12 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
-import { DEFAULT_MODEL, MODELS_BY_RUNNER, RUNNER_OPTIONS } from '../../utils/runner-options.js';
+import {
+  DEFAULT_MODEL,
+  modelForRunnerChange,
+  modelsForRunner,
+  RUNNER_OPTIONS,
+} from '../../utils/runner-options.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import { linkedRunForBacklogItem } from '../shared/linked-run-model.js';
 import {
@@ -884,22 +889,19 @@ export class RoadmapPanel extends LitElement {
     ].sort();
   }
 
-  private get _modelOptions(): string[] {
-    return [
-      ...new Set(
-        this._slots.map((slot) => slot.model).filter((model): model is string => Boolean(model)),
-      ),
-    ].sort();
-  }
-
   private get _refinementRunnerOptions(): string[] {
     return [...new Set([...RUNNER_OPTIONS, ...this._runnerOptions])].sort();
   }
 
+  /** Models for the selected (or default) runner only — never fleet-wide cross-runner models. */
   private get _refinementModelOptions(): string[] {
     const runner = this._refineRunner || DEFAULT_ROADMAP_REFINEMENT_RUNNER;
-    const runnerModels = MODELS_BY_RUNNER[runner] ?? [];
-    return [...new Set([...runnerModels, ...this._modelOptions])].sort();
+    return modelsForRunner(runner);
+  }
+
+  private get _refinementDefaultModelLabel(): string {
+    const runner = this._refineRunner || DEFAULT_ROADMAP_REFINEMENT_RUNNER;
+    return DEFAULT_MODEL[runner] ?? DEFAULT_ROADMAP_REFINEMENT_MODEL;
   }
 
   private _refinementChoiceValue(value: string, options: string[]): string {
@@ -1781,14 +1783,16 @@ export class RoadmapPanel extends LitElement {
               options: this._refinementRunnerOptions,
               onChange: (runner) => {
                 this._refineRunner = runner;
-                if (runner && !this._refineModel) this._refineModel = DEFAULT_MODEL[runner] ?? '';
+                this._refineModel = modelForRunnerChange(runner, this._refineModel, {
+                  defaultRunner: DEFAULT_ROADMAP_REFINEMENT_RUNNER,
+                });
               },
             })}
           </div>
           <div class="full">
             ${this._renderRefinementChoice({
               label: 'Model',
-              defaultLabel: `Default (${DEFAULT_ROADMAP_REFINEMENT_MODEL})`,
+              defaultLabel: `Default (${this._refinementDefaultModelLabel})`,
               testId: 'roadmap-refine-model',
               value: this._refineModel,
               options: this._refinementModelOptions,

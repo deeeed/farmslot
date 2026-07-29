@@ -14,6 +14,9 @@ const TARGETS: Array<{ provider: string; model: string }> = [
   { provider: 'anthropic', model: 'opus' },
   { provider: 'openai-codex', model: 'gpt-5.4' },
   { provider: 'openai-codex', model: 'gpt-5.5' },
+  { provider: 'openai-codex', model: 'gpt-5.6-sol' },
+  { provider: 'openai-codex', model: 'gpt-5.6-terra' },
+  { provider: 'openai-codex', model: 'gpt-5.6-luna' },
 ];
 
 async function probe(provider: string, model: string) {

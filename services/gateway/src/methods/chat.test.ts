@@ -826,8 +826,8 @@ await test('estimateContextWindow prefers exact and longest model matches', () =
     'anthropic opus runtime identity did not resolve',
   );
   assert(
-    estimateContextWindow(describeModel('openai-codex', 'standard')) === 400_000,
-    'openai-codex tier runtime identity did not resolve',
+    estimateContextWindow(describeModel('openai-codex', 'standard')) === 272_000,
+    'openai-codex standard tier (gpt-5.6-terra) runtime identity did not resolve',
   );
   assert(
     estimateContextWindow('unknown-provider:unknown-model') === null,

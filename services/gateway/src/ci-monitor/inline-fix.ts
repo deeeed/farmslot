@@ -47,7 +47,11 @@ import {
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
-import { ensureTmuxTargetReadyForRelaunch } from '../self-review/worker-lifecycle.js';
+import { retryDeferredFixDelivery } from '../self-review/orchestrator.js';
+import {
+  ensureTmuxTargetReadyForRelaunch,
+  rediscoverAcceptingWorkerPane,
+} from '../self-review/worker-lifecycle.js';
 import {
   CI_FIX_CHECKLIST,
   CI_FIX_CHECKLIST_TARGET,
@@ -485,7 +489,7 @@ async function attemptInlineCIFix(
     const roleWindowName =
       run?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
         ?.window ?? null;
-    const workerTarget = await ensureTmuxTargetReadyForRelaunch(
+    let workerTarget = await ensureTmuxTargetReadyForRelaunch(
       vars,
       primaryTarget.session,
       primaryTarget.target,
@@ -512,29 +516,46 @@ async function attemptInlineCIFix(
         { recovery: { runId } },
       );
       if (!sent) {
-        // A deferred send never retries on its own; waiting for the fix signal
-        // would just burn the whole attempt timeout. Retry once forcing the
-        // busy-composer poll (the same escalation the branch-affinity nudge
-        // uses), then fail the attempt loudly.
+        // A deferred send never retries on its own, and two immediate probes
+        // lose the race against a warm worker that is still booting — the
+        // exact failure that dropped run 62004dac's lint-fix nudge right
+        // after ci-watch relaunched its worker. Reuse the self-review retry
+        // loop: interval retries over a window, re-resolving the worker pane
+        // before each attempt and bailing if the run goes terminal.
         console.warn(
-          `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge deferred to ${workerTarget}; retrying with busy-poll`,
+          `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge deferred to ${workerTarget}; retrying on interval`,
         );
-        sent = await sendRunnerInstructionSafely(
-          vars,
-          workerTarget,
-          runner,
-          nudgeCmd,
-          'ci-monitor',
-          undefined,
-          // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-          {
-            forceBusyPoll: true,
-            recovery: { runId },
+        const retry = await retryDeferredFixDelivery({
+          runId,
+          target: workerTarget,
+          send: (retryTarget) =>
+            sendRunnerInstructionSafely(
+              vars!,
+              retryTarget,
+              runner,
+              nudgeCmd,
+              'ci-monitor',
+              undefined,
+              // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
+              { forceBusyPoll: true, recovery: { runId } },
+            ),
+          rediscover: (storedTarget) =>
+            rediscoverAcceptingWorkerPane(vars!, session, runner, storedTarget),
+          persistTarget: async (adopted, window) => {
+            const corrected = { session, window, pane: null, target: adopted };
+            await upsertAgentContext(runId, 'ci-fix', { target: corrected });
+            const workerRole = primaryRoleForFlow(getRun(runId)?.flowType);
+            if (getRun(runId)?.agentContexts?.some((ctx) => ctx.role === workerRole)) {
+              await upsertAgentContext(runId, workerRole, { target: corrected });
+            }
           },
-        );
+          getRun,
+        });
+        sent = retry.sent;
+        workerTarget = retry.target;
       }
       console.log(
-        `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'NOT delivered (deferred twice)'} to ${workerTarget}`,
+        `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'NOT delivered (retry window exhausted)'} to ${workerTarget}`,
       );
       if (!sent) {
         await markAgentContextStatus(runId, 'ci-fix', 'failed');
