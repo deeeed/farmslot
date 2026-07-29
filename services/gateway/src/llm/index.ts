@@ -93,6 +93,11 @@ const MODEL_ALIASES: Record<string, Record<string, string>> = {
     'gemini-pro': 'gemini-2.0-pro',
   },
   'openai-codex': {
+    // GPT-5.6 family uses tiered Codex slugs. Bare gpt-5.6 routes to Sol.
+    'gpt-5.6': 'gpt-5.6-sol',
+    'gpt-5.6-sol': 'gpt-5.6-sol',
+    'gpt-5.6-terra': 'gpt-5.6-terra',
+    'gpt-5.6-luna': 'gpt-5.6-luna',
     // pi-ai 0.74.x exposes gpt-5.5 natively for openai-codex — no longer need
     // to alias 5.5 down to 5.4. Keep 5.5-mini → 5.4-mini until codex ships a
     // 5.5-mini variant.
@@ -114,16 +119,21 @@ export const TIER_MAP: Record<string, Record<string, string>> = {
   fast: {
     anthropic: 'haiku',
     openai: 'gpt-4.1-mini',
-    'openai-codex': 'gpt-5.5',
+    'openai-codex': 'gpt-5.6-luna',
     google: 'gemini-flash',
   },
   standard: {
     anthropic: 'sonnet',
     openai: 'gpt-4.1',
-    'openai-codex': 'gpt-5.5',
+    'openai-codex': 'gpt-5.6-terra',
     google: 'gemini-pro',
   },
-  smart: { anthropic: 'opus', openai: 'gpt-4.1', 'openai-codex': 'gpt-5.5', google: 'gemini-pro' },
+  smart: {
+    anthropic: 'opus',
+    openai: 'gpt-4.1',
+    'openai-codex': 'gpt-5.6-sol',
+    google: 'gemini-pro',
+  },
 };
 
 export function resolveTier(provider: string, model: string): string {

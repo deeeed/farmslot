@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import {
   DEFAULT_CLAUDE_MODEL,
+  DEFAULT_CODEX_MODEL,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_MODEL,
   DEFAULT_RUNNER,
@@ -213,7 +214,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // The intrinsic fallback is sandboxed (safest posture). Projects opt into
     // higher tiers via project.json `default_safety_tier`.
     defaultSafetyTier: 'sandboxed',
-    defaultModel: 'gpt-5.5',
+    defaultModel: DEFAULT_CODEX_MODEL,
     acceptsModel: (model) => model === 'unknown' || !CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
     observabilityHeartbeatMs: 5000,

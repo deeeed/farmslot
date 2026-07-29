@@ -151,7 +151,7 @@ export function defaultRows(): CandidateRow[] {
       reviewName: '',
       reviewVersion: '',
       runner: DEFAULT_EVAL_CANDIDATE_RUNNER,
-      model: DEFAULT_MODEL[DEFAULT_EVAL_CANDIDATE_RUNNER] ?? 'gpt-5.5',
+      model: DEFAULT_MODEL[DEFAULT_EVAL_CANDIDATE_RUNNER] ?? DEFAULT_MODEL.codex,
       repeat: false,
     },
   ];
@@ -423,7 +423,7 @@ export function candidateTemplateChoices(
 }
 
 export function candidateModelOptions(runner: string): string[] {
-  return MODELS_BY_RUNNER[runner] ?? [runner ? 'default' : 'gpt-5.5'];
+  return MODELS_BY_RUNNER[runner] ?? [runner ? 'default' : (DEFAULT_MODEL.codex ?? 'gpt-5.6-sol')];
 }
 
 export function applyCandidateRunner(row: CandidateRow, runner: string): CandidateRow {

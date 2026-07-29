@@ -172,7 +172,7 @@ describe('codex runner', () => {
       /codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5/,
     );
     assertCodexWorkerDoesNotInjectMcpOverrides(launch);
-    assert.doesNotMatch(launch, /model_reasoning_effort/);
+    assert.match(launch, /model_reasoning_effort="xhigh"/);
     assert.doesNotMatch(launch, /codex exec /);
     assert.match(launch, /'Read TASK\.md'/);
   });
@@ -190,7 +190,7 @@ describe('codex runner', () => {
     );
     assert.match(
       launch,
-      /codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5$/,
+      /codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox .*model_reasoning_effort="xhigh".*--model gpt-5\.5$/,
     );
     assert.doesNotMatch(launch, /Read TASK\.md/);
   });
@@ -969,9 +969,9 @@ describe('cursor runner', () => {
     assert.equal(runnerProcessPattern('aider').test('agent'), false);
   });
 
-  it('accepts composer-2.5, grok-4.5-fast-xhigh, and account-specific model names', () => {
+  it('accepts composer-2.5, cursor-grok-4.5-high-fast, and account-specific model names', () => {
     assert.equal(runnerSupportsModel('cursor', DEFAULT_CURSOR_MODEL), true);
-    assert.equal(runnerSupportsModel('cursor', 'grok-4.5-fast-xhigh'), true);
+    assert.equal(runnerSupportsModel('cursor', 'cursor-grok-4.5-high-fast'), true);
     assert.equal(runnerSupportsModel('cursor', 'sonnet-4-thinking'), true);
     assert.equal(getRunnerDefinition('cursor').acceptsModel?.(null as any), false);
   });
@@ -1396,7 +1396,7 @@ describe('buildLaunchCommand', () => {
       );
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
-      assert.doesNotMatch(cmd, /model_reasoning_effort/);
+      assert.match(cmd, /model_reasoning_effort="xhigh"/);
       assert.doesNotMatch(cmd, /'Read TASK\.md and execute\.'/);
     });
 
@@ -1416,7 +1416,7 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /codex-home\/config\.toml/);
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
-      assert.doesNotMatch(cmd, /model_reasoning_effort/);
+      assert.match(cmd, /model_reasoning_effort="xhigh"/);
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
     });
@@ -1430,7 +1430,7 @@ describe('buildLaunchCommand', () => {
         cmd,
         /then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'; else .*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex/,
       );
-      assert.doesNotMatch(cmd, /model_reasoning_effort/);
+      assert.match(cmd, /model_reasoning_effort="xhigh"/);
     });
 
     it('falls back to inline launcher when dispatch_cmd exists but is claude-shaped', () => {
@@ -1572,15 +1572,18 @@ describe('buildLaunchCommand', () => {
     it('falls back to bare `grok` on PATH when no grok_path is configured', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
-      assert.equal(cmd, `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --model grok-build`);
+      assert.equal(
+        cmd,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --effort xhigh --model grok-build`,
+      );
     });
 
-    it('falls back to inline Grok launcher with grok-build default model', () => {
+    it('falls back to inline Grok launcher with grok-build default model and xhigh effort', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.equal(
         cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --model grok-build`,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-build`,
       );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--single/);
