@@ -429,20 +429,20 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## workGraph.\*
 
-| Method                    | Surface  | CLI command | TUI | Note                                                                                           |
-| ------------------------- | -------- | ----------- | --- | ---------------------------------------------------------------------------------------------- |
-| `workGraph.create`        | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.get`           | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.list`          | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.addNode`       | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.addEdge`       | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.removeNode`    | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.removeEdge`    | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.updateNode`    | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.activate`      | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.pause`         | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.gateResolve`   | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
-| `workGraph.schedulerTick` | rpc-only |             |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| Method                    | Surface       | CLI command                   | TUI | Note                                                                                           |
+| ------------------------- | ------------- | ----------------------------- | --- | ---------------------------------------------------------------------------------------------- |
+| `workGraph.create`        | typed-command | `farmslot graph create`       |     |                                                                                                |
+| `workGraph.get`           | typed-command | `farmslot graph show`         |     |                                                                                                |
+| `workGraph.list`          | typed-command | `farmslot graph list`         |     |                                                                                                |
+| `workGraph.addNode`       | typed-command | `farmslot graph add-node`     |     |                                                                                                |
+| `workGraph.addEdge`       | typed-command | `farmslot graph add-edge`     |     |                                                                                                |
+| `workGraph.removeNode`    | typed-command | `farmslot graph remove-node`  |     |                                                                                                |
+| `workGraph.removeEdge`    | typed-command | `farmslot graph remove-edge`  |     |                                                                                                |
+| `workGraph.updateNode`    | rpc-only      |                               |     | Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted. |
+| `workGraph.activate`      | typed-command | `farmslot graph activate`     |     |                                                                                                |
+| `workGraph.pause`         | typed-command | `farmslot graph pause`        |     |                                                                                                |
+| `workGraph.gateResolve`   | typed-command | `farmslot graph gate-resolve` |     |                                                                                                |
+| `workGraph.schedulerTick` | typed-command | `farmslot graph tick`         |     |                                                                                                |
 
 ## workspace.\*
 

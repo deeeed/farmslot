@@ -200,52 +200,52 @@
       "tui": true
     },
     "workGraph.create": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph create"
     },
     "workGraph.get": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph show"
     },
     "workGraph.list": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph list"
     },
     "workGraph.addNode": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph add-node"
     },
     "workGraph.addEdge": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph add-edge"
     },
     "workGraph.removeNode": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph remove-node"
     },
     "workGraph.removeEdge": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph remove-edge"
     },
     "workGraph.updateNode": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
     "workGraph.activate": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph activate"
     },
     "workGraph.pause": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph pause"
     },
     "workGraph.gateResolve": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph gate-resolve"
     },
     "workGraph.schedulerTick": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+      "surface": "typed-command",
+      "command": "farmslot graph tick"
     },
     "roadmap.list": {
       "surface": "typed-command",
