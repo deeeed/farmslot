@@ -2033,6 +2033,83 @@ export function isValidManualBacklogRunHandoff(
   );
 }
 
+/** Outcome of matching a direct run.create to a backlog item by sourceRef. */
+export type DirectRunBacklogLinkResult =
+  | { action: 'linked'; itemId: string }
+  | { action: 'warned'; itemId: string; reason: string }
+  | { action: 'none' };
+
+const SOFT_LINKABLE_STATUSES = new Set<BacklogStatus>(['candidate', 'ready']);
+
+/**
+ * Soft-link a directly-created run to a backlog item whose sourceRef matches
+ * ticketOrPr in the same project. Operators often call run.create with a TAT-*
+ * (or other Jira/GitHub) key that already sits on the board; without this link
+ * the item stays candidate/ready with no runId while the run proceeds.
+ *
+ * MANUAL-* still requires the backlog enqueue handoff path. Queue-claimed
+ * creates already set run.backlogItemId and call markBacklogRunStarted — skip
+ * those. When a match exists but cannot be linked (active queue/run, graph,
+ * launch plan, non-linkable status), log a warning naming the item.
+ */
+export async function linkDirectRunToMatchingBacklog(
+  run: Run,
+): Promise<DirectRunBacklogLinkResult> {
+  if (run.backlogItemId) return { action: 'none' };
+  const ticketOrPr = run.ticketOrPr?.trim();
+  if (!ticketOrPr || !run.project?.trim()) return { action: 'none' };
+
+  return withBacklogMutation(async () => {
+    const matches = items.filter(
+      (item) => item.project === run.project && item.sourceRef === ticketOrPr,
+    );
+    if (matches.length === 0) return { action: 'none' as const };
+
+    const byCreated = (a: BacklogItem, b: BacklogItem) => a.createdAt.localeCompare(b.createdAt);
+
+    const linkable = matches
+      .filter(
+        (item) =>
+          SOFT_LINKABLE_STATUSES.has(item.status) &&
+          !item.runId &&
+          !item.queuedQueueItemId &&
+          !item.workGraphId &&
+          !item.launchPlan,
+      )
+      .sort(byCreated)[0];
+
+    if (linkable) {
+      linkable.status = 'running';
+      linkable.runId = run.id;
+      linkable.lastObservedRunStatus = 'monitoring';
+      linkable.updatedAt = new Date().toISOString();
+      await persistNow('direct-run-soft-link');
+      broadcastBacklog();
+      console.log(
+        `[backlog] soft-linked run ${run.id.slice(0, 8)} to backlog item ${linkable.id} ` +
+          `(${linkable.sourceRef}) via sourceRef match on run.create`,
+      );
+      return { action: 'linked' as const, itemId: linkable.id };
+    }
+
+    const primary = matches.sort(byCreated)[0]!;
+    const reason = primary.workGraphId
+      ? 'item is work-graph linked; use workGraph.schedulerTick'
+      : primary.launchPlan
+        ? 'item has a launch plan; use backlog.enqueue'
+        : primary.runId
+          ? `item already linked to run ${primary.runId}`
+          : primary.queuedQueueItemId
+            ? `item already queued (${primary.queuedQueueItemId})`
+            : `item status is ${primary.status}`;
+    console.warn(
+      `[backlog] run.create ticketOrPr=${ticketOrPr} matches backlog item ${primary.id} ` +
+        `(${primary.sourceRef}, status=${primary.status}) but was not linked: ${reason}`,
+    );
+    return { action: 'warned' as const, itemId: primary.id, reason };
+  });
+}
+
 export function markBacklogRunObserved(run: Run): void {
   withBacklogMutation(async () => {
     const item =

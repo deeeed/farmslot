@@ -28,7 +28,10 @@ import {
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
-import { isValidManualBacklogRunHandoff } from '../backlog/store.js';
+import {
+  isValidManualBacklogRunHandoff,
+  linkDirectRunToMatchingBacklog,
+} from '../backlog/store.js';
 import { resolveCIDecision } from '../ci-monitor/service.js';
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -509,6 +512,22 @@ export async function runCreate(
   // Stamp runId / handoff marker before any await so concurrent reclaim sees
   // that create already succeeded (claim re-validation alone is not enough).
   options.afterCreateSync?.(run);
+  // Soft-link: direct run.create with ticketOrPr matching an existing backlog
+  // sourceRef should attach runId so the board does not show in-flight work as
+  // untouched. Queue-claimed creates already pass backlogItemId and link via
+  // markBacklogRunStarted — skip those. Stamp backlogItemId before durable
+  // handoff write when present so a crash cannot orphan the link.
+  if (!params.backlogItemId) {
+    const link = await linkDirectRunToMatchingBacklog(run);
+    if (link.action === 'linked') {
+      if (options.awaitPersist) {
+        run.backlogItemId = link.itemId;
+        run.updatedAt = new Date().toISOString();
+      } else {
+        run = updateRun(run.id, { backlogItemId: link.itemId });
+      }
+    }
+  }
   if (options.awaitPersist) {
     // Durable queue stamp before run file: crash between these two still leaves
     // a stamped row that restart drops against the Run (live or terminal).
