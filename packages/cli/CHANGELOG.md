@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(graph): typed `farmslot graph` family (list/show/create/add-node/add-edge/remove-node/remove-edge/activate/pause/tick/gate-resolve) for workGraph.\* parity with machine envelope + planning-status teaching errors.
 - feat(internal): expose distinct slot-derived Metro ports, migrate legacy pool resources, and fail hook expansion with a named remediation when the resource is absent.
 - fix(roadmap): count promotion backlog items from materialized drafts, not `targetProjects`. Requests with no drafts now say so instead of inventing a count, and project-filtered lists include unscoped global coordination items.
 - feat: CLI operator parity v2 — roadmap full surface (+ `set-stage`, promote defaults to drafts); backlog `delete|archive|dequeue|upcoming`; `decision list|resolve`; run `pause|resume|force-complete|for-slot|grade|get-grade`; `dispatch queue list`; TUI surfaces for roadmap + decisions; method matrix requires notes on every `rpc-only` and generates `cli-exemptions.json`.
