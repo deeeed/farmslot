@@ -1387,7 +1387,10 @@ export interface RunEngineState {
    * routes through `nudgeDispatch` (skip PREPARE, send-keys to existing tmux session) instead
    * of `dispatchExecute` (kill + relaunch). `freshReuse` is the "Kill & dispatch fresh"
    * sibling — FIND_SLOT hard-kills the prior worker BEFORE PREPARE so git reset / checkout /
-   * dependency install don't race a still-writing worker in the same worktree. */
+   * dependency install don't race a still-writing worker in the same worktree.
+   * `warmSessionReuse` is set on CI-watch chained follow-ups (pr-complete / update-branch)
+   * when the parent kept its worker warm through finalize; DISPATCH tries handoff into that
+   * session and falls back to fresh `dispatchExecute` when the process is dead or not nudgeable. */
   flags?: {
     skipPrepare?: boolean;
     warmRecovery?: boolean;
@@ -1395,6 +1398,12 @@ export interface RunEngineState {
     freshReuse?: boolean;
     /** Opt-in integrate-main during review-pr prepare (merge commit, soft-fail on conflict). */
     mergeMain?: boolean;
+    /**
+     * CI-watch chain handoff: attempt to reuse the parent's still-alive worker session
+     * instead of killing and relaunching. Distinct from `nudgeReuse` (busy mid-task branch
+     * affinity) — warm handoff targets held/ci-watch slots with an idle agent status.
+     */
+    warmSessionReuse?: boolean;
   };
   /** Monotonic replay generation counter; startRun bails if the run has been superseded. */
   generation?: number;

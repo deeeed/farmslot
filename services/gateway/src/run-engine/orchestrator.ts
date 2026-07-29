@@ -274,6 +274,8 @@ export function setRunFlags(
     freshReuse?: true;
     /** Opt-in integrate-main during review-pr prepare (merge commit, soft-fail). */
     mergeMain?: true;
+    /** CI-watch chain: attempt warm worker handoff at DISPATCH. */
+    warmSessionReuse?: true;
   },
 ): void {
   const run = getRun(runId);
@@ -290,6 +292,7 @@ function getRunFlags(runId: string):
       nudgeReuse?: true;
       freshReuse?: true;
       mergeMain?: true;
+      warmSessionReuse?: true;
     }
   | undefined {
   const flags = getRun(runId)?.engineState?.flags;
@@ -300,6 +303,7 @@ function getRunFlags(runId: string):
     ...(flags.nudgeReuse ? { nudgeReuse: true as const } : {}),
     ...(flags.freshReuse ? { freshReuse: true as const } : {}),
     ...(flags.mergeMain ? { mergeMain: true as const } : {}),
+    ...(flags.warmSessionReuse ? { warmSessionReuse: true as const } : {}),
   };
 }
 // Partial I/O stash — steps store their partial inputs/outputs before throwing,
@@ -321,9 +325,15 @@ export function initRunEngine(broadcast: BroadcastFn): void {
   setPublishPackageRefreshBroadcast(broadcast);
   setReviewGateBroadcast(broadcast);
 }
-export function applyChainedRunEngineFlags(runId: string, flags: { skipPrepare?: true }): void {
-  if (flags.skipPrepare) {
-    setRunFlags(runId, { skipPrepare: true });
+export function applyChainedRunEngineFlags(
+  runId: string,
+  flags: { skipPrepare?: true; warmSessionReuse?: true },
+): void {
+  if (flags.skipPrepare || flags.warmSessionReuse) {
+    setRunFlags(runId, {
+      ...(flags.skipPrepare ? { skipPrepare: true as const } : {}),
+      ...(flags.warmSessionReuse ? { warmSessionReuse: true as const } : {}),
+    });
   }
 }
 // ─── Start / drive a run ───

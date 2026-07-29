@@ -29,7 +29,7 @@ type CIOutcome = Awaited<ReturnType<typeof monitorCI>>;
 interface CIWatchChainSpec {
   flowType: Run['flowType'];
   createParams: RunCreateParams;
-  engineFlags: { skipPrepare?: true; warmRecovery?: true };
+  engineFlags: { skipPrepare?: true; warmRecovery?: true; warmSessionReuse?: true };
   updateFields: Partial<Run>;
 }
 
@@ -37,7 +37,7 @@ export interface CIWatchStepContext {
   activeMonitors: Map<string, AbortController>;
   applyChainedRunEngineFlags: (
     runId: string,
-    flags: { skipPrepare?: true; warmRecovery?: true },
+    flags: { skipPrepare?: true; warmRecovery?: true; warmSessionReuse?: true },
   ) => void;
   broadcastFn: BroadcastFn;
   buildCIWatchChainedRunParams: (

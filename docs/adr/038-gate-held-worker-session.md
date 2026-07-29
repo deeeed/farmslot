@@ -16,14 +16,20 @@ Secondary loss paths remain: dispatch installs `pane-died → kill-pane` on role
 ### Lifecycle contract (local-first publication)
 
 ```
-MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live) → FINALIZE (killSlotAgents) → CI_WATCH
+MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live)
+  → FINALIZE (keep worker warm) → CI_WATCH (warm session)
+  → [optional chained pr-complete / update-branch via warmSessionReuse]
+  → family/slot terminal teardown (slotRelease / failed teardown / cancel)
 ```
 
 1. **COMPLETE** — prepare local package; call `holdSlotForPublicationGate` (`busy` / `review-gate` / `agent: working`); emit `slotDisposition: 'gate-held'`. Do **not** call `slotRelease`.
 2. **HUMAN_GATE** — keep `agent: working`; operator may attach via Companion/tmux.
-3. **FINALIZE** — capture session metrics while worker may still be alive; call `killSlotAgents`; then transition slot to `held` / `ci-watch`.
-4. **Terminal cleanup** — after gate-held **COMPLETE**, tear down live agents before `resetSlot`:
-   - **Engine blocked/failed** (`run-engine/orchestrator`) — `teardownGateHeldAgentsIfNeeded` (no-op unless `complete.outputs.slotDisposition === 'gate-held'`), then `resetSlot`.
+3. **FINALIZE** — capture session metrics while worker is alive; **do not** call `killSlotAgents`. Transition slot to `held` / `ci-watch` so CI follow-ups can reuse the warm session (MANUAL-000065).
+4. **CI_WATCH handoff** — chained `pr-complete` / `update-branch` set `engineState.flags.warmSessionReuse` (+ `skipPrepare`). DISPATCH probes process liveness and hands the new TASK.md into the warm worker when alive; falls back to fresh `dispatchExecute` when the session is dead, the runner/model swapped, or the runner is not tmux-nudgeable (composes with MANUAL-000043 dead-session fallback and MANUAL-000045 ownership claims).
+5. **Terminal cleanup** — tear down live agents when the **family/run** ends, not merely because FINALIZE completed:
+   - **Successful CI end / no chain** — `slotRelease` (kills agents unless `preserveAgents`).
+   - **Engine blocked/failed after FINALIZE** — `teardownGateHeldAgentsIfNeeded` only when status is `failed`/`blocked`/`cancelled` **and** gate-held FINALIZE is done, then `resetSlot`.
+   - **Pre-FINALIZE gate failure** — `shouldTeardownGateHeldAgents` stays false so the operator can still attach; cancel still kills.
    - **Operator cancel** (`run.cancel` / `methods/run/lifecycle-control`) — `killAllAgentWindows` + `killAgentInSession` (same primitives as `killSlotAgents`, plus explicit runner for legacy base-pane cleanup), then `resetSlot`. Does **not** call `teardownGateHeldAgentsIfNeeded`; cancel is user-initiated from any non-terminal status (including `human-gating` / `blocked` review-gate) and always runs the full slot-level agent kill so the slot frees immediately after the terminal run record is published.
 
 ### Fleet refresh
@@ -37,7 +43,9 @@ MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live) �
 ### API surface
 
 - `holdSlotForPublicationGate(slotId)` — marks slot for gate wait with live worker.
-- `killSlotAgents(slotId)` — role-window teardown without full slot release.
+- `killSlotAgents(slotId)` — role-window teardown without full slot release (used by terminal failure / cancel / slotRelease — **not** FINALIZE).
+- `shouldKeepWorkerWarmThroughCiWatch(run)` / `shouldTeardownGateHeldAgents(run)` — pure policy helpers for warm-through-ci vs terminal-failure teardown.
+- `warmSessionHandoffDispatch` — CI-chain handoff into a still-alive worker; `engineState.flags.warmSessionReuse`.
 - `SlotReleaseParams.preserveAgents` — skip agent kill inside `slotRelease` for partial-release call sites (not used on the gate-held hot path).
 - `CompleteStepOutput.slotDisposition: 'gate-held'` — protocol marker.
 
@@ -48,6 +56,9 @@ Project worker templates (`dev.md`, `fix-bug.md`) should instruct: write `SIGNAL
 ## Consequences
 
 - Operators can attach to the worker during publication review on `dev` / `fix-bug`, matching the `review-pr` gate-first UX goal.
+- CI follow-ups inherit the same warm context instead of re-learning the branch after FINALIZE teardown.
+- Memory cost of warm sessions during long CI waits is accepted for the gate→ci-watch window; a bounded idle timeout is a follow-up if fleet pressure warrants it.
+- Stale context after main moves is handled by the follow-up task (update-branch / pr-complete) re-orienting the warm worker; cold resume remains the fallback when the session dies.
 - Session-resume on relaunch (ROADMAP-next) remains a fallback when the runner exits despite template guidance or `pane-died` cleanup.
 - Gateway restart mid-gate: decisions replay; slot phase must be restored via `blocksGateHeldSlotRelease` on fleet refresh.
 - Companion “talk to worker” affordances should key off `agent: working` + `phase: review-gate` during gate-held runs.

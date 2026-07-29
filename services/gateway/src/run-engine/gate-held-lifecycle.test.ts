@@ -10,6 +10,7 @@ import {
   completeStepDisposition,
   findActiveGateHeldRunForSlot,
   isGateHeldPublicationRun,
+  shouldKeepWorkerWarmThroughCiWatch,
   shouldTeardownGateHeldAgents,
 } from './gate-held-lifecycle.js';
 import { makeRun } from './test-fixtures.js';
@@ -186,6 +187,19 @@ test('blocksGateHeldSlotRelease is false after FINALIZE completes', () => {
   assert.equal(blocksGateHeldSlotRelease(run), false);
 });
 
+test('shouldKeepWorkerWarmThroughCiWatch is true for gate-held publication runs', () => {
+  const run = makeRun({ flowType: 'dev', mode: 'autonomous', slotId: 'macwork-ff-2' });
+  run.steps = [
+    {
+      name: PipelineSteps.COMPLETE,
+      status: 'done',
+      outputs: { slotDisposition: 'gate-held' },
+    },
+  ];
+  assert.equal(shouldKeepWorkerWarmThroughCiWatch(run), true);
+  assert.equal(shouldKeepWorkerWarmThroughCiWatch(makeRun({ flowType: 'review-pr' })), false);
+});
+
 test('shouldTeardownGateHeldAgents stays false for failed human-gate runs', () => {
   const run = makeRun({
     flowType: 'dev',
@@ -204,8 +218,21 @@ test('shouldTeardownGateHeldAgents stays false for failed human-gate runs', () =
   assert.equal(shouldTeardownGateHeldAgents(run), false);
 });
 
-test('shouldTeardownGateHeldAgents is true after FINALIZE completes', () => {
-  const run = makeRun({ flowType: 'fix-bug', slotId: 'macwork-ff-2', status: 'done' });
+test('shouldTeardownGateHeldAgents stays false after successful FINALIZE (warm through ci-watch)', () => {
+  const run = makeRun({ flowType: 'fix-bug', slotId: 'macwork-ff-2', status: 'ci-watching' });
+  run.steps = [
+    {
+      name: PipelineSteps.COMPLETE,
+      status: 'done',
+      outputs: { slotDisposition: 'gate-held' },
+    },
+    { name: PipelineSteps.FINALIZE, status: 'done' },
+  ];
+  assert.equal(shouldTeardownGateHeldAgents(run), false);
+});
+
+test('shouldTeardownGateHeldAgents is true only on terminal failure after FINALIZE', () => {
+  const run = makeRun({ flowType: 'fix-bug', slotId: 'macwork-ff-2', status: 'failed' });
   run.steps = [
     {
       name: PipelineSteps.COMPLETE,
@@ -215,6 +242,15 @@ test('shouldTeardownGateHeldAgents is true after FINALIZE completes', () => {
     { name: PipelineSteps.FINALIZE, status: 'done' },
   ];
   assert.equal(shouldTeardownGateHeldAgents(run), true);
+
+  run.status = 'blocked';
+  assert.equal(shouldTeardownGateHeldAgents(run), true);
+
+  run.status = 'cancelled';
+  assert.equal(shouldTeardownGateHeldAgents(run), true);
+
+  run.status = 'done';
+  assert.equal(shouldTeardownGateHeldAgents(run), false);
 });
 
 test('findActiveGateHeldRunForSlot ignores resolved gate-held runs', async (t) => {

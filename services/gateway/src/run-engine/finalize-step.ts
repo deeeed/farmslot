@@ -16,7 +16,7 @@ import { markSlotHeld } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { ghRequest } from '../integrations/github-client.js';
-import { killSlotAgents, slotRelease } from '../methods/slot.js';
+import { slotRelease } from '../methods/slot.js';
 import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
@@ -152,19 +152,15 @@ export async function executeFinalizeStep(
     );
   }
 
-  // 1. Tear down gate-held worker sessions before slot lifecycle moves on.
+  // 1. Keep gate-held worker sessions warm through ci-watch so CI follow-ups
+  // (inline fix, chained pr-complete / update-branch) can reuse the same
+  // context. Tear down only on terminal failure (teardownGateHeldAgentsIfNeeded),
+  // slotRelease when the family ends, or operator cancel — not at FINALIZE.
   if (publicationApprovalGate) {
     emitWithBroadcast('substep', {
-      name: 'agent-teardown',
-      detail: 'Releasing worker tmux session after human gate',
+      name: 'agent-keep-warm',
+      detail: 'Keeping worker session warm through ci-watch',
     });
-    try {
-      await killSlotAgents(current.slotId);
-    } catch (err) {
-      console.warn(
-        `[run-engine] finalize agent teardown failed for ${runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
-      );
-    }
   }
 
   // 2. Restore slot lifecycle — may be stuck in 'review-gate' if gateway crashed mid human-gate

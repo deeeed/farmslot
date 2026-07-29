@@ -38,7 +38,7 @@ interface ChainedRunSpec {
   flowType: FlowType;
   createParams: RunCreateParams;
   updateFields: Partial<Run>;
-  engineFlags: { skipPrepare?: true };
+  engineFlags: { skipPrepare?: true; warmSessionReuse?: true };
 }
 
 interface ReviewArtifactsSnapshot {
@@ -85,7 +85,10 @@ export interface RunRecoveryCollaborators {
     ciRepo?: string | null,
   ) => ChainedRunSpec | null;
   createRun: (params: RunCreateParams) => Run;
-  applyChainedRunEngineFlags: (runId: string, flags: { skipPrepare?: true }) => void;
+  applyChainedRunEngineFlags: (
+    runId: string,
+    flags: { skipPrepare?: true; warmSessionReuse?: true },
+  ) => void;
   startRun: (runId: string) => Promise<void>;
   reconstructStepOutputs: (run: Run, stepName: string) => Record<string, unknown> | null;
   loadSlotVars: (slotId: string) => Promise<SlotVars>;

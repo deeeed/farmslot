@@ -33,7 +33,7 @@ test('buildCIWatchChainedRunParams preserves lineage and converts pr-complete ti
   assert.equal(chain.createParams.slotId, current.slotId);
   assert.equal(chain.createParams.model, current.metrics.model);
   assert.deepEqual(chain.updateFields, { prNumber: 415, summary: 'Fix original scope' });
-  assert.deepEqual(chain.engineFlags, { skipPrepare: true });
+  assert.deepEqual(chain.engineFlags, { skipPrepare: true, warmSessionReuse: true });
 });
 
 test('buildCIWatchChainedRunParams skips prepare only when a warm source slot is pinned', () => {
@@ -43,7 +43,7 @@ test('buildCIWatchChainedRunParams skips prepare only when a warm source slot is
     'owner/repo',
   );
   assert(withSlot);
-  assert.deepEqual(withSlot.engineFlags, { skipPrepare: true });
+  assert.deepEqual(withSlot.engineFlags, { skipPrepare: true, warmSessionReuse: true });
 
   const withoutSlot = buildCIWatchChainedRunParams(
     makeRun({ slotId: null }),
