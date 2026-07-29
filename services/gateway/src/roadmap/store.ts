@@ -60,7 +60,7 @@ import { isLocal } from '../core/exec.js';
 import { assertNoUnknownPlaceholders } from '../core/hooks.js';
 import { loadPromptTemplate } from '../core/prompt-templates.js';
 import { farmslotRoot, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
-import { runnerFlagsForTier } from '../runners/registry.js';
+import { runnerDefaultModel, runnerFlagsForTier } from '../runners/registry.js';
 
 const VALID_STAGES = new Set<RoadmapItemStage>(ROADMAP_ITEM_STAGES);
 const VALID_SOURCE_KINDS = new Set<string>(ROADMAP_SOURCE_KINDS);
@@ -1371,6 +1371,9 @@ export async function startRoadmapRefinement(
     params.model?.trim() ||
     projectConfig.model ||
     process.env.FARMSLOT_ROADMAP_REFINER_MODEL?.trim() ||
+    // Runner-aware default: "Default" with a Claude refiner means Claude's
+    // default model, not the Codex roadmap default the constant carries.
+    runnerDefaultModel(runner) ||
     DEFAULT_ROADMAP_REFINEMENT_MODEL;
   const runnerCommand = params.runnerCommand?.trim() || projectConfig.runnerCommand;
   const safetyTier = params.safetyTier;

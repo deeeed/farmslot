@@ -13,7 +13,7 @@
     "postinstall": "node scripts/fix-node-pty-spawn-helper.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.74.2",
+    "@earendil-works/pi-ai": "0.82.1",
     "@farmslot/agent-runtime": "workspace:*",
     "@farmslot/capabilities": "workspace:*",
     "@farmslot/protocol": "workspace:*",

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- fix(dispatch): an unset effort drops the whole `--effort {effort}` flag from dispatch templates instead of leaving a bare `--effort` that swallows the next argument.
 - feat(slot-config): expose `metro_port` as a slot resource and fail legacy hook expansion with a named migration hint when it is absent.
 - fix(slot-config): `getProjectField` returns numbers and booleans instead of an empty string. Shell callers read project fields through `farmslot internal project-field` and fold the result into `${VAR:-<default>}`, so every numeric `project.json` value silently lost to a hardcoded default — `metamask-extension-farm` sets `timeouts.build_manifest_s: 600` and preflight used 180 for every build. Objects and arrays still return empty: they have no single shell value.
 - feat: validate project execution-template sources, defaults, and domain environment.

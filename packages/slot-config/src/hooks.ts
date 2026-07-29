@@ -415,6 +415,11 @@ export function expandDispatchCmd(
   cmd = cmd.replaceAll('{model}', context.model ?? '');
   cmd = cmd.replaceAll('{task_file}', context.taskFile ?? '');
   cmd = cmd.replaceAll('{task_prompt}', context.taskPrompt ?? '');
+  // An unset effort (operator `auto`, or a runner without a default) must drop
+  // the whole flag, not leave a bare `--effort` pointing at the next argument.
+  if (!context.effort) {
+    cmd = cmd.replace(/ ?--effort +\{effort\}/g, '');
+  }
   cmd = cmd.replaceAll('{effort}', context.effort ?? '');
   cmd = cmd.replaceAll('{safety_flags}', context.safetyFlags ?? '');
   cmd = cmd.replaceAll('{claude_path}', slotVars.claudePath);

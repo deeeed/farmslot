@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { getModel } from '@earendil-works/pi-ai';
+import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 
 import { callLLM, fallbackDoneTextDelta, TIER_MAP } from './index.js';
 
-const getModelById = getModel as (provider: string, model: string) => unknown;
+const piModels = builtinModels();
+const getModelById = (provider: string, model: string): unknown =>
+  piModels.getModel(provider, model);
 
 test('openai-codex tier defaults resolve to pi-ai registered model ids', () => {
   for (const tier of ['fast', 'standard', 'smart']) {

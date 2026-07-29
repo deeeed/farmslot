@@ -9,7 +9,7 @@
 // fail with a clear error from the wrapper, which is the user's signal to
 // re-login.
 
-import { refreshOpenAICodexToken } from '@earendil-works/pi-ai/oauth';
+import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 
 import {
   type AuthProfileCredential,
@@ -48,7 +48,18 @@ export async function refreshOAuthCredential(cred: OAuthCredential): Promise<OAu
   if (!cred.refresh) {
     throw new Error('credential has no refresh token — re-login required');
   }
-  const next = await refreshOpenAICodexToken(cred.refresh);
+  // pi-ai ≥0.82 moves token refresh onto the provider's OAuthAuth. The
+  // exchange itself is unchanged: refresh token in, rotated credential out.
+  const oauth = openaiCodexProvider().auth.oauth;
+  if (!oauth) {
+    throw new Error('pi-ai openai-codex provider exposes no oauth handler — library mismatch');
+  }
+  const next = await oauth.refresh({
+    type: 'oauth',
+    refresh: cred.refresh,
+    access: cred.access,
+    expires: cred.expires ?? 0,
+  });
   return {
     type: 'oauth',
     provider: cred.provider,

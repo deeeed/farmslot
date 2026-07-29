@@ -6,6 +6,7 @@ import type {
   AssistantMessage as PiAssistantMessage,
   AssistantMessageEvent,
   Message as PiMessage,
+  Models as PiModels,
   Tool,
   ToolCall,
   ToolResultMessage,
@@ -17,6 +18,19 @@ import { execLocal } from '../core/exec.js';
 
 import { resolveAuth } from './auth-resolve.js';
 import { getLLMConfig } from './config.js';
+
+// pi-ai ≥0.82 replaces the module-level getModel/completeSimple/streamSimple
+// functions with a Models collection. One lazily-created collection with every
+// built-in provider registered serves all calls; auth stays explicit through
+// the per-call `apiKey` stream option, so the collection's own credential
+// store is never populated.
+let piModelsPromise: Promise<PiModels> | null = null;
+function piModels(): Promise<PiModels> {
+  piModelsPromise ??= import('@earendil-works/pi-ai/providers/all').then((mod) =>
+    mod.builtinModels(),
+  );
+  return piModelsPromise;
+}
 
 // Token threshold at which we log a warning to nudge the user to start a new session.
 // Sonnet 4.6 has a 1M token context window; haiku has 200k. At 80k input tokens we're
@@ -200,13 +214,9 @@ async function callViaPiAi(
   const modelId = resolveModelId(provider, model);
 
   // Dynamic import to avoid load-time failure if pi-ai has issues
-  const piAi = await import('@earendil-works/pi-ai');
+  const models = await piModels();
 
-  // getModel is strictly typed to KnownProvider — cast since we also support custom providers
-  const piModel = (piAi.getModel as (p: string, m: string) => ReturnType<typeof piAi.getModel>)(
-    provider,
-    modelId,
-  );
+  const piModel = models.getModel(provider, modelId);
   if (!piModel) {
     throw new Error(
       `[llm] unknown model: ${provider}/${modelId} — check MODEL_ALIASES or use a full pi-ai model ID`,
@@ -218,7 +228,7 @@ async function callViaPiAi(
   const now = Date.now();
   let httpStatus: number | undefined;
   let httpHeaders: Record<string, string> | undefined;
-  const response = await piAi.completeSimple(
+  const response = await models.completeSimple(
     piModel,
     {
       systemPrompt: opts.systemPrompt || 'You are a helpful assistant. Be concise.',
@@ -232,7 +242,7 @@ async function callViaPiAi(
         httpStatus = status;
         httpHeaders = headers;
       },
-    } as Parameters<typeof piAi.completeSimple>[2],
+    } as Parameters<PiModels['completeSimple']>[2],
   );
 
   // Extract text — content is string | ContentBlock[]
@@ -358,12 +368,9 @@ async function callChatViaPiAi(
   const start = Date.now();
   const modelId = resolveModelId(provider, model);
 
-  const piAi = await import('@earendil-works/pi-ai');
+  const models = await piModels();
 
-  const piModel = (piAi.getModel as (p: string, m: string) => ReturnType<typeof piAi.getModel>)(
-    provider,
-    modelId,
-  );
+  const piModel = models.getModel(provider, modelId);
   if (!piModel) {
     throw new Error(`[llm] unknown model: ${provider}/${modelId}`);
   }
@@ -419,7 +426,7 @@ async function callChatViaPiAi(
 
     if (opts.onDelta) {
       // Streaming path — capture real AssistantMessage from the done event
-      const stream = piAi.streamSimple(piModel, context, {
+      const stream = models.streamSimple(piModel, context, {
         apiKey,
         maxTokens,
         signal: opts.signal,
@@ -464,7 +471,7 @@ async function callChatViaPiAi(
       }
     } else {
       // Non-streaming path
-      const response = await piAi.completeSimple(piModel, context, {
+      const response = await models.completeSimple(piModel, context, {
         apiKey,
         maxTokens,
         signal: opts.signal,
