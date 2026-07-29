@@ -1,7 +1,9 @@
 import {
   DEFAULT_CLAUDE_MODEL,
+  DEFAULT_CODEX_EFFORT,
   DEFAULT_CODEX_MODEL,
   DEFAULT_CURSOR_MODEL,
+  DEFAULT_GROK_EFFORT,
   DEFAULT_GROK_MODEL,
   type ReviewRunnerId,
 } from '@farmslot/protocol';
@@ -65,9 +67,9 @@ export const EFFORT_BY_RUNNER: Record<string, EffortLevel[]> = {
 /** Launch default when effort is omitted (matches gateway resolveRunnerEffort). */
 export const DEFAULT_EFFORT: Record<string, EffortLevel> = {
   claude: '',
-  codex: 'xhigh',
+  codex: DEFAULT_CODEX_EFFORT as EffortLevel,
   cursor: '',
-  grok: 'xhigh',
+  grok: DEFAULT_GROK_EFFORT as EffortLevel,
 };
 
 // Comparison/eval candidates share the same runner allowlist. Cursor is
