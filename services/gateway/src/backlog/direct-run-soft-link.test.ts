@@ -15,6 +15,14 @@ process.env.FARMSLOT_BACKLOG_SPEC_DIR = path.join(testDir, 'specs');
 process.env.NODE_TEST_CONTEXT = '1';
 process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
 
+// Fixed refs — each test calls freshStores() so backlog is empty; no Date.now().
+const SOURCE_REF_LINK = 'TAT-69001';
+const SOURCE_REF_WARN = 'TAT-69002';
+const SOURCE_REF_RUNCREATE = 'TAT-69003';
+const SOURCE_REF_NONE = 'TAT-69004';
+const SOURCE_REF_SKIP = 'TAT-69005';
+const SOURCE_REF_ORPHAN = 'TAT-69999';
+
 function testSlot(slot: string, project = 'farmslot-farm'): SlotStatus {
   return {
     slot,
@@ -100,12 +108,11 @@ async function freshStores() {
 
 test('linkDirectRunToMatchingBacklog soft-links candidate item matching sourceRef', async () => {
   const { backlog, runStore } = await freshStores();
-  const sourceRef = `TAT-${Date.now().toString().slice(-6)}`;
   const created = await backlog.createBacklogItem({
     project: 'farmslot-farm',
     title: 'Jira ticket already on the board',
     sourceKind: 'jira',
-    sourceRef,
+    sourceRef: SOURCE_REF_LINK,
     flowType: 'fix-bug',
     status: 'candidate',
   });
@@ -115,7 +122,7 @@ test('linkDirectRunToMatchingBacklog soft-links candidate item matching sourceRe
   const run = runStore.createRun({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
-    ticketOrPr: sourceRef,
+    ticketOrPr: SOURCE_REF_LINK,
     mode: 'autonomous',
     initialContext: 'Direct run.create bypassing backlog.enqueue',
   });
@@ -133,47 +140,80 @@ test('linkDirectRunToMatchingBacklog soft-links candidate item matching sourceRe
 
 test('linkDirectRunToMatchingBacklog warns when matching item is already run-linked', async () => {
   const { backlog, runStore } = await freshStores();
-  const sourceRef = `TAT-${Date.now().toString().slice(-5)}9`;
   const created = await backlog.createBacklogItem({
     project: 'farmslot-farm',
     title: 'Already linked elsewhere',
     sourceKind: 'jira',
-    sourceRef,
+    sourceRef: SOURCE_REF_WARN,
     flowType: 'fix-bug',
     status: 'ready',
   });
-  // Simulate an existing link without going through markBacklogRunStarted.
-  created.item.status = 'running';
-  created.item.runId = 'run-already-there';
 
-  const run = runStore.createRun({
+  // Establish the existing link through the soft-link path (no live-object mutate).
+  const firstRun = runStore.createRun({
     flowType: 'fix-bug',
     project: 'farmslot-farm',
-    ticketOrPr: sourceRef,
+    ticketOrPr: SOURCE_REF_WARN,
+    mode: 'autonomous',
+    initialContext: 'First direct create links the item',
+  });
+  const first = await backlog.linkDirectRunToMatchingBacklog(firstRun);
+  assert.equal(first.action, 'linked');
+
+  const secondRun = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_WARN,
     mode: 'autonomous',
     initialContext: 'Second direct create for same sourceRef',
   });
 
-  const result = await backlog.linkDirectRunToMatchingBacklog(run);
+  const result = await backlog.linkDirectRunToMatchingBacklog(secondRun);
   assert.equal(result.action, 'warned');
   if (result.action !== 'warned') return;
   assert.equal(result.itemId, created.item.id);
   assert.match(result.reason, /already linked/i);
 
   const after = backlog.getBacklogItemSnapshot(created.item.id);
-  assert.equal(after?.runId, 'run-already-there');
+  assert.equal(after?.runId, firstRun.id);
+});
+
+test('linkDirectRunToMatchingBacklog returns none when no sourceRef matches', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Unrelated board item',
+    sourceKind: 'jira',
+    sourceRef: SOURCE_REF_NONE,
+    flowType: 'fix-bug',
+    status: 'candidate',
+  });
+
+  const run = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_ORPHAN,
+    mode: 'autonomous',
+    initialContext: 'No matching backlog sourceRef',
+  });
+
+  const result = await backlog.linkDirectRunToMatchingBacklog(run);
+  assert.equal(result.action, 'none');
+
+  const after = backlog.getBacklogItemSnapshot(created.item.id);
+  assert.equal(after?.status, 'candidate');
+  assert.equal(after?.runId, undefined);
 });
 
 test('runCreate soft-links jira backlog item by sourceRef and stamps run.backlogItemId', async () => {
   const { backlog } = await freshStores();
   const { runCreate } = await import('../methods/run.js');
   const runStore = await import('../runs/store.js');
-  const sourceRef = `TAT-${Date.now().toString().slice(-4)}42`;
   const created = await backlog.createBacklogItem({
     project: 'farmslot-farm',
     title: 'Direct dispatch should attach this item',
     sourceKind: 'jira',
-    sourceRef,
+    sourceRef: SOURCE_REF_RUNCREATE,
     flowType: 'fix-bug',
     status: 'ready',
   });
@@ -182,7 +222,7 @@ test('runCreate soft-links jira backlog item by sourceRef and stamps run.backlog
     {
       flowType: 'fix-bug',
       project: 'farmslot-farm',
-      ticketOrPr: sourceRef,
+      ticketOrPr: SOURCE_REF_RUNCREATE,
       mode: 'autonomous',
       initialContext: 'Direct CLI run.create for existing backlog sourceRef',
     },
@@ -194,6 +234,47 @@ test('runCreate soft-links jira backlog item by sourceRef and stamps run.backlog
     const linked = backlog.getBacklogItemSnapshot(created.item.id);
     assert.equal(linked?.status, 'running');
     assert.equal(linked?.runId, run.id);
+  } finally {
+    if (runStore.getRun(run.id)) {
+      runStore.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await runStore.deleteRun(run.id);
+    }
+  }
+});
+
+test('runCreate skips soft-link when params.backlogItemId is set (queue handoff path)', async () => {
+  const { backlog } = await freshStores();
+  const { runCreate } = await import('../methods/run.js');
+  const runStore = await import('../runs/store.js');
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Queue claim owns this item via markBacklogRunStarted',
+    sourceKind: 'jira',
+    sourceRef: SOURCE_REF_SKIP,
+    flowType: 'fix-bug',
+    status: 'ready',
+  });
+
+  // Passing backlogItemId is the queue-claim path: soft-link must not run
+  // (markBacklogRunStarted owns the status/runId transition after create).
+  const { run } = await runCreate(
+    {
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: SOURCE_REF_SKIP,
+      mode: 'autonomous',
+      initialContext: 'Queue-claimed create with backlogItemId already set',
+      backlogItemId: created.item.id,
+    },
+    () => {},
+  );
+
+  try {
+    assert.equal(run.backlogItemId, created.item.id);
+    // Soft-link skipped → item stays ready with no runId until markBacklogRunStarted.
+    const after = backlog.getBacklogItemSnapshot(created.item.id);
+    assert.equal(after?.status, 'ready');
+    assert.equal(after?.runId, undefined);
   } finally {
     if (runStore.getRun(run.id)) {
       runStore.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });

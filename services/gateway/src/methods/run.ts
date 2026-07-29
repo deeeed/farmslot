@@ -512,22 +512,6 @@ export async function runCreate(
   // Stamp runId / handoff marker before any await so concurrent reclaim sees
   // that create already succeeded (claim re-validation alone is not enough).
   options.afterCreateSync?.(run);
-  // Soft-link: direct run.create with ticketOrPr matching an existing backlog
-  // sourceRef should attach runId so the board does not show in-flight work as
-  // untouched. Queue-claimed creates already pass backlogItemId and link via
-  // markBacklogRunStarted — skip those. Stamp backlogItemId before durable
-  // handoff write when present so a crash cannot orphan the link.
-  if (!params.backlogItemId) {
-    const link = await linkDirectRunToMatchingBacklog(run);
-    if (link.action === 'linked') {
-      if (options.awaitPersist) {
-        run.backlogItemId = link.itemId;
-        run.updatedAt = new Date().toISOString();
-      } else {
-        run = updateRun(run.id, { backlogItemId: link.itemId });
-      }
-    }
-  }
   if (options.awaitPersist) {
     // Durable queue stamp before run file: crash between these two still leaves
     // a stamped row that restart drops against the Run (live or terminal).
@@ -535,6 +519,23 @@ export async function runCreate(
     // Queue claim handoff: ensure the run file (including template snapshot) is
     // on disk before the caller drops the queue row.
     await persistRunNow(run, 'create-queue-handoff');
+  }
+  // Soft-link AFTER durable queue handoff so backlog mutation/persist cannot
+  // sit between afterCreateSync and durableStamp (crash would leave the queue
+  // row's runId in memory only). Queue-claimed creates already pass
+  // backlogItemId and link via markBacklogRunStarted — skip those.
+  // On awaitPersist a second run-file write stamps backlogItemId after handoff.
+  if (!params.backlogItemId) {
+    const link = await linkDirectRunToMatchingBacklog(run);
+    if (link.action === 'linked') {
+      if (options.awaitPersist) {
+        run.backlogItemId = link.itemId;
+        run.updatedAt = new Date().toISOString();
+        await persistRunNow(run, 'create-soft-link');
+      } else {
+        run = updateRun(run.id, { backlogItemId: link.itemId });
+      }
+    }
   }
   // Set runtime flags (not persisted)
   if (params.skipPrepare) {

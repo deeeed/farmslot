@@ -1967,6 +1967,24 @@ export async function upcomingBacklogItems(
   return { ready: eligible, blocked };
 }
 
+/**
+ * Shared non-launch "run started" transition for queue handoff and direct soft-link.
+ * Keeps status/runId/lastObservedRunStatus/queued clear + persist + broadcast in one place.
+ */
+async function applyRunStartToItem(
+  item: BacklogItem,
+  run: Run,
+  persistReason: string,
+): Promise<void> {
+  item.status = 'running';
+  item.runId = run.id;
+  item.lastObservedRunStatus = 'monitoring';
+  delete item.queuedQueueItemId;
+  item.updatedAt = new Date().toISOString();
+  await persistNow(persistReason);
+  broadcastBacklog();
+}
+
 export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Promise<void> {
   const backlogItemId = queueItem.backlogItemId;
   if (!backlogItemId) return;
@@ -2006,13 +2024,7 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
       broadcastBacklog();
       return;
     }
-    item.status = 'running';
-    item.runId = run.id;
-    item.lastObservedRunStatus = 'monitoring';
-    delete item.queuedQueueItemId;
-    item.updatedAt = new Date().toISOString();
-    await persistNow('run-started');
-    broadcastBacklog();
+    await applyRunStartToItem(item, run, 'run-started');
   });
 }
 
@@ -2079,12 +2091,7 @@ export async function linkDirectRunToMatchingBacklog(
       .sort(byCreated)[0];
 
     if (linkable) {
-      linkable.status = 'running';
-      linkable.runId = run.id;
-      linkable.lastObservedRunStatus = 'monitoring';
-      linkable.updatedAt = new Date().toISOString();
-      await persistNow('direct-run-soft-link');
-      broadcastBacklog();
+      await applyRunStartToItem(linkable, run, 'direct-run-soft-link');
       console.log(
         `[backlog] soft-linked run ${run.id.slice(0, 8)} to backlog item ${linkable.id} ` +
           `(${linkable.sourceRef}) via sourceRef match on run.create`,
@@ -2092,7 +2099,17 @@ export async function linkDirectRunToMatchingBacklog(
       return { action: 'linked' as const, itemId: linkable.id };
     }
 
-    const primary = matches.sort(byCreated)[0]!;
+    const [primary] = matches.sort(byCreated);
+    if (!primary) return { action: 'none' as const };
+
+    // Internally-chained creates (comparison-lane trials / parent-child
+    // successors) often re-use ticketOrPr without backlogItemId. When the
+    // board item is already linked that is expected, not an operator mistake —
+    // skip the noisy warn.
+    if (run.parentRunId || run.lane === 'comparison') {
+      return { action: 'none' as const };
+    }
+
     const reason = primary.workGraphId
       ? 'item is work-graph linked; use workGraph.schedulerTick'
       : primary.launchPlan
