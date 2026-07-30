@@ -13,6 +13,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import vm from 'node:vm';
 
 import {
   OFFICIAL_RECIPE_ACTIONS,
@@ -3109,11 +3110,113 @@ test('CDP navigation defers DOM settlement to the shared settle wrapper', async 
   assert.match(settleExpression ?? '', /document\.getAnimations/u);
   assert.match(settleExpression ?? '', /animation\.playState === 'running'/u);
   assert.match(settleExpression ?? '', /reject\(new Error\('DOM remained active/u);
+  assert.match(settleExpression ?? '', /globalThis\[key\] = cancel/u);
+  assert.match(settleExpression ?? '', /resolve\(false\)/u);
   assert.deepEqual(isolatedWorldCalls, [{ frameId: 'main', worldName: 'farmslot-dom-settlement' }]);
   assert.equal(
     evaluationCalls.find((call) => String(call.expression).startsWith('new Promise('))?.contextId,
     7,
   );
+});
+
+test('CDP settlement cancellation resolves the older in-page probe', async () => {
+  let evaluationCount = 0;
+  let notifyFirstEvaluation!: () => void;
+  const firstEvaluation = new Promise<void>((resolve) => {
+    notifyFirstEvaluation = resolve;
+  });
+  const values: unknown[] = [];
+  const sandbox = {
+    clearInterval,
+    clearTimeout,
+    document: {
+      getAnimations: () => [],
+      querySelectorAll: () => [],
+    },
+    MutationObserver: class {
+      disconnect() {}
+      observe() {}
+    },
+    requestAnimationFrame: (callback: () => void) => setTimeout(callback, 0),
+    setInterval,
+    setTimeout,
+  };
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        return { executionContextId: 7 };
+      }
+      assert.equal(method, 'Runtime.evaluate');
+      evaluationCount += 1;
+      const valuePromise = vm.runInNewContext(
+        String(params.expression),
+        sandbox,
+      ) as Promise<unknown>;
+      if (evaluationCount === 1) notifyFirstEvaluation();
+      const value = await valuePromise;
+      values.push(value);
+      return { result: { value } };
+    },
+  } as never);
+
+  const first = page.waitForDomSettled(100);
+  await firstEvaluation;
+  const second = page.waitForDomSettled(100);
+  await Promise.all([first, second]);
+
+  assert.deepEqual(values, [false, true]);
+});
+
+test('CDP settlement does not retry non-transient evaluation failures', async () => {
+  let evaluationCount = 0;
+  const page = new CdpWebPage({
+    async call(method: string) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        return { executionContextId: 7 };
+      }
+      evaluationCount += 1;
+      throw new Error('CDP websocket closed.');
+    },
+  } as never);
+
+  await assert.rejects(page.waitForDomSettled(100), /within 100ms: CDP websocket closed/u);
+  assert.equal(evaluationCount, 1);
+});
+
+test('CDP settlement does not retry without enough time for a quiet window', async () => {
+  const originalNow = Date.now;
+  let now = 0;
+  let createWorldCalls = 0;
+  Date.now = () => now;
+  const page = new CdpWebPage({
+    async call(method: string) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        createWorldCalls += 1;
+        return { executionContextId: createWorldCalls };
+      }
+      now = 90;
+      throw new Error('Execution context was destroyed.');
+    },
+  } as never);
+
+  try {
+    await assert.rejects(
+      page.waitForDomSettled(100),
+      /within 100ms: Execution context was destroyed/u,
+    );
+    assert.equal(createWorldCalls, 1);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 for (const transientError of [

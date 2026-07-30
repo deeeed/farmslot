@@ -404,6 +404,20 @@ test('CDP compositor probe retries when the page context navigates before evalua
   assert.equal(evaluationAttempt, 2);
 });
 
+test('CDP compositor probe reports sustained navigation churn as suspended', async () => {
+  const report = await probeCdpCompositorInteractivity(
+    {
+      async call() {
+        throw new Error('Inspected target navigated or closed');
+      },
+    },
+    10,
+  );
+
+  assert.equal(report.status, 'suspended');
+  assert.match(report.reason ?? '', /Inspected target navigated or closed/u);
+});
+
 test('depsCheck reports missing install markers', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
   try {

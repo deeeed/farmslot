@@ -246,7 +246,7 @@ const COMPOSITOR_WORLD = 'farmslot-compositor-probe';
 const DOM_SETTLEMENT_WORLD = 'farmslot-dom-settlement';
 const isolatedWorldContexts = new WeakMap<
   CdpCallSession,
-  Map<string, { frameId: string; executionContextId: number }>
+  Map<string, { executionContextId: number }>
 >();
 
 async function evaluateInIsolatedWorld<T>(
@@ -254,16 +254,15 @@ async function evaluateInIsolatedWorld<T>(
   expression: string,
   worldName: string,
 ): Promise<T> {
-  const frameTree = await session.call<{
-    frameTree?: { frame?: { id?: string } };
-  }>('Page.getFrameTree');
-  const frameId = frameTree.frameTree?.frame?.id;
-  if (!frameId) throw new Error('CDP evaluation could not resolve the page frame.');
   const contexts = isolatedWorldContexts.get(session) ?? new Map();
   isolatedWorldContexts.set(session, contexts);
   let isolatedWorld = contexts.get(worldName);
-  if (!isolatedWorld || isolatedWorld.frameId !== frameId) {
-    contexts.delete(worldName);
+  if (!isolatedWorld) {
+    const frameTree = await session.call<{
+      frameTree?: { frame?: { id?: string } };
+    }>('Page.getFrameTree');
+    const frameId = frameTree.frameTree?.frame?.id;
+    if (!frameId) throw new Error('CDP evaluation could not resolve the page frame.');
     const created = await session.call<{ executionContextId?: number }>(
       'Page.createIsolatedWorld',
       { frameId, worldName },
@@ -271,7 +270,7 @@ async function evaluateInIsolatedWorld<T>(
     if (created.executionContextId === undefined) {
       throw new Error('CDP evaluation could not create an isolated world.');
     }
-    isolatedWorld = { frameId, executionContextId: created.executionContextId };
+    isolatedWorld = { executionContextId: created.executionContextId };
     contexts.set(worldName, isolatedWorld);
   }
   try {
@@ -293,9 +292,33 @@ async function evaluateInIsolatedWorld<T>(
     }
     return result.result?.value as T;
   } catch (error) {
+    // Navigation destroys the cached execution context. Evicting it is safe
+    // because the retry resolves the current main frame and creates a new world.
     if (isTransientCdpContextError(error)) contexts.delete(worldName);
     throw error;
   }
+}
+
+async function retryTransientCdpContext<T>(
+  deadline: number,
+  attempt: (remainingMs: number) => Promise<T>,
+  minimumRetryBudgetMs = 0,
+): Promise<T> {
+  let lastError: unknown;
+  do {
+    try {
+      return await attempt(Math.max(1, deadline - Date.now()));
+    } catch (error) {
+      // A document commit temporarily invalidates its frame or execution
+      // context. Retrying is correct while the caller's total budget remains.
+      if (!isTransientCdpContextError(error)) throw error;
+      lastError = error;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= minimumRetryBudgetMs) break;
+      await sleep(Math.min(25, remainingMs));
+    }
+  } while (Date.now() < deadline);
+  throw lastError;
 }
 
 /**
@@ -352,28 +375,16 @@ export async function probeCdpCompositorInteractivity(
       hitTestOk,
     };
   })()`;
-  const evaluate = (contextId?: number) =>
+  const evaluate = () =>
     session.call<EvaluationResult>('Runtime.evaluate', {
       expression,
       awaitPromise: true,
       returnByValue: true,
-      ...(contextId === undefined ? {} : { contextId }),
     });
   try {
     const result = await withTimeout(
       (async () => {
-        let pageResult: EvaluationResult;
-        for (;;) {
-          try {
-            pageResult = await evaluate();
-            break;
-          } catch (error) {
-            if (!isTransientCdpContextError(error)) throw error;
-            const remainingMs = deadline - Date.now();
-            if (remainingMs <= 0) throw error;
-            await sleep(Math.min(25, remainingMs));
-          }
-        }
+        const pageResult = await retryTransientCdpContext(deadline, evaluate);
         const description =
           pageResult.exceptionDetails?.exception?.description ??
           pageResult.exceptionDetails?.text ??
@@ -384,24 +395,15 @@ export async function probeCdpCompositorInteractivity(
         ) {
           return pageResult;
         }
-        let lastError: unknown;
-        do {
-          try {
-            const value = await evaluateInIsolatedWorld<Omit<CdpCompositorProbe, 'status'>>(
-              session,
-              expression,
-              COMPOSITOR_WORLD,
-            );
-            return { result: { value } };
-          } catch (error) {
-            if (!isTransientCdpContextError(error)) throw error;
-            lastError = error;
-            const remainingMs = deadline - Date.now();
-            if (remainingMs <= 0) break;
-            await sleep(Math.min(25, remainingMs));
-          }
-        } while (Date.now() < deadline);
-        throw lastError;
+        return retryTransientCdpContext(deadline, async () => {
+          const value = await evaluateInIsolatedWorld<Omit<CdpCompositorProbe, 'status'>>(
+            session,
+            expression,
+            COMPOSITOR_WORLD,
+          );
+          const fallback: EvaluationResult = { result: { value } };
+          return fallback;
+        });
       })(),
       timeoutMs,
       frameTimeoutReason,
@@ -439,13 +441,19 @@ export async function probeCdpCompositorInteractivity(
       hitTestOk: value.hitTestOk ?? null,
     };
   } catch (error) {
-    if (error instanceof Error && error.message === frameTimeoutReason) {
+    if (
+      (error instanceof Error && error.message === frameTimeoutReason) ||
+      isTransientCdpContextError(error)
+    ) {
       return {
         status: 'suspended',
         frameAdvanced: false,
         interactiveTargetFound: false,
         hitTestOk: null,
-        reason: frameTimeoutReason,
+        reason:
+          error instanceof Error && error.message !== frameTimeoutReason
+            ? `${frameTimeoutReason}: ${error.message}`
+            : frameTimeoutReason,
       };
     }
     throw error;
@@ -524,30 +532,28 @@ export class CdpWebPage {
   async waitForDomSettled(timeoutMs = 10_000): Promise<void> {
     const quietMs = Math.min(300, Math.max(1, Math.floor(timeoutMs / 2)));
     const deadline = Date.now() + timeoutMs;
-    let lastError: unknown;
-    do {
-      const attemptTimeoutMs = Math.max(1, deadline - Date.now());
-      const expression = `new Promise((resolve, reject) => { const key = '__farmslotDomSettlementCancel'; globalThis[key]?.(); const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let observer; let finished = false; const cleanup = () => { observer?.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); if (globalThis[key] === cleanup) delete globalThis[key]; }; globalThis[key] = cleanup; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; const finiteAnimations = animations.filter((animation) => animation.effect?.getTiming().iterations !== Infinity); if (finiteAnimations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for ${attemptTimeoutMs}ms')); }, ${attemptTimeoutMs}); })`;
-      try {
-        await withTimeout(
-          evaluateInIsolatedWorld(this.session, expression, DOM_SETTLEMENT_WORLD),
-          attemptTimeoutMs + 50,
-          `CDP document did not settle within ${timeoutMs}ms`,
-        );
-        return;
-      } catch (error) {
-        if (!isTransientCdpContextError(error)) throw error;
-        lastError = error;
-        const remainingMs = deadline - Date.now();
-        if (remainingMs <= 0) break;
-        await sleep(Math.min(25, remainingMs));
-      }
-    } while (Date.now() < deadline);
-    const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
-    throw new Error(`CDP document did not settle within ${timeoutMs}ms${detail}`);
+    try {
+      await retryTransientCdpContext(
+        deadline,
+        async (attemptTimeoutMs) => {
+          const expression = `new Promise((resolve, reject) => { const key = '__farmslotDomSettlementCancel'; globalThis[key]?.(); const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let observer; let finished = false; const cleanup = () => { observer?.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); if (globalThis[key] === cancel) delete globalThis[key]; }; const cancel = () => { if (finished) return; finished = true; cleanup(); resolve(false); }; globalThis[key] = cancel; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; const finiteAnimations = animations.filter((animation) => animation.effect?.getTiming().iterations !== Infinity); if (finiteAnimations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for ${attemptTimeoutMs}ms')); }, ${attemptTimeoutMs}); })`;
+          await withTimeout(
+            evaluateInIsolatedWorld(this.session, expression, DOM_SETTLEMENT_WORLD),
+            attemptTimeoutMs + 50,
+            `CDP document did not settle within ${timeoutMs}ms`,
+          );
+        },
+        quietMs,
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? `: ${error.message}` : '';
+      throw new Error(`CDP document did not settle within ${timeoutMs}ms${detail}`);
+    }
   }
 
   async evaluate<T = unknown>(expression: string): Promise<T> {
+    // Follow-up: action and observer helpers still evaluate in the main world;
+    // isolated-world navigation recovery is currently limited to readiness probes.
     const result = await this.session.call<{
       result?: { value?: T };
       exceptionDetails?: { text?: string; exception?: { description?: string } };
