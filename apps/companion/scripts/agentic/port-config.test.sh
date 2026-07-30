@@ -62,4 +62,7 @@ recipe_output="$(
   exit 1
 }
 
+# Metro protocol .js→.ts rewrite path detection (cwd / worktree safe)
+node "${APP_DIR}/metro-protocol-source.test.cjs"
+
 printf 'ok - Companion launch ports are required from slot/worktree configuration\n'
