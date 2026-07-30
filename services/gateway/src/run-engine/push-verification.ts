@@ -11,7 +11,7 @@
 // only in the slot worktree and is destroyed when the slot is reclaimed, which is
 // a different failure from an unpushed commit and needs its own check.
 
-import { isInteractiveDevRun, type Run } from '@farmslot/protocol';
+import { type ExecResult, isInteractiveDevRun, type Run } from '@farmslot/protocol';
 
 import { resolveAgentTarget } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
@@ -40,72 +40,116 @@ export interface PushVerificationResult {
   aborted?: boolean;
 }
 
-interface WorktreePublishState {
+export interface WorktreePublishState {
   dirtyFiles: number;
   unpushedCommits: number;
+}
+
+type GitExecutor = (command: string) => Promise<ExecResult>;
+
+function assertGitProbe(result: ExecResult, probe: string): void {
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `push-verification ${probe} failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+    );
+  }
+}
+
+function nulPaths(stdout: string): string[] {
+  return stdout.split('\0').filter(Boolean);
+}
+
+async function countCommitsAhead(
+  execute: GitExecutor,
+  baseRef: string,
+  branchRef: string,
+): Promise<number> {
+  const result = await execute(
+    `git rev-list --count ${shellQuote(baseRef)}..${shellQuote(branchRef)}`,
+  );
+  assertGitProbe(result, `rev-list ${baseRef}..${branchRef}`);
+  return parseInt(result.stdout.trim(), 10) || 0;
+}
+
+/**
+ * Inspect content dirtiness and unpublished commits using an injectable git
+ * executor so the branch/ref fallback behavior is deterministic in tests.
+ */
+export async function inspectWorktreePublishState(
+  branch: string,
+  execute: GitExecutor,
+): Promise<WorktreePublishState> {
+  // `git status` can report a tracked path as modified from stale stat data
+  // even when its content is unchanged. Diff tracked content against HEAD and
+  // collect untracked files separately; NUL delimiters preserve unusual paths.
+  const tracked = await execute('git diff --name-only -z HEAD --');
+  assertGitProbe(tracked, 'tracked-content diff');
+  const untracked = await execute('git ls-files --others --exclude-standard -z');
+  assertGitProbe(untracked, 'untracked-files probe');
+  const dirtyFiles = new Set([...nulPaths(tracked.stdout), ...nulPaths(untracked.stdout)]).size;
+
+  const branchRef = `refs/heads/${branch}`;
+  const remoteRef = `origin/${branch}`;
+  const remoteProbe = await execute(`git rev-parse --verify --quiet ${shellQuote(remoteRef)}`);
+  if (remoteProbe.exitCode !== 0 && remoteProbe.exitCode !== 1) {
+    assertGitProbe(remoteProbe, `rev-parse ${remoteRef}`);
+  }
+  if (remoteProbe.exitCode === 0) {
+    return {
+      dirtyFiles,
+      unpushedCommits: await countCommitsAhead(execute, remoteRef, branchRef),
+    };
+  }
+
+  // A new local branch has no origin/<branch> yet. Compare it with its
+  // configured upstream when present, otherwise origin/HEAD. Counting the
+  // entire local branch history here produced absurd values (for example
+  // 31,508 "unpushed commits") and obscured the actual one-commit state.
+  const upstreamResult = await execute(
+    `git for-each-ref --format=${shellQuote('%(upstream:short)')} ${shellQuote(branchRef)}`,
+  );
+  assertGitProbe(upstreamResult, `upstream probe for ${branch}`);
+  const upstreamRef = upstreamResult.stdout.trim();
+  if (upstreamRef) {
+    const upstreamProbe = await execute(
+      `git rev-parse --verify --quiet ${shellQuote(upstreamRef)}`,
+    );
+    if (upstreamProbe.exitCode !== 0 && upstreamProbe.exitCode !== 1) {
+      assertGitProbe(upstreamProbe, `rev-parse ${upstreamRef}`);
+    }
+    if (upstreamProbe.exitCode === 0) {
+      return {
+        dirtyFiles,
+        unpushedCommits: await countCommitsAhead(execute, upstreamRef, branchRef),
+      };
+    }
+  }
+
+  const originHead = await execute('git symbolic-ref --quiet --short refs/remotes/origin/HEAD');
+  if (originHead.exitCode !== 0 && originHead.exitCode !== 1) {
+    assertGitProbe(originHead, 'origin/HEAD probe');
+  }
+  const originHeadRef = originHead.stdout.trim();
+  if (originHead.exitCode === 0 && originHeadRef) {
+    return {
+      dirtyFiles,
+      unpushedCommits: await countCommitsAhead(execute, originHeadRef, branchRef),
+    };
+  }
+
+  // With neither a feature remote nor a trustworthy base ref, publication
+  // cannot be proven. Report the safe minimum instead of the whole repository
+  // history and keep the gate closed.
+  return { dirtyFiles, unpushedCommits: 1 };
 }
 
 async function inspectWorktree(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   branch: string,
 ): Promise<WorktreePublishState> {
-  // No pipes anywhere in these probes: a failing `git status` piped into
-  // head/wc would exit 0 and falsely report a clean tree. Count client-side.
-  const status = await execOnSlot(vars, 'git status --porcelain', {
-    timeout: 30_000,
-  });
-  if (status.exitCode !== 0) {
-    throw new Error(
-      `push-verification git status failed (exit ${status.exitCode}): ${status.stderr || status.stdout}`,
-    );
-  }
-  const dirtyFiles = status.stdout.split('\n').filter((line) => line.trim()).length;
-
-  // The remote-tracking ref may be absent (skipPrepare, local-only branch): a
-  // ref the worker never pushed IS unpushed work, not a probe error. Compare
-  // against the explicit local branch ref, not HEAD — a worker that parks the
-  // worktree on another ref must not hide unpushed commits on the PR branch.
-  const remoteRef = `origin/${branch}`;
-  const refProbe = await execOnSlot(
-    vars,
-    `git rev-parse --verify --quiet ${shellQuote(remoteRef)}`,
-    { timeout: 30_000 },
+  return inspectWorktreePublishState(branch, (command) =>
+    execOnSlot(vars, command, { timeout: 30_000 }),
   );
-  // `--verify --quiet` exits 1 for a missing ref; anything else nonzero is a
-  // genuine probe failure (timeout, not a repo) and must not silently take
-  // the unpublished path.
-  if (refProbe.exitCode !== 0 && refProbe.exitCode !== 1) {
-    throw new Error(
-      `push-verification rev-parse failed (exit ${refProbe.exitCode}): ${refProbe.stderr || refProbe.stdout}`,
-    );
-  }
-  const hasRemoteRef = refProbe.exitCode === 0;
-  if (!hasRemoteRef) {
-    const localCommits = await execOnSlot(
-      vars,
-      `git rev-list --count ${shellQuote(`refs/heads/${branch}`)}`,
-      { timeout: 30_000 },
-    );
-    if (localCommits.exitCode !== 0) {
-      throw new Error(
-        `push-verification rev-list failed for local ${branch} (exit ${localCommits.exitCode}): ${localCommits.stderr || localCommits.stdout}`,
-      );
-    }
-    // No remote ref at all → the whole branch is unpublished.
-    return { dirtyFiles, unpushedCommits: parseInt(localCommits.stdout.trim(), 10) || 1 };
-  }
-
-  const revList = await execOnSlot(
-    vars,
-    `git rev-list --count ${shellQuote(remoteRef)}..${shellQuote(`refs/heads/${branch}`)}`,
-    { timeout: 30_000 },
-  );
-  if (revList.exitCode !== 0) {
-    throw new Error(
-      `push-verification rev-list failed (exit ${revList.exitCode}): ${revList.stderr || revList.stdout}`,
-    );
-  }
-  return { dirtyFiles, unpushedCommits: parseInt(revList.stdout.trim(), 10) || 0 };
 }
 
 /**

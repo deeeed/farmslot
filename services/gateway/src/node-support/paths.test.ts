@@ -1,9 +1,36 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { resolveNodeSupportPaths } from './paths.js';
 
 const root = '/repo/farmslot';
+
+test('farmslot farm declares the setup bundle used by remote prepare hooks', () => {
+  const configPath = new URL('../../../../projects/farmslot-farm/project.json', import.meta.url);
+  const projectJson = JSON.parse(readFileSync(configPath, 'utf8')) as Parameters<
+    typeof resolveNodeSupportPaths
+  >[1] & {
+    prepare?: { profiles?: Record<string, { hooks?: Record<string, string> }> };
+  };
+  const result = resolveNodeSupportPaths('farmslot-farm', projectJson, root);
+
+  assert.deepEqual(result.paths, [
+    'projects/farmslot-farm/project.json',
+    'projects/farmslot-farm/setup',
+    'scripts',
+  ]);
+  assert.deepEqual(result.undeclaredHookPaths, []);
+
+  const profiles = projectJson.prepare?.profiles;
+  assert.match(profiles?.sandbox?.hooks?.preflight ?? '', /\{\{node_support_dir\}\}/);
+  assert.doesNotMatch(profiles?.sandbox?.hooks?.preflight ?? '', /\{\{primary_repo\}\}/);
+
+  for (const hookName of ['health_check', 'dev_server_check', 'teardown'] as const) {
+    assert.match(String(projectJson.hooks?.[hookName] ?? ''), /\{\{repo\}\}/);
+    assert.doesNotMatch(String(projectJson.hooks?.[hookName] ?? ''), /\{\{primary_repo\}\}/);
+  }
+});
 
 test('simple project with repo-local hooks needs no node support', () => {
   const result = resolveNodeSupportPaths(
