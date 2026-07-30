@@ -43,7 +43,7 @@ export function buildCIWatchChainedRunParams(
   flowType: FlowType;
   createParams: RunCreateParams;
   updateFields: Partial<Run>;
-  engineFlags: { skipPrepare?: true };
+  engineFlags: { skipPrepare?: true; warmSessionReuse?: true };
 } | null {
   const flowType = resolveCIWatchChainFlowType(dispatchAction);
   if (!flowType) return null;
@@ -100,8 +100,9 @@ export function buildCIWatchChainedRunParams(
     // CI-watch follow-ups are intentionally chained onto the just-completed,
     // keep-warm slot. Re-running full PREPARE here tears down that known-good
     // browser/profile and can fail before the follow-up worker even sees the
-    // task (for example on Example App unlock actionability flakes). The follow-up
-    // should reuse the warm workspace and let DISPATCH launch the worker.
-    engineFlags: current.slotId ? { skipPrepare: true } : {},
+    // task (for example on Example App unlock actionability flakes). Prefer
+    // warmSessionReuse so DISPATCH hands the task to the still-alive parent
+    // worker; fall back to fresh launch when the session is gone.
+    engineFlags: current.slotId ? { skipPrepare: true, warmSessionReuse: true } : {},
   };
 }
