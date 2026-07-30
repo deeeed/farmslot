@@ -855,19 +855,25 @@ function visibleTargetsExpression(): string {
       const raw = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.innerText || '';
       return String(raw).replace(/\\s+/g, ' ').trim().slice(0, 120) || undefined;
     };
+    const cssString = (value) => '"' + Array.from(String(value), (character) => {
+      const code = character.codePointAt(0);
+      if (character === '"' || character === '\\\\') return '\\\\' + character;
+      if (code === 0) return '\\uFFFD';
+      if (code <= 0x1f || code === 0x7f) return '\\\\' + code.toString(16) + ' ';
+      return character;
+    }).join('') + '"';
     const cssPath = (el) => {
-      if (el.id) return '#' + CSS.escape(el.id);
+      if (el.id) return '[id=' + cssString(el.id) + ']';
       const testAttribute = ['data-testid', 'data-test-id', 'data-test'].find((attribute) => el.hasAttribute(attribute));
       if (testAttribute) {
-        const testId = CSS.escape(String(el.getAttribute(testAttribute)));
-        return '[' + testAttribute + '="' + testId + '"]';
+        return '[' + testAttribute + '=' + cssString(el.getAttribute(testAttribute)) + ']';
       }
       if (el.getRootNode() instanceof ShadowRoot) return undefined;
       const parts = [];
       let current = el;
-      while (current && current.nodeType === Node.ELEMENT_NODE) {
+      while (current && current.nodeType === 1) {
         if (current.id) {
-          parts.unshift('#' + CSS.escape(current.id));
+          parts.unshift('[id=' + cssString(current.id) + ']');
           break;
         }
         const tag = current.tagName.toLowerCase();
@@ -1275,7 +1281,7 @@ function deepQueryHelpersExpression(): string {
     };
     const renderedTextDeep = (root = document) => {
       const chunks = [];
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const walker = document.createTreeWalker(root, 4);
       let node = walker.nextNode();
       while (node) {
         if (node.parentElement && isRenderedDeep(node.parentElement)) chunks.push(node.nodeValue || '');

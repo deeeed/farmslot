@@ -3276,7 +3276,8 @@ test('CDP deep text matching uses rendered text without scanning textContent', a
   await page.waitFor({ text: 'Review Workspace', timeoutMs: 100 });
 
   assert.match(expressions[0] ?? '', /renderedTextDeep/u);
-  assert.match(expressions[0] ?? '', /NodeFilter\.SHOW_TEXT/u);
+  assert.match(expressions[0] ?? '', /createTreeWalker\(root, 4\)/u);
+  assert.doesNotMatch(expressions[0] ?? '', /NodeFilter/u);
   assert.match(expressions[0] ?? '', /isRenderedDeep\(node\.parentElement\)/u);
   assert.doesNotMatch(expressions[0] ?? '', /textContent/u);
 });
@@ -3300,6 +3301,8 @@ test('CDP visible observations omit labels for non-rendered targets', async () =
   assert.doesNotMatch(expression, /'\[data-testid\]'/u);
   assert.match(expression, /parts\.join\(' > '\)/u);
   assert.doesNotMatch(expression, /el\.textContent/u);
+  assert.doesNotMatch(expression, /CSS\.escape/u);
+  assert.doesNotMatch(expression, /Node\.ELEMENT_NODE/u);
 });
 
 test('CDP screen observations omit query parameters and sensitive fragments', async () => {

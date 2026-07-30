@@ -4,6 +4,11 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.10.2 - 2026-07-30
+
+- fix: avoid scuttled browser globals when matching visible text and producing observation selectors in hardened Extension pages.
+- fix: expose npm-semver dependency version checks for host runtime-readiness bootstraps.
+
 ## 0.10.1 - 2026-07-30
 
 - fix: capture-helper doctor failures report `capture_helper_exec_failed` (spawn/PATH/env) instead of claiming the tool is missing when only execution failed.

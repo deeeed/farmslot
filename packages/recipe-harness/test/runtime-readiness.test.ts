@@ -14,6 +14,7 @@ import {
 } from '../src/runtime/cdp.js';
 import type { RuntimeDecisionReport } from '../src/runtime/decision-types.js';
 import {
+  dependencyVersionSatisfies,
   depsCheck,
   depsFingerprint,
   recordDepsBaseline,
@@ -26,6 +27,18 @@ import {
   supersededErrorCapture,
 } from '../src/runtime/log-analysis.js';
 import { orchestrateRuntimeUp } from '../src/runtime/orchestrate-up.js';
+
+test('dependency version checks support npm semver ranges', () => {
+  assert.equal(dependencyVersionSatisfies('1.2.3', '1.2.3'), true);
+  assert.equal(dependencyVersionSatisfies('1.3.0', '^1.2.3'), true);
+  assert.equal(dependencyVersionSatisfies('2.0.0', '^1.2.3'), false);
+  assert.equal(dependencyVersionSatisfies('1.2.9', '~1.2.3'), true);
+  assert.equal(dependencyVersionSatisfies('1.3.0', '~1.2.3'), false);
+  assert.equal(dependencyVersionSatisfies('2.4.0', '>=2 <3'), true);
+  assert.equal(dependencyVersionSatisfies('not-a-version', '^1.2.3'), false);
+  assert.equal(dependencyVersionSatisfies('1.2.3', 'not-a-range'), false);
+  assert.equal(dependencyVersionSatisfies('1.2.3', ''), false);
+});
 
 test('CDP compositor probe requires advancing frames and sane hit testing', async () => {
   const ready = await probeCdpCompositorInteractivity({

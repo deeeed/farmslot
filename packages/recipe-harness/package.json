@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/recipe-harness",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -109,6 +109,7 @@
   "dependencies": {
     "@farmslot/protocol": "workspace:*",
     "commander": "^12.0.0",
+    "semver": "^7.7.3",
     "ws": "^8.18.0"
   },
   "devDependencies": {
