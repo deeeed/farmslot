@@ -20,6 +20,10 @@ const STEPS = [
     ['node', '--test', 'scripts/quality/check-conventional-commits.test.mjs'],
   ],
   [
+    'package publisher guard tests',
+    ['node', '--test', 'scripts/quality/check-farmslot-package-readiness.test.mjs'],
+  ],
+  [
     'single-canonical worker scripts',
     ['node', '--test', 'scripts/quality/single-canonical-worker-scripts.test.mjs'],
   ],
