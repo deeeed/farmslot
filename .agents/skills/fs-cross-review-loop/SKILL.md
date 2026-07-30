@@ -125,6 +125,29 @@ Only `style-only` items may be deferred. Everything else must round-trip through
 
 Rationale: farmslot review agents already produce P2/P3/nit lists but the worker historically closes them as "skipped per time budget". That erodes the signal of the feedback file — once skips are normalized, Layer 1 becomes theater. Mandatory remediation keeps the review file truthful.
 
+## Validation Contract
+
+Every fix cycle re-validates, but not every fix cycle runs the canonical gate. Running the full
+`yarn quality` on each round saturates the machine and delays reviewer feedback for no added
+coverage — the intermediate rounds already have a changed-file lane.
+
+- Intermediate rounds: run the exact affected tests for the changed files, then `yarn prepush:quality`.
+- Final round: run the full `yarn quality` once on the final committed SHA.
+
+"Exact affected tests" means the specific test files covering the changed source — for example
+`node --test scripts/quality/run-tsx-tests.test.mjs`, or
+`node scripts/quality/run-tsx-tests.mjs --cwd services/gateway --tsconfig tsconfig.json <file>.test.ts`
+for a single Gateway suite. Do not substitute a whole-workspace `quality` script for this.
+
+`yarn prepush:quality` is the existing path-filtered lane
+(`scripts/quality/prepush-quality.mjs`). Do not build or ask for a second changed-file selector.
+
+The orchestrator does not run any of these — it requires the worker to report which commands ran
+and with what result before dispatching the next review round.
+
+This contract is machine-checked by `yarn quality:review-loop`
+(`scripts/quality/check-review-loop-validation-contract.mjs`), which runs inside the canonical gate.
+
 ## Reviewer Prompt Template
 
 Use this shape for each review pane. The reviewer owns inspection; the orchestrator only sends the prompt and relays the result.
@@ -189,7 +212,8 @@ The reviewers found blocking issues. Fix all blocking items before asking for an
 
 ## After Fixing
 
-- rerun the relevant validation for the changed surface;
+- run the exact affected tests for the files you changed, then `yarn prepush:quality`;
+- do not run the full `yarn quality` for an intermediate cycle;
 - update or confirm visual/recipe proof if relevant;
 - summarize what changed;
 - say "ready for cross-review cycle {{next_cycle}}" when done.
@@ -202,7 +226,7 @@ Stop with `clean` only when:
 - worker reports implementation complete;
 - required review panes return `PASS` with no blocking nits/P2/P3/P0/P1;
 - recipe/evidence expectations are satisfied or explicitly documented as not applicable;
-- worker has run the relevant validation for the final diff;
+- worker confirms the full `yarn quality` has been run once on the final committed SHA;
 - no reviewer has unresolved concrete findings.
 
 Escalate to the human when:

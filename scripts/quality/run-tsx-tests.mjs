@@ -1,46 +1,23 @@
 #!/usr/bin/env node
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
+import { basename, relative, resolve } from 'node:path';
 
-const args = process.argv.slice(2);
-const cwdFlagIndex = args.indexOf('--cwd');
-const tsconfigFlagIndex = args.indexOf('--tsconfig');
-const nodeTest = args.includes('--node-test');
-const cwd = cwdFlagIndex >= 0 ? resolve(args[cwdFlagIndex + 1] ?? '.') : process.cwd();
-const tsconfig = tsconfigFlagIndex >= 0 ? args[tsconfigFlagIndex + 1] : undefined;
-const roots = args.filter((arg, index) => {
-  if (arg === '--cwd' || arg === '--tsconfig' || arg === '--node-test') return false;
-  if (cwdFlagIndex >= 0 && index === cwdFlagIndex + 1) return false;
-  if (tsconfigFlagIndex >= 0 && index === tsconfigFlagIndex + 1) return false;
-  return true;
-});
+import {
+  formatDuration,
+  isMainModule,
+  rankSlowest,
+  writeTimingArtifact,
+} from './lib/step-timing.mjs';
 
-if (roots.length === 0) {
-  console.error(
-    'Usage: run-tsx-tests.mjs [--cwd <dir>] [--tsconfig <file>] [--node-test] <dir-or-test-file> [...]',
-  );
-  process.exit(1);
-}
+/**
+ * Opt-in marker for suites that mutate machine-wide or repo-wide state (tmux
+ * sessions, the shared `pool/` directory, fixed ports). Marked files run one at
+ * a time, never overlapping each other or the parallel lanes.
+ */
+export const SERIAL_PRAGMA = '@farmslot:serial';
 
-function collectTests(root) {
-  const absolute = resolve(cwd, root);
-  const stat = statSync(absolute);
-  if (stat.isFile()) return absolute.endsWith('.test.ts') ? [absolute] : [];
-  const tests = [];
-  for (const entry of readdirSync(absolute)) {
-    if (entry === 'node_modules' || entry === 'dist' || entry === 'build' || entry === '.turbo')
-      continue;
-    tests.push(...collectTests(resolve(absolute, entry)));
-  }
-  return tests;
-}
-
-const tests = [...new Set(roots.flatMap(collectTests))].sort();
-if (tests.length === 0) {
-  console.error(`No .test.ts files found under: ${roots.join(', ')}`);
-  process.exit(1);
-}
+export const WORKERS_ENV = 'FARMSLOT_TSX_TEST_WORKERS';
 
 // Git exports GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (etc.) into hook
 // environments (pre-commit, pre-push). A test that spawns `git` to build a
@@ -58,42 +35,341 @@ const GIT_LOCATION_ENV = [
   'GIT_NAMESPACE',
   'GIT_PREFIX',
 ];
-const childEnv = { ...process.env, NODE_TEST_CONTEXT: '1' };
-for (const key of GIT_LOCATION_ENV) delete childEnv[key];
 
-function run(args) {
-  const result = spawnSync('yarn', args, {
-    cwd,
-    env: childEnv,
-    stdio: 'inherit',
-    shell: false,
+export function parseArgs(argv) {
+  const roots = [];
+  let cwd;
+  let tsconfig;
+  let nodeTest = false;
+  let workers;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--cwd') {
+      cwd = argv[++index];
+      continue;
+    }
+    if (arg === '--tsconfig') {
+      tsconfig = argv[++index];
+      continue;
+    }
+    if (arg === '--workers') {
+      workers = argv[++index];
+      continue;
+    }
+    if (arg === '--node-test') {
+      nodeTest = true;
+      continue;
+    }
+    roots.push(arg);
+  }
+
+  return { roots, cwd, tsconfig, nodeTest, workers };
+}
+
+export function resolveWorkers(rawValue, env = process.env) {
+  const source = rawValue ?? env[WORKERS_ENV];
+  if (source == null || source === '') return 1;
+  const parsed = Number(source);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`Worker count must be a positive integer, received: ${source}`);
+  }
+  return parsed;
+}
+
+export function collectTests(root, cwd) {
+  const absolute = resolve(cwd, root);
+  const stat = statSync(absolute);
+  if (stat.isFile()) return absolute.endsWith('.test.ts') ? [absolute] : [];
+  const tests = [];
+  for (const entry of readdirSync(absolute)) {
+    if (entry === 'node_modules' || entry === 'dist' || entry === 'build' || entry === '.turbo')
+      continue;
+    tests.push(...collectTests(resolve(absolute, entry), cwd));
+  }
+  return tests;
+}
+
+export function discoverTests(roots, cwd) {
+  return [...new Set(roots.flatMap((root) => collectTests(root, cwd)))].sort();
+}
+
+export function classifyTest(source) {
+  if (source.includes('mock.module(')) return 'module-mock';
+  if (source.includes(SERIAL_PRAGMA)) return 'serial';
+  return 'parallel';
+}
+
+/**
+ * Deterministic partition of the discovered test files.
+ *
+ * Contract: every discovered file lands in exactly one lane, and every parallel
+ * file lands in exactly one worker bucket. Assignment is round-robin over the
+ * sorted file list, so the same input always yields the same plan.
+ */
+export function partitionTests(tests, { workers = 1, classify, nodeTest = false } = {}) {
+  const moduleMock = [];
+  const serial = [];
+  const parallelFiles = [];
+
+  for (const test of tests) {
+    if (nodeTest) {
+      moduleMock.push(test);
+      continue;
+    }
+    const lane = classify(test);
+    if (lane === 'module-mock') moduleMock.push(test);
+    else if (lane === 'serial') serial.push(test);
+    else parallelFiles.push(test);
+  }
+
+  const laneCount = Math.max(1, workers);
+  const parallel = Array.from({ length: laneCount }, () => []);
+  parallelFiles.forEach((file, index) => {
+    parallel[index % laneCount].push(file);
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+
+  return { moduleMock, serial, parallel };
 }
 
-function usesModuleMocks(testPath) {
-  return readFileSync(testPath, 'utf8').includes('mock.module(');
+/** Flat {file, lane, worker} view used for reporting and assignment checks. */
+export function assignments(partition) {
+  const entries = [
+    ...partition.moduleMock.map((file) => ({ file, lane: 'module-mock', worker: null })),
+    ...partition.serial.map((file) => ({ file, lane: 'serial', worker: null })),
+    ...partition.parallel.flatMap((lane, worker) =>
+      lane.map((file) => ({ file, lane: 'parallel', worker })),
+    ),
+  ];
+  return entries;
 }
 
-const moduleMockTests = nodeTest ? tests : tests.filter(usesModuleMocks);
-const regularTests = nodeTest ? [] : tests.filter((test) => !usesModuleMocks(test));
-
-if (moduleMockTests.length > 0) {
-  run([
-    'exec',
-    'node',
-    '--import',
-    'tsx',
-    '--experimental-test-module-mocks',
-    '--test',
-    ...moduleMockTests.map((test) => relative(cwd, test)),
-  ]);
+function childEnvironment() {
+  const env = { ...process.env, NODE_TEST_CONTEXT: '1' };
+  for (const key of GIT_LOCATION_ENV) delete env[key];
+  return env;
 }
 
-for (const test of regularTests) {
+function runYarn(args, { cwd, env, buffered }) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn('yarn', args, {
+      cwd,
+      env,
+      shell: false,
+      stdio: buffered ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    });
+    let output = '';
+    if (buffered) {
+      child.stdout.setEncoding('utf-8');
+      child.stderr.setEncoding('utf-8');
+      child.stdout.on('data', (chunk) => {
+        output += chunk;
+      });
+      child.stderr.on('data', (chunk) => {
+        output += chunk;
+      });
+    }
+    child.on('error', rejectPromise);
+    child.on('close', (code) => resolvePromise({ status: code ?? 1, output }));
+  });
+}
+
+function testCommand(file, { cwd, tsconfig }) {
   const command = ['exec', 'tsx'];
   if (tsconfig) command.push('--tsconfig', tsconfig);
-  command.push(relative(cwd, test));
-  run(command);
+  command.push(relative(cwd, file));
+  return command;
 }
+
+async function runOne(file, context) {
+  const started = performance.now();
+  const { status, output } = await runYarn(testCommand(file, context), {
+    cwd: context.cwd,
+    env: context.env,
+    buffered: context.buffered,
+  });
+  const ms = performance.now() - started;
+  if (context.buffered) {
+    process.stdout.write(
+      `\n[tsx-tests] ${relative(context.cwd, file)} status=${status === 0 ? 'ok' : 'fail'} ms=${Math.round(ms)}\n${output}`,
+    );
+  }
+  return { file, ms, status };
+}
+
+async function runLaneSequentially(files, context) {
+  const records = [];
+  for (const file of files) {
+    records.push(await runOne(file, context));
+  }
+  return records;
+}
+
+/**
+ * Reporting view over one run.
+ *
+ * `records` carries per-execution timings: one entry per file for the serial and
+ * parallel lanes, plus a single entry for the module-mock batch (which is one
+ * process, so per-file timings do not exist for it).
+ */
+export function summaryLines({ workspace, workers, partition, records, failures, totalMs }) {
+  const assigned = assignments(partition);
+  const parallelCount = partition.parallel.reduce((sum, lane) => sum + lane.length, 0);
+  const lines = [
+    `\n[tsx-tests] summary workspace="${workspace}" workers=${workers}` +
+      ` discovered=${assigned.length} assigned=${assigned.length}` +
+      ` module_mock=${partition.moduleMock.length} serial=${partition.serial.length}` +
+      ` parallel=${parallelCount}` +
+      ` failed=${failures.length} total_ms=${Math.round(totalMs)} total=${formatDuration(totalMs)}`,
+  ];
+  if (records.length > 0) {
+    lines.push('[tsx-tests] slowest:');
+    rankSlowest(records).forEach((record, index) => {
+      lines.push(
+        `[tsx-tests]   ${index + 1}. ${record.label} ms=${Math.round(record.ms)} (${formatDuration(record.ms)})`,
+      );
+    });
+  }
+  if (failures.length > 0) {
+    lines.push('[tsx-tests] failures:');
+    for (const failure of failures) {
+      lines.push(`[tsx-tests]   - ${failure.label} exit=${failure.status}`);
+    }
+  }
+  return lines;
+}
+
+export function buildArtifact({
+  workspace,
+  workers,
+  partition,
+  records,
+  failures,
+  totalMs,
+  toLabel,
+}) {
+  const byFile = new Map(records.filter((record) => record.file).map((r) => [r.file, r]));
+  const batch = records.find((record) => record.batch);
+  return {
+    kind: 'tsx-tests',
+    workspace,
+    workers,
+    discoveredCount: assignments(partition).length,
+    assignedCount: assignments(partition).length,
+    status: failures.length > 0 ? 'fail' : 'ok',
+    totalMs: Math.round(totalMs),
+    files: assignments(partition).map((entry) => {
+      const record = entry.lane === 'module-mock' ? batch : byFile.get(entry.file);
+      return {
+        file: toLabel(entry.file),
+        lane: entry.lane,
+        worker: entry.worker,
+        // The module-mock lane is a single batch process, so its files share the
+        // batch verdict and have no individual duration.
+        ms: entry.lane === 'module-mock' ? null : record ? Math.round(record.ms) : null,
+        status: record ? (record.status === 0 ? 'ok' : 'fail') : 'skipped',
+      };
+    }),
+    failures: failures.map((failure) => ({ label: failure.label, status: failure.status })),
+    slowest: rankSlowest(records).map((record) => ({
+      label: record.label,
+      ms: Math.round(record.ms),
+    })),
+  };
+}
+
+async function main() {
+  const {
+    roots,
+    cwd: cwdArg,
+    tsconfig,
+    nodeTest,
+    workers: workersArg,
+  } = parseArgs(process.argv.slice(2));
+  const cwd = cwdArg ? resolve(cwdArg) : process.cwd();
+
+  if (roots.length === 0) {
+    console.error(
+      'Usage: run-tsx-tests.mjs [--cwd <dir>] [--tsconfig <file>] [--node-test] [--workers <n>] <dir-or-test-file> [...]',
+    );
+    process.exit(1);
+  }
+
+  const workers = resolveWorkers(workersArg);
+  const tests = discoverTests(roots, cwd);
+  if (tests.length === 0) {
+    console.error(`No .test.ts files found under: ${roots.join(', ')}`);
+    process.exit(1);
+  }
+
+  const partition = partitionTests(tests, {
+    workers,
+    nodeTest,
+    classify: (file) => classifyTest(readFileSync(file, 'utf8')),
+  });
+
+  const env = childEnvironment();
+  const toLabel = (file) => relative(cwd, file);
+  // Buffer per-file output only when lanes can actually interleave; a single
+  // active lane keeps the historical live-streaming behaviour.
+  const activeLanes = partition.parallel.filter((lane) => lane.length > 0);
+  const buffered = activeLanes.length > 1;
+  const context = { cwd, env, tsconfig, toLabel, buffered: false };
+  const started = performance.now();
+  const records = [];
+
+  if (partition.moduleMock.length > 0) {
+    const batchStarted = performance.now();
+    const { status } = await runYarn(
+      [
+        'exec',
+        'node',
+        '--import',
+        'tsx',
+        '--experimental-test-module-mocks',
+        '--test',
+        ...partition.moduleMock.map(toLabel),
+      ],
+      { cwd, env, buffered: false },
+    );
+    records.push({
+      batch: true,
+      label: `module-mock batch (${partition.moduleMock.length} files)`,
+      ms: performance.now() - batchStarted,
+      status,
+    });
+  }
+
+  records.push(...(await runLaneSequentially(partition.serial, context)));
+  const parallelRecords = await Promise.all(
+    activeLanes.map((lane) => runLaneSequentially(lane, { ...context, buffered })),
+  );
+  records.push(...parallelRecords.flat());
+
+  const totalMs = performance.now() - started;
+  const labelled = records.map((record) => ({
+    ...record,
+    label: record.label ?? toLabel(record.file),
+  }));
+  const failures = labelled.filter((record) => record.status !== 0);
+  const report = {
+    workspace: basename(cwd),
+    workers,
+    partition,
+    records: labelled,
+    failures,
+    totalMs,
+    toLabel,
+  };
+
+  for (const line of summaryLines(report)) console.log(line);
+  const artifactPath = writeTimingArtifact(
+    `tsx-tests-${report.workspace}.json`,
+    buildArtifact(report),
+  );
+  if (artifactPath) console.log(`[tsx-tests] timings artifact: ${artifactPath}`);
+
+  process.exit(failures.length > 0 ? 1 : 0);
+}
+
+if (isMainModule(import.meta.url)) await main();

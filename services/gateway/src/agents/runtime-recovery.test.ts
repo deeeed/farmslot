@@ -1,3 +1,4 @@
+// @farmslot:serial — drives real tmux sessions and the shared repo `pool/` directory.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';

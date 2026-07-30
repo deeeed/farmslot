@@ -1,3 +1,4 @@
+// @farmslot:serial — writes slot fixtures into the shared repo `pool/` directory.
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
