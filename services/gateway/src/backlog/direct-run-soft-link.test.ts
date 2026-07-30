@@ -1,7 +1,7 @@
 // Proves run.create soft-links (or warns about) backlog items with the same sourceRef.
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -21,6 +21,7 @@ const SOURCE_REF_WARN = 'TAT-69002';
 const SOURCE_REF_RUNCREATE = 'TAT-69003';
 const SOURCE_REF_NONE = 'TAT-69004';
 const SOURCE_REF_SKIP = 'TAT-69005';
+const SOURCE_REF_AWAIT = 'TAT-69006';
 const SOURCE_REF_ORPHAN = 'TAT-69999';
 
 function testSlot(slot: string, project = 'farmslot-farm'): SlotStatus {
@@ -275,6 +276,65 @@ test('runCreate skips soft-link when params.backlogItemId is set (queue handoff 
     const after = backlog.getBacklogItemSnapshot(created.item.id);
     assert.equal(after?.status, 'ready');
     assert.equal(after?.runId, undefined);
+  } finally {
+    if (runStore.getRun(run.id)) {
+      runStore.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await runStore.deleteRun(run.id);
+    }
+  }
+});
+
+test('runCreate awaitPersist soft-links after durable stamp and persists backlogItemId', async () => {
+  const { backlog } = await freshStores();
+  const { runCreate } = await import('../methods/run.js');
+  const runStore = await import('../runs/store.js');
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Non-backlog queue row still soft-links on awaitPersist path',
+    sourceKind: 'jira',
+    sourceRef: SOURCE_REF_AWAIT,
+    flowType: 'fix-bug',
+    status: 'ready',
+  });
+
+  // Production claim path for queue rows without backlogItemId (dispatch.queue.add
+  // forbids backlog metadata): awaitPersist + durableStamp, then soft-link +
+  // second persistRunNow('create-soft-link').
+  let afterCreateSyncSeen = false;
+  let durableStampSeen = false;
+  const { run } = await runCreate(
+    {
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: SOURCE_REF_AWAIT,
+      mode: 'autonomous',
+      initialContext: 'Queue claim without backlogItemId uses awaitPersist soft-link branch',
+    },
+    () => {},
+    {
+      awaitPersist: true,
+      afterCreateSync: () => {
+        afterCreateSyncSeen = true;
+      },
+      durableStamp: async () => {
+        durableStampSeen = true;
+      },
+    },
+  );
+
+  try {
+    assert.equal(afterCreateSyncSeen, true);
+    assert.equal(durableStampSeen, true);
+    assert.equal(run.backlogItemId, created.item.id);
+
+    const linked = backlog.getBacklogItemSnapshot(created.item.id);
+    assert.equal(linked?.status, 'running');
+    assert.equal(linked?.runId, run.id);
+
+    const onDisk = JSON.parse(await readFile(runStore.runRecordPath(run.id), 'utf8')) as {
+      backlogItemId?: string;
+    };
+    assert.equal(onDisk.backlogItemId, created.item.id);
   } finally {
     if (runStore.getRun(run.id)) {
       runStore.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
