@@ -28,7 +28,10 @@ import {
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
-import { isValidManualBacklogRunHandoff } from '../backlog/store.js';
+import {
+  isValidManualBacklogRunHandoff,
+  linkDirectRunToMatchingBacklog,
+} from '../backlog/store.js';
 import { resolveCIDecision } from '../ci-monitor/service.js';
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -516,6 +519,23 @@ export async function runCreate(
     // Queue claim handoff: ensure the run file (including template snapshot) is
     // on disk before the caller drops the queue row.
     await persistRunNow(run, 'create-queue-handoff');
+  }
+  // Soft-link AFTER durable queue handoff so backlog mutation/persist cannot
+  // sit between afterCreateSync and durableStamp (crash would leave the queue
+  // row's runId in memory only). Queue-claimed creates already pass
+  // backlogItemId and link via markBacklogRunStarted — skip those.
+  // On awaitPersist a second run-file write stamps backlogItemId after handoff.
+  if (!params.backlogItemId) {
+    const link = await linkDirectRunToMatchingBacklog(run);
+    if (link.action === 'linked') {
+      if (options.awaitPersist) {
+        run.backlogItemId = link.itemId;
+        run.updatedAt = new Date().toISOString();
+        await persistRunNow(run, 'create-soft-link');
+      } else {
+        run = updateRun(run.id, { backlogItemId: link.itemId });
+      }
+    }
   }
   // Set runtime flags (not persisted)
   if (params.skipPrepare) {
