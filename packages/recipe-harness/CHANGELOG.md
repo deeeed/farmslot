@@ -7,6 +7,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 ## 0.10.4 - 2026-07-31
 
 - fix: evaluate CDP DOM-settlement probes in a navigation-resilient isolated world so LavaMoat scuttling cannot break post-interaction readiness checks.
+- fix: retry DOM-settlement and compositor probes when navigation invalidates their CDP frame or execution context.
 
 ## 0.10.3 - 2026-07-30
 

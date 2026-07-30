@@ -3116,55 +3116,65 @@ test('CDP navigation defers DOM settlement to the shared settle wrapper', async 
   );
 });
 
-test('CDP settlement recreates its isolated world after navigation destroys the context', async () => {
-  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
-  let frameAttempt = 0;
-  const page = new CdpWebPage({
-    async call(method: string, params: Record<string, unknown> = {}) {
-      calls.push({ method, params });
-      if (method === 'Page.getFrameTree') {
-        frameAttempt += 1;
-        return { frameTree: { frame: { id: `main-${frameAttempt}` } } };
-      }
-      if (method === 'Page.createIsolatedWorld') {
-        return { executionContextId: frameAttempt };
-      }
-      assert.equal(method, 'Runtime.evaluate');
-      if (frameAttempt === 1) throw new Error('Execution context was destroyed.');
-      return { result: { value: true } };
-    },
-  } as never);
+for (const transientError of [
+  'Execution context was destroyed.',
+  'Execution context with given id not found',
+  'Cannot find context with specified id',
+  'Inspected target navigated or closed',
+]) {
+  test(`CDP settlement recreates its isolated world after: ${transientError}`, async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let contextId = 0;
+    const page = new CdpWebPage({
+      async call(method: string, params: Record<string, unknown> = {}) {
+        calls.push({ method, params });
+        if (method === 'Page.getFrameTree') {
+          // Chromium keeps the main frame id stable across ordinary navigations.
+          return { frameTree: { frame: { id: 'main' } } };
+        }
+        if (method === 'Page.createIsolatedWorld') {
+          contextId += 1;
+          return { executionContextId: contextId };
+        }
+        assert.equal(method, 'Runtime.evaluate');
+        if (contextId === 1) throw new Error(transientError);
+        return { result: { value: true } };
+      },
+    } as never);
 
-  await page.waitForDomSettled(200);
+    await page.waitForDomSettled(200);
 
-  assert.deepEqual(
-    calls.filter(({ method }) => method === 'Page.createIsolatedWorld').map(({ params }) => params),
-    [
-      { frameId: 'main-1', worldName: 'farmslot-dom-settlement' },
-      { frameId: 'main-2', worldName: 'farmslot-dom-settlement' },
-    ],
-  );
-  assert.deepEqual(
-    calls
-      .filter(({ method }) => method === 'Runtime.evaluate')
-      .map(({ params }) => params.contextId),
-    [1, 2],
-  );
-});
+    assert.deepEqual(
+      calls
+        .filter(({ method }) => method === 'Page.createIsolatedWorld')
+        .map(({ params }) => params),
+      [
+        { frameId: 'main', worldName: 'farmslot-dom-settlement' },
+        { frameId: 'main', worldName: 'farmslot-dom-settlement' },
+      ],
+    );
+    assert.deepEqual(
+      calls
+        .filter(({ method }) => method === 'Runtime.evaluate')
+        .map(({ params }) => params.contextId),
+      [1, 2],
+    );
+  });
+}
 
 test('CDP settlement retries when isolated-world creation races a stale frame', async () => {
   const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
-  let frameAttempt = 0;
+  let createAttempt = 0;
   const page = new CdpWebPage({
     async call(method: string, params: Record<string, unknown> = {}) {
       calls.push({ method, params });
       if (method === 'Page.getFrameTree') {
-        frameAttempt += 1;
-        return { frameTree: { frame: { id: `main-${frameAttempt}` } } };
+        return { frameTree: { frame: { id: 'main' } } };
       }
       if (method === 'Page.createIsolatedWorld') {
-        if (frameAttempt === 1) throw new Error('No frame for given id found');
-        return { executionContextId: frameAttempt };
+        createAttempt += 1;
+        if (createAttempt === 1) throw new Error('No frame for given id found');
+        return { executionContextId: createAttempt };
       }
       assert.equal(method, 'Runtime.evaluate');
       return { result: { value: true } };
@@ -3176,8 +3186,8 @@ test('CDP settlement retries when isolated-world creation races a stale frame', 
   assert.deepEqual(
     calls.filter(({ method }) => method === 'Page.createIsolatedWorld').map(({ params }) => params),
     [
-      { frameId: 'main-1', worldName: 'farmslot-dom-settlement' },
-      { frameId: 'main-2', worldName: 'farmslot-dom-settlement' },
+      { frameId: 'main', worldName: 'farmslot-dom-settlement' },
+      { frameId: 'main', worldName: 'farmslot-dom-settlement' },
     ],
   );
 });
