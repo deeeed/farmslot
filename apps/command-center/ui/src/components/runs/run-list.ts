@@ -21,7 +21,7 @@ import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../state.js';
-import { colors, runnerColor } from '../../styles/theme-tokens.js';
+import { colors } from '../../styles/theme-tokens.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 
 import { familyRunHash } from './family-observability-url-state.js';
@@ -477,9 +477,12 @@ export class RunList extends RunListState {
                         ? 'No completed runs'
                         : 'No runs'}
                   </div>`
-                : showFamilyGroups
-                  ? familyGroups.map((group) => this.renderFamilyGroup(group, showCheckboxes))
-                  : filtered.map((r) => this.renderCard(r, showCheckboxes))}
+                : html`<div class="runs-table">
+                    ${this.renderTableHead(showCheckboxes)}
+                    ${showFamilyGroups
+                      ? familyGroups.map((group) => this.renderFamilyGroup(group, showCheckboxes))
+                      : filtered.map((r) => this.renderCard(r, showCheckboxes))}
+                  </div>`}
             `}
     `;
   }
@@ -504,6 +507,37 @@ export class RunList extends RunListState {
 
   private async _stopAutoRecovery(runId: string) {
     await gateway.request(Methods.RUN_AUTO_RECOVERY_STOP, { runId });
+  }
+
+  private setTableSort(sort: 'project' | 'flow' | 'status' | 'newest') {
+    this.sortBy = sort === 'newest' && this.sortBy === 'newest' ? 'oldest' : sort;
+    this._persistHashState();
+  }
+
+  private renderTableSortHeader(label: string, sort: 'project' | 'flow' | 'status' | 'newest') {
+    const active =
+      this.sortBy === sort ||
+      (sort === 'newest' && (this.sortBy === 'newest' || this.sortBy === 'oldest'));
+    const direction =
+      sort === 'newest' && active ? (this.sortBy === 'oldest' ? ' ▲' : ' ▼') : active ? ' ▲' : '';
+    return html`<button
+      class=${active ? 'active' : ''}
+      type="button"
+      @click=${() => this.setTableSort(sort)}
+    >
+      ${label}${direction}
+    </button>`;
+  }
+
+  private renderTableHead(showCheckbox: boolean) {
+    return html`<div class="run-table-head ${showCheckbox ? 'with-selector' : ''}" role="row">
+      ${showCheckbox ? html`<span aria-hidden="true"></span>` : nothing}
+      ${this.renderTableSortHeader('Flow', 'flow')}
+      ${this.renderTableSortHeader('Project', 'project')}
+      <span>Run / progress</span>
+      ${this.renderTableSortHeader('State', 'status')}
+      ${this.renderTableSortHeader('Slot / time', 'newest')}
+    </div>`;
   }
 
   private renderCard(run: Run, showCheckbox: boolean) {
@@ -533,34 +567,34 @@ export class RunList extends RunListState {
     const evidenceSummary = summarizeRunEvidence(run);
     return html`
       <div
-        class="run-card ${isSelected ? 'selected' : ''} ${this.manageMode ? 'manage-mode' : ''}"
+        class="run-card ${showCheckbox ? 'with-selector' : ''} ${isSelected
+          ? 'selected'
+          : ''} ${this.manageMode ? 'manage-mode' : ''}"
         @click=${() => {
           this.manageMode ? this.toggleSelectId(run.id) : (location.hash = routeForRun(run));
         }}
       >
-        <div class="selector-cell">
-          ${showCheckbox
-            ? html`
-                <button
-                  class="selector-btn ${isSelected ? 'selected' : ''} ${!isTerminal
-                    ? 'disabled'
-                    : ''}"
-                  title=${isTerminal ? (isSelected ? 'Deselect run' : 'Select run') : 'Select run'}
-                  @click=${(e: Event) => this.toggleSelect(run.id, e)}
-                >
-                  ${isSelected ? '✓' : '+'}
-                </button>
-              `
-            : nothing}
-        </div>
+        ${showCheckbox
+          ? html`<div class="selector-cell">
+              <button
+                class="selector-btn ${isSelected ? 'selected' : ''} ${!isTerminal
+                  ? 'disabled'
+                  : ''}"
+                title=${isTerminal ? (isSelected ? 'Deselect run' : 'Select run') : 'Select run'}
+                @click=${(e: Event) => this.toggleSelect(run.id, e)}
+              >
+                ${isSelected ? '✓' : '+'}
+              </button>
+            </div>`
+          : nothing}
         <div class="run-flow-cell">
           ${renderFlowBadge(run.flowType, {
             color: fc,
             label: runDisplayLabel(run),
             title: runDisplayTitle(run),
           })}
-          <span class="run-project" title=${`Project: ${run.project}`}>${run.project}</span>
         </div>
+        <span class="run-project" title=${`Project: ${run.project}`}>${run.project}</span>
         <div class="info">
           ${this.familyFilter === run.familyId
             ? html`<div class="summary">family focus</div>`
@@ -608,83 +642,6 @@ export class RunList extends RunListState {
               >retrospective</a
             >
             ${this.renderEvidenceSignals(run, evidenceSummary)}
-            <span class="badge status-badge" style="--status-color:${sc}">${run.status}</span>
-            ${disposition
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${dispositionColor(run.metrics.disposition)}"
-                  >${disposition}</span
-                >`
-              : nothing}
-            ${(() => {
-              const engine = resolveRunEngine(run);
-              return engine.runner
-                ? html`<span
-                    class="badge status-badge"
-                    style="--status-color:${runnerColor(engine.runner) ?? colors.textMuted}"
-                    >${engine.runner}</span
-                  >`
-                : nothing;
-            })()}
-            ${run.safetyTier
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${colors.textMuted}"
-                  title="Runner safety tier (ADR-023) — agent invocation flag, not a health signal"
-                  >runner:${run.safetyTier}</span
-                >`
-              : nothing}
-            ${run.prepareProfile
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${colors.textMuted}"
-                  title="Prepare profile (ADR-037)"
-                  >prep:${run.prepareProfile}</span
-                >`
-              : nothing}
-            ${run.engineState?.intelligenceAuditDegraded
-              ? html`<span class="badge status-badge" style="--status-color:${colors.statusWarn}"
-                  >audit degraded</span
-                >`
-              : nothing}
-            ${hasCompletedAutoRecovery
-              ? html`<span class="badge status-badge" style="--status-color:${colors.statusOk}"
-                  >auto-recovered</span
-                >`
-              : hasAutoRecoveryAttempt
-                ? html`<span class="badge status-badge" style="--status-color:${colors.textMuted}"
-                    >recovery attempted</span
-                  >`
-                : nothing}
-            ${showStopAutoRecovery
-              ? html`<button
-                  class="inline-action"
-                  @click=${(e: Event) => {
-                    e.stopPropagation();
-                    void this._stopAutoRecovery(run.id);
-                  }}
-                >
-                  Stop auto-recovering
-                </button>`
-              : nothing}
-            ${isPrLinkageMissing(run)
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${colors.statusWarn}; cursor:pointer"
-                  title="Run done but no PR linked on branch ${run.branch ??
-                  ''}. Click to re-run PR lookup and kick CI watch."
-                  @click=${(e: Event) => {
-                    e.stopPropagation();
-                    this._rescueLinkage(run.id);
-                  }}
-                  >PR missing</span
-                >`
-              : nothing}
-            ${run.steps.find((s) => s.status === 'running')?.detail
-              ? html`<span class="step-detail"
-                  >${run.steps.find((s) => s.status === 'running')!.detail}</span
-                >`
-              : nothing}
           </div>
           ${runPR?.title
             ? html`<div class="pr-title">PR #${runPR.pr}: ${runPR.title}</div>`
@@ -704,8 +661,6 @@ export class RunList extends RunListState {
             : nothing}
           <div class="info-bottom">
             <span class="run-id">${shortId(run.id)}</span>
-            <span>${run.project}</span>
-            ${run.slotId ? html`<span>${run.slotId}</span>` : nothing}
             ${siblingCount && siblingCount > 0
               ? html`<span>${siblingCount} sibling${siblingCount !== 1 ? 's' : ''}</span>`
               : nothing}
@@ -716,38 +671,106 @@ export class RunList extends RunListState {
             .flowType=${run.flowType}
           ></run-pipeline-mini>
         </div>
+        <div class="run-state">
+          <div class="state-badges">
+            <span class="badge status-badge" style="--status-color:${sc}">${run.status}</span>
+            ${disposition
+              ? html`<span
+                  class="badge status-badge"
+                  style="--status-color:${dispositionColor(run.metrics.disposition)}"
+                  >${disposition}</span
+                >`
+              : nothing}
+            ${run.engineState?.intelligenceAuditDegraded
+              ? html`<span class="badge status-badge" style="--status-color:${colors.statusWarn}"
+                  >audit degraded</span
+                >`
+              : nothing}
+            ${hasCompletedAutoRecovery
+              ? html`<span class="badge status-badge" style="--status-color:${colors.statusOk}"
+                  >auto-recovered</span
+                >`
+              : hasAutoRecoveryAttempt
+                ? html`<span class="badge status-badge" style="--status-color:${colors.textMuted}"
+                    >recovery attempted</span
+                  >`
+                : nothing}
+            ${isPrLinkageMissing(run)
+              ? html`<span
+                  class="badge status-badge"
+                  style="--status-color:${colors.statusWarn}; cursor:pointer"
+                  title="Run done but no PR linked on branch ${run.branch ??
+                  ''}. Click to re-run PR lookup and kick CI watch."
+                  @click=${(e: Event) => {
+                    e.stopPropagation();
+                    this._rescueLinkage(run.id);
+                  }}
+                  >PR missing</span
+                >`
+              : nothing}
+          </div>
+          ${run.steps.find((s) => s.status === 'running')?.detail
+            ? html`<span class="step-detail"
+                >${run.steps.find((s) => s.status === 'running')!.detail}</span
+              >`
+            : nothing}
+          ${showStopAutoRecovery
+            ? html`<button
+                class="inline-action"
+                @click=${(e: Event) => {
+                  e.stopPropagation();
+                  void this._stopAutoRecovery(run.id);
+                }}
+              >
+                Stop auto-recovering
+              </button>`
+            : nothing}
+        </div>
         <div class="meta">
-          <span title=${run.createdAt}>${formatCreatedAt(run.createdAt)}</span>
-          <span>${elapsed(run.createdAt, run.completedAt)}</span>
+          ${run.slotId ? html`<span class="slot-id">${run.slotId}</span>` : html`<span>—</span>`}
+          <span title=${run.createdAt}
+            >${elapsed(run.createdAt, run.completedAt)} · ${formatCreatedAt(run.createdAt)}</span
+          >
           ${(() => {
             const engine = resolveRunEngine(run);
             return engine.model
-              ? html`<span>${engine.runner ?? ''}/${engine.model}</span>`
+              ? html`<span
+                  >${engine.runner ?? ''}/${engine.model}${run.safetyTier
+                    ? ` · ${run.safetyTier}`
+                    : ''}</span
+                >`
               : nothing;
           })()}
-          ${run.metrics.outcome
-            ? html`<span
-                class="outcome-badge"
-                style="background:${run.metrics.outcome === 'success'
-                  ? colors.statusOk
-                  : run.metrics.outcome === 'failure'
-                    ? colors.statusFail
-                    : colors.textMuted}22; color:${run.metrics.outcome === 'success'
-                  ? colors.statusOk
-                  : run.metrics.outcome === 'failure'
-                    ? colors.statusFail
-                    : colors.textMuted}"
-                >${run.metrics.outcome}</span
-              >`
+          ${run.prepareProfile
+            ? html`<span title="Prepare profile (ADR-037)">prep:${run.prepareProfile}</span>`
             : nothing}
-          ${run.humanGrade
-            ? html`<span
-                class="grade-badge"
-                style="background:${runGradeColor(
-                  run.humanGrade.recipe_semantic,
-                )}22; color:${runGradeColor(run.humanGrade.recipe_semantic)}"
-                >${run.humanGrade.recipe_semantic}</span
-              >`
+          ${run.metrics.outcome || run.humanGrade
+            ? html`<span class="meta-badges">
+                ${run.metrics.outcome
+                  ? html`<span
+                      class="outcome-badge"
+                      style="background:${run.metrics.outcome === 'success'
+                        ? colors.statusOk
+                        : run.metrics.outcome === 'failure'
+                          ? colors.statusFail
+                          : colors.textMuted}22; color:${run.metrics.outcome === 'success'
+                        ? colors.statusOk
+                        : run.metrics.outcome === 'failure'
+                          ? colors.statusFail
+                          : colors.textMuted}"
+                      >${run.metrics.outcome}</span
+                    >`
+                  : nothing}
+                ${run.humanGrade
+                  ? html`<span
+                      class="grade-badge"
+                      style="background:${runGradeColor(
+                        run.humanGrade.recipe_semantic,
+                      )}22; color:${runGradeColor(run.humanGrade.recipe_semantic)}"
+                      >${run.humanGrade.recipe_semantic}</span
+                    >`
+                  : nothing}
+              </span>`
             : nothing}
         </div>
       </div>

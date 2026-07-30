@@ -6,7 +6,10 @@ const {
   expandedArtifactsForCommand,
   resolveWorkerTerminalContract,
 } = require('./worker-terminal-contract.cjs');
-const { parseTaskDirMarkArgs } = require('./checklist-target.cjs');
+const {
+  parseTaskDirMarkArgs,
+  terminalContractInputForChecklist,
+} = require('./checklist-target.cjs');
 
 const START_COMMANDS = new Set(['start']);
 const TERMINAL_COMMANDS = new Set(['complete', 'no-change', 'blocked']);
@@ -161,8 +164,14 @@ function resolveTerminalPreset(command) {
   }
 }
 
+function terminalContractPath(taskDir, taskPath) {
+  const scopedPath = path.join(taskDir, terminalContractInputForChecklist(path.basename(taskPath)));
+  if (fs.existsSync(scopedPath)) return scopedPath;
+  return path.join(taskDir, 'inputs', 'worker-terminal-contract.json');
+}
+
 function loadTerminalContract(taskDir, taskPath) {
-  const contractPath = path.join(taskDir, 'inputs', 'worker-terminal-contract.json');
+  const contractPath = terminalContractPath(taskDir, taskPath);
   if (fs.existsSync(contractPath)) {
     return JSON.parse(fs.readFileSync(contractPath, 'utf8'));
   }
@@ -290,12 +299,12 @@ function assertChecklistComplete(taskPath, { allowOneUnchecked = false } = {}) {
   process.exit(1);
 }
 
-function assertArtifactContract(taskDir, contract, terminalCommand) {
+function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
   if (!fs.existsSync(ARTIFACT_CONTRACT_SCRIPT)) {
     console.error(`missing artifact contract script: ${ARTIFACT_CONTRACT_SCRIPT}`);
     process.exit(1);
   }
-  const contractPath = path.join(taskDir, 'inputs', 'worker-terminal-contract.json');
+  const contractPath = terminalContractPath(taskDir, taskPath);
   const args = [ARTIFACT_CONTRACT_SCRIPT, taskDir];
   if (fs.existsSync(contractPath)) {
     args.push('--contract', contractPath);
@@ -329,7 +338,7 @@ function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
   const contract = loadTerminalContract(taskDir, taskPath);
   if (contract) {
     assertRequiredArtifacts(taskDir, terminalCommand, contract);
-    assertArtifactContract(taskDir, contract, terminalCommand);
+    assertArtifactContract(taskDir, taskPath, contract, terminalCommand);
     return;
   }
 
@@ -344,7 +353,7 @@ function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
   }
 
   if (terminalCommand === 'complete' || terminalCommand === 'no-change') {
-    assertArtifactContract(taskDir);
+    assertArtifactContract(taskDir, taskPath);
   }
 }
 

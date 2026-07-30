@@ -263,6 +263,61 @@ assert.doesNotMatch(readFileSync(path.join(overrideDir, 'TASK.md'), 'utf8'), /- 
 parsed = JSON.parse(readFileSync(overrideSignal, 'utf8'));
 assert.equal(parsed.status, 'running');
 
+const scopedContractDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-scoped-contract-'));
+const scopedChecklist = 'SELF-REVIEW.rev-codex.md';
+const scopedReport = 'artifacts/review-feedback.rev-codex.md';
+writeManifest(scopedContractDir, 'TASK.md');
+mkdirSync(path.join(scopedContractDir, 'inputs'), { recursive: true });
+mkdirSync(path.join(scopedContractDir, 'artifacts'), { recursive: true });
+writeFileSync(path.join(scopedContractDir, 'TASK.md'), '- [ ] Worker step');
+writeFileSync(path.join(scopedContractDir, scopedChecklist), '- [x] Review step');
+writeFileSync(path.join(scopedContractDir, scopedReport), '# Review\n\nPASS\n');
+writeFileSync(
+  path.join(scopedContractDir, 'inputs', 'worker-terminal-contract.json'),
+  JSON.stringify({
+    schemaVersion: 1,
+    flowType: 'dev',
+    requireSignal: true,
+    commands: {
+      complete: {
+        report: 'artifacts/pr-description.md',
+        artifacts: ['artifacts/pr-description.md', 'artifacts/learnings.md'],
+      },
+      'no-change': { artifacts: [] },
+      blocked: { artifacts: [] },
+    },
+    whenPresent: [],
+    resolvedAt: new Date().toISOString(),
+    source: 'builtin',
+  }),
+);
+writeFileSync(
+  path.join(scopedContractDir, 'inputs', 'worker-terminal-contract.SELF-REVIEW.rev-codex.json'),
+  JSON.stringify({
+    schemaVersion: 1,
+    flowType: 'self-review',
+    requireSignal: true,
+    commands: {
+      complete: { report: scopedReport, artifacts: [scopedReport] },
+      'no-change': { report: scopedReport, artifacts: [scopedReport] },
+      blocked: { artifacts: [] },
+    },
+    whenPresent: [],
+    resolvedAt: new Date().toISOString(),
+    source: 'builtin',
+  }),
+);
+result = spawnSync(
+  process.execPath,
+  [helper, scopedContractDir, '--checklist', scopedChecklist, 'complete', '--mark-last'],
+  { encoding: 'utf8' },
+);
+assert.equal(result.status, 0, result.stderr);
+parsed = JSON.parse(
+  readFileSync(path.join(scopedContractDir, 'SELF-REVIEW.rev-codex-SIGNAL.json'), 'utf8'),
+);
+assert.equal(parsed.evidence.reportPath, scopedReport);
+
 const missingManifestDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-no-manifest-'));
 writeFileSync(path.join(missingManifestDir, 'TASK.md'), '- [ ] worker step');
 result = spawnSync(process.execPath, [helper, missingManifestDir, 'start'], { encoding: 'utf8' });

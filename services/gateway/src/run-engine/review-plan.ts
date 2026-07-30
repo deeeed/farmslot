@@ -103,6 +103,19 @@ export function automaticPublicationReviewPlan(
   }));
 }
 
+export function remainingExplicitReviewPlan(
+  plan: ReviewLoopRequest[],
+  reviews: IndependentReviewStatus[],
+): ReviewLoopRequest[] {
+  const passingCount = reviews.filter(
+    (review) =>
+      isQualifyingIndependentReview(review) &&
+      review.verdict === 'pass' &&
+      review.unresolvedCount === 0,
+  ).length;
+  return plan.slice(passingCount);
+}
+
 export function humanGateReviewDepth(
   basePolicy: ReviewDepthPolicy,
   reviewRequest: Record<string, unknown>,

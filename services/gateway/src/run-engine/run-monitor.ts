@@ -8,6 +8,7 @@ import {
   type AgentContext,
   type AgentRole,
   Events,
+  type ExecResult,
   FLOW_STEPS,
   type FlowType,
   isLightweightInteractiveDevRun,
@@ -352,6 +353,15 @@ export function artifactContractWaiverArgs(
   return signal.artifactWaivers?.learnings === true ? ['--skip-learnings'] : [];
 }
 
+export function terminalContractFailureKind(
+  result: Pick<ExecResult, 'exitCode' | 'stdout' | 'stderr'>,
+): 'artifact' | 'infrastructure' {
+  const output = `${result.stderr}\n${result.stdout}`;
+  return result.exitCode === 1 && !/command timed out|maxBuffer exceeded|spawn error/i.test(output)
+    ? 'artifact'
+    : 'infrastructure';
+}
+
 async function validateTerminalSignalArtifacts(
   slotId: string,
   signalJsonPath: string,
@@ -401,12 +411,16 @@ async function validateTerminalSignalArtifacts(
     .trim()
     .replace(/\n{3,}/g, '\n\n')
     .slice(0, 4000);
+  const kind = terminalContractFailureKind(result);
   return {
     ok: false,
-    kind: 'artifact',
+    kind,
     message:
-      `Terminal SIGNAL.json was rejected by the worker artifact contract. ` +
-      `Fix the listed artifacts, then run ./mark ${terminalCommand} again.\n\n${detail || `checker exited ${result.exitCode}`}`,
+      kind === 'artifact'
+        ? `Terminal SIGNAL.json was rejected by the worker artifact contract. ` +
+          `Fix the listed artifacts, then run ./mark ${terminalCommand} again.\n\n${detail || `checker exited ${result.exitCode}`}`
+        : `Farmslot terminal-contract validation infrastructure failed (exit ${result.exitCode}). ` +
+          `Repair or redeploy the checker, then resume the run; the worker cannot repair this.\n\n${detail || 'No checker diagnostics were returned.'}`,
   };
 }
 

@@ -12,6 +12,7 @@ const ROLE_SIGNAL_SUFFIX = '-SIGNAL.json';
 const SELF_REVIEW_CHECKLIST = 'SELF-REVIEW.md';
 const SELF_REVIEW_FIX_CHECKLIST = 'SELF-REVIEW-FIX.md';
 const CI_FIX_CHECKLIST = 'CI-FIX.md';
+const WORKER_TERMINAL_CONTRACT_INPUT = path.join('inputs', 'worker-terminal-contract.json');
 
 function signalFileForChecklist(checklistBasename) {
   if (
@@ -34,6 +35,17 @@ function targetForChecklistBasename(checklistBasename) {
     checklist: checklistBasename,
     signal: signalFileForChecklist(checklistBasename),
   };
+}
+
+function terminalContractInputForChecklist(checklistBasename) {
+  if (
+    checklistBasename === TASK_PROGRESS_MARKDOWN ||
+    checklistBasename === INTERACTIVE_CHECKLIST_MARKDOWN
+  ) {
+    return WORKER_TERMINAL_CONTRACT_INPUT;
+  }
+  const base = checklistBasename.replace(/\.md$/i, '');
+  return path.join('inputs', `worker-terminal-contract.${base}.json`);
 }
 
 function defaultWorkerTarget(taskDir) {
@@ -201,6 +213,7 @@ module.exports = {
   taskDirRelPath,
   signalFileForChecklist,
   targetForChecklistBasename,
+  terminalContractInputForChecklist,
   defaultWorkerTarget,
   manifestModeTeachingError,
   readManifest,

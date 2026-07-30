@@ -109,11 +109,19 @@ export async function syncChecklistTargetForRole(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
   role: NestedLoopAgentRole,
-  terminal?: { reportPath?: string },
+  terminal?: { reportPath?: string; target?: ChecklistTarget },
   registry: ChecklistTargetRegistry = DEFAULT_CHECKLIST_TARGET_REGISTRY,
 ): Promise<void> {
-  await syncChecklistTarget(vars, taskDir, checklistTargetForAgentRole(role, registry));
-  await syncTerminalContractForFlowOnSlot(vars, taskDir, role, undefined, terminal?.reportPath);
+  const target = terminal?.target ?? checklistTargetForAgentRole(role, registry);
+  await syncChecklistTarget(vars, taskDir, target);
+  await syncTerminalContractForFlowOnSlot(
+    vars,
+    taskDir,
+    role,
+    undefined,
+    terminal?.reportPath,
+    target.checklist,
+  );
 }
 
 function farmslotDirForSlot(vars: Pick<Awaited<ReturnType<typeof loadSlotVars>>, 'host'>): string {

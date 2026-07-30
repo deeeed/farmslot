@@ -288,15 +288,49 @@ export const runListStyles = css`
     padding: ${unsafeCSS(spacing.xl)} 0;
     text-align: center;
   }
+  .runs-table {
+    min-width: 980px;
+  }
+  .run-table-head,
   .run-card {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: 58px minmax(115px, 145px) minmax(390px, 1fr) 195px 170px;
+  }
+  .run-table-head.with-selector,
+  .run-card.with-selector {
+    grid-template-columns: 34px 58px minmax(115px, 145px) minmax(390px, 1fr) 195px 170px;
+  }
+  .run-table-head {
+    align-items: center;
+    background: ${unsafeCSS(colors.bgCard)};
+    border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}33;
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: ${unsafeCSS(fonts.sizeXs)};
+    padding: 4px 8px 6px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .run-table-head button {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-align: left;
+  }
+  .run-table-head button.active {
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+  .run-card {
+    align-items: start;
     background: ${unsafeCSS(colors.bgCard)};
     border-radius: ${unsafeCSS(radii.md)};
-    padding: ${unsafeCSS(spacing.md)};
-    margin-bottom: ${unsafeCSS(spacing.sm)};
-    display: grid;
-    grid-template-columns: 40px auto 1fr auto;
-    gap: ${unsafeCSS(spacing.md)};
-    align-items: center;
+    margin-top: 4px;
+    min-height: 40px;
+    padding: 5px 8px;
     cursor: pointer;
     transition: background 0.15s;
   }
@@ -307,20 +341,17 @@ export const runListStyles = css`
     cursor: default;
   }
   .run-flow-cell {
-    align-items: flex-start;
-    display: grid;
-    gap: 4px;
-    justify-items: start;
-    max-width: 150px;
+    align-items: center;
+    display: flex;
   }
   .run-project {
-    color: ${unsafeCSS(colors.textMuted)};
-    font-size: 9px;
-    line-height: 1.2;
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.25;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    width: 100%;
   }
   .family-section {
     margin-bottom: ${unsafeCSS(spacing.md)};
@@ -449,13 +480,14 @@ export const runListStyles = css`
   .info {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
     min-width: 0;
   }
   .info-top {
     display: flex;
     align-items: center;
     gap: ${unsafeCSS(spacing.sm)};
+    flex-wrap: wrap;
   }
   .run-id {
     color: ${unsafeCSS(colors.textMuted)};
@@ -504,11 +536,50 @@ export const runListStyles = css`
   .meta {
     display: flex;
     flex-direction: column;
-    align-items: flex-end;
+    align-items: flex-start;
     gap: 4px;
     font-size: 11px;
     color: ${unsafeCSS(colors.textMuted)};
     white-space: nowrap;
+  }
+  .meta-badges {
+    align-items: center;
+    display: flex;
+    gap: 4px;
+  }
+  .slot-id {
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-weight: 600;
+    max-width: 145px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .run-state {
+    align-items: flex-start;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+  }
+  .inline-action {
+    border: 1px solid ${unsafeCSS(colors.statusWarn)}66;
+    border-radius: 3px;
+    background: transparent;
+    color: ${unsafeCSS(colors.statusWarn)};
+    cursor: pointer;
+    font: inherit;
+    font-size: 9px;
+    line-height: 1.2;
+    padding: 2px 5px;
+  }
+  .inline-action:hover {
+    background: ${unsafeCSS(colors.statusWarn)}12;
+  }
+  .state-badges {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
   }
   .cleanup-preview {
     background: ${unsafeCSS(colors.bgCard)};

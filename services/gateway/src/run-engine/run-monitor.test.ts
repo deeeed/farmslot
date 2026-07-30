@@ -22,6 +22,7 @@ import {
   shouldHoldForMissingTerminalSignal,
   shouldSkipMonitorNudge,
   signalMatchesMonitorContext,
+  terminalContractFailureKind,
 } from './run-monitor.js';
 
 test('artifact contract revalidation preserves an explicit learnings waiver', () => {
@@ -48,6 +49,27 @@ test('artifact contract rejection preserves the no-change terminal command', () 
   );
   assert.match(instruction, /run \.\/mark no-change again/);
   assert.doesNotMatch(instruction, /mark complete/);
+});
+
+test('terminal contract failures blame only checker exit 1 on worker artifacts', () => {
+  assert.equal(
+    terminalContractFailureKind({ exitCode: 1, stdout: 'missing report', stderr: '' }),
+    'artifact',
+  );
+  for (const exitCode of [2, 124, 127]) {
+    assert.equal(
+      terminalContractFailureKind({ exitCode, stdout: '', stderr: 'checker failed' }),
+      'infrastructure',
+    );
+  }
+  assert.equal(
+    terminalContractFailureKind({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'maxBuffer exceeded after 300000 bytes',
+    }),
+    'infrastructure',
+  );
 });
 
 test('artifactTerminalCommandForSignal maps successful dispositions to the matching contract', () => {

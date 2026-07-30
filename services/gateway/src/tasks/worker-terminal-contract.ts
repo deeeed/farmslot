@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import {
   type Run,
   taskDirRelPath,
+  terminalContractInputForChecklist,
   WORKER_TERMINAL_CONTRACT_INPUT,
   type WorkerTerminalContractDocument,
   type WorkerTerminalProjectConfig,
@@ -76,6 +77,7 @@ export async function syncTerminalContractForFlowOnSlot(
   flowType: string,
   mode?: string | null,
   reportPath?: string,
+  checklistBasename?: string,
 ): Promise<void> {
   const projectVars = await loadProjectVars(vars.projectName);
   let contract = resolveWorkerTerminalContract(
@@ -86,7 +88,12 @@ export async function syncTerminalContractForFlowOnSlot(
   if (reportPath) contract = withTerminalReportPath(contract, reportPath);
   await writeTextFileOnSlot(
     vars,
-    taskDirRelPath(taskDir, WORKER_TERMINAL_CONTRACT_INPUT),
+    taskDirRelPath(
+      taskDir,
+      checklistBasename
+        ? terminalContractInputForChecklist(checklistBasename)
+        : WORKER_TERMINAL_CONTRACT_INPUT,
+    ),
     `${JSON.stringify(contract, null, 2)}\n`,
   );
 }

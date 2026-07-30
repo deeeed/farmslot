@@ -5,7 +5,11 @@ import {
   parsePromotionDraftAttachment,
   parsePromotionDraftsFromRoadmapBody,
   promotionDraftAttachment,
+  ROADMAP_ITEM_STAGES,
 } from '@farmslot/protocol';
+
+export type RoadmapSortKey = 'stage' | 'project' | 'id' | 'title' | 'promotion' | 'updated';
+export type RoadmapSortDirection = 'asc' | 'desc';
 
 export type { PromotionDraft, PromotionDraftAttachment } from '@farmslot/protocol';
 export {
@@ -32,6 +36,40 @@ export function filterRoadmapItemsByGlobalProjects(
       targets.some((project) => projects.has(project)) ||
       isUnscopedGlobalRoadmapItem(item)
     );
+  });
+}
+
+export function sortRoadmapItems(
+  items: readonly RoadmapItem[],
+  key: RoadmapSortKey,
+  direction: RoadmapSortDirection,
+): RoadmapItem[] {
+  const stageRank = new Map(ROADMAP_ITEM_STAGES.map((stage, index) => [stage, index]));
+  const value = (item: RoadmapItem): string | number => {
+    switch (key) {
+      case 'stage':
+        return stageRank.get(item.stage) ?? ROADMAP_ITEM_STAGES.length;
+      case 'project':
+        return item.project;
+      case 'id':
+        return item.id;
+      case 'title':
+        return item.title;
+      case 'promotion':
+        return item.promotion?.length ?? 0;
+      case 'updated':
+        return item.updatedAt;
+    }
+  };
+  const multiplier = direction === 'asc' ? 1 : -1;
+  return [...items].sort((a, b) => {
+    const av = value(a);
+    const bv = value(b);
+    const compared =
+      typeof av === 'number' && typeof bv === 'number'
+        ? av - bv
+        : String(av).localeCompare(String(bv));
+    return compared * multiplier || a.id.localeCompare(b.id);
   });
 }
 

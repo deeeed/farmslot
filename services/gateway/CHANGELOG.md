@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(self-review): write terminal artifact contracts per active checklist so concurrent or crashed nested reviewer contexts cannot leave the worker/reviewer marker enforcing another role's report contract.
+- fix(observability): poll thumbnails only for visual slot platforms instead of treating busy CLI slots as iOS simulators and repeatedly timing out on invalid `simctl` targets.
 - fix(runners): recognize Codex's changed-repository-hooks review screen, rebuild the isolated Farmslot hook/trust configuration, and select the prompt's actual “Trust all and continue” option before task delivery. The previous recovery disabled the observability hooks it was meant to preserve.
 - fix(run-engine): automatically materialize configured publication-review minimums as static independent-review work before the human gate; pipeline self-review remains non-independent and full-live validation remains explicit. Restart watchers now back off, expire to durable operator-required state, and distinguish missing Farmslot terminal-contract infrastructure from worker artifact defects.
 - fix(prepare): bound and allowlist recipe-tooling provenance reads instead of persisting arbitrary harness doctor JSON.

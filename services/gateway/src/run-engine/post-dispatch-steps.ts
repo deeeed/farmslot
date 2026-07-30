@@ -57,7 +57,7 @@ import {
 } from './publication-policy.js';
 import { verifyWorkerPushedBranch } from './push-verification.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
-import { automaticPublicationReviewPlan } from './review-plan.js';
+import { automaticPublicationReviewPlan, remainingExplicitReviewPlan } from './review-plan.js';
 import { type MonitorResult, monitorRun } from './run-monitor.js';
 
 interface StepIO {
@@ -700,7 +700,10 @@ export async function executeHumanGateStep(
       // portion; otherwise every restart launches another already-satisfied
       // reviewer (and a two-loop plan can replay loop one twice).
       const initialPlan = explicitInitialPlan.length
-        ? explicitInitialPlan.slice(0, missingReviewPlan.length)
+        ? remainingExplicitReviewPlan(
+            explicitInitialPlan,
+            beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [],
+          )
         : missingReviewPlan;
       if (explicitInitialPlan.length > 0 && initialPlan.length === 0) {
         updateRun(runId, {

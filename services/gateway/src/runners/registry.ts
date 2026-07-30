@@ -642,7 +642,7 @@ export function runnerLaunchBlockerAutoActionKey(
   if (autoAction === 'grok-select-current-project') return 'Enter';
   if (autoAction === 'codex-refresh-hooks-and-trust') {
     for (const line of pane.split('\n')) {
-      const match = normalizeInstructionText(line).match(/^(\d+)\.\s*Trust all and continue\b/i);
+      const match = normalizeInstructionText(line).match(/\b(\d+)\.\s*Trust all and continue\b/i);
       if (match) return match[1];
     }
   }

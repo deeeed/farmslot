@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import type { AgentContext, WorkerSignal } from '@farmslot/protocol';
 
-import { buildRecoveredReview, isRecoverableReviewerContext } from './recover-inflight-reviews.js';
+import {
+  buildRecoveredReview,
+  isRecoverableReviewerContext,
+  recoveredReviewArtifactScope,
+} from './recover-inflight-reviews.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
 
 function reviewerContext(overrides: Partial<AgentContext> = {}): AgentContext {
@@ -45,6 +49,14 @@ test('isRecoverableReviewerContext accepts only in-flight self-review contexts',
   // Other roles never produce a publish-gate independent review.
   assert.equal(isRecoverableReviewerContext({ role: 'primary', status: 'working' }), false);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review-fix', status: 'working' }), false);
+});
+
+test('restart recovery uses the reviewer-owned artifact scope instead of review-array length', () => {
+  assert.equal(
+    recoveredReviewArtifactScope({ artifactScope: 'independent-review-7' }, 'independent-review-2'),
+    'independent-review-7',
+  );
+  assert.equal(recoveredReviewArtifactScope({}, 'independent-review-2'), 'independent-review-2');
 });
 
 test('buildRecoveredReview returns null when the reviewer has not finished', () => {

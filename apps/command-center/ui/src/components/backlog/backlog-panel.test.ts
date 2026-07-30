@@ -209,3 +209,41 @@ test('backlog activity sorting puts out-of-band active runs ahead of idle candid
     ['active', 'idle'],
   );
 });
+
+test('backlog activity sorting treats terminal linked runs as inactive', () => {
+  const base = {
+    project: 'metamask-core-farm',
+    sourceKind: 'jira',
+    flowType: 'dev',
+    status: 'candidate',
+    priority: 10,
+    createdAt: '2026-07-30T00:00:00.000Z',
+  } as const;
+  const idle = {
+    ...base,
+    id: 'idle',
+    sourceRef: 'TAT-3400',
+    title: 'Idle candidate',
+    updatedAt: '2026-07-30T02:00:00.000Z',
+  } satisfies BacklogItem;
+  const terminal = {
+    ...base,
+    id: 'terminal',
+    sourceRef: 'TAT-3343',
+    title: 'Terminal candidate',
+    updatedAt: '2026-07-30T01:00:00.000Z',
+  } satisfies BacklogItem;
+  const terminalRun = {
+    id: 'run-terminal',
+    backlogItemId: terminal.id,
+    project: terminal.project,
+    ticketOrPr: terminal.sourceRef,
+    status: 'done',
+    updatedAt: '2026-07-30T03:00:00.000Z',
+  } as Run;
+
+  assert.deepEqual(
+    sortBacklogItems([terminal, idle], [terminalRun], 'activity', 'desc').map((item) => item.id),
+    ['idle', 'terminal'],
+  );
+});

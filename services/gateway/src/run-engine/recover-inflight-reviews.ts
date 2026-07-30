@@ -195,6 +195,13 @@ async function readRecoveredReviewSnapshot(
   return parseRecoveredReviewSnapshot(result.stdout);
 }
 
+export function recoveredReviewArtifactScope(
+  context: Pick<AgentContext, 'artifactScope'>,
+  fallbackReviewId: string,
+): string {
+  return context.artifactScope?.trim() || fallbackReviewId;
+}
+
 async function readReviewerTerminalSignal(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   ctx: AgentContext,
@@ -305,7 +312,11 @@ async function ingestRecoveredReviewer(
   const latest = getRun(runId)!;
   const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
   const reviewId = EXTRA_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id;
-  const reviewSnapshot = await readRecoveredReviewSnapshot(vars, taskDir, reviewId);
+  const reviewSnapshot = await readRecoveredReviewSnapshot(
+    vars,
+    taskDir,
+    recoveredReviewArtifactScope(ctx, reviewId),
+  );
   const review = buildRecoveredReview({
     run: latest,
     ctx,

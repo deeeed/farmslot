@@ -1,4 +1,5 @@
 import type { AgentRole } from './contracts/index.js';
+import { WORKER_TERMINAL_CONTRACT_INPUT } from './contracts/worker-terminal.js';
 
 export const CHECKLIST_TARGET_MANIFEST = 'checklist-target.json';
 export const TASK_PROGRESS_MARKDOWN = 'TASK.md';
@@ -64,6 +65,17 @@ export function targetForChecklistBasename(
     checklist: checklistBasename,
     signal: signalFileForChecklist(checklistBasename, registry),
   };
+}
+
+export function terminalContractInputForChecklist(checklistBasename: string): string {
+  if (
+    checklistBasename === TASK_PROGRESS_MARKDOWN ||
+    checklistBasename === INTERACTIVE_CHECKLIST_MARKDOWN
+  ) {
+    return WORKER_TERMINAL_CONTRACT_INPUT;
+  }
+  const base = checklistBasename.replace(/\.md$/i, '');
+  return `inputs/worker-terminal-contract.${base}.json`;
 }
 
 export const SELF_REVIEW_CHECKLIST_TARGET = targetForChecklistBasename(SELF_REVIEW_CHECKLIST);

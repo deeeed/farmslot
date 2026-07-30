@@ -837,11 +837,12 @@ function rearmPublicationReviewRecovery(
     status: 'watching' | 'recovered' | 'operator-required',
     fields: { nextRetryAt?: string; lastError?: string } = {},
   ): void => {
-    updateRun(latest.id, {
+    const current = getRun(latest.id) ?? latest;
+    updateRun(current.id, {
       engineState: {
-        ...latest.engineState,
+        ...current.engineState,
         publishGate: {
-          ...latest.engineState?.publishGate,
+          ...current.engineState?.publishGate,
           reviewRecovery: {
             status,
             attempts,
@@ -882,17 +883,17 @@ function rearmPublicationReviewRecovery(
     inFlight = true;
     attempts += 1;
     try {
+      if (Date.now() - startedAtMs >= PUBLICATION_REVIEW_RECOVERY_MAX_DURATION_MS) {
+        persistRecovery(latest, 'operator-required', {
+          lastError: 'Publication reviewer recovery exceeded the six-hour watcher budget.',
+        });
+        state.cleanup();
+        return;
+      }
       if (!state.replayPending) {
         const recovered = await recoverInflightPublicationReviews(latest.id, latest.slotId);
         if (recovered.length === 0) {
           failures = 0;
-          if (Date.now() - startedAtMs >= PUBLICATION_REVIEW_RECOVERY_MAX_DURATION_MS) {
-            persistRecovery(latest, 'operator-required', {
-              lastError: 'Publication reviewer recovery exceeded the six-hour watcher budget.',
-            });
-            state.cleanup();
-            return;
-          }
           schedule(latest);
           return;
         }

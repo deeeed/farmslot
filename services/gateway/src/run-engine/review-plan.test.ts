@@ -5,6 +5,7 @@ import {
   automaticPublicationReviewPlan,
   humanGateReviewDepth,
   recoveryReviewPlanForActiveFix,
+  remainingExplicitReviewPlan,
 } from './review-plan.js';
 
 test('automatic publication reviews materialize the policy as static independent work', () => {
@@ -49,6 +50,37 @@ test('automatic publication reviews select an alternate runner only when policy 
   assert.deepEqual(automaticPublicationReviewPlan(policy, [], 'claude'), [
     { order: 1, runner: 'codex', validationDepth: 'static-code' },
   ]);
+});
+
+test('explicit publication review plans remain authoritative when the policy minimum is zero', () => {
+  const plan = [
+    { order: 1, runner: 'codex' as const, validationDepth: 'full-live' as const },
+    { order: 2, runner: 'same' as const, validationDepth: 'static-code' as const },
+  ];
+
+  assert.deepEqual(remainingExplicitReviewPlan(plan, []), plan);
+});
+
+test('explicit publication review recovery drops the already-passed prefix', () => {
+  const plan = [
+    { order: 1, runner: 'codex' as const, validationDepth: 'full-live' as const },
+    { order: 2, runner: 'same' as const, validationDepth: 'static-code' as const },
+  ];
+
+  assert.deepEqual(
+    remainingExplicitReviewPlan(plan, [
+      {
+        id: 'independent-review-1',
+        source: 'dispatch',
+        runner: 'codex',
+        crossRunner: true,
+        loopNumber: 1,
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+    ]),
+    [plan[1]],
+  );
 });
 
 test('humanGateReviewDepth makes explicit gate review requests temporary but required', () => {

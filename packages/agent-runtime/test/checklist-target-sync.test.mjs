@@ -38,4 +38,8 @@ test('checklist-target.cjs helpers match protocol registry semantics', () => {
     cjs.checklistTargetForAgentRole('ci-fix'),
     protocol.checklistTargetForAgentRole('ci-fix'),
   );
+  assert.equal(
+    cjs.terminalContractInputForChecklist('SELF-REVIEW.rev-codex.md'),
+    protocol.terminalContractInputForChecklist('SELF-REVIEW.rev-codex.md'),
+  );
 });

@@ -59,12 +59,3 @@ export function linkedRunForBacklogItem(
   // detail/history consumers remain anchored to durable linkage.
   return linkedRunsForBacklogItems(runs, [item], options).get(item.id);
 }
-
-export function activeLinkedRunForBacklogItem(
-  runs: Run[],
-  item: BacklogItem,
-  options: BacklogRunProjectionOptions = {},
-): Run | undefined {
-  const run = linkedRunForBacklogItem(runs, item, options);
-  return run && !isTerminalRunStatus(run.status) ? run : undefined;
-}

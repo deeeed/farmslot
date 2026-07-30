@@ -95,7 +95,7 @@ export async function screenshotForSlot(params: Record<string, unknown>): Promis
     ).toString();
     if (!screenshotB64) throw new Error('CDP screenshot returned empty');
     pngBuf = Buffer.from(screenshotB64, 'base64');
-  } else {
+  } else if (platform === 'ios') {
     // iOS simulator — use temp file (piping to /dev/stdout fails on some machines)
     const simName = (params.iosSimulator as string) ?? (params.slotId as string);
     const tmp = resolve(tmpdir(), `farmslot-thumb-sim-${Date.now()}.png`);
@@ -112,6 +112,8 @@ export async function screenshotForSlot(params: Record<string, unknown>): Promis
         /* ignore */
       }
     }
+  } else {
+    throw new Error(`Unsupported thumbnail platform: ${platform}`);
   }
 
   // Resize with sips (macOS) if needed

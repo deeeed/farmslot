@@ -3,6 +3,7 @@ import {
   BACKLOG_STATUSES,
   type BacklogItem,
   type BacklogStatus,
+  isTerminalRunStatus,
   type Run,
 } from '@farmslot/protocol';
 
@@ -55,7 +56,11 @@ export function sortBacklogItems(
     allowSourceRefInference: true,
   });
   const values = new Map(
-    items.map((item) => [item.id, comparisonValue(item, linkedRuns.get(item.id), key)]),
+    items.map((item) => {
+      const linkedRun = linkedRuns.get(item.id);
+      const activeRun = linkedRun && !isTerminalRunStatus(linkedRun.status) ? linkedRun : undefined;
+      return [item.id, comparisonValue(item, activeRun, key)];
+    }),
   );
   return [...items].sort((a, b) => {
     const primary = (values.get(a.id) ?? '').localeCompare(values.get(b.id) ?? '', undefined, {

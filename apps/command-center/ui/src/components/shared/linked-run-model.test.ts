@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import type { BacklogItem, Run } from '@farmslot/protocol';
 
-import { activeLinkedRunForBacklogItem, linkedRunForBacklogItem } from './linked-run-model.js';
+import { linkedRunForBacklogItem } from './linked-run-model.js';
 
 const now = '2026-07-03T00:00:00.000Z';
 
@@ -132,10 +132,6 @@ test('linkedRunForBacklogItem projects an out-of-band run by exact project and s
 
   assert.equal(selected?.id, 'out-of-band');
   assert.equal(
-    activeLinkedRunForBacklogItem([selected!], item, { allowSourceRefInference: true })?.id,
-    'out-of-band',
-  );
-  assert.equal(
     linkedRunForBacklogItem([selected!], item),
     undefined,
     'detail/history consumers require durable linkage',
@@ -163,8 +159,4 @@ test('linkedRunForBacklogItem prefers explicit linkage over inferred source-ref 
   );
 
   assert.equal(selected?.id, 'explicit');
-  assert.equal(
-    activeLinkedRunForBacklogItem([run({ id: 'done', status: 'done' })], item),
-    undefined,
-  );
 });

@@ -15,6 +15,7 @@ import {
   shouldAcceptTaskProgressUpdate,
   signalFileForChecklist,
   targetForChecklistBasename,
+  terminalContractInputForChecklist,
 } from '../src/checklist-target.js';
 
 test('targetForChecklistBasename maps role checklists to sibling signal files', () => {
@@ -36,6 +37,21 @@ test('signalFileForChecklist honors registry overrides', () => {
   };
   assert.equal(signalFileForChecklist('WORKER.md', registry), 'WORKER-SIGNAL.json');
   assert.equal(signalFileForChecklist('CUSTOM-ROLE.md', registry), 'CUSTOM-ROLE-PROGRESS.json');
+});
+
+test('terminalContractInputForChecklist isolates nested agent contracts', () => {
+  assert.equal(
+    terminalContractInputForChecklist('TASK.md'),
+    'inputs/worker-terminal-contract.json',
+  );
+  assert.equal(
+    terminalContractInputForChecklist('CHECKLIST.md'),
+    'inputs/worker-terminal-contract.json',
+  );
+  assert.equal(
+    terminalContractInputForChecklist('SELF-REVIEW.rev-codex.md'),
+    'inputs/worker-terminal-contract.SELF-REVIEW.rev-codex.json',
+  );
 });
 
 test('agentRoleForChecklistBasename resolves nested-loop roles from registry', () => {

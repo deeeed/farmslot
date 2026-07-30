@@ -74,6 +74,9 @@ import {
   type PromotionDraftAttachment,
   promotionDraftAttachment,
   promotionDraftsFromRoadmapItem,
+  type RoadmapSortDirection,
+  type RoadmapSortKey,
+  sortRoadmapItems,
 } from './roadmap-panel-model.js';
 
 const STAGES: Array<RoadmapItemStage | 'all'> = ['all', ...ROADMAP_ITEM_STAGES];
@@ -87,6 +90,16 @@ const ROADMAP_RUNNER_PICKER_PARAM = 'runnerPicker';
 const ROADMAP_PROMOTE_PARAM = 'promote';
 const ROADMAP_DRAFT_PARAM = 'draft';
 const ROADMAP_DRAFT_MODE_PARAM = 'draftMode';
+const ROADMAP_SORT_PARAM = 'sort';
+const ROADMAP_SORT_DIRECTION_PARAM = 'direction';
+const ROADMAP_SORT_KEYS: RoadmapSortKey[] = [
+  'stage',
+  'project',
+  'id',
+  'title',
+  'promotion',
+  'updated',
+];
 type RoadmapEditorMode = 'view' | 'edit';
 type PromptViewerMode = 'raw' | 'markdown';
 type PromotionDraftModalMode = 'view' | 'edit';
@@ -144,6 +157,8 @@ export class RoadmapPanel extends LitElement {
   @state() private _filterTags = '';
   @state() private _filterSearch = '';
   @state() private _includeArchived = false;
+  @state() private _sortKey: RoadmapSortKey = 'updated';
+  @state() private _sortDirection: RoadmapSortDirection = 'desc';
   @state() private _busy = '';
   @state() private _error = '';
   @state() private _message = '';
@@ -265,12 +280,12 @@ export class RoadmapPanel extends LitElement {
       }
       .layout {
         display: grid;
-        grid-template-columns: minmax(280px, 0.8fr) minmax(420px, 1.2fr);
+        grid-template-columns: minmax(640px, 1.5fr) minmax(360px, 1fr);
         gap: ${unsafeCSS(spacing.md)};
         align-items: start;
         min-height: 0;
       }
-      @media (max-width: 1050px) {
+      @media (max-width: 1350px) {
         .layout {
           grid-template-columns: 1fr;
         }
@@ -378,19 +393,44 @@ export class RoadmapPanel extends LitElement {
       }
       .rows {
         display: grid;
-        gap: ${unsafeCSS(spacing.sm)};
+        gap: 4px;
+        overflow-x: auto;
+      }
+      .roadmap-table {
+        min-width: 820px;
+      }
+      .row,
+      .table-head {
+        align-items: center;
+        display: grid;
+        gap: 8px;
+        grid-template-columns: 84px minmax(110px, 160px) 118px minmax(260px, 1fr) 112px 86px;
+      }
+      .table-head {
+        background: ${unsafeCSS(colors.bgCard)};
+        border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}33;
+        padding: 3px 8px 6px;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+      .table-head button {
+        background: transparent;
+        border: 0;
+        color: ${unsafeCSS(colors.textMuted)};
+        font: inherit;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        padding: 2px 0;
+        text-align: left;
+      }
+      .table-head button.active {
+        color: ${unsafeCSS(colors.textPrimary)};
       }
       .row {
         border: 1px solid ${unsafeCSS(colors.textMuted)}22;
         border-radius: ${unsafeCSS(radii.sm)};
         background: ${unsafeCSS(colors.bgSurface)};
         padding: 4px 8px;
-        /* stage badge, item id, title, trailing actions — one line per item, so a
-           visit that is only here to find an item does not scroll through cards. */
-        display: grid;
-        grid-template-columns: auto auto minmax(0, 1fr) auto;
-        align-items: center;
-        gap: 8px;
         min-height: 28px;
         cursor: pointer;
       }
@@ -398,11 +438,9 @@ export class RoadmapPanel extends LitElement {
         font-size: ${unsafeCSS(fonts.sizeSm)};
         font-weight: 500;
         min-width: 0;
-        /* Wrap rather than truncate: a roadmap title is the whole point of the row,
-           and an ellipsis hides the part that distinguishes similar entries. Short
-           titles still sit on one line; long ones take a second. */
-        overflow-wrap: anywhere;
-        white-space: normal;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .row .item-ref {
         color: ${unsafeCSS(colors.textSecondary)};
@@ -410,10 +448,10 @@ export class RoadmapPanel extends LitElement {
         font-size: ${unsafeCSS(fonts.sizeXs)};
         white-space: nowrap;
       }
-      .row-trailing {
-        align-items: center;
-        display: flex;
-        gap: 6px;
+      .updated-cell {
+        color: ${unsafeCSS(colors.textMuted)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        white-space: nowrap;
       }
       .list-toolbar {
         display: flex;
@@ -709,6 +747,11 @@ export class RoadmapPanel extends LitElement {
       params.get(ROADMAP_PROMOTE_PARAM) === '1' || this._promotionDraftModalIndex >= 0;
     this._promotionDraftModalMode =
       params.get(ROADMAP_DRAFT_MODE_PARAM) === 'edit' ? 'edit' : 'view';
+    const sortKey = params.get(ROADMAP_SORT_PARAM);
+    this._sortKey = ROADMAP_SORT_KEYS.includes(sortKey as RoadmapSortKey)
+      ? (sortKey as RoadmapSortKey)
+      : 'updated';
+    this._sortDirection = params.get(ROADMAP_SORT_DIRECTION_PARAM) === 'asc' ? 'asc' : 'desc';
     if (!selectedParam && this._selectedId) queueMicrotask(() => this._writeUrlState());
   }
 
@@ -736,6 +779,10 @@ export class RoadmapPanel extends LitElement {
       params.delete(ROADMAP_DRAFT_PARAM);
       params.delete(ROADMAP_DRAFT_MODE_PARAM);
     }
+    if (this._sortKey === 'updated') params.delete(ROADMAP_SORT_PARAM);
+    else params.set(ROADMAP_SORT_PARAM, this._sortKey);
+    if (this._sortDirection === 'desc') params.delete(ROADMAP_SORT_DIRECTION_PARAM);
+    else params.set(ROADMAP_SORT_DIRECTION_PARAM, this._sortDirection);
     const next = buildHash(route, params);
     if (location.hash !== next) history.replaceState(null, '', next);
   }
@@ -867,12 +914,14 @@ export class RoadmapPanel extends LitElement {
   }
 
   private get _items(): RoadmapItem[] {
-    if (this._filterProject === 'all')
-      return filterRoadmapItemsByGlobalProjects(
-        this._allItems,
-        concretePlanningProjects(this._globalFilters.projects),
-      );
-    return this._allItems;
+    const visible =
+      this._filterProject === 'all'
+        ? filterRoadmapItemsByGlobalProjects(
+            this._allItems,
+            concretePlanningProjects(this._globalFilters.projects),
+          )
+        : this._allItems;
+    return sortRoadmapItems(visible, this._sortKey, this._sortDirection);
   }
 
   private get _selected(): RoadmapItem | null {
@@ -2018,23 +2067,44 @@ export class RoadmapPanel extends LitElement {
       <span data-testid="roadmap-project">${renderPlanningBadge(item.project)}</span>
       <span class="item-ref" title=${item.id}>${item.id}</span>
       <div class="title" title=${item.title}>${item.title}</div>
-      <div class="row-trailing">
-        ${item.promotion?.length
-          ? renderPlanningBadge(
-              `${item.promotion.length} backlog link${item.promotion.length === 1 ? '' : 's'}`,
-              'positive',
-            )
-          : nothing}
-        <button
-          type="button"
-          @click=${(event: Event) => {
-            event.stopPropagation();
-            this._selectItem(item, 'edit');
-          }}
-        >
-          Edit
-        </button>
-      </div>
+      ${item.promotion?.length
+        ? renderPlanningBadge(
+            `${item.promotion.length} backlog link${item.promotion.length === 1 ? '' : 's'}`,
+            'positive',
+          )
+        : html`<span class="muted">—</span>`}
+      <span class="updated-cell" title=${item.updatedAt}>${item.updatedAt.slice(0, 10)}</span>
+    </div>`;
+  }
+
+  private _setSort(key: RoadmapSortKey) {
+    if (this._sortKey === key) {
+      this._sortDirection = this._sortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      this._sortKey = key;
+      this._sortDirection = key === 'updated' || key === 'promotion' ? 'desc' : 'asc';
+    }
+    this._writeUrlState();
+  }
+
+  private _renderSortHeader(label: string, key: RoadmapSortKey) {
+    const active = this._sortKey === key;
+    const arrow = active ? (this._sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
+    return html`<button
+      class=${active ? 'active' : ''}
+      type="button"
+      @click=${() => this._setSort(key)}
+    >
+      ${label}${arrow}
+    </button>`;
+  }
+
+  private _renderTableHead() {
+    return html`<div class="table-head" role="row">
+      ${this._renderSortHeader('Stage', 'stage')} ${this._renderSortHeader('Project', 'project')}
+      ${this._renderSortHeader('ID', 'id')} ${this._renderSortHeader('Title', 'title')}
+      ${this._renderSortHeader('Backlog', 'promotion')}
+      ${this._renderSortHeader('Updated', 'updated')}
     </div>`;
   }
 
@@ -2420,7 +2490,9 @@ export class RoadmapPanel extends LitElement {
           <div class="rows">
             ${this._items.length === 0
               ? html`<div class="empty">No roadmap items match this view.</div>`
-              : this._items.map((item) => this._renderRow(item))}
+              : html`<div class="roadmap-table">
+                  ${this._renderTableHead()} ${this._items.map((item) => this._renderRow(item))}
+                </div>`}
           </div>
         </div>
         <div class="shell">${this._renderEditor()}</div>

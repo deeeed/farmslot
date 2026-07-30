@@ -75,6 +75,7 @@ import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js'
 import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
 
 import {
+  BACKLOG_SORT_KEYS,
   backlogItemMatchesStatusFilter,
   type BacklogSortDirection,
   type BacklogSortKey,
@@ -102,6 +103,8 @@ const BACKLOG_MODE_PARAM = 'mode';
 const BACKLOG_CREATE_PARAM = 'create';
 const BACKLOG_DISPATCH_CONFIG_PARAM = 'dispatchConfig';
 const BACKLOG_SPEC_PARAM = 'spec';
+const BACKLOG_SORT_PARAM = 'sort';
+const BACKLOG_SORT_DIRECTION_PARAM = 'direction';
 const NEW_PLAN_KEY = '__new__';
 const AUTO_DISPATCH_TOOLTIP =
   'Auto-dispatch enqueues ready backlog items only when the item has auto-dispatch enabled, the project allows it, and explicit allowed slots are set.';
@@ -711,14 +714,14 @@ export class BacklogPanel extends LitElement {
         grid-column: span 2;
       }
       .backlog-table {
-        min-width: 940px;
+        min-width: 1040px;
       }
       .compact-row,
       .table-head {
         align-items: center;
         display: grid;
         gap: 8px;
-        grid-template-columns: 92px 58px minmax(130px, 180px) 112px minmax(220px, 1fr) 210px;
+        grid-template-columns: 92px 58px minmax(130px, 180px) 112px minmax(220px, 1fr) 210px 86px;
       }
       .table-head {
         background: ${unsafeCSS(colors.bgCard)};
@@ -787,6 +790,11 @@ export class BacklogPanel extends LitElement {
       }
       .no-activity {
         color: ${unsafeCSS(colors.textMuted)};
+      }
+      .updated-cell {
+        color: ${unsafeCSS(colors.textMuted)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        white-space: nowrap;
       }
       .title {
         font-weight: 700;
@@ -1020,10 +1028,12 @@ export class BacklogPanel extends LitElement {
       .notes-field textarea {
         min-height: 180px;
       }
-      @media (max-width: 860px) {
+      @media (max-width: 1450px) {
         .main-area.has-detail {
           grid-template-columns: 1fr;
         }
+      }
+      @media (max-width: 860px) {
         .filter-toolbar {
           position: static;
         }
@@ -1106,6 +1116,11 @@ export class BacklogPanel extends LitElement {
     this._dispatchConfigOpen =
       Boolean(this._selectedItemId) && params.get(BACKLOG_DISPATCH_CONFIG_PARAM) === '1';
     this._specViewerOpen = Boolean(this._selectedItemId) && params.get(BACKLOG_SPEC_PARAM) === '1';
+    const sortKey = params.get(BACKLOG_SORT_PARAM);
+    this._sortKey = BACKLOG_SORT_KEYS.includes(sortKey as BacklogSortKey)
+      ? (sortKey as BacklogSortKey)
+      : 'activity';
+    this._sortDirection = params.get(BACKLOG_SORT_DIRECTION_PARAM) === 'asc' ? 'asc' : 'desc';
     if (this._slotSelectorOpen) this._createPanelOpen = true;
   }
 
@@ -1136,6 +1151,10 @@ export class BacklogPanel extends LitElement {
     }
     if (this._specViewerOpen && this._selectedItemId) params.set(BACKLOG_SPEC_PARAM, '1');
     else params.delete(BACKLOG_SPEC_PARAM);
+    if (this._sortKey === 'activity') params.delete(BACKLOG_SORT_PARAM);
+    else params.set(BACKLOG_SORT_PARAM, this._sortKey);
+    if (this._sortDirection === 'desc') params.delete(BACKLOG_SORT_DIRECTION_PARAM);
+    else params.set(BACKLOG_SORT_DIRECTION_PARAM, this._sortDirection);
     const next = buildHash(route, params);
     if (location.hash !== next) history.replaceState(null, '', next);
   }
@@ -1278,10 +1297,12 @@ export class BacklogPanel extends LitElement {
   private _setSort(key: BacklogSortKey): void {
     if (this._sortKey === key) {
       this._sortDirection = this._sortDirection === 'asc' ? 'desc' : 'asc';
+      this._writeUrlState();
       return;
     }
     this._sortKey = key;
     this._sortDirection = key === 'activity' || key === 'updated' ? 'desc' : 'asc';
+    this._writeUrlState();
   }
 
   private _renderSortHeader(label: string, key: BacklogSortKey) {
@@ -2464,6 +2485,7 @@ export class BacklogPanel extends LitElement {
             <span class="activity-slot">${activeRun.slotId ?? activeRun.id.slice(0, 8)}</span>
           </a>`
         : html`<span class="no-activity">—</span>`}
+      <span class="updated-cell" title=${item.updatedAt}>${item.updatedAt.slice(0, 10)}</span>
     </div>`;
   }
 
@@ -2473,6 +2495,7 @@ export class BacklogPanel extends LitElement {
       ${this._renderSortHeader('Project', 'project')} ${this._renderSortHeader('Ref', 'ref')}
       ${this._renderSortHeader('Title', 'title')}
       ${this._renderSortHeader('Active run / slot', 'activity')}
+      ${this._renderSortHeader('Updated', 'updated')}
     </div>`;
   }
 

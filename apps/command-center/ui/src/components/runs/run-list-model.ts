@@ -100,6 +100,18 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
       return [...result].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     case 'duration':
       return [...result].sort((a, b) => (b.metrics.durationMs ?? 0) - (a.metrics.durationMs ?? 0));
+    case 'project':
+      return [...result].sort(
+        (a, b) => a.project.localeCompare(b.project) || b.createdAt.localeCompare(a.createdAt),
+      );
+    case 'flow':
+      return [...result].sort(
+        (a, b) => a.flowType.localeCompare(b.flowType) || b.createdAt.localeCompare(a.createdAt),
+      );
+    case 'status':
+      return [...result].sort(
+        (a, b) => a.status.localeCompare(b.status) || b.createdAt.localeCompare(a.createdAt),
+      );
     case 'grade': {
       const order: Record<string, number> = { good: 3, ok: 2, bad: 1 };
       return [...result].sort(

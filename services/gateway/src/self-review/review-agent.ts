@@ -223,6 +223,7 @@ export async function runReviewAgent(
     attemptStartedAt: startedAt,
     taskFile: taskDirRelPath(taskDir, reviewChecklistTarget.checklist),
     signalFile: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+    artifactScope: artifactScope ?? null,
     runner,
     model,
     target: null,
@@ -288,6 +289,7 @@ export async function runReviewAgent(
     await writeTextFileOnSlot(vars, taskMdPath, expandedTemplate);
     await syncChecklistTargetForRole(vars, taskDir, 'self-review', {
       reportPath: feedbackRelPath,
+      target: reviewChecklistTarget,
     });
 
     // Mark the reviewer-specific checklist as the active task file for progress tracking.

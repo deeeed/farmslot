@@ -421,7 +421,7 @@ describe('cursor runner', () => {
     const codexPane = `
   Hooks need review
   1. Review hooks
-  2. Trust all and continue
+  │ 2. Trust all and continue
   3. Continue without trusting (hooks won't run)
   Press enter to confirm or esc to go back
 `;
