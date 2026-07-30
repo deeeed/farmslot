@@ -80,6 +80,29 @@ test('buildEvidenceSection renders media and ignores adjacent non-media entries'
   assert.doesNotMatch(section, /report\.json/);
 });
 
+test('buildEvidenceSection renders standalone screenshots as a compact two-column grid', () => {
+  const section = buildEvidenceSection(
+    {
+      standalone: [
+        { label: 'Collapsed', file: 'collapsed.png', note: 'compact state' },
+        { label: 'Expanded', file: 'expanded.png', note: 'chart restored' },
+        { label: 'Restarted', file: 'restarted.png', note: 'preference persisted' },
+      ],
+    },
+    new Map([
+      ['collapsed.png', 'https://cdn/collapsed.png'],
+      ['expanded.png', 'https://cdn/expanded.png'],
+      ['restarted.png', 'https://cdn/restarted.png'],
+    ]),
+  );
+
+  assert(section);
+  assert.equal((section.match(/<tr>/g) ?? []).length, 2);
+  assert.equal((section.match(/valign="top"/g) ?? []).length, 3);
+  assert.equal((section.match(/width="320"/g) ?? []).length, 3);
+  assert.match(section, /<sub>preference persisted<\/sub>/);
+});
+
 test('captionConfidenceFor: note present -> HIGH', () => {
   const res = captionConfidenceFor(
     { file: 'screenshot.png', note: 'shows populated account list after AC1' },

@@ -456,8 +456,8 @@ export function buildEvidenceSection(
             return [
               labelCell,
               `<tr>`,
-              `<td align="center" width="50%"><em>Before</em><br/><img src="${beforeUrl}" alt="before" width="400" /></td>`,
-              `<td align="center" width="50%"><em>After</em><br/><img src="${afterUrl}" alt="after" width="400" /></td>`,
+              `<td align="center" valign="top" width="50%"><em>Before</em><br/><img src="${beforeUrl}" alt="before" width="320" /></td>`,
+              `<td align="center" valign="top" width="50%"><em>After</em><br/><img src="${afterUrl}" alt="after" width="320" /></td>`,
               `</tr>`,
             ].join('\n');
           }
@@ -465,7 +465,7 @@ export function buildEvidenceSection(
           const which = beforeUrl ? 'Before' : 'After';
           return [
             labelCell,
-            `<tr><td colspan="2" align="center"><em>${which}</em><br/><img src="${url}" alt="${which.toLowerCase()}" width="400" /></td></tr>`,
+            `<tr><td colspan="2" align="center" valign="top"><em>${which}</em><br/><img src="${url}" alt="${which.toLowerCase()}" width="320" /></td></tr>`,
           ].join('\n');
         })
         .filter(Boolean);
@@ -489,13 +489,13 @@ export function buildEvidenceSection(
           const leftUrl = urlFor(left.file);
           if (!leftUrl) continue;
           const leftHint = confidenceHint(captionConfidenceFor(left, fileUsage));
-          const leftCell = `<td align="center" width="50%"><strong>${left.label}</strong>${left.note ? `<br/><em>${left.note}</em>` : ''}<br/><img src="${leftUrl}" alt="${left.label}" width="400" />${leftHint ? `<br/>${leftHint}` : ''}</td>`;
+          const leftCell = `<td align="center" valign="top" width="50%"><strong>${left.label}</strong><br/><img src="${leftUrl}" alt="${left.label}" width="320" />${left.note ? `<br/><sub>${left.note}</sub>` : ''}${leftHint ? `<br/>${leftHint}` : ''}</td>`;
           if (right) {
             const rightUrl = urlFor(right.file);
             if (rightUrl) {
               const rightHint = confidenceHint(captionConfidenceFor(right, fileUsage));
               rows.push(
-                `<tr>${leftCell}<td align="center" width="50%"><strong>${right.label}</strong>${right.note ? `<br/><em>${right.note}</em>` : ''}<br/><img src="${rightUrl}" alt="${right.label}" width="400" />${rightHint ? `<br/>${rightHint}` : ''}</td></tr>`,
+                `<tr>${leftCell}<td align="center" valign="top" width="50%"><strong>${right.label}</strong><br/><img src="${rightUrl}" alt="${right.label}" width="320" />${right.note ? `<br/><sub>${right.note}</sub>` : ''}${rightHint ? `<br/>${rightHint}` : ''}</td></tr>`,
               );
             } else {
               rows.push(`<tr>${leftCell}<td></td></tr>`);

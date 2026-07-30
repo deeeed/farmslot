@@ -22,6 +22,10 @@ export const BACKLOG_SORT_KEYS = [
 export type BacklogSortKey = (typeof BACKLOG_SORT_KEYS)[number];
 export type BacklogSortDirection = 'asc' | 'desc';
 
+export function displayedBacklogFlow(item: BacklogItem, activeRun?: Run): string {
+  return activeRun?.flowType || item.flowType;
+}
+
 function comparisonValue(
   item: BacklogItem,
   activeRun: Run | undefined,
@@ -31,7 +35,7 @@ function comparisonValue(
     case 'status':
       return item.status;
     case 'flow':
-      return item.flowType;
+      return displayedBacklogFlow(item, activeRun);
     case 'project':
       return item.project;
     case 'ref':

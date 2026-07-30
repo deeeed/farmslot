@@ -12,6 +12,7 @@ import {
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
   DEFAULT_BACKLOG_STATUS_FILTER,
+  displayedBacklogFlow,
   parseBacklogStatusFilter,
   serializeBacklogStatusFilter,
   showsBacklogCleanupActionsForUi,
@@ -207,6 +208,43 @@ test('backlog activity sorting puts out-of-band active runs ahead of idle candid
   assert.deepEqual(
     sortBacklogItems([idle, active], [activeRun], 'project', 'asc').map((item) => item.id),
     ['active', 'idle'],
+  );
+});
+
+test('backlog displays and sorts by the active run flow when it differs from intake', () => {
+  const devItem = {
+    id: 'dev-item',
+    project: 'metamask-core-farm',
+    sourceKind: 'jira',
+    sourceRef: 'TAT-3252',
+    title: 'Reduce-only order would increase position',
+    flowType: 'dev',
+    status: 'candidate',
+    priority: 10,
+    createdAt: '2026-07-30T00:00:00.000Z',
+    updatedAt: '2026-07-30T00:00:00.000Z',
+  } satisfies BacklogItem;
+  const reviewItem = {
+    ...devItem,
+    id: 'review-item',
+    sourceRef: 'TAT-3309',
+    title: 'Review order book',
+    flowType: 'review-pr',
+  } satisfies BacklogItem;
+  const activeRun = {
+    id: 'run-active',
+    project: devItem.project,
+    ticketOrPr: devItem.sourceRef,
+    flowType: 'fix-bug',
+    status: 'human-gating',
+    updatedAt: '2026-07-30T02:00:00.000Z',
+  } as Run;
+
+  assert.equal(displayedBacklogFlow(devItem), 'dev');
+  assert.equal(displayedBacklogFlow(devItem, activeRun), 'fix-bug');
+  assert.deepEqual(
+    sortBacklogItems([reviewItem, devItem], [activeRun], 'flow', 'asc').map((item) => item.id),
+    ['dev-item', 'review-item'],
   );
 });
 

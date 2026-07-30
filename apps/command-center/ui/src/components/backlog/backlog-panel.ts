@@ -86,6 +86,7 @@ import {
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
   DEFAULT_BACKLOG_STATUS_FILTER,
+  displayedBacklogFlow,
   parseBacklogStatusFilter,
   serializeBacklogStatusFilter,
   showsBacklogCleanupActionsForUi,
@@ -2477,6 +2478,11 @@ export class BacklogPanel extends LitElement {
   private _renderCompactRow(item: BacklogItem, activeRun?: Run) {
     const selected = this._selectedItemId === item.id;
     const tone = statusTone(item.status);
+    const displayedFlow = displayedBacklogFlow(item, activeRun);
+    const flowTitle =
+      activeRun && displayedFlow !== item.flowType
+        ? `Active run flow: ${displayedFlow}; backlog flow: ${item.flowType}`
+        : undefined;
     return html`<div
       class="compact-row ${selected ? 'selected' : ''} ${item.lastDispatchError ? 'has-error' : ''}"
       role="button"
@@ -2490,7 +2496,9 @@ export class BacklogPanel extends LitElement {
       }}
     >
       ${renderPlanningBadge(item.status, tone)}
-      <span data-testid="backlog-flow">${renderFlowBadge(item.flowType)}</span>
+      <span data-testid="backlog-flow"
+        >${renderFlowBadge(displayedFlow, flowTitle ? { title: flowTitle } : {})}</span
+      >
       <span data-testid="backlog-project">${renderPlanningBadge(item.project)}</span>
       <span class="item-ref" title=${item.sourceRef}>${item.sourceRef}</span>
       <div class="title" title=${item.title}>${item.title}</div>
