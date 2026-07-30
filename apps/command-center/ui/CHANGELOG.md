@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- feat(backlog): show each item's flow (`dev`, `fix-bug`, `review-pr`, and maintenance flows) directly in the compact live list instead of requiring selection of the detail pane.
+- feat(backlog): use a sortable work table as the primary scan surface while retaining the selected row's full right-hand detail panel; show status counts, flow/project columns, and exact-ref out-of-band activity. Run inference is activity-only, while detail/history remains anchored to durable linkage.
 - fix(runs): show active independent review/fix work ahead of the enclosing human gate in compact pipelines; reserve `publish ready` for gates that actually expose approval.
 - fix(runners): offer only the current `grok-4.5` model for Grok instead of stale model ids that the CLI silently replaces.
 - feat(runners): model pickers are scoped per runner (no fleet-wide bleed); Codex lists GPT-5.6 Sol/Terra/Luna (default Sol) with legacy 5.5/5.4; Cursor offers real `cursor-grok-4.5-high-fast` / `high` (drops invalid `grok-4.5-fast-xhigh`); default effort for Codex/Grok is `xhigh` when omitted.

@@ -356,7 +356,7 @@ async function validateTerminalSignalArtifacts(
   slotId: string,
   signalJsonPath: string,
   signal: WorkerSignal,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | { ok: false; kind: 'artifact' | 'infrastructure'; message: string }> {
   const terminalCommand = artifactTerminalCommandForSignal(signal);
   if (!terminalCommand) return { ok: true };
 
@@ -367,6 +367,20 @@ async function validateTerminalSignalArtifacts(
     ? farmslotRoot
     : resolveRemoteRepo('~/farmslot-node', vars.osType, vars.sshUser);
   const checker = `${agentRoot}/packages/agent-runtime/scripts/check-task-artifact-contract.mjs`;
+  const prerequisites = await execOnSlot(
+    vars,
+    `test -f ${shellQuote(checker)} && test -f ${shellQuote(contractPath)}`,
+    { timeout: 10_000 },
+  );
+  if (prerequisites.exitCode !== 0) {
+    return {
+      ok: false,
+      kind: 'infrastructure',
+      message:
+        'Farmslot terminal-contract infrastructure is missing on the slot. ' +
+        `Expected checker ${checker} and contract ${contractPath}. Sync/deploy the Farmslot node, then resume the run; the worker cannot repair this.`,
+    };
+  }
   const checkerArgs = [
     'node',
     shellQuote(checker),
@@ -389,6 +403,7 @@ async function validateTerminalSignalArtifacts(
     .slice(0, 4000);
   return {
     ok: false,
+    kind: 'artifact',
     message:
       `Terminal SIGNAL.json was rejected by the worker artifact contract. ` +
       `Fix the listed artifacts, then run ./mark ${terminalCommand} again.\n\n${detail || `checker exited ${result.exitCode}`}`,
@@ -531,7 +546,10 @@ export async function probeWorkerSignalForRun(
     if (!artifactValidation.ok) {
       return {
         ok: false,
-        code: 'artifact_contract',
+        code:
+          artifactValidation.kind === 'infrastructure'
+            ? 'terminal_contract_infrastructure'
+            : 'artifact_contract',
         message: artifactValidation.message,
         signalFile: displayPath,
         status: boundSig.status,
@@ -792,6 +810,22 @@ export async function monitorRun(
           return retry.signal;
         }
         return undefined;
+      }
+      if (!probe.ok && probe.code === 'terminal_contract_infrastructure') {
+        console.warn(
+          `[run-monitor] run ${runId.slice(0, 8)} — ${probe.message.replace(/\n/g, ' | ')}`,
+        );
+        updateRunStep(runId, 'monitor', {
+          detail: `Terminal contract infrastructure unavailable: ${probe.message.slice(0, 1000)}`,
+        });
+        const actionId = await createBlockedDecision(
+          runId,
+          'interactive_handoff',
+          `Completion is blocked by Farmslot slot infrastructure, not worker artifacts. Do not ask the worker to retry.\n\n${probe.message}`,
+        );
+        if (actionId === 'abort') return undefined;
+        const retry = await probeWorkerSignalForRun(runId, slotId, currentMonitorContext());
+        return retry.ok ? retry.signal : undefined;
       }
       if (probe.ok) lastArtifactContractMessage = null;
       return probe.ok ? probe.signal : undefined;

@@ -417,6 +417,7 @@ export async function runReviewAgent(
               requirePromptDigest: true,
               handoffAckSinceMs,
               softAcceptOnHandoffAck: true,
+              runtimeDir,
             },
           );
         } catch (err) {

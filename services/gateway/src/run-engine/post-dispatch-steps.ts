@@ -51,11 +51,13 @@ import {
   supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
 import {
+  publicationReviewPolicyForRun,
   requiresPublicationApproval,
   shouldPrepareLocalFirstPackage,
 } from './publication-policy.js';
 import { verifyWorkerPushedBranch } from './push-verification.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
+import { automaticPublicationReviewPlan } from './review-plan.js';
 import { type MonitorResult, monitorRun } from './run-monitor.js';
 
 interface StepIO {
@@ -684,8 +686,45 @@ export async function executeHumanGateStep(
           );
         }
       }
-      const initialPlan = getRun(runId)?.engineState?.publishGate?.pendingReviewPlan ?? [];
+      const beforeInitialPlan = getRun(runId)!;
+      const explicitInitialPlan =
+        beforeInitialPlan.engineState?.publishGate?.pendingReviewPlan ?? [];
+      const missingReviewPlan = automaticPublicationReviewPlan(
+        beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
+          publicationReviewPolicyForRun(beforeInitialPlan),
+        beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [],
+        beforeInitialPlan.metrics.runner,
+      );
+      // A restart can land after a reviewer verdict was persisted but before
+      // the durable pending plan was cleared. Execute only the still-missing
+      // portion; otherwise every restart launches another already-satisfied
+      // reviewer (and a two-loop plan can replay loop one twice).
+      const initialPlan = explicitInitialPlan.length
+        ? explicitInitialPlan.slice(0, missingReviewPlan.length)
+        : missingReviewPlan;
+      if (explicitInitialPlan.length > 0 && initialPlan.length === 0) {
+        updateRun(runId, {
+          engineState: {
+            ...beforeInitialPlan.engineState,
+            publishGate: {
+              ...beforeInitialPlan.engineState?.publishGate,
+              pendingReviewPlan: [],
+            },
+          },
+        });
+      }
       if (initialPlan.length) {
+        if (explicitInitialPlan.length === 0) {
+          updateRun(runId, {
+            engineState: {
+              ...beforeInitialPlan.engineState,
+              publishGate: {
+                ...beforeInitialPlan.engineState?.publishGate,
+                pendingReviewPlan: initialPlan,
+              },
+            },
+          });
+        }
         const dispatchReviewSlotId = current.slotId;
         if (!dispatchReviewSlotId)
           throw new Error('No slot assigned — cannot run dispatch publish-gate reviews');

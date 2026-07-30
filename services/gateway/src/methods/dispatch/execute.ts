@@ -61,6 +61,7 @@ import {
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../../runners/registry.js';
+import { buildRunnerObservabilityInstallCommand } from '../../runners/runner-observability.js';
 import {
   assertScriptedRunnerConfig,
   resolveScriptedCommandFromRawProjectJson,
@@ -401,6 +402,7 @@ export type RunnerLaunchBlockerResolverDeps = {
   sleep?: (ms: number) => Promise<void>;
   /** Bound provider account label (for typed usage-limit errors). */
   providerAccountLabel?: string | null;
+  runtimeDir?: string;
 };
 
 export async function resolveRunnerLaunchBlockers(
@@ -433,13 +435,30 @@ export async function resolveRunnerLaunchBlockers(
     if (!blocker) return;
     lastBlockerSummary = blocker.summary;
 
-    const key = runnerLaunchBlockerAutoActionKey(blocker.autoAction);
+    const key = runnerLaunchBlockerAutoActionKey(blocker.autoAction, pane);
     if (key) {
       const attempts = autoActionAttempts.get(blocker.kind) ?? 0;
       if (attempts < 2) {
+        if (blocker.autoAction === 'codex-refresh-hooks-and-trust') {
+          const refreshed = await exec(
+            vars,
+            buildRunnerObservabilityInstallCommand(vars, runner, vars.remoteRepo, deps.runtimeDir, {
+              accountLabel: deps.providerAccountLabel,
+            }),
+          );
+          if (refreshed.exitCode !== 0) {
+            throw new Error(
+              `Failed to refresh trusted Codex hooks for ${target}: ${refreshed.stderr || refreshed.stdout || `exit ${refreshed.exitCode}`}`,
+            );
+          }
+        }
+        const keySequence =
+          blocker.autoAction === 'codex-refresh-hooks-and-trust'
+            ? `${shellQuote(key)} ${shellQuote('Enter')}`
+            : shellQuote(key);
         const result = await exec(
           vars,
-          tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${shellQuote(key)} 2>/dev/null`),
+          tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${keySequence} 2>/dev/null`),
         );
         if (result.exitCode !== 0) {
           throw new Error(
@@ -1205,6 +1224,7 @@ export async function dispatchExecute(
     if (runnerResolvesPreTaskLaunchBlockers(runner)) {
       await resolveRunnerLaunchBlockers(vars, workerTarget, runner, 60_000, {
         providerAccountLabel: accountBind?.bind.accountLabel ?? null,
+        runtimeDir: projectVars?.runtimeDir,
       });
       // Cursor receives the task prompt on argv, so resolving a launch blocker
       // is the last gate before monitor starts; verify the runner survived it.
@@ -1254,6 +1274,7 @@ export async function dispatchExecute(
           handoffAckSinceMs,
           softAcceptOnHandoffAck: true,
           providerAccountLabel: accountBind?.bind.accountLabel ?? null,
+          runtimeDir: projectVars?.runtimeDir,
         },
       );
       step('task', 'Task prompt delivered and verified');

@@ -417,7 +417,7 @@ describe('cursor runner', () => {
     assert.match(commands[1], /^send-keys -t 'ff-1:agent\.0' 'a'/);
   });
 
-  it('continues Codex without trusting changed repository hooks', async () => {
+  it('refreshes and trusts changed Codex repository hooks', async () => {
     const codexPane = `
   Hooks need review
   1. Review hooks
@@ -428,10 +428,11 @@ describe('cursor runner', () => {
     assert.deepEqual(detectRunnerLaunchBlocker(codexPane, 'codex'), {
       kind: 'hooks-review',
       summary: 'Codex is waiting for repository hook review before the chat input is available.',
-      autoAction: 'codex-continue-without-hooks',
+      autoAction: 'codex-refresh-hooks-and-trust',
     });
 
     const commands: string[] = [];
+    let refreshed = false;
     const result = await confirmTrustPromptWithFreshEvidence({
       runnerId: 'codex',
       target: 'core-2:review.0',
@@ -440,10 +441,14 @@ describe('cursor runner', () => {
         commands.push(tmuxCommand);
         return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? codexPane : '' };
       },
+      refreshCodexHooks: async () => {
+        refreshed = true;
+      },
     });
 
-    assert.deepEqual(result, { outcome: 'sent', key: '3' });
-    assert.match(commands[1], /^send-keys -t 'core-2:review\.0' '3' 'Enter'/);
+    assert.equal(refreshed, true);
+    assert.deepEqual(result, { outcome: 'sent', key: '2' });
+    assert.match(commands[1], /^send-keys -t 'core-2:review\.0' '2' 'Enter'/);
   });
 
   it('confirmTrustPromptWithFreshEvidence never sends without fresh deterministic evidence', async () => {

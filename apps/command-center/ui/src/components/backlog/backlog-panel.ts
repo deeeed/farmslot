@@ -30,7 +30,12 @@ import type {
   WorkGraphProjection,
   WorkGraphSchedulerTickResult,
 } from '@farmslot/protocol';
-import { BACKLOG_SOURCE_KINDS, BACKLOG_STATUSES, Methods } from '@farmslot/protocol';
+import {
+  BACKLOG_SOURCE_KINDS,
+  BACKLOG_STATUSES,
+  isTerminalRunStatus,
+  Methods,
+} from '@farmslot/protocol';
 
 import '../shared/dispatch-config-editor.js';
 import '../shared/linked-run-summary.js';
@@ -52,10 +57,7 @@ import type {
 } from '../shared/dispatch-config-editor.js';
 import { summarizeBacklogDispatchConfig } from '../shared/dispatch-config-summary.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
-import {
-  activeLinkedRunForBacklogItem,
-  linkedRunForBacklogItem,
-} from '../shared/linked-run-model.js';
+import { linkedRunForBacklogItem, linkedRunsForBacklogItems } from '../shared/linked-run-model.js';
 import {
   planningBadgeStyles,
   renderPlanningBadge,
@@ -2430,10 +2432,9 @@ export class BacklogPanel extends LitElement {
     </section>`;
   }
 
-  private _renderCompactRow(item: BacklogItem) {
+  private _renderCompactRow(item: BacklogItem, activeRun?: Run) {
     const selected = this._selectedItemId === item.id;
     const tone = statusTone(item.status);
-    const activeRun = activeLinkedRunForBacklogItem(this._runs, item);
     return html`<div
       class="compact-row ${selected ? 'selected' : ''} ${item.lastDispatchError ? 'has-error' : ''}"
       role="button"
@@ -2723,6 +2724,10 @@ export class BacklogPanel extends LitElement {
 
   render() {
     const hasDetail = Boolean(this._selectedItem);
+    const filtered = this._filtered;
+    const activityRuns = linkedRunsForBacklogItems(this._runs, filtered, {
+      allowSourceRefInference: true,
+    });
     return html`<section class="shell">
       <div class="header header-compact">
         <h1>Backlog</h1>
@@ -2734,11 +2739,17 @@ export class BacklogPanel extends LitElement {
       <div class="main-area ${hasDetail ? 'has-detail' : ''}">
         <section class="list-panel">
           <div class="scroll-column rows">
-            ${this._filtered.length === 0
+            ${filtered.length === 0
               ? html`<div class="empty">No backlog items match this view.</div>`
               : html`<div class="backlog-table">
                   ${this._renderTableHead()}
-                  ${this._filtered.map((item) => this._renderCompactRow(item))}
+                  ${filtered.map((item) => {
+                    const run = activityRuns.get(item.id);
+                    return this._renderCompactRow(
+                      item,
+                      run && !isTerminalRunStatus(run.status) ? run : undefined,
+                    );
+                  })}
                 </div>`}
           </div>
         </section>

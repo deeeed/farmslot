@@ -1429,6 +1429,15 @@ export interface RunEngineState {
     independentReviews?: IndependentReviewStatus[];
     supersededPackageIds?: string[];
     feedbackArtifactPath?: string;
+    /** Bounded restart watcher state for an in-flight publication reviewer. */
+    reviewRecovery?: {
+      status: 'watching' | 'recovered' | 'operator-required';
+      attempts: number;
+      startedAt: string;
+      updatedAt: string;
+      nextRetryAt?: string;
+      lastError?: string;
+    };
     /** Consolidated gate narrative snapshot, persisted so historical redisplay needs no recompute. */
     gateSummary?: GateSummary;
   };

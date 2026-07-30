@@ -117,11 +117,12 @@ function detectLaunchBlocker(
   if (
     runner === 'codex' &&
     lower.includes('hooks need review') &&
+    lower.includes('trust all and continue') &&
     lower.includes('continue without trusting') &&
     lower.includes("hooks won't run") &&
     lower.includes('press enter to confirm')
   ) {
-    return { kind: 'hooks-review', autoAction: 'codex-continue-without-hooks' };
+    return { kind: 'hooks-review', autoAction: 'codex-refresh-hooks-and-trust' };
   }
   if (runner === 'grok') {
     const liveStatus = grokLiveStatusText(pane);

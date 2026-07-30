@@ -4,7 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(runners): recognize Codex's changed-repository-hooks review screen and choose "continue without trusting" before prompt delivery, preventing independent reviews from idling with their task never submitted.
+- fix(runners): recognize Codex's changed-repository-hooks review screen, rebuild the isolated Farmslot hook/trust configuration, and select the prompt's actual “Trust all and continue” option before task delivery. The previous recovery disabled the observability hooks it was meant to preserve.
+- fix(run-engine): automatically materialize configured publication-review minimums as static independent-review work before the human gate; pipeline self-review remains non-independent and full-live validation remains explicit. Restart watchers now back off, expire to durable operator-required state, and distinguish missing Farmslot terminal-contract infrastructure from worker artifact defects.
+- fix(prepare): bound and allowlist recipe-tooling provenance reads instead of persisting arbitrary harness doctor JSON.
 - feat(run-engine): keep gate-held worker sessions warm through ci-watch (MANUAL-000065) — FINALIZE no longer calls `killSlotAgents`; CI-chained `pr-complete` / `update-branch` set `warmSessionReuse` and hand off into the live session when present, falling back to fresh dispatch when dead or runner/model-swapped; terminal failure after FINALIZE still tears down via `teardownGateHeldAgentsIfNeeded`.
 - fix(run-completion): strip platform-only `[Core]` prefixes from generated PR titles and keep worker branch/commit execution provenance out of public PR descriptions.
 - fix(run-engine): keep publication review plans durable until their independent review/fix/re-review loop exits, and reconstruct interrupted active fix passes after gateway restart instead of reopening a misleading operator gate.

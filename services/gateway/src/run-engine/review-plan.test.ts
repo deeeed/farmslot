@@ -1,7 +1,55 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { humanGateReviewDepth, recoveryReviewPlanForActiveFix } from './review-plan.js';
+import {
+  automaticPublicationReviewPlan,
+  humanGateReviewDepth,
+  recoveryReviewPlanForActiveFix,
+} from './review-plan.js';
+
+test('automatic publication reviews materialize the policy as static independent work', () => {
+  const policy = {
+    minimumIndependentReviews: 1,
+    requireCrossRunner: false,
+    extraLoopsRequested: 0,
+    requestedBy: 'dispatch' as const,
+  };
+  assert.deepEqual(automaticPublicationReviewPlan(policy, [], 'claude'), [
+    { order: 1, runner: 'same', validationDepth: 'static-code' },
+  ]);
+  assert.deepEqual(
+    automaticPublicationReviewPlan(
+      policy,
+      [
+        {
+          id: 'self-review-1',
+          source: 'self-review',
+          runner: 'claude',
+          crossRunner: false,
+          loopNumber: 1,
+          verdict: 'pass',
+          unresolvedCount: 0,
+          validationDepth: 'static-code',
+        },
+      ],
+      'claude',
+    ),
+    [{ order: 1, runner: 'same', validationDepth: 'static-code' }],
+    'worker self-review must not consume the independent-review minimum',
+  );
+});
+
+test('automatic publication reviews select an alternate runner only when policy requires it', () => {
+  const policy = {
+    minimumIndependentReviews: 1,
+    requireCrossRunner: true,
+    extraLoopsRequested: 0,
+    requestedBy: 'dispatch' as const,
+  };
+  assert.deepEqual(automaticPublicationReviewPlan(policy, [], 'claude'), [
+    { order: 1, runner: 'codex', validationDepth: 'static-code' },
+  ]);
+});
 
 test('humanGateReviewDepth makes explicit gate review requests temporary but required', () => {
   const basePolicy = {

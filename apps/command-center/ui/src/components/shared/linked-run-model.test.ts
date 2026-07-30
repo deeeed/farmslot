@@ -85,6 +85,7 @@ test('linkedRunForBacklogItem chooses newest linked active run', () => {
       }),
     ],
     item,
+    { allowSourceRefInference: true },
   );
 
   assert.equal(selected?.id, 'newer-active');
@@ -126,10 +127,19 @@ test('linkedRunForBacklogItem projects an out-of-band run by exact project and s
       run({ id: 'out-of-band', status: 'human-gating' }),
     ],
     item,
+    { allowSourceRefInference: true },
   );
 
   assert.equal(selected?.id, 'out-of-band');
-  assert.equal(activeLinkedRunForBacklogItem([selected!], item)?.id, 'out-of-band');
+  assert.equal(
+    activeLinkedRunForBacklogItem([selected!], item, { allowSourceRefInference: true })?.id,
+    'out-of-band',
+  );
+  assert.equal(
+    linkedRunForBacklogItem([selected!], item),
+    undefined,
+    'detail/history consumers require durable linkage',
+  );
 });
 
 test('linkedRunForBacklogItem prefers explicit linkage over inferred source-ref matches', () => {
@@ -149,6 +159,7 @@ test('linkedRunForBacklogItem prefers explicit linkage over inferred source-ref 
       }),
     ],
     item,
+    { allowSourceRefInference: true },
   );
 
   assert.equal(selected?.id, 'explicit');

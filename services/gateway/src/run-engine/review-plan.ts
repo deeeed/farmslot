@@ -1,5 +1,6 @@
 import {
   type AgentContext,
+  type IndependentReviewStatus,
   isReviewValidationDepth,
   type ReviewDepthPolicy,
   type ReviewLoopRequest,
@@ -9,7 +10,11 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
-import { normalizeRunner } from '../runners/registry.js';
+import {
+  effectiveRequiredReviewCount,
+  isQualifyingIndependentReview,
+} from '../quality/review-policy.js';
+import { defaultAlternateReviewRunner, normalizeRunner } from '../runners/registry.js';
 
 export function reviewPlanFromSelection(
   selectionData: Record<string, unknown> | undefined,
@@ -62,6 +67,40 @@ export function requestedReviewLoopCount(
   return Number.isFinite(requestedLoops)
     ? Math.max(1, Math.min(MAX_PUBLISH_GATE_REVIEW_LOOPS, Math.round(requestedLoops)))
     : Math.max(1, Math.min(MAX_PUBLISH_GATE_REVIEW_LOOPS, fallbackCount));
+}
+
+/**
+ * Materialize the configured publication-review minimum into executable work.
+ * A pipeline self-review is useful worker feedback, but it is not independent
+ * and therefore never consumes this budget. The default publication review is
+ * static; operators and explicit dispatch plans can still request full-live.
+ */
+export function automaticPublicationReviewPlan(
+  policy: ReviewDepthPolicy,
+  reviews: IndependentReviewStatus[],
+  workerRunner?: string | null,
+): ReviewLoopRequest[] {
+  const passing = reviews.filter(
+    (review) =>
+      isQualifyingIndependentReview(review) &&
+      review.verdict === 'pass' &&
+      review.unresolvedCount === 0,
+  );
+  const crossRunnerAlreadySatisfied =
+    !policy.requireCrossRunner || passing.some((review) => review.crossRunner);
+  const missing = Math.max(
+    Math.max(0, effectiveRequiredReviewCount(policy) - passing.length),
+    crossRunnerAlreadySatisfied ? 0 : 1,
+  );
+
+  return Array.from({ length: missing }, (_, index) => ({
+    order: index + 1,
+    runner:
+      policy.requireCrossRunner && !crossRunnerAlreadySatisfied && index === 0
+        ? (defaultAlternateReviewRunner(workerRunner) as ReviewLoopRequest['runner'])
+        : 'same',
+    validationDepth: 'static-code',
+  }));
 }
 
 export function humanGateReviewDepth(

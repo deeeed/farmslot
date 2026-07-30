@@ -61,7 +61,8 @@ export type WorkerSignalProbeCode =
   | 'non_terminal'
   | 'context_mismatch'
   | 'stale'
-  | 'artifact_contract';
+  | 'artifact_contract'
+  | 'terminal_contract_infrastructure';
 
 export interface WorkerSignalProbeResult {
   ok: boolean;

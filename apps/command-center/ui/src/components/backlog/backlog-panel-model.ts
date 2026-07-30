@@ -6,7 +6,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { activeLinkedRunForBacklogItem } from '../shared/linked-run-model.js';
+import { linkedRunsForBacklogItems } from '../shared/linked-run-model.js';
 import { syncedDraftProject } from '../shared/planning-projects.js';
 
 export const BACKLOG_SORT_KEYS = [
@@ -21,8 +21,11 @@ export const BACKLOG_SORT_KEYS = [
 export type BacklogSortKey = (typeof BACKLOG_SORT_KEYS)[number];
 export type BacklogSortDirection = 'asc' | 'desc';
 
-function comparisonValue(item: BacklogItem, runs: Run[], key: BacklogSortKey): string {
-  const activeRun = activeLinkedRunForBacklogItem(runs, item);
+function comparisonValue(
+  item: BacklogItem,
+  activeRun: Run | undefined,
+  key: BacklogSortKey,
+): string {
   switch (key) {
     case 'status':
       return item.status;
@@ -48,12 +51,17 @@ export function sortBacklogItems(
   direction: BacklogSortDirection,
 ): BacklogItem[] {
   const multiplier = direction === 'asc' ? 1 : -1;
+  const linkedRuns = linkedRunsForBacklogItems(runs, items, {
+    allowSourceRefInference: true,
+  });
+  const values = new Map(
+    items.map((item) => [item.id, comparisonValue(item, linkedRuns.get(item.id), key)]),
+  );
   return [...items].sort((a, b) => {
-    const primary = comparisonValue(a, runs, key).localeCompare(
-      comparisonValue(b, runs, key),
-      undefined,
-      { numeric: true, sensitivity: 'base' },
-    );
+    const primary = (values.get(a.id) ?? '').localeCompare(values.get(b.id) ?? '', undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    });
     if (primary !== 0) return primary * multiplier;
     return a.sourceRef.localeCompare(b.sourceRef, undefined, {
       numeric: true,

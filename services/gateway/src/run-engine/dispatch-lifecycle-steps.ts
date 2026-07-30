@@ -40,6 +40,56 @@ interface PrepareProvenance {
   referenceRepoProvenance?: Record<string, unknown>;
 }
 
+function copyDefinedKeys(
+  source: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const safe: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (source[key] !== undefined) safe[key] = source[key];
+  }
+  return safe;
+}
+
+export function safeRecipeToolingProvenance(
+  provenance: Record<string, unknown>,
+): Record<string, unknown> {
+  const safe = copyDefinedKeys(provenance, [
+    'schemaVersion',
+    'protocolVersion',
+    'runner_protocol_version',
+    'status',
+    'adapter',
+    'compatibilityMode',
+  ]);
+  const runner =
+    provenance.runner && typeof provenance.runner === 'object' && !Array.isArray(provenance.runner)
+      ? (provenance.runner as Record<string, unknown>)
+      : null;
+  if (runner) {
+    safe.runner = copyDefinedKeys(runner, [
+      'name',
+      'packageName',
+      'version',
+      'packageSource',
+      'installKind',
+      'linked',
+      'global',
+      'harnessPackage',
+    ]);
+  }
+  const requiredChecks =
+    provenance.requiredChecks &&
+    typeof provenance.requiredChecks === 'object' &&
+    !Array.isArray(provenance.requiredChecks)
+      ? (provenance.requiredChecks as Record<string, unknown>)
+      : null;
+  if (requiredChecks) {
+    safe.requiredChecks = copyDefinedKeys(requiredChecks, ['status', 'total', 'passed', 'failed']);
+  }
+  return safe;
+}
+
 export function safeReferenceRepoProvenance(
   provenance: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -80,6 +130,7 @@ async function readPrepareProvenance(slotId: string, project: string): Promise<P
     const result = await execOnSlot(
       vars,
       `cat ${shellQuote(`${vars.remoteRepo}/${runtimeDir}/${basename}`)} 2>/dev/null`,
+      { timeout: 5_000, maxBuffer: 256 * 1024 },
     );
     if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
     const parsed: unknown = JSON.parse(result.stdout);
@@ -90,7 +141,9 @@ async function readPrepareProvenance(slotId: string, project: string): Promise<P
   const recipeToolingProvenance = await readJson('recipe-tooling-provenance.json');
   const referenceRepoProvenance = await readJson('reference-repos.json');
   return {
-    recipeToolingProvenance,
+    recipeToolingProvenance: recipeToolingProvenance
+      ? safeRecipeToolingProvenance(recipeToolingProvenance)
+      : undefined,
     referenceRepoProvenance: referenceRepoProvenance
       ? safeReferenceRepoProvenance(referenceRepoProvenance)
       : undefined,

@@ -1,7 +1,46 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { safeReferenceRepoProvenance } from './dispatch-lifecycle-steps.js';
+import {
+  safeRecipeToolingProvenance,
+  safeReferenceRepoProvenance,
+} from './dispatch-lifecycle-steps.js';
+
+test('safeRecipeToolingProvenance keeps the version contract without arbitrary doctor data', () => {
+  assert.deepEqual(
+    safeRecipeToolingProvenance({
+      schemaVersion: 1,
+      protocolVersion: 'v1',
+      runner_protocol_version: 1,
+      status: 'pass',
+      adapter: 'core',
+      target: '/private/checkout',
+      runner: {
+        packageName: '@deeeed/metamask-harness',
+        version: '0.24.0',
+        packageSource: 'node_modules',
+        installKind: 'global-install',
+        executablePath: '/private/bin/mm-harness',
+      },
+      requiredChecks: { status: 'pass', total: 1, passed: 1, failed: [] },
+      unbounded: { nested: 'discarded' },
+    }),
+    {
+      schemaVersion: 1,
+      protocolVersion: 'v1',
+      runner_protocol_version: 1,
+      status: 'pass',
+      adapter: 'core',
+      runner: {
+        packageName: '@deeeed/metamask-harness',
+        version: '0.24.0',
+        packageSource: 'node_modules',
+        installKind: 'global-install',
+      },
+      requiredChecks: { status: 'pass', total: 1, passed: 1, failed: [] },
+    },
+  );
+});
 
 test('safeReferenceRepoProvenance omits credential-bearing repository URLs', () => {
   assert.deepEqual(
