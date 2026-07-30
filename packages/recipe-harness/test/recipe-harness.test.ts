@@ -3152,6 +3152,58 @@ test('CDP settlement recreates its isolated world after navigation destroys the 
   );
 });
 
+test('CDP settlement retries when isolated-world creation races a stale frame', async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  let frameAttempt = 0;
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      calls.push({ method, params });
+      if (method === 'Page.getFrameTree') {
+        frameAttempt += 1;
+        return { frameTree: { frame: { id: `main-${frameAttempt}` } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        if (frameAttempt === 1) throw new Error('No frame for given id found');
+        return { executionContextId: frameAttempt };
+      }
+      assert.equal(method, 'Runtime.evaluate');
+      return { result: { value: true } };
+    },
+  } as never);
+
+  await page.waitForDomSettled(200);
+
+  assert.deepEqual(
+    calls.filter(({ method }) => method === 'Page.createIsolatedWorld').map(({ params }) => params),
+    [
+      { frameId: 'main-1', worldName: 'farmslot-dom-settlement' },
+      { frameId: 'main-2', worldName: 'farmslot-dom-settlement' },
+    ],
+  );
+});
+
+test('CDP settlement reuses an isolated world while the main frame is unchanged', async () => {
+  let createWorldCalls = 0;
+  const page = new CdpWebPage({
+    async call(method: string) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        createWorldCalls += 1;
+        return { executionContextId: 7 };
+      }
+      assert.equal(method, 'Runtime.evaluate');
+      return { result: { value: true } };
+    },
+  } as never);
+
+  await page.waitForDomSettled(100);
+  await page.waitForDomSettled(100);
+
+  assert.equal(createWorldCalls, 1);
+});
+
 test('CDP ui.navigate honors the settle contract through the shared wrapper', async () => {
   const makeContext = () =>
     ({

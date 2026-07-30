@@ -384,6 +384,10 @@ export async function probeCdpCompositorInteractivity(
 
 export class CdpWebPage {
   readonly session: CdpSession;
+  readonly #isolatedWorldContexts = new Map<
+    string,
+    { frameId: string; executionContextId: number }
+  >();
 
   constructor(session: CdpSession) {
     this.session = session;
@@ -494,30 +498,42 @@ export class CdpWebPage {
     }>('Page.getFrameTree');
     const frameId = frameTree.frameTree?.frame?.id;
     if (!frameId) throw new Error('CDP evaluation could not resolve the page frame.');
-    const isolatedWorld = await this.session.call<{ executionContextId?: number }>(
-      'Page.createIsolatedWorld',
-      { frameId, worldName },
-    );
-    if (isolatedWorld.executionContextId === undefined) {
-      throw new Error('CDP evaluation could not create an isolated world.');
-    }
-    const result = await this.session.call<{
-      result?: { value?: T };
-      exceptionDetails?: { text?: string; exception?: { description?: string } };
-    }>('Runtime.evaluate', {
-      expression,
-      contextId: isolatedWorld.executionContextId,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) {
-      throw new Error(
-        result.exceptionDetails.exception?.description ??
-          result.exceptionDetails.text ??
-          'CDP isolated-world evaluation failed.',
+    let isolatedWorld = this.#isolatedWorldContexts.get(worldName);
+    if (!isolatedWorld || isolatedWorld.frameId !== frameId) {
+      const created = await this.session.call<{ executionContextId?: number }>(
+        'Page.createIsolatedWorld',
+        { frameId, worldName },
       );
+      if (created.executionContextId === undefined) {
+        throw new Error('CDP evaluation could not create an isolated world.');
+      }
+      isolatedWorld = { frameId, executionContextId: created.executionContextId };
+      this.#isolatedWorldContexts.set(worldName, isolatedWorld);
     }
-    return result.result?.value as T;
+    try {
+      const result = await this.session.call<{
+        result?: { value?: T };
+        exceptionDetails?: { text?: string; exception?: { description?: string } };
+      }>('Runtime.evaluate', {
+        expression,
+        contextId: isolatedWorld.executionContextId,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (result.exceptionDetails) {
+        throw new Error(
+          result.exceptionDetails.exception?.description ??
+            result.exceptionDetails.text ??
+            'CDP isolated-world evaluation failed.',
+        );
+      }
+      return result.result?.value as T;
+    } catch (error) {
+      if (isTransientCdpContextError(error)) {
+        this.#isolatedWorldContexts.delete(worldName);
+      }
+      throw error;
+    }
   }
 
   async click(selector: string): Promise<unknown> {
@@ -738,7 +754,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 
 function isTransientCdpContextError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /execution context was destroyed|cannot find context with specified id|no frame with given id found|frame with the given id is not found/iu.test(
+  return /execution context was destroyed|cannot find context with specified id|no frame (?:with|for) given id found|frame with the given id (?:is|was) not found/iu.test(
     message,
   );
 }
