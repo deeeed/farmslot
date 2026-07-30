@@ -97,6 +97,12 @@ test('backlog status projection reconciles linked direct runs', () => {
   assert.equal(displayedBacklogStatus(item, { ...run, status: 'paused' }), 'needs-attention');
   assert.equal(displayedBacklogStatus(item, { ...run, status: 'done' }), 'done');
   assert.equal(backlogStatusCounts([item], new Map([[item.id, run]])).running, 1);
+  assert.equal(
+    backlogStatusCounts([item], new Map([[item.id, { ...run, status: 'paused' }]]))[
+      'needs-attention'
+    ],
+    1,
+  );
 });
 
 test('backlog status filter round-trips through the hash param', () => {
