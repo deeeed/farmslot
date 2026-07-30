@@ -7,10 +7,10 @@ import {
   shouldKeepWaitingForOverdueReview,
 } from './review-agent.js';
 
-test('active overdue reviewers remain non-terminal while inactive reviewers may time out', () => {
+test('live overdue reviewers remain non-terminal even while temporarily idle', () => {
   assert.equal(shouldKeepWaitingForOverdueReview(true, false), true);
   assert.equal(shouldKeepWaitingForOverdueReview(false, false), false);
-  assert.equal(shouldKeepWaitingForOverdueReview(true, true), false);
+  assert.equal(shouldKeepWaitingForOverdueReview(true, true), true);
 });
 
 test('parseTerminalSelfReviewSignal ignores progress mark signals (status running)', () => {

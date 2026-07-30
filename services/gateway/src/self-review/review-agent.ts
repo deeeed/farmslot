@@ -87,9 +87,9 @@ export function parseTerminalSelfReviewSignal(raw: string) {
 
 export function shouldKeepWaitingForOverdueReview(
   reviewerProcessAlive: boolean,
-  reviewerAtIdlePrompt: boolean,
+  _reviewerAtIdlePrompt: boolean,
 ): boolean {
-  return reviewerProcessAlive && !reviewerAtIdlePrompt;
+  return reviewerProcessAlive;
 }
 
 export const LEGACY_REVIEW_FEEDBACK_REL_PATH = 'artifacts/review-feedback.md';
