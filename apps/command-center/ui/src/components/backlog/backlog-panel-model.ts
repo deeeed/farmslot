@@ -30,7 +30,11 @@ export function displayedBacklogStatus(item: BacklogItem, linkedRun?: Run): Back
   if (!linkedRun || item.status === 'archived' || item.status === 'done') return item.status;
   if (linkedRun.status === 'done') return item.multiPr ? 'ready' : 'done';
   if (linkedRun.status === 'failed') return 'failed';
-  if (linkedRun.status === 'cancelled' || linkedRun.status === 'blocked') {
+  if (
+    linkedRun.status === 'cancelled' ||
+    linkedRun.status === 'blocked' ||
+    linkedRun.status === 'paused'
+  ) {
     return 'needs-attention';
   }
   return 'running';

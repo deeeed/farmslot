@@ -125,6 +125,32 @@ test('buildRecoveredReview ingests a completed ISSUES review as an extra review'
   assert.equal(review.reviewedHeadSha ?? null, null);
 });
 
+test('buildRecoveredReview preserves the dispatch source for automatic review plans', () => {
+  const run = makeRun({
+    engineState: {
+      publishGate: {
+        independentReviews: [],
+        reviewDepth: {
+          minimumIndependentReviews: 1,
+          requireCrossRunner: true,
+          extraLoopsRequested: 0,
+          requestedBy: 'dispatch',
+        },
+      },
+    },
+  });
+  const review = buildRecoveredReview({
+    run,
+    ctx: reviewerContext(),
+    signal: terminalSignal(),
+    feedback: { verdict: 'pass', issues: [] },
+    reviewedPackage: undefined,
+  });
+
+  assert.ok(review);
+  assert.equal(review.source, 'dispatch');
+});
+
 test('buildRecoveredReview stamps a PASS review against the matching package and numbers after priors', () => {
   const pkg = makeReadyGatePackage({ headSha: 'deadbeef', reviewSubjectHash: 'subject-xyz' });
   const run = makeRun({

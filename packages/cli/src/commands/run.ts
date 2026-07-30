@@ -24,6 +24,24 @@ import { collectRunCreatePlan } from '../wizard/run-create-wizard.js';
 
 import { dispatchBacklogItem, resolveItem } from './backlog.js';
 
+export function assertRunGateActionAvailable(
+  decision: NonNullable<Run['decisions']>[number],
+  actionId: string,
+): void {
+  if (decision.actions?.some((action) => action.id === actionId)) return;
+  const available = (decision.actions ?? []).map((action) => action.id);
+  throw Object.assign(
+    new Error(
+      `Action ${actionId} is not available for decision ${decision.id}.` +
+        (available.length ? ` Available actions: ${available.join(', ')}.` : ''),
+    ),
+    {
+      code: 'GATE_ACTION_UNAVAILABLE',
+      userAction: 'List current actions with `farmslot run gate <runId>`.',
+    },
+  );
+}
+
 /** The run.create pipeline shared by the flag path and the wizard entry points. */
 export async function executeRunCreate(
   ctx: CommandContext,
@@ -376,6 +394,7 @@ export function registerRunCommand(program: Command): void {
         if (!decision) {
           throw new Error(`Decision ${decisionId} was not found on run ${runId}.`);
         }
+        assertRunGateActionAvailable(decision, actionId);
         const result = await withProgress(
           `Resolving ${decisionId} with ${opts.action}`,
           () =>

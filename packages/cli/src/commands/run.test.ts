@@ -4,7 +4,27 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildRunCreateParams, parseTaskPath } from './run.js';
+import { assertRunGateActionAvailable, buildRunCreateParams, parseTaskPath } from './run.js';
+
+test('run gate rejects actions that the pending decision does not offer', () => {
+  const decision = {
+    id: 'decision-1',
+    type: 'engine_human_gate',
+    title: 'Publish gate',
+    description: 'Review package',
+    actions: [
+      { id: 'hold', label: 'Hold', style: 'secondary' },
+      { id: 'approve-publish', label: 'Publish', style: 'primary' },
+    ],
+    createdAt: '2026-07-31T00:00:00.000Z',
+  } as NonNullable<import('@farmslot/protocol').Run['decisions']>[number];
+
+  assert.doesNotThrow(() => assertRunGateActionAvailable(decision, 'approve-publish'));
+  assert.throws(
+    () => assertRunGateActionAvailable(decision, 'request-extra-review'),
+    /Available actions: hold, approve-publish/,
+  );
+});
 
 test('run create builds params from a GitHub/Jira ticket source', () => {
   assert.deepEqual(

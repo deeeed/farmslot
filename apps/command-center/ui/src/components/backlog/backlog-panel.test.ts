@@ -94,6 +94,7 @@ test('backlog status projection reconciles linked direct runs', () => {
 
   assert.equal(displayedBacklogStatus(item, run), 'running');
   assert.equal(displayedBacklogStatus(item, { ...run, status: 'blocked' }), 'needs-attention');
+  assert.equal(displayedBacklogStatus(item, { ...run, status: 'paused' }), 'needs-attention');
   assert.equal(displayedBacklogStatus(item, { ...run, status: 'done' }), 'done');
   assert.equal(backlogStatusCounts([item], new Map([[item.id, run]])).running, 1);
 });

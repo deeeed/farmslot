@@ -106,7 +106,10 @@ export function buildRecoveredReview(params: {
     reviewSnapshot,
   };
   return buildPublishGateReviewStatus({
-    source: 'human-gate',
+    source:
+      run.engineState?.publishGate?.reviewDepth?.requestedBy === 'dispatch'
+        ? 'dispatch'
+        : 'human-gate',
     priorReviewCount: priorReviews.length,
     reviewResult,
     requestedRunner: ctx.runner ?? null,
