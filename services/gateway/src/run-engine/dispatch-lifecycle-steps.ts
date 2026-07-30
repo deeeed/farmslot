@@ -1,7 +1,7 @@
 import { Events, type Run } from '@farmslot/protocol';
 
-import { loadSlotVars } from '../core/config.js';
-import { isLocal } from '../core/exec.js';
+import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
@@ -33,6 +33,68 @@ import { createSubStepCollector } from './sub-step-collector.js';
 interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
+}
+
+interface PrepareProvenance {
+  recipeToolingProvenance?: Record<string, unknown>;
+  referenceRepoProvenance?: Record<string, unknown>;
+}
+
+export function safeReferenceRepoProvenance(
+  provenance: Record<string, unknown>,
+): Record<string, unknown> {
+  const repositories = Array.isArray(provenance.repositories)
+    ? provenance.repositories
+        .filter(
+          (repository): repository is Record<string, unknown> =>
+            Boolean(repository) && typeof repository === 'object' && !Array.isArray(repository),
+        )
+        .map((repository) => {
+          const safe: Record<string, unknown> = {};
+          for (const key of [
+            'name',
+            'localName',
+            'path',
+            'requestedBranch',
+            'actualBranch',
+            'head',
+            'dirty',
+            'syncStatus',
+          ]) {
+            if (repository[key] !== undefined) safe[key] = repository[key];
+          }
+          return safe;
+        })
+    : [];
+  return {
+    ...(provenance.version !== undefined ? { version: provenance.version } : {}),
+    ...(provenance.recordedAt !== undefined ? { recordedAt: provenance.recordedAt } : {}),
+    repositories,
+  };
+}
+
+async function readPrepareProvenance(slotId: string, project: string): Promise<PrepareProvenance> {
+  const vars = await loadSlotVars(slotId);
+  const runtimeDir = await resolveProjectRuntimeDir(project);
+  const readJson = async (basename: string): Promise<Record<string, unknown> | undefined> => {
+    const result = await execOnSlot(
+      vars,
+      `cat ${shellQuote(`${vars.remoteRepo}/${runtimeDir}/${basename}`)} 2>/dev/null`,
+    );
+    if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
+    const parsed: unknown = JSON.parse(result.stdout);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  };
+  const recipeToolingProvenance = await readJson('recipe-tooling-provenance.json');
+  const referenceRepoProvenance = await readJson('reference-repos.json');
+  return {
+    recipeToolingProvenance,
+    referenceRepoProvenance: referenceRepoProvenance
+      ? safeReferenceRepoProvenance(referenceRepoProvenance)
+      : undefined,
+  };
 }
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -234,16 +296,18 @@ export async function executePrepareStep(
   let machine: string | undefined;
   let platform: string | undefined;
   let local: boolean | undefined;
+  let provenance: PrepareProvenance = {};
   try {
     const vars = await loadSlotVars(current.slotId);
     machine = vars.machine;
     platform = vars.platform;
     local = isLocal(vars.host, vars.machine);
+    provenance = await readPrepareProvenance(current.slotId, current.project);
   } catch (err) {
-    // Slot metadata is enrichment only; preserve the successful PREPARE
-    // result while surfacing why machine/platform are missing.
+    // Slot metadata and prepare provenance are enrichment only; preserve the
+    // successful PREPARE result while surfacing why either is missing.
     console.warn(
-      `[run-engine] prepare metadata lookup failed for ${runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+      `[run-engine] prepare metadata/provenance lookup failed for ${runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
     );
   }
 
@@ -258,6 +322,12 @@ export async function executePrepareStep(
       machine,
       platform,
       isLocal: local,
+      ...(provenance.recipeToolingProvenance
+        ? { recipeToolingProvenance: provenance.recipeToolingProvenance }
+        : {}),
+      ...(provenance.referenceRepoProvenance
+        ? { referenceRepoProvenance: provenance.referenceRepoProvenance }
+        : {}),
       cliCommand,
       ...(selectedPrepareProfile ? { profile: selectedPrepareProfile } : {}),
       ...(preparedRun?.startRef ? { startRef: preparedRun.startRef } : {}),

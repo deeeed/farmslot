@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseTerminalSelfReviewSignal, resumableSessionProbeCommand } from './review-agent.js';
+import {
+  parseTerminalSelfReviewSignal,
+  resumableSessionProbeCommand,
+  shouldKeepWaitingForOverdueReview,
+} from './review-agent.js';
+
+test('active overdue reviewers remain non-terminal while inactive reviewers may time out', () => {
+  assert.equal(shouldKeepWaitingForOverdueReview(true, false), true);
+  assert.equal(shouldKeepWaitingForOverdueReview(false, false), false);
+  assert.equal(shouldKeepWaitingForOverdueReview(true, true), false);
+});
 
 test('parseTerminalSelfReviewSignal ignores progress mark signals (status running)', () => {
   const raw = JSON.stringify({

@@ -198,6 +198,15 @@
               "type": "string",
               "description": "Branch to track.",
               "default": "main"
+            },
+            "required_paths": {
+              "type": "array",
+              "description": "Paths that must exist in the selected reference snapshot before dispatch can continue.",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
             }
           },
           "additionalProperties": false

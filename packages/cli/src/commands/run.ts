@@ -4,15 +4,16 @@ import { fileURLToPath } from 'node:url';
 
 import type { Command } from 'commander';
 
-import type {
-  EventFrame,
-  HumanGrade,
-  Run,
-  RunForceCompleteResult,
-  RunGetGradeResult,
-  RunGradeResult,
-  RunPauseResult,
-  RunResumeResult,
+import {
+  buildRunResolveDecisionParams,
+  type EventFrame,
+  type HumanGrade,
+  type Run,
+  type RunForceCompleteResult,
+  type RunGetGradeResult,
+  type RunGradeResult,
+  type RunPauseResult,
+  type RunResumeResult,
 } from '@farmslot/protocol';
 
 import { bold, cyan, green } from '../colors.js';
@@ -345,17 +346,7 @@ export function registerRunCommand(program: Command): void {
       try {
         const { run: current } = await withProgress(
           `Loading gates for ${runId.slice(0, 8)}`,
-          () =>
-            client.call<{
-              run: {
-                decisions?: Array<{
-                  id: string;
-                  title?: string;
-                  resolvedAt?: string;
-                  actions?: Array<{ id: string; label: string }>;
-                }>;
-              };
-            }>('run.get', { runId }),
+          () => client.call<{ run: Run }>('run.get', { runId }),
           !emit.machine,
         );
         const pending = (current.decisions ?? []).filter((d) => !d.resolvedAt);
@@ -372,6 +363,7 @@ export function registerRunCommand(program: Command): void {
           }
           return;
         }
+        const actionId = opts.action;
         const decisionId = opts.decision ?? (pending.length === 1 ? pending[0].id : undefined);
         if (!decisionId) {
           throw Object.assign(new Error(`Run has ${pending.length} pending decisions.`), {
@@ -380,14 +372,21 @@ export function registerRunCommand(program: Command): void {
               'List them with `farmslot run gate <runId>` and pass --decision <id> with --action.',
           });
         }
+        const decision = current.decisions?.find((candidate) => candidate.id === decisionId);
+        if (!decision) {
+          throw new Error(`Decision ${decisionId} was not found on run ${runId}.`);
+        }
         const result = await withProgress(
           `Resolving ${decisionId} with ${opts.action}`,
           () =>
-            client.call('run.resolveDecision', {
-              runId,
-              decisionId,
-              actionId: opts.action,
-            }),
+            client.call(
+              'run.resolveDecision',
+              buildRunResolveDecisionParams({
+                runId,
+                decision,
+                actionId,
+              }),
+            ),
           !emit.machine,
         );
         if (emit.machine) emit.ok(result);

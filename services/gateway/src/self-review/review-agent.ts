@@ -34,12 +34,13 @@ import { probeRunnerHandoffAck } from '../runners/prompt-delivery-evidence.js';
 import {
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
+  runnerPaneShowsCurrentInteractiveProgress,
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
-import { getRun, updateRun } from '../runs/store.js';
+import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
   unavailableRunnerSessionUsage,
@@ -47,7 +48,7 @@ import {
 import {
   restoreWorkerChecklistTargetFromSlot,
   slotTaskRelPath,
-  syncChecklistMarkerOnSlot,
+  syncChecklistTargetForRole,
   targetForChecklistBasename,
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
@@ -84,9 +85,16 @@ export function parseTerminalSelfReviewSignal(raw: string) {
   return terminalWorkerSignalFromRaw(raw);
 }
 
+export function shouldKeepWaitingForOverdueReview(
+  reviewerProcessAlive: boolean,
+  reviewerAtIdlePrompt: boolean,
+): boolean {
+  return reviewerProcessAlive && !reviewerAtIdlePrompt;
+}
+
 export const LEGACY_REVIEW_FEEDBACK_REL_PATH = 'artifacts/review-feedback.md';
-const LEGACY_REVIEW_FEEDBACK_PATH_PATTERN =
-  /(^|[^\w./-])((?:artifacts\/)?review-feedback\.md)(?![\w./-])/g;
+const LEGACY_REVIEW_FEEDBACK_ARTIFACT_PATTERN = /artifacts\/review-feedback\.md(?![\w./-])/g;
+const LEGACY_REVIEW_FEEDBACK_BASENAME_PATTERN = /(^|[^\w./-])review-feedback\.md(?![\w./-])/g;
 
 export function selfReviewChecklistMarkPrompt(
   taskDir: string,
@@ -123,10 +131,12 @@ export function reviewerFeedbackRelPath(contextId: string): string {
 }
 
 export function scopeReviewFeedbackPath(template: string, feedbackRelPath: string): string {
-  const scoped = template.replace(
-    LEGACY_REVIEW_FEEDBACK_PATH_PATTERN,
-    (_match, prefix: string) => `${prefix}${feedbackRelPath}`,
-  );
+  const scoped = template
+    .replace(LEGACY_REVIEW_FEEDBACK_ARTIFACT_PATTERN, feedbackRelPath)
+    .replace(
+      LEGACY_REVIEW_FEEDBACK_BASENAME_PATTERN,
+      (_match, prefix: string) => `${prefix}${feedbackRelPath}`,
+    );
   if (scoped !== template) return scoped;
   return `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
 }
@@ -276,7 +286,9 @@ export async function runReviewAgent(
       feedbackRelPath,
     );
     await writeTextFileOnSlot(vars, taskMdPath, expandedTemplate);
-    await syncChecklistMarkerOnSlot(vars, taskDir);
+    await syncChecklistTargetForRole(vars, taskDir, 'self-review', {
+      reportPath: feedbackRelPath,
+    });
 
     // Mark the reviewer-specific checklist as the active task file for progress tracking.
     updateRun(_runId, { activeTaskFile: taskMdPath });
@@ -617,7 +629,12 @@ export async function runReviewAgent(
     }
     if (activeTaskSet) {
       updateRun(_runId, { activeTaskFile: undefined });
-      await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
+      const parentRun = getRun(_runId);
+      await restoreWorkerChecklistTargetFromSlot(
+        vars,
+        taskDir,
+        parentRun ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined } : undefined,
+      );
     }
     if (completedSuccessfully) {
       try {
@@ -643,12 +660,14 @@ async function waitForReviewCompletion(
 ): Promise<boolean> {
   const start = Date.now();
   const pollInterval = 10_000; // 10s
+  let overdueWarned = false;
   // Re-enforce the minimum window size before polling: completion matching
   // reads the last pane lines, which a reflowed 5-row window truncates.
   await ensureTmuxWindowMinimumSize(vars, `${session}:${reviewWindow}`);
 
-  while (Date.now() - start < timeoutMs) {
+  while (true) {
     await new Promise((r) => setTimeout(r, pollInterval));
+    let reviewerActive = false;
 
     // Check if the review window still exists
     const hasWindow =
@@ -680,6 +699,12 @@ async function waitForReviewCompletion(
       console.warn(
         `[self-review] review window gone before feedback file existed — waiting for timeout`,
       );
+      if (Date.now() - start >= timeoutMs) {
+        console.warn(
+          `[self-review] review window disappeared without feedback after ${timeoutMs}ms`,
+        );
+        return false;
+      }
       continue;
     }
 
@@ -695,6 +720,7 @@ async function waitForReviewCompletion(
 
     if (panePid) {
       const agentAlive = await isRunnerAliveUnderPane(vars, panePid, runner);
+      reviewerActive = agentAlive;
 
       if (!agentAlive) {
         // Runner exited but window still exists — only declare done if feedback was written.
@@ -770,12 +796,10 @@ async function waitForReviewCompletion(
 
     // Runner at idle prompt, not mid-tool-call.
     const tailLines = pane.split('\n');
-    if (
+    const reviewerAtIdlePrompt =
       tailLines.some((line) => runnerLineLooksWaiting(line, runner)) &&
-      !pane.includes('Running') &&
-      !pane.includes('Searching') &&
-      !pane.includes('Reading')
-    ) {
+      !runnerPaneShowsCurrentInteractiveProgress(pane, runner);
+    if (reviewerAtIdlePrompt) {
       // Double-check: the reviewer-specific feedback file exists = work is done.
       const hasFeedback = (
         await execOnSlot(
@@ -813,8 +837,22 @@ async function waitForReviewCompletion(
         `[self-review] shell prompt detected before feedback file existed — treating as incomplete and continuing wait`,
       );
     }
-  }
 
-  console.warn(`[self-review] review agent timed out after ${timeoutMs}ms`);
-  return false;
+    if (Date.now() - start >= timeoutMs) {
+      if (!shouldKeepWaitingForOverdueReview(reviewerActive, reviewerAtIdlePrompt)) {
+        console.warn(
+          `[self-review] reviewer became inactive without feedback after ${timeoutMs}ms`,
+        );
+        return false;
+      }
+      if (!overdueWarned) {
+        overdueWarned = true;
+        const detail =
+          `Review exceeded ${timeoutMs / 60_000}min but the reviewer process is still active; ` +
+          'continuing to wait. The operator may inspect or cancel the review without failing the run.';
+        console.warn(`[self-review] ${detail}`);
+        updateRunStep(runId, 'self-review', { detail });
+      }
+    }
+  }
 }

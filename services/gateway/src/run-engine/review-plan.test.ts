@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { humanGateReviewDepth } from './review-plan.js';
+import { humanGateReviewDepth, recoveryReviewPlanForActiveFix } from './review-plan.js';
 
 test('humanGateReviewDepth makes explicit gate review requests temporary but required', () => {
   const basePolicy = {
@@ -33,5 +33,76 @@ test('humanGateReviewDepth makes explicit gate review requests temporary but req
       extraLoopsRequested: 0,
       requestedBy: 'human-gate',
     },
+  );
+});
+
+test('recoveryReviewPlanForActiveFix restores the latest reviewer work order', () => {
+  assert.deepEqual(
+    recoveryReviewPlanForActiveFix({
+      agentContexts: [
+        {
+          id: 'rev-codex',
+          role: 'self-review',
+          label: 'Reviewer',
+          status: 'complete',
+          slotId: 'slot-1',
+          runId: 'run-1',
+          runner: 'codex',
+          model: 'gpt-5.6-sol',
+          attemptStartedAt: '2026-07-30T03:24:00.000Z',
+        },
+        {
+          id: 'self-review-fix',
+          role: 'self-review-fix',
+          label: 'Review fix',
+          status: 'working',
+          slotId: 'slot-1',
+          runId: 'run-1',
+          startedAt: '2026-07-30T03:30:00.000Z',
+        },
+      ],
+      engineState: {
+        publishGate: {
+          independentReviews: [
+            {
+              id: 'independent-review-1',
+              source: 'human-gate',
+              runner: 'codex',
+              crossRunner: true,
+              loopNumber: 1,
+              verdict: 'issues',
+              unresolvedCount: 1,
+              validationDepth: 'static-code',
+            },
+          ],
+        },
+      },
+    }),
+    [
+      {
+        order: 1,
+        runner: 'codex',
+        model: 'gpt-5.6-sol',
+        validationDepth: 'static-code',
+      },
+    ],
+  );
+});
+
+test('recoveryReviewPlanForActiveFix ignores completed fix contexts', () => {
+  assert.deepEqual(
+    recoveryReviewPlanForActiveFix({
+      agentContexts: [
+        {
+          id: 'self-review-fix',
+          role: 'self-review-fix',
+          label: 'Review fix',
+          status: 'complete',
+          slotId: 'slot-1',
+          runId: 'run-1',
+        },
+      ],
+    }),
+    [],
   );
 });

@@ -2,6 +2,7 @@
 // Ported from farm-monitor skill logic to be gateway-resident and persistent.
 
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 
 import {
   type AgentContext,
@@ -18,6 +19,7 @@ import {
   type RunDecision,
   type RunMonitorState,
   type RunStep,
+  WORKER_TERMINAL_CONTRACT_INPUT,
   type WorkerSignal,
   type WorkerSignalProbeResult,
   type WorkerTerminalContractDocument,
@@ -25,14 +27,16 @@ import {
 
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import {
+  farmslotRoot,
   getOrchestratorTaskRoot,
   loadProjectVars,
   loadSlotVars,
   type RawProjectJson,
   resolveProjectTaskDirName,
+  resolveRemoteRepo,
   resolveTaskRelDir,
 } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
   runnerLineLooksWaiting,
@@ -43,7 +47,7 @@ import {
   stripRunnerNoise,
 } from '../runners/registry.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
-import { getRun, updateRun } from '../runs/store.js';
+import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { onWorkerSignal, resolveContextFilePath } from '../tasks/watcher.js';
 import {
   isTerminalWorkerSignal,
@@ -321,6 +325,76 @@ async function resolveSignalJsonPathForRun(
 export const INTERACTIVE_HANDOFF_DESCRIPTION =
   'The agent did not write a terminal signal. Finish the PR work in the slot (or verify the signal file), then resume the run.';
 
+export function artifactTerminalCommandForSignal(
+  signal: Pick<WorkerSignal, 'status' | 'disposition'>,
+): 'complete' | 'no-change' | null {
+  if (signal.status !== 'complete' && signal.status !== 'done') return null;
+  if (signal.disposition === 'already_fixed' || signal.disposition === 'not_reproducible') {
+    return 'no-change';
+  }
+  return 'complete';
+}
+
+export function artifactContractWorkerInstruction(
+  message: string,
+  terminalCommand: 'complete' | 'no-change' = 'complete',
+): string {
+  const detail = message.replace(/\s+/g, ' ').trim().slice(0, 1800);
+  return (
+    '[Orchestrator] Your completion signal was rejected by the artifact contract. ' +
+    `Fix the listed artifact issue(s), then run ./mark ${terminalCommand} again. ${detail}`
+  );
+}
+
+export function artifactContractWaiverArgs(
+  signal: Pick<WorkerSignal, 'artifactWaivers'>,
+): string[] {
+  return signal.artifactWaivers?.learnings === true ? ['--skip-learnings'] : [];
+}
+
+async function validateTerminalSignalArtifacts(
+  slotId: string,
+  signalJsonPath: string,
+  signal: WorkerSignal,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const terminalCommand = artifactTerminalCommandForSignal(signal);
+  if (!terminalCommand) return { ok: true };
+
+  const vars = await loadSlotVars(slotId);
+  const taskDir = path.posix.dirname(signalJsonPath);
+  const contractPath = `${taskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`;
+  const agentRoot = isLocal(vars.host, vars.machine)
+    ? farmslotRoot
+    : resolveRemoteRepo('~/farmslot-node', vars.osType, vars.sshUser);
+  const checker = `${agentRoot}/packages/agent-runtime/scripts/check-task-artifact-contract.mjs`;
+  const checkerArgs = [
+    'node',
+    shellQuote(checker),
+    shellQuote(taskDir),
+    '--contract',
+    shellQuote(contractPath),
+    '--terminal',
+    terminalCommand,
+    ...artifactContractWaiverArgs(signal),
+  ];
+  const result = await execOnSlot(vars, checkerArgs.join(' '), {
+    timeout: 60_000,
+    maxBuffer: 256 * 1024,
+  });
+  if (result.exitCode === 0) return { ok: true };
+
+  const detail = `${result.stderr}\n${result.stdout}`
+    .trim()
+    .replace(/\n{3,}/g, '\n\n')
+    .slice(0, 4000);
+  return {
+    ok: false,
+    message:
+      `Terminal SIGNAL.json was rejected by the worker artifact contract. ` +
+      `Fix the listed artifacts, then run ./mark ${terminalCommand} again.\n\n${detail || `checker exited ${result.exitCode}`}`,
+  };
+}
+
 function displaySignalPath(
   monitorContext:
     | (MonitorContextIdentity & Pick<AgentContext, 'taskFile' | 'signalFile'>)
@@ -443,6 +517,22 @@ export async function probeWorkerSignalForRun(
         ok: false,
         code: 'stale',
         message: 'SIGNAL.json is older than this run — write a fresh terminal signal.',
+        signalFile: displayPath,
+        status: boundSig.status,
+        signal: boundSig,
+      };
+    }
+
+    const artifactValidation = await validateTerminalSignalArtifacts(
+      slotId,
+      signalJsonPath,
+      boundSig,
+    );
+    if (!artifactValidation.ok) {
+      return {
+        ok: false,
+        code: 'artifact_contract',
+        message: artifactValidation.message,
         signalFile: displayPath,
         status: boundSig.status,
         signal: boundSig,
@@ -588,11 +678,15 @@ export async function monitorRun(
   }
 
   // Subscribe to push-based worker signals (SIGNAL.json via task-watcher)
-  let receivedSignal: WorkerSignal | undefined;
+  let pushedTerminalSignal = false;
   let signalResolve: (() => void) | undefined;
-  const signalPromise = new Promise<void>((resolve) => {
-    signalResolve = resolve;
-  });
+  let signalPromise: Promise<void> = Promise.resolve();
+  const armSignalPromise = () => {
+    signalPromise = new Promise<void>((resolve) => {
+      signalResolve = resolve;
+    });
+  };
+  armSignalPromise();
   const signalHandler = (sigSlotId: string, sigRunId: string | null, ws: WorkerSignal) => {
     if (sigSlotId !== slotId) return;
     if (sigRunId && sigRunId !== runId) return;
@@ -614,9 +708,9 @@ export async function monitorRun(
         );
         return;
       }
-      receivedSignal = bound;
+      pushedTerminalSignal = true;
       console.log(
-        `[run-monitor] run ${runId.slice(0, 8)} — push signal: status=${bound.status} outcome=${bound.outcome ?? '-'}`,
+        `[run-monitor] run ${runId.slice(0, 8)} — push signal candidate: status=${bound.status} outcome=${bound.outcome ?? '-'}`,
       );
       signalResolve?.();
     }
@@ -628,6 +722,7 @@ export async function monitorRun(
   );
 
   let warnedNoSignalPath = false;
+  let lastArtifactContractMessage: string | null = null;
   async function resolveSignalJsonPath(): Promise<string | undefined> {
     return resolveSignalJsonPathForRun(initialRun, slotId, currentMonitorContext());
   }
@@ -645,7 +740,61 @@ export async function monitorRun(
         }
         return undefined;
       }
-      return readFreshTerminalSignalForRun(runId, slotId, currentMonitorContext());
+      const probe = await probeWorkerSignalForRun(runId, slotId, currentMonitorContext());
+      if (!probe.ok && probe.code === 'artifact_contract') {
+        console.warn(
+          `[run-monitor] run ${runId.slice(0, 8)} — ${probe.message.replace(/\n/g, ' | ')}`,
+        );
+        updateRunStep(runId, 'monitor', {
+          detail: `Completion artifact contract rejected: ${probe.message.slice(0, 1000)}`,
+        });
+        if (lastArtifactContractMessage !== probe.message) {
+          lastArtifactContractMessage = probe.message;
+          try {
+            const context = currentMonitorContext();
+            const vars = await loadSlotVars(slotId);
+            const target = (
+              await resolveAgentTarget(slotId, {
+                runId,
+                role: context?.role,
+                contextId: context?.id,
+              })
+            ).target;
+            await sendRunnerInstructionSafely(
+              vars,
+              target,
+              initialRun.metrics.runner ?? 'claude',
+              artifactContractWorkerInstruction(
+                probe.message,
+                probe.signal
+                  ? (artifactTerminalCommandForSignal(probe.signal) ?? 'complete')
+                  : 'complete',
+              ),
+              'artifact-contract',
+            );
+          } catch (err) {
+            // The durable blocked decision below is the recovery path when the
+            // best-effort worker notification cannot be delivered.
+            console.warn(
+              `[run-monitor] run ${runId.slice(0, 8)} — artifact-contract worker notification failed: ${(err as Error).message}`,
+            );
+          }
+        }
+        const actionId = await createBlockedDecision(
+          runId,
+          'interactive_handoff',
+          `Completion is blocked by the worker artifact contract. The worker was notified and the run will resume automatically after a valid fresh signal.\n\n${probe.message}`,
+        );
+        if (actionId === 'abort') return undefined;
+        const retry = await probeWorkerSignalForRun(runId, slotId, currentMonitorContext());
+        if (retry.ok) {
+          lastArtifactContractMessage = null;
+          return retry.signal;
+        }
+        return undefined;
+      }
+      if (probe.ok) lastArtifactContractMessage = null;
+      return probe.ok ? probe.signal : undefined;
     } catch (err) {
       console.warn(
         `[run-monitor] failed to read SIGNAL.json for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
@@ -718,22 +867,30 @@ export async function monitorRun(
       });
       if (signal.aborted) break;
 
-      // Check if push signal arrived — exit immediately
-      if (receivedSignal) {
-        exitReason = 'worker-done';
-        return {
-          pollCount,
-          exitReason,
-          violations: allViolations,
-          snapshots,
-          workerSignal: receivedSignal,
-        };
+      // Push events are wake-ups, never completion authority. Re-read the
+      // durable signal and run the artifact contract before accepting it.
+      if (pushedTerminalSignal) {
+        pushedTerminalSignal = false;
+        const pushedSignal = await checkSignalFile();
+        if (pushedSignal) {
+          exitReason = 'worker-done';
+          return {
+            pollCount,
+            exitReason,
+            violations: allViolations,
+            snapshots,
+            workerSignal: pushedSignal,
+          };
+        }
+        // The one-shot promise was consumed by this rejected candidate. Re-arm
+        // it so a later ./mark completion can wake the monitor.
+        armSignalPromise();
       }
 
       pollCount++;
 
       // Check SIGNAL.json directly (fallback for when task-watcher push fails)
-      if (!receivedSignal) {
+      {
         const directSignal = await checkSignalFile();
         if (directSignal) {
           // Push handler is wired (signalHandler subscribed at start). The first poll
@@ -1279,7 +1436,19 @@ function armInteractiveHandoffAutoRecovery(
     if (sigRunId && sigRunId !== runId) return;
     const normalized = normalizeWorkerSignal(ws);
     if (!normalized.ok) return;
-    consider(normalized.signal);
+    // A watcher push is only a wake-up. Re-read the durable signal through
+    // the same freshness + artifact-contract probe as the normal monitor;
+    // otherwise an invalid terminal push could auto-resolve the handoff that
+    // was created specifically because its artifacts were rejected.
+    void readFreshTerminalSignalForRun(runId, slotId)
+      .then((signal) => {
+        if (signal) consider(signal);
+      })
+      .catch((err) => {
+        console.warn(
+          `[run-monitor] run ${runId.slice(0, 8)} — handoff push verification failed: ${(err as Error).message}`,
+        );
+      });
   };
   unsub = onWorkerSignal(handlePush);
 

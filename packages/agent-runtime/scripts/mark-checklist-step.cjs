@@ -374,6 +374,7 @@ function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPa
     ...(terminal.command === 'complete' && opts['no-self-review']
       ? { needsSelfReview: false }
       : {}),
+    ...(opts['skip-learnings'] ? { artifactWaivers: { learnings: true } } : {}),
   };
 
   const contract = terminal ? loadTerminalContract(_taskDir, taskPath) : null;

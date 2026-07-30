@@ -46,7 +46,7 @@ STATUS: pending
 - [ ] **5. Audit evidence**:
   ```bash
   cd {{REPO}}
-  node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-quality-if-recipe --require-recipe-coverage-if-recipe
+  node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe
   ```
   If screenshots are present, inspect whether the claimed UI state is actually visible.
 - [ ] **6. Judge the change** - check correctness, minimality, test coverage, recipe quality, evidence quality, and whether any introduced issue should block publishing.

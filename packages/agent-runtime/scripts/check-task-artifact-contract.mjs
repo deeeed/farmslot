@@ -166,6 +166,12 @@ function isStringArray(value) {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
+function isNonEmptyStringArray(value) {
+  return (
+    isStringArray(value) && value.length > 0 && value.every((entry) => entry.trim().length > 0)
+  );
+}
+
 function isRecipeQualityArtifactFallback(value) {
   if (!isRecord(value)) return false;
   if (value.version !== 1) return false;
@@ -289,8 +295,9 @@ function addRef(refs, value) {
 }
 
 function validateRecipeQualityArtifact() {
-  const text = readText('artifacts/recipe-quality.json');
-  if (!text) return;
+  const relPath = 'artifacts/recipe-quality.json';
+  if (!fileExists(relPath)) return;
+  const text = readText(relPath) ?? '';
   let artifact;
   try {
     artifact = JSON.parse(text);
@@ -379,8 +386,8 @@ function resolvedRecipeArtifactPath(digest) {
 }
 
 function readJsonArtifact(relPath, label) {
-  const text = readText(relPath);
-  if (!text) return undefined;
+  if (!fileExists(relPath)) return undefined;
+  const text = readText(relPath) ?? '';
   try {
     return JSON.parse(text);
   } catch (error) {
@@ -459,8 +466,9 @@ function listArtifactPaths(root) {
 }
 
 function parseManifest() {
-  const text = readText('artifacts/evidence-manifest.json');
-  if (!text) return null;
+  const relPath = 'artifacts/evidence-manifest.json';
+  if (!fileExists(relPath)) return null;
+  const text = readText(relPath) ?? '';
   let manifest;
   try {
     manifest = JSON.parse(text);
@@ -570,32 +578,97 @@ function parseManifest() {
   return { manifest, refs };
 }
 
+let terminalContract;
+if (contractPath && terminalCommand && existsSync(contractPath)) {
+  try {
+    terminalContract = JSON.parse(readFileSync(contractPath, 'utf8'));
+  } catch (error) {
+    issues.push(`${contractPath}: invalid worker terminal contract JSON (${error.message})`);
+  }
+}
+const isSelfReviewTerminal = terminalContract?.flowType === 'self-review';
 const hasRecipe = fileExists('artifacts/recipe.json');
-validateRecipeDocumentArtifact();
-if (
-  hasRecipe &&
-  flags.has('--require-recipe-quality-if-recipe') &&
-  !fileExists('artifacts/recipe-quality.json')
-) {
-  issues.push('recipe.json exists but artifacts/recipe-quality.json is missing');
-}
-if (
-  hasRecipe &&
-  flags.has('--require-recipe-coverage-if-recipe') &&
-  !fileExists('artifacts/recipe-coverage.md')
-) {
-  issues.push('recipe.json exists but artifacts/recipe-coverage.md is missing');
-}
-validateRecipeQualityArtifact();
 
-const parsed = parseManifest();
-const coverage = readText('artifacts/recipe-coverage.md');
-if (coverage && /\|\s*(visual|mixed)\s*\|/i.test(coverage)) {
-  const refCount = parsed?.refs?.size ?? 0;
-  if (refCount === 0)
-    issues.push(
-      'recipe-coverage.md declares visual/mixed proof but evidence-manifest has no media references',
-    );
+// A reviewer must be able to report ISSUES when worker-owned proof is invalid.
+// Its terminal gate validates only the reviewer-owned feedback artifact below;
+// contribution and fix flows still validate the complete proof package.
+if (!isSelfReviewTerminal) {
+  const hasRecipeDecision = fileExists('artifacts/recipe-decision.json');
+  const recipeDecisionText = readText('artifacts/recipe-decision.json');
+  if (hasRecipeDecision) {
+    try {
+      const decision = JSON.parse(recipeDecisionText);
+      if (!isRecord(decision)) {
+        issues.push('artifacts/recipe-decision.json: expected object');
+      } else {
+        if (decision.version !== 1) {
+          issues.push('artifacts/recipe-decision.json.version: expected 1');
+        }
+        if (typeof decision.required !== 'boolean') {
+          issues.push('artifacts/recipe-decision.json.required: expected boolean');
+        }
+        if (typeof decision.reason !== 'string' || !decision.reason.trim()) {
+          issues.push('artifacts/recipe-decision.json.reason: expected non-empty string');
+        }
+        if (!isNonEmptyStringArray(decision.actionsChecked)) {
+          issues.push(
+            'artifacts/recipe-decision.json.actionsChecked: expected non-empty string array',
+          );
+        }
+        if (!isNonEmptyStringArray(decision.claims)) {
+          issues.push('artifacts/recipe-decision.json.claims: expected non-empty string array');
+        }
+        if (decision.recipePath !== undefined && decision.recipePath !== 'artifacts/recipe.json') {
+          issues.push(
+            'artifacts/recipe-decision.json.recipePath: expected artifacts/recipe.json when set',
+          );
+        }
+        if (decision.required === true && !hasRecipe) {
+          issues.push(
+            'artifacts/recipe-decision.json requires a recipe but artifacts/recipe.json is missing',
+          );
+        }
+        if (decision.required === false && hasRecipe) {
+          issues.push(
+            'artifacts/recipe-decision.json says recipe is not required but artifacts/recipe.json exists',
+          );
+        }
+        if (decision.required === true && decision.recipePath !== 'artifacts/recipe.json') {
+          issues.push(
+            'artifacts/recipe-decision.json.recipePath: required recipes must declare artifacts/recipe.json',
+          );
+        }
+      }
+    } catch (error) {
+      issues.push(`artifacts/recipe-decision.json: invalid JSON (${error.message})`);
+    }
+  }
+  validateRecipeDocumentArtifact();
+  if (
+    hasRecipe &&
+    flags.has('--require-recipe-quality-if-recipe') &&
+    !fileExists('artifacts/recipe-quality.json')
+  ) {
+    issues.push('recipe.json exists but artifacts/recipe-quality.json is missing');
+  }
+  if (
+    hasRecipe &&
+    flags.has('--require-recipe-coverage-if-recipe') &&
+    !fileExists('artifacts/recipe-coverage.md')
+  ) {
+    issues.push('recipe.json exists but artifacts/recipe-coverage.md is missing');
+  }
+  validateRecipeQualityArtifact();
+
+  const parsed = parseManifest();
+  const coverage = readText('artifacts/recipe-coverage.md');
+  if (coverage && /\|\s*(visual|mixed)\s*\|/i.test(coverage)) {
+    const refCount = parsed?.refs?.size ?? 0;
+    if (refCount === 0)
+      issues.push(
+        'recipe-coverage.md declares visual/mixed proof but evidence-manifest has no media references',
+      );
+  }
 }
 
 if (flags.has('--require-learnings')) {
@@ -605,8 +678,12 @@ if (flags.has('--require-learnings')) {
   }
 }
 
-if (contractPath && existsSync(contractPath) && terminalCommand) {
-  const contract = JSON.parse(readFileSync(contractPath, 'utf8'));
+if (contractPath && terminalCommand && !existsSync(contractPath)) {
+  issues.push(`${contractPath}: explicit worker terminal contract missing`);
+} else if (terminalContract && terminalCommand) {
+  const contract = isSelfReviewTerminal
+    ? { ...terminalContract, whenPresent: [] }
+    : terminalContract;
   const expanded = expandedArtifactsForCommand(contract, terminalCommand, fileExists);
   for (const artifactPath of expanded.artifacts) {
     if (flags.has('--skip-learnings') && artifactPath === 'artifacts/learnings.md') continue;

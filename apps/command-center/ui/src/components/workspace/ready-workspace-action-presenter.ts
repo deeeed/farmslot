@@ -7,7 +7,7 @@ import type {
   RecipeRunArtifactGroup,
   ReviewValidationDepth,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import {
@@ -31,7 +31,6 @@ import {
   readyDecisionSuccessMessage,
   readyRefreshPublishPackageFeedback,
   type ReadyRefreshPublishPackageResult,
-  readyResolveSelectionData,
   refreshedReadyEvidenceSelection,
 } from './ready-workspace-action-model.js';
 import {
@@ -672,17 +671,17 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._actionMessage = readyDecisionSubmittingMessage(approving);
     this._actionTone = '';
     try {
-      await gateway.request(Methods.RUN_RESOLVE_DECISION, {
-        runId: this.runId,
-        decisionId: this.decision.id,
-        actionId,
-        selectionData: readyResolveSelectionData({
-          payload,
+      await gateway.request(
+        Methods.RUN_RESOLVE_DECISION,
+        buildRunResolveDecisionParams({
+          runId: this.runId,
+          decision: this.decision,
+          actionId,
           publicationTarget: this._publicationTarget,
           selectedEvidenceKeys: payload ? this._selectedEvidenceKeysForSubmit(payload) : [],
-          extraSelectionData,
+          selectionData: extraSelectionData,
         }),
-      });
+      );
       this._actionMessage = readyDecisionSuccessMessage(approving);
       this._actionTone = 'success';
     } catch (err) {

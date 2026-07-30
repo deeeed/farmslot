@@ -690,17 +690,21 @@ export async function executeHumanGateStep(
         if (!dispatchReviewSlotId)
           throw new Error('No slot assigned — cannot run dispatch publish-gate reviews');
         const dispatchPlan = initialPlan.slice(0, MAX_PUBLISH_GATE_REVIEW_LOOPS);
-        const beforeDispatchReviews = getRun(runId)!;
+        const reviewSource =
+          getRun(runId)?.engineState?.publishGate?.reviewDepth?.requestedBy === 'human-gate'
+            ? 'human-gate'
+            : 'dispatch';
+        await executePublishGateReviewPlan(runId, dispatchReviewSlotId, dispatchPlan, reviewSource);
+        const afterDispatchReviews = getRun(runId)!;
         updateRun(runId, {
           engineState: {
-            ...beforeDispatchReviews.engineState,
+            ...afterDispatchReviews.engineState,
             publishGate: {
-              ...beforeDispatchReviews.engineState?.publishGate,
+              ...afterDispatchReviews.engineState?.publishGate,
               pendingReviewPlan: [],
             },
           },
         });
-        await executePublishGateReviewPlan(runId, dispatchReviewSlotId, dispatchPlan, 'dispatch');
         const diffStat = await getDiffStat(getRun(runId)!);
         await prepareCompletionPackage(runId, {
           diffStat,
@@ -748,21 +752,22 @@ export async function executeHumanGateStep(
             gateAction,
           );
         reviewRequestLoops += boundedPlan.length;
-        updateRun(runId, {
-          engineState: {
-            ...beforeReviewPlan.engineState,
-            publishGate: {
-              ...beforeReviewPlan.engineState?.publishGate,
-              pendingReviewPlan: [],
-            },
-          },
-        });
         const newReviewIds = await executePublishGateReviewPlan(
           runId,
           reviewSlotId,
           boundedPlan,
           'human-gate',
         );
+        const afterReviewPlan = getRun(runId)!;
+        updateRun(runId, {
+          engineState: {
+            ...afterReviewPlan.engineState,
+            publishGate: {
+              ...afterReviewPlan.engineState?.publishGate,
+              pendingReviewPlan: [],
+            },
+          },
+        });
         const diffStat = await getDiffStat(getRun(runId)!);
         const prepared = await prepareCompletionPackage(runId, {
           diffStat,

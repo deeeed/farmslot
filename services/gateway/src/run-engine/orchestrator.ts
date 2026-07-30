@@ -80,6 +80,8 @@ import {
 } from './ready-gate.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import {
+  hasRecoverablePublicationReviewer,
+  isPublicationReviewRecoveryHeld,
   recoverActiveRuns as recoverActiveRunsImpl,
   type RunRecoveryCollaborators,
   startOrphanReconciler as startOrphanReconcilerImpl,
@@ -778,6 +780,89 @@ export function cancelRunEngine(runId: string): void {
 
 // ─── Recover active runs on startup ───
 
+const PUBLICATION_REVIEW_RECOVERY_POLL_MS = 10_000;
+const publicationReviewRecoveryWatchers = new Map<
+  string,
+  {
+    cleanup: () => void;
+    replayPending: boolean;
+  }
+>();
+
+async function replayHumanGateForRecovery(runId: string): Promise<void> {
+  // replay-step.ts imports this module (startRun), so import lazily.
+  const { runReplayStep } = await import('../methods/run/replay-step.js');
+  await runReplayStep(
+    { runId, stepName: S.HUMAN_GATE, triggeredBy: 'auto-recovery' },
+    (event, payload) => broadcastFn(event, payload),
+  );
+}
+
+function rearmPublicationReviewRecovery(
+  run: Run,
+  options?: { replayPending?: boolean },
+): (() => void) | undefined {
+  if (!run.slotId || !isPublicationReviewRecoveryHeld(run)) return undefined;
+
+  const existing = publicationReviewRecoveryWatchers.get(run.id);
+  if (existing) {
+    if (options?.replayPending) existing.replayPending = true;
+    return existing.cleanup;
+  }
+
+  let settled = false;
+  let inFlight = false;
+  let timer: ReturnType<typeof setInterval>;
+  const state = {
+    replayPending: options?.replayPending ?? false,
+    cleanup: (): void => {
+      if (settled) return;
+      settled = true;
+      clearInterval(timer);
+      if (publicationReviewRecoveryWatchers.get(run.id) === state) {
+        publicationReviewRecoveryWatchers.delete(run.id);
+      }
+    },
+  };
+
+  const poll = async (): Promise<void> => {
+    if (settled || inFlight) return;
+    const latest = getRun(run.id);
+    if (!latest || !latest.slotId || !isPublicationReviewRecoveryHeld(latest)) {
+      state.cleanup();
+      return;
+    }
+    if (!state.replayPending && !hasRecoverablePublicationReviewer(latest)) {
+      state.cleanup();
+      return;
+    }
+
+    inFlight = true;
+    try {
+      if (!state.replayPending) {
+        const recovered = await recoverInflightPublicationReviews(latest.id, latest.slotId);
+        if (recovered.length === 0) return;
+        state.replayPending = true;
+      }
+      await replayHumanGateForRecovery(latest.id);
+      state.cleanup();
+    } catch (err) {
+      console.warn(
+        `[run-engine] run ${run.id.slice(0, 8)} — publication-review recovery poll failed: ${(err as Error).message.slice(0, 200)}`,
+      );
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  timer = setInterval(() => {
+    void poll();
+  }, PUBLICATION_REVIEW_RECOVERY_POLL_MS);
+  timer.unref();
+  publicationReviewRecoveryWatchers.set(run.id, state);
+  return state.cleanup;
+}
+
 function buildRecoveryDeps(): RunRecoveryCollaborators {
   return {
     listRuns,
@@ -819,15 +904,9 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
           broadcastFn(event, payload),
         );
       }),
+    rearmPublicationReviewRecovery,
     recoverInflightPublicationReviews,
-    replayHumanGate: async (runId) => {
-      // replay-step.ts imports this module (startRun), so import lazily.
-      const { runReplayStep } = await import('../methods/run/replay-step.js');
-      await runReplayStep(
-        { runId, stepName: S.HUMAN_GATE, triggeredBy: 'auto-recovery' },
-        (event, payload) => broadcastFn(event, payload),
-      );
-    },
+    replayHumanGate: replayHumanGateForRecovery,
   };
 }
 

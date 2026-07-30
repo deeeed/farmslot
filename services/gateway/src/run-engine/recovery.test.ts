@@ -239,6 +239,221 @@ function humanGateDecision(id: string): Run['decisions'][number] {
   };
 }
 
+function withRecoverableReviewer(run: Run): Run {
+  return {
+    ...run,
+    agentContexts: [
+      {
+        id: 'rev3-claude',
+        role: 'self-review',
+        label: 'rev3-claude',
+        status: 'working',
+        slotId: run.slotId!,
+        runId: run.id,
+        taskFile: 'temp/tasks/fix/recovery/SELF-REVIEW.rev3-claude.md',
+        signalFile: 'temp/tasks/fix/recovery/SELF-REVIEW.rev3-claude-SIGNAL.json',
+        runner: 'claude',
+        model: 'opus',
+        attemptStartedAt: '2026-07-18T10:01:00.000Z',
+      },
+    ],
+  };
+}
+
+function publicationReviewRecoveryDeps(
+  run: Run,
+  options: {
+    recovered?: unknown[];
+    replayError?: Error;
+  } = {},
+): {
+  deps: RunRecoveryCollaborators;
+  calls: {
+    broadcasted: number;
+    rearmed: Array<{ runId: string; replayPending: boolean }>;
+    reconciled: number;
+    replayed: string[];
+  };
+} {
+  const calls = {
+    broadcasted: 0,
+    rearmed: [] as Array<{ runId: string; replayPending: boolean }>,
+    reconciled: 0,
+    replayed: [] as string[],
+  };
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
+    }),
+    updateRun: () => {},
+    updateRunStep: () => {},
+    broadcast: () => {
+      calls.broadcasted++;
+    },
+    quarantineLeakedRun: async () => {},
+    reconcileRunAgentRuntime: async () => {
+      calls.reconciled++;
+    },
+    rearmPublicationReviewRecovery: (
+      candidate: Run,
+      rearmOptions?: { replayPending?: boolean },
+    ) => {
+      calls.rearmed.push({
+        runId: candidate.id,
+        replayPending: rearmOptions?.replayPending ?? false,
+      });
+      return () => {};
+    },
+    recoverInflightPublicationReviews: async () => options.recovered ?? [],
+    replayHumanGate: async (runId: string) => {
+      calls.replayed.push(runId);
+      if (options.replayError) throw options.replayError;
+    },
+  } as unknown as RunRecoveryCollaborators;
+  return { deps, calls };
+}
+
+test('recovery holds a blocked human gate while its reviewer is still in flight', async () => {
+  const run = withRecoverableReviewer(
+    minimalActiveRun({
+      ticketOrPr: 'RECOVERY-REVIEW-BLOCKED',
+      familyRootTicketOrPr: 'RECOVERY-REVIEW-BLOCKED',
+      taskFile: '/tmp/farmslot-recovery-review-blocked/TASK.md',
+      status: 'blocked',
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [humanGateDecision('gate-review-blocked')],
+    }),
+  );
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(calls.rearmed, [{ runId: run.id, replayPending: false }]);
+  assert.equal(calls.reconciled, 0);
+  assert.equal(calls.broadcasted, 0);
+  assert.deepEqual(calls.replayed, []);
+});
+
+test('recovery holds a human-gating run while its reviewer is still in flight', async () => {
+  const run = withRecoverableReviewer(
+    minimalActiveRun({
+      ticketOrPr: 'RECOVERY-REVIEW-HUMAN-GATING',
+      familyRootTicketOrPr: 'RECOVERY-REVIEW-HUMAN-GATING',
+      taskFile: '/tmp/farmslot-recovery-review-human-gating/TASK.md',
+      status: 'human-gating',
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [],
+    }),
+  );
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(calls.rearmed, [{ runId: run.id, replayPending: false }]);
+  assert.equal(calls.reconciled, 0);
+  assert.equal(calls.broadcasted, 0);
+});
+
+test('recovery restores and replays a review plan for an active fix pass', async () => {
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-REVIEW-FIX',
+    familyRootTicketOrPr: 'RECOVERY-REVIEW-FIX',
+    taskFile: '/tmp/farmslot-recovery-review-fix/TASK.md',
+    status: 'blocked',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [humanGateDecision('gate-review-fix')],
+    agentContexts: [
+      {
+        id: 'rev-codex',
+        role: 'self-review',
+        label: 'Reviewer',
+        status: 'complete',
+        slotId: 'slot-1',
+        runId: 'run-1',
+        runner: 'codex',
+        model: 'gpt-5.6-sol',
+        attemptStartedAt: '2026-07-30T03:24:00.000Z',
+      },
+      {
+        id: 'self-review-fix',
+        role: 'self-review-fix',
+        label: 'Review fix',
+        status: 'working',
+        slotId: 'slot-1',
+        runId: 'run-1',
+        startedAt: '2026-07-30T03:30:00.000Z',
+      },
+    ],
+  });
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+  let restoredPlan: unknown;
+  deps.updateRun = (_runId, fields) => {
+    restoredPlan = fields.engineState?.publishGate?.pendingReviewPlan;
+  };
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(restoredPlan, [
+    {
+      order: 1,
+      runner: 'codex',
+      model: 'gpt-5.6-sol',
+      validationDepth: 'full-live',
+    },
+  ]);
+  assert.deepEqual(calls.rearmed, [{ runId: run.id, replayPending: true }]);
+  assert.deepEqual(calls.replayed, []);
+  assert.equal(calls.broadcasted, 0);
+});
+
+test('recovery replays the human gate before reconciliation when a reviewer completed', async () => {
+  const run = withRecoverableReviewer(
+    minimalActiveRun({
+      ticketOrPr: 'RECOVERY-REVIEW-COMPLETE',
+      familyRootTicketOrPr: 'RECOVERY-REVIEW-COMPLETE',
+      taskFile: '/tmp/farmslot-recovery-review-complete/TASK.md',
+      status: 'blocked',
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [humanGateDecision('gate-review-complete')],
+    }),
+  );
+  const { deps, calls } = publicationReviewRecoveryDeps(run, {
+    recovered: [{ id: 'rev3' }],
+  });
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(calls.replayed, [run.id]);
+  assert.deepEqual(calls.rearmed, []);
+  assert.equal(calls.reconciled, 0);
+  assert.equal(calls.broadcasted, 0);
+});
+
+test('recovery retries gate replay after a completed reviewer was ingested', async () => {
+  const run = withRecoverableReviewer(
+    minimalActiveRun({
+      ticketOrPr: 'RECOVERY-REVIEW-REPLAY-RETRY',
+      familyRootTicketOrPr: 'RECOVERY-REVIEW-REPLAY-RETRY',
+      taskFile: '/tmp/farmslot-recovery-review-replay-retry/TASK.md',
+      status: 'blocked',
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [humanGateDecision('gate-review-replay-retry')],
+    }),
+  );
+  const { deps, calls } = publicationReviewRecoveryDeps(run, {
+    recovered: [{ id: 'rev3' }],
+    replayError: new Error('transient replay failure'),
+  });
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(calls.replayed, [run.id]);
+  assert.deepEqual(calls.rearmed, [{ runId: run.id, replayPending: true }]);
+  assert.equal(calls.reconciled, 0);
+  assert.equal(calls.broadcasted, 0);
+});
+
 function gateRecoveryDeps(
   run: Run,
   opts: { recovered: unknown[] },

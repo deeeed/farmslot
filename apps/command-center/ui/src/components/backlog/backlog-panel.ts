@@ -705,9 +705,9 @@ export class BacklogPanel extends LitElement {
         cursor: pointer;
         display: grid;
         gap: 8px;
-        /* badge, item ref, title — the ref is its own column so the title keeps
-           the remaining width and the row stays a single line. */
-        grid-template-columns: auto auto minmax(0, 1fr);
+        /* status, flow, item ref, title — fixed metadata keeps its own columns
+           so the title gets the remaining width without hiding dispatch intent. */
+        grid-template-columns: auto auto auto minmax(0, 1fr);
         min-height: 28px;
         padding: 4px 8px;
       }
@@ -2352,6 +2352,9 @@ export class BacklogPanel extends LitElement {
       }}
     >
       ${renderPlanningBadge(item.status, tone)}
+      <span data-testid="backlog-flow" title=${`Flow: ${item.flowType}`}
+        >${renderPlanningBadge(item.flowType)}</span
+      >
       <span class="item-ref" title=${item.sourceRef}>${item.sourceRef}</span>
       <div class="title" title=${item.title}>${item.title}</div>
     </div>`;

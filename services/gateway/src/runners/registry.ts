@@ -1031,7 +1031,18 @@ export function runnerPaneShowsCurrentInteractiveProgress(
     }
   }
   if (progressIndex === -1) return false;
-  return !tail.slice(progressIndex + 1).some((line) => paneLineLooksShellPrompt(line));
+  const afterProgress = tail.slice(progressIndex + 1);
+  if (afterProgress.some((line) => paneLineLooksShellPrompt(line))) return false;
+  const laterTuiPrompt =
+    (runner === 'claude' || runner === 'codex') &&
+    afterProgress.some((line) => runnerLineLooksWaiting(line, runner));
+  if (laterTuiPrompt) {
+    const progressLine = tail[progressIndex] ?? '';
+    const hasLiveActivityMarker =
+      /…|\.\.\.|esc to interrupt|running in the background|\(\s*\d+[smh]\b/i.test(progressLine);
+    if (!hasLiveActivityMarker) return false;
+  }
+  return true;
 }
 
 export function runnerPaneShowsTaskAlreadyRunning(

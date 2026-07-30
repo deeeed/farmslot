@@ -150,6 +150,17 @@ result = spawnSync(process.execPath, [helper, missingLearningsDir, 'complete', '
 assert.equal(result.status, 1);
 assert.match(result.stderr, /learnings\.md/);
 
+result = spawnSync(
+  process.execPath,
+  [helper, missingLearningsDir, 'complete', '--mark-last', '--skip-learnings'],
+  {
+    encoding: 'utf8',
+  },
+);
+assert.equal(result.status, 0, result.stderr);
+parsed = JSON.parse(readFileSync(path.join(missingLearningsDir, 'SIGNAL.json'), 'utf8'));
+assert.deepEqual(parsed.artifactWaivers, { learnings: true });
+
 const incompleteChecklistDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-checklist-'));
 writeManifest(incompleteChecklistDir, 'TASK.md');
 const incompleteTask = path.join(incompleteChecklistDir, 'TASK.md');

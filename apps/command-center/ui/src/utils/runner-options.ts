@@ -24,7 +24,7 @@ export const MODELS_BY_RUNNER: Record<string, string[]> = {
     'cursor-grok-4.5-high-fast',
     'cursor-grok-4.5-high',
   ],
-  grok: [DEFAULT_GROK_MODEL, 'grok-composer-2.5-fast'],
+  grok: [DEFAULT_GROK_MODEL],
 };
 
 export const DEFAULT_MODEL: Record<string, string> = {

@@ -7,6 +7,9 @@ import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
   applyHandoffAutoResolution,
+  artifactContractWaiverArgs,
+  artifactContractWorkerInstruction,
+  artifactTerminalCommandForSignal,
   bindSignalToMonitorContext,
   handoffDecisionStillPending,
   isFreshTerminalHandoffSignal,
@@ -20,6 +23,52 @@ import {
   shouldSkipMonitorNudge,
   signalMatchesMonitorContext,
 } from './run-monitor.js';
+
+test('artifact contract revalidation preserves an explicit learnings waiver', () => {
+  assert.deepEqual(artifactContractWaiverArgs({ artifactWaivers: { learnings: true } }), [
+    '--skip-learnings',
+  ]);
+  assert.deepEqual(artifactContractWaiverArgs({}), []);
+});
+
+test('artifact contract rejection instruction tells the worker how to recover', () => {
+  const instruction = artifactContractWorkerInstruction(
+    'Terminal SIGNAL.json was rejected.\n\n- artifacts/recipe-decision.json: invalid JSON',
+  );
+  assert.match(instruction, /artifact contract/);
+  assert.match(instruction, /run \.\/mark complete again/);
+  assert.match(instruction, /recipe-decision\.json: invalid JSON/);
+  assert.ok(!instruction.includes('\n'));
+});
+
+test('artifact contract rejection preserves the no-change terminal command', () => {
+  const instruction = artifactContractWorkerInstruction(
+    'Terminal SIGNAL.json was rejected: recipe decision missing.',
+    'no-change',
+  );
+  assert.match(instruction, /run \.\/mark no-change again/);
+  assert.doesNotMatch(instruction, /mark complete/);
+});
+
+test('artifactTerminalCommandForSignal maps successful dispositions to the matching contract', () => {
+  assert.equal(
+    artifactTerminalCommandForSignal({ status: 'complete', disposition: 'fixed' }),
+    'complete',
+  );
+  assert.equal(
+    artifactTerminalCommandForSignal({ status: 'done', disposition: 'already_fixed' }),
+    'no-change',
+  );
+  assert.equal(
+    artifactTerminalCommandForSignal({ status: 'complete', disposition: 'not_reproducible' }),
+    'no-change',
+  );
+  assert.equal(
+    artifactTerminalCommandForSignal({ status: 'blocked', disposition: 'blocked' }),
+    null,
+  );
+  assert.equal(artifactTerminalCommandForSignal({ status: 'failed', disposition: 'failed' }), null);
+});
 
 function devRunView(overrides: Partial<MonitorNudgeRunView> = {}): MonitorNudgeRunView {
   return {

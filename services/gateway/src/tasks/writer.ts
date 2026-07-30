@@ -1059,10 +1059,9 @@ export function checklistMarkerHelperPath(farmslotDirForSlot: string): string {
  * Build the task-local `mark` wrapper script.
  *
  * Resolves the published @farmslot/agent-runtime bin at run time, mirroring the
- * harness runner shim ladder (env override → PATH → recorded install path →
- * teach). The published `farmslot-agent mark` runs the same mark-checklist-step
- * it always has; the recorded-path rung keeps dev/farmslot-checkout installs
- * (where the bin is not on PATH) behaving exactly as before. The env rung
+ * harness runner shim ladder (env override → recorded install path → PATH →
+ * teach). The recorded path is the slot-synced helper selected by the gateway,
+ * so it must win over a possibly stale global `farmslot-agent`. The env rung
  * requires the override to be executable so a bad operator value falls through
  * the ladder to the teach instead of hard-dying under `set -euo pipefail`.
  */
@@ -1074,12 +1073,12 @@ export function buildChecklistMarkerScript(helperPath: string): string {
     'if [ -n "${FARMSLOT_AGENT_BIN:-}" ] && [ -x "${FARMSLOT_AGENT_BIN}" ]; then',
     '  exec "$FARMSLOT_AGENT_BIN" mark "$DIR" "$@"',
     'fi',
-    'if command -v farmslot-agent >/dev/null 2>&1; then',
-    '  exec farmslot-agent mark "$DIR" "$@"',
-    'fi',
     `RECORDED=${JSON.stringify(helperPath)}`,
     'if [ -f "$RECORDED" ]; then',
     '  exec node "$RECORDED" "$DIR" "$@"',
+    'fi',
+    'if command -v farmslot-agent >/dev/null 2>&1; then',
+    '  exec farmslot-agent mark "$DIR" "$@"',
     'fi',
     'echo "mark: cannot resolve @farmslot/agent-runtime." >&2',
     'echo "Next: install it (npm i -g @farmslot/agent-runtime) so \'farmslot-agent\' is on PATH, or set FARMSLOT_AGENT_BIN=/path/to/farmslot-agent, then re-run: $0 $*" >&2',

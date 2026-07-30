@@ -45,6 +45,7 @@ export interface StatuslineRecord {
   model?: string;
   ctxPct?: number;
   contextPct?: number;
+  tmuxPane?: string;
 }
 
 export interface RunnerObservability {

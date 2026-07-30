@@ -4,6 +4,9 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(backlog): show each item's flow (`dev`, `fix-bug`, `review-pr`, and maintenance flows) directly in the compact live list instead of requiring selection of the detail pane.
+- fix(runs): show active independent review/fix work ahead of the enclosing human gate in compact pipelines; reserve `publish ready` for gates that actually expose approval.
+- fix(runners): offer only the current `grok-4.5` model for Grok instead of stale model ids that the CLI silently replaces.
 - feat(runners): model pickers are scoped per runner (no fleet-wide bleed); Codex lists GPT-5.6 Sol/Terra/Luna (default Sol) with legacy 5.5/5.4; Cursor offers real `cursor-grok-4.5-high-fast` / `high` (drops invalid `grok-4.5-fast-xhigh`); default effort for Codex/Grok is `xhigh` when omitted.
 - fix(fleet): the Setup modal fetches seats for ITS machine only — the all-machines snapshot probes remote nodes and blew the 15s request budget, which is exactly the timeout the modal surfaced. Snapshots live in one client store shared by the fleet map and the machine config page (open either surface, the other renders instantly; concurrent fetches collapse), kept on failure, with a "querying node…" loading state, snapshot-age display, and Refresh buttons that force a live probe with a 45s budget. The config page gains the same runner-seats section (email, remaining quota — rounded, cooling) on pool selection.
 - fix(fleet): the machine Setup button renders even when the provider-accounts snapshot is empty or failed — hiding it made a merged feature invisible with no trace. The modal now explains an empty seats list (usual cause: node service not connected), shows the last fetch error, offers Retry, and refetches on every open so a node that reconnected after the last fetch shows fresh seats.

@@ -165,7 +165,10 @@ export interface RawProjectJson {
   recipe_run_supports_video_recording?: boolean;
   apps?: string[];
   external?: { mock_mode?: boolean; fixtures_dir?: string };
-  reference_repos?: Record<string, { repo_url: string; local_name: string; branch?: string }>;
+  reference_repos?: Record<
+    string,
+    { repo_url: string; local_name: string; branch?: string; required_paths?: string[] }
+  >;
   paths?: { runtime_dir?: string; artifact_dir?: string; recipe_dir?: string };
   vars?: Record<string, string>;
   node_support?: {

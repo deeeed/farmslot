@@ -14,11 +14,17 @@ export interface WorkerSignal {
   outcome?: 'success' | 'failure' | 'partial';
   disposition?: WorkerTerminalDisposition;
   evidence?: WorkerTerminalEvidence;
+  artifactWaivers?: WorkerSignalArtifactWaivers;
   checklistTiming?: WorkerSignalChecklistTiming;
   step?: string; // current step name
   reason?: string; // why blocked/failed
   prNumber?: number; // if worker created a PR
   timestamp: string;
+}
+
+export interface WorkerSignalArtifactWaivers {
+  /** The worker explicitly completed with `./mark ... --skip-learnings`. */
+  learnings?: boolean;
 }
 
 export interface WorkerSignalChecklistTiming {
@@ -54,7 +60,8 @@ export type WorkerSignalProbeCode =
   | 'invalid_schema'
   | 'non_terminal'
   | 'context_mismatch'
-  | 'stale';
+  | 'stale'
+  | 'artifact_contract';
 
 export interface WorkerSignalProbeResult {
   ok: boolean;

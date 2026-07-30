@@ -37,6 +37,8 @@ export interface EvidenceManifest {
 
 type JsonRecord = Record<string, unknown>;
 
+const EVIDENCE_IMAGE_EXT = /\.(png|jpe?g|gif)$/i;
+const EVIDENCE_VIDEO_EXT = /\.(mp4|mov|webm)$/i;
 const EVIDENCE_MEDIA_EXT = /\.(png|jpe?g|gif|mp4|mov|webm)$/i;
 
 const MANIFEST_KEYS = new Set([
@@ -366,6 +368,7 @@ export function collectLowCaptions(manifest: EvidenceManifest): LowCaption[] {
   const fileUsage = manifestFileUsage(manifest);
   const out: LowCaption[] = [];
   for (const pair of manifest.before_after_pairs ?? []) {
+    if (![pair.before, pair.after].some((file) => file && EVIDENCE_MEDIA_EXT.test(file))) continue;
     const c = captionConfidenceFor(pair, fileUsage);
     if (c.level === 'LOW') {
       out.push({
@@ -376,6 +379,7 @@ export function collectLowCaptions(manifest: EvidenceManifest): LowCaption[] {
     }
   }
   for (const shot of manifest.standalone ?? []) {
+    if (!EVIDENCE_MEDIA_EXT.test(shot.file)) continue;
     const c = captionConfidenceFor(shot, fileUsage);
     if (c.level === 'LOW') {
       out.push({ label: shot.label, file: shot.file, reason: c.reason ?? 'unknown' });
@@ -427,7 +431,7 @@ export function buildEvidenceSection(
     bumpUsage(s.file);
   }
   const urlFor = (file?: string): string | undefined => {
-    if (!file) return undefined;
+    if (!file || !EVIDENCE_MEDIA_EXT.test(file)) return undefined;
     for (const variant of evidenceKeyVariants(file)) {
       const url = artifactUrls.get(variant);
       if (url) return url;
@@ -473,8 +477,8 @@ export function buildEvidenceSection(
 
     // Standalone screenshots: compact grid
     if (standalone.length > 0) {
-      const imageShots = standalone.filter((s) => !/\.(mp4|mov|webm)$/i.test(s.file));
-      const videoShots = standalone.filter((s) => /\.(mp4|mov|webm)$/i.test(s.file));
+      const imageShots = standalone.filter((shot) => EVIDENCE_IMAGE_EXT.test(shot.file));
+      const videoShots = standalone.filter((shot) => EVIDENCE_VIDEO_EXT.test(shot.file));
 
       if (imageShots.length > 0) {
         // Two-column grid for standalone images

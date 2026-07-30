@@ -14,6 +14,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
+  buildRunResolveDecisionParams,
   type DecisionListResult,
   Events,
   Methods,
@@ -311,7 +312,9 @@ export default function DecisionDetailScreen() {
         if (isGatewayBackgroundPauseError(err)) {
           // App transitions can pause gateway refreshes; keep cached decision
           // evidence visible instead of replacing the workspace with noise.
-          console.warn(`Recipe evidence availability paused after ${reason}: ${(err as Error).message}`);
+          console.warn(
+            `Recipe evidence availability paused after ${reason}: ${(err as Error).message}`,
+          );
           return;
         }
         setRecipeRuns([]);
@@ -421,7 +424,11 @@ export default function DecisionDetailScreen() {
       if (!client || !decision) return;
       const method = decision.runMeta ? 'run.resolveDecision' : 'decision.resolve';
       const params = decision.runMeta
-        ? { runId: decision.runMeta.runId, decisionId: decision.id, actionId }
+        ? buildRunResolveDecisionParams({
+            runId: decision.runMeta.runId,
+            decision,
+            actionId,
+          })
         : { decisionId: decision.id, actionId };
 
       Alert.alert('Confirm action', `Send "${actionId}" for ${decision.title}?`, [

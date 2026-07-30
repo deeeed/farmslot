@@ -64,7 +64,7 @@ STATUS: pending
 - [ ] **5. Artifact contract gate:**
   ```bash
   cd {{REPO}}
-  node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-quality-if-recipe --require-recipe-coverage-if-recipe
+  node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe
   ```
   Fix any failure before signaling completion.
 

@@ -19,6 +19,9 @@ import {
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
+import { isRecoverableReviewerContext } from './recover-inflight-reviews.js';
+import { recoveryReviewPlanForActiveFix } from './review-plan.js';
+
 const S = PipelineSteps;
 const RECONCILE_INTERVAL_MS = 60_000; // 60s
 let orphanReconcileInFlight = false;
@@ -116,6 +119,10 @@ export interface RunRecoveryCollaborators {
   quarantineLeakedRun: (run: Run) => Promise<void>;
   reconcileRunAgentRuntime?: (run: Run) => Promise<void>;
   rearmHandoffAutoRecovery: (run: Run) => (() => void) | undefined;
+  rearmPublicationReviewRecovery: (
+    run: Run,
+    options?: { replayPending?: boolean },
+  ) => (() => void) | undefined;
   recoverInflightPublicationReviews: (runId: string, slotId: string) => Promise<unknown[]>;
   replayHumanGate: (runId: string) => Promise<void>;
 }
@@ -149,6 +156,18 @@ export function recoveryHealthIsReady(
   const value = result.stdout.trim();
   if (!value) return false;
   return readyIndicator ? value === readyIndicator : true;
+}
+
+export function isPublicationReviewRecoveryHeld(run: Run): boolean {
+  if (run.status === 'human-gating') return true;
+  if (run.status !== 'blocked') return false;
+  return run.decisions.some(
+    (decision) => decision.type === 'engine_human_gate' && !decision.resolvedAt,
+  );
+}
+
+export function hasRecoverablePublicationReviewer(run: Run): boolean {
+  return (run.agentContexts ?? []).some(isRecoverableReviewerContext);
 }
 
 /**
@@ -206,6 +225,73 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
 
     if (run.status === 'paused') {
       console.log(`[run-engine] run ${run.id.slice(0, 8)} — paused, skipping recovery`);
+      continue;
+    }
+
+    const recoveredFixPlan = recoveryReviewPlanForActiveFix(run);
+    if (run.slotId && isPublicationReviewRecoveryHeld(run) && recoveredFixPlan.length > 0) {
+      const pendingReviewPlan = run.engineState?.publishGate?.pendingReviewPlan ?? [];
+      const recoveredRun =
+        pendingReviewPlan.length > 0
+          ? run
+          : {
+              ...run,
+              engineState: {
+                ...run.engineState,
+                publishGate: {
+                  ...run.engineState?.publishGate,
+                  pendingReviewPlan: recoveredFixPlan,
+                },
+              },
+            };
+      if (pendingReviewPlan.length === 0) {
+        deps.updateRun(run.id, { engineState: recoveredRun.engineState });
+        console.log(
+          `[run-engine] run ${run.id.slice(0, 8)} — restored publication review plan for active fix pass`,
+        );
+      }
+      deps.rearmPublicationReviewRecovery(recoveredRun, { replayPending: true });
+      continue;
+    }
+
+    // A gate-held reviewer survives a gateway restart in tmux, but the await
+    // that owned it does not. Recover or re-arm that reviewer BEFORE generic
+    // runtime reconciliation: reconciliation can otherwise mark a terminal
+    // reviewer failed/idle, after which the stale human gate is rebroadcast and
+    // the completed review is never ingested.
+    if (
+      run.slotId &&
+      isPublicationReviewRecoveryHeld(run) &&
+      hasRecoverablePublicationReviewer(run)
+    ) {
+      let recoveredReviews: unknown[] = [];
+      try {
+        recoveredReviews = await deps.recoverInflightPublicationReviews(run.id, run.slotId);
+      } catch (err) {
+        console.warn(
+          `[run-engine] run ${run.id.slice(0, 8)} — startup publication-review recovery failed: ${(err as Error).message.slice(0, 200)}`,
+        );
+        deps.rearmPublicationReviewRecovery(run);
+        continue;
+      }
+
+      if (recoveredReviews.length > 0) {
+        try {
+          await deps.replayHumanGate(run.id);
+        } catch (err) {
+          console.warn(
+            `[run-engine] run ${run.id.slice(0, 8)} — recovered review gate replay failed; re-arming: ${(err as Error).message.slice(0, 200)}`,
+          );
+          deps.rearmPublicationReviewRecovery(run, { replayPending: true });
+        }
+        continue;
+      }
+
+      if (deps.rearmPublicationReviewRecovery(run)) {
+        console.log(
+          `[run-engine] run ${run.id.slice(0, 8)} — re-armed publication-review recovery`,
+        );
+      }
       continue;
     }
 

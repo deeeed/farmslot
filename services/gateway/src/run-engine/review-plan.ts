@@ -1,8 +1,11 @@
 import {
+  type AgentContext,
   isReviewValidationDepth,
   type ReviewDepthPolicy,
   type ReviewLoopRequest,
+  type ReviewRunnerId,
   reviewValidationDepthForLoop,
+  type Run,
   type RunDecision,
 } from '@farmslot/protocol';
 
@@ -97,4 +100,55 @@ export function humanGateReviewRequestFromDecision(
     ? (selectionData.reviewRequest as Record<string, unknown>)
     : {};
 }
+
+const REVIEW_RUNNERS = new Set<ReviewRunnerId>(['claude', 'codex', 'cursor', 'grok', 'opencode']);
+
+function contextTimestamp(context: AgentContext): number {
+  const value =
+    context.attemptStartedAt ?? context.completedAt ?? context.updatedAt ?? context.startedAt ?? '';
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Reconstruct the review work order when a gateway restart interrupted an
+ * independent-review fix pass after the gate had already consumed its pending
+ * plan. The latest reviewer context identifies the runner/model that must
+ * re-enter executeSelfReview, whose fix-pass recovery resumes the live worker.
+ */
+export function recoveryReviewPlanForActiveFix(
+  run: Pick<Run, 'agentContexts' | 'engineState'>,
+): ReviewLoopRequest[] {
+  const contexts = run.agentContexts ?? [];
+  const activeFix = contexts.some(
+    (context) =>
+      context.role === 'self-review-fix' &&
+      (context.status === 'launching' ||
+        context.status === 'working' ||
+        context.status === 'waiting'),
+  );
+  if (!activeFix) return [];
+
+  const reviewer = contexts
+    .filter((context) => context.role === 'self-review' && context.runner)
+    .sort((left, right) => contextTimestamp(right) - contextTimestamp(left))[0];
+  if (!reviewer) return [];
+
+  const normalizedRunner = normalizeRunner(reviewer.runner);
+  const runner = REVIEW_RUNNERS.has(normalizedRunner as ReviewRunnerId)
+    ? (normalizedRunner as ReviewRunnerId)
+    : 'same';
+  const matchingReview = [...(run.engineState?.publishGate?.independentReviews ?? [])]
+    .reverse()
+    .find((review) => normalizeRunner(review.runner) === normalizedRunner);
+  return [
+    {
+      order: 1,
+      runner,
+      model: reviewer.model ?? null,
+      validationDepth: matchingReview?.validationDepth ?? 'full-live',
+    },
+  ];
+}
+
 export const MAX_PUBLISH_GATE_REVIEW_LOOPS = 5;

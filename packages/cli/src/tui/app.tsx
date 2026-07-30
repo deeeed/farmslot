@@ -8,13 +8,14 @@
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type {
-  BacklogItem,
-  EventFrame,
-  FleetStatus,
-  PendingDecision,
-  RoadmapItem,
-  Run,
+import {
+  type BacklogItem,
+  buildRunResolveDecisionParams,
+  type EventFrame,
+  type FleetStatus,
+  type PendingDecision,
+  type RoadmapItem,
+  type Run,
 } from '@farmslot/protocol';
 
 import type { GatewayConnection } from '../gateway-client.js';
@@ -368,11 +369,19 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
         void (async () => {
           try {
             setNotice(`resolving ${row.shortId} with ${actionId}…`);
-            await connection.call('run.resolveDecision', {
-              runId: row.id,
-              decisionId: decision.id,
-              actionId,
-            });
+            const result = await connection.call<{ run: Run }>('run.get', { runId: row.id });
+            const fullDecision = result.run.decisions?.find(
+              (candidate) => candidate.id === decision.id,
+            );
+            if (!fullDecision) throw new Error(`decision ${decision.id} was not found`);
+            await connection.call(
+              'run.resolveDecision',
+              buildRunResolveDecisionParams({
+                runId: row.id,
+                decision: fullDecision,
+                actionId,
+              }),
+            );
             setNotice(`resolved ${row.shortId} with ${actionId}`);
             void refresh();
           } catch (err) {

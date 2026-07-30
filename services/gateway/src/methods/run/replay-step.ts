@@ -663,7 +663,10 @@ export async function runReplayStep(
           if (preserveSelfReviewFix) {
             await syncChecklistTargetForRole(vars, taskDirRel, 'self-review-fix');
           } else {
-            await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel);
+            await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel, {
+              flowType: existing.flowType,
+              mode: existing.mode ?? undefined,
+            });
           }
           console.log(
             `[run] replay from ${replayStepName} — cleared nested-loop task artifacts in ${workerTaskDir}${preserveSelfReviewFix ? ' (preserved active self-review-fix)' : ''}`,

@@ -399,6 +399,7 @@ export interface SelfReviewRetryDeps {
   restoreWorkerChecklistTargetFromSlot: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
     taskDir: string,
+    terminal?: { flowType: string; mode?: string | null },
   ) => Promise<void>;
   getRun: typeof getRun;
 }
@@ -692,7 +693,12 @@ export async function runSelfReviewRetryLoop({
       );
     } finally {
       fixWatcher.stop();
-      await deps.restoreWorkerChecklistTargetFromSlot(vars, taskDir);
+      const parentRun = deps.getRun(runId);
+      await deps.restoreWorkerChecklistTargetFromSlot(
+        vars,
+        taskDir,
+        parentRun ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined } : undefined,
+      );
     }
   }
 
@@ -944,7 +950,12 @@ async function recoverSelfReviewFixPass({
       feedbackAlreadySent: true,
     });
   } finally {
-    await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
+    const parentRun = getRun(runId);
+    await restoreWorkerChecklistTargetFromSlot(
+      vars,
+      taskDir,
+      parentRun ? { flowType: parentRun.flowType, mode: parentRun.mode ?? undefined } : undefined,
+    );
   }
 }
 
@@ -1235,7 +1246,11 @@ async function sendFeedbackToWorker(
     }
     return fixSignalBaseline;
   } catch (err) {
-    await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
+    await restoreWorkerChecklistTargetFromSlot(
+      vars,
+      taskDir,
+      run ? { flowType: run.flowType, mode: run.mode ?? undefined } : undefined,
+    );
     updateRun(runId, { activeTaskFile: undefined });
     throw err;
   }

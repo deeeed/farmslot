@@ -768,7 +768,11 @@ async function attemptInlineCIFix(
     return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
   } finally {
     if (vars) {
-      await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
+      await restoreWorkerChecklistTargetFromSlot(
+        vars,
+        writeResult.taskDir,
+        run ? { flowType: run.flowType, mode: run.mode ?? undefined } : undefined,
+      );
     }
   }
 }

@@ -11,7 +11,12 @@ import type {
   RunDecision,
   RunGetResult,
 } from '@farmslot/protocol';
-import { Events, isRunEvidenceVideoArtifact, Methods } from '@farmslot/protocol';
+import {
+  buildRunResolveDecisionParams,
+  Events,
+  isRunEvidenceVideoArtifact,
+  Methods,
+} from '@farmslot/protocol';
 
 import '../shared/media-lightbox.js';
 import '../shared/diff-viewer-modal.js';
@@ -574,11 +579,10 @@ export class FamilyObservability extends FamilyObservabilityState {
     actionId: string,
   ) {
     try {
-      await gateway.request(Methods.RUN_RESOLVE_DECISION, {
-        runId: run.runId,
-        decisionId: decision.id,
-        actionId,
-      });
+      await gateway.request(
+        Methods.RUN_RESOLVE_DECISION,
+        buildRunResolveDecisionParams({ runId: run.runId, decision, actionId }),
+      );
       await this._loadSnapshot();
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);

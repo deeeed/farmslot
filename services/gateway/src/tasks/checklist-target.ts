@@ -47,6 +47,7 @@ import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
+import { syncTerminalContractForFlowOnSlot } from './worker-terminal-contract.js';
 
 const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
 const localHostname = os.hostname().replace(/\.local$/, '');
@@ -108,9 +109,11 @@ export async function syncChecklistTargetForRole(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
   role: NestedLoopAgentRole,
+  terminal?: { reportPath?: string },
   registry: ChecklistTargetRegistry = DEFAULT_CHECKLIST_TARGET_REGISTRY,
 ): Promise<void> {
   await syncChecklistTarget(vars, taskDir, checklistTargetForAgentRole(role, registry));
+  await syncTerminalContractForFlowOnSlot(vars, taskDir, role, undefined, terminal?.reportPath);
 }
 
 function farmslotDirForSlot(vars: Pick<Awaited<ReturnType<typeof loadSlotVars>>, 'host'>): string {
@@ -159,6 +162,7 @@ export async function restoreWorkerChecklistTargetOnSlot(
 export async function restoreWorkerChecklistTargetFromSlot(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
+  terminal?: { flowType: string; mode?: string | null },
   registry: ChecklistTargetRegistry = DEFAULT_CHECKLIST_TARGET_REGISTRY,
 ): Promise<void> {
   const checklistPath = slotTaskRelPath(vars, taskDir, registry.interactiveChecklist);
@@ -169,6 +173,9 @@ export async function restoreWorkerChecklistTargetFromSlot(
   );
   const preferInteractive = probe.stdout.trim() === 'yes';
   await restoreWorkerChecklistTargetOnSlot(vars, taskDir, preferInteractive, registry);
+  if (terminal) {
+    await syncTerminalContractForFlowOnSlot(vars, taskDir, terminal.flowType, terminal.mode);
+  }
 }
 
 export async function writeWorkerChecklistTargetLocal(taskAbsDir: string): Promise<void> {

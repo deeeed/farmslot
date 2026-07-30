@@ -2,8 +2,12 @@ import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
-import type { ArtifactRef, InteractiveOperatorPacket } from '@farmslot/protocol';
-import { Methods, validateInteractiveOperatorPacket } from '@farmslot/protocol';
+import type { ArtifactRef, InteractiveOperatorPacket, RunDecision } from '@farmslot/protocol';
+import {
+  buildRunResolveDecisionParams,
+  Methods,
+  validateInteractiveOperatorPacket,
+} from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
@@ -130,6 +134,7 @@ export class InteractiveOperatorPackets extends LitElement {
 
   @property() runId = '';
   @property() slotId: string | null = null;
+  @property({ attribute: false }) decisions: RunDecision[] = [];
   @property({ attribute: false }) artifacts: ArtifactRef[] = [];
   @property({ attribute: false }) artifactTextLoader: InteractivePacketArtifactTextLoader | null =
     null;
@@ -260,11 +265,16 @@ export class InteractiveOperatorPackets extends LitElement {
           enter: true,
         });
       } else if (request.kind === 'decision.resolve') {
-        await gateway.request(Methods.RUN_RESOLVE_DECISION, {
-          runId: this.runId,
-          decisionId: request.decisionId,
-          actionId: request.actionId,
-        });
+        const decision = this.decisions.find((candidate) => candidate.id === request.decisionId);
+        if (!decision) throw new Error(`Decision ${request.decisionId} is no longer pending.`);
+        await gateway.request(
+          Methods.RUN_RESOLVE_DECISION,
+          buildRunResolveDecisionParams({
+            runId: this.runId,
+            decision,
+            actionId: request.actionId,
+          }),
+        );
       }
       this._feedback = `Completed "${action.label}" for ${packet.id}.`;
     } catch (err) {

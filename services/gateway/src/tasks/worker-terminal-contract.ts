@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 
 import {
   type Run,
+  taskDirRelPath,
   WORKER_TERMINAL_CONTRACT_INPUT,
   type WorkerTerminalContractDocument,
   type WorkerTerminalProjectConfig,
@@ -16,6 +17,7 @@ import {
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
 const require = createRequire(import.meta.url);
 const {
@@ -47,6 +49,46 @@ export function readWorkerTerminalProjectConfig(
   const raw = projectJson.worker_terminal;
   if (!raw || typeof raw !== 'object') return null;
   return raw as WorkerTerminalProjectConfig;
+}
+
+export function withTerminalReportPath(
+  contract: WorkerTerminalContractDocument,
+  reportPath: string,
+): WorkerTerminalContractDocument {
+  const commands = { ...contract.commands };
+  for (const command of ['complete', 'no-change'] as const) {
+    const current = contract.commands[command];
+    const artifacts = current.report
+      ? current.artifacts.map((artifact) => (artifact === current.report ? reportPath : artifact))
+      : [...current.artifacts, reportPath];
+    commands[command] = {
+      ...current,
+      report: reportPath,
+      artifacts: [...new Set(artifacts)],
+    };
+  }
+  return { ...contract, commands };
+}
+
+export async function syncTerminalContractForFlowOnSlot(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+  flowType: string,
+  mode?: string | null,
+  reportPath?: string,
+): Promise<void> {
+  const projectVars = await loadProjectVars(vars.projectName);
+  let contract = resolveWorkerTerminalContract(
+    readWorkerTerminalProjectConfig(projectVars.projectJson as Record<string, unknown>),
+    flowType,
+    { mode },
+  );
+  if (reportPath) contract = withTerminalReportPath(contract, reportPath);
+  await writeTextFileOnSlot(
+    vars,
+    taskDirRelPath(taskDir, WORKER_TERMINAL_CONTRACT_INPUT),
+    `${JSON.stringify(contract, null, 2)}\n`,
+  );
 }
 
 export async function loadTerminalContractForRun(

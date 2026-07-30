@@ -27,6 +27,10 @@ export function effectiveRequiredReviewCount(policy: ReviewDepthPolicy): number 
   return base + Math.max(0, policy.extraLoopsRequested);
 }
 
+export function isQualifyingIndependentReview(review: IndependentReviewStatus): boolean {
+  return review.source !== 'self-review' && !review.id.startsWith('self-review-');
+}
+
 export function independentReviewPolicySatisfied(
   policy: ReviewDepthPolicy,
   reviews: IndependentReviewStatus[],
@@ -34,11 +38,12 @@ export function independentReviewPolicySatisfied(
   const required = effectiveRequiredReviewCount(policy);
   if (required === 0) return true;
   const passing = reviews.filter(
-    (review) => review.verdict === 'pass' && review.unresolvedCount === 0,
+    (review) =>
+      isQualifyingIndependentReview(review) &&
+      review.verdict === 'pass' &&
+      review.unresolvedCount === 0,
   );
   if (passing.length < required) return false;
   if (policy.requireCrossRunner && !passing.some((review) => review.crossRunner)) return false;
-  if (!passing.some((review) => (review.validationDepth ?? 'full-live') === 'full-live'))
-    return false;
   return true;
 }

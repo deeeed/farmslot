@@ -134,8 +134,8 @@ Encoded in `scripts/runner-validation/runners/<id>.mjs` — **not** shared assum
 
 Grok is interactive-first in production (`needsPostLaunchPrompt: true`). The harness exposes **two** validated paths:
 
-1. **`pane-smoke` (fast):** `grok -p '<prompt>' --model grok-build` — single-turn, tmux shell, proves binary + network + marker response.
-2. **`interaction-smoke` (production-parity):** launch `grok --model grok-build`, auto-resolve project-directory prompt (`Enter` on current repo), submit prompt via tmux compose, wait for marker. Matches gateway `detectRunnerLaunchBlocker` / `grok-select-current-project` behavior.
+1. **`pane-smoke` (fast):** `grok -p '<prompt>' --model grok-4.5` — single-turn, tmux shell, proves binary + network + marker response.
+2. **`interaction-smoke` (production-parity):** launch `grok --model grok-4.5`, auto-resolve project-directory prompt (`Enter` on current repo), submit prompt via tmux compose, wait for marker. Matches gateway `detectRunnerLaunchBlocker` / `grok-select-current-project` behavior.
 
 Improvement backlog for Grok:
 

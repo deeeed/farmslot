@@ -65,6 +65,7 @@ import {
   runnerPaneHasQueuedInstruction,
   runnerPaneLooksIdle,
   runnerPaneShouldSubmitExistingInstruction,
+  runnerPaneShowsCurrentInteractiveProgress,
   runnerPaneShowsPreSendDuplicateInstruction,
   runnerPaneShowsPromptAccepted,
   runnerPaneShowsSubmittedInstruction,
@@ -236,6 +237,18 @@ describe('cursor runner', () => {
     assert.equal(runnerLineLooksWaiting('press enter to continue', 'codex'), true);
     assert.equal(runnerLineLooksWaiting('›', 'codex'), true);
     assert.equal(runnerLineLooksWaiting('› Run /review on my current changes', 'codex'), true);
+  });
+
+  it('treats a later idle prompt as ending stale progress text', () => {
+    assert.equal(
+      runnerPaneShowsCurrentInteractiveProgress('• Explored\nReview finished\n›', 'codex'),
+      false,
+    );
+    assert.equal(
+      runnerPaneShowsCurrentInteractiveProgress('✻ Explored 2 files\nReview finished\n❯', 'claude'),
+      false,
+    );
+    assert.equal(runnerPaneShowsCurrentInteractiveProgress('✻ Reading…', 'claude'), true);
   });
 
   it('detects Cursor idle prompt above trailing blank input-box rows', () => {
@@ -989,7 +1002,7 @@ describe('pre-task launch blocker resolution', () => {
 });
 
 describe('grok runner', () => {
-  it('is registered as an interactive runner with grok-build default model', () => {
+  it('is registered as an interactive runner with the shared Grok default model', () => {
     const def = getRunnerDefinition('grok');
     assert.equal(def.id, 'grok');
     assert.equal(def.defaultLaunchMode, 'interactive');
@@ -1574,16 +1587,16 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.equal(
         cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --effort xhigh --model grok-build`,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --effort xhigh --model grok-4.5`,
       );
     });
 
-    it('falls back to inline Grok launcher with grok-build default model and xhigh effort', () => {
+    it('falls back to inline Grok launcher with grok-4.5 and xhigh effort', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.equal(
         cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-build`,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.5`,
       );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--single/);
@@ -1613,7 +1626,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-build$/,
+        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-4\.5$/,
       );
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);

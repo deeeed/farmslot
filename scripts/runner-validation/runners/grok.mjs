@@ -10,7 +10,7 @@ export const OBSERVABILITY_SCOPE = 'pane-only';
 export const REGISTERED_EVENTS = [];
 
 const GROK_BIN = path.join(os.homedir(), '.grok/bin/grok');
-const DEFAULT_MODEL = 'grok-build';
+const DEFAULT_MODEL = 'grok-4.5';
 
 export function prepareRepo(repo) {
   execFileSync('git', ['init'], { cwd: repo, stdio: 'pipe' });

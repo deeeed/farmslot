@@ -15,6 +15,7 @@ import type {
 import {
   effectiveRequiredReviewCount,
   independentReviewPolicySatisfied,
+  isQualifyingIndependentReview,
 } from '../quality/review-policy.js';
 import { EXTRA_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
@@ -395,7 +396,8 @@ export function countStalePublicationReviews(
   options?: { requireCrossRunnerCertification?: boolean },
 ): number {
   const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
-  if (!packageReviewSubjectHash) return independentReviews.length;
+  if (!packageReviewSubjectHash)
+    return independentReviews.filter(isQualifyingIndependentReview).length;
   const reviewDepth = {
     minimumIndependentReviews: preparedPackage.reviewDepth?.minimumIndependentReviews ?? 1,
     requireCrossRunner: Boolean(
@@ -415,6 +417,7 @@ export function countStalePublicationReviews(
   );
   return independentReviews.filter(
     (review) =>
+      isQualifyingIndependentReview(review) &&
       diagnosePublicationReviewStaleness(review, packageReviewSubjectHash, preparedPackage).stale &&
       !certifiedByFreshFixLoop,
   ).length;
@@ -446,6 +449,7 @@ function classifyStaleApprovingReviews(
   const evidenceOnly: IndependentReviewStatus[] = [];
   let hasHeadDriftedApproval = false;
   for (const review of independentReviews) {
+    if (!isQualifyingIndependentReview(review)) continue;
     if (review.verdict !== 'pass' || review.unresolvedCount !== 0) continue;
     if (options?.requireCrossRunnerCertification && !review.crossRunner) continue;
     const diagnosis = diagnosePublicationReviewStaleness(
@@ -579,7 +583,10 @@ function freshPublicationReviewCountSatisfied(
   const required = effectiveRequiredReviewCount(reviewDepth);
   if (required === 0) return true;
   const passing = reviews.filter(
-    (review) => review.verdict === 'pass' && review.unresolvedCount === 0,
+    (review) =>
+      isQualifyingIndependentReview(review) &&
+      review.verdict === 'pass' &&
+      review.unresolvedCount === 0,
   );
   if (passing.length < required) return false;
   if (reviewDepth.requireCrossRunner && !passing.some((review) => review.crossRunner)) return false;
@@ -590,6 +597,7 @@ function reviewCertifiesPreparedPackage(
   review: IndependentReviewStatus,
   preparedPackage: ReadyGatePrPackage,
 ): boolean {
+  if (!isQualifyingIndependentReview(review)) return false;
   if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
   const snapshot = review.reviewSnapshot;
   const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
@@ -625,8 +633,8 @@ function reviewCertifiesApprovedHeadAfterFix(
   preparedPackage: ReadyGatePrPackage,
 ): boolean {
   if (!preparedPackage.headSha) return false;
+  if (!isQualifyingIndependentReview(review)) return false;
   if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
-  if ((review.validationDepth ?? 'full-live') !== 'full-live') return false;
   const snapshot = review.reviewSnapshot;
   if (
     !snapshot ||

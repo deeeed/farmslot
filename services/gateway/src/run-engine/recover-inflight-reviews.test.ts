@@ -151,6 +151,33 @@ test('buildRecoveredReview stamps a PASS review against the matching package and
   assert.equal(review.reviewedReviewSubjectHash, 'subject-xyz');
 });
 
+test('buildRecoveredReview preserves a captured snapshot when the prepared package drifted', () => {
+  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  const review = buildRecoveredReview({
+    run,
+    ctx: reviewerContext(),
+    signal: terminalSignal(),
+    feedback: { verdict: 'pass', issues: [] },
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'main',
+      baseSha: '1111111',
+      headRef: 'fix/recovered-review',
+      headSha: 'deadbeef',
+      diffPath: 'artifacts/independent-review-1/review-loop-1/review.diff',
+      diffHash: 'a'.repeat(64),
+      diffStat: { files: 1, additions: 2, deletions: 0 },
+      capturedAt: '2026-07-16T10:01:00.000Z',
+    },
+    reviewedPackage: undefined,
+  });
+
+  assert.ok(review);
+  assert.equal(review.reviewSnapshot?.headSha, 'deadbeef');
+  assert.equal(review.reviewedHeadSha, 'deadbeef');
+  assert.equal(review.reviewedReviewSubjectHash ?? null, null);
+});
+
 test('a failed or blocked reviewer never stamps a verdict, even with parseable PASS feedback', () => {
   const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
   const ctx = reviewerContext();

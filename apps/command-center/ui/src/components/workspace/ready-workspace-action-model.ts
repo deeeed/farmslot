@@ -1,4 +1,6 @@
-import type { PublicationTarget, ReadyGatePayload, RunDecision } from '@farmslot/protocol';
+import type { RunDecision } from '@farmslot/protocol';
+
+export { readyResolveSelectionData } from '@farmslot/protocol';
 
 export interface ReadyRefreshPublishPackageResult {
   preservedEvidenceKeys?: string[];
@@ -28,26 +30,6 @@ export function readyDecisionSuccessMessage(approving: boolean): string {
   return approving
     ? 'Publication approved — waiting for finalize to publish…'
     : 'Decision submitted — waiting for the pipeline to continue…';
-}
-
-export function readyResolveSelectionData(input: {
-  payload?: ReadyGatePayload;
-  publicationTarget: PublicationTarget;
-  selectedEvidenceKeys: string[];
-  extraSelectionData?: Record<string, unknown>;
-}): Record<string, unknown> | undefined {
-  const extraSelectionData = input.extraSelectionData ?? {};
-  if (!input.payload?.prPackage) {
-    return Object.keys(extraSelectionData).length ? extraSelectionData : undefined;
-  }
-  return {
-    publicationTarget: input.publicationTarget,
-    selectedEvidenceKeys: input.selectedEvidenceKeys,
-    packageId: input.payload.prPackage.id,
-    packageHash: input.payload.prPackage.packageHash,
-    packageHeadSha: input.payload.prPackage.headSha,
-    ...extraSelectionData,
-  };
 }
 
 export function refreshedReadyEvidenceSelection(

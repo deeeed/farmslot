@@ -21,6 +21,7 @@ import type {
   AgentContext,
   IndependentReviewStatus,
   ReadyGatePrPackage,
+  ReviewDiffSnapshot,
   Run,
   WorkerSignal,
 } from '@farmslot/protocol';
@@ -75,9 +76,10 @@ export function buildRecoveredReview(params: {
     Awaited<ReturnType<typeof readReviewFeedback>>,
     'verdict' | 'issues' | 'validationDepth' | 'incomplete'
   >;
+  reviewSnapshot?: ReviewDiffSnapshot;
   reviewedPackage: ReadyGatePrPackage | undefined;
 }): IndependentReviewStatus | null {
-  const { run, ctx, signal, feedback, reviewedPackage } = params;
+  const { run, ctx, signal, feedback, reviewSnapshot, reviewedPackage } = params;
   // Freshness anchors on the CURRENT attempt's launch time. startedAt is too
   // old for warm-reused contexts (they keep loop 1's value, so a prior loop's
   // signal looks fresh) and updatedAt is too new after a restart (startup
@@ -101,6 +103,7 @@ export function buildRecoveredReview(params: {
     runner: ctx.runner ?? undefined,
     model: ctx.model ?? undefined,
     retryCount: 0,
+    reviewSnapshot,
   };
   return buildPublishGateReviewStatus({
     source: 'human-gate',
@@ -112,6 +115,84 @@ export function buildRecoveredReview(params: {
     reviewId,
     reviewedPackage: reviewedPackage ?? null,
   });
+}
+
+function isOptionalStringOrNull(value: object, key: string): boolean {
+  const field = Reflect.get(value, key);
+  return field === undefined || field === null || typeof field === 'string';
+}
+
+function isReviewDiffSnapshot(value: unknown): value is ReviewDiffSnapshot {
+  if (typeof value !== 'object' || value === null) return false;
+  const source = Reflect.get(value, 'source');
+  if (
+    (source !== 'local-git' && source !== 'github-pr' && source !== 'unavailable') ||
+    typeof Reflect.get(value, 'capturedAt') !== 'string'
+  ) {
+    return false;
+  }
+  for (const key of ['baseRef', 'baseSha', 'headRef', 'headSha', 'diffPath', 'diffHash']) {
+    if (!isOptionalStringOrNull(value, key)) return false;
+  }
+  for (const key of ['missingReason', 'error']) {
+    const field = Reflect.get(value, key);
+    if (field !== undefined && typeof field !== 'string') return false;
+  }
+  const diffStat = Reflect.get(value, 'diffStat');
+  if (
+    diffStat !== undefined &&
+    (typeof diffStat !== 'object' ||
+      diffStat === null ||
+      !Number.isFinite(Reflect.get(diffStat, 'files')) ||
+      !Number.isFinite(Reflect.get(diffStat, 'additions')) ||
+      !Number.isFinite(Reflect.get(diffStat, 'deletions')))
+  ) {
+    return false;
+  }
+  const headSha = Reflect.get(value, 'headSha');
+  return (
+    source !== 'local-git' || (typeof headSha === 'string' && /^[0-9a-f]{7,40}$/i.test(headSha))
+  );
+}
+
+function parseRecoveredReviewSnapshot(raw: string): ReviewDiffSnapshot | undefined {
+  if (!raw.trim()) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isReviewDiffSnapshot(parsed) ? parsed : undefined;
+  } catch (err) {
+    // A malformed snapshot cannot certify a package. Keep the recovered verdict
+    // unstamped so publication remains blocked and a fresh review is required.
+    console.warn(
+      `[run-engine] ignoring invalid recovered reviewer snapshot: ${(err as Error).message}`,
+    );
+    return undefined;
+  }
+}
+
+async function readRecoveredReviewSnapshot(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+  reviewId: string,
+): Promise<ReviewDiffSnapshot | undefined> {
+  const scope = `${vars.remoteRepo}/${taskDir}/artifacts/${reviewId}`;
+  const command = [
+    `scope=${shellQuote(scope)}`,
+    'latest=""',
+    'for candidate in "$scope"/review-loop-*/review-diff-stat.json; do',
+    '  [ -f "$candidate" ] || continue',
+    '  if [ -z "$latest" ] || [ "$candidate" -nt "$latest" ]; then latest="$candidate"; fi',
+    'done',
+    '[ -z "$latest" ] || cat "$latest"',
+  ].join('\n');
+  const result = await execOnSlot(vars, command, { timeout: 10_000 });
+  if (result.exitCode !== 0) {
+    console.warn(
+      `[run-engine] recovered-review snapshot read failed for ${reviewId}: ${(result.stderr || result.stdout || `exit ${result.exitCode}`).slice(0, 200)}`,
+    );
+    return undefined;
+  }
+  return parseRecoveredReviewSnapshot(result.stdout);
 }
 
 async function readReviewerTerminalSignal(
@@ -222,17 +303,20 @@ async function ingestRecoveredReviewer(
   const feedback = await readReviewFeedback(vars, taskDir, reviewerFeedbackRelPath(ctx.id));
 
   const latest = getRun(runId)!;
+  const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
+  const reviewId = EXTRA_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id;
+  const reviewSnapshot = await readRecoveredReviewSnapshot(vars, taskDir, reviewId);
   const review = buildRecoveredReview({
     run: latest,
     ctx,
     signal,
     feedback,
+    reviewSnapshot,
     reviewedPackage: stampablePackage,
   });
   if (!review) return null;
 
   const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [review]);
-  const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
   updateRun(runId, {
     engineState: {
       ...latest.engineState,
