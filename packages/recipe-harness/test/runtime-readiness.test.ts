@@ -6,6 +6,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import vm from 'node:vm';
 
+import { WebSocketServer } from 'ws';
+
 import {
   CdpSession,
   jsonGet,
@@ -136,6 +138,37 @@ test('CDP session connection timeout rejects a stalled WebSocket upgrade', async
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
+  }
+});
+
+test('CDP call timeout releases the stalled request and keeps the session usable', async () => {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  server.on('connection', (socket) => {
+    socket.on('message', (buffer) => {
+      const request = JSON.parse(buffer.toString()) as { id: number; method: string };
+      if (request.method === 'Page.getFrameTree') {
+        socket.send(JSON.stringify({ id: request.id, result: { ok: true } }));
+      }
+    });
+  });
+  const session = await CdpSession.connect(`ws://127.0.0.1:${address.port}`);
+
+  try {
+    await assert.rejects(
+      session.call('Runtime.evaluate', {}, { timeoutMs: 20 }),
+      /CDP Runtime\.evaluate timed out after 20ms/u,
+    );
+    assert.deepEqual(await session.call('Page.getFrameTree', {}, { timeoutMs: 1_000 }), {
+      ok: true,
+    });
+  } finally {
+    session.close();
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
   }
 });
 

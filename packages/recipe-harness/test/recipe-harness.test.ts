@@ -3109,7 +3109,10 @@ test('CDP navigation defers DOM settlement to the shared settle wrapper', async 
   assert.match(settleExpression ?? '', /setInterval\(discoverRoots/u);
   assert.match(settleExpression ?? '', /document\.getAnimations/u);
   assert.match(settleExpression ?? '', /animation\.playState === 'running'/u);
-  assert.match(settleExpression ?? '', /reject\(new Error\('DOM remained active/u);
+  assert.match(
+    settleExpression ?? '',
+    /reject\(new Error\('DOM remained active for this settlement attempt\.'/u,
+  );
   assert.match(settleExpression ?? '', /globalThis\[key\] = cancel/u);
   assert.match(settleExpression ?? '', /resolve\(false\)/u);
   assert.deepEqual(isolatedWorldCalls, [{ frameId: 'main', worldName: 'farmslot-dom-settlement' }]);
@@ -3165,8 +3168,14 @@ test('CDP settlement cancellation resolves the older in-page probe', async () =>
   const first = page.waitForDomSettled(100);
   await firstEvaluation;
   const second = page.waitForDomSettled(100);
-  await Promise.all([first, second]);
+  const [firstResult, secondResult] = await Promise.allSettled([first, second]);
 
+  assert.equal(firstResult.status, 'rejected');
+  assert.match(
+    String(firstResult.status === 'rejected' ? firstResult.reason : ''),
+    /settlement was superseded by another probe/u,
+  );
+  assert.equal(secondResult.status, 'fulfilled');
   assert.deepEqual(values, [false, true]);
 });
 
@@ -3190,10 +3199,7 @@ test('CDP settlement does not retry non-transient evaluation failures', async ()
 });
 
 test('CDP settlement does not retry without enough time for a quiet window', async () => {
-  const originalNow = Date.now;
-  let now = 0;
   let createWorldCalls = 0;
-  Date.now = () => now;
   const page = new CdpWebPage({
     async call(method: string) {
       if (method === 'Page.getFrameTree') {
@@ -3203,27 +3209,26 @@ test('CDP settlement does not retry without enough time for a quiet window', asy
         createWorldCalls += 1;
         return { executionContextId: createWorldCalls };
       }
-      now = 90;
+      await new Promise((resolve) => setTimeout(resolve, 75));
       throw new Error('Execution context was destroyed.');
     },
   } as never);
 
-  try {
-    await assert.rejects(
-      page.waitForDomSettled(100),
-      /within 100ms: Execution context was destroyed/u,
-    );
-    assert.equal(createWorldCalls, 1);
-  } finally {
-    Date.now = originalNow;
-  }
+  await assert.rejects(
+    page.waitForDomSettled(100),
+    /within 100ms: Execution context was destroyed/u,
+  );
+  assert.equal(createWorldCalls, 1);
 });
 
 for (const transientError of [
   'Execution context was destroyed.',
   'Execution context with given id not found',
   'Cannot find context with specified id',
+  'Execution context is not available in detached frame',
   'Inspected target navigated or closed',
+  'Not attached to an active page',
+  'Session with given id not found',
 ]) {
   test(`CDP settlement recreates its isolated world after: ${transientError}`, async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
