@@ -265,7 +265,7 @@
       "properties": {
         "paths": {
           "type": "array",
-          "description": "Farmslot-relative support paths. Allowed roots are scripts/ and this project's projects/<name>/ subtree.",
+          "description": "Farmslot-relative support paths. Allowed roots are scripts/ and validated projects/<name>/ subtrees.",
           "items": {
             "type": "string"
           },
