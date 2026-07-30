@@ -26,14 +26,25 @@ export function displayedBacklogFlow(item: BacklogItem, activeRun?: Run): string
   return activeRun?.flowType || item.flowType;
 }
 
+export function displayedBacklogStatus(item: BacklogItem, linkedRun?: Run): BacklogStatus {
+  if (!linkedRun || item.status === 'archived' || item.status === 'done') return item.status;
+  if (linkedRun.status === 'done') return item.multiPr ? 'ready' : 'done';
+  if (linkedRun.status === 'failed') return 'failed';
+  if (linkedRun.status === 'cancelled' || linkedRun.status === 'blocked') {
+    return 'needs-attention';
+  }
+  return 'running';
+}
+
 function comparisonValue(
   item: BacklogItem,
-  activeRun: Run | undefined,
+  linkedRun: Run | undefined,
   key: BacklogSortKey,
 ): string {
+  const activeRun = linkedRun && !isTerminalRunStatus(linkedRun.status) ? linkedRun : undefined;
   switch (key) {
     case 'status':
-      return item.status;
+      return displayedBacklogStatus(item, linkedRun);
     case 'flow':
       return displayedBacklogFlow(item, activeRun);
     case 'project':
@@ -64,9 +75,7 @@ export function sortBacklogItems(
     });
   const values = new Map(
     items.map((item) => {
-      const linkedRun = linkedRuns.get(item.id);
-      const activeRun = linkedRun && !isTerminalRunStatus(linkedRun.status) ? linkedRun : undefined;
-      return [item.id, comparisonValue(item, activeRun, key)];
+      return [item.id, comparisonValue(item, linkedRuns.get(item.id), key)];
     }),
   );
   return [...items].sort((a, b) => {
@@ -138,13 +147,14 @@ export function backlogItemMatchesStatusFilter(
 }
 
 export function backlogStatusCounts(
-  items: readonly Pick<BacklogItem, 'status'>[],
+  items: readonly BacklogItem[],
+  linkedRuns: ReadonlyMap<string, Run | undefined> = new Map(),
 ): Record<BacklogStatus, number> {
   const counts = Object.fromEntries(BACKLOG_STATUSES.map((status) => [status, 0])) as Record<
     BacklogStatus,
     number
   >;
-  for (const item of items) counts[item.status] += 1;
+  for (const item of items) counts[displayedBacklogStatus(item, linkedRuns.get(item.id))] += 1;
   return counts;
 }
 

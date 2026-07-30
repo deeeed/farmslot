@@ -87,6 +87,7 @@ import {
   canRestoreBacklogItemForUi,
   DEFAULT_BACKLOG_STATUS_FILTER,
   displayedBacklogFlow,
+  displayedBacklogStatus,
   parseBacklogStatusFilter,
   serializeBacklogStatusFilter,
   showsBacklogCleanupActionsForUi,
@@ -1275,8 +1276,12 @@ export class BacklogPanel extends LitElement {
   }
 
   private get _filteredCandidates(): BacklogItem[] {
+    const linkedRuns = this._linkedActivityRuns();
     return this._projectFiltered.filter((item) =>
-      backlogItemMatchesStatusFilter(item.status, this._statuses),
+      backlogItemMatchesStatusFilter(
+        displayedBacklogStatus(item, linkedRuns.get(item.id)),
+        this._statuses,
+      ),
     );
   }
 
@@ -1310,7 +1315,7 @@ export class BacklogPanel extends LitElement {
   }
 
   private get _statusLabels(): Partial<Record<BacklogStatus, string>> {
-    const counts = backlogStatusCounts(this._projectFiltered);
+    const counts = backlogStatusCounts(this._projectFiltered, this._linkedActivityRuns());
     return Object.fromEntries(
       BACKLOG_STATUSES.map((status) => [status, `${status} (${counts[status]})`]),
     );
@@ -2475,9 +2480,11 @@ export class BacklogPanel extends LitElement {
     </section>`;
   }
 
-  private _renderCompactRow(item: BacklogItem, activeRun?: Run) {
+  private _renderCompactRow(item: BacklogItem, linkedRun?: Run) {
     const selected = this._selectedItemId === item.id;
-    const tone = statusTone(item.status);
+    const displayedStatus = displayedBacklogStatus(item, linkedRun);
+    const tone = statusTone(displayedStatus);
+    const activeRun = linkedRun && !isTerminalRunStatus(linkedRun.status) ? linkedRun : undefined;
     const displayedFlow = displayedBacklogFlow(item, activeRun);
     const flowTitle =
       activeRun && displayedFlow !== item.flowType
@@ -2495,7 +2502,7 @@ export class BacklogPanel extends LitElement {
         }
       }}
     >
-      ${renderPlanningBadge(item.status, tone)}
+      ${renderPlanningBadge(displayedStatus, tone)}
       <span data-testid="backlog-flow"
         >${renderFlowBadge(displayedFlow, flowTitle ? { title: flowTitle } : {})}</span
       >
@@ -2795,11 +2802,7 @@ export class BacklogPanel extends LitElement {
               : html`<div class="backlog-table">
                   ${this._renderTableHead()}
                   ${filtered.map((item) => {
-                    const run = activityRuns.get(item.id);
-                    return this._renderCompactRow(
-                      item,
-                      run && !isTerminalRunStatus(run.status) ? run : undefined,
-                    );
+                    return this._renderCompactRow(item, activityRuns.get(item.id));
                   })}
                 </div>`}
           </div>

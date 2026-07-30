@@ -13,6 +13,7 @@ import {
   canRestoreBacklogItemForUi,
   DEFAULT_BACKLOG_STATUS_FILTER,
   displayedBacklogFlow,
+  displayedBacklogStatus,
   parseBacklogStatusFilter,
   serializeBacklogStatusFilter,
   showsBacklogCleanupActionsForUi,
@@ -47,17 +48,54 @@ test('backlog default filter shows the live set and hides done/archived', () => 
 });
 
 test('backlog status counts keep hidden completed work discoverable', () => {
+  const base = {
+    project: 'metamask-core-farm',
+    sourceKind: 'jira',
+    sourceRef: 'TAT-1',
+    title: 'Item',
+    flowType: 'dev',
+    priority: 10,
+    createdAt: '2026-07-30T00:00:00.000Z',
+    updatedAt: '2026-07-30T00:00:00.000Z',
+  } as const;
   const counts = backlogStatusCounts([
-    { status: 'candidate' },
-    { status: 'done' },
-    { status: 'done' },
-    { status: 'archived' },
+    { ...base, id: 'candidate', status: 'candidate' },
+    { ...base, id: 'done-1', status: 'done' },
+    { ...base, id: 'done-2', status: 'done' },
+    { ...base, id: 'archived', status: 'archived' },
   ]);
 
   assert.equal(counts.candidate, 1);
   assert.equal(counts.done, 2);
   assert.equal(counts.archived, 1);
   assert.equal(counts.running, 0);
+});
+
+test('backlog status projection reconciles linked direct runs', () => {
+  const item = {
+    id: 'item',
+    project: 'metamask-core-farm',
+    sourceKind: 'jira',
+    sourceRef: 'TAT-3252',
+    title: 'Reduce-only order',
+    flowType: 'fix-bug',
+    status: 'candidate',
+    priority: 10,
+    createdAt: '2026-07-30T00:00:00.000Z',
+    updatedAt: '2026-07-30T00:00:00.000Z',
+  } satisfies BacklogItem;
+  const run = {
+    id: 'run',
+    project: item.project,
+    ticketOrPr: item.sourceRef,
+    status: 'human-gating',
+    updatedAt: '2026-07-30T02:00:00.000Z',
+  } as Run;
+
+  assert.equal(displayedBacklogStatus(item, run), 'running');
+  assert.equal(displayedBacklogStatus(item, { ...run, status: 'blocked' }), 'needs-attention');
+  assert.equal(displayedBacklogStatus(item, { ...run, status: 'done' }), 'done');
+  assert.equal(backlogStatusCounts([item], new Map([[item.id, run]])).running, 1);
 });
 
 test('backlog status filter round-trips through the hash param', () => {
