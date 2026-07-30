@@ -153,7 +153,7 @@ function stripExecutionPreamble(rawBody: string): string {
   const summaryIndexes = lines
     .map((line, index) => (/^## Summary\s*$/i.test(line) ? index : -1))
     .filter((index) => index >= 0);
-  const summaryIndex = summaryIndexes.length > 1 ? summaryIndexes[1] : summaryIndexes[0];
+  const summaryIndex = summaryIndexes[0];
   if (summaryIndex === undefined || summaryIndex <= 0) return rawBody.trim();
 
   const preamble = lines.slice(0, summaryIndex).join('\n');

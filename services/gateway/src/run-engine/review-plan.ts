@@ -106,12 +106,20 @@ export function automaticPublicationReviewPlan(
 export function remainingExplicitReviewPlan(
   plan: ReviewLoopRequest[],
   reviews: IndependentReviewStatus[],
+  scope: {
+    requestedAt?: string;
+    source?: IndependentReviewStatus['source'];
+  } = {},
 ): ReviewLoopRequest[] {
+  const requestedAt = scope.requestedAt ? Date.parse(scope.requestedAt) : Number.NaN;
   const passingCount = reviews.filter(
     (review) =>
       isQualifyingIndependentReview(review) &&
       review.verdict === 'pass' &&
-      review.unresolvedCount === 0,
+      review.unresolvedCount === 0 &&
+      (!scope.source || (review.source ?? 'dispatch') === scope.source) &&
+      (!Number.isFinite(requestedAt) ||
+        Date.parse(review.completedAt ?? review.startedAt ?? '') >= requestedAt),
   ).length;
   return plan.slice(passingCount);
 }

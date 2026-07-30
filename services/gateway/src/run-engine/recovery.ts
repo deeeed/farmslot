@@ -241,6 +241,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                 publishGate: {
                   ...run.engineState?.publishGate,
                   pendingReviewPlan: recoveredFixPlan,
+                  pendingReviewPlanRequestedAt: new Date().toISOString(),
                 },
               },
             };

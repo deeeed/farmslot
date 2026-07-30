@@ -83,6 +83,41 @@ test('explicit publication review recovery drops the already-passed prefix', () 
   );
 });
 
+test('explicit publication review recovery ignores passes from an earlier work order', () => {
+  const plan = [{ order: 1, runner: 'codex' as const, validationDepth: 'static-code' as const }];
+  const reviews = [
+    {
+      id: 'earlier-human-review',
+      source: 'human-gate' as const,
+      runner: 'codex',
+      crossRunner: true,
+      loopNumber: 1,
+      verdict: 'pass' as const,
+      unresolvedCount: 0,
+      completedAt: '2026-07-30T01:00:00.000Z',
+    },
+  ];
+
+  assert.deepEqual(
+    remainingExplicitReviewPlan(plan, reviews, {
+      requestedAt: '2026-07-30T02:00:00.000Z',
+      source: 'human-gate',
+    }),
+    plan,
+  );
+  assert.deepEqual(
+    remainingExplicitReviewPlan(
+      plan,
+      [{ ...reviews[0], id: 'current-human-review', completedAt: '2026-07-30T03:00:00.000Z' }],
+      {
+        requestedAt: '2026-07-30T02:00:00.000Z',
+        source: 'human-gate',
+      },
+    ),
+    [],
+  );
+});
+
 test('humanGateReviewDepth makes explicit gate review requests temporary but required', () => {
   const basePolicy = {
     minimumIndependentReviews: 0,

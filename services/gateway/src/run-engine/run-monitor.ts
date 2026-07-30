@@ -7,6 +7,7 @@ import path from 'node:path';
 import {
   type AgentContext,
   type AgentRole,
+  checklistBasenameFromTaskPath,
   Events,
   type ExecResult,
   FLOW_STEPS,
@@ -20,6 +21,7 @@ import {
   type RunDecision,
   type RunMonitorState,
   type RunStep,
+  terminalContractInputForChecklist,
   WORKER_TERMINAL_CONTRACT_INPUT,
   type WorkerSignal,
   type WorkerSignalProbeResult,
@@ -366,13 +368,18 @@ async function validateTerminalSignalArtifacts(
   slotId: string,
   signalJsonPath: string,
   signal: WorkerSignal,
+  checklistTaskFile?: string | null,
 ): Promise<{ ok: true } | { ok: false; kind: 'artifact' | 'infrastructure'; message: string }> {
   const terminalCommand = artifactTerminalCommandForSignal(signal);
   if (!terminalCommand) return { ok: true };
 
   const vars = await loadSlotVars(slotId);
   const taskDir = path.posix.dirname(signalJsonPath);
-  const contractPath = `${taskDir}/${WORKER_TERMINAL_CONTRACT_INPUT}`;
+  const checklistBasename = checklistBasenameFromTaskPath(checklistTaskFile);
+  const contractInput = checklistBasename
+    ? terminalContractInputForChecklist(checklistBasename)
+    : WORKER_TERMINAL_CONTRACT_INPUT;
+  const contractPath = `${taskDir}/${contractInput}`;
   const agentRoot = isLocal(vars.host, vars.machine)
     ? farmslotRoot
     : resolveRemoteRepo('~/farmslot-node', vars.osType, vars.sshUser);
@@ -556,6 +563,7 @@ export async function probeWorkerSignalForRun(
       slotId,
       signalJsonPath,
       boundSig,
+      ctx?.taskFile,
     );
     if (!artifactValidation.ok) {
       return {

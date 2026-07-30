@@ -1426,6 +1426,8 @@ export interface RunEngineState {
     prNumber?: number | null;
     reviewDepth?: ReviewDepthPolicy;
     pendingReviewPlan?: ReviewLoopRequest[];
+    /** Creation time for the current pending plan, used to ignore reviews from earlier work orders. */
+    pendingReviewPlanRequestedAt?: string;
     independentReviews?: IndependentReviewStatus[];
     supersededPackageIds?: string[];
     feedbackArtifactPath?: string;

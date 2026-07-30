@@ -1268,13 +1268,24 @@ export class BacklogPanel extends LitElement {
 
   private get _filtered(): BacklogItem[] {
     return sortBacklogItems(
-      this._projectFiltered.filter((item) =>
-        backlogItemMatchesStatusFilter(item.status, this._statuses),
-      ),
+      this._filteredCandidates,
       this._runs,
       this._sortKey,
       this._sortDirection,
     );
+  }
+
+  private get _filteredCandidates(): BacklogItem[] {
+    return this._projectFiltered.filter((item) =>
+      backlogItemMatchesStatusFilter(item.status, this._statuses),
+    );
+  }
+
+  private _sortFilteredCandidates(
+    items: BacklogItem[],
+    linkedRuns: ReadonlyMap<string, Run | undefined>,
+  ): BacklogItem[] {
+    return sortBacklogItems(items, this._runs, this._sortKey, this._sortDirection, linkedRuns);
   }
 
   private get _projectFiltered(): BacklogItem[] {
@@ -2691,7 +2702,7 @@ export class BacklogPanel extends LitElement {
     </section>`;
   }
 
-  private _renderFilterToolbar() {
+  private _renderFilterToolbar(filteredCount: number) {
     const globalProjectScope =
       this._globalFilters.projects.length === 0
         ? 'All projects'
@@ -2717,7 +2728,7 @@ export class BacklogPanel extends LitElement {
           </button>
         </div>
         <div class="filter-count" title=${`${globalProjectScope} · ${globalMachineScope}`}>
-          ${this._filtered.length} / ${this._items.length} items
+          ${filteredCount} / ${this._items.length} items
         </div>
       </div>
       <div class="filter-groups">
@@ -2747,10 +2758,11 @@ export class BacklogPanel extends LitElement {
 
   render() {
     const hasDetail = Boolean(this._selectedItem);
-    const filtered = this._filtered;
-    const activityRuns = linkedRunsForBacklogItems(this._runs, filtered, {
+    const candidates = this._filteredCandidates;
+    const activityRuns = linkedRunsForBacklogItems(this._runs, candidates, {
       allowSourceRefInference: true,
     });
+    const filtered = this._sortFilteredCandidates(candidates, activityRuns);
     return html`<section class="shell">
       <div class="header header-compact">
         <h1>Backlog</h1>
@@ -2758,7 +2770,7 @@ export class BacklogPanel extends LitElement {
       </div>
       ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
       ${this._message ? html`<div class="message">${this._message}</div>` : nothing}
-      ${this._renderFilterToolbar()} ${this._renderCreatePanel()}
+      ${this._renderFilterToolbar(filtered.length)} ${this._renderCreatePanel()}
       <div class="main-area ${hasDetail ? 'has-detail' : ''}">
         <section class="list-panel">
           <div class="scroll-column rows">

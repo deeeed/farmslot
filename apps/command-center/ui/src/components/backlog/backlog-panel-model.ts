@@ -50,11 +50,14 @@ export function sortBacklogItems(
   runs: Run[],
   key: BacklogSortKey,
   direction: BacklogSortDirection,
+  prelinkedRuns?: ReadonlyMap<string, Run | undefined>,
 ): BacklogItem[] {
   const multiplier = direction === 'asc' ? 1 : -1;
-  const linkedRuns = linkedRunsForBacklogItems(runs, items, {
-    allowSourceRefInference: true,
-  });
+  const linkedRuns =
+    prelinkedRuns ??
+    linkedRunsForBacklogItems(runs, items, {
+      allowSourceRefInference: true,
+    });
   const values = new Map(
     items.map((item) => {
       const linkedRun = linkedRuns.get(item.id);

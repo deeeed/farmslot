@@ -133,7 +133,17 @@ async function readPrepareProvenance(slotId: string, project: string): Promise<P
       { timeout: 5_000, maxBuffer: 256 * 1024 },
     );
     if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
-    const parsed: unknown = JSON.parse(result.stdout);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(result.stdout);
+    } catch (error) {
+      // Each provenance file is optional enrichment. A malformed file must not
+      // prevent the other independent provenance source from being preserved.
+      console.warn(
+        `[run-engine] ignoring malformed optional prepare provenance ${basename}: ${(error as Error).message}`,
+      );
+      return undefined;
+    }
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : undefined;

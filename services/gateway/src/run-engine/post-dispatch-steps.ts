@@ -703,6 +703,14 @@ export async function executeHumanGateStep(
         ? remainingExplicitReviewPlan(
             explicitInitialPlan,
             beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [],
+            {
+              requestedAt: beforeInitialPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt,
+              source:
+                beforeInitialPlan.engineState?.publishGate?.reviewDepth?.requestedBy ===
+                'human-gate'
+                  ? 'human-gate'
+                  : 'dispatch',
+            },
           )
         : missingReviewPlan;
       if (explicitInitialPlan.length > 0 && initialPlan.length === 0) {
@@ -712,6 +720,7 @@ export async function executeHumanGateStep(
             publishGate: {
               ...beforeInitialPlan.engineState?.publishGate,
               pendingReviewPlan: [],
+              pendingReviewPlanRequestedAt: undefined,
             },
           },
         });
@@ -724,6 +733,7 @@ export async function executeHumanGateStep(
               publishGate: {
                 ...beforeInitialPlan.engineState?.publishGate,
                 pendingReviewPlan: initialPlan,
+                pendingReviewPlanRequestedAt: new Date().toISOString(),
               },
             },
           });
@@ -744,6 +754,7 @@ export async function executeHumanGateStep(
             publishGate: {
               ...afterDispatchReviews.engineState?.publishGate,
               pendingReviewPlan: [],
+              pendingReviewPlanRequestedAt: undefined,
             },
           },
         });
@@ -807,6 +818,7 @@ export async function executeHumanGateStep(
             publishGate: {
               ...afterReviewPlan.engineState?.publishGate,
               pendingReviewPlan: [],
+              pendingReviewPlanRequestedAt: undefined,
             },
           },
         });

@@ -540,6 +540,8 @@ export const runListStyles = css`
     gap: 4px;
     font-size: 11px;
     color: ${unsafeCSS(colors.textMuted)};
+    min-width: 0;
+    overflow: hidden;
     white-space: nowrap;
   }
   .meta-badges {

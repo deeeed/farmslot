@@ -171,3 +171,28 @@ test('buildDraftPrBody strips execution provenance before the public summary', a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('buildDraftPrBody preserves later summary sections after stripping execution provenance', async () => {
+  const body = await buildDraftPrBody(
+    makeRun(),
+    [
+      '# TAT-3344 — execution report',
+      '',
+      '**Branch:** `task-branch`',
+      '**Commit:** `123456789`',
+      '',
+      '## Summary',
+      '',
+      'Public summary.',
+      '',
+      '## Summary',
+      '',
+      'Nested source summary that remains part of the report.',
+    ].join('\n'),
+    [],
+  );
+
+  assert.match(body, /^## Summary\n\nPublic summary\./);
+  assert.equal(body.match(/^## Summary$/gm)?.length, 2);
+  assert.match(body, /Nested source summary that remains part of the report\./);
+});

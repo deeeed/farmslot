@@ -418,6 +418,7 @@ export class RoadmapPanel extends LitElement {
         background: transparent;
         border: 0;
         color: ${unsafeCSS(colors.textMuted)};
+        cursor: pointer;
         font: inherit;
         font-size: ${unsafeCSS(fonts.sizeXs)};
         padding: 2px 0;

@@ -236,7 +236,14 @@ export class RunPipelineMini extends LitElement {
         title: `${activeContextLabel}: running`,
       });
     }
-    return segments.slice(0, 5);
+    if (segments.length <= 5) return segments;
+    let activeIndex = -1;
+    segments.forEach((segment, index) => {
+      if (segment.status === 'running') activeIndex = index;
+    });
+    return activeIndex >= 5
+      ? [...segments.slice(0, 4), segments[activeIndex]]
+      : segments.slice(0, 5);
   }
 
   private planSegments(plan: Array<Record<string, unknown>>, label: string): MiniSegment[] {
