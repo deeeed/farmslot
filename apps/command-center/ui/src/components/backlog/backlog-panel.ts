@@ -231,6 +231,9 @@ export class BacklogPanel extends LitElement {
   @state() private _pendingConfirm: string | null = null;
 
   private _unsub?: () => void;
+  private _activityCacheItems: BacklogItem[] | null = null;
+  private _activityCacheRuns: Run[] | null = null;
+  private _activityCache = new Map<string, Run | undefined>();
   private readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
     setPendingConfirm: (pending) => {
@@ -1267,12 +1270,7 @@ export class BacklogPanel extends LitElement {
   }
 
   private get _filtered(): BacklogItem[] {
-    return sortBacklogItems(
-      this._filteredCandidates,
-      this._runs,
-      this._sortKey,
-      this._sortDirection,
-    );
+    return this._sortFilteredCandidates(this._filteredCandidates, this._linkedActivityRuns());
   }
 
   private get _filteredCandidates(): BacklogItem[] {
@@ -1286,6 +1284,18 @@ export class BacklogPanel extends LitElement {
     linkedRuns: ReadonlyMap<string, Run | undefined>,
   ): BacklogItem[] {
     return sortBacklogItems(items, this._runs, this._sortKey, this._sortDirection, linkedRuns);
+  }
+
+  private _linkedActivityRuns(): ReadonlyMap<string, Run | undefined> {
+    if (this._activityCacheItems === this._items && this._activityCacheRuns === this._runs) {
+      return this._activityCache;
+    }
+    this._activityCacheItems = this._items;
+    this._activityCacheRuns = this._runs;
+    this._activityCache = linkedRunsForBacklogItems(this._runs, this._items, {
+      allowSourceRefInference: true,
+    });
+    return this._activityCache;
   }
 
   private get _projectFiltered(): BacklogItem[] {
@@ -2759,9 +2769,7 @@ export class BacklogPanel extends LitElement {
   render() {
     const hasDetail = Boolean(this._selectedItem);
     const candidates = this._filteredCandidates;
-    const activityRuns = linkedRunsForBacklogItems(this._runs, candidates, {
-      allowSourceRefInference: true,
-    });
+    const activityRuns = this._linkedActivityRuns();
     const filtered = this._sortFilteredCandidates(candidates, activityRuns);
     return html`<section class="shell">
       <div class="header header-compact">

@@ -726,7 +726,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
               runner: defaultAlternateReviewRunner(
                 current.metrics.runner,
               ) as ReviewLoopRequest['runner'],
-              validationDepth: 'full-live' as const,
+              validationDepth: 'static-code' as const,
             },
           ]
         : selectedPlan;

@@ -803,7 +803,7 @@ export async function monitorRun(
             await sendRunnerInstructionSafely(
               vars,
               target,
-              initialRun.metrics.runner ?? 'claude',
+              context?.runner ?? initialRun.metrics.runner ?? 'claude',
               artifactContractWorkerInstruction(
                 probe.message,
                 probe.signal

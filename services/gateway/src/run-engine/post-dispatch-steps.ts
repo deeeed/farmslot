@@ -689,12 +689,6 @@ export async function executeHumanGateStep(
       const beforeInitialPlan = getRun(runId)!;
       const explicitInitialPlan =
         beforeInitialPlan.engineState?.publishGate?.pendingReviewPlan ?? [];
-      const missingReviewPlan = automaticPublicationReviewPlan(
-        beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
-          publicationReviewPolicyForRun(beforeInitialPlan),
-        beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [],
-        beforeInitialPlan.metrics.runner,
-      );
       // A restart can land after a reviewer verdict was persisted but before
       // the durable pending plan was cleared. Execute only the still-missing
       // portion; otherwise every restart launches another already-satisfied
@@ -712,7 +706,12 @@ export async function executeHumanGateStep(
                   : 'dispatch',
             },
           )
-        : missingReviewPlan;
+        : automaticPublicationReviewPlan(
+            beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
+              publicationReviewPolicyForRun(beforeInitialPlan),
+            beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [],
+            beforeInitialPlan.metrics.runner,
+          );
       if (explicitInitialPlan.length > 0 && initialPlan.length === 0) {
         updateRun(runId, {
           engineState: {

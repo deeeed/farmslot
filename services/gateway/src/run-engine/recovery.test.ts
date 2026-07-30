@@ -273,6 +273,7 @@ function publicationReviewRecoveryDeps(
     rearmed: Array<{ runId: string; replayPending: boolean }>;
     reconciled: number;
     replayed: string[];
+    updates: Array<Partial<Run>>;
   };
 } {
   const calls = {
@@ -280,13 +281,16 @@ function publicationReviewRecoveryDeps(
     rearmed: [] as Array<{ runId: string; replayPending: boolean }>,
     reconciled: 0,
     replayed: [] as string[],
+    updates: [] as Array<Partial<Run>>,
   };
   const deps = {
     listRuns: () => ({ runs: [run] }),
     loadFleetStatus: async () => ({
       slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
     }),
-    updateRun: () => {},
+    updateRun: (_runId: string, fields: Partial<Run>) => {
+      calls.updates.push(fields);
+    },
     updateRunStep: () => {},
     broadcast: () => {
       calls.broadcasted++;
@@ -313,6 +317,28 @@ function publicationReviewRecoveryDeps(
   } as unknown as RunRecoveryCollaborators;
   return { deps, calls };
 }
+
+test('startup clears a stale live-watcher recovery marker before skipping a paused run', async () => {
+  const run = minimalActiveRun({
+    status: 'paused',
+    engineState: {
+      publishGate: {
+        reviewRecovery: {
+          status: 'watching',
+          attempts: 2,
+          startedAt: '2026-07-30T01:00:00.000Z',
+          updatedAt: '2026-07-30T01:05:00.000Z',
+        },
+      },
+    },
+  });
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+
+  await recoverActiveRuns(deps);
+
+  const recoveryUpdate = calls.updates.find((update) => update.engineState);
+  assert.equal(recoveryUpdate?.engineState?.publishGate?.reviewRecovery, undefined);
+});
 
 test('recovery holds a blocked human gate while its reviewer is still in flight', async () => {
   const run = withRecoverableReviewer(

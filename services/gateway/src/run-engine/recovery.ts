@@ -201,6 +201,16 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
   console.log(`[run-engine] recovering ${active.length} active run(s)`);
 
   for (const run of active) {
+    if (run.engineState?.publishGate?.reviewRecovery?.status === 'watching') {
+      run.engineState = {
+        ...run.engineState,
+        publishGate: {
+          ...run.engineState.publishGate,
+          reviewRecovery: undefined,
+        },
+      };
+      deps.updateRun(run.id, { engineState: run.engineState });
+    }
     if (isLeakedGatewayTestRun(run)) {
       console.warn(
         `[run-engine] skipping recovery for leaked gateway test run ${run.id.slice(0, 8)}`,

@@ -82,6 +82,68 @@ test('buildReviewSummary projects verdicts and flags feedback-driven re-work', (
   assert.equal(summary.didAnyReviewTriggerReWork, true);
 });
 
+test('buildReviewSummary excludes findings from an older reviewed head', () => {
+  const run = makeRun({
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-old',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 2,
+            verdict: 'issues',
+            unresolvedCount: 7,
+            reviewSnapshot: {
+              source: 'local-git',
+              baseRef: 'main',
+              baseSha: 'base',
+              headRef: 'feature',
+              headSha: 'old-head',
+              diffPath: 'artifacts/old.diff',
+              diffHash: 'old-diff',
+              diffStat: { files: 1, additions: 1, deletions: 0 },
+              capturedAt: '2026-07-30T01:00:00.000Z',
+            },
+            // Package refreshes may restamp this compatibility field; the
+            // immutable review snapshot remains the authority for code freshness.
+            reviewedHeadSha: 'current-head',
+          },
+          {
+            id: 'independent-review-current',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 3,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            reviewSnapshot: {
+              source: 'local-git',
+              baseRef: 'main',
+              baseSha: 'base',
+              headRef: 'feature',
+              headSha: 'current-head',
+              diffPath: 'artifacts/current.diff',
+              diffHash: 'current-diff',
+              diffStat: { files: 1, additions: 2, deletions: 0 },
+              capturedAt: '2026-07-30T02:00:00.000Z',
+            },
+            reviewedHeadSha: 'current-head',
+          },
+        ],
+      },
+    },
+  });
+
+  const summary = buildReviewSummary(run);
+
+  assert.deepEqual(
+    summary.independentReviews.map((review) => review.id),
+    ['independent-review-current'],
+  );
+  assert.equal(summary.passingReviews, 1);
+  assert.equal(summary.totalUnresolved, 0);
+});
+
 test('buildReviewSummary surfaces self-review skip reason from the pipeline step', () => {
   const run = makeRun({
     steps: [
