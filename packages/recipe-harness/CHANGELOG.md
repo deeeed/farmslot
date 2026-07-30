@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.10.4 - 2026-07-31
+
+- fix: evaluate CDP DOM-settlement probes in a navigation-resilient isolated world so LavaMoat scuttling cannot break post-interaction readiness checks.
+
 ## 0.10.3 - 2026-07-30
 
 - fix: publish the protocol workspace dependency as its concrete npm version for external consumers.

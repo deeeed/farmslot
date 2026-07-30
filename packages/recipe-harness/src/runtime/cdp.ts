@@ -453,13 +453,24 @@ export class CdpWebPage {
 
   async waitForDomSettled(timeoutMs = 10_000): Promise<void> {
     const quietMs = Math.min(300, Math.max(1, Math.floor(timeoutMs / 2)));
-    await withTimeout(
-      this.evaluate(
-        `new Promise((resolve, reject) => { const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let finished = false; const cleanup = () => { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); }; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; const finiteAnimations = animations.filter((animation) => animation.effect?.getTiming().iterations !== Infinity); if (finiteAnimations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); const observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for ${timeoutMs}ms')); }, ${timeoutMs}); })`,
-      ),
-      timeoutMs + 50,
-      `CDP document did not settle within ${timeoutMs}ms`,
-    );
+    const deadline = Date.now() + timeoutMs;
+    const expression = `new Promise((resolve, reject) => { const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let finished = false; const cleanup = () => { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); }; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; const finiteAnimations = animations.filter((animation) => animation.effect?.getTiming().iterations !== Infinity); if (finiteAnimations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); const observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for ${timeoutMs}ms')); }, ${timeoutMs}); })`;
+    while (Date.now() < deadline) {
+      try {
+        await withTimeout(
+          this.evaluateInIsolatedWorld(expression, 'farmslot-dom-settlement'),
+          Math.max(1, deadline - Date.now()),
+          `CDP document did not settle within ${timeoutMs}ms`,
+        );
+        return;
+      } catch (error) {
+        if (!isTransientCdpContextError(error)) throw error;
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) break;
+        await sleep(Math.min(25, remainingMs));
+      }
+    }
+    throw new Error(`CDP document did not settle within ${timeoutMs}ms`);
   }
 
   async evaluate<T = unknown>(expression: string): Promise<T> {
@@ -472,6 +483,38 @@ export class CdpWebPage {
         result.exceptionDetails.exception?.description ??
           result.exceptionDetails.text ??
           'CDP evaluation failed.',
+      );
+    }
+    return result.result?.value as T;
+  }
+
+  async evaluateInIsolatedWorld<T = unknown>(expression: string, worldName: string): Promise<T> {
+    const frameTree = await this.session.call<{
+      frameTree?: { frame?: { id?: string } };
+    }>('Page.getFrameTree');
+    const frameId = frameTree.frameTree?.frame?.id;
+    if (!frameId) throw new Error('CDP evaluation could not resolve the page frame.');
+    const isolatedWorld = await this.session.call<{ executionContextId?: number }>(
+      'Page.createIsolatedWorld',
+      { frameId, worldName },
+    );
+    if (isolatedWorld.executionContextId === undefined) {
+      throw new Error('CDP evaluation could not create an isolated world.');
+    }
+    const result = await this.session.call<{
+      result?: { value?: T };
+      exceptionDetails?: { text?: string; exception?: { description?: string } };
+    }>('Runtime.evaluate', {
+      expression,
+      contextId: isolatedWorld.executionContextId,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    if (result.exceptionDetails) {
+      throw new Error(
+        result.exceptionDetails.exception?.description ??
+          result.exceptionDetails.text ??
+          'CDP isolated-world evaluation failed.',
       );
     }
     return result.result?.value as T;
@@ -691,6 +734,13 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   return Promise.race([promise, timeoutPromise]).finally(() => {
     if (timeout) clearTimeout(timeout);
   });
+}
+
+function isTransientCdpContextError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /execution context was destroyed|cannot find context with specified id|no frame with given id found|frame with the given id is not found/iu.test(
+    message,
+  );
 }
 
 export interface CdpWebUiTransportInput {
