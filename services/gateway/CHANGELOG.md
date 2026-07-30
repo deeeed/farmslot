@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(backlog): direct `run.create` soft-links matching same-project backlog `sourceRef` items (`status=running`, `runId`, `run.backlogItemId`) and warns when a match cannot be linked.
 - feat(run-engine): keep gate-held worker sessions warm through ci-watch (MANUAL-000065) — FINALIZE no longer calls `killSlotAgents`; CI-chained `pr-complete` / `update-branch` set `warmSessionReuse` and hand off into the live session when present, falling back to fresh dispatch when dead or runner/model-swapped; terminal failure after FINALIZE still tears down via `teardownGateHeldAgentsIfNeeded`.
 - fix(slot-io): home-relative remote paths (`~/farmslot-node/support/...`) are valid node fs roots — the gateway forwards `~` for the node's own tilde expansion instead of rejecting the path as non-absolute. Remote-slot prepare died on the support-bundle manifest probe; local slots never exercised this path.
 - fix(ci-monitor): a deferred inline CI-fix nudge retries on the self-review interval loop (pane re-resolution before each attempt, bailing on terminal runs) instead of two immediate probes. The old two-strikes rule lost the race against a warm worker still booting after ci-watch relaunched it — run 62004dac's lint-fix nudge was written but never delivered.
