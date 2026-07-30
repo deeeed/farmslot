@@ -306,6 +306,22 @@ export const runListStyles = css`
   .run-card.manage-mode {
     cursor: default;
   }
+  .run-flow-cell {
+    align-items: flex-start;
+    display: grid;
+    gap: 4px;
+    justify-items: start;
+    max-width: 150px;
+  }
+  .run-project {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 9px;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+  }
   .family-section {
     margin-bottom: ${unsafeCSS(spacing.md)};
   }
@@ -393,10 +409,6 @@ export const runListStyles = css`
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.05em;
-  }
-  .flow-badge {
-    background: var(--flow-color, ${unsafeCSS(colors.textMuted)});
-    color: #000;
   }
   .status-badge {
     border: 1px solid var(--status-color, ${unsafeCSS(colors.textMuted)});

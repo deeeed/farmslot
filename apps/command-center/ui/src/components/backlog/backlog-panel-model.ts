@@ -3,9 +3,64 @@ import {
   BACKLOG_STATUSES,
   type BacklogItem,
   type BacklogStatus,
+  type Run,
 } from '@farmslot/protocol';
 
+import { activeLinkedRunForBacklogItem } from '../shared/linked-run-model.js';
 import { syncedDraftProject } from '../shared/planning-projects.js';
+
+export const BACKLOG_SORT_KEYS = [
+  'status',
+  'flow',
+  'project',
+  'ref',
+  'title',
+  'activity',
+  'updated',
+] as const;
+export type BacklogSortKey = (typeof BACKLOG_SORT_KEYS)[number];
+export type BacklogSortDirection = 'asc' | 'desc';
+
+function comparisonValue(item: BacklogItem, runs: Run[], key: BacklogSortKey): string {
+  const activeRun = activeLinkedRunForBacklogItem(runs, item);
+  switch (key) {
+    case 'status':
+      return item.status;
+    case 'flow':
+      return item.flowType;
+    case 'project':
+      return item.project;
+    case 'ref':
+      return item.sourceRef;
+    case 'title':
+      return item.title;
+    case 'activity':
+      return activeRun ? `1:${activeRun.updatedAt}` : `0:${item.updatedAt}`;
+    case 'updated':
+      return item.updatedAt;
+  }
+}
+
+export function sortBacklogItems(
+  items: readonly BacklogItem[],
+  runs: Run[],
+  key: BacklogSortKey,
+  direction: BacklogSortDirection,
+): BacklogItem[] {
+  const multiplier = direction === 'asc' ? 1 : -1;
+  return [...items].sort((a, b) => {
+    const primary = comparisonValue(a, runs, key).localeCompare(
+      comparisonValue(b, runs, key),
+      undefined,
+      { numeric: true, sensitivity: 'base' },
+    );
+    if (primary !== 0) return primary * multiplier;
+    return a.sourceRef.localeCompare(b.sourceRef, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    });
+  });
+}
 
 // An archived item plus everything archivable is what the cleanup actions act on.
 const TERMINAL_CLEANUP_BACKLOG_STATUSES: ReadonlySet<BacklogItem['status']> = new Set([
@@ -60,6 +115,17 @@ export function backlogItemMatchesStatusFilter(
   filter: ReadonlySet<BacklogStatus>,
 ): boolean {
   return filter.has(status);
+}
+
+export function backlogStatusCounts(
+  items: readonly Pick<BacklogItem, 'status'>[],
+): Record<BacklogStatus, number> {
+  const counts = Object.fromEntries(BACKLOG_STATUSES.map((status) => [status, 0])) as Record<
+    BacklogStatus,
+    number
+  >;
+  for (const item of items) counts[item.status] += 1;
+  return counts;
 }
 
 function sameStatusSet(a: ReadonlySet<BacklogStatus>, b: ReadonlySet<BacklogStatus>): boolean {

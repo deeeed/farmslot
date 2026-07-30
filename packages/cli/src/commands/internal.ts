@@ -25,7 +25,6 @@ import {
   getProjectField,
   loadProjectVars,
   loadSlotVars,
-  missingMetroPortMessage,
   renderFixtureTemplate,
   resolveProjectTaskDirName,
   resolveSlot,
@@ -47,9 +46,6 @@ function shellQuote(value: string): string {
  * assemble with python heredocs, including its backward-compat aliases.
  */
 export function slotVarsShellLines(vars: SlotVars): string[] {
-  if (!vars.resourceVars.metro_port?.trim()) {
-    throw new Error(missingMetroPortMessage(vars));
-  }
   const resource = (key: string) => vars.resourceVars[key] ?? '';
   const pairs: Array<[string, string]> = [
     ['MACHINE', vars.machine],
@@ -67,9 +63,10 @@ export function slotVarsShellLines(vars: SlotVars): string[] {
     ['REPO', vars.repo],
     ['SESSION', vars.session],
     ['APP', resource('app')],
-    ...Object.entries(vars.resourceVars).map(
-      ([key, value]) => [key.toUpperCase(), value] as [string, string],
-    ),
+    ...Object.entries(vars.resourceVars)
+      .filter(([key]) => key !== 'metro_port')
+      .map(([key, value]) => [key.toUpperCase(), value] as [string, string]),
+    ['METRO_PORT', resource('metro_port')],
     ['WATCHER_PORT', resource('port')],
     ['IOS_SIMULATOR', resource('simulator')],
     ['ANDROID_AVD', resource('avd')],

@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
-- fix(workflows): show active independent-review/fix work instead of a premature publish gate, reuse shared decision actions, display backlog flow types, and report the effective Grok model.
+- fix(workflows): show active independent-review/fix work instead of a premature publish gate, reuse shared decision actions, turn Backlog into a sortable live-run-aware table with status counts, display flow types with the Runs palette, identify projects in Backlog/Roadmap/Run rows, and report the effective Grok model.
 - feat: fleet Setup recipe evidence for per-node runner seats (bind label + CodexBar/native identity), including a dismiss-What's-new helper so CDP recipes can open the Setup modal reliably.
 - chore: type-escape baseline pruned — `fleet/state.ts` no longer contains `as any` casts (RawSlot honest optionality).
 - refactor: rename the branch-maintenance flow `merge-main` → `update-branch` in the orphan-run backfill flow map.

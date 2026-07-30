@@ -22,6 +22,7 @@ import '../queue/dispatch-queue-panel.js';
 import { gateway } from '../../gateway-client.js';
 import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../state.js';
 import { colors, runnerColor } from '../../styles/theme-tokens.js';
+import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 
 import { familyRunHash } from './family-observability-url-state.js';
 import {
@@ -71,7 +72,7 @@ function shortId(id: string): string {
 
 @customElement('run-list')
 export class RunList extends RunListState {
-  static styles = runListStyles;
+  static styles = [runListStyles, flowBadgeStyles];
 
   connectedCallback() {
     super.connectedCallback();
@@ -552,13 +553,13 @@ export class RunList extends RunListState {
               `
             : nothing}
         </div>
-        <div>
-          <span
-            class="badge flow-badge"
-            style="--flow-color:${fc}; background:${fc}"
-            title=${runDisplayTitle(run)}
-            >${runDisplayLabel(run)}</span
-          >
+        <div class="run-flow-cell">
+          ${renderFlowBadge(run.flowType, {
+            color: fc,
+            label: runDisplayLabel(run),
+            title: runDisplayTitle(run),
+          })}
+          <span class="run-project" title=${`Project: ${run.project}`}>${run.project}</span>
         </div>
         <div class="info">
           ${this.familyFilter === run.familyId

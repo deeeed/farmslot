@@ -81,7 +81,7 @@ test('slotVarsShellLines preserves an explicit slot Metro port', () => {
   );
 });
 
-test('slotVarsShellLines teaches farmslot update for missing or empty Metro ports', () => {
+test('slotVarsShellLines emits an empty Metro port for non-Metro slots', () => {
   const vars: SlotVars = {
     slotId: 'legacy-ff-1',
     machine: 'legacy',
@@ -106,18 +106,18 @@ test('slotVarsShellLines teaches farmslot update for missing or empty Metro port
     resourceVars: { port: '8808' },
   };
 
-  assert.throws(
-    () => slotVarsShellLines(vars),
-    /missing resources\.dev-server\.metro_port.*farmslot update/i,
+  assert.deepEqual(
+    slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
+    ["METRO_PORT=''"],
   );
   vars.resourceVars.metro_port = '';
-  assert.throws(
-    () => slotVarsShellLines(vars),
-    /missing resources\.dev-server\.metro_port.*farmslot update/i,
+  assert.deepEqual(
+    slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
+    ["METRO_PORT=''"],
   );
 });
 
-test('slotVarsShellLines requires manual pool configuration without dev-server', () => {
+test('slotVarsShellLines supports slots without a dev-server resource', () => {
   const vars = {
     slotId: 'legacy-ff-1',
     machine: 'legacy',
@@ -142,8 +142,8 @@ test('slotVarsShellLines requires manual pool configuration without dev-server',
     resourceVars: {},
   } satisfies SlotVars;
 
-  assert.throws(
-    () => slotVarsShellLines(vars),
-    /missing resources\.dev-server.*add the resource manually.*distinct port and metro_port/i,
+  assert.deepEqual(
+    slotVarsShellLines(vars).filter((line) => line.startsWith('METRO_PORT=')),
+    ["METRO_PORT=''"],
   );
 });

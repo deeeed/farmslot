@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import type { BacklogItem, Run } from '@farmslot/protocol';
 
-import { linkedRunForBacklogItem } from './linked-run-model.js';
+import { activeLinkedRunForBacklogItem, linkedRunForBacklogItem } from './linked-run-model.js';
 
 const now = '2026-07-03T00:00:00.000Z';
 
@@ -116,4 +116,44 @@ test('linkedRunForBacklogItem falls back to newest linked terminal run', () => {
 test('linkedRunForBacklogItem supports legacy backlog runId linkage', () => {
   const item = backlog({ runId: 'legacy-run' });
   assert.equal(linkedRunForBacklogItem([run({ id: 'legacy-run' })], item)?.id, 'legacy-run');
+});
+
+test('linkedRunForBacklogItem projects an out-of-band run by exact project and source ref', () => {
+  const item = backlog({ status: 'candidate' });
+  const selected = linkedRunForBacklogItem(
+    [
+      run({ id: 'wrong-project', project: 'metamask-core-farm' }),
+      run({ id: 'out-of-band', status: 'human-gating' }),
+    ],
+    item,
+  );
+
+  assert.equal(selected?.id, 'out-of-band');
+  assert.equal(activeLinkedRunForBacklogItem([selected!], item)?.id, 'out-of-band');
+});
+
+test('linkedRunForBacklogItem prefers explicit linkage over inferred source-ref matches', () => {
+  const item = backlog();
+  const selected = linkedRunForBacklogItem(
+    [
+      run({
+        id: 'explicit',
+        backlogItemId: item.id,
+        status: 'done',
+        updatedAt: '2026-07-03T01:00:00.000Z',
+      }),
+      run({
+        id: 'inferred',
+        status: 'monitoring',
+        updatedAt: '2026-07-03T02:00:00.000Z',
+      }),
+    ],
+    item,
+  );
+
+  assert.equal(selected?.id, 'explicit');
+  assert.equal(
+    activeLinkedRunForBacklogItem([run({ id: 'done', status: 'done' })], item),
+    undefined,
+  );
 });

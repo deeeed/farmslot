@@ -51,7 +51,11 @@ import type {
   DispatchConfigEditorControls,
 } from '../shared/dispatch-config-editor.js';
 import { summarizeBacklogDispatchConfig } from '../shared/dispatch-config-summary.js';
-import { linkedRunForBacklogItem } from '../shared/linked-run-model.js';
+import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
+import {
+  activeLinkedRunForBacklogItem,
+  linkedRunForBacklogItem,
+} from '../shared/linked-run-model.js';
 import {
   planningBadgeStyles,
   renderPlanningBadge,
@@ -70,6 +74,9 @@ import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
 
 import {
   backlogItemMatchesStatusFilter,
+  type BacklogSortDirection,
+  type BacklogSortKey,
+  backlogStatusCounts,
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
@@ -79,6 +86,7 @@ import {
   parseBacklogStatusFilter,
   serializeBacklogStatusFilter,
   showsBacklogCleanupActionsForUi,
+  sortBacklogItems,
   syncedBacklogDraftProject,
 } from './backlog-panel-model.js';
 
@@ -179,6 +187,8 @@ export class BacklogPanel extends LitElement {
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _project = 'all';
   @state() private _statuses: ReadonlySet<BacklogStatus> = DEFAULT_BACKLOG_STATUS_FILTER;
+  @state() private _sortKey: BacklogSortKey = 'activity';
+  @state() private _sortDirection: BacklogSortDirection = 'desc';
   @state() private _busy = '';
   @state() private _error = '';
   @state() private _message = '';
@@ -250,6 +260,7 @@ export class BacklogPanel extends LitElement {
 
   static styles = [
     planningBadgeStyles,
+    flowBadgeStyles,
     planningChoiceStyles,
     css`
       :host {
@@ -697,17 +708,42 @@ export class BacklogPanel extends LitElement {
       .launch-row .wide {
         grid-column: span 2;
       }
-      .compact-row {
+      .backlog-table {
+        min-width: 940px;
+      }
+      .compact-row,
+      .table-head {
         align-items: center;
+        display: grid;
+        gap: 8px;
+        grid-template-columns: 92px 58px minmax(130px, 180px) 112px minmax(220px, 1fr) 210px;
+      }
+      .table-head {
+        background: ${unsafeCSS(colors.bgCard)};
+        border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}33;
+        padding: 3px 8px 6px;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+      .table-head button {
+        background: transparent;
+        border: 0;
+        color: ${unsafeCSS(colors.textMuted)};
+        cursor: pointer;
+        font-family: inherit;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        padding: 2px 0;
+        text-align: left;
+      }
+      .table-head button.active {
+        color: ${unsafeCSS(colors.textPrimary)};
+      }
+      .compact-row {
         background: ${unsafeCSS(colors.bgSurface)};
         border: 1px solid transparent;
         border-radius: ${unsafeCSS(radii.sm)};
         cursor: pointer;
-        display: grid;
-        gap: 8px;
-        /* status, flow, item ref, title — fixed metadata keeps its own columns
-           so the title gets the remaining width without hiding dispatch intent. */
-        grid-template-columns: auto auto auto minmax(0, 1fr);
         min-height: 28px;
         padding: 4px 8px;
       }
@@ -730,6 +766,25 @@ export class BacklogPanel extends LitElement {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+      .activity-link {
+        align-items: center;
+        color: ${unsafeCSS(colors.textSecondary)};
+        display: flex;
+        gap: 6px;
+        min-width: 0;
+        text-decoration: none;
+      }
+      .activity-link:hover {
+        color: ${unsafeCSS(colors.accent)};
+      }
+      .activity-slot {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .no-activity {
+        color: ${unsafeCSS(colors.textMuted)};
       }
       .title {
         font-weight: 700;
@@ -1191,14 +1246,53 @@ export class BacklogPanel extends LitElement {
   }
 
   private get _filtered(): BacklogItem[] {
+    return sortBacklogItems(
+      this._projectFiltered.filter((item) =>
+        backlogItemMatchesStatusFilter(item.status, this._statuses),
+      ),
+      this._runs,
+      this._sortKey,
+      this._sortDirection,
+    );
+  }
+
+  private get _projectFiltered(): BacklogItem[] {
     const globalProjects = new Set(this._globalFilters.projects);
     return this._items.filter((item) => {
       if (this._project === 'all' && globalProjects.size > 0 && !globalProjects.has(item.project)) {
         return false;
       }
-      if (this._project !== 'all' && item.project !== this._project) return false;
-      return backlogItemMatchesStatusFilter(item.status, this._statuses);
+      return this._project === 'all' || item.project === this._project;
     });
+  }
+
+  private get _statusLabels(): Partial<Record<BacklogStatus, string>> {
+    const counts = backlogStatusCounts(this._projectFiltered);
+    return Object.fromEntries(
+      BACKLOG_STATUSES.map((status) => [status, `${status} (${counts[status]})`]),
+    );
+  }
+
+  private _setSort(key: BacklogSortKey): void {
+    if (this._sortKey === key) {
+      this._sortDirection = this._sortDirection === 'asc' ? 'desc' : 'asc';
+      return;
+    }
+    this._sortKey = key;
+    this._sortDirection = key === 'activity' || key === 'updated' ? 'desc' : 'asc';
+  }
+
+  private _renderSortHeader(label: string, key: BacklogSortKey) {
+    const active = this._sortKey === key;
+    const arrow = active ? (this._sortDirection === 'asc' ? ' ↑' : ' ↓') : '';
+    return html`<button
+      class=${active ? 'active' : ''}
+      type="button"
+      data-testid=${`backlog-sort-${key}`}
+      @click=${() => this._setSort(key)}
+    >
+      ${label}${arrow}
+    </button>`;
   }
 
   private get _selectedItem(): BacklogItem | null {
@@ -2339,6 +2433,7 @@ export class BacklogPanel extends LitElement {
   private _renderCompactRow(item: BacklogItem) {
     const selected = this._selectedItemId === item.id;
     const tone = statusTone(item.status);
+    const activeRun = activeLinkedRunForBacklogItem(this._runs, item);
     return html`<div
       class="compact-row ${selected ? 'selected' : ''} ${item.lastDispatchError ? 'has-error' : ''}"
       role="button"
@@ -2352,11 +2447,31 @@ export class BacklogPanel extends LitElement {
       }}
     >
       ${renderPlanningBadge(item.status, tone)}
-      <span data-testid="backlog-flow" title=${`Flow: ${item.flowType}`}
-        >${renderPlanningBadge(item.flowType)}</span
-      >
+      <span data-testid="backlog-flow">${renderFlowBadge(item.flowType)}</span>
+      <span data-testid="backlog-project">${renderPlanningBadge(item.project)}</span>
       <span class="item-ref" title=${item.sourceRef}>${item.sourceRef}</span>
       <div class="title" title=${item.title}>${item.title}</div>
+      ${activeRun
+        ? html`<a
+            class="activity-link"
+            data-testid="backlog-active-run"
+            href=${`#run/${encodeURIComponent(activeRun.id)}`}
+            title=${`${activeRun.status} on ${activeRun.slotId ?? 'unassigned slot'}`}
+            @click=${(event: Event) => event.stopPropagation()}
+          >
+            ${renderPlanningBadge(activeRun.status, 'active')}
+            <span class="activity-slot">${activeRun.slotId ?? activeRun.id.slice(0, 8)}</span>
+          </a>`
+        : html`<span class="no-activity">—</span>`}
+    </div>`;
+  }
+
+  private _renderTableHead() {
+    return html`<div class="table-head" role="row">
+      ${this._renderSortHeader('Status', 'status')} ${this._renderSortHeader('Flow', 'flow')}
+      ${this._renderSortHeader('Project', 'project')} ${this._renderSortHeader('Ref', 'ref')}
+      ${this._renderSortHeader('Title', 'title')}
+      ${this._renderSortHeader('Active run / slot', 'activity')}
     </div>`;
   }
 
@@ -2598,6 +2713,7 @@ export class BacklogPanel extends LitElement {
             options: BACKLOG_STATUSES,
             selected: [...this._statuses],
             onToggle: (status) => this._toggleStatusFilter(status),
+            labels: this._statusLabels,
             testId: 'backlog-status-filter',
           })}
         </div>
@@ -2620,7 +2736,10 @@ export class BacklogPanel extends LitElement {
           <div class="scroll-column rows">
             ${this._filtered.length === 0
               ? html`<div class="empty">No backlog items match this view.</div>`
-              : this._filtered.map((item) => this._renderCompactRow(item))}
+              : html`<div class="backlog-table">
+                  ${this._renderTableHead()}
+                  ${this._filtered.map((item) => this._renderCompactRow(item))}
+                </div>`}
           </div>
         </section>
         ${hasDetail ? this._renderSelectedItemPanel() : nothing}

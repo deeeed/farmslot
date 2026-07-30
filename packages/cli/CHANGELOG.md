@@ -5,6 +5,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 ## Unreleased
 
 - fix(workflows): route run decision resolution through the shared protocol action contract used by the operator clients.
+- fix(internal): allow non-Metro slots to export an empty `METRO_PORT`; hook expansion still fails with the existing teaching error when a template actually requires `{{metro_port}}`.
 - feat(graph): typed `farmslot graph` family (list/show/create/add-node/add-edge/remove-node/remove-edge/activate/pause/tick/gate-resolve) for workGraph.\* parity with machine envelope + planning-status teaching errors.
 - feat(internal): expose distinct slot-derived Metro ports, migrate legacy pool resources, and fail hook expansion with a named remediation when the resource is absent.
 - fix(roadmap): count promotion backlog items from materialized drafts, not `targetProjects`. Requests with no drafts now say so instead of inventing a count, and project-filtered lists include unscoped global coordination items.

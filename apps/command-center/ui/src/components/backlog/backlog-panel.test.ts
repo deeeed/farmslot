@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { BacklogStatus } from '@farmslot/protocol';
+import type { BacklogItem, BacklogStatus, Run } from '@farmslot/protocol';
 
 import {
   backlogItemMatchesStatusFilter,
+  backlogStatusCounts,
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
@@ -14,6 +15,7 @@ import {
   parseBacklogStatusFilter,
   serializeBacklogStatusFilter,
   showsBacklogCleanupActionsForUi,
+  sortBacklogItems,
   syncedBacklogDraftProject,
 } from './backlog-panel-model.js';
 
@@ -41,6 +43,20 @@ test('backlog default filter shows the live set and hides done/archived', () => 
     backlogItemMatchesStatusFilter('ready', new Set<BacklogStatus>(['archived'])),
     false,
   );
+});
+
+test('backlog status counts keep hidden completed work discoverable', () => {
+  const counts = backlogStatusCounts([
+    { status: 'candidate' },
+    { status: 'done' },
+    { status: 'done' },
+    { status: 'archived' },
+  ]);
+
+  assert.equal(counts.candidate, 1);
+  assert.equal(counts.done, 2);
+  assert.equal(counts.archived, 1);
+  assert.equal(counts.running, 0);
 });
 
 test('backlog status filter round-trips through the hash param', () => {
@@ -151,5 +167,45 @@ test('backlog draft project falls back to the first available project', () => {
       globalProjects: [],
     }),
     'metamask-core-farm',
+  );
+});
+
+test('backlog activity sorting puts out-of-band active runs ahead of idle candidates', () => {
+  const base = {
+    project: 'metamask-core-farm',
+    sourceKind: 'jira',
+    flowType: 'dev',
+    status: 'candidate',
+    priority: 10,
+    createdAt: '2026-07-30T00:00:00.000Z',
+    updatedAt: '2026-07-30T00:00:00.000Z',
+  } as const;
+  const idle = {
+    ...base,
+    id: 'idle',
+    sourceRef: 'TAT-3400',
+    title: 'Idle candidate',
+  } satisfies BacklogItem;
+  const active = {
+    ...base,
+    id: 'active',
+    sourceRef: 'TAT-3343',
+    title: 'Active candidate',
+  } satisfies BacklogItem;
+  const activeRun = {
+    id: 'run-active',
+    project: active.project,
+    ticketOrPr: active.sourceRef,
+    status: 'human-gating',
+    updatedAt: '2026-07-30T02:00:00.000Z',
+  } as Run;
+
+  assert.deepEqual(
+    sortBacklogItems([idle, active], [activeRun], 'activity', 'desc').map((item) => item.id),
+    ['active', 'idle'],
+  );
+  assert.deepEqual(
+    sortBacklogItems([idle, active], [activeRun], 'project', 'asc').map((item) => item.id),
+    ['active', 'idle'],
   );
 });
