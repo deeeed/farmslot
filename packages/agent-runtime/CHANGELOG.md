@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix(workers): validate terminal artifact dispositions and keep nested review checklist progress scoped to the active worker context.
 - Surface optional execution-template descriptions for selection guidance.
 
 ## 0.4.0 - 2026-07-26
