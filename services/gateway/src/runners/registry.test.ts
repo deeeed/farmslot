@@ -417,6 +417,35 @@ describe('cursor runner', () => {
     assert.match(commands[1], /^send-keys -t 'ff-1:agent\.0' 'a'/);
   });
 
+  it('continues Codex without trusting changed repository hooks', async () => {
+    const codexPane = `
+  Hooks need review
+  1. Review hooks
+  2. Trust all and continue
+  3. Continue without trusting (hooks won't run)
+  Press enter to confirm or esc to go back
+`;
+    assert.deepEqual(detectRunnerLaunchBlocker(codexPane, 'codex'), {
+      kind: 'hooks-review',
+      summary: 'Codex is waiting for repository hook review before the chat input is available.',
+      autoAction: 'codex-continue-without-hooks',
+    });
+
+    const commands: string[] = [];
+    const result = await confirmTrustPromptWithFreshEvidence({
+      runnerId: 'codex',
+      target: 'core-2:review.0',
+      logPrefix: 'test',
+      exec: async (tmuxCommand) => {
+        commands.push(tmuxCommand);
+        return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? codexPane : '' };
+      },
+    });
+
+    assert.deepEqual(result, { outcome: 'sent', key: '3' });
+    assert.match(commands[1], /^send-keys -t 'core-2:review\.0' '3' 'Enter'/);
+  });
+
   it('confirmTrustPromptWithFreshEvidence never sends without fresh deterministic evidence', async () => {
     const commands: string[] = [];
     const result = await confirmTrustPromptWithFreshEvidence({

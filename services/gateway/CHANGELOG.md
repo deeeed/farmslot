@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(runners): recognize Codex's changed-repository-hooks review screen and choose "continue without trusting" before prompt delivery, preventing independent reviews from idling with their task never submitted.
 - feat(run-engine): keep gate-held worker sessions warm through ci-watch (MANUAL-000065) — FINALIZE no longer calls `killSlotAgents`; CI-chained `pr-complete` / `update-branch` set `warmSessionReuse` and hand off into the live session when present, falling back to fresh dispatch when dead or runner/model-swapped; terminal failure after FINALIZE still tears down via `teardownGateHeldAgentsIfNeeded`.
 - fix(run-completion): strip platform-only `[Core]` prefixes from generated PR titles and keep worker branch/commit execution provenance out of public PR descriptions.
 - fix(run-engine): keep publication review plans durable until their independent review/fix/re-review loop exits, and reconstruct interrupted active fix passes after gateway restart instead of reopening a misleading operator gate.

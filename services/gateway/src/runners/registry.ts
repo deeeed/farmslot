@@ -618,21 +618,27 @@ export interface RunnerLaunchBlocker {
   kind:
     | 'workspace-trust'
     | 'project-directory'
+    | 'hooks-review'
     | 'auth-required'
     | 'mcp-init'
     | 'cold-start'
     | 'usage-limit';
   summary: string;
-  autoAction: 'cursor-trust-workspace' | 'grok-select-current-project' | null;
+  autoAction:
+    | 'cursor-trust-workspace'
+    | 'grok-select-current-project'
+    | 'codex-continue-without-hooks'
+    | null;
   /** Wait for the blocker to clear instead of failing prompt delivery. */
   defer?: boolean;
 }
 
 export function runnerLaunchBlockerAutoActionKey(
   autoAction: RunnerLaunchBlocker['autoAction'],
-): 'a' | 'Enter' | null {
+): 'a' | 'Enter' | '3' | null {
   if (autoAction === 'cursor-trust-workspace') return 'a';
   if (autoAction === 'grok-select-current-project') return 'Enter';
+  if (autoAction === 'codex-continue-without-hooks') return '3';
   return null;
 }
 
@@ -651,7 +657,7 @@ export function keyForClassifierTrustAction(
   classifier: { state: string; confidence: number; suggestedAction?: string },
   runnerId: string | null | undefined,
   pane: string,
-): 'a' | 'Enter' | null {
+): 'a' | 'Enter' | '3' | null {
   if (classifier.confidence < 0.8) return null;
   if (classifier.state !== 'trust_prompt') return null;
   if (classifier.suggestedAction !== 'send_yes' && classifier.suggestedAction !== 'send_enter') {
@@ -682,7 +688,7 @@ export async function confirmTrustPromptWithFreshEvidence(opts: {
   exec: (
     tmuxCommand: string,
   ) => Promise<{ exitCode: number; stdout: string; stderr?: string | undefined }>;
-}): Promise<{ outcome: 'sent'; key: 'a' | 'Enter' } | { outcome: 'no-fresh-evidence' }> {
+}): Promise<{ outcome: 'sent'; key: 'a' | 'Enter' | '3' } | { outcome: 'no-fresh-evidence' }> {
   const fresh = await opts.exec(`capture-pane -p -t ${shellQuote(opts.target)} 2>/dev/null`);
   const runner = normalizeRunner(opts.runnerId);
   const blocker = detectRunnerLaunchBlocker(fresh.stdout, runner);
@@ -693,8 +699,12 @@ export async function confirmTrustPromptWithFreshEvidence(opts: {
     );
     return { outcome: 'no-fresh-evidence' };
   }
+  const keySequence =
+    blocker?.autoAction === 'codex-continue-without-hooks'
+      ? `${shellQuote(key)} ${shellQuote('Enter')}`
+      : shellQuote(key);
   const sent = await opts.exec(
-    `send-keys -t ${shellQuote(opts.target)} ${shellQuote(key)} 2>/dev/null`,
+    `send-keys -t ${shellQuote(opts.target)} ${keySequence} 2>/dev/null`,
   );
   if (sent.exitCode !== 0) {
     throw new Error(
@@ -729,6 +739,12 @@ export function detectRunnerLaunchBlocker(
         summary:
           'Grok is waiting for project-directory selection before the chat input is available.',
         autoAction: 'grok-select-current-project',
+      };
+    case 'hooks-review':
+      return {
+        kind: 'hooks-review',
+        summary: 'Codex is waiting for repository hook review before the chat input is available.',
+        autoAction: 'codex-continue-without-hooks',
       };
     case 'mcp-init':
       return {
@@ -2119,6 +2135,7 @@ export async function sendRunnerPostLaunchPrompt(
   let ready = false;
   let workspaceTrustAttempts = 0;
   let grokProjectAttempts = 0;
+  let codexHooksReviewAttempts = 0;
   const maxBlockerAutoAttempts = 2;
   const snapshottedBlockers = new Set<string>();
   while (Date.now() < readyDeadline) {
@@ -2216,6 +2233,35 @@ export async function sendRunnerPostLaunchPrompt(
         `[${logPrefix}] selected current Grok project directory for ${target} (${vars.remoteRepo})`,
       );
       extendDeadlineAfterBlockerResolve('auto-resolving project-directory');
+      stableCount = 0;
+      lastPane = '';
+      continue;
+    }
+    if (
+      blocker?.autoAction === 'codex-continue-without-hooks' &&
+      autoActionKey &&
+      codexHooksReviewAttempts < maxBlockerAutoAttempts
+    ) {
+      const continueResult = await execOnSlot(
+        vars,
+        tmuxShellSnippet(
+          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} ${shellQuote(
+            'Enter',
+          )} 2>/dev/null`,
+        ),
+      );
+      if (continueResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to continue Codex without trusting repository hooks in ${target}: ${
+            continueResult.stderr || continueResult.stdout || `exit ${continueResult.exitCode}`
+          }`,
+        );
+      }
+      codexHooksReviewAttempts += 1;
+      console.log(
+        `[${logPrefix}] continued Codex without trusting repository hooks for ${target} (${vars.remoteRepo})`,
+      );
+      extendDeadlineAfterBlockerResolve('auto-resolving hooks-review');
       stableCount = 0;
       lastPane = '';
       continue;
