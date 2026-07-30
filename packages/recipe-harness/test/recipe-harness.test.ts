@@ -2985,7 +2985,8 @@ test('CDP observations and selectors traverse open shadow roots', async () => {
   assert.match(observationExpression, /shadowRoot/u);
   assert.match(observationExpression, /testAttribute/u);
   assert.match(observationExpression, /'data-test-id'/u);
-  assert.match(observationExpression, /instanceof ShadowRoot/u);
+  assert.match(observationExpression, /shadowHostFor/u);
+  assert.doesNotMatch(observationExpression, /ShadowRoot/u);
   assert.doesNotMatch(observationExpression, /getAttribute\('value'\)/u);
 });
 
@@ -3259,7 +3260,8 @@ test('CDP click hit-testing crosses shadow boundaries with composed ancestry', a
 
   const clickExpression = expressions[0] ?? '';
   assert.match(clickExpression, /composedContains/u);
-  assert.match(clickExpression, /root instanceof ShadowRoot \? root\.host : null/u);
+  assert.match(clickExpression, /shadowHostFor\(root\)/u);
+  assert.doesNotMatch(clickExpression, /ShadowRoot/u);
   assert.doesNotMatch(clickExpression, /element\.contains\(hit\)/u);
 });
 
@@ -3276,7 +3278,8 @@ test('CDP deep text matching uses rendered text without scanning textContent', a
   await page.waitFor({ text: 'Review Workspace', timeoutMs: 100 });
 
   assert.match(expressions[0] ?? '', /renderedTextDeep/u);
-  assert.match(expressions[0] ?? '', /NodeFilter\.SHOW_TEXT/u);
+  assert.match(expressions[0] ?? '', /createTreeWalker\(root, 4\)/u);
+  assert.doesNotMatch(expressions[0] ?? '', /NodeFilter/u);
   assert.match(expressions[0] ?? '', /isRenderedDeep\(node\.parentElement\)/u);
   assert.doesNotMatch(expressions[0] ?? '', /textContent/u);
 });
@@ -3295,11 +3298,14 @@ test('CDP visible observations omit labels for non-rendered targets', async () =
   const expression = expressions[0] ?? '';
   assert.match(expression, /label: includeLabel \? textFor\(el\) : undefined/u);
   assert.match(expression, /itemFor\(el, rendered \? rect : undefined, rendered\)/u);
-  assert.match(expression, /root instanceof ShadowRoot \? root\.host/u);
+  assert.match(expression, /shadowHostFor\(root\)/u);
+  assert.doesNotMatch(expression, /ShadowRoot/u);
   assert.match(expression, /Number\(style\.opacity \|\| 1\) <= 0/u);
   assert.doesNotMatch(expression, /'\[data-testid\]'/u);
   assert.match(expression, /parts\.join\(' > '\)/u);
   assert.doesNotMatch(expression, /el\.textContent/u);
+  assert.doesNotMatch(expression, /CSS\.escape/u);
+  assert.doesNotMatch(expression, /Node\.ELEMENT_NODE/u);
 });
 
 test('CDP screen observations omit query parameters and sensitive fragments', async () => {

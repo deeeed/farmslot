@@ -4,7 +4,19 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.10.3 - 2026-07-30
+
+- fix: publish the protocol workspace dependency as its concrete npm version for external consumers.
+
+## 0.10.2 - 2026-07-30
+
+- fix: avoid scuttled browser globals when matching visible text and producing observation selectors in hardened Extension pages.
+- fix: expose npm-semver dependency version checks for host runtime-readiness bootstraps.
+
+## 0.10.1 - 2026-07-30
+
 - fix: capture-helper doctor failures report `capture_helper_exec_failed` (spawn/PATH/env) instead of claiming the tool is missing when only execution failed.
+- fix: retry the compositor probe in a CDP isolated world when a hardened page blocks injected `requestAnimationFrame` access.
 
 ## 0.10.0 - 2026-07-24
 

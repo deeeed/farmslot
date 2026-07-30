@@ -1,7 +1,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+
+const require = createRequire(import.meta.url);
+const semver = require('semver') as {
+  satisfies(version: string, range: string): boolean;
+};
 
 /** Lock/manifest inputs hashed for the deps baseline. */
 export const DEPS_INPUTS = ['package.json', 'yarn.lock', '.yarnrc.yml', '.tool-versions'];
@@ -19,6 +25,11 @@ export interface DepsCheck {
 }
 
 const STATE_NAMESPACE = 'farmslot-recipe-runtime-decision';
+
+export function dependencyVersionSatisfies(version: string, range: string): boolean {
+  if (!version.trim() || !range.trim()) return false;
+  return semver.satisfies(version, range);
+}
 
 function stateDir(target: string): string {
   const key = crypto.createHash('sha1').update(path.resolve(target)).digest('hex').slice(0, 16);

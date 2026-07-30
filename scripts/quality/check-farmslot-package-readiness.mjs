@@ -344,6 +344,11 @@ function checkNpmScopeConfig() {
   if (strictPublish && !process.env.NPM_FARMSLOT_TOKEN) {
     fail('NPM_FARMSLOT_TOKEN must be set for strict publish checks.');
   }
+  if (strictPublish && /^npm\//i.test(process.env.npm_config_user_agent ?? '')) {
+    fail(
+      'Direct npm publish preserves workspace:* dependencies in the public manifest. Use yarn npm publish.',
+    );
+  }
 }
 
 function buildPackage(pkgSpec) {

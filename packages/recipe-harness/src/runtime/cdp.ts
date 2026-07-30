@@ -244,61 +244,95 @@ interface CdpCallSession {
 
 /**
  * Distinguish a reachable JavaScript context from a renderable, interactive
- * browser page. The probe is read-only: it waits for two animation frames and
- * checks the hit-test result of one already-visible interactive element.
+ * browser page. Hardened pages are retried in an isolated world so page policy
+ * cannot hide requestAnimationFrame from the readiness probe.
  */
 export async function probeCdpCompositorInteractivity(
   session: CdpCallSession,
   timeoutMs = 1_000,
 ): Promise<CdpCompositorProbe> {
-  const frameTimeoutReason = `requestAnimationFrame did not advance within ${timeoutMs}ms`;
+  const frameTimeoutReason = `Compositor frame did not advance within ${timeoutMs}ms`;
+  type EvaluationResult = {
+    result?: { value?: Omit<CdpCompositorProbe, 'status'> };
+    exceptionDetails?: { text?: string; exception?: { description?: string } };
+  };
+  const expression = `(async () => {
+    const startedAt = performance.now();
+    const frameAdvanced = await new Promise((resolve) => {
+      requestAnimationFrame((firstFrame) => {
+        requestAnimationFrame((secondFrame) => resolve(secondFrame > firstFrame));
+      });
+    });
+    const candidates = [...document.querySelectorAll('button, a, [role="button"], [role="link"], [role="tab"]')];
+    const visibleTargets = candidates.filter((element) => {
+      if (element.disabled || element.getAttribute('aria-disabled') === 'true') return false;
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        Number(style.opacity || 1) > 0 &&
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.left >= 0 &&
+        rect.top >= 0 &&
+        rect.right <= innerWidth &&
+        rect.bottom <= innerHeight;
+    });
+    let hitTestOk = null;
+    if (visibleTargets.length > 0) {
+      hitTestOk = visibleTargets.some((target) => {
+        const rect = target.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2,
+        );
+        return Boolean(hit && (hit === target || target.contains(hit)));
+      });
+    }
+    return {
+      frameAdvanced: frameAdvanced && performance.now() > startedAt,
+      interactiveTargetFound: visibleTargets.length > 0,
+      hitTestOk,
+    };
+  })()`;
+  const evaluate = (contextId?: number) =>
+    session.call<EvaluationResult>('Runtime.evaluate', {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+      ...(contextId === undefined ? {} : { contextId }),
+    });
   try {
     const result = await withTimeout(
-      session.call<{
-        result?: { value?: Omit<CdpCompositorProbe, 'status'> };
-        exceptionDetails?: { text?: string; exception?: { description?: string } };
-      }>('Runtime.evaluate', {
-        expression: `new Promise((resolve) => {
-          const startedAt = performance.now();
-          requestAnimationFrame((firstFrame) => {
-            requestAnimationFrame((secondFrame) => {
-              const candidates = [...document.querySelectorAll('button, a, [role="button"], [role="link"], [role="tab"]')];
-              const visibleTargets = candidates.filter((element) => {
-                if (element.disabled || element.getAttribute('aria-disabled') === 'true') return false;
-                const style = getComputedStyle(element);
-                const rect = element.getBoundingClientRect();
-                return style.display !== 'none' &&
-                  style.visibility !== 'hidden' &&
-                  Number(style.opacity || 1) > 0 &&
-                  rect.width > 0 &&
-                  rect.height > 0 &&
-                  rect.left >= 0 &&
-                  rect.top >= 0 &&
-                  rect.right <= innerWidth &&
-                  rect.bottom <= innerHeight;
-              });
-              let hitTestOk = null;
-              if (visibleTargets.length > 0) {
-                hitTestOk = visibleTargets.some((target) => {
-                  const rect = target.getBoundingClientRect();
-                  const hit = document.elementFromPoint(
-                    rect.left + rect.width / 2,
-                    rect.top + rect.height / 2,
-                  );
-                  return Boolean(hit && (hit === target || target.contains(hit)));
-                });
-              }
-              resolve({
-                frameAdvanced: secondFrame > firstFrame && performance.now() > startedAt,
-                interactiveTargetFound: visibleTargets.length > 0,
-                hitTestOk,
-              });
-            });
-          });
-        })`,
-        awaitPromise: true,
-        returnByValue: true,
-      }),
+      (async () => {
+        const pageResult = await evaluate();
+        const description =
+          pageResult.exceptionDetails?.exception?.description ??
+          pageResult.exceptionDetails?.text ??
+          '';
+        if (
+          !description.includes('requestAnimationFrame') ||
+          !description.includes('inaccessible under scuttling mode')
+        ) {
+          return pageResult;
+        }
+        const frameTree = await session.call<{
+          frameTree?: { frame?: { id?: string } };
+        }>('Page.getFrameTree');
+        const frameId = frameTree.frameTree?.frame?.id;
+        if (!frameId) throw new Error('CDP compositor probe could not resolve the page frame.');
+        const isolatedWorld = await session.call<{ executionContextId?: number }>(
+          'Page.createIsolatedWorld',
+          {
+            frameId,
+            worldName: 'farmslot-compositor-probe',
+          },
+        );
+        if (isolatedWorld.executionContextId === undefined) {
+          throw new Error('CDP compositor probe could not create an isolated world.');
+        }
+        return evaluate(isolatedWorld.executionContextId);
+      })(),
       timeoutMs,
       frameTimeoutReason,
     );
@@ -316,7 +350,7 @@ export async function probeCdpCompositorInteractivity(
         frameAdvanced: false,
         interactiveTargetFound: Boolean(value?.interactiveTargetFound),
         hitTestOk: value?.hitTestOk ?? null,
-        reason: 'requestAnimationFrame did not advance.',
+        reason: 'The compositor frame did not advance.',
       };
     }
     if (value.interactiveTargetFound && value.hitTestOk !== true) {
@@ -821,19 +855,25 @@ function visibleTargetsExpression(): string {
       const raw = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.innerText || '';
       return String(raw).replace(/\\s+/g, ' ').trim().slice(0, 120) || undefined;
     };
+    const cssString = (value) => '"' + Array.from(String(value), (character) => {
+      const code = character.codePointAt(0);
+      if (character === '"' || character === '\\\\') return '\\\\' + character;
+      if (code === 0) return '\\uFFFD';
+      if (code <= 0x1f || code === 0x7f) return '\\\\' + code.toString(16) + ' ';
+      return character;
+    }).join('') + '"';
     const cssPath = (el) => {
-      if (el.id) return '#' + CSS.escape(el.id);
+      if (el.id) return '[id=' + cssString(el.id) + ']';
       const testAttribute = ['data-testid', 'data-test-id', 'data-test'].find((attribute) => el.hasAttribute(attribute));
       if (testAttribute) {
-        const testId = CSS.escape(String(el.getAttribute(testAttribute)));
-        return '[' + testAttribute + '="' + testId + '"]';
+        return '[' + testAttribute + '=' + cssString(el.getAttribute(testAttribute)) + ']';
       }
-      if (el.getRootNode() instanceof ShadowRoot) return undefined;
+      if (shadowHostFor(el.getRootNode())) return undefined;
       const parts = [];
       let current = el;
-      while (current && current.nodeType === Node.ELEMENT_NODE) {
+      while (current && current.nodeType === 1) {
         if (current.id) {
-          parts.unshift('#' + CSS.escape(current.id));
+          parts.unshift('[id=' + cssString(current.id) + ']');
           break;
         }
         const tag = current.tagName.toLowerCase();
@@ -863,7 +903,7 @@ function visibleTargetsExpression(): string {
       while (current) {
         if (current === ancestor) return true;
         const root = current.getRootNode();
-        current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+        current = current.parentElement || shadowHostFor(root);
       }
       return false;
     };
@@ -1178,6 +1218,8 @@ function visibleSelectorExpression(selector: string): string {
 
 function deepQueryHelpersExpression(): string {
   return `
+    const shadowHostFor = (root) =>
+      root && root.nodeType === 11 && root.host ? root.host : null;
     const querySelectorAllDeep = (selector, root = document) => {
       const matches = Array.from(root.querySelectorAll(selector));
       for (const element of root.querySelectorAll('*')) {
@@ -1193,7 +1235,7 @@ function deepQueryHelpersExpression(): string {
         const style = getComputedStyle(current);
         if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) <= 0) return false;
         const root = current.getRootNode();
-        current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+        current = current.parentElement || shadowHostFor(root);
       }
       return true;
     };
@@ -1203,7 +1245,7 @@ function deepQueryHelpersExpression(): string {
       let current = element;
       while (current) {
         const root = current.getRootNode();
-        const parent = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+        const parent = current.parentElement || shadowHostFor(root);
         if (!parent) break;
         const style = getComputedStyle(parent);
         if (/(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
@@ -1232,7 +1274,7 @@ function deepQueryHelpersExpression(): string {
         while (current) {
           if (current === ancestor) return true;
           const root = current.getRootNode();
-          current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+          current = current.parentElement || shadowHostFor(root);
         }
         return false;
       };
@@ -1241,7 +1283,7 @@ function deepQueryHelpersExpression(): string {
     };
     const renderedTextDeep = (root = document) => {
       const chunks = [];
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const walker = document.createTreeWalker(root, 4);
       let node = walker.nextNode();
       while (node) {
         if (node.parentElement && isRenderedDeep(node.parentElement)) chunks.push(node.nodeValue || '');

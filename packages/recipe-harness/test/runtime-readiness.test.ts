@@ -14,6 +14,7 @@ import {
 } from '../src/runtime/cdp.js';
 import type { RuntimeDecisionReport } from '../src/runtime/decision-types.js';
 import {
+  dependencyVersionSatisfies,
   depsCheck,
   depsFingerprint,
   recordDepsBaseline,
@@ -27,9 +28,23 @@ import {
 } from '../src/runtime/log-analysis.js';
 import { orchestrateRuntimeUp } from '../src/runtime/orchestrate-up.js';
 
+test('dependency version checks support npm semver ranges', () => {
+  assert.equal(dependencyVersionSatisfies('1.2.3', '1.2.3'), true);
+  assert.equal(dependencyVersionSatisfies('1.3.0', '^1.2.3'), true);
+  assert.equal(dependencyVersionSatisfies('2.0.0', '^1.2.3'), false);
+  assert.equal(dependencyVersionSatisfies('1.2.9', '~1.2.3'), true);
+  assert.equal(dependencyVersionSatisfies('1.3.0', '~1.2.3'), false);
+  assert.equal(dependencyVersionSatisfies('2.4.0', '>=2 <3'), true);
+  assert.equal(dependencyVersionSatisfies('not-a-version', '^1.2.3'), false);
+  assert.equal(dependencyVersionSatisfies('1.2.3', 'not-a-range'), false);
+  assert.equal(dependencyVersionSatisfies('1.2.3', ''), false);
+});
+
 test('CDP compositor probe requires advancing frames and sane hit testing', async () => {
+  const readyCalls: string[] = [];
   const ready = await probeCdpCompositorInteractivity({
-    async call() {
+    async call(method) {
+      readyCalls.push(method);
       return {
         result: {
           value: {
@@ -47,6 +62,7 @@ test('CDP compositor probe requires advancing frames and sane hit testing', asyn
     interactiveTargetFound: true,
     hitTestOk: true,
   });
+  assert.deepEqual(readyCalls, ['Runtime.evaluate']);
 
   const obscured = await probeCdpCompositorInteractivity({
     async call() {
@@ -255,6 +271,74 @@ test('CDP compositor probe accepts a hittable modal control after an occluded ca
   assert.equal(report.status, 'ready');
   assert.equal(report.interactiveTargetFound, true);
   assert.equal(report.hitTestOk, true);
+});
+
+test('CDP compositor probe retries scuttled requestAnimationFrame access in an isolated world', async () => {
+  let now = 0;
+  let frame = 0;
+  const target = {
+    disabled: false,
+    getAttribute: () => null,
+    getBoundingClientRect: () => ({
+      left: 10,
+      top: 10,
+      right: 30,
+      bottom: 30,
+      width: 20,
+      height: 20,
+    }),
+    contains: () => false,
+  };
+  const sandbox = {
+    Promise,
+    performance: { now: () => ++now },
+    requestAnimationFrame: (callback: (timestamp: number) => void) => callback(++frame),
+    document: {
+      querySelectorAll: () => [target],
+      elementFromPoint: () => target,
+    },
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }),
+    innerWidth: 100,
+    innerHeight: 100,
+  };
+  const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
+
+  const report = await probeCdpCompositorInteractivity({
+    async call(method, params) {
+      calls.push({ method, params });
+      if (method === 'Runtime.evaluate' && params?.contextId === undefined) {
+        return {
+          exceptionDetails: {
+            exception: {
+              description:
+                'LavaMoat - property "requestAnimationFrame" of globalThis is inaccessible under scuttling mode.',
+            },
+          },
+        };
+      }
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main-frame' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        assert.equal(params?.frameId, 'main-frame');
+        assert.equal(params?.worldName, 'farmslot-compositor-probe');
+        return { executionContextId: 42 };
+      }
+      assert.equal(method, 'Runtime.evaluate');
+      assert.equal(params?.contextId, 42);
+      const value = await vm.runInNewContext(String(params?.expression), sandbox);
+      return { result: { value } };
+    },
+  });
+
+  assert.equal(report.status, 'ready');
+  assert.equal(report.frameAdvanced, true);
+  assert.equal(report.interactiveTargetFound, true);
+  assert.equal(report.hitTestOk, true);
+  assert.deepEqual(
+    calls.map(({ method }) => method),
+    ['Runtime.evaluate', 'Page.getFrameTree', 'Page.createIsolatedWorld', 'Runtime.evaluate'],
+  );
 });
 
 test('depsCheck reports missing install markers', async () => {
