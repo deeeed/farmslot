@@ -6,6 +6,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import vm from 'node:vm';
 
+import { WebSocketServer } from 'ws';
+
 import {
   CdpSession,
   jsonGet,
@@ -136,6 +138,37 @@ test('CDP session connection timeout rejects a stalled WebSocket upgrade', async
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
+  }
+});
+
+test('CDP call timeout releases the stalled request and keeps the session usable', async () => {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  server.on('connection', (socket) => {
+    socket.on('message', (buffer) => {
+      const request = JSON.parse(buffer.toString()) as { id: number; method: string };
+      if (request.method === 'Page.getFrameTree') {
+        socket.send(JSON.stringify({ id: request.id, result: { ok: true } }));
+      }
+    });
+  });
+  const session = await CdpSession.connect(`ws://127.0.0.1:${address.port}`);
+
+  try {
+    await assert.rejects(
+      session.call('Runtime.evaluate', {}, { timeoutMs: 20 }),
+      /CDP Runtime\.evaluate timed out after 20ms/u,
+    );
+    assert.deepEqual(await session.call('Page.getFrameTree', {}, { timeoutMs: 1_000 }), {
+      ok: true,
+    });
+  } finally {
+    session.close();
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
   }
 });
 
@@ -339,6 +372,83 @@ test('CDP compositor probe retries scuttled requestAnimationFrame access in an i
     calls.map(({ method }) => method),
     ['Runtime.evaluate', 'Page.getFrameTree', 'Page.createIsolatedWorld', 'Runtime.evaluate'],
   );
+});
+
+test('CDP compositor probe recreates a stale isolated context after navigation', async () => {
+  let contextId = 0;
+  const calls: string[] = [];
+  const report = await probeCdpCompositorInteractivity({
+    async call(method, params) {
+      calls.push(method);
+      if (method === 'Runtime.evaluate' && params?.contextId === undefined) {
+        return {
+          exceptionDetails: {
+            exception: {
+              description:
+                'LavaMoat - property "requestAnimationFrame" of globalThis is inaccessible under scuttling mode.',
+            },
+          },
+        };
+      }
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main-frame' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        contextId += 1;
+        return { executionContextId: contextId };
+      }
+      if (contextId === 1) throw new Error('Inspected target navigated or closed');
+      return {
+        result: {
+          value: {
+            frameAdvanced: true,
+            interactiveTargetFound: true,
+            hitTestOk: true,
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(report.status, 'ready');
+  assert.equal(calls.filter((method) => method === 'Page.createIsolatedWorld').length, 2);
+});
+
+test('CDP compositor probe retries when the page context navigates before evaluation', async () => {
+  let evaluationAttempt = 0;
+  const report = await probeCdpCompositorInteractivity({
+    async call(method) {
+      assert.equal(method, 'Runtime.evaluate');
+      evaluationAttempt += 1;
+      if (evaluationAttempt === 1) throw new Error('Inspected target navigated or closed');
+      return {
+        result: {
+          value: {
+            frameAdvanced: true,
+            interactiveTargetFound: true,
+            hitTestOk: true,
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(report.status, 'ready');
+  assert.equal(evaluationAttempt, 2);
+});
+
+test('CDP compositor probe reports sustained navigation churn as suspended', async () => {
+  const report = await probeCdpCompositorInteractivity(
+    {
+      async call() {
+        throw new Error('Inspected target navigated or closed');
+      },
+    },
+    10,
+  );
+
+  assert.equal(report.status, 'suspended');
+  assert.match(report.reason ?? '', /Inspected target navigated or closed/u);
 });
 
 test('depsCheck reports missing install markers', async () => {

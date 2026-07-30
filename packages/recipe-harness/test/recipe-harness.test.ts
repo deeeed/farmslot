@@ -13,6 +13,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import vm from 'node:vm';
 
 import {
   OFFICIAL_RECIPE_ACTIONS,
@@ -3065,12 +3066,22 @@ test('CDP same-document navigation waits for the requested location', async () =
 
 test('CDP navigation defers DOM settlement to the shared settle wrapper', async () => {
   const expressions: string[] = [];
+  const isolatedWorldCalls: Record<string, unknown>[] = [];
+  const evaluationCalls: Record<string, unknown>[] = [];
   const page = new CdpWebPage({
     on() {
       return () => {};
     },
     async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        isolatedWorldCalls.push(params);
+        return { executionContextId: 7 };
+      }
       if (method === 'Page.navigate') return {};
+      evaluationCalls.push(params);
       const expression = String(params.expression);
       expressions.push(expression);
       if (expression.startsWith('new URL(')) {
@@ -3098,7 +3109,217 @@ test('CDP navigation defers DOM settlement to the shared settle wrapper', async 
   assert.match(settleExpression ?? '', /setInterval\(discoverRoots/u);
   assert.match(settleExpression ?? '', /document\.getAnimations/u);
   assert.match(settleExpression ?? '', /animation\.playState === 'running'/u);
-  assert.match(settleExpression ?? '', /reject\(new Error\('DOM remained active/u);
+  assert.match(
+    settleExpression ?? '',
+    /reject\(new Error\('DOM remained active for this settlement attempt\.'/u,
+  );
+  assert.match(settleExpression ?? '', /globalThis\[key\] = cancel/u);
+  assert.match(settleExpression ?? '', /resolve\(false\)/u);
+  assert.deepEqual(isolatedWorldCalls, [{ frameId: 'main', worldName: 'farmslot-dom-settlement' }]);
+  assert.equal(
+    evaluationCalls.find((call) => String(call.expression).startsWith('new Promise('))?.contextId,
+    7,
+  );
+});
+
+test('CDP settlement cancellation resolves the older in-page probe', async () => {
+  let evaluationCount = 0;
+  let notifyFirstEvaluation!: () => void;
+  const firstEvaluation = new Promise<void>((resolve) => {
+    notifyFirstEvaluation = resolve;
+  });
+  const values: unknown[] = [];
+  const sandbox = {
+    clearInterval,
+    clearTimeout,
+    document: {
+      getAnimations: () => [],
+      querySelectorAll: () => [],
+    },
+    MutationObserver: class {
+      disconnect() {}
+      observe() {}
+    },
+    requestAnimationFrame: (callback: () => void) => setTimeout(callback, 0),
+    setInterval,
+    setTimeout,
+  };
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        return { executionContextId: 7 };
+      }
+      assert.equal(method, 'Runtime.evaluate');
+      evaluationCount += 1;
+      const valuePromise = vm.runInNewContext(
+        String(params.expression),
+        sandbox,
+      ) as Promise<unknown>;
+      if (evaluationCount === 1) notifyFirstEvaluation();
+      const value = await valuePromise;
+      values.push(value);
+      return { result: { value } };
+    },
+  } as never);
+
+  const first = page.waitForDomSettled(100);
+  await firstEvaluation;
+  const second = page.waitForDomSettled(100);
+  const [firstResult, secondResult] = await Promise.allSettled([first, second]);
+
+  assert.equal(firstResult.status, 'rejected');
+  assert.match(
+    String(firstResult.status === 'rejected' ? firstResult.reason : ''),
+    /settlement was superseded by another probe/u,
+  );
+  assert.equal(secondResult.status, 'fulfilled');
+  assert.deepEqual(values, [false, true]);
+});
+
+test('CDP settlement does not retry non-transient evaluation failures', async () => {
+  let evaluationCount = 0;
+  const page = new CdpWebPage({
+    async call(method: string) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        return { executionContextId: 7 };
+      }
+      evaluationCount += 1;
+      throw new Error('CDP websocket closed.');
+    },
+  } as never);
+
+  await assert.rejects(page.waitForDomSettled(100), /within 100ms: CDP websocket closed/u);
+  assert.equal(evaluationCount, 1);
+});
+
+test('CDP settlement does not retry without enough time for a quiet window', async () => {
+  let createWorldCalls = 0;
+  const page = new CdpWebPage({
+    async call(method: string) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        createWorldCalls += 1;
+        return { executionContextId: createWorldCalls };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      throw new Error('Execution context was destroyed.');
+    },
+  } as never);
+
+  await assert.rejects(
+    page.waitForDomSettled(100),
+    /within 100ms: Execution context was destroyed/u,
+  );
+  assert.equal(createWorldCalls, 1);
+});
+
+for (const transientError of [
+  'Execution context was destroyed.',
+  'Execution context with given id not found',
+  'Cannot find context with specified id',
+  'Execution context is not available in detached frame',
+  'Inspected target navigated or closed',
+  'Not attached to an active page',
+  'Session with given id not found',
+]) {
+  test(`CDP settlement recreates its isolated world after: ${transientError}`, async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let contextId = 0;
+    const page = new CdpWebPage({
+      async call(method: string, params: Record<string, unknown> = {}) {
+        calls.push({ method, params });
+        if (method === 'Page.getFrameTree') {
+          // Chromium keeps the main frame id stable across ordinary navigations.
+          return { frameTree: { frame: { id: 'main' } } };
+        }
+        if (method === 'Page.createIsolatedWorld') {
+          contextId += 1;
+          return { executionContextId: contextId };
+        }
+        assert.equal(method, 'Runtime.evaluate');
+        if (contextId === 1) throw new Error(transientError);
+        return { result: { value: true } };
+      },
+    } as never);
+
+    await page.waitForDomSettled(200);
+
+    assert.deepEqual(
+      calls
+        .filter(({ method }) => method === 'Page.createIsolatedWorld')
+        .map(({ params }) => params),
+      [
+        { frameId: 'main', worldName: 'farmslot-dom-settlement' },
+        { frameId: 'main', worldName: 'farmslot-dom-settlement' },
+      ],
+    );
+    assert.deepEqual(
+      calls
+        .filter(({ method }) => method === 'Runtime.evaluate')
+        .map(({ params }) => params.contextId),
+      [1, 2],
+    );
+  });
+}
+
+test('CDP settlement retries when isolated-world creation races a stale frame', async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  let createAttempt = 0;
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      calls.push({ method, params });
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        createAttempt += 1;
+        if (createAttempt === 1) throw new Error('No frame for given id found');
+        return { executionContextId: createAttempt };
+      }
+      assert.equal(method, 'Runtime.evaluate');
+      return { result: { value: true } };
+    },
+  } as never);
+
+  await page.waitForDomSettled(200);
+
+  assert.deepEqual(
+    calls.filter(({ method }) => method === 'Page.createIsolatedWorld').map(({ params }) => params),
+    [
+      { frameId: 'main', worldName: 'farmslot-dom-settlement' },
+      { frameId: 'main', worldName: 'farmslot-dom-settlement' },
+    ],
+  );
+});
+
+test('CDP settlement reuses an isolated world while the main frame is unchanged', async () => {
+  let createWorldCalls = 0;
+  const page = new CdpWebPage({
+    async call(method: string) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        createWorldCalls += 1;
+        return { executionContextId: 7 };
+      }
+      assert.equal(method, 'Runtime.evaluate');
+      return { result: { value: true } };
+    },
+  } as never);
+
+  await page.waitForDomSettled(100);
+  await page.waitForDomSettled(100);
+
+  assert.equal(createWorldCalls, 1);
 });
 
 test('CDP ui.navigate honors the settle contract through the shared wrapper', async () => {
@@ -3152,6 +3373,12 @@ test('CDP settlement ignores infinite animations while waiting for quiet DOM', a
   const expressions: string[] = [];
   const page = new CdpWebPage({
     async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        return { executionContextId: 7 };
+      }
       assert.equal(method, 'Runtime.evaluate');
       expressions.push(String(params.expression));
       return { result: { value: true } };
