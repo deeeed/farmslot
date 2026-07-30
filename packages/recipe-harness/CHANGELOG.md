@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.10.3 - 2026-07-30
+
+- fix: publish the protocol workspace dependency as its concrete npm version for external consumers.
+
 ## 0.10.2 - 2026-07-30
 
 - fix: avoid scuttled browser globals when matching visible text and producing observation selectors in hardened Extension pages.
