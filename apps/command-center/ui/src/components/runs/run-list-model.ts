@@ -104,13 +104,25 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
       return [...result].sort(
         (a, b) => a.project.localeCompare(b.project) || b.createdAt.localeCompare(a.createdAt),
       );
+    case 'project-desc':
+      return [...result].sort(
+        (a, b) => b.project.localeCompare(a.project) || b.createdAt.localeCompare(a.createdAt),
+      );
     case 'flow':
       return [...result].sort(
         (a, b) => a.flowType.localeCompare(b.flowType) || b.createdAt.localeCompare(a.createdAt),
       );
+    case 'flow-desc':
+      return [...result].sort(
+        (a, b) => b.flowType.localeCompare(a.flowType) || b.createdAt.localeCompare(a.createdAt),
+      );
     case 'status':
       return [...result].sort(
         (a, b) => a.status.localeCompare(b.status) || b.createdAt.localeCompare(a.createdAt),
+      );
+    case 'status-desc':
+      return [...result].sort(
+        (a, b) => b.status.localeCompare(a.status) || b.createdAt.localeCompare(a.createdAt),
       );
     case 'grade': {
       const order: Record<string, number> = { good: 3, ok: 2, bad: 1 };

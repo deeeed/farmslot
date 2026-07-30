@@ -70,6 +70,14 @@ function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
+const TABLE_SORT_PAIRS = {
+  project: 'project-desc',
+  flow: 'flow-desc',
+  status: 'status-desc',
+  newest: 'oldest',
+} as const;
+type TableSort = keyof typeof TABLE_SORT_PAIRS;
+
 @customElement('run-list')
 export class RunList extends RunListState {
   static styles = [runListStyles, flowBadgeStyles];
@@ -509,17 +517,24 @@ export class RunList extends RunListState {
     await gateway.request(Methods.RUN_AUTO_RECOVERY_STOP, { runId });
   }
 
-  private setTableSort(sort: 'project' | 'flow' | 'status' | 'newest') {
-    this.sortBy = sort === 'newest' && this.sortBy === 'newest' ? 'oldest' : sort;
+  private setTableSort(sort: TableSort) {
+    this.sortBy = this.sortBy === sort ? TABLE_SORT_PAIRS[sort] : sort;
     this._persistHashState();
   }
 
-  private renderTableSortHeader(label: string, sort: 'project' | 'flow' | 'status' | 'newest') {
-    const active =
-      this.sortBy === sort ||
-      (sort === 'newest' && (this.sortBy === 'newest' || this.sortBy === 'oldest'));
+  private renderTableSortHeader(label: string, sort: TableSort) {
+    const inverse = TABLE_SORT_PAIRS[sort];
+    const active = this.sortBy === sort || this.sortBy === inverse;
     const direction =
-      sort === 'newest' && active ? (this.sortBy === 'oldest' ? ' ▲' : ' ▼') : active ? ' ▲' : '';
+      active && sort === 'newest'
+        ? this.sortBy === 'oldest'
+          ? ' ▲'
+          : ' ▼'
+        : active
+          ? this.sortBy === inverse
+            ? ' ▼'
+            : ' ▲'
+          : '';
     return html`<button
       class=${active ? 'active' : ''}
       type="button"

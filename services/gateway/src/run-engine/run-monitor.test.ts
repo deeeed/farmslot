@@ -51,12 +51,16 @@ test('artifact contract rejection preserves the no-change terminal command', () 
   assert.doesNotMatch(instruction, /mark complete/);
 });
 
-test('terminal contract failures blame only checker exit 1 on worker artifacts', () => {
+test('terminal contract failures blame only explicit checker rejections on worker artifacts', () => {
   assert.equal(
-    terminalContractFailureKind({ exitCode: 1, stdout: 'missing report', stderr: '' }),
+    terminalContractFailureKind({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'TASK_ARTIFACT_CONTRACT_FAIL\n- missing report',
+    }),
     'artifact',
   );
-  for (const exitCode of [2, 124, 127]) {
+  for (const exitCode of [1, 2, 124, 127]) {
     assert.equal(
       terminalContractFailureKind({ exitCode, stdout: '', stderr: 'checker failed' }),
       'infrastructure',

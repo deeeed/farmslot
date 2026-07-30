@@ -93,7 +93,8 @@ export function shouldKeepWaitingForOverdueReview(
 }
 
 export const LEGACY_REVIEW_FEEDBACK_REL_PATH = 'artifacts/review-feedback.md';
-const LEGACY_REVIEW_FEEDBACK_ARTIFACT_PATTERN = /artifacts\/review-feedback\.md(?![\w./-])/g;
+const LEGACY_REVIEW_FEEDBACK_ARTIFACT_PATTERN =
+  /(^|[^\w-])artifacts\/review-feedback\.md(?![\w./-])/g;
 const LEGACY_REVIEW_FEEDBACK_BASENAME_PATTERN = /(^|[^\w./-])review-feedback\.md(?![\w./-])/g;
 
 export function selfReviewChecklistMarkPrompt(
@@ -132,7 +133,10 @@ export function reviewerFeedbackRelPath(contextId: string): string {
 
 export function scopeReviewFeedbackPath(template: string, feedbackRelPath: string): string {
   const scoped = template
-    .replace(LEGACY_REVIEW_FEEDBACK_ARTIFACT_PATTERN, feedbackRelPath)
+    .replace(
+      LEGACY_REVIEW_FEEDBACK_ARTIFACT_PATTERN,
+      (_match, prefix: string) => `${prefix}${feedbackRelPath}`,
+    )
     .replace(
       LEGACY_REVIEW_FEEDBACK_BASENAME_PATTERN,
       (_match, prefix: string) => `${prefix}${feedbackRelPath}`,

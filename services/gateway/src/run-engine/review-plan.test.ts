@@ -118,6 +118,36 @@ test('explicit publication review recovery ignores passes from an earlier work o
   );
 });
 
+test('explicit publication review recovery preserves a missing runner-specific prefix', () => {
+  const plan = [
+    { order: 1, runner: 'codex' as const, validationDepth: 'static-code' as const },
+    { order: 2, runner: 'same' as const, validationDepth: 'static-code' as const },
+  ];
+
+  assert.deepEqual(
+    remainingExplicitReviewPlan(
+      plan,
+      [
+        {
+          id: 'second-loop-pass',
+          source: 'human-gate',
+          runner: 'claude',
+          crossRunner: false,
+          loopNumber: 2,
+          verdict: 'pass',
+          unresolvedCount: 0,
+          completedAt: '2026-07-30T03:00:00.000Z',
+        },
+      ],
+      {
+        requestedAt: '2026-07-30T02:00:00.000Z',
+        source: 'human-gate',
+      },
+    ),
+    plan,
+  );
+});
+
 test('humanGateReviewDepth makes explicit gate review requests temporary but required', () => {
   const basePolicy = {
     minimumIndependentReviews: 0,

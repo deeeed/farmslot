@@ -197,6 +197,18 @@ test('filterRunList sorts inventory columns deterministically', () => {
     filter({ runs: [zeta, alpha], sortBy: 'status' }).map((item) => item.id),
     ['alpha', 'zeta'],
   );
+  assert.deepEqual(
+    filter({ runs: [zeta, alpha], sortBy: 'project-desc' }).map((item) => item.id),
+    ['zeta', 'alpha'],
+  );
+  assert.deepEqual(
+    filter({ runs: [zeta, alpha], sortBy: 'flow-desc' }).map((item) => item.id),
+    ['zeta', 'alpha'],
+  );
+  assert.deepEqual(
+    filter({ runs: [zeta, alpha], sortBy: 'status-desc' }).map((item) => item.id),
+    ['zeta', 'alpha'],
+  );
 });
 
 test('filterRunList applies exact tag filters and includes tags in text search', () => {

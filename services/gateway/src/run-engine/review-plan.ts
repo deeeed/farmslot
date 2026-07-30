@@ -112,7 +112,7 @@ export function remainingExplicitReviewPlan(
   } = {},
 ): ReviewLoopRequest[] {
   const requestedAt = scope.requestedAt ? Date.parse(scope.requestedAt) : Number.NaN;
-  const passingCount = reviews.filter(
+  const passingReviews = reviews.filter(
     (review) =>
       isQualifyingIndependentReview(review) &&
       review.verdict === 'pass' &&
@@ -120,8 +120,20 @@ export function remainingExplicitReviewPlan(
       (!scope.source || (review.source ?? 'dispatch') === scope.source) &&
       (!Number.isFinite(requestedAt) ||
         Date.parse(review.completedAt ?? review.startedAt ?? '') >= requestedAt),
-  ).length;
-  return plan.slice(passingCount);
+  );
+  let completedPrefix = 0;
+  const unusedPassingReviews = [...passingReviews];
+  for (const planStep of plan) {
+    const matchingIndex = unusedPassingReviews.findIndex(
+      (review) =>
+        planStep.runner === 'same' ||
+        normalizeRunner(review.runner) === normalizeRunner(planStep.runner),
+    );
+    if (matchingIndex < 0) break;
+    unusedPassingReviews.splice(matchingIndex, 1);
+    completedPrefix += 1;
+  }
+  return plan.slice(completedPrefix);
 }
 
 export function humanGateReviewDepth(

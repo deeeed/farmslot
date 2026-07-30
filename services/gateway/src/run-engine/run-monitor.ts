@@ -359,7 +359,7 @@ export function terminalContractFailureKind(
   result: Pick<ExecResult, 'exitCode' | 'stdout' | 'stderr'>,
 ): 'artifact' | 'infrastructure' {
   const output = `${result.stderr}\n${result.stdout}`;
-  return result.exitCode === 1 && !/command timed out|maxBuffer exceeded|spawn error/i.test(output)
+  return result.exitCode === 1 && /(?:^|\n)TASK_ARTIFACT_CONTRACT_FAIL(?:\n|$)/.test(output)
     ? 'artifact'
     : 'infrastructure';
 }

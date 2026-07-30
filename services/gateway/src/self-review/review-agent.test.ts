@@ -51,3 +51,15 @@ test('review agent appends scoped feedback path when template omits legacy path'
     'Review the diff.\n\nWrite reviewer feedback to artifacts/review-feedback.rev-codex.md.',
   );
 });
+
+test('review agent does not rewrite a similarly named artifact directory', () => {
+  const scoped = scopeReviewFeedbackPath(
+    'Keep my-artifacts/review-feedback.md; write artifacts/review-feedback.md, now.',
+    reviewerFeedbackRelPath('rev-codex'),
+  );
+
+  assert.equal(
+    scoped,
+    'Keep my-artifacts/review-feedback.md; write artifacts/review-feedback.rev-codex.md, now.',
+  );
+});
