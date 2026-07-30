@@ -855,6 +855,19 @@ function rearmPublicationReviewRecovery(
     });
   };
 
+  const clearRecovery = (latest: Run): void => {
+    const current = getRun(latest.id) ?? latest;
+    updateRun(current.id, {
+      engineState: {
+        ...current.engineState,
+        publishGate: {
+          ...current.engineState?.publishGate,
+          reviewRecovery: undefined,
+        },
+      },
+    });
+  };
+
   const schedule = (latest: Run): void => {
     const delayMs = Math.min(
       PUBLICATION_REVIEW_RECOVERY_MAX_POLL_MS,
@@ -871,11 +884,17 @@ function rearmPublicationReviewRecovery(
   const poll = async (): Promise<void> => {
     if (settled || inFlight) return;
     const latest = getRun(run.id);
-    if (!latest || !latest.slotId || !isPublicationReviewRecoveryHeld(latest)) {
+    if (!latest) {
+      state.cleanup();
+      return;
+    }
+    if (!latest.slotId || !isPublicationReviewRecoveryHeld(latest)) {
+      clearRecovery(latest);
       state.cleanup();
       return;
     }
     if (!state.replayPending && !hasRecoverablePublicationReviewer(latest)) {
+      clearRecovery(latest);
       state.cleanup();
       return;
     }

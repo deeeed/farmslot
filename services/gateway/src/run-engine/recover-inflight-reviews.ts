@@ -312,11 +312,13 @@ async function ingestRecoveredReviewer(
   const latest = getRun(runId)!;
   const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
   const reviewId = EXTRA_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id;
-  const reviewSnapshot = await readRecoveredReviewSnapshot(
-    vars,
-    taskDir,
-    recoveredReviewArtifactScope(ctx, reviewId),
-  );
+  const artifactScope = recoveredReviewArtifactScope(ctx, reviewId);
+  if (!ctx.artifactScope?.trim()) {
+    console.warn(
+      `[run-engine] recovered reviewer ${ctx.id} has no persisted artifact scope; falling back to ${artifactScope}`,
+    );
+  }
+  const reviewSnapshot = await readRecoveredReviewSnapshot(vars, taskDir, artifactScope);
   const review = buildRecoveredReview({
     run: latest,
     ctx,

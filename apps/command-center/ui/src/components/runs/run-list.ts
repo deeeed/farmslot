@@ -661,7 +661,10 @@ export class RunList extends RunListState {
           ${runPR?.title
             ? html`<div class="pr-title">PR #${runPR.pr}: ${runPR.title}</div>`
             : nothing}
-          ${run.summary ? html`<div class="summary">${run.summary}</div>` : nothing}
+          <div class="run-summary-line">
+            ${run.summary ? html`<div class="summary">${run.summary}</div>` : nothing}
+            <span class="run-id">${shortId(run.id)}</span>
+          </div>
           ${run.lane === 'comparison'
             ? html`<div class="summary">
                 comparison
@@ -674,12 +677,11 @@ export class RunList extends RunListState {
                 })()}
               </div>`
             : nothing}
-          <div class="info-bottom">
-            <span class="run-id">${shortId(run.id)}</span>
-            ${siblingCount && siblingCount > 0
-              ? html`<span>${siblingCount} sibling${siblingCount !== 1 ? 's' : ''}</span>`
-              : nothing}
-          </div>
+          ${siblingCount && siblingCount > 0
+            ? html`<div class="info-bottom">
+                <span>${siblingCount} sibling${siblingCount !== 1 ? 's' : ''}</span>
+              </div>`
+            : nothing}
           <run-pipeline-mini
             .run=${run}
             .steps=${run.steps}

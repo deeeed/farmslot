@@ -289,17 +289,17 @@ export const runListStyles = css`
     text-align: center;
   }
   .runs-table {
-    min-width: 980px;
+    min-width: 944px;
   }
   .run-table-head,
   .run-card {
     display: grid;
-    gap: 8px;
-    grid-template-columns: 58px minmax(115px, 145px) minmax(390px, 1fr) 195px 170px;
+    gap: 6px;
+    grid-template-columns: 50px minmax(112px, 136px) minmax(390px, 1fr) 196px 156px;
   }
   .run-table-head.with-selector,
   .run-card.with-selector {
-    grid-template-columns: 34px 58px minmax(115px, 145px) minmax(390px, 1fr) 195px 170px;
+    grid-template-columns: 30px 50px minmax(112px, 136px) minmax(390px, 1fr) 196px 156px;
   }
   .run-table-head {
     align-items: center;
@@ -328,7 +328,7 @@ export const runListStyles = css`
     align-items: start;
     background: ${unsafeCSS(colors.bgCard)};
     border-radius: ${unsafeCSS(radii.md)};
-    margin-top: 4px;
+    margin-top: 3px;
     min-height: 40px;
     padding: 5px 8px;
     cursor: pointer;
@@ -486,7 +486,7 @@ export const runListStyles = css`
   .info-top {
     display: flex;
     align-items: center;
-    gap: ${unsafeCSS(spacing.sm)};
+    gap: 6px;
     flex-wrap: wrap;
   }
   .run-id {
@@ -516,7 +516,19 @@ export const runListStyles = css`
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 400px;
+    max-width: 100%;
+  }
+  .run-summary-line {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+  }
+  .run-summary-line .summary {
+    flex: 1;
+  }
+  .run-summary-line .run-id {
+    flex: none;
   }
   .pr-title {
     color: ${unsafeCSS(colors.textPrimary)};
@@ -537,7 +549,7 @@ export const runListStyles = css`
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
+    gap: 3px;
     font-size: 11px;
     color: ${unsafeCSS(colors.textMuted)};
     min-width: 0;
@@ -560,7 +572,7 @@ export const runListStyles = css`
     align-items: flex-start;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 4px;
     min-width: 0;
   }
   .inline-action {
