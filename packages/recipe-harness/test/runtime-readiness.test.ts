@@ -41,8 +41,10 @@ test('dependency version checks support npm semver ranges', () => {
 });
 
 test('CDP compositor probe requires advancing frames and sane hit testing', async () => {
+  const readyCalls: string[] = [];
   const ready = await probeCdpCompositorInteractivity({
-    async call() {
+    async call(method) {
+      readyCalls.push(method);
       return {
         result: {
           value: {
@@ -60,6 +62,7 @@ test('CDP compositor probe requires advancing frames and sane hit testing', asyn
     interactiveTargetFound: true,
     hitTestOk: true,
   });
+  assert.deepEqual(readyCalls, ['Runtime.evaluate']);
 
   const obscured = await probeCdpCompositorInteractivity({
     async call() {
@@ -273,13 +276,26 @@ test('CDP compositor probe accepts a hittable modal control after an occluded ca
 test('CDP compositor probe retries scuttled requestAnimationFrame access in an isolated world', async () => {
   let now = 0;
   let frame = 0;
+  const target = {
+    disabled: false,
+    getAttribute: () => null,
+    getBoundingClientRect: () => ({
+      left: 10,
+      top: 10,
+      right: 30,
+      bottom: 30,
+      width: 20,
+      height: 20,
+    }),
+    contains: () => false,
+  };
   const sandbox = {
     Promise,
     performance: { now: () => ++now },
     requestAnimationFrame: (callback: (timestamp: number) => void) => callback(++frame),
     document: {
-      querySelectorAll: () => [],
-      elementFromPoint: () => null,
+      querySelectorAll: () => [target],
+      elementFromPoint: () => target,
     },
     getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }),
     innerWidth: 100,
@@ -317,6 +333,8 @@ test('CDP compositor probe retries scuttled requestAnimationFrame access in an i
 
   assert.equal(report.status, 'ready');
   assert.equal(report.frameAdvanced, true);
+  assert.equal(report.interactiveTargetFound, true);
+  assert.equal(report.hitTestOk, true);
   assert.deepEqual(
     calls.map(({ method }) => method),
     ['Runtime.evaluate', 'Page.getFrameTree', 'Page.createIsolatedWorld', 'Runtime.evaluate'],

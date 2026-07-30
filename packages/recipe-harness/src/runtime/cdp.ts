@@ -868,7 +868,7 @@ function visibleTargetsExpression(): string {
       if (testAttribute) {
         return '[' + testAttribute + '=' + cssString(el.getAttribute(testAttribute)) + ']';
       }
-      if (el.getRootNode() instanceof ShadowRoot) return undefined;
+      if (shadowHostFor(el.getRootNode())) return undefined;
       const parts = [];
       let current = el;
       while (current && current.nodeType === 1) {
@@ -903,7 +903,7 @@ function visibleTargetsExpression(): string {
       while (current) {
         if (current === ancestor) return true;
         const root = current.getRootNode();
-        current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+        current = current.parentElement || shadowHostFor(root);
       }
       return false;
     };
@@ -1218,6 +1218,8 @@ function visibleSelectorExpression(selector: string): string {
 
 function deepQueryHelpersExpression(): string {
   return `
+    const shadowHostFor = (root) =>
+      root && root.nodeType === 11 && root.host ? root.host : null;
     const querySelectorAllDeep = (selector, root = document) => {
       const matches = Array.from(root.querySelectorAll(selector));
       for (const element of root.querySelectorAll('*')) {
@@ -1233,7 +1235,7 @@ function deepQueryHelpersExpression(): string {
         const style = getComputedStyle(current);
         if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) <= 0) return false;
         const root = current.getRootNode();
-        current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+        current = current.parentElement || shadowHostFor(root);
       }
       return true;
     };
@@ -1243,7 +1245,7 @@ function deepQueryHelpersExpression(): string {
       let current = element;
       while (current) {
         const root = current.getRootNode();
-        const parent = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+        const parent = current.parentElement || shadowHostFor(root);
         if (!parent) break;
         const style = getComputedStyle(parent);
         if (/(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
@@ -1272,7 +1274,7 @@ function deepQueryHelpersExpression(): string {
         while (current) {
           if (current === ancestor) return true;
           const root = current.getRootNode();
-          current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+          current = current.parentElement || shadowHostFor(root);
         }
         return false;
       };
