@@ -35,6 +35,8 @@ export interface AgentContext {
   runId: string;
   taskFile?: string | null;
   signalFile?: string | null;
+  /** Artifact directory scope owned by this reviewer attempt (for restart recovery). */
+  artifactScope?: string | null;
   runner?: string | null;
   model?: string | null;
   target?: AgentContextTarget | null;

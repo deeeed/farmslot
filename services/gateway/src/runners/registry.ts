@@ -64,6 +64,7 @@ import type {
 } from './observability-types.js';
 import { lineHasAuthBlockerPhrase, readPaneStateFromCapture } from './pane-state-script.js';
 import { probeRunnerHandoffAck } from './prompt-delivery-evidence.js';
+import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
 
 /**
  * Env prefix for worker sessions.
@@ -618,21 +619,33 @@ export interface RunnerLaunchBlocker {
   kind:
     | 'workspace-trust'
     | 'project-directory'
+    | 'hooks-review'
     | 'auth-required'
     | 'mcp-init'
     | 'cold-start'
     | 'usage-limit';
   summary: string;
-  autoAction: 'cursor-trust-workspace' | 'grok-select-current-project' | null;
+  autoAction:
+    | 'cursor-trust-workspace'
+    | 'grok-select-current-project'
+    | 'codex-refresh-hooks-and-trust'
+    | null;
   /** Wait for the blocker to clear instead of failing prompt delivery. */
   defer?: boolean;
 }
 
 export function runnerLaunchBlockerAutoActionKey(
   autoAction: RunnerLaunchBlocker['autoAction'],
-): 'a' | 'Enter' | null {
+  pane = '',
+): string | null {
   if (autoAction === 'cursor-trust-workspace') return 'a';
   if (autoAction === 'grok-select-current-project') return 'Enter';
+  if (autoAction === 'codex-refresh-hooks-and-trust') {
+    for (const line of pane.split('\n')) {
+      const match = normalizeInstructionText(line).match(/\b(\d+)\.\s*Trust all and continue\b/i);
+      if (match) return match[1];
+    }
+  }
   return null;
 }
 
@@ -651,7 +664,7 @@ export function keyForClassifierTrustAction(
   classifier: { state: string; confidence: number; suggestedAction?: string },
   runnerId: string | null | undefined,
   pane: string,
-): 'a' | 'Enter' | null {
+): string | null {
   if (classifier.confidence < 0.8) return null;
   if (classifier.state !== 'trust_prompt') return null;
   if (classifier.suggestedAction !== 'send_yes' && classifier.suggestedAction !== 'send_enter') {
@@ -659,7 +672,7 @@ export function keyForClassifierTrustAction(
   }
   const runner = normalizeRunner(runnerId);
   const blocker = detectRunnerLaunchBlocker(pane, runner);
-  const fromBlocker = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null);
+  const fromBlocker = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null, pane);
   if (fromBlocker) return fromBlocker;
   if (runner === 'cursor') return 'a';
   if (runner === 'grok') return 'Enter';
@@ -682,19 +695,33 @@ export async function confirmTrustPromptWithFreshEvidence(opts: {
   exec: (
     tmuxCommand: string,
   ) => Promise<{ exitCode: number; stdout: string; stderr?: string | undefined }>;
-}): Promise<{ outcome: 'sent'; key: 'a' | 'Enter' } | { outcome: 'no-fresh-evidence' }> {
+  refreshCodexHooks?: () => Promise<void>;
+}): Promise<{ outcome: 'sent'; key: string } | { outcome: 'no-fresh-evidence' }> {
   const fresh = await opts.exec(`capture-pane -p -t ${shellQuote(opts.target)} 2>/dev/null`);
   const runner = normalizeRunner(opts.runnerId);
   const blocker = detectRunnerLaunchBlocker(fresh.stdout, runner);
-  const key = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null);
+  const key = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null, fresh.stdout);
   if (!key) {
     console.log(
       `[${opts.logPrefix}] classifier reported a trust prompt in ${opts.target} but the fresh capture shows no actionable trust blocker; not sending`,
     );
     return { outcome: 'no-fresh-evidence' };
   }
+  if (blocker?.autoAction === 'codex-refresh-hooks-and-trust') {
+    if (!opts.refreshCodexHooks) {
+      console.log(
+        `[${opts.logPrefix}] fresh Codex hooks-review prompt found in ${opts.target}, but no trusted hook refresh is available; not sending`,
+      );
+      return { outcome: 'no-fresh-evidence' };
+    }
+    await opts.refreshCodexHooks();
+  }
+  const keySequence =
+    blocker?.autoAction === 'codex-refresh-hooks-and-trust'
+      ? `${shellQuote(key)} ${shellQuote('Enter')}`
+      : shellQuote(key);
   const sent = await opts.exec(
-    `send-keys -t ${shellQuote(opts.target)} ${shellQuote(key)} 2>/dev/null`,
+    `send-keys -t ${shellQuote(opts.target)} ${keySequence} 2>/dev/null`,
   );
   if (sent.exitCode !== 0) {
     throw new Error(
@@ -729,6 +756,12 @@ export function detectRunnerLaunchBlocker(
         summary:
           'Grok is waiting for project-directory selection before the chat input is available.',
         autoAction: 'grok-select-current-project',
+      };
+    case 'hooks-review':
+      return {
+        kind: 'hooks-review',
+        summary: 'Codex is waiting for repository hook review before the chat input is available.',
+        autoAction: 'codex-refresh-hooks-and-trust',
       };
     case 'mcp-init':
       return {
@@ -1031,7 +1064,18 @@ export function runnerPaneShowsCurrentInteractiveProgress(
     }
   }
   if (progressIndex === -1) return false;
-  return !tail.slice(progressIndex + 1).some((line) => paneLineLooksShellPrompt(line));
+  const afterProgress = tail.slice(progressIndex + 1);
+  if (afterProgress.some((line) => paneLineLooksShellPrompt(line))) return false;
+  const laterTuiPrompt =
+    (runner === 'claude' || runner === 'codex') &&
+    afterProgress.some((line) => runnerLineLooksWaiting(line, runner));
+  if (laterTuiPrompt) {
+    const progressLine = tail[progressIndex] ?? '';
+    const hasLiveActivityMarker =
+      /…|\.\.\.|esc to interrupt|running in the background|\(\s*\d+[smh]\b/i.test(progressLine);
+    if (!hasLiveActivityMarker) return false;
+  }
+  return true;
 }
 
 export function runnerPaneShowsTaskAlreadyRunning(
@@ -2071,6 +2115,8 @@ export async function sendRunnerPostLaunchPrompt(
     handoffAckSinceMs?: number;
     /** Bound provider subscription label for typed usage-limit errors. */
     providerAccountLabel?: string | null;
+    /** Project runtime dir used to rebuild Codex's isolated trusted hook config. */
+    runtimeDir?: string;
   } = {},
 ): Promise<void> {
   const runner = normalizeRunner(runnerId);
@@ -2108,6 +2154,7 @@ export async function sendRunnerPostLaunchPrompt(
   let ready = false;
   let workspaceTrustAttempts = 0;
   let grokProjectAttempts = 0;
+  let codexHooksReviewAttempts = 0;
   const maxBlockerAutoAttempts = 2;
   const snapshottedBlockers = new Set<string>();
   while (Date.now() < readyDeadline) {
@@ -2154,7 +2201,7 @@ export async function sendRunnerPostLaunchPrompt(
       );
       snapshottedBlockers.add(blocker.kind);
     }
-    const autoActionKey = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null);
+    const autoActionKey = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null, pane);
     if (
       blocker?.autoAction === 'cursor-trust-workspace' &&
       autoActionKey &&
@@ -2205,6 +2252,48 @@ export async function sendRunnerPostLaunchPrompt(
         `[${logPrefix}] selected current Grok project directory for ${target} (${vars.remoteRepo})`,
       );
       extendDeadlineAfterBlockerResolve('auto-resolving project-directory');
+      stableCount = 0;
+      lastPane = '';
+      continue;
+    }
+    if (
+      blocker?.autoAction === 'codex-refresh-hooks-and-trust' &&
+      autoActionKey &&
+      codexHooksReviewAttempts < maxBlockerAutoAttempts
+    ) {
+      const refreshResult = await execOnSlot(
+        vars,
+        buildRunnerObservabilityInstallCommand(vars, runner, vars.remoteRepo, opts.runtimeDir, {
+          accountLabel: opts.providerAccountLabel,
+        }),
+      );
+      if (refreshResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to refresh trusted Codex hooks for ${target}: ${
+            refreshResult.stderr || refreshResult.stdout || `exit ${refreshResult.exitCode}`
+          }`,
+        );
+      }
+      const trustResult = await execOnSlot(
+        vars,
+        tmuxShellSnippet(
+          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} ${shellQuote(
+            'Enter',
+          )} 2>/dev/null`,
+        ),
+      );
+      if (trustResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to trust refreshed Codex repository hooks in ${target}: ${
+            trustResult.stderr || trustResult.stdout || `exit ${trustResult.exitCode}`
+          }`,
+        );
+      }
+      codexHooksReviewAttempts += 1;
+      console.log(
+        `[${logPrefix}] refreshed and trusted Codex repository hooks for ${target} (${vars.remoteRepo})`,
+      );
+      extendDeadlineAfterBlockerResolve('auto-resolving hooks-review');
       stableCount = 0;
       lastPane = '';
       continue;
@@ -2345,6 +2434,21 @@ export async function sendRunnerPostLaunchPrompt(
         target,
         logPrefix,
         exec: (tmuxCommand) => execOnSlot(vars, tmuxShellSnippet(tmuxCommand)),
+        refreshCodexHooks: async () => {
+          const refreshed = await execOnSlot(
+            vars,
+            buildRunnerObservabilityInstallCommand(vars, runner, vars.remoteRepo, opts.runtimeDir, {
+              accountLabel: opts.providerAccountLabel,
+            }),
+          );
+          if (refreshed.exitCode !== 0) {
+            throw new Error(
+              `Failed to refresh trusted Codex hooks for ${target}: ${
+                refreshed.stderr || refreshed.stdout || `exit ${refreshed.exitCode}`
+              }`,
+            );
+          }
+        },
       });
       if (confirmed.outcome !== 'sent') {
         // No fresh deterministic evidence — fall through to the normal

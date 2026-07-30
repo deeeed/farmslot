@@ -307,16 +307,23 @@ export async function executeReviewGate(runId: string): Promise<void> {
       await writeF(evidenceTmpFile, evidenceMarkdown, 'utf-8');
     }
 
+    // The gateway already owns session metrics, artifact upload, and local artifact
+    // archival. Tell the standalone script not to repeat those remote-heavy phases.
     // Use execFile with an argv array so user-supplied run metadata (runner/model)
     // can't break out of shell quoting.
     const postReviewArgs: string[] = [
       `${farmslotRoot}/scripts/post-review.sh`,
+      '--run-id',
+      runId,
       '--pr',
       String(prNumber),
       '--repo',
       ciRepo,
       '--slot',
       current.slotId!,
+      '--skip-session-usage',
+      '--skip-artifact-upload',
+      '--skip-archive',
     ];
     if (taskRelDir) postReviewArgs.push('--task-dir', `${taskDirName}/${taskRelDir}`);
     if (overrideRec) postReviewArgs.push('--recommendation', overrideRec);
@@ -334,7 +341,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
         execFile(
           'bash',
           postReviewArgs,
-          { timeout: 60000, maxBuffer: 10 * 1024 * 1024 },
+          { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
           (err, stdout, stderr) => {
             if (err) {
               reject(Object.assign(err, { stdout, stderr }));

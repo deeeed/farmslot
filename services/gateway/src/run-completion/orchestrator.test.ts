@@ -615,7 +615,7 @@ test('independent review policy requires passing reviews and optional cross-runn
         validationDepth: 'static-code',
       },
     ]),
-    false,
+    true,
   );
   assert.equal(
     independentReviewPolicySatisfied(base, [
@@ -629,6 +629,20 @@ test('independent review policy requires passing reviews and optional cross-runn
       },
     ]),
     true,
+  );
+  assert.equal(
+    independentReviewPolicySatisfied(base, [
+      {
+        id: 'self-review-1',
+        source: 'self-review',
+        crossRunner: true,
+        loopNumber: 1,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        validationDepth: 'full-live',
+      },
+    ]),
+    false,
   );
   assert.equal(
     independentReviewPolicySatisfied(

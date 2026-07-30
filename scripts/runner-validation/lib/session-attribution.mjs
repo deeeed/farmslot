@@ -10,7 +10,7 @@ export const RUNNER_SESSION_DISPATCH_SLACK_MS = 60_000;
 export const ATTRIBUTION_MODELS = {
   claude: 'opus',
   codex: 'gpt-5.4',
-  grok: 'grok-build',
+  grok: 'grok-4.5',
 };
 
 export const STALE_MODELS = {

@@ -1426,9 +1426,20 @@ export interface RunEngineState {
     prNumber?: number | null;
     reviewDepth?: ReviewDepthPolicy;
     pendingReviewPlan?: ReviewLoopRequest[];
+    /** Creation time for the current pending plan, used to ignore reviews from earlier work orders. */
+    pendingReviewPlanRequestedAt?: string;
     independentReviews?: IndependentReviewStatus[];
     supersededPackageIds?: string[];
     feedbackArtifactPath?: string;
+    /** Bounded restart watcher state for an in-flight publication reviewer. */
+    reviewRecovery?: {
+      status: 'watching' | 'recovered' | 'operator-required';
+      attempts: number;
+      startedAt: string;
+      updatedAt: string;
+      nextRetryAt?: string;
+      lastError?: string;
+    };
     /** Consolidated gate narrative snapshot, persisted so historical redisplay needs no recompute. */
     gateSummary?: GateSummary;
   };
@@ -1852,7 +1863,7 @@ export const DEFAULT_CODEX_EFFORT = 'xhigh';
 export const DEFAULT_CURSOR_MODEL = 'composer-2.5';
 
 /** Default Grok model used when no slot/task/project/user override is set. */
-export const DEFAULT_GROK_MODEL = 'grok-build';
+export const DEFAULT_GROK_MODEL = 'grok-4.5';
 
 /** Default Grok reasoning effort when dispatch/launch omits effort. */
 export const DEFAULT_GROK_EFFORT = 'xhigh';

@@ -19,7 +19,17 @@ import { parseRunsHashState, writeRunsHashState } from '../../state.js';
 
 export type TabFilter = 'active' | 'history' | 'all';
 export type StatusFilter = RunStatus | 'all';
-export type SortOption = 'newest' | 'oldest' | 'duration' | 'grade';
+export type SortOption =
+  | 'newest'
+  | 'oldest'
+  | 'project'
+  | 'project-desc'
+  | 'flow'
+  | 'flow-desc'
+  | 'status'
+  | 'status-desc'
+  | 'duration'
+  | 'grade';
 
 export const STATUS_PILLS: { label: string; value: StatusFilter }[] = [
   { label: 'All', value: 'all' },
@@ -46,6 +56,12 @@ export const LANE_OPTIONS: { label: string; value: RunLane | '' }[] = [
 export const SORT_OPTIONS: { label: string; value: SortOption }[] = [
   { label: 'Newest', value: 'newest' },
   { label: 'Oldest', value: 'oldest' },
+  { label: 'Project A–Z', value: 'project' },
+  { label: 'Project Z–A', value: 'project-desc' },
+  { label: 'Flow A–Z', value: 'flow' },
+  { label: 'Flow Z–A', value: 'flow-desc' },
+  { label: 'Status A–Z', value: 'status' },
+  { label: 'Status Z–A', value: 'status-desc' },
   { label: 'Duration', value: 'duration' },
   { label: 'Grade', value: 'grade' },
 ];

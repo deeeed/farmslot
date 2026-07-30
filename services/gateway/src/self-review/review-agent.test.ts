@@ -33,13 +33,13 @@ test('review agent instructions use context-scoped checklist, signal, and feedba
 
 test('review agent scopes legacy template feedback paths to the reviewer context', () => {
   const scoped = scopeReviewFeedbackPath(
-    'Write artifacts/review-feedback.md, include review-feedback.md in evidence, but leave docs/review-feedback.md alone.',
+    'Write tasks/run-1/artifacts/review-feedback.md, include review-feedback.md in evidence, but leave docs/review-feedback.md alone.',
     reviewerFeedbackRelPath('rev-claude'),
   );
 
   assert.equal(
     scoped,
-    'Write artifacts/review-feedback.rev-claude.md, include artifacts/review-feedback.rev-claude.md in evidence, but leave docs/review-feedback.md alone.',
+    'Write tasks/run-1/artifacts/review-feedback.rev-claude.md, include artifacts/review-feedback.rev-claude.md in evidence, but leave docs/review-feedback.md alone.',
   );
 });
 
@@ -49,5 +49,17 @@ test('review agent appends scoped feedback path when template omits legacy path'
   assert.equal(
     scoped,
     'Review the diff.\n\nWrite reviewer feedback to artifacts/review-feedback.rev-codex.md.',
+  );
+});
+
+test('review agent does not rewrite a similarly named artifact directory', () => {
+  const scoped = scopeReviewFeedbackPath(
+    'Keep my-artifacts/review-feedback.md; write artifacts/review-feedback.md, now.',
+    reviewerFeedbackRelPath('rev-codex'),
+  );
+
+  assert.equal(
+    scoped,
+    'Keep my-artifacts/review-feedback.md; write artifacts/review-feedback.rev-codex.md, now.',
   );
 });

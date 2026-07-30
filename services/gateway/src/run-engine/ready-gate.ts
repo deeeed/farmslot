@@ -726,7 +726,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
               runner: defaultAlternateReviewRunner(
                 current.metrics.runner,
               ) as ReviewLoopRequest['runner'],
-              validationDepth: 'full-live' as const,
+              validationDepth: 'static-code' as const,
             },
           ]
         : selectedPlan;
@@ -745,6 +745,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
               { actionId, fallbackLoopCount: loopsToAdd },
             ),
             pendingReviewPlan: requestedPlan,
+            pendingReviewPlanRequestedAt: new Date().toISOString(),
           }
         : {};
     // applyEvidenceRefreshOverride persists restamped reviews + an audit record

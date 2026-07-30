@@ -30,6 +30,9 @@ function normalizeFarmPath(value: string): string {
   if (!input || input.startsWith('/')) {
     throw new Error(`Invalid node_support path ${JSON.stringify(value)}: path must be relative`);
   }
+  if (input.split('/').includes('..')) {
+    throw new Error(`Invalid node_support path ${JSON.stringify(value)}: path escapes Farmslot`);
+  }
   const normalized = path.posix.normalize(input).replace(/\/+$/, '');
   if (
     normalized === '.' ||
@@ -62,19 +65,23 @@ function addProjectTopLevel(
   paths.add(path.posix.join('projects', projectName, topLevel));
 }
 
-function addFarmPath(paths: Set<string>, projectName: string, farmPath: string): void {
+function addFarmPath(paths: Set<string>, farmPath: string): void {
   const normalized = normalizeFarmPath(farmPath);
   if (!normalized) return;
-  const projectPrefix = `projects/${projectName}/`;
   if (normalized === 'scripts' || normalized.startsWith('scripts/')) {
     addRootScripts(paths);
-  } else if (normalized === `projects/${projectName}/project.json`) {
-    addProjectJson(paths, projectName);
-  } else if (normalized.startsWith(projectPrefix)) {
-    addProjectTopLevel(paths, projectName, normalized.slice(projectPrefix.length));
+  } else if (normalized.startsWith('projects/')) {
+    const [, referencedProject, ...projectRelativeParts] = normalized.split('/');
+    const projectRelativePath = projectRelativeParts.join('/');
+    if (!referencedProject || !projectRelativePath) {
+      throw new Error(
+        `Invalid node_support path ${JSON.stringify(farmPath)}: expected projects/<project>/...`,
+      );
+    }
+    addProjectTopLevel(paths, referencedProject, projectRelativePath);
   } else {
     throw new Error(
-      `Invalid node_support path ${JSON.stringify(farmPath)}: expected scripts or projects/${projectName}/...`,
+      `Invalid node_support path ${JSON.stringify(farmPath)}: expected scripts or projects/<project>/...`,
     );
   }
 }
@@ -103,10 +110,14 @@ function inferHookPaths(
   farmslotRoot: string,
 ): string[] {
   const paths = new Set<string>();
-  const projectPrefix = `projects/${projectName}/`;
 
-  const recordProjectRef = (projectRelativeRef: string): void => {
-    addProjectTopLevel(paths, projectName, projectRelativeRef);
+  const recordProjectRef = (projectRef: string): void => {
+    try {
+      addFarmPath(paths, `projects/${projectRef}`);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Invalid hook support reference in ${projectName}: ${reason}`);
+    }
   };
 
   for (const command of hookCommands(projectJson)) {
@@ -117,7 +128,7 @@ function inferHookPaths(
       '{{NODE_SUPPORT_DIR}}',
     ]) {
       if (command.includes(`${supportDirToken}/scripts/`)) addRootScripts(paths);
-      const token = `${supportDirToken}/${projectPrefix}`;
+      const token = `${supportDirToken}/projects/`;
       let index = command.indexOf(token);
       while (index !== -1) {
         const match = FARM_PATH_STOP.exec(command.slice(index + token.length));
@@ -126,7 +137,7 @@ function inferHookPaths(
       }
     }
 
-    const literalRootToken = `${farmslotRoot}/${projectPrefix}`;
+    const literalRootToken = `${farmslotRoot}/projects/`;
     if (command.includes(`${farmslotRoot}/scripts/`)) addRootScripts(paths);
     let index = command.indexOf(literalRootToken);
     while (index !== -1) {
@@ -140,13 +151,13 @@ function inferHookPaths(
   return [...paths].sort();
 }
 
-function declaredNodeSupportPaths(projectName: string, projectJson: RawProjectJson): string[] {
+function declaredNodeSupportPaths(projectJson: RawProjectJson): string[] {
   const rawPaths = getProjectFieldRaw(projectJson, 'node_support.paths');
   if (!Array.isArray(rawPaths)) return [];
   const paths = new Set<string>();
   for (const entry of rawPaths) {
     if (typeof entry !== 'string' || !entry.trim()) continue;
-    addFarmPath(paths, projectName, entry.trim());
+    addFarmPath(paths, entry.trim());
   }
   if ([...paths].some((supportPath) => supportPath.startsWith('projects/'))) addRootScripts(paths);
   return [...paths].sort();
@@ -161,7 +172,7 @@ export function resolveNodeSupportPaths(
   projectJson: RawProjectJson,
   farmslotRoot: string,
 ): NodeSupportPathResolution {
-  const declaredPaths = declaredNodeSupportPaths(projectName, projectJson);
+  const declaredPaths = declaredNodeSupportPaths(projectJson);
   const inferredHookPaths = inferHookPaths(projectName, projectJson, farmslotRoot);
   const undeclaredHookPaths = inferredHookPaths.filter(
     (inferredPath) =>

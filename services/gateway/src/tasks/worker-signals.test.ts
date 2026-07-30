@@ -92,6 +92,37 @@ test('normalizeWorkerSignal accepts report-backed no-change terminal disposition
   );
 });
 
+test('normalizeWorkerSignal accepts a reviewer-scoped no-change report', () => {
+  const result = normalizeWorkerSignal({
+    status: 'complete',
+    outcome: 'success',
+    disposition: 'not_reproducible',
+    evidence: {
+      reportPath: 'artifacts/review-feedback.rev8-claude.md',
+    },
+    timestamp: '2026-05-05T01:00:00Z',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.signal.status, 'complete');
+});
+
+test('normalizeWorkerSignal rejects an unscoped reviewer no-change report', () => {
+  const result = normalizeWorkerSignal({
+    status: 'complete',
+    outcome: 'success',
+    disposition: 'not_reproducible',
+    evidence: {
+      reportPath: 'artifacts/review-feedback.md',
+    },
+    timestamp: '2026-05-05T01:00:00Z',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.signal.status, 'blocked');
+  assert.match(result.ok ? (result.signal.reason ?? '') : '', /scoped/);
+});
+
 test('normalizeWorkerSignal preserves optional checklist timing metadata', () => {
   const result = normalizeWorkerSignal({
     status: 'complete',
@@ -143,7 +174,7 @@ test('normalizeWorkerSignal rejects non-canonical no-change report paths', () =>
 
   assert.equal(result.ok, true);
   assert.equal(result.ok && result.signal.status, 'blocked');
-  assert.match(result.ok ? (result.signal.reason ?? '') : '', /artifacts\/no-change-report\.md/);
+  assert.match(result.ok ? (result.signal.reason ?? '') : '', /review-feedback/);
 });
 
 test('normalizeWorkerSignal rejects non-no-change inconsistent tuples', () => {

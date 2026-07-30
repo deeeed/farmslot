@@ -427,7 +427,7 @@ test('mark wrapper resolves the published bin with a recorded-path fallback', as
   });
   taskFile = await writeTaskFile(makeRun('MARK-1234', 'claude'));
   const marker = await readFile(path.join(path.dirname(taskFile), CHECKLIST_MARKER_INPUT), 'utf-8');
-  // Ladder: env override → PATH → recorded install path → teach.
+  // Ladder: env override → recorded slot-synced path → PATH → teach.
   assert.match(marker, /FARMSLOT_AGENT_BIN/);
   // The env rung requires the override to be executable so a bad value falls
   // through the ladder instead of hard-dying under `set -euo pipefail`.
@@ -503,28 +503,28 @@ test('generated mark wrapper executes the right ladder rung', async (t) => {
   assert.match(await readRecord(), /^ENV mark .* N$/m);
   await rm(recordFile, { force: true });
 
-  // 2. a non-executable override falls through to the PATH rung.
+  // 2. a non-executable override falls through to the recorded rung.
   const badBin = path.join(dir, 'not-exec');
   await writeFile(badBin, 'nope', 'utf-8'); // deliberately not chmod +x
   r = run({ PATH: withPathBin, FARMSLOT_AGENT_BIN: badBin });
   assert.equal(r.status, 0);
-  assert.match(await readRecord(), /^PATH mark /m);
+  assert.match(await readRecord(), /^CJS .* N$/m);
   await rm(recordFile, { force: true });
 
-  // 3. PATH rung wins when no env override is set.
+  // 3. The recorded slot-synced helper wins over a possibly stale PATH bin.
+  r = run({ PATH: withPathBin });
+  assert.equal(r.status, 0);
+  assert.match(await readRecord(), /^CJS .* N$/m);
+  await rm(recordFile, { force: true });
+
+  // 4. PATH is the fallback when the recorded helper is unavailable.
+  await rm(recordedCjs, { force: true });
   r = run({ PATH: withPathBin });
   assert.equal(r.status, 0);
   assert.match(await readRecord(), /^PATH mark /m);
   await rm(recordFile, { force: true });
 
-  // 4. recorded rung wins when the bin is not on PATH.
-  r = run({ PATH: cleanPath });
-  assert.equal(r.status, 0);
-  assert.match(await readRecord(), /^CJS .* N$/m);
-  await rm(recordFile, { force: true });
-
   // 5. nothing resolves → teach + exit 127.
-  await rm(recordedCjs, { force: true });
   r = run({ PATH: cleanPath });
   assert.equal(r.status, 127);
   assert.match(r.stderr, /Next: install it/);

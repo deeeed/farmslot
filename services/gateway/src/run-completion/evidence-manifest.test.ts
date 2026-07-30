@@ -37,6 +37,72 @@ test('buildEvidenceSection matches artifact-prefixed manifest paths to uploaded 
   assert.match(section, /https:\/\/cdn\/after\.mp4/);
 });
 
+test('buildEvidenceSection keeps headless summary but never renders proof documents as images', () => {
+  const section = buildEvidenceSection(
+    {
+      summary: 'No visual evidence applies — this is a headless library.',
+      standalone: [
+        { label: 'Recipe verdict', file: 'recipe-run/summary.json' },
+        { label: 'Run report', file: 'recipe-run/report.md' },
+        { label: 'Assertion helper', file: 'recipe-support/assert-required-tests.cjs' },
+      ],
+    },
+    new Map([
+      ['recipe-run/summary.json', 'artifacts/recipe-run/summary.json'],
+      ['recipe-run/report.md', 'artifacts/recipe-run/report.md'],
+      [
+        'recipe-support/assert-required-tests.cjs',
+        'artifacts/recipe-support/assert-required-tests.cjs',
+      ],
+    ]),
+  );
+
+  assert.equal(section, 'No visual evidence applies — this is a headless library.');
+  assert.doesNotMatch(section, /<img|<table>/);
+});
+
+test('buildEvidenceSection renders media and ignores adjacent non-media entries', () => {
+  const section = buildEvidenceSection(
+    {
+      standalone: [
+        { label: 'Visual state', file: 'after-loaded.png' },
+        { label: 'Raw report', file: 'report.json' },
+      ],
+    },
+    new Map([
+      ['after-loaded.png', 'https://cdn/after-loaded.png'],
+      ['report.json', 'https://cdn/report.json'],
+    ]),
+  );
+
+  assert(section);
+  assert.match(section, /https:\/\/cdn\/after-loaded\.png/);
+  assert.doesNotMatch(section, /report\.json/);
+});
+
+test('buildEvidenceSection renders standalone screenshots as a compact two-column grid', () => {
+  const section = buildEvidenceSection(
+    {
+      standalone: [
+        { label: 'Collapsed', file: 'collapsed.png', note: 'compact state' },
+        { label: 'Expanded', file: 'expanded.png', note: 'chart restored' },
+        { label: 'Restarted', file: 'restarted.png', note: 'preference persisted' },
+      ],
+    },
+    new Map([
+      ['collapsed.png', 'https://cdn/collapsed.png'],
+      ['expanded.png', 'https://cdn/expanded.png'],
+      ['restarted.png', 'https://cdn/restarted.png'],
+    ]),
+  );
+
+  assert(section);
+  assert.equal((section.match(/<tr>/g) ?? []).length, 2);
+  assert.equal((section.match(/valign="top"/g) ?? []).length, 3);
+  assert.equal((section.match(/width="320"/g) ?? []).length, 3);
+  assert.match(section, /<sub>preference persisted<\/sub>/);
+});
+
 test('captionConfidenceFor: note present -> HIGH', () => {
   const res = captionConfidenceFor(
     { file: 'screenshot.png', note: 'shows populated account list after AC1' },
@@ -150,6 +216,18 @@ test('collectLowCaptions: flags generic standalone filenames', () => {
   assert.equal(lows.length, 1);
   assert.equal(lows[0].label, 'AC1');
   assert.match(lows[0].reason, /generic filename/);
+});
+
+test('collectLowCaptions ignores headless proof documents', () => {
+  assert.deepEqual(
+    collectLowCaptions({
+      standalone: [
+        { label: 'Recipe result', file: 'summary.json' },
+        { label: 'Run report', file: 'report.md' },
+      ],
+    }),
+    [],
+  );
 });
 
 test('collectLowCaptions: flags pairs sharing the same file', () => {

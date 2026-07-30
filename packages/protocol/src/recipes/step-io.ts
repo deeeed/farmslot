@@ -224,6 +224,8 @@ export interface PrepareStepOutput {
   machine?: string;
   platform?: string;
   isLocal?: boolean;
+  recipeToolingProvenance?: Record<string, unknown>;
+  referenceRepoProvenance?: Record<string, unknown>;
   healthValue?: string;
   cliCommand?: string;
 }

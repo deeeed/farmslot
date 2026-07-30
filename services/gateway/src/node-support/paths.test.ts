@@ -121,6 +121,44 @@ test('explicit declarations cover legacy hook refs', () => {
   assert.deepEqual(result.undeclaredHookPaths, []);
 });
 
+test('cross-project hook refs bundle the referenced project support', () => {
+  const result = resolveNodeSupportPaths(
+    'example-browser-farm',
+    {
+      hooks: {
+        post_merge_install:
+          'bash {{farmslot_dir}}/projects/example-mobile-farm/scripts/ensure-skills-local.sh {{repo}}',
+      },
+    },
+    root,
+  );
+
+  assert.deepEqual(result.paths, [
+    'projects/example-mobile-farm/project.json',
+    'projects/example-mobile-farm/scripts',
+    'scripts',
+  ]);
+});
+
+test('cross-project support can be declared explicitly', () => {
+  const result = resolveNodeSupportPaths(
+    'example-browser-farm',
+    {
+      node_support: {
+        paths: ['projects/example-mobile-farm/scripts'],
+      },
+      hooks: {},
+    },
+    root,
+  );
+
+  assert.deepEqual(result.declaredPaths, [
+    'projects/example-mobile-farm/project.json',
+    'projects/example-mobile-farm/scripts',
+    'scripts',
+  ]);
+});
+
 test('node_support_dir hook refs require the same explicit coverage', () => {
   const result = resolveNodeSupportPaths(
     'example-mobile-farm',
@@ -165,10 +203,10 @@ test('declared node support paths cannot escape the supported roots', () => {
     () =>
       resolveNodeSupportPaths(
         'example-mobile-farm',
-        { node_support: { paths: ['projects/other-farm/scripts'] }, hooks: {} },
+        { node_support: { paths: ['unrelated/support'] }, hooks: {} },
         root,
       ),
-    /expected scripts or projects\/example-mobile-farm/,
+    /expected scripts or projects\/<project>/,
   );
 });
 
@@ -185,5 +223,47 @@ test('legacy hook inference rejects escaping project refs', () => {
         root,
       ),
     /path escapes Farmslot/,
+  );
+
+  assert.throws(
+    () =>
+      resolveNodeSupportPaths(
+        'example-mobile-farm',
+        {
+          hooks: {
+            preflight: 'bash {{farmslot_dir}}/projects/../pool/secret.sh',
+          },
+        },
+        root,
+      ),
+    /path escapes Farmslot/,
+  );
+
+  assert.throws(
+    () =>
+      resolveNodeSupportPaths(
+        'example-mobile-farm',
+        {
+          hooks: {
+            preflight: 'bash /repo/farmslot/projects/other-farm/../../pool/secret.sh',
+          },
+        },
+        root,
+      ),
+    /path escapes Farmslot/,
+  );
+
+  assert.throws(
+    () =>
+      resolveNodeSupportPaths(
+        'example-mobile-farm',
+        {
+          hooks: {
+            preflight: 'cd {{farmslot_dir}}/projects/other-farm',
+          },
+        },
+        root,
+      ),
+    /Invalid hook support reference in example-mobile-farm: .*expected projects\/<project>/,
   );
 });

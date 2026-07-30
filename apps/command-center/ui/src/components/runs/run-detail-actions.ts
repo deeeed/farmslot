@@ -6,7 +6,7 @@ import type {
   RunProbeWorkerSignalResult,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { buildRunResolveDecisionParams, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { navigateToPreparedSlot, runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
@@ -148,11 +148,14 @@ export async function checkInteractiveHandoffSignal(
       context.setError(probe.message);
       return;
     }
-    await gateway.request(Methods.RUN_RESOLVE_DECISION, {
-      runId,
-      decisionId: decision.id,
-      actionId: 'signal-written',
-    });
+    await gateway.request(
+      Methods.RUN_RESOLVE_DECISION,
+      buildRunResolveDecisionParams({
+        runId,
+        decision,
+        actionId: 'signal-written',
+      }),
+    );
   } catch (err) {
     context.setError((err as Error).message);
   } finally {
@@ -174,7 +177,10 @@ export function confirmRunDecision(
     clearTimeout(context.confirmTimer());
     context.setPendingConfirm(null);
     gateway
-      .request(Methods.RUN_RESOLVE_DECISION, { runId, decisionId: decision.id, actionId })
+      .request(
+        Methods.RUN_RESOLVE_DECISION,
+        buildRunResolveDecisionParams({ runId, decision, actionId }),
+      )
       .then(() => {
         // start-comparison cancels the current run and creates a successor in the comparison
         // lane. Without an auto-jump the operator stays on the now-cancelled origin and the
@@ -246,12 +252,15 @@ export function resolveBranchNudgePick(
   const slotId = context.selectedSlotId();
   if (!slotId) return;
   gateway
-    .request(Methods.RUN_RESOLVE_DECISION, {
-      runId,
-      decisionId,
-      actionId: 'pick',
-      selectionData: { slotId },
-    })
+    .request(
+      Methods.RUN_RESOLVE_DECISION,
+      buildRunResolveDecisionParams({
+        runId,
+        decision: { id: decisionId },
+        actionId: 'pick',
+        selectionData: { slotId },
+      }),
+    )
     .then(() => {
       context.setBranchNudgeShowPicker(false);
       context.setSelectedSlotId(null);
@@ -271,12 +280,15 @@ export function resolveSlotPick(
   const slotId = context.selectedSlotId();
   if (!slotId) return;
   gateway
-    .request(Methods.RUN_RESOLVE_DECISION, {
-      runId,
-      decisionId,
-      actionId: 'pick',
-      selectionData: { slotId, resetBranch: context.resetBranch() },
-    })
+    .request(
+      Methods.RUN_RESOLVE_DECISION,
+      buildRunResolveDecisionParams({
+        runId,
+        decision: { id: decisionId },
+        actionId: 'pick',
+        selectionData: { slotId, resetBranch: context.resetBranch() },
+      }),
+    )
     .catch((err) => {
       // The gateway keeps the slot-pick decision pending; log the failure for diagnostics.
       console.error('Failed to resolve slot pick:', err);

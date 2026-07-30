@@ -8,7 +8,7 @@
     "dev:gateway": "yarn workspace @farmslot/gateway dev",
     "dev:ui": "yarn --cwd ui dev",
     "dev:node": "yarn workspace @farmslot/node dev",
-    "farmslot": "tsx ../../packages/cli/src/entry.ts",
+    "farmslot": "tsx --tsconfig ../../packages/cli/tsconfig.json ../../packages/cli/src/entry.ts",
     "build:ui": "yarn --cwd ui build",
     "typecheck": "yarn check:auto-recovery-authority && yarn typecheck:protocol && yarn typecheck:harness && yarn typecheck:gateway && yarn typecheck:node && yarn typecheck:ui && yarn typecheck:cli",
     "check:auto-recovery-authority": "bash scripts/check-auto-recovery-authority.sh",

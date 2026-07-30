@@ -21,7 +21,8 @@ import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../state.js';
-import { colors, runnerColor } from '../../styles/theme-tokens.js';
+import { colors } from '../../styles/theme-tokens.js';
+import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 
 import { familyRunHash } from './family-observability-url-state.js';
 import {
@@ -69,9 +70,17 @@ function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
+const TABLE_SORT_PAIRS = {
+  project: 'project-desc',
+  flow: 'flow-desc',
+  status: 'status-desc',
+  newest: 'oldest',
+} as const;
+type TableSort = keyof typeof TABLE_SORT_PAIRS;
+
 @customElement('run-list')
 export class RunList extends RunListState {
-  static styles = runListStyles;
+  static styles = [runListStyles, flowBadgeStyles];
 
   connectedCallback() {
     super.connectedCallback();
@@ -476,9 +485,12 @@ export class RunList extends RunListState {
                         ? 'No completed runs'
                         : 'No runs'}
                   </div>`
-                : showFamilyGroups
-                  ? familyGroups.map((group) => this.renderFamilyGroup(group, showCheckboxes))
-                  : filtered.map((r) => this.renderCard(r, showCheckboxes))}
+                : html`<div class="runs-table">
+                    ${this.renderTableHead(showCheckboxes)}
+                    ${showFamilyGroups
+                      ? familyGroups.map((group) => this.renderFamilyGroup(group, showCheckboxes))
+                      : filtered.map((r) => this.renderCard(r, showCheckboxes))}
+                  </div>`}
             `}
     `;
   }
@@ -503,6 +515,44 @@ export class RunList extends RunListState {
 
   private async _stopAutoRecovery(runId: string) {
     await gateway.request(Methods.RUN_AUTO_RECOVERY_STOP, { runId });
+  }
+
+  private setTableSort(sort: TableSort) {
+    this.sortBy = this.sortBy === sort ? TABLE_SORT_PAIRS[sort] : sort;
+    this._persistHashState();
+  }
+
+  private renderTableSortHeader(label: string, sort: TableSort) {
+    const inverse = TABLE_SORT_PAIRS[sort];
+    const active = this.sortBy === sort || this.sortBy === inverse;
+    const direction =
+      active && sort === 'newest'
+        ? this.sortBy === 'oldest'
+          ? ' ▲'
+          : ' ▼'
+        : active
+          ? this.sortBy === inverse
+            ? ' ▼'
+            : ' ▲'
+          : '';
+    return html`<button
+      class=${active ? 'active' : ''}
+      type="button"
+      @click=${() => this.setTableSort(sort)}
+    >
+      ${label}${direction}
+    </button>`;
+  }
+
+  private renderTableHead(showCheckbox: boolean) {
+    return html`<div class="run-table-head ${showCheckbox ? 'with-selector' : ''}" role="row">
+      ${showCheckbox ? html`<span aria-hidden="true"></span>` : nothing}
+      ${this.renderTableSortHeader('Flow', 'flow')}
+      ${this.renderTableSortHeader('Project', 'project')}
+      <span>Run / progress</span>
+      ${this.renderTableSortHeader('State', 'status')}
+      ${this.renderTableSortHeader('Slot / time', 'newest')}
+    </div>`;
   }
 
   private renderCard(run: Run, showCheckbox: boolean) {
@@ -532,34 +582,34 @@ export class RunList extends RunListState {
     const evidenceSummary = summarizeRunEvidence(run);
     return html`
       <div
-        class="run-card ${isSelected ? 'selected' : ''} ${this.manageMode ? 'manage-mode' : ''}"
+        class="run-card ${showCheckbox ? 'with-selector' : ''} ${isSelected
+          ? 'selected'
+          : ''} ${this.manageMode ? 'manage-mode' : ''}"
         @click=${() => {
           this.manageMode ? this.toggleSelectId(run.id) : (location.hash = routeForRun(run));
         }}
       >
-        <div class="selector-cell">
-          ${showCheckbox
-            ? html`
-                <button
-                  class="selector-btn ${isSelected ? 'selected' : ''} ${!isTerminal
-                    ? 'disabled'
-                    : ''}"
-                  title=${isTerminal ? (isSelected ? 'Deselect run' : 'Select run') : 'Select run'}
-                  @click=${(e: Event) => this.toggleSelect(run.id, e)}
-                >
-                  ${isSelected ? '✓' : '+'}
-                </button>
-              `
-            : nothing}
+        ${showCheckbox
+          ? html`<div class="selector-cell">
+              <button
+                class="selector-btn ${isSelected ? 'selected' : ''} ${!isTerminal
+                  ? 'disabled'
+                  : ''}"
+                title=${isTerminal ? (isSelected ? 'Deselect run' : 'Select run') : 'Select run'}
+                @click=${(e: Event) => this.toggleSelect(run.id, e)}
+              >
+                ${isSelected ? '✓' : '+'}
+              </button>
+            </div>`
+          : nothing}
+        <div class="run-flow-cell">
+          ${renderFlowBadge(run.flowType, {
+            color: fc,
+            label: runDisplayLabel(run),
+            title: runDisplayTitle(run),
+          })}
         </div>
-        <div>
-          <span
-            class="badge flow-badge"
-            style="--flow-color:${fc}; background:${fc}"
-            title=${runDisplayTitle(run)}
-            >${runDisplayLabel(run)}</span
-          >
-        </div>
+        <span class="run-project" title=${`Project: ${run.project}`}>${run.project}</span>
         <div class="info">
           ${this.familyFilter === run.familyId
             ? html`<div class="summary">family focus</div>`
@@ -607,38 +657,45 @@ export class RunList extends RunListState {
               >retrospective</a
             >
             ${this.renderEvidenceSignals(run, evidenceSummary)}
+          </div>
+          ${runPR?.title
+            ? html`<div class="pr-title">PR #${runPR.pr}: ${runPR.title}</div>`
+            : nothing}
+          <div class="run-summary-line">
+            ${run.summary ? html`<div class="summary">${run.summary}</div>` : nothing}
+            <span class="run-id">${shortId(run.id)}</span>
+          </div>
+          ${run.lane === 'comparison'
+            ? html`<div class="summary">
+                comparison
+                run${(() => {
+                  const engine = resolveRunEngine(run);
+                  if (engine.runner && engine.model) {
+                    return html` · ${engine.runner}/${engine.model}`;
+                  }
+                  return run.variant ? html` · variant ${run.variant}` : nothing;
+                })()}
+              </div>`
+            : nothing}
+          ${siblingCount && siblingCount > 0
+            ? html`<div class="info-bottom">
+                <span>${siblingCount} sibling${siblingCount !== 1 ? 's' : ''}</span>
+              </div>`
+            : nothing}
+          <run-pipeline-mini
+            .run=${run}
+            .steps=${run.steps}
+            .flowType=${run.flowType}
+          ></run-pipeline-mini>
+        </div>
+        <div class="run-state">
+          <div class="state-badges">
             <span class="badge status-badge" style="--status-color:${sc}">${run.status}</span>
             ${disposition
               ? html`<span
                   class="badge status-badge"
                   style="--status-color:${dispositionColor(run.metrics.disposition)}"
                   >${disposition}</span
-                >`
-              : nothing}
-            ${(() => {
-              const engine = resolveRunEngine(run);
-              return engine.runner
-                ? html`<span
-                    class="badge status-badge"
-                    style="--status-color:${runnerColor(engine.runner) ?? colors.textMuted}"
-                    >${engine.runner}</span
-                  >`
-                : nothing;
-            })()}
-            ${run.safetyTier
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${colors.textMuted}"
-                  title="Runner safety tier (ADR-023) — agent invocation flag, not a health signal"
-                  >runner:${run.safetyTier}</span
-                >`
-              : nothing}
-            ${run.prepareProfile
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${colors.textMuted}"
-                  title="Prepare profile (ADR-037)"
-                  >prep:${run.prepareProfile}</span
                 >`
               : nothing}
             ${run.engineState?.intelligenceAuditDegraded
@@ -655,17 +712,6 @@ export class RunList extends RunListState {
                     >recovery attempted</span
                   >`
                 : nothing}
-            ${showStopAutoRecovery
-              ? html`<button
-                  class="inline-action"
-                  @click=${(e: Event) => {
-                    e.stopPropagation();
-                    void this._stopAutoRecovery(run.id);
-                  }}
-                >
-                  Stop auto-recovering
-                </button>`
-              : nothing}
             ${isPrLinkageMissing(run)
               ? html`<span
                   class="badge status-badge"
@@ -679,74 +725,69 @@ export class RunList extends RunListState {
                   >PR missing</span
                 >`
               : nothing}
-            ${run.steps.find((s) => s.status === 'running')?.detail
-              ? html`<span class="step-detail"
-                  >${run.steps.find((s) => s.status === 'running')!.detail}</span
-                >`
-              : nothing}
           </div>
-          ${runPR?.title
-            ? html`<div class="pr-title">PR #${runPR.pr}: ${runPR.title}</div>`
+          ${run.steps.find((s) => s.status === 'running')?.detail
+            ? html`<span class="step-detail"
+                >${run.steps.find((s) => s.status === 'running')!.detail}</span
+              >`
             : nothing}
-          ${run.summary ? html`<div class="summary">${run.summary}</div>` : nothing}
-          ${run.lane === 'comparison'
-            ? html`<div class="summary">
-                comparison
-                run${(() => {
-                  const engine = resolveRunEngine(run);
-                  if (engine.runner && engine.model) {
-                    return html` · ${engine.runner}/${engine.model}`;
-                  }
-                  return run.variant ? html` · variant ${run.variant}` : nothing;
-                })()}
-              </div>`
+          ${showStopAutoRecovery
+            ? html`<button
+                class="inline-action"
+                @click=${(e: Event) => {
+                  e.stopPropagation();
+                  void this._stopAutoRecovery(run.id);
+                }}
+              >
+                Stop auto-recovering
+              </button>`
             : nothing}
-          <div class="info-bottom">
-            <span class="run-id">${shortId(run.id)}</span>
-            <span>${run.project}</span>
-            ${run.slotId ? html`<span>${run.slotId}</span>` : nothing}
-            ${siblingCount && siblingCount > 0
-              ? html`<span>${siblingCount} sibling${siblingCount !== 1 ? 's' : ''}</span>`
-              : nothing}
-          </div>
-          <run-pipeline-mini
-            .run=${run}
-            .steps=${run.steps}
-            .flowType=${run.flowType}
-          ></run-pipeline-mini>
         </div>
         <div class="meta">
-          <span title=${run.createdAt}>${formatCreatedAt(run.createdAt)}</span>
-          <span>${elapsed(run.createdAt, run.completedAt)}</span>
+          ${run.slotId ? html`<span class="slot-id">${run.slotId}</span>` : html`<span>—</span>`}
+          <span title=${run.createdAt}
+            >${elapsed(run.createdAt, run.completedAt)} · ${formatCreatedAt(run.createdAt)}</span
+          >
           ${(() => {
             const engine = resolveRunEngine(run);
             return engine.model
-              ? html`<span>${engine.runner ?? ''}/${engine.model}</span>`
+              ? html`<span
+                  >${engine.runner ?? ''}/${engine.model}${run.safetyTier
+                    ? ` · ${run.safetyTier}`
+                    : ''}</span
+                >`
               : nothing;
           })()}
-          ${run.metrics.outcome
-            ? html`<span
-                class="outcome-badge"
-                style="background:${run.metrics.outcome === 'success'
-                  ? colors.statusOk
-                  : run.metrics.outcome === 'failure'
-                    ? colors.statusFail
-                    : colors.textMuted}22; color:${run.metrics.outcome === 'success'
-                  ? colors.statusOk
-                  : run.metrics.outcome === 'failure'
-                    ? colors.statusFail
-                    : colors.textMuted}"
-                >${run.metrics.outcome}</span
-              >`
+          ${run.prepareProfile
+            ? html`<span title="Prepare profile (ADR-037)">prep:${run.prepareProfile}</span>`
             : nothing}
-          ${run.humanGrade
-            ? html`<span
-                class="grade-badge"
-                style="background:${runGradeColor(
-                  run.humanGrade.recipe_semantic,
-                )}22; color:${runGradeColor(run.humanGrade.recipe_semantic)}"
-                >${run.humanGrade.recipe_semantic}</span
-              >`
+          ${run.metrics.outcome || run.humanGrade
+            ? html`<span class="meta-badges">
+                ${run.metrics.outcome
+                  ? html`<span
+                      class="outcome-badge"
+                      style="background:${run.metrics.outcome === 'success'
+                        ? colors.statusOk
+                        : run.metrics.outcome === 'failure'
+                          ? colors.statusFail
+                          : colors.textMuted}22; color:${run.metrics.outcome === 'success'
+                        ? colors.statusOk
+                        : run.metrics.outcome === 'failure'
+                          ? colors.statusFail
+                          : colors.textMuted}"
+                      >${run.metrics.outcome}</span
+                    >`
+                  : nothing}
+                ${run.humanGrade
+                  ? html`<span
+                      class="grade-badge"
+                      style="background:${runGradeColor(
+                        run.humanGrade.recipe_semantic,
+                      )}22; color:${runGradeColor(run.humanGrade.recipe_semantic)}"
+                      >${run.humanGrade.recipe_semantic}</span
+                    >`
+                  : nothing}
+              </span>`
             : nothing}
         </div>
       </div>

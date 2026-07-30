@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 
 import {
+  buildRunResolveDecisionParams,
   type InteractiveOperatorPacket,
   Methods,
   type Run,
@@ -150,11 +151,16 @@ export function InteractiveOperatorPacketsPanel({
         });
       } else if (request.kind === 'decision.resolve') {
         if (!client) throw new Error('Gateway is not connected.');
-        await client.request(Methods.RUN_RESOLVE_DECISION, {
-          runId: run.id,
-          decisionId: request.decisionId,
-          actionId: request.actionId,
-        });
+        const decision = run.decisions.find((candidate) => candidate.id === request.decisionId);
+        if (!decision) throw new Error(`Decision ${request.decisionId} is no longer pending.`);
+        await client.request(
+          Methods.RUN_RESOLVE_DECISION,
+          buildRunResolveDecisionParams({
+            runId: run.id,
+            decision,
+            actionId: request.actionId,
+          }),
+        );
       }
       setFeedback(
         request.kind === 'copy'

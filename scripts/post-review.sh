@@ -32,9 +32,14 @@ OVERRIDE_MODEL=""
 OVERRIDE_COST=""
 OVERRIDE_TOTAL_TOKENS=""
 EVIDENCE_MD_FILE=""
+RUN_ID=""
+SKIP_SESSION_USAGE=false
+SKIP_ARTIFACT_UPLOAD=false
+SKIP_ARCHIVE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --run-id)            RUN_ID="$2"; shift 2 ;;
     --pr)                PR_NUMBER="$2"; shift 2 ;;
     --repo)              GH_REPO="$2"; shift 2 ;;
     --slot)              SLOT_ID="$2"; shift 2 ;;
@@ -45,6 +50,9 @@ while [[ $# -gt 0 ]]; do
     --cost)              OVERRIDE_COST="$2"; shift 2 ;;
     --total-tokens)      OVERRIDE_TOTAL_TOKENS="$2"; shift 2 ;;
     --evidence-md-file)  EVIDENCE_MD_FILE="$2"; shift 2 ;;
+    --skip-session-usage) SKIP_SESSION_USAGE=true; shift ;;
+    --skip-artifact-upload) SKIP_ARTIFACT_UPLOAD=true; shift ;;
+    --skip-archive)      SKIP_ARCHIVE=true; shift ;;
     --dry-run)           DRY_RUN=true; shift ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
@@ -170,7 +178,7 @@ DURATION=""
 
 if [ -n "$OVERRIDE_COST" ]; then
   COST="\$${OVERRIDE_COST}"
-else
+elif [ "$SKIP_SESSION_USAGE" = false ]; then
   USAGE_OUTPUT=$(bash "${SCRIPT_DIR}/session-usage.sh" "$SLOT_ID" report 2>/dev/null || true)
   if [ -n "$USAGE_OUTPUT" ]; then
     COST=$(echo "$USAGE_OUTPUT" | grep '^cost_usd=' | cut -d= -f2)
@@ -379,13 +387,12 @@ RECIPE_END
   echo "" >> "$COMMENT_FILE"
 fi
 
-# Video — upload artifacts to per-project repo, include download link
-echo "---" >> "$COMMENT_FILE"
-echo "" >> "$COMMENT_FILE"
+# Video — standalone callers upload artifacts here. Gateway callers already
+# uploaded and rendered visual evidence into EVIDENCE_MD_FILE.
 ARTIFACTS_REPO=$(get_project_field "artifacts_repo")
 VIDEO_DOWNLOAD_URL=""
 
-if [ -n "$ARTIFACTS_REPO" ]; then
+if [ "$SKIP_ARTIFACT_UPLOAD" = false ] && [ -n "$ARTIFACTS_REPO" ]; then
   # Ensure artifacts are locally available for upload
   LOCAL_UPLOAD_DIR=""
   CLEANUP_UPLOAD_DIR=""
@@ -413,15 +420,29 @@ if [ -n "$ARTIFACTS_REPO" ]; then
   [ -n "$CLEANUP_UPLOAD_DIR" ] && rm -r "$CLEANUP_UPLOAD_DIR" 2>/dev/null || true
 fi
 
-if [ -n "$VIDEO_DOWNLOAD_URL" ]; then
-  echo "[review.mp4 (${VIDEO_SIZE})](${VIDEO_DOWNLOAD_URL})" >> "$COMMENT_FILE"
-elif [ -n "$VIDEO_SIZE" ]; then
-  echo "*Video evidence: \`review.mp4\` (${VIDEO_SIZE}) — upload pending (local artifact only)*" >> "$COMMENT_FILE"
-else
-  echo "*No video evidence recorded.*" >> "$COMMENT_FILE"
+if [ "$SKIP_ARTIFACT_UPLOAD" = false ]; then
+  echo "---" >> "$COMMENT_FILE"
+  echo "" >> "$COMMENT_FILE"
+  if [ -n "$VIDEO_DOWNLOAD_URL" ]; then
+    echo "[review.mp4 (${VIDEO_SIZE})](${VIDEO_DOWNLOAD_URL})" >> "$COMMENT_FILE"
+  elif [ -n "$VIDEO_SIZE" ]; then
+    echo "*Video evidence: \`review.mp4\` (${VIDEO_SIZE}) — upload pending (local artifact only)*" >> "$COMMENT_FILE"
+  else
+    echo "*No video evidence recorded.*" >> "$COMMENT_FILE"
+  fi
 fi
 
 # ── Post or dry-run ───────────────────────────────────────────────
+COMMENT_MARKER=""
+if [ -n "$RUN_ID" ]; then
+  COMMENT_MARKER="<!-- farmslot-review-run:${RUN_ID} -->"
+  {
+    echo "$COMMENT_MARKER"
+    cat "$COMMENT_FILE"
+  } > "${COMMENT_FILE}.marked"
+  mv "${COMMENT_FILE}.marked" "$COMMENT_FILE"
+fi
+
 echo "Comment file: ${COMMENT_FILE}"
 echo "---"
 head -20 "$COMMENT_FILE"
@@ -433,10 +454,22 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
-echo "Posting comment to ${GH_REPO}#${PR_NUMBER}..."
 unset GH_TOKEN
-gh pr comment "$PR_NUMBER" --repo "$GH_REPO" --body-file "$COMMENT_FILE"
-echo "Comment posted successfully."
+EXISTING_COMMENT_ID=""
+if [ -n "$COMMENT_MARKER" ]; then
+  EXISTING_COMMENT_ID=$(gh api --paginate "repos/${GH_REPO}/issues/${PR_NUMBER}/comments" \
+    --jq ".[] | select(.body | contains(\"${COMMENT_MARKER}\")) | .id" | tail -1)
+fi
+if [ -n "$EXISTING_COMMENT_ID" ]; then
+  echo "Updating existing review comment ${EXISTING_COMMENT_ID} on ${GH_REPO}#${PR_NUMBER}..."
+  gh api --method PATCH "repos/${GH_REPO}/issues/comments/${EXISTING_COMMENT_ID}" \
+    -F "body=@${COMMENT_FILE}" >/dev/null
+  echo "Comment updated successfully."
+else
+  echo "Posting comment to ${GH_REPO}#${PR_NUMBER}..."
+  gh pr comment "$PR_NUMBER" --repo "$GH_REPO" --body-file "$COMMENT_FILE"
+  echo "Comment posted successfully."
+fi
 
 # ── Submit formal GitHub review event (APPROVE / REQUEST_CHANGES) ─
 if [ "$RECOMMENDATION" = "APPROVE" ]; then
@@ -468,7 +501,7 @@ if [ -z "$ORCH_TASK_DIR" ] && [ -n "$TASK_REL" ]; then
   ORCH_TASK_DIR="${PROJECT_DIR}/projects/${PROJECT_NAME}/tasks/${TASK_REL}"
 fi
 
-if [ -n "$ORCH_TASK_DIR" ] && [ -d "$ORCH_TASK_DIR" ]; then
+if [ "$SKIP_ARCHIVE" = false ] && [ -n "$ORCH_TASK_DIR" ] && [ -d "$ORCH_TASK_DIR" ]; then
   mkdir -p "${ORCH_TASK_DIR}/artifacts"
 
   # Copy artifacts from slot to orchestrator task folder
@@ -528,7 +561,7 @@ if recipe_raw:
 print(json.dumps({'runner': runner, 'model': model, 'tier': tier, 'recommendation': recommendation, 'started_at': started_at, 'completed_at': completed_at, 'validate_exit': validate_exit, 'outcome': outcome}, indent=2))
 " > "${ORCH_TASK_DIR}/artifacts/meta.json" 2>/dev/null || true
   echo "meta.json written: ${ORCH_TASK_DIR}/artifacts/meta.json"
-else
+elif [ "$SKIP_ARCHIVE" = false ]; then
   echo "WARN: Could not determine orchestrator task folder — artifacts not archived locally"
 fi
 

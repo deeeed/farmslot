@@ -16,7 +16,7 @@ import type {
   ReviewLineComment,
   RunDecision,
 } from '@farmslot/protocol';
-import { Events, Methods } from '@farmslot/protocol';
+import { buildRunResolveDecisionParams, Events, Methods } from '@farmslot/protocol';
 
 import '../diff-viewer/diff-review.js';
 import '../diff-viewer/code-viewer.js';
@@ -389,18 +389,21 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._confirmAction('post', async () => {
       this._posting = true;
       try {
-        await gateway.request(Methods.RUN_RESOLVE_DECISION, {
-          runId: this.runId,
-          decisionId: this.decision.id,
-          actionId: 'post',
-          selectionData: {
-            includedIndices: [...this._includedComments],
-            recommendation: this._selectedRecommendation,
-            ...(this._evidenceOverrides.size > 0
-              ? { evidenceOverrides: Object.fromEntries(this._evidenceOverrides) }
-              : {}),
-          },
-        });
+        await gateway.request(
+          Methods.RUN_RESOLVE_DECISION,
+          buildRunResolveDecisionParams({
+            runId: this.runId,
+            decision: this.decision,
+            actionId: 'post',
+            selectionData: {
+              includedIndices: [...this._includedComments],
+              recommendation: this._selectedRecommendation,
+              ...(this._evidenceOverrides.size > 0
+                ? { evidenceOverrides: Object.fromEntries(this._evidenceOverrides) }
+                : {}),
+            },
+          }),
+        );
       } catch (err) {
         console.error('Failed to post review:', err);
       } finally {
@@ -414,11 +417,14 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._confirmAction('dismiss', async () => {
       this._posting = true;
       try {
-        await gateway.request(Methods.RUN_RESOLVE_DECISION, {
-          runId: this.runId,
-          decisionId: this.decision.id,
-          actionId: 'dismiss',
-        });
+        await gateway.request(
+          Methods.RUN_RESOLVE_DECISION,
+          buildRunResolveDecisionParams({
+            runId: this.runId,
+            decision: this.decision,
+            actionId: 'dismiss',
+          }),
+        );
       } catch (err) {
         console.error('Failed to dismiss review:', err);
       } finally {

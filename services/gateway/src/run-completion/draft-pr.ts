@@ -27,7 +27,7 @@ function inferDraftPrTitleScope(run: Run): string {
 function sanitizeDraftPrTitleDescription(rawTitle: string): string {
   return rawTitle
     .trim()
-    .replace(/^\[(extension|mobile|mm[em])\]\s*[:—-]?\s*/i, '')
+    .replace(/^\[(core|extension|mobile|mm[em])\]\s*[:—-]?\s*/i, '')
     .replace(/[.\s]+$/, '');
 }
 
@@ -148,6 +148,22 @@ export function isPublicationGateMetadataArtifact(artifactPath: string): boolean
   return PUBLICATION_GATE_METADATA_PATTERNS.some((pattern) => pattern.test(artifactPath));
 }
 
+function stripExecutionPreamble(rawBody: string): string {
+  const lines = rawBody.trim().split('\n');
+  const summaryIndexes = lines
+    .map((line, index) => (/^## Summary\s*$/i.test(line) ? index : -1))
+    .filter((index) => index >= 0);
+  const summaryIndex = summaryIndexes[0];
+  if (summaryIndex === undefined || summaryIndex <= 0) return rawBody.trim();
+
+  const preamble = lines.slice(0, summaryIndex).join('\n');
+  const isExecutionPreamble =
+    /^#\s+\S/m.test(preamble) &&
+    /^\*\*Branch:\*\*/m.test(preamble) &&
+    /^\*\*Commit:\*\*/m.test(preamble);
+  return isExecutionPreamble ? lines.slice(summaryIndex).join('\n').trim() : rawBody.trim();
+}
+
 export async function buildDraftPrBody(
   run: Run,
   report: string | null,
@@ -156,16 +172,19 @@ export async function buildDraftPrBody(
   const existing =
     (await readTaskArtifactText(run, 'pr-description.md')) ??
     (await readTaskArtifactText(run, 'pr-body.md'));
-  if (existing?.trim()) return applyLocalEvidencePreview(run, existing, artifacts);
+  if (existing?.trim()) {
+    return applyLocalEvidencePreview(run, stripExecutionPreamble(existing), artifacts);
+  }
   const publishableArtifacts = artifacts.filter(
     (artifact) => !isPublicationGateMetadataArtifact(artifact.path),
   );
   const artifactList = publishableArtifacts.length
     ? publishableArtifacts.map((artifact) => `- ${artifact.path} (${artifact.purpose})`).join('\n')
     : '- No artifacts copied';
+  const normalizedReport = report?.trim() ? stripExecutionPreamble(report) : null;
+  const summary = normalizedReport ?? `Local-first package prepared for ${run.ticketOrPr}.`;
   const body = [
-    '## Summary',
-    report?.trim() || `Local-first package prepared for ${run.ticketOrPr}.`,
+    ...(summary.startsWith('## Summary') ? [summary] : ['## Summary', summary]),
     '',
     '## Validation / Evidence',
     artifactList,

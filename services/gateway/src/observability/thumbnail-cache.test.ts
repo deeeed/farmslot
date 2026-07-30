@@ -60,3 +60,15 @@ test('shouldPollThumbnailForSlot skips disabled and offline-device slots', () =>
     false,
   );
 });
+
+test('shouldPollThumbnailForSlot skips non-visual CLI slots', () => {
+  assert.equal(
+    shouldPollThumbnailForSlot(
+      makeSlot({
+        platform: 'cli',
+        health: { ssh: 'LOCAL', device: 'sim:OK', devserver: '-', cdp: '-', fixtures: 'OK' },
+      }),
+    ),
+    false,
+  );
+});

@@ -108,6 +108,17 @@ test('computeLayout places post-gate review nodes after the worker lane to avoid
         },
         independentReviews: [
           {
+            id: 'independent-review-2',
+            source: 'human-gate',
+            runner: 'codex',
+            crossRunner: true,
+            loopNumber: 2,
+            verdict: 'failed',
+            unresolvedCount: 0,
+            validationDepth: 'static-code',
+            completedAt: '2026-05-14T00:00:30.000Z',
+          },
+          {
             id: 'independent-review-3',
             source: 'human-gate',
             runner: 'claude',
@@ -132,6 +143,7 @@ test('computeLayout places post-gate review nodes after the worker lane to avoid
   assert.ok(postGateReview);
   assert.ok(packageRefresh);
   assert.ok(finalize);
+  assert.equal(packageRefresh.step.status, 'done');
   assert.ok(postGateReview.x > selfReview.x + selfReview.w);
   assert.ok(packageRefresh.x > postGateReview.x + postGateReview.w);
   assert.ok(finalize.x > packageRefresh.x + packageRefresh.w);

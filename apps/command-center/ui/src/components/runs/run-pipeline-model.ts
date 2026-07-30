@@ -442,8 +442,7 @@ interface PublicationReviewPlanNode {
 function postGateRefreshStatus(nodes: PublicationReviewPlanNode[]): RunStep['status'] {
   if (nodes.some((node) => node.step.status === 'running')) return 'pending';
   if (nodes.some((node) => node.step.status === 'pending')) return 'pending';
-  if (nodes.some((node) => node.step.status === 'failed')) return 'failed';
-  return 'done';
+  return nodes.at(-1)?.step.status === 'failed' ? 'failed' : 'done';
 }
 
 function publicationReviewPlanNodes(

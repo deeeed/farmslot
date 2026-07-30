@@ -24,6 +24,13 @@ MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live)
 
 1. **COMPLETE** — prepare local package; call `holdSlotForPublicationGate` (`busy` / `review-gate` / `agent: working`); emit `slotDisposition: 'gate-held'`. Do **not** call `slotRelease`.
 2. **HUMAN_GATE** — keep `agent: working`; operator may attach via Companion/tmux.
+   - Before presenting publication approval, materialize
+     `publication_review.<flow>.minimum_independent_reviews` into reviewer work when no explicit
+     dispatch plan exists. These automatic passes use `static-code`; `full-live` is opt-in through
+     an explicit review plan/operator request.
+   - Pipeline self-review is worker feedback and never counts as an independent review. A separate
+     reviewer context using the same runner may count; runner diversity is required only when
+     `require_cross_runner` is configured.
 3. **FINALIZE** — capture session metrics while worker is alive; **do not** call `killSlotAgents`. Transition slot to `held` / `ci-watch` so CI follow-ups can reuse the warm session (MANUAL-000065).
 4. **CI_WATCH handoff** — chained `pr-complete` / `update-branch` set `engineState.flags.warmSessionReuse` (+ `skipPrepare`). DISPATCH probes process liveness and hands the new TASK.md into the warm worker when alive; falls back to fresh `dispatchExecute` when the session is dead, the runner/model swapped, or the runner is not tmux-nudgeable (composes with MANUAL-000043 dead-session fallback and MANUAL-000045 ownership claims).
 5. **Terminal cleanup** — tear down live agents when the **family/run** ends, not merely because FINALIZE completed:

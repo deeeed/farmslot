@@ -5,6 +5,7 @@ import type {
   IndependentReviewStatus,
   ReadyGatePayload,
   ReviewDepthPolicy,
+  Run,
 } from '@farmslot/protocol';
 
 export type ReviewFreshnessReason =
@@ -116,6 +117,60 @@ export function reviewSegmentLabel(
   order: number,
 ): string {
   return `${reviewSourceLabel(review)} ${order}`;
+}
+
+const ACTIVE_REVIEW_CONTEXT_STATUSES = new Set(['launching', 'working', 'waiting']);
+
+export function activePublicationReviewLabel(
+  run: Pick<Run, 'agentContexts'> | undefined,
+): string | null {
+  const contexts = run?.agentContexts ?? [];
+  if (
+    contexts.some(
+      (context) =>
+        context.role === 'self-review-fix' && ACTIVE_REVIEW_CONTEXT_STATUSES.has(context.status),
+    )
+  ) {
+    return 'Independent review fix';
+  }
+  if (
+    contexts.some(
+      (context) =>
+        context.role === 'self-review' && ACTIVE_REVIEW_CONTEXT_STATUSES.has(context.status),
+    )
+  ) {
+    return 'Independent review';
+  }
+  return null;
+}
+
+export function compactHumanGateLabel(
+  run: Pick<Run, 'agentContexts' | 'decisions' | 'engineState'> | undefined,
+): string {
+  const activeReview = activePublicationReviewLabel(run);
+  if (activeReview) return activeReview.toLowerCase();
+  if ((run?.engineState?.publishGate?.pendingReviewPlan?.length ?? 0) > 0) {
+    return 'independent review';
+  }
+
+  const decision = [...(run?.decisions ?? [])]
+    .reverse()
+    .find((candidate) => candidate.type === 'engine_human_gate' && !candidate.resolvedAt);
+  if (decision?.actions.some((action) => action.id === 'approve-publish')) {
+    return 'publish ready';
+  }
+
+  const reviews = run?.engineState?.publishGate?.independentReviews ?? [];
+  if (
+    reviews.some(
+      (review) =>
+        review.source !== 'self-review' &&
+        (review.verdict === 'issues' || review.unresolvedCount > 0),
+    )
+  ) {
+    return 'review blocked';
+  }
+  return 'operator gate';
 }
 
 function reviewIsPassing(review: IndependentReviewStatus): boolean {

@@ -15,7 +15,7 @@ import type {
   TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { Events, Methods } from '@farmslot/protocol';
+import { buildRunResolveDecisionParams, Events, Methods } from '@farmslot/protocol';
 
 import './step-inspector.js';
 import './run-pipeline-mini.js';
@@ -336,11 +336,11 @@ export class RunDetail extends RunDetailState {
     try {
       await gateway.request(
         Methods.RUN_RESOLVE_DECISION,
-        {
+        buildRunResolveDecisionParams({
           runId: run.id,
-          decisionId: decision.id,
+          decision,
           actionId: 'continue',
-        },
+        }),
         30_000,
       );
     } catch (err) {
@@ -675,6 +675,7 @@ export class RunDetail extends RunDetailState {
       <interactive-operator-packets
         .runId=${run.id}
         .slotId=${run.slotId}
+        .decisions=${run.decisions}
         .artifacts=${artifacts}
         .artifactTextLoader=${this.mockData ? this.mockArtifactTextLoader : null}
       ></interactive-operator-packets>

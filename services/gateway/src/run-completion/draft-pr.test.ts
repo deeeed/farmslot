@@ -118,3 +118,81 @@ test('buildDraftPrTitle strips platform prefixes and infers perps conventional s
 
   assert.equal(buildDraftPrTitle(run), 'feat(perps): show liquidation distance % on market detail');
 });
+
+test('buildDraftPrTitle strips the Core platform prefix', () => {
+  const run = makeRun({
+    flowType: 'fix-bug',
+    ticketData: {
+      source: 'jira',
+      title: '[Core] order 0: insufficient margin to place order',
+      description: 'Fix Perps max-size market buys.',
+      acceptanceCriteria: [],
+      affectedArea: '',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+    },
+  });
+
+  assert.equal(buildDraftPrTitle(run), 'fix(perps): order 0: insufficient margin to place order');
+});
+
+test('buildDraftPrBody strips execution provenance before the public summary', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-pr-body-report-preamble-'));
+  try {
+    const taskFile = path.join(root, 'task.md');
+    await writeFile(taskFile, '# Task\n');
+
+    const body = await buildDraftPrBody(
+      makeRun({ taskFile }),
+      [
+        '# TAT-3344 — [Core] order 0: insufficient margin to place order',
+        '',
+        '**Branch:** `TAT-3344-fix-core-order-0-insufficient-marg`',
+        '**Commit:** `98903d27a` — `fix(perps): size max order amount`',
+        '',
+        '## Summary',
+        '',
+        'Max-size market buys now reserve slippage.',
+        '',
+        '## Root cause',
+        '',
+        'Sizing used the mid price instead of the submitted price.',
+      ].join('\n'),
+      [],
+    );
+
+    assert.match(body, /^## Summary\n\nMax-size market buys now reserve slippage\./);
+    assert.doesNotMatch(body, /TAT-3344 —/);
+    assert.doesNotMatch(body, /\*\*Branch:\*\*/);
+    assert.doesNotMatch(body, /\*\*Commit:\*\*/);
+    assert.equal(body.match(/^## Summary$/gm)?.length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('buildDraftPrBody preserves later summary sections after stripping execution provenance', async () => {
+  const body = await buildDraftPrBody(
+    makeRun(),
+    [
+      '# TAT-3344 — execution report',
+      '',
+      '**Branch:** `task-branch`',
+      '**Commit:** `123456789`',
+      '',
+      '## Summary',
+      '',
+      'Public summary.',
+      '',
+      '## Summary',
+      '',
+      'Nested source summary that remains part of the report.',
+    ].join('\n'),
+    [],
+  );
+
+  assert.match(body, /^## Summary\n\nPublic summary\./);
+  assert.equal(body.match(/^## Summary$/gm)?.length, 2);
+  assert.match(body, /Nested source summary that remains part of the report\./);
+});

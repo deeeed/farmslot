@@ -7,6 +7,7 @@ import {
   filterRoadmapItemsByGlobalProjects,
   parsePromotionDraftsFromRoadmapBody,
   promotionDraftAttachment,
+  sortRoadmapItems,
 } from './roadmap-panel-model.js';
 
 test('project filters keep unscoped global items visible', () => {
@@ -88,6 +89,40 @@ test('roadmap filtering preserves the item list when no global projects are acti
   ] satisfies RoadmapItem[];
 
   assert.equal(filterRoadmapItemsByGlobalProjects(items, []), items);
+});
+
+test('sortRoadmapItems supports stable inventory columns', () => {
+  const base = {
+    kind: 'roadmap-item',
+    project: 'zeta-farm',
+    title: 'Zeta',
+    stage: 'rough',
+    source: { kind: 'manual' },
+    body: 'Idea.\n',
+    createdAt: '2026-07-28T00:00:00.000Z',
+    updatedAt: '2026-07-28T00:00:00.000Z',
+    filePath: '.roadmap/items/ri_zeta.md',
+    fileHash: 'zeta-hash',
+  } satisfies Omit<RoadmapItem, 'id'>;
+  const zeta = { ...base, id: 'ri_zeta' } satisfies RoadmapItem;
+  const alpha = {
+    ...base,
+    id: 'ri_alpha',
+    project: 'alpha-farm',
+    title: 'Alpha',
+    stage: 'promoted',
+    updatedAt: '2026-07-29T00:00:00.000Z',
+    promotion: [{ backlogItemId: 'bl_alpha', createdAt: '2026-07-29T00:00:00.000Z' }],
+  } satisfies RoadmapItem;
+
+  assert.deepEqual(
+    sortRoadmapItems([zeta, alpha], 'project', 'asc').map((item) => item.id),
+    ['ri_alpha', 'ri_zeta'],
+  );
+  assert.deepEqual(
+    sortRoadmapItems([zeta, alpha], 'updated', 'desc').map((item) => item.id),
+    ['ri_alpha', 'ri_zeta'],
+  );
 });
 
 test('project filters keep unassigned items hidden until they are scoped', () => {

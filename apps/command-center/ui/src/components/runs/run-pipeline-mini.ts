@@ -4,7 +4,11 @@ import { customElement, property } from 'lit/decorators.js';
 import type { FlowType, Run, RunStep } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
-import { reviewSegmentLabel } from '../../utils/review-gate-display.js';
+import {
+  activePublicationReviewLabel,
+  compactHumanGateLabel,
+  reviewSegmentLabel,
+} from '../../utils/review-gate-display.js';
 
 import { effectiveStepStatus, formatDuration, stepStatusColor } from './run-utils.js';
 
@@ -86,7 +90,10 @@ export class RunPipelineMini extends LitElement {
         seg.status = effectiveStepStatus(seg.status, 'cancelled');
       }
     }
-    const runningIndex = segments.findIndex((segment) => segment.status === 'running');
+    const runningIndex = segments.reduce(
+      (latest, segment, index) => (segment.status === 'running' ? index : latest),
+      -1,
+    );
     const nextIndex = segments.findIndex((segment) => segment.status === 'pending');
     const labelIndex =
       runningIndex >= 0 ? runningIndex : nextIndex >= 0 ? nextIndex : segments.length - 1;
@@ -193,7 +200,11 @@ export class RunPipelineMini extends LitElement {
           : 'reviewer';
       const verdict = typeof review.verdict === 'string' ? review.verdict : '';
       const status: RunStep['status'] =
-        verdict === 'failed' ? 'failed' : verdict === 'pending' ? 'running' : 'done';
+        verdict === 'failed' || verdict === 'issues'
+          ? 'failed'
+          : verdict === 'pending'
+            ? 'running'
+            : 'done';
       const order = Math.max(1, source === 'dispatch' ? loopNumber - minimum : segments.length + 1);
       const reviewSource =
         review.source === 'human-gate'
@@ -216,7 +227,23 @@ export class RunPipelineMini extends LitElement {
     }
     const active = this.activeReviewSegment(source, label);
     if (active && !segments.some((segment) => segment.name === active.name)) segments.push(active);
-    return segments.slice(0, 5);
+    const activeContextLabel =
+      source === 'human-gate' ? activePublicationReviewLabel(this.run) : null;
+    if (activeContextLabel && !segments.some((segment) => segment.status === 'running')) {
+      segments.push({
+        name: activeContextLabel,
+        status: 'running',
+        title: `${activeContextLabel}: running`,
+      });
+    }
+    if (segments.length <= 5) return segments;
+    let activeIndex = -1;
+    segments.forEach((segment, index) => {
+      if (segment.status === 'running') activeIndex = index;
+    });
+    return activeIndex >= 5
+      ? [...segments.slice(0, 4), segments[activeIndex]]
+      : segments.slice(0, 5);
   }
 
   private planSegments(plan: Array<Record<string, unknown>>, label: string): MiniSegment[] {
@@ -275,9 +302,9 @@ export class RunPipelineMini extends LitElement {
   }
 
   private shortName(name: string): string {
+    if (name === 'human-gate') return compactHumanGateLabel(this.run);
     return name
       .replace('self-review', 'self review')
-      .replace('human-gate', 'publish gate')
       .replace('ci-watch', 'CI')
       .replace('find-slot', 'slot')
       .replace('write-task', 'task');

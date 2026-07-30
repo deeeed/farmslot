@@ -23,6 +23,8 @@ let subscriberCount = 0;
 let intervalMs = 15_000;
 let pollInFlight = false;
 
+const THUMBNAIL_PLATFORMS = new Set(['ios', 'android', 'chrome-extension', 'web']);
+
 export function getThumbnail(slotId: string): ThumbnailEntry | null {
   return cache.get(slotId) ?? null;
 }
@@ -34,6 +36,7 @@ export function getAllThumbnails(): Record<string, ThumbnailEntry> {
 }
 
 export function shouldPollThumbnailForSlot(slot: SlotStatus): boolean {
+  if (!THUMBNAIL_PLATFORMS.has(slot.platform)) return false;
   if (slot.lifecycle === 'disabled') return false;
   if (!slot.currentRunId || (slot.lifecycle !== 'busy' && slot.lifecycle !== 'held')) return false;
   if (!slot.health?.device || slot.health.device.includes('OFF')) return false;

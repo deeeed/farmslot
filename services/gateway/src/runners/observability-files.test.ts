@@ -6,6 +6,7 @@ import {
   contextPctFromStatusline,
   deriveRunnerActivity,
   filterHooksByPane,
+  filterStatuslineByPane,
   parseHookJsonl,
   promptAcceptedFromHooks,
   promptTurnStartedFromHooks,
@@ -117,6 +118,12 @@ test('filterHooksByPane scopes hook records to target pane', () => {
   );
   assert.equal(hooks.length, 1);
   assert.equal(hooks[0]?.tmuxPane, '%129');
+});
+
+test('filterStatuslineByPane ignores another pane in a shared slot', () => {
+  const statusline = { busy: true, observedAt: NOW, tmuxPane: '%91' };
+  assert.equal(filterStatuslineByPane(statusline, '%129'), null);
+  assert.equal(filterStatuslineByPane(statusline, '%91'), statusline);
 });
 
 test('promptAcceptedFromHooks: absent hooks are null ONLY under pane retirement, medium-false flag-off', () => {

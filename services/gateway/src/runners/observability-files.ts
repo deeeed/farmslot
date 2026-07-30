@@ -65,6 +65,14 @@ export function parseStatuslineJson(raw: string | null | undefined): StatuslineR
   }
 }
 
+export function filterStatuslineByPane(
+  statusline: StatuslineRecord | null,
+  paneId?: string | null,
+): StatuslineRecord | null {
+  if (!statusline || !paneId || !statusline.tmuxPane) return statusline;
+  return statusline.tmuxPane === paneId ? statusline : null;
+}
+
 export function deriveRunnerActivity(
   hooks: readonly HookRecord[],
   statusline: StatuslineRecord | null,

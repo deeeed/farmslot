@@ -3,7 +3,7 @@
 ## Source of truth
 
 - Status: Draft
-- Last refreshed: 2026-07-26
+- Last refreshed: 2026-07-30
 - Primary product surfaces: Command Center operator UI, especially dispatch, backlog, roadmap, runs, and work graph views.
 - Evidence reviewed: `CLAUDE.md`, `apps/command-center/CLAUDE.md`, `apps/command-center/ui/src/styles/theme-tokens.ts`, `apps/command-center/ui/src/components/app-shell.ts`, `apps/command-center/ui/src/components/dispatch/dispatch-wizard-view-renderer.ts`, `apps/command-center/ui/src/components/shared/whats-new-modal.ts`, `apps/command-center/ui/src/components/recipe-graph/recipe-graph.ts`, `apps/command-center/ui/src/components/work-graph/work-graph-panel.ts`, `packages/protocol/src/contracts/execution-templates.ts`, `packages/protocol/src/contracts/work-graph.ts`.
 
@@ -35,13 +35,14 @@
 
 - Principle 1: show the dependency shape first, then expose raw refs/details on selection.
 - Principle 2: preserve human-editable markdown/spec workflows; UI should visualize and orchestrate, not own every field.
+- Principle 3: planning and execution inventories use compact, sortable rows with explicit Flow, Project, State, ID, and activity columns; selection reveals depth in a side panel instead of expanding every row.
 - Tradeoffs: dense technical detail is acceptable; visual polish must not obscure IDs, gates, or dispatch state.
 
 ## Visual language
 
 - Color: use Command Center tokens from `theme-tokens.ts`; green = unlocked/satisfied, yellow = waiting/running/gated, red = failed/needs attention, muted = skipped/unknown.
 - Typography: monospace, compact labels, bold titles for scanability.
-- Spacing/layout rhythm: dense cards, 8–16px internal rhythm, two-pane graph/detail layout on wide screens.
+- Spacing/layout rhythm: dense 28–40px inventory rows, 8–16px detail-panel rhythm, and two-pane list/detail or graph/detail layouts on wide screens.
 - Shape/radius/elevation: rounded cards using existing radii and shadows; SVG graph nodes mirror card styling.
 - Motion: minimal hover/focus feedback only.
 - Imagery/iconography: no new icon set; use labels, badges, and graph geometry.
@@ -49,7 +50,7 @@
 ## Components
 
 - Existing components to reuse: app shell route patterns, recipe graph SVG patterns, shared theme tokens.
-- New/changed components: `work-graph-panel` and `work-graph-layout` for dependency visualization; `execution-template-preview-modal` for exact, read-only dispatch template inspection.
+- New/changed components: compact inventory tables on Roadmap, Backlog, and Runs; `work-graph-panel` and `work-graph-layout` for dependency visualization; `execution-template-preview-modal` for exact, read-only dispatch template inspection.
 - Variants and states: empty graph list, project filter, graph status badges, selected node, waiting/gated/running/succeeded/failed/skipped nodes, pending/satisfied/failed/waived edges; execution-template preview loading, content, stale-source error, and closed states.
 - Token/component ownership: Command Center owns UI tokens; protocol owns graph and execution-template data shapes.
 
@@ -64,7 +65,7 @@
 ## Responsive behavior
 
 - Supported breakpoints/devices: desktop-first with single-column fallback below ~1100px.
-- Layout adaptations: graph/detail split collapses into stacked panels; SVG remains horizontally scrollable for large DAGs.
+- Layout adaptations: list/detail and graph/detail splits collapse into stacked panels; dense inventory tables and SVG remain horizontally scrollable when columns cannot safely compress.
 - Touch/hover differences: buttons remain tap targets; hover is enhancement only.
 
 ## Interaction states

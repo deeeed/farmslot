@@ -65,6 +65,7 @@ import {
   runnerPaneHasQueuedInstruction,
   runnerPaneLooksIdle,
   runnerPaneShouldSubmitExistingInstruction,
+  runnerPaneShowsCurrentInteractiveProgress,
   runnerPaneShowsPreSendDuplicateInstruction,
   runnerPaneShowsPromptAccepted,
   runnerPaneShowsSubmittedInstruction,
@@ -238,6 +239,18 @@ describe('cursor runner', () => {
     assert.equal(runnerLineLooksWaiting('› Run /review on my current changes', 'codex'), true);
   });
 
+  it('treats a later idle prompt as ending stale progress text', () => {
+    assert.equal(
+      runnerPaneShowsCurrentInteractiveProgress('• Explored\nReview finished\n›', 'codex'),
+      false,
+    );
+    assert.equal(
+      runnerPaneShowsCurrentInteractiveProgress('✻ Explored 2 files\nReview finished\n❯', 'claude'),
+      false,
+    );
+    assert.equal(runnerPaneShowsCurrentInteractiveProgress('✻ Reading…', 'claude'), true);
+  });
+
   it('detects Cursor idle prompt above trailing blank input-box rows', () => {
     assert.equal(
       runnerPaneLooksIdle(
@@ -402,6 +415,40 @@ describe('cursor runner', () => {
     });
     assert.deepEqual(result, { outcome: 'sent', key: 'a' });
     assert.match(commands[1], /^send-keys -t 'ff-1:agent\.0' 'a'/);
+  });
+
+  it('refreshes and trusts changed Codex repository hooks', async () => {
+    const codexPane = `
+  Hooks need review
+  1. Review hooks
+  │ 2. Trust all and continue
+  3. Continue without trusting (hooks won't run)
+  Press enter to confirm or esc to go back
+`;
+    assert.deepEqual(detectRunnerLaunchBlocker(codexPane, 'codex'), {
+      kind: 'hooks-review',
+      summary: 'Codex is waiting for repository hook review before the chat input is available.',
+      autoAction: 'codex-refresh-hooks-and-trust',
+    });
+
+    const commands: string[] = [];
+    let refreshed = false;
+    const result = await confirmTrustPromptWithFreshEvidence({
+      runnerId: 'codex',
+      target: 'core-2:review.0',
+      logPrefix: 'test',
+      exec: async (tmuxCommand) => {
+        commands.push(tmuxCommand);
+        return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? codexPane : '' };
+      },
+      refreshCodexHooks: async () => {
+        refreshed = true;
+      },
+    });
+
+    assert.equal(refreshed, true);
+    assert.deepEqual(result, { outcome: 'sent', key: '2' });
+    assert.match(commands[1], /^send-keys -t 'core-2:review\.0' '2' 'Enter'/);
   });
 
   it('confirmTrustPromptWithFreshEvidence never sends without fresh deterministic evidence', async () => {
@@ -989,7 +1036,7 @@ describe('pre-task launch blocker resolution', () => {
 });
 
 describe('grok runner', () => {
-  it('is registered as an interactive runner with grok-build default model', () => {
+  it('is registered as an interactive runner with the shared Grok default model', () => {
     const def = getRunnerDefinition('grok');
     assert.equal(def.id, 'grok');
     assert.equal(def.defaultLaunchMode, 'interactive');
@@ -1574,16 +1621,16 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.equal(
         cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --effort xhigh --model grok-build`,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && grok --effort xhigh --model grok-4.5`,
       );
     });
 
-    it('falls back to inline Grok launcher with grok-build default model and xhigh effort', () => {
+    it('falls back to inline Grok launcher with grok-4.5 and xhigh effort', () => {
       const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
       const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
       assert.equal(
         cmd,
-        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-build`,
+        `${CLEAR_RECIPE_TRUST_ENV}cd '/tmp/repo' && /usr/local/bin/grok --effort xhigh --model grok-4.5`,
       );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--single/);
@@ -1613,7 +1660,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-build$/,
+        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-4\.5$/,
       );
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);

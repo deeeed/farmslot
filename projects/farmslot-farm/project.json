@@ -155,6 +155,7 @@
   },
   "self_review": {
     "enabled": false,
+    "max_retries": 3,
     "review_timeout_min": 75
   },
   "ci": {

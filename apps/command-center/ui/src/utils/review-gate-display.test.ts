@@ -4,7 +4,9 @@ import test from 'node:test';
 import type { IndependentReviewStatus, ReadyGatePayload } from '@farmslot/protocol';
 
 import {
+  activePublicationReviewLabel,
   classifyReviewFreshness,
+  compactHumanGateLabel,
   fixDeltaAbsenceReason,
   formatTokenCount,
   publishEvidenceDisplayRows,
@@ -225,6 +227,76 @@ test('review labels preserve self-review source', () => {
   const review = payload({ source: 'self-review', crossRunner: false }).independentReviews![0];
   assert.equal(reviewAttemptLabel(review, 0, 1), 'Self-review attempt');
   assert.equal(reviewSegmentLabel(review, 2), 'Self-review 2');
+});
+
+test('compact human-gate labels prioritize the active independent review loop', () => {
+  const activeFix = {
+    agentContexts: [
+      {
+        id: 'self-review-fix',
+        role: 'self-review-fix' as const,
+        label: 'Review fix',
+        status: 'working' as const,
+        slotId: 'slot-1',
+        runId: 'run-1',
+      },
+    ],
+    decisions: [],
+  };
+  assert.equal(activePublicationReviewLabel(activeFix), 'Independent review fix');
+  assert.equal(compactHumanGateLabel(activeFix), 'independent review fix');
+
+  assert.equal(
+    compactHumanGateLabel({
+      agentContexts: [],
+      decisions: [],
+      engineState: {
+        publishGate: {
+          pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
+        },
+      },
+    }),
+    'independent review',
+  );
+});
+
+test('compact human-gate labels distinguish publish-ready from review-blocked', () => {
+  assert.equal(
+    compactHumanGateLabel({
+      decisions: [
+        {
+          id: 'gate-1',
+          type: 'engine_human_gate',
+          title: 'Publication',
+          description: '',
+          actions: [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' }],
+          createdAt: '2026-07-30T00:00:00.000Z',
+        },
+      ],
+    }),
+    'publish ready',
+  );
+
+  assert.equal(
+    compactHumanGateLabel({
+      decisions: [],
+      engineState: {
+        publishGate: {
+          independentReviews: [
+            {
+              id: 'independent-review-1',
+              source: 'human-gate',
+              crossRunner: true,
+              loopNumber: 1,
+              verdict: 'issues',
+              unresolvedCount: 2,
+            },
+          ],
+        },
+      },
+    }),
+    'review blocked',
+  );
 });
 
 test('readyReviewBlockingDisplayReason cites stale reviews even when fresh quorum is satisfied', () => {

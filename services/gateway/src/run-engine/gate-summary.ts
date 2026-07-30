@@ -101,6 +101,18 @@ function isSelfReviewEntry(review: IndependentReviewStatus): boolean {
   return inferReviewSourceKind(review) === 'self-review';
 }
 
+function effectiveReviewedHead(review: IndependentReviewStatus): string | null {
+  return review.reviewSnapshot?.headSha?.trim() || review.reviewedHeadSha?.trim() || null;
+}
+
+function reviewsForLatestReviewedHead(
+  reviews: readonly IndependentReviewStatus[],
+): IndependentReviewStatus[] {
+  const latestHead = [...reviews].reverse().map(effectiveReviewedHead).find(Boolean);
+  if (!latestHead) return [...reviews];
+  return reviews.filter((review) => effectiveReviewedHead(review) === latestHead);
+}
+
 /**
  * A review caused re-work when it sent feedback AND something ran afterwards —
  * either a second attempt on the same review, or a later review loop.
@@ -175,7 +187,9 @@ function buildSelfReview(
 export function buildReviewSummary(run: Run): ReviewSummary {
   const reviews = run.engineState?.publishGate?.independentReviews ?? [];
   const selfEntries = reviews.filter(isSelfReviewEntry);
-  const independentEntries = reviews.filter((r) => !isSelfReviewEntry(r));
+  const independentEntries = reviewsForLatestReviewedHead(
+    reviews.filter((r) => !isSelfReviewEntry(r)),
+  );
 
   const selfReview = buildSelfReview(run, selfEntries, reviews);
 
@@ -197,7 +211,9 @@ export function buildReviewSummary(run: Run): ReviewSummary {
   }));
 
   const passingReviews = independentEntries.filter((r) => r.verdict === 'pass').length;
-  const totalUnresolved = reviews.reduce((sum, r) => sum + num(r.unresolvedCount), 0);
+  const totalUnresolved =
+    num(selfReview?.unresolvedCount) +
+    independentEntries.reduce((sum, r) => sum + num(r.unresolvedCount), 0);
   const didAnyReviewTriggerReWork =
     selfReview?.triggeredReWork === true || independentReviews.some((r) => r.triggeredReWork);
   const requiredReviews = run.engineState?.publishGate?.reviewDepth?.minimumIndependentReviews;

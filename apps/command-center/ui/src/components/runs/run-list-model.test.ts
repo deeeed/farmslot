@@ -173,6 +173,44 @@ test('filterRunList sorts by oldest, duration, and grade', () => {
   );
 });
 
+test('filterRunList sorts inventory columns deterministically', () => {
+  const zeta = run('zeta', {
+    project: 'zeta-farm',
+    flowType: 'review-pr',
+    status: 'monitoring',
+  });
+  const alpha = run('alpha', {
+    project: 'alpha-farm',
+    flowType: 'dev',
+    status: 'failed',
+  });
+
+  assert.deepEqual(
+    filter({ runs: [zeta, alpha], sortBy: 'project' }).map((item) => item.id),
+    ['alpha', 'zeta'],
+  );
+  assert.deepEqual(
+    filter({ runs: [zeta, alpha], sortBy: 'flow' }).map((item) => item.id),
+    ['alpha', 'zeta'],
+  );
+  assert.deepEqual(
+    filter({ runs: [zeta, alpha], sortBy: 'status' }).map((item) => item.id),
+    ['alpha', 'zeta'],
+  );
+  assert.deepEqual(
+    filter({ runs: [zeta, alpha], sortBy: 'project-desc' }).map((item) => item.id),
+    ['zeta', 'alpha'],
+  );
+  assert.deepEqual(
+    filter({ runs: [zeta, alpha], sortBy: 'flow-desc' }).map((item) => item.id),
+    ['zeta', 'alpha'],
+  );
+  assert.deepEqual(
+    filter({ runs: [zeta, alpha], sortBy: 'status-desc' }).map((item) => item.id),
+    ['zeta', 'alpha'],
+  );
+});
+
 test('filterRunList applies exact tag filters and includes tags in text search', () => {
   const demo = run('demo', { tags: ['demo', 'launch-review'] });
   const other = run('other', { tags: ['regression'] });

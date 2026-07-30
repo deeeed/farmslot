@@ -4,15 +4,16 @@ import { fileURLToPath } from 'node:url';
 
 import type { Command } from 'commander';
 
-import type {
-  EventFrame,
-  HumanGrade,
-  Run,
-  RunForceCompleteResult,
-  RunGetGradeResult,
-  RunGradeResult,
-  RunPauseResult,
-  RunResumeResult,
+import {
+  buildRunResolveDecisionParams,
+  type EventFrame,
+  type HumanGrade,
+  type Run,
+  type RunForceCompleteResult,
+  type RunGetGradeResult,
+  type RunGradeResult,
+  type RunPauseResult,
+  type RunResumeResult,
 } from '@farmslot/protocol';
 
 import { bold, cyan, green } from '../colors.js';
@@ -22,6 +23,24 @@ import { withProgress, withStreamProgress } from '../progress.js';
 import { collectRunCreatePlan } from '../wizard/run-create-wizard.js';
 
 import { dispatchBacklogItem, resolveItem } from './backlog.js';
+
+export function assertRunGateActionAvailable(
+  decision: NonNullable<Run['decisions']>[number],
+  actionId: string,
+): void {
+  if (decision.actions?.some((action) => action.id === actionId)) return;
+  const available = (decision.actions ?? []).map((action) => action.id);
+  throw Object.assign(
+    new Error(
+      `Action ${actionId} is not available for decision ${decision.id}.` +
+        (available.length ? ` Available actions: ${available.join(', ')}.` : ''),
+    ),
+    {
+      code: 'GATE_ACTION_UNAVAILABLE',
+      userAction: 'List current actions with `farmslot run gate <runId>`.',
+    },
+  );
+}
 
 /** The run.create pipeline shared by the flag path and the wizard entry points. */
 export async function executeRunCreate(
@@ -345,17 +364,7 @@ export function registerRunCommand(program: Command): void {
       try {
         const { run: current } = await withProgress(
           `Loading gates for ${runId.slice(0, 8)}`,
-          () =>
-            client.call<{
-              run: {
-                decisions?: Array<{
-                  id: string;
-                  title?: string;
-                  resolvedAt?: string;
-                  actions?: Array<{ id: string; label: string }>;
-                }>;
-              };
-            }>('run.get', { runId }),
+          () => client.call<{ run: Run }>('run.get', { runId }),
           !emit.machine,
         );
         const pending = (current.decisions ?? []).filter((d) => !d.resolvedAt);
@@ -372,6 +381,7 @@ export function registerRunCommand(program: Command): void {
           }
           return;
         }
+        const actionId = opts.action;
         const decisionId = opts.decision ?? (pending.length === 1 ? pending[0].id : undefined);
         if (!decisionId) {
           throw Object.assign(new Error(`Run has ${pending.length} pending decisions.`), {
@@ -380,14 +390,22 @@ export function registerRunCommand(program: Command): void {
               'List them with `farmslot run gate <runId>` and pass --decision <id> with --action.',
           });
         }
+        const decision = current.decisions?.find((candidate) => candidate.id === decisionId);
+        if (!decision) {
+          throw new Error(`Decision ${decisionId} was not found on run ${runId}.`);
+        }
+        assertRunGateActionAvailable(decision, actionId);
         const result = await withProgress(
           `Resolving ${decisionId} with ${opts.action}`,
           () =>
-            client.call('run.resolveDecision', {
-              runId,
-              decisionId,
-              actionId: opts.action,
-            }),
+            client.call(
+              'run.resolveDecision',
+              buildRunResolveDecisionParams({
+                runId,
+                decision,
+                actionId,
+              }),
+            ),
           !emit.machine,
         );
         if (emit.machine) emit.ok(result);

@@ -104,7 +104,8 @@ test('publication review policy rejects stale and unavailable review snapshots',
         },
         independentReviews: [
           {
-            id: 'self-review-1',
+            id: 'independent-review-1',
+            source: 'dispatch',
             crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
@@ -137,7 +138,8 @@ test('publication review policy rejects stale and unavailable review snapshots',
         },
         independentReviews: [
           {
-            id: 'self-review-1',
+            id: 'independent-review-1',
+            source: 'dispatch',
             crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
@@ -172,7 +174,8 @@ test('publication review policy rejects stale and unavailable review snapshots',
         },
         independentReviews: [
           {
-            id: 'self-review-1',
+            id: 'independent-review-1',
+            source: 'dispatch',
             crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
@@ -209,7 +212,8 @@ test('publication review policy rejects semantic review subject drift', () => {
         },
         independentReviews: [
           {
-            id: 'self-review-1',
+            id: 'independent-review-1',
+            source: 'dispatch',
             crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
@@ -243,7 +247,8 @@ test('publication review policy rejects semantic review subject drift', () => {
         },
         independentReviews: [
           {
-            id: 'self-review-1',
+            id: 'independent-review-1',
+            source: 'dispatch',
             crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
@@ -286,7 +291,8 @@ test('publication review policy rejects semantic review subject drift', () => {
         },
         independentReviews: [
           {
-            id: 'self-review-1',
+            id: 'independent-review-1',
+            source: 'dispatch',
             crossRunner: false,
             loopNumber: 1,
             verdict: 'pass',
@@ -334,6 +340,40 @@ test('publication review policy accepts zero-review package snapshots', () => {
     engineState: { publishGate: { independentReviews: [] } },
   });
   assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(run, pkg));
+});
+test('publication review policy does not count worker self-review as independent approval', () => {
+  const pkg = makeReadyGatePackage();
+  const run = makeRun({
+    engineState: {
+      publishGate: {
+        reviewDepth: pkg.reviewDepth,
+        independentReviews: [
+          {
+            id: 'self-review-1',
+            source: 'self-review',
+            crossRunner: true,
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            validationDepth: 'full-live',
+            reviewedHeadSha: pkg.headSha,
+            reviewedReviewSubjectHash: pkg.reviewSubjectHash,
+            reviewSnapshot: {
+              headSha: pkg.headSha!,
+              capturedAt: '2026-04-15T00:00:00.000Z',
+              source: 'local-git',
+            },
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(
+    countStalePublicationReviews(run.engineState!.publishGate!.independentReviews!, pkg),
+    0,
+  );
+  assert.throws(() => assertPublicationReviewPolicySatisfied(run, pkg), /independent reviews/);
 });
 test('publication review policy accepts stale reviews superseded by a fresh fix-loop certification', () => {
   const pkg = makeReadyGatePackage({ headSha: 'head-new', reviewSubjectHash: 'subject-new' });

@@ -1,19 +1,23 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { BacklogStatus } from '@farmslot/protocol';
+import type { BacklogItem, BacklogStatus, Run } from '@farmslot/protocol';
 
 import {
   backlogItemMatchesStatusFilter,
+  backlogStatusCounts,
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
   DEFAULT_BACKLOG_STATUS_FILTER,
+  displayedBacklogFlow,
+  displayedBacklogStatus,
   parseBacklogStatusFilter,
   serializeBacklogStatusFilter,
   showsBacklogCleanupActionsForUi,
+  sortBacklogItems,
   syncedBacklogDraftProject,
 } from './backlog-panel-model.js';
 
@@ -40,6 +44,64 @@ test('backlog default filter shows the live set and hides done/archived', () => 
   assert.equal(
     backlogItemMatchesStatusFilter('ready', new Set<BacklogStatus>(['archived'])),
     false,
+  );
+});
+
+test('backlog status counts keep hidden completed work discoverable', () => {
+  const base = {
+    project: 'metamask-core-farm',
+    sourceKind: 'jira',
+    sourceRef: 'TAT-1',
+    title: 'Item',
+    flowType: 'dev',
+    priority: 10,
+    createdAt: '2026-07-30T00:00:00.000Z',
+    updatedAt: '2026-07-30T00:00:00.000Z',
+  } as const;
+  const counts = backlogStatusCounts([
+    { ...base, id: 'candidate', status: 'candidate' },
+    { ...base, id: 'done-1', status: 'done' },
+    { ...base, id: 'done-2', status: 'done' },
+    { ...base, id: 'archived', status: 'archived' },
+  ]);
+
+  assert.equal(counts.candidate, 1);
+  assert.equal(counts.done, 2);
+  assert.equal(counts.archived, 1);
+  assert.equal(counts.running, 0);
+});
+
+test('backlog status projection reconciles linked direct runs', () => {
+  const item = {
+    id: 'item',
+    project: 'metamask-core-farm',
+    sourceKind: 'jira',
+    sourceRef: 'TAT-3252',
+    title: 'Reduce-only order',
+    flowType: 'fix-bug',
+    status: 'candidate',
+    priority: 10,
+    createdAt: '2026-07-30T00:00:00.000Z',
+    updatedAt: '2026-07-30T00:00:00.000Z',
+  } satisfies BacklogItem;
+  const run = {
+    id: 'run',
+    project: item.project,
+    ticketOrPr: item.sourceRef,
+    status: 'human-gating',
+    updatedAt: '2026-07-30T02:00:00.000Z',
+  } as Run;
+
+  assert.equal(displayedBacklogStatus(item, run), 'running');
+  assert.equal(displayedBacklogStatus(item, { ...run, status: 'blocked' }), 'needs-attention');
+  assert.equal(displayedBacklogStatus(item, { ...run, status: 'paused' }), 'needs-attention');
+  assert.equal(displayedBacklogStatus(item, { ...run, status: 'done' }), 'done');
+  assert.equal(backlogStatusCounts([item], new Map([[item.id, run]])).running, 1);
+  assert.equal(
+    backlogStatusCounts([item], new Map([[item.id, { ...run, status: 'paused' }]]))[
+      'needs-attention'
+    ],
+    1,
   );
 });
 
@@ -151,5 +213,120 @@ test('backlog draft project falls back to the first available project', () => {
       globalProjects: [],
     }),
     'metamask-core-farm',
+  );
+});
+
+test('backlog activity sorting puts out-of-band active runs ahead of idle candidates', () => {
+  const base = {
+    project: 'metamask-core-farm',
+    sourceKind: 'jira',
+    flowType: 'dev',
+    status: 'candidate',
+    priority: 10,
+    createdAt: '2026-07-30T00:00:00.000Z',
+    updatedAt: '2026-07-30T00:00:00.000Z',
+  } as const;
+  const idle = {
+    ...base,
+    id: 'idle',
+    sourceRef: 'TAT-3400',
+    title: 'Idle candidate',
+  } satisfies BacklogItem;
+  const active = {
+    ...base,
+    id: 'active',
+    sourceRef: 'TAT-3343',
+    title: 'Active candidate',
+  } satisfies BacklogItem;
+  const activeRun = {
+    id: 'run-active',
+    project: active.project,
+    ticketOrPr: active.sourceRef,
+    status: 'human-gating',
+    updatedAt: '2026-07-30T02:00:00.000Z',
+  } as Run;
+
+  assert.deepEqual(
+    sortBacklogItems([idle, active], [activeRun], 'activity', 'desc').map((item) => item.id),
+    ['active', 'idle'],
+  );
+  assert.deepEqual(
+    sortBacklogItems([idle, active], [activeRun], 'project', 'asc').map((item) => item.id),
+    ['active', 'idle'],
+  );
+});
+
+test('backlog displays and sorts by the active run flow when it differs from intake', () => {
+  const devItem = {
+    id: 'dev-item',
+    project: 'metamask-core-farm',
+    sourceKind: 'jira',
+    sourceRef: 'TAT-3252',
+    title: 'Reduce-only order would increase position',
+    flowType: 'dev',
+    status: 'candidate',
+    priority: 10,
+    createdAt: '2026-07-30T00:00:00.000Z',
+    updatedAt: '2026-07-30T00:00:00.000Z',
+  } satisfies BacklogItem;
+  const reviewItem = {
+    ...devItem,
+    id: 'review-item',
+    sourceRef: 'TAT-3309',
+    title: 'Review order book',
+    flowType: 'review-pr',
+  } satisfies BacklogItem;
+  const activeRun = {
+    id: 'run-active',
+    project: devItem.project,
+    ticketOrPr: devItem.sourceRef,
+    flowType: 'fix-bug',
+    status: 'human-gating',
+    updatedAt: '2026-07-30T02:00:00.000Z',
+  } as Run;
+
+  assert.equal(displayedBacklogFlow(devItem), 'dev');
+  assert.equal(displayedBacklogFlow(devItem, activeRun), 'fix-bug');
+  assert.deepEqual(
+    sortBacklogItems([reviewItem, devItem], [activeRun], 'flow', 'asc').map((item) => item.id),
+    ['dev-item', 'review-item'],
+  );
+});
+
+test('backlog activity sorting treats terminal linked runs as inactive', () => {
+  const base = {
+    project: 'metamask-core-farm',
+    sourceKind: 'jira',
+    flowType: 'dev',
+    status: 'candidate',
+    priority: 10,
+    createdAt: '2026-07-30T00:00:00.000Z',
+  } as const;
+  const idle = {
+    ...base,
+    id: 'idle',
+    sourceRef: 'TAT-3400',
+    title: 'Idle candidate',
+    updatedAt: '2026-07-30T02:00:00.000Z',
+  } satisfies BacklogItem;
+  const terminal = {
+    ...base,
+    id: 'terminal',
+    sourceRef: 'TAT-3343',
+    title: 'Terminal candidate',
+    updatedAt: '2026-07-30T01:00:00.000Z',
+  } satisfies BacklogItem;
+  const terminalRun = {
+    id: 'run-terminal',
+    backlogItemId: terminal.id,
+    project: terminal.project,
+    ticketOrPr: terminal.sourceRef,
+    status: 'done',
+    updatedAt: '2026-07-30T03:00:00.000Z',
+  } as Run;
+
+  assert.deepEqual(
+    sortBacklogItems([terminal, idle], [terminalRun], 'activity', 'desc').map((item) => item.id),
+    ['idle', 'terminal'],
   );
 });

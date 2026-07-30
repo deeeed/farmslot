@@ -80,6 +80,8 @@ import {
 } from './ready-gate.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import {
+  hasRecoverablePublicationReviewer,
+  isPublicationReviewRecoveryHeld,
   recoverActiveRuns as recoverActiveRunsImpl,
   type RunRecoveryCollaborators,
   startOrphanReconciler as startOrphanReconcilerImpl,
@@ -778,6 +780,171 @@ export function cancelRunEngine(runId: string): void {
 
 // ─── Recover active runs on startup ───
 
+const PUBLICATION_REVIEW_RECOVERY_POLL_MS = 10_000;
+const PUBLICATION_REVIEW_RECOVERY_MAX_POLL_MS = 5 * 60_000;
+const PUBLICATION_REVIEW_RECOVERY_MAX_DURATION_MS = 6 * 60 * 60_000;
+const PUBLICATION_REVIEW_RECOVERY_MAX_FAILURES = 8;
+const publicationReviewRecoveryWatchers = new Map<
+  string,
+  {
+    cleanup: () => void;
+    replayPending: boolean;
+  }
+>();
+
+async function replayHumanGateForRecovery(runId: string): Promise<void> {
+  // replay-step.ts imports this module (startRun), so import lazily.
+  const { runReplayStep } = await import('../methods/run/replay-step.js');
+  await runReplayStep(
+    { runId, stepName: S.HUMAN_GATE, triggeredBy: 'auto-recovery' },
+    (event, payload) => broadcastFn(event, payload),
+  );
+}
+
+function rearmPublicationReviewRecovery(
+  run: Run,
+  options?: { replayPending?: boolean },
+): (() => void) | undefined {
+  if (!run.slotId || !isPublicationReviewRecoveryHeld(run)) return undefined;
+
+  const existing = publicationReviewRecoveryWatchers.get(run.id);
+  if (existing) {
+    if (options?.replayPending) existing.replayPending = true;
+    return existing.cleanup;
+  }
+
+  let settled = false;
+  let inFlight = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let attempts = 0;
+  let failures = 0;
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
+  const state = {
+    replayPending: options?.replayPending ?? false,
+    cleanup: (): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (publicationReviewRecoveryWatchers.get(run.id) === state) {
+        publicationReviewRecoveryWatchers.delete(run.id);
+      }
+    },
+  };
+
+  const persistRecovery = (
+    latest: Run,
+    status: 'watching' | 'recovered' | 'operator-required',
+    fields: { nextRetryAt?: string; lastError?: string } = {},
+  ): void => {
+    const current = getRun(latest.id) ?? latest;
+    updateRun(current.id, {
+      engineState: {
+        ...current.engineState,
+        publishGate: {
+          ...current.engineState?.publishGate,
+          reviewRecovery: {
+            status,
+            attempts,
+            startedAt,
+            updatedAt: new Date().toISOString(),
+            ...fields,
+          },
+        },
+      },
+    });
+  };
+
+  const clearRecovery = (latest: Run): void => {
+    const current = getRun(latest.id) ?? latest;
+    updateRun(current.id, {
+      engineState: {
+        ...current.engineState,
+        publishGate: {
+          ...current.engineState?.publishGate,
+          reviewRecovery: undefined,
+        },
+      },
+    });
+  };
+
+  const schedule = (latest: Run): void => {
+    const delayMs = Math.min(
+      PUBLICATION_REVIEW_RECOVERY_MAX_POLL_MS,
+      PUBLICATION_REVIEW_RECOVERY_POLL_MS * 2 ** Math.min(attempts, 5),
+    );
+    const nextRetryAt = new Date(Date.now() + delayMs).toISOString();
+    persistRecovery(latest, 'watching', { nextRetryAt });
+    timer = setTimeout(() => {
+      void poll();
+    }, delayMs);
+    timer.unref();
+  };
+
+  const poll = async (): Promise<void> => {
+    if (settled || inFlight) return;
+    const latest = getRun(run.id);
+    if (!latest) {
+      state.cleanup();
+      return;
+    }
+    if (!latest.slotId || !isPublicationReviewRecoveryHeld(latest)) {
+      clearRecovery(latest);
+      state.cleanup();
+      return;
+    }
+    if (!state.replayPending && !hasRecoverablePublicationReviewer(latest)) {
+      clearRecovery(latest);
+      state.cleanup();
+      return;
+    }
+
+    inFlight = true;
+    attempts += 1;
+    try {
+      if (Date.now() - startedAtMs >= PUBLICATION_REVIEW_RECOVERY_MAX_DURATION_MS) {
+        persistRecovery(latest, 'operator-required', {
+          lastError: 'Publication reviewer recovery exceeded the six-hour watcher budget.',
+        });
+        state.cleanup();
+        return;
+      }
+      if (!state.replayPending) {
+        const recovered = await recoverInflightPublicationReviews(latest.id, latest.slotId);
+        if (recovered.length === 0) {
+          failures = 0;
+          schedule(latest);
+          return;
+        }
+        state.replayPending = true;
+      }
+      await replayHumanGateForRecovery(latest.id);
+      persistRecovery(getRun(latest.id) ?? latest, 'recovered');
+      state.cleanup();
+    } catch (err) {
+      failures += 1;
+      const message = (err as Error).message.slice(0, 200);
+      console.warn(
+        `[run-engine] run ${run.id.slice(0, 8)} — publication-review recovery poll failed: ${message}`,
+      );
+      if (failures >= PUBLICATION_REVIEW_RECOVERY_MAX_FAILURES) {
+        persistRecovery(getRun(latest.id) ?? latest, 'operator-required', {
+          lastError: message,
+        });
+        state.cleanup();
+        return;
+      }
+      schedule(getRun(latest.id) ?? latest);
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  publicationReviewRecoveryWatchers.set(run.id, state);
+  schedule(run);
+  return state.cleanup;
+}
+
 function buildRecoveryDeps(): RunRecoveryCollaborators {
   return {
     listRuns,
@@ -819,15 +986,9 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
           broadcastFn(event, payload),
         );
       }),
+    rearmPublicationReviewRecovery,
     recoverInflightPublicationReviews,
-    replayHumanGate: async (runId) => {
-      // replay-step.ts imports this module (startRun), so import lazily.
-      const { runReplayStep } = await import('../methods/run/replay-step.js');
-      await runReplayStep(
-        { runId, stepName: S.HUMAN_GATE, triggeredBy: 'auto-recovery' },
-        (event, payload) => broadcastFn(event, payload),
-      );
-    },
+    replayHumanGate: replayHumanGateForRecovery,
   };
 }
 

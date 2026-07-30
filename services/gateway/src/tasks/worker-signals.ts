@@ -64,8 +64,9 @@ function validateNoChangeEvidence(signal: WorkerSignal): string | null {
     return 'evidence.reportPath is required (use ./mark no-change after writing artifacts/no-change-report.md)';
   }
   const normalized = reportPath.replace(/^\.\//, '').replace(/\\/g, '/');
-  if (normalized !== 'artifacts/no-change-report.md') {
-    return 'evidence.reportPath must be artifacts/no-change-report.md';
+  const reviewerReport = /^artifacts\/review-feedback\.[A-Za-z0-9][A-Za-z0-9_-]*\.md$/;
+  if (normalized !== 'artifacts/no-change-report.md' && !reviewerReport.test(normalized)) {
+    return 'evidence.reportPath must be artifacts/no-change-report.md or a scoped artifacts/review-feedback.<context>.md';
   }
   return null;
 }

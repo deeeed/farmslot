@@ -92,11 +92,36 @@ result = spawnSync(process.execPath, [checker, taskDir, '--require-recipe-qualit
   encoding: 'utf8',
 });
 assert.equal(result.status, 0, result.stderr);
+const validRecipeQualityTaskDir = taskDir;
 
+taskDir = makeTaskDir('farmslot-agent-artifact-empty-recipe-quality-');
+writeFileSync(path.join(taskDir, 'artifacts', 'recipe-quality.json'), '');
 result = spawnSync(process.execPath, [checker, taskDir, '--require-recipe-quality-if-recipe'], {
   encoding: 'utf8',
-  env: { ...process.env, FARMSLOT_TEST_DISABLE_RECIPE_PROTOCOL: '1' },
 });
+assert.equal(result.status, 1);
+assert.match(result.stderr, /recipe-quality\.json: invalid JSON/);
+
+taskDir = makeTaskDir('farmslot-agent-artifact-empty-recipe-');
+writeFileSync(path.join(taskDir, 'artifacts', 'recipe.json'), '');
+result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });
+assert.equal(result.status, 1);
+assert.match(result.stderr, /recipe\.json: invalid JSON/);
+
+taskDir = makeTaskDir('farmslot-agent-artifact-empty-evidence-manifest-');
+writeFileSync(path.join(taskDir, 'artifacts', 'evidence-manifest.json'), '');
+result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });
+assert.equal(result.status, 1);
+assert.match(result.stderr, /evidence-manifest\.json: invalid JSON/);
+
+result = spawnSync(
+  process.execPath,
+  [checker, validRecipeQualityTaskDir, '--require-recipe-quality-if-recipe'],
+  {
+    encoding: 'utf8',
+    env: { ...process.env, FARMSLOT_TEST_DISABLE_RECIPE_PROTOCOL: '1' },
+  },
+);
 assert.equal(result.status, 1);
 assert.match(result.stderr, /requires built @farmslot\/protocol/);
 
@@ -160,5 +185,121 @@ writeFileSync(
 result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });
 assert.equal(result.status, 1);
 assert.match(result.stderr, /resolves outside the task directory/i);
+
+taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-recipe-decision-required-'));
+mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+writeFileSync(
+  path.join(taskDir, 'artifacts', 'recipe-decision.json'),
+  `${JSON.stringify({
+    version: 1,
+    required: true,
+    reason: 'A Core action exercises the changed behavior.',
+    actionsChecked: ['metamask.perps.place_order'],
+    claims: ['The rejected order is surfaced.'],
+    recipePath: 'artifacts/recipe.json',
+  })}\n`,
+);
+result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });
+assert.equal(result.status, 1);
+assert.match(result.stderr, /requires a recipe but artifacts\/recipe\.json is missing/);
+
+const reviewerContractPath = path.join(taskDir, 'inputs', 'worker-terminal-contract.json');
+mkdirSync(path.dirname(reviewerContractPath), { recursive: true });
+writeFileSync(path.join(taskDir, 'artifacts', 'review-feedback.rev-claude.md'), '# ISSUES\n');
+const reviewerContract = {
+  schemaVersion: 1,
+  flowType: 'self-review',
+  requireSignal: true,
+  commands: {
+    complete: {
+      report: 'artifacts/review-feedback.rev-claude.md',
+      artifacts: ['artifacts/review-feedback.rev-claude.md'],
+    },
+    'no-change': {
+      report: 'artifacts/review-feedback.rev-claude.md',
+      artifacts: ['artifacts/review-feedback.rev-claude.md'],
+    },
+    blocked: { artifacts: [] },
+  },
+  whenPresent: [
+    {
+      path: 'artifacts/recipe.json',
+      alsoRequire: ['artifacts/recipe-coverage.md'],
+      requireRecipeQuality: true,
+      requireRecipeCoverage: true,
+    },
+  ],
+  resolvedAt: new Date().toISOString(),
+  source: 'builtin',
+};
+writeFileSync(reviewerContractPath, `${JSON.stringify(reviewerContract)}\n`);
+result = spawnSync(
+  process.execPath,
+  [checker, taskDir, '--contract', reviewerContractPath, '--terminal', 'complete'],
+  { encoding: 'utf8' },
+);
+assert.equal(result.status, 0, result.stderr);
+
+writeFileSync(
+  reviewerContractPath,
+  `${JSON.stringify({ ...reviewerContract, flowType: 'self-review-fix' })}\n`,
+);
+result = spawnSync(
+  process.execPath,
+  [checker, taskDir, '--contract', reviewerContractPath, '--terminal', 'complete'],
+  { encoding: 'utf8' },
+);
+assert.equal(result.status, 1);
+assert.match(result.stderr, /requires a recipe but artifacts\/recipe\.json is missing/);
+
+taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-recipe-decision-exempt-'));
+mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+writeFileSync(
+  path.join(taskDir, 'artifacts', 'recipe-decision.json'),
+  `${JSON.stringify({
+    version: 1,
+    required: false,
+    reason: 'No declared Core action reaches the changed build-only path.',
+    actionsChecked: ['metamask.perps.read_markets'],
+    claims: ['The generated declaration exports the corrected type.'],
+  })}\n`,
+);
+result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+
+taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-recipe-decision-empty-'));
+mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+writeFileSync(path.join(taskDir, 'artifacts', 'recipe-decision.json'), '');
+result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });
+assert.equal(result.status, 1);
+assert.match(result.stderr, /recipe-decision\.json: invalid JSON/);
+
+taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-recipe-decision-blank-'));
+mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+writeFileSync(
+  path.join(taskDir, 'artifacts', 'recipe-decision.json'),
+  `${JSON.stringify({
+    version: 1,
+    required: false,
+    reason: 'No declared action reaches the changed build-only path.',
+    actionsChecked: [''],
+    claims: ['  '],
+  })}\n`,
+);
+result = spawnSync(process.execPath, [checker, taskDir], { encoding: 'utf8' });
+assert.equal(result.status, 1);
+assert.match(result.stderr, /actionsChecked: expected non-empty string array/);
+assert.match(result.stderr, /claims: expected non-empty string array/);
+
+taskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-agent-terminal-contract-missing-'));
+mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
+const missingContractPath = path.join(taskDir, 'missing-worker-terminal-contract.json');
+result = spawnSync(
+  process.execPath,
+  [checker, taskDir, '--contract', missingContractPath, '--terminal', 'complete'],
+  { encoding: 'utf8' },
+);
+assert.equal(result.status, 1);
+assert.match(result.stderr, /explicit worker terminal contract missing/);
 
 process.stdout.write('agent-runtime artifact contract tests: ok\n');
