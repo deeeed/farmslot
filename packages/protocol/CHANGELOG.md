@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat(protocol): `RunEngineState.flags.warmSessionReuse` for CI-watch chained follow-ups that hand off into a parent worker kept warm through finalize (MANUAL-000065).
 - feat(runners): export `DEFAULT_CODEX_MODEL` (`gpt-5.6-sol`), `DEFAULT_CODEX_EFFORT` / `DEFAULT_GROK_EFFORT` (`xhigh`), and bump the roadmap refinement default model to Sol so dispatch/UI/gateway share one catalog.
 - `ProviderAccountsSnapshotParams.forceRefresh` — wait for a live probe instead of accepting the gateway's cached snapshot (additive; default stays cache-first).
 - Export canonical roadmap project sentinels and shared concrete/unscoped predicates so clients and the gateway use the same scoping rules.

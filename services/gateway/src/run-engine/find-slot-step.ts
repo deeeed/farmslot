@@ -69,6 +69,7 @@ interface RunEngineFlags {
   skipPrepare?: true;
   nudgeReuse?: true;
   freshReuse?: true;
+  warmSessionReuse?: true;
 }
 
 export interface FindSlotStepContext {
@@ -262,6 +263,34 @@ export async function executeFindSlotStep(
     slotPlatform: null,
   });
   const requiredPrepareProfile = run.prepareProfile || profileFit?.suggestedPrepareProfile || null;
+
+  // CI-watch warm-session handoff: chained follow-up already pinned to the parent's
+  // keep-warm slot. Bind immediately so DISPATCH can probe the live worker; do not
+  // require busy/agent=working eligibility (slot is typically held/ci-watch, agent idle).
+  if (run.engineState?.flags?.warmSessionReuse && run.slotId) {
+    const warmSlot = (await loadFleetStatus()).slots.find((s) => s.slot === run.slotId);
+    if (!warmSlot) {
+      throw new Error(
+        `Warm-session reuse slot '${run.slotId}' not found in fleet; cannot hand off chained run`,
+      );
+    }
+    if (warmSlot.lifecycle === 'manual' || warmSlot.lifecycle === 'disabled') {
+      throw new Error(
+        `Warm-session reuse slot '${run.slotId}' is ${warmSlot.lifecycle}; cannot hand off`,
+      );
+    }
+    // Take over the parent's ownership fence; DISPATCH decides warm vs fresh after liveness.
+    await claimSelectedSlot(run.slotId, runId, 'working', 'working', { takeoverLiveOwner: true });
+    return {
+      inputs,
+      outputs: {
+        selectedSlot: run.slotId,
+        selectionMethod: 'warm-session-reuse',
+        branch: warmSlot.branch ?? null,
+        via: 'ci-watch-chain',
+      },
+    };
+  }
 
   // Wizard-shortcut: when run.create was issued with `nudgeReuse: true` (operator picked
   // the busy branch-matched slot in the dispatch wizard), the slotId is already bound and

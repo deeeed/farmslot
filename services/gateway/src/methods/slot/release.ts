@@ -249,8 +249,9 @@ async function slotReleaseImpl(
   };
 
   // 1. Kill running agent. Local-first publication gate-hold skips slotRelease at
-  // COMPLETE entirely (see holdSlotForPublicationGate) and tears down via
-  // killSlotAgents at FINALIZE. preserveAgents is for partial release call sites only.
+  // COMPLETE entirely (see holdSlotForPublicationGate) and keeps the worker warm
+  // through FINALIZE → ci-watch; agent teardown happens here at family/slot end
+  // (or terminal-failure / cancel). preserveAgents is for partial release call sites only.
   if (!preserveAgents) {
     // Close the passive log reader first. If it were the only non-agent
     // window, killing role windows first would leave it as tmux's last window;

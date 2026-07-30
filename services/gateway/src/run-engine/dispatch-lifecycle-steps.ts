@@ -3,7 +3,7 @@ import { Events, type Run } from '@farmslot/protocol';
 import { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
-import { dispatchExecute, nudgeDispatch } from '../methods/dispatch.js';
+import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
 import {
@@ -42,6 +42,7 @@ interface RunEngineFlags {
   warmRecovery?: true;
   nudgeReuse?: true;
   mergeMain?: true;
+  warmSessionReuse?: true;
 }
 
 export interface PrepareStepContext {
@@ -284,6 +285,54 @@ export async function executeDispatchStep(
     taskFile: current.taskFile,
     app: current.app,
   };
+
+  // CI-watch warm-session handoff — parent finalize kept the worker alive through
+  // ci-watch. Prefer handing the follow-up TASK.md into that session; fall through
+  // to fresh dispatchExecute when the process is dead, runner/model swapped, or
+  // the runner cannot accept tmux instructions (MANUAL-000065 / MANUAL-000043).
+  if (current.engineState?.flags?.warmSessionReuse) {
+    const collector = createSubStepCollector();
+    const dispatchStart = Date.now();
+    const result = await warmSessionHandoffDispatch(
+      {
+        slotId: current.slotId,
+        taskFile: current.taskFile,
+        runId,
+        ticketOrPr: current.ticketOrPr,
+        flowType: current.flowType,
+        runner: current.metrics.runner,
+        model: current.metrics.model,
+      },
+      collector.emit,
+    );
+    if (result.handedOff) {
+      const subSteps = collector.finish();
+      updateRun(runId, {
+        activeTaskFile: current.taskFile ?? undefined,
+        metrics: {
+          ...current.metrics,
+          runner: result.runner,
+          ...(result.model ? { model: result.model } : {}),
+        },
+      });
+      return {
+        inputs,
+        outputs: {
+          success: true,
+          warmHandoff: true,
+          workerTarget: result.workerTarget,
+          subSteps,
+          readinessWaitMs: Date.now() - dispatchStart,
+          runner: result.runner,
+          model: result.model,
+        },
+      };
+    }
+    console.log(
+      `[run-engine] run ${runId.slice(0, 8)} — warm session handoff skipped (${result.reason}); falling back to fresh dispatch`,
+    );
+    // Leave warmSessionReuse set for observability; fresh path ignores it.
+  }
 
   // Branch-affinity nudge — set by the wizard via run.create or by the decision card in
   // FIND_SLOT. Skip dispatchExecute entirely: no pane teardown, no relaunch. nudgeDispatch
