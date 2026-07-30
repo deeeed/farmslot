@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  assignmentDiagnosticLines,
   assignments,
   buildArtifact,
   classifyTest,
@@ -14,6 +15,7 @@ import {
   resolveWorkers,
   SERIAL_PRAGMA,
   summaryLines,
+  verifyAssignment,
   WORKERS_ENV,
 } from './run-tsx-tests.mjs';
 
@@ -64,6 +66,57 @@ test('classification keys off module mocks and the serial pragma', () => {
     'module-mock',
     'module mocks need the batched runner even when also marked serial',
   );
+});
+
+test('assignment verification compares the discovered set, not a self-derived count', () => {
+  const partition = partitionOf(FILES, 4);
+  const healthy = verifyAssignment(FILES, partition);
+  assert.equal(healthy.ok, true);
+  assert.equal(healthy.discoveredCount, 10);
+  assert.equal(healthy.assignedUniqueCount, 10);
+  assert.deepEqual([healthy.missing, healthy.duplicate, healthy.unexpected], [[], [], []]);
+});
+
+test('a partition that drops a file is rejected', () => {
+  const partition = partitionOf(FILES, 4);
+  partition.parallel[2].pop();
+  const check = verifyAssignment(FILES, partition);
+  assert.equal(check.ok, false);
+  assert.deepEqual(check.missing, ['src/suite-6.test.ts']);
+  assert.equal(check.assignedUniqueCount, 9);
+  assert.equal(check.discoveredCount, 10, 'discovered must stay independent of the partition');
+});
+
+test('a partition that duplicates a file across lanes is rejected', () => {
+  const partition = partitionOf(FILES, 4);
+  partition.serial.push(partition.parallel[0][0]);
+  const check = verifyAssignment(FILES, partition);
+  assert.equal(check.ok, false);
+  assert.deepEqual(check.duplicate, ['src/suite-0.test.ts']);
+  assert.equal(check.assignedCount, 11, 'total assignments exceed the discovered set');
+  assert.equal(check.assignedUniqueCount, 10);
+});
+
+test('a partition containing a file that was never discovered is rejected', () => {
+  const partition = partitionOf(FILES, 4);
+  partition.parallel[1].push('src/ghost.test.ts');
+  const check = verifyAssignment(FILES, partition);
+  assert.equal(check.ok, false);
+  assert.deepEqual(check.unexpected, ['src/ghost.test.ts']);
+});
+
+test('the assignment diagnostic names every offending file', () => {
+  const partition = partitionOf(FILES, 4);
+  partition.parallel[2].pop();
+  partition.serial.push(partition.parallel[0][0]);
+  const lines = assignmentDiagnosticLines(verifyAssignment(FILES, partition));
+  assert.equal(
+    lines[0],
+    '[tsx-tests] assignment check FAILED discovered=10 assigned=10 assigned_unique=9' +
+      ' missing=1 duplicate=1 unexpected=0',
+  );
+  assert.ok(lines.includes('[tsx-tests]   missing: src/suite-6.test.ts'));
+  assert.ok(lines.includes('[tsx-tests]   duplicate: src/suite-0.test.ts'));
 });
 
 test('every discovered file is assigned exactly once', () => {
@@ -151,8 +204,10 @@ test('discovery finds .test.ts files recursively and skips build output', () => 
   }
 });
 
+const REPORT_FILES = ['src/a.test.ts', 'src/b.test.ts', 'src/c.test.ts'];
+
 function report(overrides = {}) {
-  const partition = partitionOf(['src/a.test.ts', 'src/b.test.ts', 'src/c.test.ts'], 2);
+  const partition = partitionOf(REPORT_FILES, 2);
   const records = [
     { file: 'src/a.test.ts', label: 'src/a.test.ts', ms: 4000, status: 0 },
     { file: 'src/c.test.ts', label: 'src/c.test.ts', ms: 500, status: 0 },
@@ -161,6 +216,7 @@ function report(overrides = {}) {
   return {
     workspace: 'gateway',
     workers: 2,
+    discovered: REPORT_FILES,
     partition,
     records,
     failures: records.filter((record) => record.status !== 0),
@@ -200,6 +256,13 @@ test('the artifact records the worker contract and every assigned file exactly o
   assert.equal(artifact.workers, 2);
   assert.equal(artifact.discoveredCount, 3);
   assert.equal(artifact.assignedCount, 3);
+  assert.deepEqual(artifact.assignment, {
+    ok: true,
+    assignedTotal: 3,
+    missing: [],
+    duplicate: [],
+    unexpected: [],
+  });
   assert.equal(artifact.status, 'fail');
   assert.deepEqual(artifact.files.map((entry) => entry.file).sort(), [
     'src/a.test.ts',
@@ -221,14 +284,30 @@ test('the artifact records the worker contract and every assigned file exactly o
   assert.doesNotThrow(() => JSON.parse(JSON.stringify(artifact)));
 });
 
+test('a lost file surfaces in the artifact instead of a silent discovered===assigned', () => {
+  const partition = partitionOf(REPORT_FILES, 2);
+  partition.parallel[1].pop();
+  const artifact = buildArtifact(report({ partition }));
+  assert.equal(artifact.discoveredCount, 3);
+  assert.equal(artifact.assignedCount, 2);
+  assert.equal(artifact.assignment.ok, false);
+  assert.deepEqual(artifact.assignment.missing, ['src/b.test.ts']);
+  assert.ok(
+    summaryLines(report({ partition }))[0].includes('discovered=3 assigned=2'),
+    'the summary must show the mismatch rather than two equal derived counts',
+  );
+});
+
 test('module-mock files share the batch verdict and carry no per-file duration', () => {
-  const partition = partitionTests(['src/m1.test.ts', 'src/m2.test.ts'], {
+  const files = ['src/m1.test.ts', 'src/m2.test.ts'];
+  const partition = partitionTests(files, {
     workers: 2,
     classify: () => 'module-mock',
   });
   const artifact = buildArtifact({
     workspace: 'gateway',
     workers: 2,
+    discovered: files,
     partition,
     records: [{ batch: true, label: 'module-mock batch (2 files)', ms: 900, status: 1 }],
     failures: [{ label: 'module-mock batch (2 files)', status: 1 }],

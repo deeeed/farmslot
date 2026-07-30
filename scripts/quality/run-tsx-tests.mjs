@@ -144,6 +144,58 @@ export function assignments(partition) {
   return entries;
 }
 
+/**
+ * Compare the independently discovered file set against what the partition
+ * actually assigned.
+ *
+ * Both sides must come from different sources for this to mean anything: pass
+ * the `discovered` list straight from discovery, never a value derived from the
+ * partition. Otherwise the check is tautological and a partition that drops or
+ * duplicates a file still reports discovered === assigned.
+ */
+export function verifyAssignment(discovered, partition) {
+  const assigned = assignments(partition).map((entry) => entry.file);
+  const discoveredSet = new Set(discovered);
+  const seen = new Set();
+  const duplicate = [];
+  const unexpected = [];
+  for (const file of assigned) {
+    if (seen.has(file)) duplicate.push(file);
+    else {
+      seen.add(file);
+      if (!discoveredSet.has(file)) unexpected.push(file);
+    }
+  }
+  const missing = discovered.filter((file) => !seen.has(file));
+  return {
+    discoveredCount: discovered.length,
+    assignedCount: assigned.length,
+    assignedUniqueCount: seen.size,
+    missing: [...missing].sort(),
+    duplicate: [...new Set(duplicate)].sort(),
+    unexpected: [...new Set(unexpected)].sort(),
+    ok: missing.length === 0 && duplicate.length === 0 && unexpected.length === 0,
+  };
+}
+
+/** Machine-readable diagnostic emitted when the assignment check fails. */
+export function assignmentDiagnosticLines(check, toLabel = (file) => file) {
+  const lines = [
+    `[tsx-tests] assignment check FAILED discovered=${check.discoveredCount}` +
+      ` assigned=${check.assignedCount} assigned_unique=${check.assignedUniqueCount}` +
+      ` missing=${check.missing.length} duplicate=${check.duplicate.length}` +
+      ` unexpected=${check.unexpected.length}`,
+  ];
+  for (const [label, files] of [
+    ['missing', check.missing],
+    ['duplicate', check.duplicate],
+    ['unexpected', check.unexpected],
+  ]) {
+    for (const file of files) lines.push(`[tsx-tests]   ${label}: ${toLabel(file)}`);
+  }
+  return lines;
+}
+
 function childEnvironment() {
   const env = { ...process.env, NODE_TEST_CONTEXT: '1' };
   for (const key of GIT_LOCATION_ENV) delete env[key];
@@ -211,13 +263,24 @@ async function runLaneSequentially(files, context) {
  * `records` carries per-execution timings: one entry per file for the serial and
  * parallel lanes, plus a single entry for the module-mock batch (which is one
  * process, so per-file timings do not exist for it).
+ *
+ * `discovered` is the pre-partition file list; reporting it separately from the
+ * assignment count is what makes `discovered=N assigned=N` a real claim.
  */
-export function summaryLines({ workspace, workers, partition, records, failures, totalMs }) {
-  const assigned = assignments(partition);
+export function summaryLines({
+  workspace,
+  workers,
+  discovered,
+  partition,
+  records,
+  failures,
+  totalMs,
+}) {
+  const check = verifyAssignment(discovered, partition);
   const parallelCount = partition.parallel.reduce((sum, lane) => sum + lane.length, 0);
   const lines = [
     `\n[tsx-tests] summary workspace="${workspace}" workers=${workers}` +
-      ` discovered=${assigned.length} assigned=${assigned.length}` +
+      ` discovered=${check.discoveredCount} assigned=${check.assignedUniqueCount}` +
       ` module_mock=${partition.moduleMock.length} serial=${partition.serial.length}` +
       ` parallel=${parallelCount}` +
       ` failed=${failures.length} total_ms=${Math.round(totalMs)} total=${formatDuration(totalMs)}`,
@@ -242,6 +305,7 @@ export function summaryLines({ workspace, workers, partition, records, failures,
 export function buildArtifact({
   workspace,
   workers,
+  discovered,
   partition,
   records,
   failures,
@@ -250,12 +314,20 @@ export function buildArtifact({
 }) {
   const byFile = new Map(records.filter((record) => record.file).map((r) => [r.file, r]));
   const batch = records.find((record) => record.batch);
+  const check = verifyAssignment(discovered, partition);
   return {
     kind: 'tsx-tests',
     workspace,
     workers,
-    discoveredCount: assignments(partition).length,
-    assignedCount: assignments(partition).length,
+    discoveredCount: check.discoveredCount,
+    assignedCount: check.assignedUniqueCount,
+    assignment: {
+      ok: check.ok,
+      assignedTotal: check.assignedCount,
+      missing: check.missing.map(toLabel),
+      duplicate: check.duplicate.map(toLabel),
+      unexpected: check.unexpected.map(toLabel),
+    },
     status: failures.length > 0 ? 'fail' : 'ok',
     totalMs: Math.round(totalMs),
     files: assignments(partition).map((entry) => {
@@ -310,6 +382,15 @@ async function main() {
 
   const env = childEnvironment();
   const toLabel = (file) => relative(cwd, file);
+
+  // Reject a bad partition before spending minutes running tests: a lost file
+  // would otherwise look like a green run over a smaller suite.
+  const assignmentCheck = verifyAssignment(tests, partition);
+  if (!assignmentCheck.ok) {
+    for (const line of assignmentDiagnosticLines(assignmentCheck, toLabel)) console.error(line);
+    process.exit(1);
+  }
+
   // Buffer per-file output only when lanes can actually interleave; a single
   // active lane keeps the historical live-streaming behaviour.
   const activeLanes = partition.parallel.filter((lane) => lane.length > 0);
@@ -355,6 +436,7 @@ async function main() {
   const report = {
     workspace: basename(cwd),
     workers,
+    discovered: tests,
     partition,
     records: labelled,
     failures,
