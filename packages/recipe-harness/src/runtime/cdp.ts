@@ -279,6 +279,7 @@ interface CdpCallSession {
 
 const COMPOSITOR_WORLD = 'farmslot-compositor-probe';
 const DOM_SETTLEMENT_WORLD = 'farmslot-dom-settlement';
+class CdpPageEvaluationError extends Error {}
 const isolatedWorldContexts = new WeakMap<
   CdpCallSession,
   Map<string, { executionContextId: number }>
@@ -328,7 +329,7 @@ async function evaluateCdpSessionInIsolatedWorld<T>(
       { timeoutMs },
     );
     if (result.exceptionDetails) {
-      throw new Error(
+      throw new CdpPageEvaluationError(
         result.exceptionDetails.exception?.description ??
           result.exceptionDetails.text ??
           'CDP isolated-world evaluation failed.',
@@ -862,6 +863,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 }
 
 function isTransientCdpContextError(error: unknown): boolean {
+  if (error instanceof CdpPageEvaluationError) return false;
   const message = error instanceof Error ? error.message : String(error);
   return /execution context was destroyed|execution context with given id not found|cannot find context with specified id|execution context is not available in detached frame|inspected target navigated or closed|not attached to an active page|session with given id not found|no frame (?:with|for) given id found|frame with the given id (?:is|was) not found/iu.test(
     message,

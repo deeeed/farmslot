@@ -3069,6 +3069,32 @@ test('CDP public isolated-world evaluation recovers on its first call after navi
   ]);
 });
 
+test('CDP public isolated-world evaluation does not retry page-authored exceptions', async () => {
+  let evaluationCount = 0;
+  const page = new CdpWebPage({
+    async call(method: string) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main-frame' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        return { executionContextId: 17 };
+      }
+      evaluationCount += 1;
+      return {
+        exceptionDetails: {
+          exception: { description: 'Execution context was destroyed.' },
+        },
+      };
+    },
+  } as never);
+
+  await assert.rejects(
+    page.evaluateInIsolatedWorld('throw new Error("Execution context was destroyed.")', 'consumer'),
+    /Execution context was destroyed\./u,
+  );
+  assert.equal(evaluationCount, 1);
+});
+
 test('CDP navigation waits for the loaded document before returning', async () => {
   let loadHandler: (() => void) | undefined;
   let ready = false;
