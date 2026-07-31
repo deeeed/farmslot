@@ -24,6 +24,7 @@ import {
 
 const QUALITY_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RUNNER_PATH = path.resolve(QUALITY_DIR, 'run-tsx-tests.mjs');
+const REPO_ROOT = path.resolve(QUALITY_DIR, '..', '..');
 // Every entrypoint that prints a timing summary and then exits shares the same
 // truncation hazard, so the guard covers all of them, not just this runner.
 const DRAIN_SAFE_ENTRYPOINTS = [
@@ -51,6 +52,45 @@ test('parseArgs separates flags from test roots', () => {
     nodeTest: true,
     workers: undefined,
   });
+});
+
+test('--workers rejects a missing or flag-like value instead of silently going serial', () => {
+  // resolveWorkers(undefined) is indistinguishable from an omitted flag, so a bare
+  // trailing --workers used to drop the run to serial while the operator believed
+  // they had asked for parallelism — a silent breach of the AC5 worker contract.
+  assert.throws(() => parseArgs(['src', '--workers']), /--workers requires a value/);
+  assert.throws(
+    () => parseArgs(['--workers', '--node-test', 'src']),
+    /followed by the flag --node-test/,
+    'a following flag must not be swallowed as the worker count',
+  );
+  // The valid form is unaffected.
+  assert.deepEqual(parseArgs(['--workers', '4', 'src']), {
+    roots: ['src'],
+    cwd: undefined,
+    tsconfig: undefined,
+    nodeTest: false,
+    workers: '4',
+  });
+});
+
+test('the CLI surfaces a missing --workers value rather than running serial', () => {
+  const result = spawnSync(
+    process.execPath,
+    [RUNNER_PATH, '--cwd', REPO_ROOT, 'src', '--workers'],
+    {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+  assert.notEqual(result.status, 0, `expected a non-zero exit\n${out}`);
+  assert.match(out, /--workers requires a value/);
+  assert.ok(
+    !/\[tsx-tests\] summary/.test(out),
+    'the run must abort before executing anything, not report a serial summary',
+  );
 });
 
 test('worker count defaults to serial and rejects invalid values', () => {
@@ -214,6 +254,7 @@ const GATEWAY_SERIAL_INVENTORY = [
 const SHARED_STATE_PATTERNS = [
   /\bstatusFile\b/, //                                    core/state.js accessor
   /\bpoolDir\b/, //                                       core/config.js accessor
+  /\bprojectsDir\b/, //                                   core/config.js accessor
   /\.farm-status/, //                                      the status file by name
   /farmslotRoot\s*,\s*['"`](pool|projects|templates)\b/, // path.join(farmslotRoot, 'pool', …)
 ];
@@ -222,9 +263,19 @@ export function reachesSharedState(source) {
   return SHARED_STATE_PATTERNS.some((pattern) => pattern.test(source));
 }
 
+// Justified exceptions. A suite lands here only when it cannot collide with a
+// parallel lane; "it happens to pass today" is not a reason. Note the asymmetry
+// with the serial inventory: mkdtemp names are unique per call, so two lanes
+// cannot target the same path — but a FIXED-name write through any of the
+// accessors above must be serial, which is why the guard matches the accessor
+// rather than the write.
 const SHARED_STATE_READ_ONLY = {
   'src/projects/repo-root.test.ts': 'asserts resolved paths only; never writes',
   'src/runtime/session-usage-script.test.ts': 'declares its own temp poolDir under a mkdtemp root',
+  'src/methods/run.test.ts':
+    'writes under the real projectsDir but only via mkdtempSync, so every fixture path is unique ' +
+    'per call and cannot collide with another lane; it must move to the serial lane if it ever ' +
+    'writes a fixed name there',
 };
 
 test('the gateway serial lane matches its reviewed inventory', () => {
@@ -496,6 +547,50 @@ test('failures are aggregated rather than reported one at a time', () => {
     '[tsx-tests]   - src/c.test.ts exit=2',
     '[tsx-tests]   - src/b.test.ts exit=1',
   ]);
+});
+
+// The summary-rendering test above builds finished records by hand, so it stays
+// green even if the runner stopped at the first failing file. This one drives the
+// real runner end to end: two failing files with a passing file sorted AFTER them,
+// so a fail-fast runner could not produce the passing file's marker or the second
+// failure. Deliberately slower than the rest of this suite — it spawns real
+// `yarn exec tsx` processes — because that is the only way to prove the execution
+// contract rather than the reporting of it.
+test('a failing run executes every file and aggregates all failures', () => {
+  // temp/ is gitignored and inside the repo, so `yarn exec tsx` still resolves
+  // the workspace. Cleanup removes only this uniquely named subdirectory.
+  const fixtureDir = path.join(REPO_ROOT, 'temp', `tsx-runner-e2e-${process.pid}`);
+  mkdirSync(fixtureDir, { recursive: true });
+  const write = (name, body) => writeFileSync(path.join(fixtureDir, name), body);
+  write('a-fails.test.ts', "console.log('E2E-MARKER-A');\nprocess.exit(1);\n");
+  write('b-fails.test.ts', "console.log('E2E-MARKER-B');\nprocess.exit(1);\n");
+  write('c-passes.test.ts', "console.log('E2E-MARKER-C');\n");
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', REPO_ROOT, '--workers', '1', path.relative(REPO_ROOT, fixtureDir)],
+      { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 180_000 },
+    );
+    const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+
+    assert.notEqual(result.status, 0, `a run with failing files must exit non-zero\n${out}`);
+
+    // Execution contract: every file ran, including the one after both failures.
+    for (const marker of ['E2E-MARKER-A', 'E2E-MARKER-B', 'E2E-MARKER-C']) {
+      assert.ok(out.includes(marker), `${marker} missing — the runner stopped early\n${out}`);
+    }
+
+    // Aggregation contract: both failures reported, not just the first.
+    assert.ok(
+      /\[tsx-tests\] summary .*discovered=3 assigned=3 .*failed=2/.test(out),
+      `summary should report 3 files and 2 failures\n${out}`,
+    );
+    assert.ok(out.includes('a-fails.test.ts exit=1'), `first failure not listed\n${out}`);
+    assert.ok(out.includes('b-fails.test.ts exit=1'), `second failure not listed\n${out}`);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
 });
 
 test('the artifact records the worker contract and every assigned file exactly once', () => {

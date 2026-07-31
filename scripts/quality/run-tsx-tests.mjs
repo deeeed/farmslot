@@ -40,6 +40,24 @@ const GIT_LOCATION_ENV = [
   'GIT_PREFIX',
 ];
 
+/**
+ * Read the value that must follow `flag`.
+ *
+ * A bare trailing `--workers` used to yield `undefined`, which `resolveWorkers`
+ * treats exactly like an omitted flag — so the run silently dropped to serial
+ * while the operator believed they had asked for parallelism. A following flag
+ * token (`--workers --node-test`) was worse: it was swallowed as the value and
+ * the real flag disappeared. Both are now hard errors.
+ */
+function requireFlagValue(argv, index, flag) {
+  const value = argv[index + 1];
+  if (value === undefined) throw new Error(`${flag} requires a value but none was given`);
+  if (value.startsWith('--')) {
+    throw new Error(`${flag} requires a value but was followed by the flag ${value}`);
+  }
+  return value;
+}
+
 export function parseArgs(argv) {
   const roots = [];
   let cwd;
@@ -58,7 +76,8 @@ export function parseArgs(argv) {
       continue;
     }
     if (arg === '--workers') {
-      workers = argv[++index];
+      workers = requireFlagValue(argv, index, '--workers');
+      index += 1;
       continue;
     }
     if (arg === '--node-test') {
