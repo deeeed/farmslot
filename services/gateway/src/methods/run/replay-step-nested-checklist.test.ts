@@ -23,6 +23,7 @@ mock.module('../../core/config.js', {
   namedExports: {
     ...realConfig,
     DEFAULT_TASK_DIR: '.task',
+    farmslotRoot: path.resolve(import.meta.dirname, '../../../../..'),
     loadSlotVars: async () => ({
       remoteRepo: workspace,
       host: 'localhost',
@@ -31,7 +32,16 @@ mock.module('../../core/config.js', {
       projectName: 'farmslot-farm',
     }),
     loadProjectVars: async () => ({ projectJson: {} }),
+    isIgnoredPoolFile: () => false,
+    normalizeRawProjectAutoRecovery: () => undefined,
+    normalizeRawProjectBacklog: () => undefined,
+    normalizeRawProjectPrepare: () => undefined,
+    normalizeRawProjectRoadmap: () => undefined,
     getOrchestratorTaskRoot: () => orchestratorTaskRoot,
+    resolveSlot: async () => ({
+      pool: {},
+      slot: { id: 'macwork-ff-replay-checklist' },
+    }),
     resolveProjectTaskDirName: () => '.task',
     resolveTaskRelDir: (taskFile: string, taskRoot: string) => {
       const relativeTaskPath = path.relative(taskRoot, taskFile);
@@ -65,11 +75,83 @@ mock.module('../../core/index.js', {
   },
 });
 
+mock.module('../../core/tmux.js', {
+  namedExports: {
+    shellQuote: (value: string) => `'${value.replaceAll("'", "'\\''")}'`,
+  },
+});
+
+mock.module('../../backlog/dispatch-queue.js', {
+  namedExports: {
+    claimQueueItemForReplay: () => null,
+    getQueueSnapshot: () => [],
+    persistQueueNow: async () => {},
+    releaseQueueClaim: () => {},
+    removeQueueItemInternal: () => {},
+    renewQueueClaim: () => false,
+  },
+});
+
+mock.module('../../family-observability/context.js', {
+  namedExports: {
+    isFollowUpFlow: () => false,
+  },
+});
+
+mock.module('../dispatch/ticket-ref.js', {
+  namedExports: {
+    validateTicketRef: () => {},
+  },
+});
+
+mock.module('../../run-engine/gate-policy.js', {
+  namedExports: {
+    hasValidPrNumber: (value: unknown) => Number.isInteger(value) && Number(value) > 0,
+    supersedeStaleHumanGateDecisions: () => {},
+  },
+});
+
+mock.module('../filesystem.js', {
+  namedExports: {
+    invalidateRecipeRunGroupCache: () => {},
+  },
+});
+
+mock.module('../../fleet/state.js', {
+  namedExports: {
+    farmslotRoot: path.resolve(import.meta.dirname, '../../../../..'),
+    isValidSafetyTier: () => true,
+  },
+});
+
+mock.module('../../live-recipe/context.js', {
+  namedExports: {
+    invalidateLiveRecipeContextMemo: () => {},
+  },
+});
+
+mock.module('../../runners/registry.js', {
+  namedExports: {
+    assertSupportedRunnerSpelling: () => {},
+    normalizeRunner: (runner: string) => runner,
+    runnerDefaultModel: () => 'test-model',
+    runnerDefaultSafetyTier: () => 'sandboxed',
+  },
+});
+
+mock.module('../../tasks/writer.js', {
+  namedExports: {
+    buildChecklistMarkerScript: () => '#!/bin/bash\n',
+    checklistMarkerHelperPath: () => '/tmp/checklist-marker.mjs',
+  },
+});
+
 mock.module('../../run-engine/orchestrator.js', {
   namedExports: {
     ...realOrchestrator,
     cancelRunEngine: () => {},
     bumpRunGeneration: () => {},
+    setRunFlags: () => {},
     startRun: async () => {},
   },
 });

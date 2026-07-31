@@ -14,6 +14,8 @@ let nextResult: ExecResult = { stdout: '', stderr: '', exitCode: 0 };
 const execCommands: string[] = [];
 mock.module('../../core/exec.js', {
   namedExports: {
+    execArgvOnSlot: async (): Promise<ExecResult> => nextResult,
+    execFileArgv: async (): Promise<ExecResult> => nextResult,
     execOnSlot: async (_vars: unknown, cmd: string): Promise<ExecResult> => {
       execCommands.push(cmd);
       return nextResult;
