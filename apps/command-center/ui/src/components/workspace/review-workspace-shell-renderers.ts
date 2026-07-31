@@ -137,6 +137,9 @@ export function renderReviewTopBar(input: {
   selectedRecommendation: string;
   setRecommendation: (recommendation: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE') => void;
   hasLearnings: boolean;
+  evidenceCount: number;
+  includeEvidence: boolean;
+  setIncludeEvidence: (includeEvidence: boolean) => void;
   posting: boolean;
   recovering: boolean;
   refreshing: boolean;
@@ -176,6 +179,20 @@ export function renderReviewTopBar(input: {
           `,
         )}
       </span>
+      ${input.evidenceCount > 0
+        ? html`
+            <label class="rw-evidence-post-toggle">
+              <input
+                type="checkbox"
+                .checked=${input.includeEvidence}
+                ?disabled=${input.posting || input.recovering}
+                @change=${(event: Event) =>
+                  input.setIncludeEvidence((event.currentTarget as HTMLInputElement).checked)}
+              />
+              Attach ${input.evidenceCount} evidence item${input.evidenceCount === 1 ? '' : 's'}
+            </label>
+          `
+        : nothing}
       <span class="rw-spacer"></span>
       <button
         class="rw-panel-toggle"

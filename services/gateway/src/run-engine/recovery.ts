@@ -19,7 +19,7 @@ import {
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
-import { isRecoverableReviewerContext } from './recover-inflight-reviews.js';
+import { reviewerContextNeedsRecovery } from './recover-inflight-reviews.js';
 import { recoveryReviewPlanForActiveFix } from './review-plan.js';
 
 const S = PipelineSteps;
@@ -167,7 +167,10 @@ export function isPublicationReviewRecoveryHeld(run: Run): boolean {
 }
 
 export function hasRecoverablePublicationReviewer(run: Run): boolean {
-  return (run.agentContexts ?? []).some(isRecoverableReviewerContext);
+  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  return (run.agentContexts ?? []).some((context) =>
+    reviewerContextNeedsRecovery(context, reviews),
+  );
 }
 
 /**
@@ -267,9 +270,10 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
 
     // A gate-held reviewer survives a gateway restart in tmux, but the await
     // that owned it does not. Recover or re-arm that reviewer BEFORE generic
-    // runtime reconciliation: reconciliation can otherwise mark a terminal
-    // reviewer failed/idle, after which the stale human gate is rebroadcast and
-    // the completed review is never ingested.
+    // runtime reconciliation: reconciliation can otherwise observe a terminal
+    // reviewer before the publish-gate await persists its result, after which
+    // the stale human gate is rebroadcast and the completed review is never
+    // ingested.
     if (
       run.slotId &&
       isPublicationReviewRecoveryHeld(run) &&
