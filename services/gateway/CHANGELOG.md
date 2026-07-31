@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(run-engine): honor an update-branch worker's persisted `needsSelfReview: false` signal on remote slots instead of defaulting to an unnecessary review when the signal file is not local to the gateway.
 - fix(dispatch): bind fresh orchestration workers to the canonical `worker` tmux session anchor, reuse a chained run's persisted parent-worker target, and recognize legacy `review-fix[-N]` tabs during terminal slot cleanup so retries cannot inherit stale reviewer panes while the empty anchor remains available.
 - fix(work-graph): preserve durable completed-run outcomes when historical reconciliation reveals work that began before a start dependency. Scheduler-authorized work still surfaces prerequisite regressions.
 - fix(backlog): reconcile historical same-project/source runs into durable backlog and WorkGraph linkage, applying the run's current lifecycle without bypassing queue, launch-plan, or ownership guards.

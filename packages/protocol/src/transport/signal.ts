@@ -19,6 +19,8 @@ export interface WorkerSignal {
   step?: string; // current step name
   reason?: string; // why blocked/failed
   prNumber?: number; // if worker created a PR
+  /** The worker completed a trivial update-branch task that does not need self-review. */
+  needsSelfReview?: boolean;
   timestamp: string;
 }
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix(protocol): declare the optional worker `needsSelfReview` signal already emitted by the agent runtime so remote update-branch review skips remain type-safe on clean builds.
 - fix(agents): expose the canonical primary `worker` tmux session anchor separately from disposable role windows, and recognize legacy `review-fix[-N]` reviewer windows for lifecycle cleanup.
 - fix(work-graph): persist scheduler authorization on nodes so historical reconciliation cannot suppress prerequisite-regression alarms for scheduled work.
 - feat(backlog): add the typed `backlog.reconcileRun` repair action for existing run/backlog handoffs.
