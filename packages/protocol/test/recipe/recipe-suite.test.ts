@@ -218,6 +218,7 @@ test('fails closed when suite coverage or retained summaries do not reconcile', 
       },
     })),
     { ...input, summaries: { 'summaries/fail.json': input.summaries['summaries/fail.json'] } },
+    { ...input, summaries: { ...input.summaries, 'summaries/unreferenced.json': summary('pass') } },
     {
       ...input,
       summaries: { ...input.summaries, 'summaries/pass.json': summary('unknown') },
@@ -237,6 +238,27 @@ test('fails closed when suite coverage or retained summaries do not reconcile', 
   for (const mutation of mutations) {
     assert.equal(validateRecipeSuitePackage(mutation).status, 'invalid');
   }
+});
+
+test('rejects distinct cases backed by the same retained run', () => {
+  const input = validPackage();
+  const passVerdict = input.result.resolutions[0];
+  const result = {
+    ...input.result,
+    resolutions: input.result.resolutions.map((resolution) =>
+      resolution.id === 'fails' ? { ...passVerdict, id: 'fails' } : resolution,
+    ),
+  };
+  const validation = validateRecipeSuitePackage({ ...input, result });
+  assert.equal(validation.status, 'invalid');
+  assert.equal(
+    validation.findings.some((finding) => finding.code === 'recipe_suite.duplicate_summary_path'),
+    true,
+  );
+  assert.equal(
+    validation.findings.some((finding) => finding.code === 'recipe_suite.duplicate_summary_digest'),
+    true,
+  );
 });
 
 test('enforces explicit and truthful non-execution reasons', () => {
@@ -289,10 +311,48 @@ test('enforces explicit and truthful non-execution reasons', () => {
     replaceManual({
       id: 'manual',
       kind: 'not_executed',
+      reason_class: 'ordering_dependent',
+      detail: 'Blocked by itself.',
+      blocked_by: ['manual'],
+    }),
+    replaceManual({
+      id: 'manual',
+      kind: 'not_executed',
       reason_class: 'oversight',
       detail: 'The case was accidentally skipped.',
     }),
   ]) {
     assert.equal(validateRecipeSuitePackage(invalid).status, 'invalid');
   }
+
+  const cycle = {
+    ...input,
+    scope: {
+      ...input.scope,
+      cases: [...input.scope.cases, { id: 'other' }],
+    },
+  };
+  const cyclicResult = {
+    ...cycle.result,
+    scope_digest: digestRecipeSuiteScope(cycle.scope),
+    totals: { declared: 4, executed: 2, not_executed: 2 },
+    resolutions: [
+      ...cycle.result.resolutions.filter((resolution) => resolution.id !== 'manual'),
+      {
+        id: 'manual',
+        kind: 'not_executed' as const,
+        reason_class: 'ordering_dependent' as const,
+        detail: 'Blocked by other.',
+        blocked_by: ['other'],
+      },
+      {
+        id: 'other',
+        kind: 'not_executed' as const,
+        reason_class: 'ordering_dependent' as const,
+        detail: 'Blocked by manual.',
+        blocked_by: ['manual'],
+      },
+    ],
+  };
+  assert.equal(validateRecipeSuitePackage({ ...cycle, result: cyclicResult }).status, 'invalid');
 });

@@ -89,6 +89,18 @@ test('finalizes real recipe results and explicit non-execution without schedulin
       suite_id: 'suite.finalizer',
       cases: [{ id: 'passes' }, { id: 'fails' }, { id: 'manual' }],
     });
+    const rejectedDir = path.join(tempRoot, 'rejected-suite');
+    await assert.rejects(
+      finalizeRecipeSuite({
+        scope,
+        outputDir: rejectedDir,
+        resolutions: [{ id: 'passes', kind: 'verdict', result: pass }],
+      }),
+      /missing_resolution/u,
+    );
+    await assert.rejects(readFile(path.join(rejectedDir, 'summaries', '0001.json')), {
+      code: 'ENOENT',
+    });
     const finalized = await finalizeRecipeSuite({
       scope,
       outputDir: path.join(tempRoot, 'suite'),

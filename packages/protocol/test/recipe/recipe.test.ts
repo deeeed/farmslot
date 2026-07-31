@@ -1258,6 +1258,26 @@ test('rejects invalid traces without relying on retained recipe validation', () 
   );
 });
 
+test('rejects an empty trace even when its summary claims a passing zero-step run', () => {
+  const result = validateRecipeArtifactPackage({
+    trace: [],
+    summary: {
+      status: 'pass',
+      total: 0,
+      passed: 0,
+      failed: 0,
+      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+    },
+    manifest: { version: 1, runStatus: 'pass', artifacts: [] },
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.equal(
+    result.findings.some((finding) => finding.code === 'artifact_package.invalid_trace'),
+    true,
+  );
+});
+
 test('rejects retained traces that no longer match their recipe or artifact attribution', () => {
   const document = recipe({
     capture: {

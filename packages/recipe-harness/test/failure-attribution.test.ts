@@ -208,7 +208,7 @@ test('preserves a nested structured cause on the parent call failure', async () 
   }
 });
 
-test('records authored terminal failure as an unknown failed entry', async () => {
+test('records authored terminal failure as a subject failed entry', async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-terminal-failure-'));
   try {
     const result = await createRecipeRunner({
@@ -223,13 +223,13 @@ test('records authored terminal failure as an unknown failed entry', async () =>
     const summary = (await readJson(result.summaryPath)) as Record<string, unknown>;
     assert.equal(result.status, 'fail');
     assert.equal(trace[0]?.ok, false);
-    assert.equal(trace[0]?.cause_class, 'unknown');
+    assert.equal(trace[0]?.cause_class, 'subject');
     assert.equal(summary.failed, 1);
     assert.deepEqual(summary.cause_counts, {
-      subject: 0,
+      subject: 1,
       harness: 0,
       environment: 0,
-      unknown: 1,
+      unknown: 0,
     });
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

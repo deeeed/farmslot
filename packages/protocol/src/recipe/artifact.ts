@@ -457,6 +457,15 @@ function validateRunEvidence(
     );
     return;
   }
+  if (entries.length === 0) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.invalid_trace',
+      'trace.json',
+      'trace.json must contain at least one recorded entry.',
+    );
+  }
   const causeSet = new Set<string>(RECIPE_FAILURE_CAUSES);
   const causeCounts = Object.fromEntries(
     RECIPE_FAILURE_CAUSES.map((cause) => [cause, 0]),

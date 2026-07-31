@@ -126,6 +126,9 @@ mismatches are `subject`; harness-owned machinery and unavailable prerequisites
 must emit their structured classes; untyped failures remain `unknown`. Summary
 cause counts reconcile exactly with the failed trace entries.
 
+A non-zero `command` exit is untyped and remains `unknown`; callers that can
+prove ownership must raise `RecipeExecutionError` with the appropriate class.
+
 ## Suite evidence
 
 Freeze scope before executing cases, then finalize already-completed runs. The

@@ -177,10 +177,10 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           endedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAt.getTime(),
           ok: !failed,
-          ...(failed ? { cause_class: 'unknown' as const } : {}),
+          ...(failed ? { cause_class: 'subject' as const } : {}),
           status,
         });
-        if (failed) failureCause ??= 'unknown';
+        if (failed) failureCause ??= 'subject';
         return status;
       }
 

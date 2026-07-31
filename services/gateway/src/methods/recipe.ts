@@ -204,7 +204,10 @@ function isSuppressedRecipeProtocolFinding(
     (finding.code === 'artifact_package.missing_required_file' &&
       missingArtifactPaths.has(finding.path)) ||
     (finding.code === 'artifact_package.missing_manifest' &&
-      artifactReadErrorPaths.has('artifact-manifest.json'))
+      artifactReadErrorPaths.has('artifact-manifest.json')) ||
+    (finding.code === 'artifact_package.invalid_summary' &&
+      artifactReadErrorPaths.has('summary.json')) ||
+    (finding.code === 'artifact_package.invalid_trace' && artifactReadErrorPaths.has('trace.json'))
   );
 }
 

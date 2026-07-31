@@ -189,6 +189,51 @@ export function validateRecipeSuitePackage(input: RecipeSuitePackageInput): Reci
       .filter(([, entries]) => entries.length === 1)
       .map(([id, entries]) => [id, entries[0]!] as const),
   );
+  const summaryPathOwners = new Map<string, string>();
+  const summaryDigestOwners = new Map<string, string>();
+  result.resolutions.forEach((resolution, index) => {
+    if (resolution.kind !== 'verdict') return;
+    const pathOwner = summaryPathOwners.get(resolution.summary_path);
+    if (pathOwner != null) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe_suite.duplicate_summary_path',
+        `suite-result.json.resolutions[${index}].summary_path`,
+        `Cases ${pathOwner} and ${resolution.id} cannot reuse the same retained summary.`,
+      );
+    } else {
+      summaryPathOwners.set(resolution.summary_path, resolution.id);
+    }
+    const digestOwner = summaryDigestOwners.get(resolution.summary_digest);
+    if (digestOwner != null) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe_suite.duplicate_summary_digest',
+        `suite-result.json.resolutions[${index}].summary_digest`,
+        `Cases ${digestOwner} and ${resolution.id} cannot reuse the same retained summary digest.`,
+      );
+    } else {
+      summaryDigestOwners.set(resolution.summary_digest, resolution.id);
+    }
+  });
+  const referencedSummaryPaths = new Set(
+    result.resolutions
+      .filter((resolution) => resolution.kind === 'verdict')
+      .map((resolution) => resolution.summary_path),
+  );
+  for (const summaryPath of Object.keys(input.summaries)) {
+    if (!referencedSummaryPaths.has(summaryPath)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe_suite.unexpected_summary',
+        `summaries.${summaryPath}`,
+        `Retained summary ${summaryPath} is not referenced by a suite verdict.`,
+      );
+    }
+  }
   result.resolutions.forEach((resolution, index) => {
     if (resolution.kind === 'verdict') {
       validateVerdictSummary(ctx, resolution, index, input.summaries);
@@ -196,8 +241,40 @@ export function validateRecipeSuitePackage(input: RecipeSuitePackageInput): Reci
     }
     validateNonExecutionSemantics(ctx, resolution, index, declaredIds, finalResolutions);
   });
+  validateOrderingDependencyGraph(ctx, finalResolutions);
 
   return finishResult(ctx);
+}
+
+function validateOrderingDependencyGraph(
+  ctx: MutableValidationContext,
+  resolutions: ReadonlyMap<string, RecipeSuiteResolution>,
+): void {
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (id: string): void => {
+    if (visiting.has(id)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe_suite.ordering_dependency_cycle',
+        'suite-result.json.resolutions',
+        `Ordering dependencies must be acyclic; ${id} participates in a cycle.`,
+      );
+      return;
+    }
+    if (visited.has(id)) return;
+    const resolution = resolutions.get(id);
+    if (resolution?.kind !== 'not_executed' || resolution.reason_class !== 'ordering_dependent') {
+      visited.add(id);
+      return;
+    }
+    visiting.add(id);
+    for (const blocker of resolution.blocked_by ?? []) visit(blocker);
+    visiting.delete(id);
+    visited.add(id);
+  };
+  for (const id of resolutions.keys()) visit(id);
 }
 
 function parseScope(
@@ -444,7 +521,9 @@ function parseResolution(
     };
   }
   if (value.kind === 'not_executed') {
-    validateExactKeys(ctx, value, ['id', 'kind', 'reason_class', 'detail', 'blocked_by'], path);
+    validateExactKeys(ctx, value, ['id', 'kind', 'reason_class', 'detail', 'blocked_by'], path, [
+      'blocked_by',
+    ]);
     const blockedBy = value.blocked_by;
     const blockedByValid =
       blockedBy == null ||
@@ -578,8 +657,10 @@ function validateExactKeys(
   value: Record<string, unknown>,
   allowed: readonly string[],
   path: string,
+  optional: readonly string[] = [],
 ): void {
   const allowedSet = new Set(allowed);
+  const optionalSet = new Set(optional);
   for (const key of Object.keys(value)) {
     if (!allowedSet.has(key)) {
       addFinding(
@@ -592,7 +673,7 @@ function validateExactKeys(
     }
   }
   for (const key of allowed) {
-    if (key === 'blocked_by') continue;
+    if (optionalSet.has(key)) continue;
     if (!Object.hasOwn(value, key)) {
       addFinding(
         ctx,

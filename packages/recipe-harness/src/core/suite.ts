@@ -60,8 +60,8 @@ export async function finalizeRecipeSuite(
   if (digestRecipeSuiteScope(request.scope.scope) !== request.scope.digest) {
     throw new Error('Recipe suite scope changed after it was frozen.');
   }
-  await mkdir(request.outputDir, { recursive: true, mode: 0o700 });
   const summaries: Record<string, unknown> = {};
+  const summaryFiles: Array<{ path: string; content: string }> = [];
   const resolutions: RecipeSuiteResultDocument['resolutions'] = [];
   let summaryIndex = 0;
 
@@ -72,12 +72,8 @@ export async function finalizeRecipeSuite(
     }
     const summary: unknown = JSON.parse(await readFile(input.result.summaryPath, 'utf8'));
     const summaryPath = `summaries/${String(++summaryIndex).padStart(4, '0')}.json`;
-    await writeFileWithinRoot(
-      request.outputDir,
-      summaryPath,
-      `${JSON.stringify(summary, null, 2)}\n`,
-    );
     summaries[summaryPath] = summary;
+    summaryFiles.push({ path: summaryPath, content: `${JSON.stringify(summary, null, 2)}\n` });
     resolutions.push({
       id: input.id,
       kind: 'verdict',
@@ -109,6 +105,10 @@ export async function finalizeRecipeSuite(
     );
   }
 
+  await mkdir(request.outputDir, { recursive: true, mode: 0o700 });
+  for (const file of summaryFiles) {
+    await writeFileWithinRoot(request.outputDir, file.path, file.content);
+  }
   const scopePath = await writeFileWithinRoot(
     request.outputDir,
     'suite-scope.json',

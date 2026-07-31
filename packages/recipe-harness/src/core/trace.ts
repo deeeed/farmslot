@@ -6,13 +6,13 @@ export function recordSyntheticFailure(
   traceWriter: TraceWriter,
   nodeId: string,
   error: Error,
-  action = 'unknown',
-  causeClass: RecipeFailureCause = 'unknown',
+  action: string | undefined,
+  causeClass: RecipeFailureCause,
 ): void {
   const now = new Date().toISOString();
   traceWriter.record({
     nodeId,
-    action,
+    action: action ?? 'unknown',
     startedAt: now,
     endedAt: now,
     durationMs: 0,
