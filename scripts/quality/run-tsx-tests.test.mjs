@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,6 +12,7 @@ import {
   buildArtifact,
   classifyTest,
   discoverTests,
+  finish,
   parseArgs,
   partitionTests,
   resolveWorkers,
@@ -19,6 +21,8 @@ import {
   verifyAssignment,
   WORKERS_ENV,
 } from './run-tsx-tests.mjs';
+
+const RUNNER_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'run-tsx-tests.mjs');
 
 const FILES = Array.from({ length: 10 }, (_, index) => `src/suite-${index}.test.ts`);
 
@@ -67,6 +71,76 @@ test('classification keys off module mocks and the serial pragma', () => {
     'module-mock',
     'module mocks need the batched runner even when also marked serial',
   );
+});
+
+// The runner prints its aggregate failure list immediately before exiting. If it
+// exits via process.exit(), Node tears down without flushing pending writes and
+// pipe-backed stdout truncates at the pipe buffer — the exit status stays correct
+// while the diagnostics a red build needs disappear. These two tests pin the
+// drain-safe exit: one asserts the mechanism end-to-end over a pipe, the other
+// stops process.exit() from creeping back into the module.
+const LARGE_PAYLOAD_BYTES = 1_000_000;
+
+function runDetached(source) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'farmslot-exit-drain-'));
+  const script = path.join(dir, 'probe.mjs');
+  writeFileSync(script, source);
+  try {
+    const result = spawnSync(process.execPath, [script], {
+      encoding: 'utf8',
+      // Pipe-backed stdout is the condition that triggers the truncation;
+      // an inherited TTY would hide it.
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return { stdout: result.stdout ?? '', status: result.status };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('a failing run flushes its full output over a pipe before exiting', () => {
+  const probe = `
+    import { finish } from ${JSON.stringify(RUNNER_PATH)};
+    process.stdout.write('x'.repeat(${LARGE_PAYLOAD_BYTES}));
+    process.stdout.write('\\n[tsx-tests] failures:\\n[tsx-tests]   - src/last.test.ts exit=1\\n');
+    finish(1);
+  `;
+  const { stdout, status } = runDetached(probe);
+
+  assert.equal(status, 1, 'a failing run must still exit non-zero');
+  assert.ok(
+    stdout.length > LARGE_PAYLOAD_BYTES,
+    `stdout truncated to ${stdout.length} of >${LARGE_PAYLOAD_BYTES} bytes — pending writes were dropped`,
+  );
+  assert.ok(
+    stdout.endsWith('[tsx-tests]   - src/last.test.ts exit=1\n'),
+    'the trailing failure list must survive; it is written last and is dropped first',
+  );
+});
+
+test('the runner never calls process.exit()', () => {
+  const source = readFileSync(RUNNER_PATH, 'utf8');
+  const calls = source
+    .split('\n')
+    .filter((line) => /process\.exit\(/.test(line) && !line.trimStart().startsWith('*'));
+  assert.deepEqual(
+    calls,
+    [],
+    'use `process.exitCode` / finish() instead — process.exit() drops buffered stdout on a pipe',
+  );
+});
+
+test('finish sets the exit status without ending the process', () => {
+  const previous = process.exitCode;
+  try {
+    finish(1);
+    assert.equal(process.exitCode, 1);
+    finish(0);
+    assert.equal(process.exitCode, 0);
+  } finally {
+    process.exitCode = previous;
+  }
 });
 
 // Gateway runs at --workers 4, so any suite touching machine-wide or repo-wide

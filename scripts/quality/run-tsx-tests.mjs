@@ -350,6 +350,21 @@ export function buildArtifact({
   };
 }
 
+/**
+ * Set the exit status and let the event loop drain instead of calling
+ * `process.exit()`.
+ *
+ * `process.exit()` tears the process down without flushing pending writes. When
+ * stdout is a pipe — CI, `| tee`, a parent runner capturing output — that
+ * truncates at the pipe buffer: a 1 MB payload arrived as 8 KB in a local probe.
+ * This runner prints the aggregate failure list immediately before exiting, so
+ * the dropped bytes were exactly the diagnostics a red build needs, while the
+ * exit status still looked correct.
+ */
+export function finish(code) {
+  process.exitCode = code;
+}
+
 async function main() {
   const {
     roots,
@@ -364,14 +379,16 @@ async function main() {
     console.error(
       'Usage: run-tsx-tests.mjs [--cwd <dir>] [--tsconfig <file>] [--node-test] [--workers <n>] <dir-or-test-file> [...]',
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const workers = resolveWorkers(workersArg);
   const tests = discoverTests(roots, cwd);
   if (tests.length === 0) {
     console.error(`No .test.ts files found under: ${roots.join(', ')}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const partition = partitionTests(tests, {
@@ -388,7 +405,8 @@ async function main() {
   const assignmentCheck = verifyAssignment(tests, partition);
   if (!assignmentCheck.ok) {
     for (const line of assignmentDiagnosticLines(assignmentCheck, toLabel)) console.error(line);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // Buffer per-file output only when lanes can actually interleave; a single
@@ -451,7 +469,7 @@ async function main() {
   );
   if (artifactPath) console.log(`[tsx-tests] timings artifact: ${artifactPath}`);
 
-  process.exit(failures.length > 0 ? 1 : 0);
+  finish(failures.length > 0 ? 1 : 0);
 }
 
 if (isMainModule(import.meta.url)) await main();
