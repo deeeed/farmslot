@@ -55,6 +55,13 @@ function assertGitProbe(result: ExecResult, probe: string): void {
   }
 }
 
+function refExists(result: ExecResult, probe: string): boolean {
+  if (result.exitCode === 0) return true;
+  if (result.exitCode === 1) return false;
+  assertGitProbe(result, probe);
+  return false;
+}
+
 function nulPaths(stdout: string): string[] {
   return stdout.split('\0').filter(Boolean);
 }
@@ -82,7 +89,9 @@ export async function inspectWorktreePublishState(
   // `git status` can report a tracked path as modified from stale stat data
   // even when its content is unchanged. Diff tracked content against HEAD and
   // collect untracked files separately; NUL delimiters preserve unusual paths.
-  const tracked = await execute('git diff --name-only -z HEAD --');
+  const tracked = await execute(
+    'if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --name-only -z HEAD --; else git ls-files --cached -z; fi',
+  );
   assertGitProbe(tracked, 'tracked-content diff');
   const untracked = await execute('git ls-files --others --exclude-standard -z');
   assertGitProbe(untracked, 'untracked-files probe');
@@ -91,10 +100,7 @@ export async function inspectWorktreePublishState(
   const branchRef = `refs/heads/${branch}`;
   const remoteRef = `origin/${branch}`;
   const remoteProbe = await execute(`git rev-parse --verify --quiet ${shellQuote(remoteRef)}`);
-  if (remoteProbe.exitCode !== 0 && remoteProbe.exitCode !== 1) {
-    assertGitProbe(remoteProbe, `rev-parse ${remoteRef}`);
-  }
-  if (remoteProbe.exitCode === 0) {
+  if (refExists(remoteProbe, `rev-parse ${remoteRef}`)) {
     return {
       dirtyFiles,
       unpushedCommits: await countCommitsAhead(execute, remoteRef, branchRef),
@@ -114,10 +120,7 @@ export async function inspectWorktreePublishState(
     const upstreamProbe = await execute(
       `git rev-parse --verify --quiet ${shellQuote(upstreamRef)}`,
     );
-    if (upstreamProbe.exitCode !== 0 && upstreamProbe.exitCode !== 1) {
-      assertGitProbe(upstreamProbe, `rev-parse ${upstreamRef}`);
-    }
-    if (upstreamProbe.exitCode === 0) {
+    if (refExists(upstreamProbe, `rev-parse ${upstreamRef}`)) {
       return {
         dirtyFiles,
         unpushedCommits: await countCommitsAhead(execute, upstreamRef, branchRef),
@@ -126,11 +129,8 @@ export async function inspectWorktreePublishState(
   }
 
   const originHead = await execute('git symbolic-ref --quiet --short refs/remotes/origin/HEAD');
-  if (originHead.exitCode !== 0 && originHead.exitCode !== 1) {
-    assertGitProbe(originHead, 'origin/HEAD probe');
-  }
   const originHeadRef = originHead.stdout.trim();
-  if (originHead.exitCode === 0 && originHeadRef) {
+  if (refExists(originHead, 'origin/HEAD probe') && originHeadRef) {
     return {
       dirtyFiles,
       unpushedCommits: await countCommitsAhead(execute, originHeadRef, branchRef),

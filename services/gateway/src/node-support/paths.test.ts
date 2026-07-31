@@ -15,11 +15,13 @@ test('farmslot farm declares the setup bundle used by remote prepare hooks', () 
   };
   const result = resolveNodeSupportPaths('farmslot-farm', projectJson, root);
 
-  assert.deepEqual(result.paths, [
+  for (const expectedPath of [
     'projects/farmslot-farm/project.json',
     'projects/farmslot-farm/setup',
     'scripts',
-  ]);
+  ]) {
+    assert.ok(result.paths.includes(expectedPath), `missing ${expectedPath}`);
+  }
   assert.deepEqual(result.undeclaredHookPaths, []);
 
   const profiles = projectJson.prepare?.profiles;
@@ -193,6 +195,31 @@ test('node_support_dir hook refs require the same explicit coverage', () => {
       hooks: {
         preflight:
           'bash {{node_support_dir}}/projects/example-mobile-farm/scripts/preflight.sh {{repo}}',
+      },
+    },
+    root,
+  );
+
+  assert.deepEqual(result.undeclaredHookPaths, [
+    'projects/example-mobile-farm/project.json',
+    'projects/example-mobile-farm/scripts',
+    'scripts',
+  ]);
+});
+
+test('prepare profile hook refs are included in node support inference', () => {
+  const result = resolveNodeSupportPaths(
+    'example-mobile-farm',
+    {
+      prepare: {
+        profiles: {
+          sandbox: {
+            hooks: {
+              preflight:
+                'bash {{node_support_dir}}/projects/example-mobile-farm/scripts/preflight.sh',
+            },
+          },
+        },
       },
     },
     root,

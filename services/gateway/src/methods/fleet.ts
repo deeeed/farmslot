@@ -37,7 +37,7 @@ import {
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
-import { runnerProcessPatternSource } from '../runners/registry.js';
+import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { listRuns } from '../runs/store.js';
 
 import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
@@ -767,11 +767,7 @@ async function checkAgent(vars: SlotVars): Promise<string> {
     const panePid = r.stdout.trim();
     if (!panePid) return 'no-tmux';
     const runner = (await readSlotField(vars.slotId, 'runner')) as string | null;
-    const agentPattern = runnerProcessPatternSource(runner ?? undefined);
-    const a = await execOnSlot(vars, `pgrep -P '${panePid}' -f '${agentPattern}' >/dev/null 2>&1`, {
-      timeout: SLOT_CHECK_TIMEOUT_MS,
-    });
-    const status = a.exitCode === 0 ? 'working' : 'idle';
+    const status = (await isRunnerAliveUnderPane(vars, panePid, runner)) ? 'working' : 'idle';
     if (status === 'working') {
       console.log(
         `[fleet] checkAgent ${vars.slotId}: working (panePid=${panePid}, session=${session}, runner=${runner ?? 'auto'})`,

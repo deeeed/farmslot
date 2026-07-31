@@ -4,6 +4,7 @@ import { mock, test } from 'node:test';
 import type { SlotVars } from '../core/config.js';
 
 const vars = { slotId: 'macwork-mm-2', remoteRepo: '/tmp/repo' } as SlotVars;
+const issuedCommands: string[] = [];
 
 function cmdIncludes(cmd: string, fragment: string): boolean {
   return cmd.includes(fragment);
@@ -16,6 +17,7 @@ mock.module('../core/exec.js', {
     execArgvOnSlot: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execFileArgv: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execOnSlot: async (_vars: SlotVars, cmd: string) => {
+      issuedCommands.push(cmd);
       if (cmdIncludes(cmd, 'has-session')) {
         return { exitCode: 0, stdout: '', stderr: '' };
       }
@@ -91,7 +93,7 @@ mock.module('../core/exec.js', {
       // is a grandchild of the tmux shell and must be found through the shared
       // descendant-tree probe rather than direct-child `pgrep -P`.
       if (cmdIncludes(cmd, "list-panes -s -t 'coredev-5'")) {
-        return { exitCode: 0, stdout: '1|dev|0|zsh\n2|fix|0|2.1.220', stderr: '' };
+        return { exitCode: 0, stdout: '1|dev|0|zsh|4141\n2|fix|0|2.1.220|4242', stderr: '' };
       }
       if (cmdIncludes(cmd, 'display-message') && cmdIncludes(cmd, "'coredev-5:dev'")) {
         return { exitCode: 0, stdout: 'zsh', stderr: '' };
@@ -176,7 +178,12 @@ test('rediscoverAcceptingWorkerPane does not adopt a runner pane that is mid-tur
 });
 
 test('rediscoverAcceptingWorkerPane adopts a wrapped runner found below the pane shell', async () => {
+  const commandOffset = issuedCommands.length;
   const result = await rediscoverAcceptingWorkerPane(vars, 'coredev-5', 'claude', 'coredev-5:dev');
   assert.equal(result.target, 'coredev-5:fix.0');
   assert.equal(result.window, 'fix');
+  assert.ok(
+    issuedCommands.slice(commandOffset).some((command) => command.includes("root='4242'")),
+    'the regression must exercise the descendant-tree probe, not a fused direct-child mock',
+  );
 });

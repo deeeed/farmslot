@@ -277,8 +277,28 @@ export async function findRunnerDescendantPid(
 }
 
 export function buildFindRunnerDescendantPidCommand(panePid: string, pattern: string): string {
+  return buildFindRunnerDescendantPidCommandWithRoot(shellQuote(panePid), pattern);
+}
+
+/**
+ * Build the same descendant probe for a pane PID already held in a remote
+ * shell variable. The variable name is validated before interpolation so
+ * monitor-style commands can reuse the canonical process-tree walk without
+ * duplicating it.
+ */
+export function buildFindRunnerDescendantPidFromVariableCommand(
+  variableName: string,
+  pattern: string,
+): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(variableName)) {
+    throw new Error(`Invalid shell variable name: ${variableName}`);
+  }
+  return buildFindRunnerDescendantPidCommandWithRoot(`"$${variableName}"`, pattern);
+}
+
+function buildFindRunnerDescendantPidCommandWithRoot(quotedRoot: string, pattern: string): string {
   const cmd = [
-    `root=${shellQuote(panePid)}`,
+    `root=${quotedRoot}`,
     `for pid in $(pgrep -f ${shellQuote(pattern)} 2>/dev/null); do`,
     `  command=$(ps -o command= -p "$pid" 2>/dev/null || true)`,
     `  case "$command" in`,
@@ -299,6 +319,9 @@ export function buildFindRunnerDescendantPidCommand(panePid: string, pattern: st
  * Boolean convenience wrapper around {@link findRunnerDescendantPid} for
  * callers that only need "is the runner alive somewhere under this pane?"
  * (run-monitor, ci-monitor, dispatch's wait-for-exit / wait-for-start polls).
+ * This is intentionally process-only: callers deciding whether a worker can
+ * accept input must additionally inspect the pane prompt, because a transient
+ * headless runner descendant can be alive while the interactive worker is not.
  * `killAgentInSession` and any other caller that needs the PID itself
  * (graceful-exit signaling, kill -TERM/KILL fallback) should use the
  * underlying helper directly.

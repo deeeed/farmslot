@@ -106,6 +106,7 @@ async function paneHostsRunnerProcess(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
+  knownPanePid?: string,
 ): Promise<boolean> {
   const paneCommand = (
     await execOnSlot(
@@ -124,14 +125,16 @@ async function paneHostsRunnerProcess(
   if (paneCommand && matcherParts.some((part) => paneCommand.includes(part))) {
     return true;
   }
-  const panePid = (
-    await execOnSlot(
-      vars,
-      tmuxShellSnippet(
-        `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1`,
-      ),
-    )
-  ).stdout.trim();
+  const panePid =
+    knownPanePid ??
+    (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(
+          `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1`,
+        ),
+      )
+    ).stdout.trim();
   return await isRunnerAliveUnderPane(vars, panePid, runner);
 }
 
@@ -182,7 +185,7 @@ export async function rediscoverAcceptingWorkerPane(
       await execOnSlot(
         vars,
         tmuxShellSnippet(
-          `list-panes -s -t ${shellQuote(session)} -F '#{window_index}|#{window_name}|#{pane_index}|#{pane_current_command}' 2>/dev/null`,
+          `list-panes -s -t ${shellQuote(session)} -F '#{window_index}|#{window_name}|#{pane_index}|#{pane_current_command}|#{pane_pid}' 2>/dev/null`,
         ),
       )
     ).stdout.trim();
@@ -191,8 +194,8 @@ export async function rediscoverAcceptingWorkerPane(
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => {
-        const [windowIndex, windowName, paneIndex, command] = line.split('|');
-        return { windowIndex, windowName, paneIndex, command };
+        const [windowIndex, windowName, paneIndex, command, panePid] = line.split('|');
+        return { windowIndex, windowName, paneIndex, command, panePid };
       })
       .filter((pane) => pane.windowIndex && pane.paneIndex);
     const seenWindows = panes.map(
@@ -200,10 +203,18 @@ export async function rediscoverAcceptingWorkerPane(
         `${pane.windowIndex}:${pane.windowName || '(unnamed)'} pane ${pane.paneIndex} (${pane.command || 'unknown'})`,
     );
 
-    if (await paneHostsRunnerProcess(vars, storedTarget, runner)) {
-      const storedWindow = storedTarget.includes(':')
-        ? storedTarget.slice(storedTarget.indexOf(':') + 1).split('.', 1)[0] || null
-        : null;
+    const storedWindow = storedTarget.includes(':')
+      ? storedTarget.slice(storedTarget.indexOf(':') + 1).split('.', 1)[0] || null
+      : null;
+    const storedPaneIndex = storedTarget.includes('.')
+      ? storedTarget.slice(storedTarget.lastIndexOf('.') + 1)
+      : null;
+    const storedPane = panes.find(
+      (pane) =>
+        (pane.windowName === storedWindow || pane.windowIndex === storedWindow) &&
+        (!storedPaneIndex || pane.paneIndex === storedPaneIndex),
+    );
+    if (await paneHostsRunnerProcess(vars, storedTarget, runner, storedPane?.panePid)) {
       return { target: storedTarget, window: storedWindow, seenWindows };
     }
 
@@ -216,7 +227,7 @@ export async function rediscoverAcceptingWorkerPane(
       // The stored target's window already failed the liveness check above.
       if (windowRef === storedWindowPart || pane.windowIndex === storedWindowPart) continue;
       const candidate = `${session}:${windowRef}.${pane.paneIndex}`;
-      if (!(await paneHostsRunnerProcess(vars, candidate, runner))) continue;
+      if (!(await paneHostsRunnerProcess(vars, candidate, runner, pane.panePid))) continue;
       const content = (
         await execOnSlot(
           vars,

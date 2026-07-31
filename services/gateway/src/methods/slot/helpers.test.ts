@@ -48,7 +48,9 @@ test('buildMonitorCommand embeds slot identity, task dir, repo, session, and run
   assert.match(cmd, /tmux has-session -t 'ff-1'/);
   assert.match(cmd, /tmux capture-pane -p -J -t 'ff-1' -S -30/);
   // Runner-liveness pattern comes from the runner registry, not inline runner ids.
-  assert.match(cmd, /pgrep -P "\$PANE_PID" -f 'claude\|codex\|scripted-runner'/);
+  assert.match(cmd, /root="\$PANE_PID"/);
+  assert.match(cmd, /pgrep -f 'claude\|codex\|scripted-runner'/);
+  assert.doesNotMatch(cmd, /pgrep -P "\$PANE_PID"/);
 });
 
 test('validateHarnessRoot accepts the default and rejects escape attempts', () => {
