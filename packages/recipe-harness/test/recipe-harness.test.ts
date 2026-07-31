@@ -2991,41 +2991,77 @@ test('CDP observations and selectors traverse open shadow roots', async () => {
   assert.doesNotMatch(observationExpression, /getAttribute\('value'\)/u);
 });
 
-test('CDP page evaluates through its public isolated-world API', async () => {
+test('CDP public isolated-world evaluation recovers on its first call after navigation', async () => {
   const calls: {
     method: string;
     params: Record<string, unknown>;
   }[] = [];
+  let frame = 1;
+  let staleEvaluationPending = false;
   const page = new CdpWebPage({
     async call(method: string, params: Record<string, unknown> = {}) {
       calls.push({ method, params });
       if (method === 'Page.getFrameTree') {
-        return { frameTree: { frame: { id: 'main-frame' } } };
+        return { frameTree: { frame: { id: `main-frame-${frame}` } } };
       }
       if (method === 'Page.createIsolatedWorld') {
-        return { executionContextId: 17 };
+        return { executionContextId: 16 + frame };
       }
-      return { result: { value: { ready: true } } };
+      if (staleEvaluationPending) {
+        staleEvaluationPending = false;
+        throw new Error('Execution context was destroyed.');
+      }
+      return { result: { value: { frame } } };
     },
   } as never);
 
-  const result = await page.evaluateInIsolatedWorld<{ ready: boolean }>(
+  const first = await page.evaluateInIsolatedWorld<{ frame: number }>(
+    'globalThis.ready',
+    'consumer-world',
+  );
+  frame = 2;
+  staleEvaluationPending = true;
+  const afterNavigation = await page.evaluateInIsolatedWorld<{ frame: number }>(
     'globalThis.ready',
     'consumer-world',
   );
 
-  assert.deepEqual(result, { ready: true });
+  assert.deepEqual(first, { frame: 1 });
+  assert.deepEqual(afterNavigation, { frame: 2 });
   assert.deepEqual(calls, [
     { method: 'Page.getFrameTree', params: {} },
     {
       method: 'Page.createIsolatedWorld',
-      params: { frameId: 'main-frame', worldName: 'consumer-world' },
+      params: { frameId: 'main-frame-1', worldName: 'consumer-world' },
     },
     {
       method: 'Runtime.evaluate',
       params: {
         expression: 'globalThis.ready',
         contextId: 17,
+        awaitPromise: true,
+        returnByValue: true,
+      },
+    },
+    {
+      method: 'Runtime.evaluate',
+      params: {
+        expression: 'globalThis.ready',
+        contextId: 17,
+        awaitPromise: true,
+        returnByValue: true,
+      },
+    },
+    { method: 'Page.getFrameTree', params: {} },
+    {
+      method: 'Page.createIsolatedWorld',
+      params: { frameId: 'main-frame-2', worldName: 'consumer-world' },
+    },
+    {
+      method: 'Runtime.evaluate',
+      params: {
+        expression: 'globalThis.ready',
+        contextId: 18,
         awaitPromise: true,
         returnByValue: true,
       },

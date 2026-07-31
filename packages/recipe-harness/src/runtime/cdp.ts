@@ -637,7 +637,12 @@ export class CdpWebPage {
   }
 
   async evaluateInIsolatedWorld<T = unknown>(expression: string, worldName: string): Promise<T> {
-    return evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName);
+    try {
+      return await evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName);
+    } catch (error) {
+      if (!isTransientCdpContextError(error)) throw error;
+      return evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName);
+    }
   }
 
   async click(selector: string): Promise<unknown> {

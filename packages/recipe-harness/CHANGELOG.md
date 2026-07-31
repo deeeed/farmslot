@@ -6,7 +6,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## 0.10.5 - 2026-07-31
 
-- fix: retry DOM-settlement and compositor probes when navigation invalidates their frame or execution context, report transient or superseded probe races as suspended results or warnings instead of throws or false success, and preserve the public isolated-world evaluator.
+- fix: retry DOM-settlement and compositor probes when navigation invalidates their frame or execution context, report transient or superseded probe races as suspended results or warnings instead of throws or false success, and preserve the public isolated-world evaluator across navigation.
 
 ## 0.10.4 - 2026-07-31
 
