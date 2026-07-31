@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix(work-graph): persist scheduler authorization on nodes so historical reconciliation cannot suppress prerequisite-regression alarms for scheduled work.
 - feat(backlog): add the typed `backlog.reconcileRun` repair action for existing run/backlog handoffs.
 - fix(protocol): expose checklist-scoped terminal contract paths and persist each agent context's artifact scope for restart-safe independent review recovery.
 - feat(protocol): `RunEngineState.flags.warmSessionReuse` for CI-watch chained follow-ups that hand off into a parent worker kept warm through finalize (MANUAL-000065).

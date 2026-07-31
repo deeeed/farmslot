@@ -83,6 +83,7 @@ export interface WorkNode {
   currentFamilyId?: string;
   currentRootRunId?: string;
   latestRunId?: string;
+  schedulerAuthorizedAt?: string;
   supersededFamilyIds?: string[];
   baseRef?: string;
   upstreamBaseNodeIds?: string[];

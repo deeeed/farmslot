@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(work-graph): preserve durable completed-run outcomes when historical reconciliation reveals work that began before a start dependency. Scheduler-authorized work still surfaces prerequisite regressions.
 - fix(backlog): reconcile historical same-project/source runs into durable backlog and WorkGraph linkage, applying the run's current lifecycle without bypassing queue, launch-plan, or ownership guards.
 - fix(runners): use the shared descendant-process probe for self-review rediscovery, fleet status, slot monitoring, and agent teardown so wrapped Claude/Codex runners are not mistaken for idle panes.
 - fix(run-engine): sync Farmslot setup hooks into remote node support for prepare while keeping runtime hooks checkout-local, verify publish readiness from working-tree, staged, and untracked content plus commits ahead of a trustworthy base instead of stale stat metadata or the branch's full history, and keep legacy runner cleanup aligned with every supported runner process.
