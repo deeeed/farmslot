@@ -950,6 +950,19 @@ function recordNodeUnlockFailure(
   snapshot.graph.status = 'needs-attention';
 }
 
+function backfillSchedulerAuthorization(snapshot: WorkGraphSnapshot, node: WorkNode): void {
+  if (node.schedulerAuthorizedAt) return;
+  const completedEntry = snapshot.ledger.find(
+    (entry) =>
+      entry.nodeId === node.id &&
+      entry.status === 'completed' &&
+      (entry.actionKind === 'enqueue' || entry.actionKind === 'mark-ready'),
+  );
+  if (completedEntry) {
+    node.schedulerAuthorizedAt = completedEntry.completedAt ?? completedEntry.startedAt;
+  }
+}
+
 async function executeNodeUnlock(
   snapshot: WorkGraphSnapshot,
   node: WorkNode,
@@ -994,6 +1007,7 @@ async function executeNodeUnlock(
     (entry) => entry.key === actionKey && entry.status === 'completed',
   );
   if (completedEntry) {
+    backfillSchedulerAuthorization(snapshot, node);
     const retryableStaleEnqueue =
       actionKind === 'enqueue' &&
       !existingQueue &&
@@ -1050,6 +1064,7 @@ async function executeNodeUnlock(
     return;
   }
   if (existingQueue || existingRun) {
+    node.schedulerAuthorizedAt = node.schedulerAuthorizedAt ?? now;
     snapshot.ledger.push({
       key: actionKey,
       graphId: snapshot.graph.id,
@@ -1066,6 +1081,7 @@ async function executeNodeUnlock(
   if (inbound.some((edge) => edge.unlock.kind === 'mark-ready')) {
     await markBacklogItemReady({ itemId: node.backlogItemId });
     node.status = 'ready';
+    node.schedulerAuthorizedAt = node.schedulerAuthorizedAt ?? now;
     snapshot.ledger.push({
       key: actionKey,
       graphId: snapshot.graph.id,
@@ -1096,9 +1112,11 @@ async function executeNodeUnlock(
   node.status = 'queued';
   const entry = snapshot.ledger.find((candidate) => candidate.key === actionKey);
   if (entry) {
+    const completedAt = new Date().toISOString();
     entry.status = 'completed';
-    entry.completedAt = new Date().toISOString();
+    entry.completedAt = completedAt;
     entry.result = `queue:${result.queueItem.id}`;
+    node.schedulerAuthorizedAt = node.schedulerAuthorizedAt ?? completedAt;
   }
 }
 
@@ -1145,7 +1163,13 @@ export async function schedulerTick(
       }
       for (const edge of snapshot.edges) evaluateEdge(edge, snapshot, runs, now);
       let runnable = 0;
+      let graphNeedsAttention = false;
       for (const node of snapshot.nodes) {
+        // Persisted v1 snapshots predate schedulerAuthorizedAt. Their completed
+        // action ledger is the durable proof that the scheduler admitted the
+        // node, so restore that proof before deciding whether a completed run
+        // is historical work imported during reconciliation.
+        backfillSchedulerAuthorization(snapshot, node);
         const inbound = snapshot.edges.filter((edge) => edge.toNodeId === node.id);
         const startInbound = startEdges(inbound);
         const failedRequired = failedRequiredEdges(inbound);
@@ -1159,6 +1183,7 @@ export async function schedulerTick(
           }));
           node.updatedAt = now;
           snapshot.graph.status = 'needs-attention';
+          graphNeedsAttention = true;
           continue;
         }
         const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound);
@@ -1174,6 +1199,7 @@ export async function schedulerTick(
               errorMessage(err),
             );
           }
+          if (node.status === 'needs-attention') graphNeedsAttention = true;
           continue;
         }
         if (isReferenceNode(node)) {
@@ -1183,6 +1209,21 @@ export async function schedulerTick(
             node.updatedAt = now;
           } else {
             syncReferenceNode(node, now);
+          }
+          continue;
+        }
+        const hasCompletedRun =
+          node.status === 'succeeded' &&
+          node.latestRunId !== undefined &&
+          runs.some((run) => run.id === node.latestRunId && run.status === 'done');
+        if (hasCompletedRun && !node.schedulerAuthorizedAt) {
+          // Start dependencies decide whether work may begin. Once a durable run
+          // completed without scheduler authorization, later reconciliation must
+          // not rewrite that historical outcome for a merely pending prerequisite.
+          // Failed required edges are handled above and still require attention.
+          if (node.waitingOn.length > 0) {
+            node.waitingOn = [];
+            node.updatedAt = now;
           }
           continue;
         }
@@ -1234,6 +1275,7 @@ export async function schedulerTick(
               },
             ];
             snapshot.graph.status = 'needs-attention';
+            graphNeedsAttention = true;
           } else {
             node.status = 'waiting';
           }
@@ -1253,9 +1295,15 @@ export async function schedulerTick(
           } catch (err) {
             recordNodeUnlockFailure(snapshot, node, inbound, now, errorMessage(err));
           }
+          if (node.status === 'needs-attention') graphNeedsAttention = true;
         }
       }
-      if (snapshot.graph.status !== 'needs-attention') {
+      if (
+        graphNeedsAttention ||
+        snapshot.nodes.some((node) => isBacklogNode(node) && node.status === 'needs-attention')
+      ) {
+        snapshot.graph.status = 'needs-attention';
+      } else {
         const allDone =
           snapshot.nodes.length > 0 &&
           snapshot.nodes.every((node) => node.status === 'succeeded' || node.status === 'skipped');
