@@ -1,16 +1,18 @@
-import type {
-  BacklogArchiveParams,
-  BacklogAutoDispatchTickParams,
-  BacklogCloseShippedParams,
-  BacklogCreateParams,
-  BacklogDeleteParams,
-  BacklogDequeueParams,
-  BacklogEnqueueParams,
-  BacklogListParams,
-  BacklogMarkReadyParams,
-  BacklogSpecGetParams,
-  BacklogUpcomingParams,
-  BacklogUpdateParams,
+import {
+  type BacklogArchiveParams,
+  type BacklogAutoDispatchTickParams,
+  type BacklogCloseShippedParams,
+  type BacklogCreateParams,
+  type BacklogDeleteParams,
+  type BacklogDequeueParams,
+  type BacklogEnqueueParams,
+  type BacklogListParams,
+  type BacklogMarkReadyParams,
+  type BacklogReconcileRunParams,
+  type BacklogSpecGetParams,
+  type BacklogUpcomingParams,
+  type BacklogUpdateParams,
+  Events,
 } from '@farmslot/protocol';
 
 import {
@@ -24,6 +26,7 @@ import {
   getBacklogSpec,
   listBacklogItems,
   markBacklogItemReady,
+  reconcileBacklogRun,
   upcomingBacklogItems,
   updateBacklogItem,
 } from '../backlog/store.js';
@@ -40,5 +43,13 @@ export const backlogAutoDispatchTick = (params: BacklogAutoDispatchTickParams = 
   autoDispatchBacklogReady(params);
 export const backlogUpcoming = (params: BacklogUpcomingParams = {}) => upcomingBacklogItems(params);
 export const backlogSpecGet = (params: BacklogSpecGetParams) => getBacklogSpec(params);
+export const backlogReconcileRun = async (
+  params: BacklogReconcileRunParams,
+  emit: (event: string, payload: unknown) => void,
+) => {
+  const result = await reconcileBacklogRun(params);
+  emit(Events.RUN_UPDATED, { run: result.run });
+  return result;
+};
 export const backlogCloseShipped = (params: BacklogCloseShippedParams) =>
   closeShippedBacklogItem(params);

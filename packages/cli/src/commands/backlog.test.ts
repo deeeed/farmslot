@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { CommandContext } from '../context.js';
 
-import { resolveItem } from './backlog.js';
+import { reconcileBacklogItemRun, resolveItem } from './backlog.js';
 
 function ctxWithItems(items: Array<{ id: string; sourceRef?: string }>): CommandContext {
   return {
@@ -40,4 +40,28 @@ test('resolveItem rejects ambiguous id prefixes with a teach-the-escape error', 
     () => resolveItem(ctx, 'zzz'),
     (err: unknown) => (err as { code?: string }).code === 'BACKLOG_ITEM_NOT_FOUND',
   );
+});
+
+test('reconcileBacklogItemRun calls the shared typed gateway action', async () => {
+  const calls: Array<{ method: string; params: unknown }> = [];
+  const result = {
+    item: { id: 'backlog-1', status: 'done' },
+    run: { id: 'run-1', status: 'done' },
+  };
+  const ctx = {
+    client: {
+      call: async (method: string, params: unknown) => {
+        calls.push({ method, params });
+        return result;
+      },
+    },
+  } as unknown as CommandContext;
+
+  assert.equal(await reconcileBacklogItemRun(ctx, { id: 'backlog-1' } as never, 'run-1'), result);
+  assert.deepEqual(calls, [
+    {
+      method: 'backlog.reconcileRun',
+      params: { itemId: 'backlog-1', runId: 'run-1' },
+    },
+  ]);
 });

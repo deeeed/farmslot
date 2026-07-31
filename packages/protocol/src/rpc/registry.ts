@@ -58,6 +58,7 @@ export const Methods = {
   BACKLOG_AUTO_DISPATCH_TICK: 'backlog.autoDispatchTick',
   BACKLOG_UPCOMING: 'backlog.upcoming',
   BACKLOG_SPEC_GET: 'backlog.spec.get',
+  BACKLOG_RECONCILE_RUN: 'backlog.reconcileRun',
   BACKLOG_CLOSE_SHIPPED: 'backlog.closeShipped',
 
   // Work Graph

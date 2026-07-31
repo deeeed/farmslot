@@ -21,6 +21,8 @@ import {
   type BacklogListParams,
   type BacklogListResult,
   type BacklogMarkReadyParams,
+  type BacklogReconcileRunParams,
+  type BacklogReconcileRunResult,
   type BacklogSourceKind,
   type BacklogSpecGetParams,
   type BacklogSpecGetResult,
@@ -57,7 +59,7 @@ import {
   validateTicketRef,
 } from '../methods/dispatch/ticket-ref.js';
 import { normalizeRunner, runnerSupportsModel } from '../runners/registry.js';
-import { getAllRuns } from '../runs/store.js';
+import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
 import {
   normalizeTaskTemplateSelection,
   resolveWorkerTemplateSelection,
@@ -816,6 +818,7 @@ async function reconcileBacklogLinks(): Promise<boolean> {
   }
   const allRuns = getAllRuns();
   const runsById = new Map(allRuns.map((run) => [run.id, run]));
+  const pendingReconcileRunByBacklogId = new Map<string, Run>();
   const runByCandidate = new Map<string, Run>();
   for (const run of allRuns) {
     if (run.backlogItemId && run.launchPlanId && run.launchCandidateId) {
@@ -823,6 +826,11 @@ async function reconcileBacklogLinks(): Promise<boolean> {
         launchCandidateKey(run.backlogItemId, run.launchPlanId, run.launchCandidateId),
         run,
       );
+    } else if (run.backlogItemId && run.backlogReconcilePending) {
+      const current = pendingReconcileRunByBacklogId.get(run.backlogItemId);
+      if (!current || run.createdAt > current.createdAt) {
+        pendingReconcileRunByBacklogId.set(run.backlogItemId, run);
+      }
     }
   }
 
@@ -863,8 +871,19 @@ async function reconcileBacklogLinks(): Promise<boolean> {
     if (item.runId) {
       const run = runsById.get(item.runId);
       if (run) {
-        if (shouldApplyLinkedRunObservation(item, run) && applyRunObservation(item, run))
+        const observationChanged = run.backlogReconcilePending
+          ? applyRunObservation(item, run)
+          : shouldApplyLinkedRunObservation(item, run) && applyRunObservation(item, run);
+        if (observationChanged) {
           changed = true;
+          if (run.backlogReconcilePending) {
+            await persistNow('backlog-reconcile-run-settled-on-load');
+          }
+        }
+        if (run.backlogReconcilePending) {
+          const settledRun = updateRun(run.id, { backlogReconcilePending: undefined });
+          await persistRunNow(settledRun, 'backlog-reconcile-run-settled-on-load');
+        }
       } else if (REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) {
         if (releaseBacklogRunLink(item, item.runId)) changed = true;
       } else if (!TERMINAL_STATUSES.has(item.status)) {
@@ -878,6 +897,12 @@ async function reconcileBacklogLinks(): Promise<boolean> {
       continue;
     }
 
+    let pendingRun = pendingReconcileRunByBacklogId.get(item.id);
+    if (item.multiPr && pendingRun) {
+      const settledRun = updateRun(pendingRun.id, { backlogReconcilePending: undefined });
+      await persistRunNow(settledRun, 'backlog-reconcile-run-incompatible-multi-pr');
+      pendingRun = undefined;
+    }
     const queued = queueByBacklogId.get(item.id);
     if (queued) {
       if (item.status !== 'queued' || item.queuedQueueItemId !== queued.id) {
@@ -887,6 +912,27 @@ async function reconcileBacklogLinks(): Promise<boolean> {
         delete item.lastDispatchError;
         changed = true;
       }
+      if (pendingRun) {
+        await persistNow('backlog-reconcile-run-superseded-by-queue');
+        const settledRun = updateRun(pendingRun.id, {
+          backlogItemId: undefined,
+          backlogReconcilePending: undefined,
+        });
+        await persistRunNow(settledRun, 'backlog-reconcile-run-superseded-by-queue');
+      }
+      continue;
+    }
+
+    // Only an explicit write-ahead repair marker can restore a missing
+    // projection. Ordinary historical backlinks are not ownership: an item may
+    // have been restored and requeued after that run completed.
+    if (pendingRun) {
+      if (applyRunObservation(item, pendingRun)) {
+        changed = true;
+        await persistNow('backlog-reconcile-run-recovered');
+      }
+      const settledRun = updateRun(pendingRun.id, { backlogReconcilePending: undefined });
+      await persistRunNow(settledRun, 'backlog-reconcile-run-recovered');
       continue;
     }
 
@@ -2124,6 +2170,105 @@ export async function linkDirectRunToMatchingBacklog(
         `(${primary.sourceRef}, status=${primary.status}) but was not linked: ${reason}`,
     );
     return { action: 'warned' as const, itemId: primary.id, reason };
+  });
+}
+
+/**
+ * Repair a missing backlog/run handoff for an existing run.
+ *
+ * The durable run backlink is written before the backlog projection. If the
+ * process stops between those writes, load-time backlog reconciliation can
+ * recover from run.backlogItemId instead of leaving an item linked to a run
+ * that does not point back.
+ */
+export async function reconcileBacklogRun(
+  params: BacklogReconcileRunParams,
+): Promise<BacklogReconcileRunResult> {
+  const reject = (message: string, userAction?: string): never => {
+    throw new GatewayMethodError('BACKLOG_RECONCILE_REJECTED', message, { userAction });
+  };
+  if (!params.itemId?.trim()) reject('backlog.reconcileRun requires itemId');
+  if (!params.runId?.trim()) reject('backlog.reconcileRun requires runId');
+
+  return withBacklogMutation(async () => {
+    const item = getItem(params.itemId);
+    const run = getRun(params.runId);
+    if (!run) {
+      throw new GatewayMethodError('BACKLOG_RECONCILE_REJECTED', `Run not found: ${params.runId}`, {
+        userAction: 'List runs and pass the full run id.',
+      });
+    }
+    if (item.status === 'archived') reject('Cannot reconcile an archived backlog item');
+    if (item.multiPr) {
+      reject('Multi-PR backlog items intentionally do not retain one authoritative run');
+    }
+    if (!item.sourceRef.trim() || !run.ticketOrPr?.trim()) {
+      reject('Backlog item and run must both have a source reference');
+    }
+    if (item.project !== run.project) {
+      reject(
+        `Backlog project ${item.project} does not match run project ${run.project ?? '(none)'}`,
+      );
+    }
+    if (item.sourceRef !== run.ticketOrPr) {
+      reject(
+        `Backlog sourceRef ${item.sourceRef} does not match run ticketOrPr ${run.ticketOrPr ?? '(none)'}`,
+      );
+    }
+    if (run.parentRunId || run.lane !== 'production') {
+      reject('Only a root production run can be reconciled to a backlog item');
+    }
+    if (run.launchPlanId || run.launchCandidateId || run.launchGroupId) {
+      reject('Launch-plan candidate runs must reconcile through their candidate handoff');
+    }
+    if (item.launchPlan) {
+      reject('Launch-plan backlog items must reconcile through their candidate handoff');
+    }
+    if (item.queuedQueueItemId) {
+      reject(`Backlog item is already queued (${item.queuedQueueItemId})`);
+    }
+    if (item.runId && item.runId !== run.id) {
+      reject(`Backlog item is already linked to run ${item.runId}`);
+    }
+    if (run.backlogItemId && run.backlogItemId !== item.id) {
+      reject(`Run is already linked to backlog item ${run.backlogItemId}`);
+    }
+    const competingRun = getAllRuns().find(
+      (candidate) => candidate.id !== run.id && candidate.backlogItemId === item.id,
+    );
+    if (competingRun) {
+      reject(`Backlog item is already linked from run ${competingRun.id}`);
+    }
+    if (run.workGraphId && run.workGraphId !== item.workGraphId) {
+      reject(`Run belongs to work graph ${run.workGraphId}, not ${item.workGraphId}`);
+    }
+    if (run.workNodeId && run.workNodeId !== item.workNodeId) {
+      reject(`Run belongs to work node ${run.workNodeId}, not ${item.workNodeId}`);
+    }
+    if (run.status === 'cancelled' && run.redirectedToRunId) {
+      reject(`Run redirects to successor ${run.redirectedToRunId}; reconcile that run`);
+    }
+
+    const linkedRun = updateRun(run.id, {
+      backlogItemId: item.id,
+      backlogReconcilePending: true,
+      ...(item.workGraphId ? { workGraphId: item.workGraphId } : {}),
+      ...(item.workNodeId ? { workNodeId: item.workNodeId } : {}),
+    });
+    await persistRunNow(linkedRun, 'backlog-reconcile-run-link');
+
+    // This is an explicit operator repair, not a potentially stale background
+    // event. The selected run becomes authoritative after all ownership and
+    // identity checks above, even when the item currently has a terminal state.
+    applyRunObservation(item, linkedRun);
+    await persistNow('backlog-reconcile-run');
+    const settledRun = updateRun(linkedRun.id, { backlogReconcilePending: undefined });
+    await persistRunNow(settledRun, 'backlog-reconcile-run-settled');
+    broadcastBacklog();
+    return {
+      item: getBacklogItemSnapshot(item.id)!,
+      run: settledRun,
+    };
   });
 }
 

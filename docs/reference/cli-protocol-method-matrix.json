@@ -194,6 +194,10 @@
       "surface": "typed-command",
       "command": "farmslot backlog"
     },
+    "backlog.reconcileRun": {
+      "surface": "typed-command",
+      "command": "farmslot backlog reconcile-run"
+    },
     "backlog.closeShipped": {
       "surface": "typed-command",
       "command": "farmslot backlog",
