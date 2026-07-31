@@ -208,6 +208,12 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       } else {
         this._includedComments = new Set(this._comments.map((_, i) => i));
       }
+      if (this._preservedIncludeEvidence !== undefined) {
+        this._includeEvidence = this._preservedIncludeEvidence;
+        this._preservedIncludeEvidence = undefined;
+      } else {
+        this._includeEvidence = true;
+      }
       this._normalizeActiveTab();
     }
     // Re-check if slotId changes
@@ -221,6 +227,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private _preservedInclusion?: Map<string, boolean>;
+  private _preservedIncludeEvidence?: boolean;
 
   private get _isRecovering(): boolean {
     return this._recoveryPhase !== 'live';
@@ -442,11 +449,13 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._preservedInclusion = new Map(
       this._comments.map((c, i) => [this._commentKey(c), this._includedComments.has(i)]),
     );
+    this._preservedIncludeEvidence = this._includeEvidence;
     try {
       await gateway.request(Methods.RUN_REFRESH_REVIEW_GATE, { runId: this.runId });
     } catch (err) {
       console.error('Failed to refresh review artifacts:', err);
       this._preservedInclusion = undefined;
+      this._preservedIncludeEvidence = undefined;
     } finally {
       this._refreshing = false;
     }

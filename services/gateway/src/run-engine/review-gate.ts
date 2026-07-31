@@ -57,6 +57,15 @@ export function shouldIncludeReviewEvidence(selectionData?: Record<string, unkno
   return selectionData?.includeEvidence !== false;
 }
 
+export function reviewEvidencePostArgs(
+  selectionData: Record<string, unknown> | undefined,
+  evidenceTmpFile: string | null,
+): string[] {
+  return evidenceTmpFile && shouldIncludeReviewEvidence(selectionData)
+    ? ['--evidence-md-file', evidenceTmpFile]
+    : [];
+}
+
 export async function executeReviewGate(runId: string): Promise<void> {
   const current = getRun(runId)!;
 
@@ -337,7 +346,9 @@ export async function executeReviewGate(runId: string): Promise<void> {
       postReviewArgs.push('--cost', costSnapshot.costUsd.toFixed(4));
     if (typeof costSnapshot.totalTokens === 'number')
       postReviewArgs.push('--total-tokens', String(costSnapshot.totalTokens));
-    if (evidenceTmpFile) postReviewArgs.push('--evidence-md-file', evidenceTmpFile);
+    postReviewArgs.push(
+      ...reviewEvidencePostArgs(resolvedDecision?.selectionData, evidenceTmpFile),
+    );
 
     try {
       const { execFile } = await import('node:child_process');

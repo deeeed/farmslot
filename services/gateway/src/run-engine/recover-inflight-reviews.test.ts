@@ -87,6 +87,7 @@ test('buildRecoveredReview preserves the reviewer-owned artifact scope as the re
 
   assert.ok(review);
   assert.equal(review.id, 'independent-review-7');
+  assert.equal(review.loopNumber, 7);
 });
 
 test('buildRecoveredReview returns null when the reviewer has not finished', () => {

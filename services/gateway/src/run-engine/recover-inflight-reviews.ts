@@ -359,12 +359,15 @@ async function ingestRecoveredReviewer(
   if (!review) return null;
 
   const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [review]);
+  const finalRun = getRun(runId)!;
+  const finalReviews = finalRun.engineState?.publishGate?.independentReviews ?? [];
+  if (finalReviews.some((candidate) => candidate.id === persisted.id)) return null;
   updateRun(runId, {
     engineState: {
-      ...latest.engineState,
+      ...finalRun.engineState,
       publishGate: {
-        ...latest.engineState?.publishGate,
-        independentReviews: [...priorReviews, persisted],
+        ...finalRun.engineState?.publishGate,
+        independentReviews: [...finalReviews, persisted],
       },
     },
   });
