@@ -105,6 +105,45 @@ test('human-gate can approve a prepared local-first package when slot was detach
   assert.equal(typeof io.outputs?.waitDurationMs, 'number');
 });
 
+test('review-pr always presents its publication gate in autonomous mode', async (t) => {
+  const run = createRun({
+    flowType: 'review-pr',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'example/mobile#123',
+    runner: 'grok',
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  let reviewGateCalls = 0;
+  const io = await executeHumanGateStep(run.id, {
+    activeMonitors: new Map(),
+    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {},
+    createEngineDecision: async () => 'decision-1',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async () => [],
+    executeReadyGate: async () => 'ready',
+    executeReviewGate: async () => {
+      reviewGateCalls++;
+    },
+    getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => false,
+    latestResolvedHumanGateDecision: () => undefined,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    refreshRunLinks: async () => {},
+    reviewPlanFromSelection: () => [],
+    stepPartialIO: new Map(),
+  });
+
+  assert.equal(reviewGateCalls, 1);
+  assert.deepEqual(io.inputs, { gateType: 'review', gateEnabled: true, forced: false });
+  assert.equal(io.outputs?.resolvedAction, null);
+});
+
 test('readyGateReviewSubjectMatches ignores review-loop metadata but rejects subject drift', () => {
   const reviewed = makeReadyGatePackage({
     headSha: 'head-1',
