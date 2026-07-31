@@ -20,7 +20,10 @@ mock.module('../../core/exec.js', {
       execCommands.push(argv.join(' '));
       return nextResult;
     },
-    execFileArgv: async (): Promise<ExecResult> => nextResult,
+    execFileArgv: async (argv: string[]): Promise<ExecResult> => {
+      execCommands.push(argv.join(' '));
+      return nextResult;
+    },
     execOnSlot: async (_vars: unknown, cmd: string): Promise<ExecResult> => {
       execCommands.push(cmd);
       return nextResult;
