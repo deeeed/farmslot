@@ -25,6 +25,9 @@ test('isReviewerWindowName recognizes short and legacy names', () => {
   assert.equal(isReviewerWindowName('rev-codex'), true);
   assert.equal(isReviewerWindowName('rev1-claude'), true);
   assert.equal(isReviewerWindowName(LEGACY_SELF_REVIEW_WINDOW), true);
+  assert.equal(isReviewerWindowName('review-fix'), true);
+  assert.equal(isReviewerWindowName('review-fix-4'), true);
+  assert.equal(isReviewerWindowName('review-fix-old'), false);
   assert.equal(isReviewerWindowName('bugfix'), false);
   assert.equal(isReviewerWindowName('dev'), false);
 });

@@ -7,6 +7,7 @@ import {
   AGENT_ROLES,
   type AgentContext,
   agentContextTaskFile,
+  agentDispatchWindow,
   agentRoleWindow,
   primaryRoleForFlow,
   signalFileForTask,
@@ -88,6 +89,8 @@ test('non-primary roles with dedicated windows have a tmux window mapping', () =
     null,
     'self-review-fix runs in the primary worker window',
   );
+  assert.equal(agentRoleWindow('primary'), null, 'primary is not a disposable role window');
+  assert.equal(agentDispatchWindow('primary'), 'worker', 'primary dispatch has a canonical target');
 });
 
 test('synthesizePrimaryContext stores SIGNAL.json beside TASK.md', async (t) => {

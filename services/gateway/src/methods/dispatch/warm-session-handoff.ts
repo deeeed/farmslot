@@ -3,10 +3,13 @@ import { copyFile, cp, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  type AgentContext,
   type AgentContextTarget,
-  agentRoleWindow,
+  agentDispatchWindow,
+  type AgentRole,
   type FlowType,
   primaryRoleForFlow,
+  type Run,
 } from '@farmslot/protocol';
 
 import { upsertAgentContext } from '../../agents/contexts.js';
@@ -24,12 +27,7 @@ import {
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
-import {
-  firstWindowTarget,
-  resolveTmuxSession,
-  shellQuote,
-  tmuxShellSnippet,
-} from '../../core/tmux.js';
+import { resolveTmuxSession, shellQuote } from '../../core/tmux.js';
 import {
   normalizeRunner,
   resolveSafeSendTimeoutMs,
@@ -41,7 +39,7 @@ import { isWorkerAlive } from '../../self-review/worker-lifecycle.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
-import { ensureWorkerRoleTarget } from './execute.js';
+import { ensureWorkerRoleTarget, isRunnerAliveInAnyPane } from './execute.js';
 import { terminalizePriorRunOnSlot } from './nudge.js';
 import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
 
@@ -53,6 +51,8 @@ export interface WarmSessionHandoffParams {
   runId: string;
   ticketOrPr: string;
   flowType: FlowType;
+  /** Parent whose live flow-owned worker should receive the chained task. */
+  parentRunId?: string | null;
   /** Expected runner from the chained run (must match live slot runner). */
   runner?: string | null;
   /** When set and differs from the slot runner, refuse warm handoff (model/runner swap). */
@@ -71,6 +71,39 @@ export type WarmSessionHandoffResult =
       reason: string;
     };
 
+export interface WarmWorkerBinding {
+  role: AgentRole;
+  context: AgentContext | null;
+  target: string | null;
+}
+
+/**
+ * Bind a chained flow to its persisted parent worker, never to whichever tmux
+ * window happens to sort first after slot metadata has moved to the child run.
+ */
+export function resolveWarmWorkerBinding(
+  session: string,
+  parentRun: Pick<Run, 'flowType' | 'agentContexts'> | null,
+  priorFlowType: FlowType | string | null,
+  newFlowType: FlowType,
+): WarmWorkerBinding {
+  const role = parentRun
+    ? primaryRoleForFlow(parentRun.flowType)
+    : priorFlowType
+      ? primaryRoleForFlow(priorFlowType)
+      : primaryRoleForFlow(newFlowType);
+  const context =
+    parentRun?.agentContexts?.find((candidate) => candidate.role === role) ??
+    parentRun?.agentContexts?.find((candidate) => candidate.role === 'primary') ??
+    null;
+  const persistedTarget = context?.target;
+  const target =
+    persistedTarget?.session === session && persistedTarget.target?.trim()
+      ? persistedTarget.target
+      : null;
+  return { role, context, target };
+}
+
 /**
  * Hand a CI-watch chained follow-up into a still-alive worker session left warm
  * after gate-held FINALIZE. Unlike branch-affinity `nudgeDispatch`, this path
@@ -88,6 +121,13 @@ export async function warmSessionHandoffDispatch(
   }
 
   const step = (name: string, detail: string) => emit('dispatch.step', { name, detail });
+
+  const { getRun } = await import('../../runs/store.js');
+  const requestingRun = getRun(params.runId);
+  if (!requestingRun) {
+    return { handedOff: false, reason: `run ${params.runId} not found` };
+  }
+  const parentRun = params.parentRunId ? (getRun(params.parentRunId) ?? null) : null;
 
   const slotRunnerRaw = (await readSlotField(params.slotId, 'runner')) as string | null;
   const slotModelRaw = (await readSlotField(params.slotId, 'model')) as string | null;
@@ -121,7 +161,7 @@ export async function warmSessionHandoffDispatch(
   }
 
   step('probe', `Checking warm worker liveness on ${params.slotId} (${runner})`);
-  const alive = await isWorkerAlive(vars, runner, params.runId);
+  const alive = await isWorkerAlive(vars, runner, params.parentRunId ?? params.runId);
   if (!alive) {
     // Parent run's primary context may still be the only target that hosts the
     // process (chained run has no agent context yet). Retry without runId.
@@ -192,34 +232,22 @@ export async function warmSessionHandoffDispatch(
   const priorFlowTypeRaw = (await readSlotField(params.slotId, 'current_flow_type')) as
     | string
     | null;
-  const priorRole = priorFlowTypeRaw ? primaryRoleForFlow(priorFlowTypeRaw as FlowType) : null;
-  const newRole = primaryRoleForFlow(flowType);
-  const workerRole = priorRole ?? newRole;
-  const workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
+  const binding = resolveWarmWorkerBinding(session, parentRun, priorFlowTypeRaw, flowType);
+  const workerRole = binding.role;
+  const workerTarget =
+    binding.target ?? (await ensureWorkerRoleTarget(vars, session, runner, workerRole));
   const primaryTarget: AgentContextTarget = {
     session,
-    window: agentRoleWindow(workerRole),
-    pane: null,
+    window:
+      (binding.target ? binding.context?.target?.window : null) ?? agentDispatchWindow(workerRole),
+    pane: binding.target ? (binding.context?.target?.pane ?? null) : null,
     target: workerTarget,
   };
 
   // Re-probe the resolved target: role window may differ from unscoped probe.
-  const targetAlive = await isWorkerAlive(vars, runner);
+  const targetAlive = await isRunnerAliveInAnyPane(vars, workerTarget, runner);
   if (!targetAlive) {
-    // ensureWorkerRoleTarget can create empty role windows — verify the pane
-    // that actually hosts the runner via first-window fallback.
-    const fallbackTarget = await firstWindowTarget(vars, session);
-    const fallbackAlive = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `list-panes -t ${shellQuote(fallbackTarget)} -F '#{pane_pid}' 2>/dev/null | head -1`,
-        ),
-      )
-    ).stdout.trim();
-    if (!fallbackAlive) {
-      return { handedOff: false, reason: `no live runner under ${workerTarget}` };
-    }
+    return { handedOff: false, reason: `no live ${runner} runner under ${workerTarget}` };
   }
 
   step('handoff', `Sending TASK.md prompt to warm worker at ${workerTarget}`);
@@ -245,17 +273,7 @@ export async function warmSessionHandoffDispatch(
     };
   }
 
-  const { getRun } = await import('../../runs/store.js');
-  const requestingRun = getRun(params.runId);
-  if (!requestingRun) {
-    return { handedOff: false, reason: `run ${params.runId} not found` };
-  }
-
-  const priorRunId = (await readSlotField(params.slotId, 'current_run_id')) as string | null;
-  const priorOwnerRun = priorRunId && priorRunId !== params.runId ? getRun(priorRunId) : null;
-  const priorOwnerContext =
-    priorOwnerRun?.agentContexts?.find((c) => c.role === workerRole) ??
-    priorOwnerRun?.agentContexts?.[0];
+  const priorOwnerContext = binding.context;
   const priorNudgeCount = priorOwnerContext?.nudgeCount ?? 0;
 
   await terminalizePriorRunOnSlot(params.slotId, params.runId, 'warm-handoff');

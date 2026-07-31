@@ -433,6 +433,7 @@ export async function executeDispatchStep(
         runId,
         ticketOrPr: current.ticketOrPr,
         flowType: current.flowType,
+        parentRunId: current.parentRunId,
         runner: current.metrics.runner,
         model: current.metrics.model,
       },
