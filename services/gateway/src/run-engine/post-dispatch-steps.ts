@@ -10,6 +10,7 @@ import {
   type ReviewLoopRequest,
   type Run,
   type RunDecision,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 
 import { markSlotBusy, markSlotHeld, updateSlotStatus } from '../core/index.js';
@@ -102,19 +103,19 @@ export interface PostDispatchStepContext {
     approvalOnly?: boolean,
   ) => RunDecision | undefined;
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
+  probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
   refreshRunLinks: (runId: string) => Promise<void>;
   reviewPlanFromSelection: (selection: RunDecision['selectionData']) => ReviewLoopRequest[];
   stepPartialIO: Map<string, StepIO>;
 }
 
-function updateBranchWorkerSkippedSelfReview(run: Pick<Run, 'steps'>): boolean {
+export function updateBranchWorkerSkippedSelfReview(run: Pick<Run, 'steps'>): boolean {
   const monitorStep = run.steps.find((step) => step.name === S.MONITOR);
-  const workerSignal = monitorStep?.outputs?.workerSignal;
+  const workerSignal = monitorStep?.outputs?.workerSignal as WorkerSignal | undefined;
   return (
     monitorStep?.status === 'done' &&
-    typeof workerSignal === 'object' &&
     workerSignal !== null &&
-    (workerSignal as { needsSelfReview?: unknown }).needsSelfReview === false
+    workerSignal?.needsSelfReview === false
   );
 }
 
@@ -463,7 +464,10 @@ export async function executeSelfReviewStep(
       };
     }
     try {
-      const probe = await probeWorkerSignalForRun(runId, current.slotId);
+      const probe = await (context.probeWorkerSignalForRun ?? probeWorkerSignalForRun)(
+        runId,
+        current.slotId,
+      );
       if (probe.ok && probe.signal?.needsSelfReview === false) {
         console.log(
           `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (slot signal probe)`,
