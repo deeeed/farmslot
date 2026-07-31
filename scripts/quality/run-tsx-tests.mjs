@@ -68,11 +68,13 @@ export function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--cwd') {
-      cwd = argv[++index];
+      cwd = requireFlagValue(argv, index, '--cwd');
+      index += 1;
       continue;
     }
     if (arg === '--tsconfig') {
-      tsconfig = argv[++index];
+      tsconfig = requireFlagValue(argv, index, '--tsconfig');
+      index += 1;
       continue;
     }
     if (arg === '--workers') {

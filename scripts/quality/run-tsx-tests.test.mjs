@@ -55,7 +55,7 @@ test('parseArgs separates flags from test roots', () => {
   });
 });
 
-test('--workers rejects a missing or flag-like value instead of silently going serial', () => {
+test('every value-taking flag rejects a missing or flag-like value', () => {
   // resolveWorkers(undefined) is indistinguishable from an omitted flag, so a bare
   // trailing --workers used to drop the run to serial while the operator believed
   // they had asked for parallelism — a silent breach of the AC5 worker contract.
@@ -65,14 +65,30 @@ test('--workers rejects a missing or flag-like value instead of silently going s
     /followed by the flag --node-test/,
     'a following flag must not be swallowed as the worker count',
   );
+  // Same failure class on the other two value-taking flags: `--cwd --tsconfig x`
+  // used to set cwd to the literal '--tsconfig', and a bare trailing --tsconfig
+  // silently dropped the tsconfig.
+  assert.throws(
+    () => parseArgs(['--cwd', '--tsconfig', 'x', 'src']),
+    /--cwd requires a value but was followed by the flag --tsconfig/,
+  );
+  assert.throws(() => parseArgs(['src', '--cwd']), /--cwd requires a value but none was given/);
+  assert.throws(
+    () => parseArgs(['src', '--tsconfig']),
+    /--tsconfig requires a value but none was given/,
+  );
+
   // The valid form is unaffected.
-  assert.deepEqual(parseArgs(['--workers', '4', 'src']), {
-    roots: ['src'],
-    cwd: undefined,
-    tsconfig: undefined,
-    nodeTest: false,
-    workers: '4',
-  });
+  assert.deepEqual(
+    parseArgs(['--cwd', '.', '--tsconfig', 'tsconfig.json', '--workers', '4', 'src']),
+    {
+      roots: ['src'],
+      cwd: '.',
+      tsconfig: 'tsconfig.json',
+      nodeTest: false,
+      workers: '4',
+    },
+  );
 });
 
 test('the CLI surfaces a missing --workers value rather than running serial', () => {
