@@ -395,13 +395,18 @@ export function buildArtifact({
 }
 
 async function main() {
-  const {
-    roots,
-    cwd: cwdArg,
-    tsconfig,
-    nodeTest,
-    workers: workersArg,
-  } = parseArgs(process.argv.slice(2));
+  // Argument errors are operator typos, not crashes: surface the one-line reason
+  // the way the usage error below does, rather than seven frames of module-loader
+  // stack burying it.
+  let parsed;
+  try {
+    parsed = parseArgs(process.argv.slice(2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+    return;
+  }
+  const { roots, cwd: cwdArg, tsconfig, nodeTest, workers: workersArg } = parsed;
   const cwd = cwdArg ? resolve(cwdArg) : process.cwd();
 
   if (roots.length === 0) {

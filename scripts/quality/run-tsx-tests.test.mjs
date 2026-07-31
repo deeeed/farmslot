@@ -135,7 +135,7 @@ test('classification keys off module mocks and the serial pragma', () => {
   assert.equal(
     classifyTest(`// ${SERIAL_PRAGMA}\nmock.module('./a.js', {});`),
     'module-mock',
-    'module mocks need the batched runner even when also marked serial',
+    'module mocks need the module-mock lane even when also marked serial',
   );
 });
 
@@ -480,7 +480,7 @@ test('unsafe shared-fixture suites stay off the parallel lanes', () => {
   );
 });
 
-test('--node-test routes every file through the batched runner', () => {
+test('--node-test routes every file through the module-mock lane', () => {
   const partition = partitionTests(FILES, {
     workers: 4,
     nodeTest: true,
