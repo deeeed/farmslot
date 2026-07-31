@@ -6,7 +6,7 @@ import { resolveNodeSupportPaths } from './paths.js';
 
 const root = '/repo/farmslot';
 
-test('farmslot farm declares the setup bundle used by remote prepare hooks', () => {
+test('farmslot farm declares remote prepare support and keeps sandbox lifecycle checkout-local', () => {
   const configPath = new URL('../../../../projects/farmslot-farm/project.json', import.meta.url);
   const projectJson = JSON.parse(readFileSync(configPath, 'utf8')) as Parameters<
     typeof resolveNodeSupportPaths
@@ -25,8 +25,10 @@ test('farmslot farm declares the setup bundle used by remote prepare hooks', () 
   assert.deepEqual(result.undeclaredHookPaths, []);
 
   const profiles = projectJson.prepare?.profiles;
-  assert.match(profiles?.sandbox?.hooks?.preflight ?? '', /\{\{node_support_dir\}\}/);
+  assert.match(profiles?.sandbox?.hooks?.preflight ?? '', /\{\{repo\}\}/);
+  assert.doesNotMatch(profiles?.sandbox?.hooks?.preflight ?? '', /\{\{node_support_dir\}\}/);
   assert.doesNotMatch(profiles?.sandbox?.hooks?.preflight ?? '', /\{\{primary_repo\}\}/);
+  assert.match(profiles?.['companion-warm']?.hooks?.preflight ?? '', /\{\{node_support_dir\}\}/);
 
   for (const hookName of ['health_check', 'dev_server_check', 'teardown'] as const) {
     assert.match(String(projectJson.hooks?.[hookName] ?? ''), /\{\{repo\}\}/);

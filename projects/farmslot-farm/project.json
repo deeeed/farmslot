@@ -49,7 +49,7 @@
         "description": "Git sync, deps, then boot this checkout's gateway and Vite UI on the slot port. Use for ff-* worktree sandboxes. Typecheck is not run here — use profile typecheck when you need it before dispatch.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{node_support_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{port}}"
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{port}}"
         }
       },
       "attach": {
