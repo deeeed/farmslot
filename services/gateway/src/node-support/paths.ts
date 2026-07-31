@@ -98,6 +98,11 @@ function hookCommands(projectJson: RawProjectJson): string[] {
       }
     }
   }
+  for (const profile of Object.values(projectJson.prepare?.profiles ?? {})) {
+    for (const command of Object.values(profile.hooks ?? {})) {
+      if (typeof command === 'string') commands.push(command);
+    }
+  }
   for (const value of Object.values(projectJson.vars ?? {})) {
     if (typeof value === 'string') commands.push(value);
   }
