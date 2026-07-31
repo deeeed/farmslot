@@ -228,7 +228,7 @@ kill_agent_in_session() {
   local agent_pid
   agent_pid=$(run_on "$host" "$machine" "$ssh_user" \
     "root='${pane_pid}'
-for pid in \$(pgrep -f 'claude|codex|opencode' 2>/dev/null); do
+for pid in \$(pgrep -f 'claude|codex|opencode|cursor-agent|grok|scripted-runner' 2>/dev/null); do
   command=\$(ps -o command= -p \"\$pid\" 2>/dev/null || true)
   case \"\$command\" in
     *'__farmslot_status'*) continue ;;

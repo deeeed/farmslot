@@ -89,13 +89,23 @@ export async function inspectWorktreePublishState(
   // `git status` can report a tracked path as modified from stale stat data
   // even when its content is unchanged. Diff tracked content against HEAD and
   // collect untracked files separately; NUL delimiters preserve unusual paths.
-  const tracked = await execute(
-    'if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --name-only -z HEAD --; else git ls-files --cached -z; fi',
+  const headProbe = await execute('git rev-parse --verify --quiet HEAD');
+  const hasHead = refExists(headProbe, 'HEAD probe');
+  const worktree = await execute(
+    hasHead ? 'git diff --name-only -z HEAD --' : 'git ls-files --cached -z',
   );
-  assertGitProbe(tracked, 'tracked-content diff');
+  assertGitProbe(worktree, 'tracked-content diff');
+  const staged = hasHead
+    ? await execute('git diff --cached --name-only -z HEAD --')
+    : { stdout: '', stderr: '', exitCode: 0 };
+  assertGitProbe(staged, 'staged-content diff');
   const untracked = await execute('git ls-files --others --exclude-standard -z');
   assertGitProbe(untracked, 'untracked-files probe');
-  const dirtyFiles = new Set([...nulPaths(tracked.stdout), ...nulPaths(untracked.stdout)]).size;
+  const dirtyFiles = new Set([
+    ...nulPaths(worktree.stdout),
+    ...nulPaths(staged.stdout),
+    ...nulPaths(untracked.stdout),
+  ]).size;
 
   const branchRef = `refs/heads/${branch}`;
   const remoteRef = `origin/${branch}`;

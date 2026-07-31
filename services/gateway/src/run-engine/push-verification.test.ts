@@ -63,7 +63,9 @@ function scriptedExecutor(results: ExecResult[]) {
 
 test('worktree inspection counts actual content changes and untracked files NUL-safely', async () => {
   const script = scriptedExecutor([
+    result(),
     result('tracked file\0shared path\0'),
+    result('staged file\0shared path\0'),
     result('new file\0shared path\0'),
     result('origin/feature\n'),
     result('0\n'),
@@ -71,15 +73,18 @@ test('worktree inspection counts actual content changes and untracked files NUL-
 
   const state = await inspectWorktreePublishState('feature', script.execute);
 
-  assert.deepEqual(state, { dirtyFiles: 3, unpushedCommits: 0 });
-  assert.deepEqual(script.commands.slice(0, 2), [
-    'if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --name-only -z HEAD --; else git ls-files --cached -z; fi',
+  assert.deepEqual(state, { dirtyFiles: 4, unpushedCommits: 0 });
+  assert.deepEqual(script.commands.slice(0, 4), [
+    'git rev-parse --verify --quiet HEAD',
+    'git diff --name-only -z HEAD --',
+    'git diff --cached --name-only -z HEAD --',
     'git ls-files --others --exclude-standard -z',
   ]);
 });
 
 test('worktree inspection supports a repository with no HEAD commit yet', async () => {
   const script = scriptedExecutor([
+    result('', 1),
     result('tracked file\0'),
     result('untracked file\0'),
     result('', 1),
@@ -90,11 +95,19 @@ test('worktree inspection supports a repository with no HEAD commit yet', async 
   const state = await inspectWorktreePublishState('feature', script.execute);
 
   assert.deepEqual(state, { dirtyFiles: 2, unpushedCommits: 1 });
-  assert.match(script.commands[0] ?? '', /git ls-files --cached -z/);
+  assert.equal(script.commands[1], 'git ls-files --cached -z');
+  assert.ok(!script.commands.some((command) => command.includes('git diff --cached')));
 });
 
 test('worktree inspection compares an existing feature remote with the local branch', async () => {
-  const script = scriptedExecutor([result(), result(), result(), result('2\n')]);
+  const script = scriptedExecutor([
+    result(),
+    result(),
+    result(),
+    result(),
+    result(),
+    result('2\n'),
+  ]);
 
   const state = await inspectWorktreePublishState('feature', script.execute);
 
@@ -107,6 +120,8 @@ test('worktree inspection compares an existing feature remote with the local bra
 
 test('new branch inspection compares its configured upstream instead of all local history', async () => {
   const script = scriptedExecutor([
+    result(),
+    result(),
     result(),
     result(),
     result('', 1),
@@ -126,6 +141,8 @@ test('new branch inspection falls back to origin HEAD when it has no upstream', 
   const script = scriptedExecutor([
     result(),
     result(),
+    result(),
+    result(),
     result('', 1),
     result(),
     result('origin/main\n'),
@@ -139,7 +156,15 @@ test('new branch inspection falls back to origin HEAD when it has no upstream', 
 });
 
 test('new branch inspection keeps publication blocked when no comparison ref exists', async () => {
-  const script = scriptedExecutor([result(), result(), result('', 1), result(), result('', 1)]);
+  const script = scriptedExecutor([
+    result(),
+    result(),
+    result(),
+    result(),
+    result('', 1),
+    result(),
+    result('', 1),
+  ]);
 
   const state = await inspectWorktreePublishState('feature', script.execute);
 

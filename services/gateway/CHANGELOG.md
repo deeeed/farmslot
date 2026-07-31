@@ -5,7 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - fix(runners): use the shared descendant-process probe for self-review rediscovery, fleet status, slot monitoring, and agent teardown so wrapped Claude/Codex runners are not mistaken for idle panes.
-- fix(run-engine): sync Farmslot setup hooks into remote node support for prepare while keeping runtime hooks checkout-local, and verify publish readiness from real content changes plus commits ahead of a trustworthy base instead of stale stat metadata or the branch's full history.
+- fix(run-engine): sync Farmslot setup hooks into remote node support for prepare while keeping runtime hooks checkout-local, verify publish readiness from working-tree, staged, and untracked content plus commits ahead of a trustworthy base instead of stale stat metadata or the branch's full history, and keep legacy runner cleanup aligned with every supported runner process.
 - fix(self-review): write terminal artifact contracts per active checklist so concurrent or crashed nested reviewer contexts cannot leave the worker/reviewer marker enforcing another role's report contract.
 - fix(observability): poll thumbnails only for visual slot platforms instead of treating busy CLI slots as iOS simulators and repeatedly timing out on invalid `simctl` targets.
 - fix(runners): recognize Codex's changed-repository-hooks review screen, rebuild the isolated Farmslot hook/trust configuration, and select the prompt's actual “Trust all and continue” option before task delivery. The previous recovery disabled the observability hooks it was meant to preserve.
