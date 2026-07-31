@@ -103,21 +103,25 @@ export interface PostDispatchStepContext {
     approvalOnly?: boolean,
   ) => RunDecision | undefined;
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
+  executeSelfReviewForRun?: typeof executeSelfReview;
   probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
   refreshRunLinks: (runId: string) => Promise<void>;
   reviewPlanFromSelection: (selection: RunDecision['selectionData']) => ReviewLoopRequest[];
   stepPartialIO: Map<string, StepIO>;
 }
 
-export function updateBranchWorkerSkippedSelfReview(run: Pick<Run, 'steps'>): boolean {
+export function persistedUpdateBranchNeedsSelfReview(
+  run: Pick<Run, 'flowType' | 'steps'>,
+): boolean | undefined {
+  if (run.flowType !== 'update-branch') return undefined;
   const monitorStep = run.steps.find((step) => step.name === S.MONITOR);
-  const workerSignal = monitorStep?.outputs?.workerSignal as WorkerSignal | undefined;
-  return (
-    monitorStep?.status === 'done' &&
-    workerSignal !== null &&
-    typeof workerSignal === 'object' &&
-    workerSignal.needsSelfReview === false
-  );
+  if (monitorStep?.status !== 'done') return undefined;
+  const workerSignal = monitorStep.outputs?.workerSignal as WorkerSignal | undefined;
+  if (workerSignal === null || typeof workerSignal !== 'object') return undefined;
+  if (workerSignal.status !== 'complete' && workerSignal.status !== 'done') return undefined;
+  return typeof workerSignal.needsSelfReview === 'boolean'
+    ? workerSignal.needsSelfReview
+    : undefined;
 }
 
 export function shouldSkipRetrospectiveAtComplete(run: Pick<Run, 'flowType'>): boolean {
@@ -455,38 +459,50 @@ export async function executeSelfReviewStep(
 
   // update-branch: check worker's signal to decide if self-review is needed
   if (current.flowType === 'update-branch') {
-    if (updateBranchWorkerSkippedSelfReview(current)) {
+    const persistedNeedsSelfReview = persistedUpdateBranchNeedsSelfReview(current);
+    if (persistedNeedsSelfReview === false) {
       console.log(
         `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (persisted monitor signal)`,
       );
       return {
         inputs: { ...inputs, enabled: false },
-        outputs: { skipped: true, reason: 'worker-signal-trivial' },
+        outputs: {
+          skipped: true,
+          reason: 'worker-signal-trivial',
+          workerSignalSource: 'persisted-monitor',
+        },
       };
     }
-    try {
-      const probe = await (context.probeWorkerSignalForRun ?? probeWorkerSignalForRun)(
-        runId,
-        current.slotId,
-      );
-      if (probe.ok && probe.signal?.needsSelfReview === false) {
-        console.log(
-          `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (slot signal probe)`,
+    if (persistedNeedsSelfReview === undefined) {
+      try {
+        const probe = await (context.probeWorkerSignalForRun ?? probeWorkerSignalForRun)(
+          runId,
+          current.slotId,
         );
-        return {
-          inputs: { ...inputs, enabled: false },
-          outputs: { skipped: true, reason: 'worker-signal-trivial' },
-        };
+        if (probe.ok && probe.signal?.needsSelfReview === false) {
+          console.log(
+            `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (slot signal probe)`,
+          );
+          return {
+            inputs: { ...inputs, enabled: false },
+            outputs: {
+              skipped: true,
+              reason: 'worker-signal-trivial',
+              workerSignalSource: 'slot-probe',
+            },
+          };
+        }
+      } catch (err) {
+        // Signal not found or unreadable — default to running self-review
+        console.warn(
+          `[run-engine] update-branch worker signal unavailable for ${runId.slice(0, 8)}; running self-review: ${(err as Error).message.slice(0, 200)}`,
+        );
       }
-    } catch (err) {
-      // Signal not found or unreadable — default to running self-review
-      console.warn(
-        `[run-engine] update-branch worker signal unavailable for ${runId.slice(0, 8)}; running self-review: ${(err as Error).message.slice(0, 200)}`,
-      );
     }
   }
 
-  const result = await executeSelfReview(runId, current.slotId);
+  const executeSelfReviewForRun = context.executeSelfReviewForRun ?? executeSelfReview;
+  const result = await executeSelfReviewForRun(runId, current.slotId);
   const cliCommand = `farmslot rpc self-review.run '{"runId":"${runId}"}'`;
 
   // Interactive mode: present self-review results as a decision before proceeding
@@ -505,7 +521,7 @@ export async function executeSelfReviewStep(
     // When human chooses "send_feedback", re-run self-review which will
     // send feedback and wait for fix (existing retry logic)
     if (actionId === 'send_feedback') {
-      const retryResult = await executeSelfReview(runId, current.slotId);
+      const retryResult = await executeSelfReviewForRun(runId, current.slotId);
       return {
         inputs: { ...inputs, enabled: true },
         outputs: {
