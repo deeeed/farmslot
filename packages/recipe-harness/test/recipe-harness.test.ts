@@ -2919,6 +2919,30 @@ test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () =
   ]);
 });
 
+test('CDP page scroll uses the document root when window globals are unavailable', async () => {
+  const scrolls: Array<[number, number]> = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      assert.equal(method, 'Runtime.evaluate');
+      const context = vm.createContext({
+        document: {
+          scrollingElement: {
+            scrollBy(x: number, y: number) {
+              scrolls.push([x, y]);
+            },
+          },
+          documentElement: null,
+        },
+      });
+      return { result: { value: vm.runInContext(String(params.expression), context) } };
+    },
+  } as never);
+
+  const result = (await page.scroll({ deltaX: 4, deltaY: 120 })) as { scrolled: boolean };
+  assert.equal(result.scrolled, true);
+  assert.deepEqual(scrolls, [[4, 120]]);
+});
+
 test('maps typed numeric recipe parameters to CDP input text', async () => {
   const values: string[] = [];
   const transport = createCdpWebUiTransport({
