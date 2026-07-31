@@ -14,7 +14,12 @@ let nextResult: ExecResult = { stdout: '', stderr: '', exitCode: 0 };
 const execCommands: string[] = [];
 mock.module('../../core/exec.js', {
   namedExports: {
-    execArgvOnSlot: async (): Promise<ExecResult> => nextResult,
+    // Reached transitively via methods/git.ts. Record it like execOnSlot so a
+    // future call remains visible to these wiring assertions.
+    execArgvOnSlot: async (_vars: unknown, argv: string[]): Promise<ExecResult> => {
+      execCommands.push(argv.join(' '));
+      return nextResult;
+    },
     execFileArgv: async (): Promise<ExecResult> => nextResult,
     execOnSlot: async (_vars: unknown, cmd: string): Promise<ExecResult> => {
       execCommands.push(cmd);
