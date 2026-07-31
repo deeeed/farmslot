@@ -186,23 +186,42 @@ test('finish sets the exit status without ending the process', () => {
 // test below fails both when a listed file loses its pragma and when a new file
 // gains one without being reviewed into the list. Keep it sorted.
 const GATEWAY_SERIAL_INVENTORY = [
-  'src/agents/contexts.test.ts', //             writes fixtures into the repo pool/
-  'src/agents/runtime-recovery.test.ts', //     real tmux sessions + repo pool/
-  'src/core/state.test.ts', //                  rewrites the root .farm-status.json
-  'src/live-recipe/context.test.ts', //         writes fixtures into the repo pool/
-  'src/methods/filesystem.test.ts', //          writes fixtures into the repo pool/
-  'src/methods/run/replay-step.test.ts', //     rewrites the root .farm-status.json
-  'src/methods/slot/release.test.ts', //        rewrites the root .farm-status.json
-  'src/tasks/writer.test.ts', //                fixed-name file in templates/worker/
+  'src/agents/contexts.test.ts', //                   writes fixtures into the repo pool/
+  'src/agents/runtime-recovery.test.ts', //           real tmux sessions + repo pool/
+  'src/ci-monitor/inline-fix.test.ts', //             real template dirs under repo projects/
+  'src/core/state.test.ts', //                        rewrites the root .farm-status.json
+  'src/live-recipe/context.test.ts', //               writes fixtures into the repo pool/
+  'src/methods/config.test.ts', //                    real dirs under repo projects/
+  'src/methods/filesystem.test.ts', //                writes fixtures into the repo pool/
+  'src/methods/run/replay-step.test.ts', //           rewrites the root .farm-status.json
+  'src/methods/slot/release.test.ts', //              rewrites the root .farm-status.json
+  'src/roadmap/store.test.ts', //                     real dirs under repo projects/
+  'src/run-completion/artifact-mirror.test.ts', //    real JSON under repo pool/
+  'src/run-engine/publish-package-refresh.test.ts', // real JSON under repo pool/
+  'src/tasks/writer.test.ts', //                      fixed-name file in templates/worker/
 ];
 
 // Discovery, not just a lock. The inventory above only catches a *lost* pragma;
-// three review rounds in a row found suites that were never listed because a
-// hand-written grep missed them (poolDir reached via a re-export, statusFile via
-// an imported symbol, then a dynamic import). Any gateway test that can reach the
-// shared root `.farm-status.json` or the shared repo `pool/` must therefore either
-// carry the pragma or be listed here with the reason it is safe.
-const SHARED_STATE_IDENTIFIERS = /\b(statusFile|poolDir)\b/;
+// four review rounds running found suites that were never listed because a
+// matcher was too narrow — poolDir reached via a re-export, statusFile via an
+// imported symbol, then a dynamic import, then a pool path built with
+// path.join(farmslotRoot, 'pool', …) that no identifier match could see.
+//
+// So match the shared *location*, however the path is spelled: the named
+// accessors, the status file, and any join rooted at farmslotRoot into a shared
+// repo subtree. A test reaching those must carry the pragma or be listed below
+// with the reason it is safe.
+const SHARED_STATE_PATTERNS = [
+  /\bstatusFile\b/, //                                    core/state.js accessor
+  /\bpoolDir\b/, //                                       core/config.js accessor
+  /\.farm-status/, //                                      the status file by name
+  /farmslotRoot\s*,\s*['"`](pool|projects|templates)\b/, // path.join(farmslotRoot, 'pool', …)
+];
+
+export function reachesSharedState(source) {
+  return SHARED_STATE_PATTERNS.some((pattern) => pattern.test(source));
+}
+
 const SHARED_STATE_READ_ONLY = {
   'src/projects/repo-root.test.ts': 'asserts resolved paths only; never writes',
   'src/runtime/session-usage-script.test.ts': 'declares its own temp poolDir under a mkdtemp root',
@@ -225,6 +244,41 @@ test('the gateway serial lane matches its reviewed inventory', () => {
   );
 });
 
+test('the shared-state matcher sees pool paths built from farmslotRoot', () => {
+  // Regression for rev7: both omitted suites built the pool path this way, and an
+  // identifier-only matcher (statusFile|poolDir) scored them clean.
+  const viaFarmslotRoot = "const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);";
+  assert.equal(reachesSharedState(viaFarmslotRoot), true, 'missed path.join(farmslotRoot, "pool")');
+  assert.equal(
+    reachesSharedState(
+      "await rm(path.join(farmslotRoot, 'projects', project), { recursive: true }));",
+    ),
+    true,
+    'missed a shared repo projects/ path',
+  );
+  assert.equal(
+    reachesSharedState("const workerDir = path.join(farmslotRoot, 'templates', 'worker');"),
+    true,
+    'missed a shared repo templates/ path',
+  );
+
+  // The earlier identifier and literal shapes must keep matching.
+  assert.equal(reachesSharedState("import { poolDir } from '../core/config.js';"), true);
+  assert.equal(
+    reachesSharedState("const { statusFile } = await import('../../core/state.js');"),
+    true,
+  );
+  assert.equal(reachesSharedState("await readFile('.farm-status.json');"), true);
+
+  // A temp-dir pool must NOT trip the guard, or every fixture becomes serial.
+  assert.equal(
+    reachesSharedState("const dir = path.join(tmpdir(), 'pool');"),
+    false,
+    'temp-dir pools are isolated and must stay on parallel lanes',
+  );
+  assert.equal(reachesSharedState('const x = 1;'), false);
+});
+
 test('every gateway suite that can reach shared state is serial or justified', () => {
   const gatewaySrc = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -233,7 +287,7 @@ test('every gateway suite that can reach shared state is serial or justified', (
   const unguarded = [];
   for (const file of discoverTests(['.'], gatewaySrc)) {
     const source = readFileSync(file, 'utf8');
-    if (!SHARED_STATE_IDENTIFIERS.test(source)) continue;
+    if (!reachesSharedState(source)) continue;
     const rel = `src/${path.relative(gatewaySrc, file).split(path.sep).join('/')}`;
     if (source.includes(SERIAL_PRAGMA)) continue;
     if (rel in SHARED_STATE_READ_ONLY) continue;
@@ -256,7 +310,7 @@ test('the shared-state read-only allowlist stays honest', () => {
   for (const [rel, reason] of Object.entries(SHARED_STATE_READ_ONLY)) {
     const source = readFileSync(path.join(gatewaySrc, rel.replace(/^src\//, '')), 'utf8');
     assert.ok(
-      SHARED_STATE_IDENTIFIERS.test(source),
+      reachesSharedState(source),
       `${rel} no longer touches shared state — drop it from the allowlist`,
     );
     assert.ok(reason.length > 0, `${rel} needs a reason`);

@@ -1,3 +1,4 @@
+// @farmslot:serial — creates and removes real JSON under the shared repo `pool/`.
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
