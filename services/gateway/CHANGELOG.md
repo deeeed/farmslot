@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(run-engine): always hold `review-pr` runs at the operator-owned review-posting gate, including autonomous and validation runs; runner mode can neither bypass nor auto-dismiss publication approval, operators may exclude visual evidence from the posted review, and restart recovery ingests completed reviewer feedback even when runtime reconciliation already marked its context complete.
+- fix(run-engine): always hold `review-pr` runs at the operator-owned review-posting gate, including autonomous and validation runs; runner mode can neither bypass nor auto-dismiss publication approval, operators may exclude visual evidence from the posted review, restart recovery ingests completed reviewer feedback even when runtime reconciliation already marked its context complete, and the active step distinguishes worker fixes from reviewer execution.
 - fix(self-review): write terminal artifact contracts per active checklist so concurrent or crashed nested reviewer contexts cannot leave the worker/reviewer marker enforcing another role's report contract.
 - fix(observability): poll thumbnails only for visual slot platforms instead of treating busy CLI slots as iOS simulators and repeatedly timing out on invalid `simctl` targets.
 - fix(runners): recognize Codex's changed-repository-hooks review screen, rebuild the isolated Farmslot hook/trust configuration, and select the prompt's actual “Trust all and continue” option before task delivery. The previous recovery disabled the observability hooks it was meant to preserve.
