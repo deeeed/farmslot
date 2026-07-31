@@ -112,10 +112,72 @@ test('publishes byte-identical, described suite schemas', async () => {
   }
 });
 
+test('published suite schemas enforce the v1 wire shapes', async () => {
+  const input = validPackage();
+  const ajv = new Ajv2020({ strict: true });
+  const validateScope = ajv.compile(
+    JSON.parse(
+      await readFile(
+        path.join(repoRoot, 'packages/protocol/schemas/recipe-suite-scope-v1.schema.json'),
+        'utf8',
+      ),
+    ),
+  );
+  const validateResult = ajv.compile(
+    JSON.parse(
+      await readFile(
+        path.join(repoRoot, 'packages/protocol/schemas/recipe-suite-result-v1.schema.json'),
+        'utf8',
+      ),
+    ),
+  );
+  assert.equal(validateScope(input.scope), true, JSON.stringify(validateScope.errors));
+  assert.equal(validateResult(input.result), true, JSON.stringify(validateResult.errors));
+  assert.equal(validateScope({ ...input.scope, cases: [] }), false);
+  assert.equal(validateScope({ ...input.scope, cases: [{ id: 'same' }, { id: 'same' }] }), false);
+  assert.equal(validateResult({ ...input.result, resolutions: [] }), false);
+  assert.equal(
+    validateResult({ ...input.result, totals: { ...input.result.totals, declared: 0 } }),
+    false,
+  );
+  assert.equal(
+    validateResult({
+      ...input.result,
+      resolutions: input.result.resolutions.map((resolution) =>
+        resolution.kind === 'verdict'
+          ? { ...resolution, summary_path: '../outside.json' }
+          : resolution,
+      ),
+    }),
+    false,
+  );
+  assert.equal(
+    validateResult({
+      ...input.result,
+      resolutions: [
+        {
+          id: 'manual',
+          kind: 'not_executed',
+          reason_class: 'ordering_dependent',
+          detail: 'Blocked without naming a blocker.',
+        },
+      ],
+    }),
+    false,
+  );
+});
+
 test('validates frozen suite scope and result documents', () => {
   const input = validPackage();
   assert.equal(validateRecipeSuiteScopeDocument(input.scope).status, 'valid');
   assert.equal(validateRecipeSuiteResultDocument(input.result).status, 'valid');
+  assert.equal(
+    validateRecipeSuiteResultDocument({
+      ...input.result,
+      resolutions: [],
+    }).status,
+    'invalid',
+  );
 
   for (const invalidScope of [
     { ...input.scope, cases: [] },
@@ -148,7 +210,13 @@ test('fails closed when suite coverage or retained summaries do not reconcile', 
         resolutions: [...input.result.resolutions, input.result.resolutions[0]],
       },
     },
-    { ...input, result: { ...input.result, totals: { ...input.result.totals, executed: 1 } } },
+    ...(['declared', 'executed', 'not_executed'] as const).map((key) => ({
+      ...input,
+      result: {
+        ...input.result,
+        totals: { ...input.result.totals, [key]: input.result.totals[key] + 1 },
+      },
+    })),
     { ...input, summaries: { 'summaries/fail.json': input.summaries['summaries/fail.json'] } },
     {
       ...input,
@@ -185,6 +253,12 @@ test('enforces explicit and truthful non-execution reasons', () => {
 
   for (const invalid of [
     replaceManual({ id: 'manual', kind: 'not_executed', detail: 'Missing reason.' }),
+    replaceManual({
+      id: 'manual',
+      kind: 'not_executed',
+      reason_class: 'other',
+      detail: 'Invalid reason.',
+    }),
     replaceManual({
       id: 'manual',
       kind: 'not_executed',

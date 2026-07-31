@@ -49,6 +49,8 @@ export type RecipeActionName = OfficialActionName | (string & {});
 export const BUILT_IN_UI_OBSERVERS = ['ui.screen', 'ui.visible'] as const;
 export type BuiltInUiObserverRef = (typeof BUILT_IN_UI_OBSERVERS)[number];
 export type UiObserverRef = BuiltInUiObserverRef | (string & {});
+export const RECIPE_FAILURE_CAUSES = ['subject', 'harness', 'environment', 'unknown'] as const;
+export type RecipeFailureCause = (typeof RECIPE_FAILURE_CAUSES)[number];
 
 export interface RecipeActionCatalogEntry {
   description: string;
@@ -108,6 +110,7 @@ export interface RecipeValidationResult {
 export interface RecipeArtifactPackageInput {
   manifest?: unknown;
   trace?: unknown;
+  summary: unknown;
   artifactPaths?: readonly string[];
   recipe?: unknown;
   /** Exact reachable dependency documents keyed by their sha256 digest. */

@@ -6,6 +6,7 @@ import {
   isNonEmptyString,
   isRecord,
   isRelativeArtifactPath,
+  RECIPE_FAILURE_CAUSES,
   type RecipeArtifactPackageInput,
   type RecipeResolutionDocument,
   type RecipeValidationResult,
@@ -312,6 +313,8 @@ export function validateRecipeArtifactPackage(
   const ctx = createContext();
   const artifactPaths = new Set(input.artifactPaths ?? []);
 
+  validateRunEvidence(ctx, input.trace, input.summary, input.manifest);
+
   if (input.artifactPaths != null) {
     const requiredPaths = ['summary.json', 'trace.json'];
     if (input.manifest != null) requiredPaths.push('artifact-manifest.json');
@@ -425,6 +428,172 @@ export function validateRecipeArtifactPackage(
   }
 
   return finishResult(ctx);
+}
+
+function validateRunEvidence(
+  ctx: ReturnType<typeof createContext>,
+  trace: unknown,
+  summary: unknown,
+  manifest: unknown,
+): void {
+  const summaryDocument = isRecord(summary) ? summary : undefined;
+  if (!summaryDocument) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.invalid_summary',
+      'summary.json',
+      'summary.json must be an object.',
+    );
+  }
+  const entries = traceEntries(trace);
+  if (!entries) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.invalid_trace',
+      'trace.json',
+      'trace.json must be an array or an object with entries[].',
+    );
+    return;
+  }
+  const causeSet = new Set<string>(RECIPE_FAILURE_CAUSES);
+  const causeCounts = Object.fromEntries(
+    RECIPE_FAILURE_CAUSES.map((cause) => [cause, 0]),
+  ) as Record<(typeof RECIPE_FAILURE_CAUSES)[number], number>;
+  let passed = 0;
+  let failed = 0;
+  entries.forEach((entry, index) => {
+    const path = `trace.json${Array.isArray(trace) ? '' : '.entries'}[${index}]`;
+    if (!isRecord(entry) || typeof entry.ok !== 'boolean') {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.invalid_trace_outcome',
+        `${path}.ok`,
+        'Trace entries require a boolean ok outcome.',
+      );
+      return;
+    }
+    if (entry.ok) {
+      passed += 1;
+      if (Object.hasOwn(entry, 'cause_class')) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_package.success_has_cause',
+          `${path}.cause_class`,
+          'Successful trace entries must not carry cause_class.',
+        );
+      }
+      return;
+    }
+    failed += 1;
+    if (typeof entry.cause_class !== 'string' || !causeSet.has(entry.cause_class)) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.missing_failure_cause',
+        `${path}.cause_class`,
+        'Failed trace entries require subject, harness, environment, or unknown cause_class.',
+      );
+      return;
+    }
+    causeCounts[entry.cause_class as keyof typeof causeCounts] += 1;
+  });
+
+  if (!summaryDocument) return;
+  if (
+    typeof summaryDocument.status !== 'string' ||
+    !TERMINAL_STATUSES.has(summaryDocument.status)
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.invalid_summary_status',
+      'summary.json.status',
+      'Summary status must be pass, fail, or unknown.',
+    );
+  }
+  const expectedCounts = { total: entries.length, passed, failed };
+  for (const key of ['total', 'passed', 'failed'] as const) {
+    if (!Number.isInteger(summaryDocument[key]) || summaryDocument[key] !== expectedCounts[key]) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.summary_count_mismatch',
+        `summary.json.${key}`,
+        `Summary ${key} must equal ${expectedCounts[key]}.`,
+      );
+    }
+  }
+  if (!isRecord(summaryDocument.cause_counts)) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.invalid_cause_counts',
+      'summary.json.cause_counts',
+      'Summary cause_counts must contain all four failure classes.',
+    );
+  } else {
+    for (const cause of RECIPE_FAILURE_CAUSES) {
+      if (
+        !Number.isInteger(summaryDocument.cause_counts[cause]) ||
+        summaryDocument.cause_counts[cause] !== causeCounts[cause]
+      ) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_package.cause_count_mismatch',
+          `summary.json.cause_counts.${cause}`,
+          `Summary ${cause} cause count must equal ${causeCounts[cause]}.`,
+        );
+      }
+    }
+    const extraCauses = Object.keys(summaryDocument.cause_counts).filter(
+      (cause) => !causeSet.has(cause),
+    );
+    if (extraCauses.length > 0) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_package.invalid_cause_counts',
+        'summary.json.cause_counts',
+        'Summary cause_counts must not contain undeclared classes.',
+      );
+    }
+  }
+  if (failed > 0 && summaryDocument.status !== 'fail') {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.summary_status_mismatch',
+      'summary.json.status',
+      'A trace containing failed entries requires summary status fail.',
+    );
+  }
+  if (failed === 0 && summaryDocument.status === 'fail') {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.summary_status_mismatch',
+      'summary.json.status',
+      'Summary status fail requires at least one failed trace entry.',
+    );
+  }
+  if (
+    isRecord(manifest) &&
+    manifest.runStatus != null &&
+    manifest.runStatus !== summaryDocument.status
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'artifact_package.manifest_status_mismatch',
+      'summary.json.status',
+      'Summary status must match artifact-manifest.json runStatus.',
+    );
+  }
 }
 
 interface ExpectedTraceNode {

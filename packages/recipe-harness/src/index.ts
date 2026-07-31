@@ -25,6 +25,7 @@ export {
   rootResolutionRef,
   validateRecipeDependencyParams,
 } from './core/compose.js';
+export { RecipeExecutionError } from './core/failure.js';
 export type { RecipeLibraryResolution, ResolvedLibraryRecipe } from './core/library.js';
 export {
   applyTaskLocalInvocationTrust,
@@ -36,6 +37,15 @@ export {
 } from './core/library.js';
 export { RecipeResolutionError } from './core/resolution-error.js';
 export { createRecipeRunner, defineActionAdapter } from './core/runner.js';
+export {
+  finalizeRecipeSuite,
+  type FinalizeRecipeSuiteRequest,
+  freezeRecipeSuiteScope,
+  type RecipeSuiteFinalizeResult,
+  type RecipeSuiteResolutionInput,
+  type RecipeSuiteScopeSnapshot,
+  type RecipeSuiteVerdictInput,
+} from './core/suite.js';
 export {
   buildRecipeExecutionPlan,
   enforceRecipeExecutionPlan,

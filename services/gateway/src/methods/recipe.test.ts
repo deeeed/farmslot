@@ -250,7 +250,13 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
       nodes: { done: { action: 'end', status: 'pass' } },
     },
   };
-  const summary = { status: 'pass', passed: 1, failed: 0, total: 1 };
+  const summary = {
+    status: 'pass',
+    passed: 1,
+    failed: 0,
+    total: 1,
+    cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+  };
   const manifest = {
     version: 1,
     runStatus: 'pass',
@@ -524,7 +530,13 @@ test('validateRecipeRunArtifactPackageOutput requires exact recipe dependency ev
       },
       { nodeId: 'done', action: 'end', ok: true, artifacts: [] },
     ],
-    summary: { status: 'pass', passed: 1, failed: 0, total: 1 },
+    summary: {
+      status: 'pass',
+      passed: 3,
+      failed: 0,
+      total: 3,
+      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+    },
     manifest,
   });
   assert.equal(valid.status, 'pass', JSON.stringify(valid.recipe?.findings));

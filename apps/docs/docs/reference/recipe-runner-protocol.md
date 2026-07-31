@@ -50,6 +50,23 @@ artifact-manifest.json
 
 Package validation revalidates every recipe, digest, call edge, and artifact. Missing evidence never becomes a passing claim.
 
+Failed trace entries carry one explicit `cause_class`: `subject`, `harness`,
+`environment`, or `unknown`. Successful entries omit it. `summary.json` retains
+all four cause counts, and package validation requires them to reconcile with
+the trace.
+
+## Suite evidence
+
+Multi-run coverage uses standalone Recipe Suite Scope v1 and Recipe Suite
+Result v1 documents. A scope freezes a non-empty set of opaque case IDs before
+execution. Its result must resolve every ID exactly once with either a retained
+run-summary verdict or an explicit non-execution reason.
+
+Suite validation checks the canonical scope digest, summary digests and
+statuses, exact totals, safe paths, ordering dependencies, and completeness.
+`oversight` keeps an omission machine-readable but makes the suite invalid. The
+harness finalizer aggregates completed runs; it does not schedule or retry them.
+
 ## Command Center replay options
 
 Command Center renders the same live trace and artifact package as the CLI. It is not a second executor. Optional video capture is capability-bound, stored under the artifact root, and indexed in the manifest.

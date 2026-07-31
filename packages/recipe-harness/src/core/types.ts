@@ -4,6 +4,7 @@ import type {
   RecipeExecutionApproval,
   RecipeExecutionCapability,
   RecipeExecutionPlan,
+  RecipeFailureCause,
   RecipeResolutionDocument,
   RecipeSourceProvenance,
   UiObserverRef,
@@ -263,6 +264,7 @@ export interface TraceEntry {
   endedAt: string;
   durationMs: number;
   ok: boolean;
+  cause_class?: RecipeFailureCause;
   next?: string;
   status?: RecipeRunStatus;
   case?: string;
@@ -284,6 +286,7 @@ export interface SummaryDocument {
   total: number;
   passed: number;
   failed: number;
+  cause_counts: Record<RecipeFailureCause, number>;
   startedAt: string;
   endedAt: string;
   durationMs: number;

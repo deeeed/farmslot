@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import type { RecipeArtifactManifestEntry } from '@farmslot/protocol';
 
+import { RecipeExecutionError } from '../core/failure.js';
 import {
   asNumber,
   asOptionalString,
@@ -89,7 +90,8 @@ function defineAssertFileAdapter(): ActionAdapter {
         const content = (await readFileWithinRoot(context.projectRoot, filePath)).toString('utf-8');
         const expected = asString(node.contains, 'assert_file.contains');
         if (!content.includes(expected)) {
-          throw new Error(
+          throw new RecipeExecutionError(
+            'subject',
             `File ${filePath} does not contain expected text ${JSON.stringify(expected)}.`,
           );
         }
@@ -139,14 +141,20 @@ function defineAssertOutputAdapter(): ActionAdapter {
       if (node.contains != null) {
         const expected = asString(node.contains, 'assert_output.contains');
         if (!actual.includes(expected)) {
-          throw new Error(`${source}.${stream} does not contain ${JSON.stringify(expected)}.`);
+          throw new RecipeExecutionError(
+            'subject',
+            `${source}.${stream} does not contain ${JSON.stringify(expected)}.`,
+          );
         }
         return { output: { source, stream, contains: expected } };
       }
       if (node.match != null) {
         const pattern = asString(node.match, 'assert_output.match');
         if (!new RegExp(pattern).test(actual)) {
-          throw new Error(`${source}.${stream} does not match ${pattern}.`);
+          throw new RecipeExecutionError(
+            'subject',
+            `${source}.${stream} does not match ${pattern}.`,
+          );
         }
         return { output: { source, stream, match: pattern } };
       }
@@ -220,7 +228,8 @@ function defineWatchLogsAdapter(): ActionAdapter {
       const start = baseline > contentBuffer.length ? 0 : baseline;
       const content = contentBuffer.subarray(start).toString('utf-8');
       if (contains && !content.includes(contains)) {
-        throw new Error(
+        throw new RecipeExecutionError(
+          'subject',
           `Log ${filePath} does not contain ${JSON.stringify(contains)} in ${rawScope} scope.`,
         );
       }
@@ -393,7 +402,10 @@ function parseAssertionNode(value: unknown, label: string): AssertionNode {
 
 function assertAssertion(actualRoot: unknown, assertion: AssertionNode, label: string): void {
   if (!evaluateAssertion(actualRoot, assertion)) {
-    throw new Error(`${label} failed assertion ${JSON.stringify(assertion)}.`);
+    throw new RecipeExecutionError(
+      'subject',
+      `${label} failed assertion ${JSON.stringify(assertion)}.`,
+    );
   }
 }
 
@@ -415,7 +427,8 @@ function assertAtomicValue(
   label: string,
 ): void {
   if (!evaluateAtomicValue(actual, operator, expected)) {
-    throw new Error(
+    throw new RecipeExecutionError(
+      'subject',
       `${label} expected ${operator} ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}.`,
     );
   }

@@ -295,6 +295,7 @@ export function validateRecipeRunArtifactPackageOutput(
   const recipe = validateRecipeArtifactPackage({
     recipe: input.recipeArtifactPresent ? input.recipe : undefined,
     trace: input.trace,
+    summary: input.summary,
     recipeResolution: input.recipeResolution,
     resolvedRecipes: input.resolvedRecipes,
     manifest: input.manifest,

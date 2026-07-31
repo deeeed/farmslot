@@ -16,6 +16,26 @@ import { createRecipeRunner, defineActionAdapter } from '../src/core/runner.js';
 import type { ActionAdapter } from '../src/core/types.js';
 
 function manifest(actions: string[]): RecipeActionManifestDocument {
+  const schemas: Record<string, Record<string, unknown>> = {
+    assert_json: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        assert: { type: 'object', additionalProperties: true },
+      },
+      additionalProperties: false,
+    },
+    command: {
+      type: 'object',
+      properties: { cmd: { type: 'string' } },
+      additionalProperties: false,
+    },
+    switch: {
+      type: 'object',
+      properties: { value: { type: 'string' }, equals: { type: 'string' } },
+      additionalProperties: false,
+    },
+  };
   return {
     $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
     actions: Object.fromEntries(
@@ -25,14 +45,22 @@ function manifest(actions: string[]): RecipeActionManifestDocument {
           description: `Execute ${action}.`,
           ...(action === 'call' || action === 'end'
             ? {}
-            : { schema: { type: 'object', additionalProperties: true } }),
-          execution_capabilities: [],
+            : { schema: schemas[action] ?? { type: 'object', additionalProperties: false } }),
+          ...(action === 'call' || action === 'end' ? {} : { execution_capabilities: [] }),
+          ...(action === 'switch' ? { result_cases: ['match'] } : {}),
           examples:
             action === 'end'
               ? [{ action: 'end', status: 'pass' }]
               : action === 'call'
-                ? [{ action: 'call', ref: 'child', next: 'done' }]
-                : [{ action, next: 'done' }],
+                ? [
+                    {
+                      action: 'call',
+                      intent: 'Invoke the retained child recipe.',
+                      ref: 'child',
+                      next: 'done',
+                    },
+                  ]
+                : [{ action, intent: 'Exercise the declared failure path.', next: 'done' }],
         },
       ]),
     ),
@@ -63,18 +91,10 @@ test('classifies explicit and untyped adapter failures and reconciles summary co
           throw new RecipeExecutionError(cause, `${cause} failure`);
         },
       });
-    const unknown = defineActionAdapter({
-      action: 'example.unknown',
-      source: { kind: 'bundled', trust: 'trusted' },
-      async execute() {
-        throw new Error('ordinary adapter failure');
-      },
-    });
     const adapters = [
-      ...createStandardCoreAdapters({ actions: ['assert_json'] }),
+      ...createStandardCoreAdapters({ actions: ['assert_json', 'command'] }),
       classified('example.harness', 'harness'),
       classified('example.environment', 'environment'),
-      unknown,
     ];
     const cases = [
       {
@@ -84,7 +104,11 @@ test('classifies explicit and untyped adapter failures and reconciles summary co
       },
       { action: 'example.harness', node: {}, cause: 'harness' },
       { action: 'example.environment', node: {}, cause: 'environment' },
-      { action: 'example.unknown', node: {}, cause: 'unknown' },
+      {
+        action: 'command',
+        node: { cmd: 'node -e "process.exit(9)"' },
+        cause: 'unknown',
+      },
     ] as const;
 
     for (const entry of cases) {
@@ -92,10 +116,16 @@ test('classifies explicit and untyped adapter failures and reconciles summary co
       const runner = createRecipeRunner({
         actionManifest: manifest([entry.action]),
         adapters: adapters.filter((adapter) => adapter.action === entry.action),
+        defaultSource: { kind: 'operator', trust: 'trusted' },
       });
       const result = await runner.run({
         recipeDocument: recipe({
-          check: { action: entry.action, ...entry.node, next: 'done' },
+          check: {
+            action: entry.action,
+            intent: 'Exercise the declared failure classification.',
+            ...entry.node,
+            next: 'done',
+          },
           done: { action: 'end', status: 'pass' },
         }),
         artifactsDir,
@@ -127,7 +157,11 @@ test('preserves a nested structured cause on the parent call failure', async () 
       path.join(libraryRoot, 'recipes', 'child.recipe.json'),
       `${JSON.stringify(
         recipe({
-          fail: { action: 'example.subject', next: 'done' },
+          fail: {
+            action: 'example.subject',
+            intent: 'Produce a structured child assertion failure.',
+            next: 'done',
+          },
           done: { action: 'end', status: 'pass' },
         }),
         null,
@@ -144,9 +178,15 @@ test('preserves a nested structured cause on the parent call failure', async () 
     const result = await createRecipeRunner({
       actionManifest: manifest(['example.subject']),
       adapters: [subject],
+      defaultSource: { kind: 'operator', trust: 'trusted' },
     }).run({
       recipeDocument: recipe({
-        child: { action: 'call', ref: 'child', next: 'done' },
+        child: {
+          action: 'call',
+          intent: 'Invoke the child that produces a structured failure.',
+          ref: 'child',
+          next: 'done',
+        },
         done: { action: 'end', status: 'pass' },
       }),
       librarySources: [
@@ -191,6 +231,48 @@ test('records authored terminal failure as an unknown failed entry', async () =>
       environment: 0,
       unknown: 1,
     });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('does not turn a non-taken workflow branch into suite non-execution evidence', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'farmslot-branch-evidence-'));
+  try {
+    const result = await createRecipeRunner({
+      actionManifest: manifest(['switch']),
+      adapters: createStandardCoreAdapters({ actions: ['switch'] }),
+      defaultSource: { kind: 'operator', trust: 'trusted' },
+    }).run({
+      recipeDocument: recipe({
+        route: {
+          action: 'switch',
+          intent: 'Select the matching branch.',
+          value: 'yes',
+          equals: 'yes',
+          cases: { match: 'taken' },
+          default: 'skipped',
+        },
+        taken: { action: 'end', status: 'pass' },
+        skipped: { action: 'end', status: 'fail' },
+      }),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+    });
+    const trace = (await readJson(result.tracePath)) as Array<Record<string, unknown>>;
+    assert.equal(result.status, 'pass');
+    assert.deepEqual(
+      trace.map((entry) => entry.nodeId),
+      ['route', 'taken'],
+    );
+    assert.equal(
+      trace.every((entry) => !('cause_class' in entry)),
+      true,
+    );
+    assert.equal(
+      trace.some((entry) => 'reason_class' in entry),
+      false,
+    );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

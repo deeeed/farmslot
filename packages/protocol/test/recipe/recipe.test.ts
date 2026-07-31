@@ -1154,6 +1154,13 @@ test('validates artifact manifests and complete packages', () => {
   const result = validateRecipeArtifactPackage({
     recipe: document,
     trace: [{ nodeId: 'done', action: 'end', ok: true, artifacts: [] }],
+    summary: {
+      status: 'pass',
+      total: 1,
+      passed: 1,
+      failed: 0,
+      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+    },
     manifest: artifactManifest,
     artifactPaths: [
       ...artifactManifest.artifacts.map((entry) => entry.path),
@@ -1169,6 +1176,86 @@ test('validates artifact manifests and complete packages', () => {
     resolvedRecipes: {},
   });
   assert.equal(result.status, 'valid', JSON.stringify(result.findings));
+});
+
+test('validates trace failure causes against summary rollups', () => {
+  const document = recipe({ done: { action: 'end', status: 'fail' } });
+  const manifest = {
+    version: 1,
+    runStatus: 'fail',
+    artifacts: [
+      { path: 'recipe.json', type: 'recipe' },
+      { path: 'summary.json', type: 'summary' },
+      { path: 'trace.json', type: 'trace' },
+    ],
+  };
+  const trace = [{ nodeId: 'done', action: 'end', ok: false, cause_class: 'unknown' }];
+  const summary = {
+    status: 'fail',
+    total: 1,
+    passed: 0,
+    failed: 1,
+    cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 1 },
+  };
+  const validate = (overrides: { trace?: unknown; summary?: unknown } = {}) =>
+    validateRecipeArtifactPackage({
+      recipe: document,
+      trace: overrides.trace ?? trace,
+      summary: overrides.summary ?? summary,
+      manifest,
+      artifactPaths: [
+        'recipe.json',
+        'summary.json',
+        'trace.json',
+        'artifact-manifest.json',
+        'recipe-resolution.json',
+      ],
+      recipeResolution: {
+        schema_version: 1,
+        root: { ref: 'root', digest: digestRecipeDocument(document) },
+        dependencies: [],
+        edges: [],
+      },
+      resolvedRecipes: {},
+    });
+
+  assert.equal(validate().status, 'valid');
+  assert.equal(validate({ trace: [{ ...trace[0], cause_class: undefined }] }).status, 'invalid');
+  assert.equal(
+    validate({ trace: [{ ...trace[0], ok: true, cause_class: null }] }).status,
+    'invalid',
+  );
+  assert.equal(validate({ trace: [{ ...trace[0], ok: true }] }).status, 'invalid');
+  assert.equal(
+    validate({
+      summary: {
+        ...summary,
+        cause_counts: { subject: 1, harness: 0, environment: 0, unknown: 0 },
+      },
+    }).status,
+    'invalid',
+  );
+  assert.equal(validate({ summary: { ...summary, failed: 0 } }).status, 'invalid');
+});
+
+test('rejects invalid traces without relying on retained recipe validation', () => {
+  const result = validateRecipeArtifactPackage({
+    trace: {},
+    summary: {
+      status: 'pass',
+      total: 0,
+      passed: 0,
+      failed: 0,
+      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+    },
+    manifest: { version: 1, runStatus: 'pass', artifacts: [] },
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.equal(
+    result.findings.some((finding) => finding.code === 'artifact_package.invalid_trace'),
+    true,
+  );
 });
 
 test('rejects retained traces that no longer match their recipe or artifact attribution', () => {
@@ -1216,6 +1303,13 @@ test('rejects retained traces that no longer match their recipe or artifact attr
       },
       { id: 'done', action: 'end', ok: true, artifacts: [] },
     ],
+    summary: {
+      status: 'pass',
+      total: 3,
+      passed: 3,
+      failed: 0,
+      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+    },
     manifest: artifactManifest,
     artifactPaths: [
       ...artifactManifest.artifacts.map((entry) => entry.path),

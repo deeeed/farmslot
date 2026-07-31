@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- feat: preserve structured failure ownership in run evidence and finalize frozen suite scopes from completed recipe results or explicit non-execution records.
+
 ## 0.10.6 - 2026-07-31
 
 - fix: scroll hardened browser pages through the document root without accessing scuttled window globals.

@@ -3,7 +3,14 @@
   "startedAt": "2026-05-16T10:01:00Z",
   "completedAt": "2026-05-16T10:01:09Z",
   "durationMs": 9000,
+  "total": 11,
   "passed": 11,
   "failed": 0,
+  "cause_counts": {
+    "subject": 0,
+    "harness": 0,
+    "environment": 0,
+    "unknown": 0
+  },
   "error": null
 }

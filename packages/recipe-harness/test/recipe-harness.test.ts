@@ -511,6 +511,7 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
     const packageResult = validateRecipeArtifactPackage({
       recipe,
       trace,
+      summary,
       manifest,
       recipeResolution,
       artifactPaths: await listRelativeFiles(artifactsDir),
