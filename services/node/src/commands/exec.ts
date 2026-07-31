@@ -7,9 +7,12 @@ export type { ExecResult };
 
 export type OutputCallback = (stream: 'stdout' | 'stderr', data: string) => void;
 
-// macOS: zsh is default shell and typically has asdf/nvm in .zshrc
-// Linux: bash with login shell picks up .bashrc/.profile
-const SHELL = platform() === 'darwin' ? 'zsh' : 'bash';
+// Resolve the operator's login PATH once, then reuse it for every command.
+// Resource health probes run frequently; starting each one as a login shell
+// repeatedly sources expensive dotfiles and can overwhelm the machine.
+const IS_DARWIN = platform() === 'darwin';
+const SHELL = IS_DARWIN ? 'zsh' : 'bash';
+const NON_LOGIN_SHELL_ARGS = IS_DARWIN ? ['-f', '-c'] : ['--noprofile', '--norc', '-c'];
 
 // Guarantee system binaries (lsof, ps, sw_vers, ...) stay reachable even when
 // an operator's login dotfile hard-overwrites PATH. We append after login init
@@ -49,7 +52,7 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
   if (argvMode && params.argv.length === 0) {
     throw new Error('exec argv must contain at least one element');
   }
-  const env = argvMode ? { ...envNoForceColor, PATH: await resolveLoginPath() } : envNoForceColor;
+  const env = { ...envNoForceColor, PATH: await resolveLoginPath() };
 
   return new Promise((resolve) => {
     let stdout = '';
@@ -68,9 +71,7 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
     // looking for an unavailable react-native-worklets-core spec. Mirrors the
     // gateway-side fix in core/exec.ts.
     const executable = argvMode ? params.argv[0] : SHELL;
-    const spawnArgs = argvMode
-      ? params.argv.slice(1)
-      : ['-lc', `export PATH="$PATH:${SYSTEM_PATH_FALLBACK}"; ${params.cmd}`];
+    const spawnArgs = argvMode ? params.argv.slice(1) : [...NON_LOGIN_SHELL_ARGS, params.cmd];
     const proc = spawn(executable, spawnArgs, {
       cwd: cwd ?? process.cwd(),
       env,
