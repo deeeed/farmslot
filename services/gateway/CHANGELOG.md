@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(backlog): reconcile historical same-project/source runs into durable backlog and WorkGraph linkage, applying the run's current lifecycle without bypassing queue, launch-plan, or ownership guards.
 - fix(runners): use the shared descendant-process probe for self-review rediscovery, fleet status, slot monitoring, and agent teardown so wrapped Claude/Codex runners are not mistaken for idle panes.
 - fix(run-engine): sync Farmslot setup hooks into remote node support for prepare while keeping runtime hooks checkout-local, verify publish readiness from working-tree, staged, and untracked content plus commits ahead of a trustworthy base instead of stale stat metadata or the branch's full history, and keep legacy runner cleanup aligned with every supported runner process.
 - fix(run-engine): always hold `review-pr` runs at the operator-owned review-posting gate, including autonomous and validation runs; runner mode can neither bypass nor auto-dismiss publication approval, operators may exclude visual evidence from the posted review, restart recovery ingests completed reviewer feedback even when runtime reconciliation already marked its context complete, and the active step distinguishes worker fixes from reviewer execution.

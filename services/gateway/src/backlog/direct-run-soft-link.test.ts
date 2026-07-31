@@ -22,6 +22,8 @@ const SOURCE_REF_RUNCREATE = 'TAT-69003';
 const SOURCE_REF_NONE = 'TAT-69004';
 const SOURCE_REF_SKIP = 'TAT-69005';
 const SOURCE_REF_AWAIT = 'TAT-69006';
+const SOURCE_REF_RECONCILE = 'TAT-69007';
+const SOURCE_REF_RECONCILE_MISMATCH = 'TAT-69008';
 const SOURCE_REF_ORPHAN = 'TAT-69999';
 
 function testSlot(slot: string, project = 'farmslot-farm'): SlotStatus {
@@ -340,5 +342,262 @@ test('runCreate awaitPersist soft-links after durable stamp and persists backlog
       runStore.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
       await runStore.deleteRun(run.id);
     }
+  }
+});
+
+test('reconcileBacklogRun durably links a historical graph run and applies terminal status', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Historical direct run missed its backlog handoff',
+    sourceKind: 'jira',
+    sourceRef: SOURCE_REF_RECONCILE,
+    flowType: 'fix-bug',
+    status: 'candidate',
+  });
+  created.item.workGraphId = 'graph-1';
+  created.item.workNodeId = 'node-1';
+
+  const run = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_RECONCILE,
+    mode: 'autonomous',
+    initialContext: 'Historical direct run',
+  });
+  runStore.updateRun(run.id, {
+    status: 'done',
+    completedAt: '2026-07-31T00:00:00.000Z',
+  });
+
+  try {
+    const result = await backlog.reconcileBacklogRun({
+      itemId: created.item.id,
+      runId: run.id,
+    });
+    assert.equal(result.item.status, 'done');
+    assert.equal(result.item.runId, run.id);
+    assert.equal(result.item.lastObservedRunStatus, 'done');
+    assert.equal(result.run.backlogItemId, created.item.id);
+    assert.equal(result.run.workGraphId, 'graph-1');
+    assert.equal(result.run.workNodeId, 'node-1');
+
+    const onDisk = JSON.parse(await readFile(runStore.runRecordPath(run.id), 'utf8')) as {
+      backlogItemId?: string;
+      workGraphId?: string;
+      workNodeId?: string;
+    };
+    assert.equal(onDisk.backlogItemId, created.item.id);
+    assert.equal(onDisk.workGraphId, 'graph-1');
+    assert.equal(onDisk.workNodeId, 'node-1');
+  } finally {
+    await runStore.deleteRun(run.id);
+  }
+});
+
+test('reconcileBacklogRun rejects source mismatches without linking either side', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Canonical board identity',
+    sourceKind: 'jira',
+    sourceRef: SOURCE_REF_RECONCILE_MISMATCH,
+    flowType: 'fix-bug',
+    status: 'candidate',
+  });
+  const run = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_ORPHAN,
+    mode: 'autonomous',
+    initialContext: 'Wrong ticket identity',
+  });
+
+  try {
+    await assert.rejects(
+      backlog.reconcileBacklogRun({ itemId: created.item.id, runId: run.id }),
+      (err: unknown) => {
+        const rich = err as { code?: string; message?: string };
+        assert.equal(rich.code, 'BACKLOG_RECONCILE_REJECTED');
+        assert.match(rich.message ?? '', /sourceRef.*does not match run ticketOrPr/);
+        return true;
+      },
+    );
+    assert.equal(runStore.getRun(run.id)?.backlogItemId, undefined);
+    assert.equal(backlog.getBacklogItemSnapshot(created.item.id)?.runId, undefined);
+    assert.equal(backlog.getBacklogItemSnapshot(created.item.id)?.status, 'candidate');
+  } finally {
+    runStore.updateRun(run.id, {
+      status: 'failed',
+      completedAt: '2026-07-31T00:00:00.000Z',
+    });
+    await runStore.deleteRun(run.id);
+  }
+});
+
+test('loadBacklog recovers a terminal item projection from an explicit pending repair', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Backlog projection was interrupted after run persistence',
+    sourceKind: 'jira',
+    sourceRef: SOURCE_REF_RECONCILE,
+    flowType: 'fix-bug',
+    status: 'candidate',
+  });
+  await backlog.closeShippedBacklogItem({ itemId: created.item.id });
+  const run = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_RECONCILE,
+    mode: 'autonomous',
+    initialContext: 'Durable backlink only',
+  });
+  const linked = runStore.updateRun(run.id, {
+    status: 'done',
+    completedAt: '2026-07-31T00:00:00.000Z',
+    backlogItemId: created.item.id,
+    backlogReconcilePending: true,
+  });
+  await runStore.persistRunNow(linked, 'test-reverse-backlink');
+  await backlog.flushBacklogForTests();
+
+  try {
+    await backlog.loadBacklog();
+    const recovered = backlog.getBacklogItemSnapshot(created.item.id);
+    assert.equal(recovered?.status, 'done');
+    assert.equal(recovered?.runId, run.id);
+    assert.equal(recovered?.lastObservedRunStatus, 'done');
+    assert.equal(runStore.getRun(run.id)?.backlogReconcilePending, undefined);
+    const onDisk = JSON.parse(await readFile(runStore.runRecordPath(run.id), 'utf8')) as {
+      backlogReconcilePending?: boolean;
+    };
+    assert.equal(onDisk.backlogReconcilePending, undefined);
+  } finally {
+    await runStore.deleteRun(run.id);
+  }
+});
+
+test('loadBacklog keeps a queued retry authoritative over a historical run backlink', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Completed work was explicitly queued for another pass',
+    sourceKind: 'jira',
+    sourceRef: SOURCE_REF_RECONCILE,
+    flowType: 'fix-bug',
+    status: 'candidate',
+  });
+  const run = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_RECONCILE,
+    mode: 'autonomous',
+    initialContext: 'Historical completed run',
+  });
+  runStore.updateRun(run.id, {
+    status: 'done',
+    completedAt: '2026-07-31T00:00:00.000Z',
+  });
+
+  try {
+    await backlog.reconcileBacklogRun({ itemId: created.item.id, runId: run.id });
+    await backlog.markBacklogItemReady({ itemId: created.item.id });
+    const queued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+    const pending = runStore.updateRun(run.id, { backlogReconcilePending: true });
+    await runStore.persistRunNow(pending, 'test-queue-supersedes-pending-repair');
+    await backlog.flushBacklogForTests();
+
+    await backlog.loadBacklog();
+    const recovered = backlog.getBacklogItemSnapshot(created.item.id);
+    assert.equal(recovered?.status, 'queued');
+    assert.equal(recovered?.queuedQueueItemId, queued.queueItem.id);
+    assert.equal(recovered?.runId, undefined);
+    assert.equal(runStore.getRun(run.id)?.backlogItemId, undefined);
+    assert.equal(runStore.getRun(run.id)?.backlogReconcilePending, undefined);
+  } finally {
+    await runStore.deleteRun(run.id);
+  }
+});
+
+test('reconcileBacklogRun rejects a second run backlink for the same item', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Only one historical run may own the item',
+    sourceKind: 'jira',
+    sourceRef: SOURCE_REF_RECONCILE,
+    flowType: 'fix-bug',
+    status: 'candidate',
+  });
+  const first = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_RECONCILE,
+    mode: 'autonomous',
+    initialContext: 'Existing owner',
+  });
+  runStore.updateRun(first.id, { backlogItemId: created.item.id });
+  const second = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_RECONCILE,
+    mode: 'autonomous',
+    initialContext: 'Conflicting owner',
+  });
+
+  try {
+    await assert.rejects(
+      backlog.reconcileBacklogRun({ itemId: created.item.id, runId: second.id }),
+      /already linked from run/,
+    );
+    assert.equal(runStore.getRun(second.id)?.backlogItemId, undefined);
+  } finally {
+    runStore.updateRun(first.id, {
+      status: 'failed',
+      completedAt: '2026-07-31T00:00:00.000Z',
+    });
+    runStore.updateRun(second.id, {
+      status: 'failed',
+      completedAt: '2026-07-31T00:00:00.000Z',
+    });
+    await runStore.deleteRun(first.id);
+    await runStore.deleteRun(second.id);
+  }
+});
+
+test('reconcileBacklogRun makes the selected run authoritative over a stale terminal item', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Terminal projection lost its run identity',
+    sourceKind: 'jira',
+    sourceRef: SOURCE_REF_RECONCILE,
+    flowType: 'fix-bug',
+    status: 'candidate',
+  });
+  await backlog.closeShippedBacklogItem({ itemId: created.item.id });
+  const run = runStore.createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: SOURCE_REF_RECONCILE,
+    mode: 'autonomous',
+    initialContext: 'Authoritative historical run',
+  });
+  runStore.updateRun(run.id, {
+    status: 'done',
+    completedAt: '2026-07-31T00:00:00.000Z',
+  });
+
+  try {
+    const result = await backlog.reconcileBacklogRun({
+      itemId: created.item.id,
+      runId: run.id,
+    });
+    assert.equal(result.item.status, 'done');
+    assert.equal(result.item.runId, run.id);
+    assert.equal(result.item.lastObservedRunStatus, 'done');
+  } finally {
+    await runStore.deleteRun(run.id);
   }
 });

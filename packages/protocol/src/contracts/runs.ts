@@ -1323,6 +1323,11 @@ export interface Run {
   allowedSlots?: string[] | null;
   /** Internal backlog handoff link, persisted so backlog delete/reconcile can find runs. */
   backlogItemId?: string;
+  /**
+   * Durable write-ahead marker for an operator-requested backlog/run repair.
+   * Startup clears it after the backlog projection is persisted.
+   */
+  backlogReconcilePending?: boolean;
   /** Work graph node that scheduled this run via backlog/queue. */
   workGraphId?: string;
   workNodeId?: string;

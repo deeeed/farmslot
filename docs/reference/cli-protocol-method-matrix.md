@@ -24,20 +24,21 @@ CI fails when a registry method is missing from the matrix or this file is stale
 
 ## backlog.\*
 
-| Method                     | Surface       | CLI command                 | TUI | Note |
-| -------------------------- | ------------- | --------------------------- | --- | ---- |
-| `backlog.create`           | typed-command | `farmslot backlog`          |     |      |
-| `backlog.list`             | typed-command | `farmslot backlog`          | yes |      |
-| `backlog.update`           | typed-command | `farmslot backlog`          |     |      |
-| `backlog.delete`           | typed-command | `farmslot backlog delete`   |     |      |
-| `backlog.markReady`        | typed-command | `farmslot backlog`          | yes |      |
-| `backlog.archive`          | typed-command | `farmslot backlog archive`  |     |      |
-| `backlog.enqueue`          | typed-command | `farmslot backlog`          | yes |      |
-| `backlog.dequeue`          | typed-command | `farmslot backlog dequeue`  |     |      |
-| `backlog.autoDispatchTick` | typed-command | `farmslot backlog`          | yes |      |
-| `backlog.upcoming`         | typed-command | `farmslot backlog upcoming` |     |      |
-| `backlog.spec.get`         | typed-command | `farmslot backlog`          |     |      |
-| `backlog.closeShipped`     | typed-command | `farmslot backlog`          | yes |      |
+| Method                     | Surface       | CLI command                      | TUI | Note |
+| -------------------------- | ------------- | -------------------------------- | --- | ---- |
+| `backlog.create`           | typed-command | `farmslot backlog`               |     |      |
+| `backlog.list`             | typed-command | `farmslot backlog`               | yes |      |
+| `backlog.update`           | typed-command | `farmslot backlog`               |     |      |
+| `backlog.delete`           | typed-command | `farmslot backlog delete`        |     |      |
+| `backlog.markReady`        | typed-command | `farmslot backlog`               | yes |      |
+| `backlog.archive`          | typed-command | `farmslot backlog archive`       |     |      |
+| `backlog.enqueue`          | typed-command | `farmslot backlog`               | yes |      |
+| `backlog.dequeue`          | typed-command | `farmslot backlog dequeue`       |     |      |
+| `backlog.autoDispatchTick` | typed-command | `farmslot backlog`               | yes |      |
+| `backlog.upcoming`         | typed-command | `farmslot backlog upcoming`      |     |      |
+| `backlog.spec.get`         | typed-command | `farmslot backlog`               |     |      |
+| `backlog.reconcileRun`     | typed-command | `farmslot backlog reconcile-run` |     |      |
+| `backlog.closeShipped`     | typed-command | `farmslot backlog`               | yes |      |
 
 ## chat.\*
 

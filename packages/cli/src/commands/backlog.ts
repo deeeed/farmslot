@@ -12,6 +12,7 @@ import type {
   BacklogEnqueueResult,
   BacklogItem,
   BacklogListResult,
+  BacklogReconcileRunResult,
   BacklogSpecGetResult,
   BacklogUpcomingResult,
   BacklogUpdateResult,
@@ -73,6 +74,17 @@ export async function dispatchBacklogItem(
   });
   const tick = await ctx.client.call('backlog.autoDispatchTick', {});
   return { enqueue, tick };
+}
+
+export async function reconcileBacklogItemRun(
+  ctx: CommandContext,
+  item: BacklogItem,
+  runId: string,
+): Promise<BacklogReconcileRunResult> {
+  return ctx.client.call<BacklogReconcileRunResult>('backlog.reconcileRun', {
+    itemId: item.id,
+    runId,
+  });
 }
 
 function renderItems(items: BacklogItem[]): string {
@@ -158,6 +170,32 @@ export function registerBacklogCommand(program: Command): void {
           if (item.notes) ctx.output.write(`\n${item.notes}\n`);
           if (spec) ctx.output.write(`\n${spec.content}\n`);
         }
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  backlog
+    .command('reconcile-run <ref> <run-id>')
+    .description('Repair a missing backlog/run link after validating project and source identity')
+    .action(async (ref: string, runId: string, _opts: unknown, cmd: Command) => {
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
+      try {
+        const { item, result } = await withProgress(
+          `Reconciling ${ref} to ${runId.slice(0, 8)}`,
+          async () => {
+            const item = await resolveItem(ctx, ref);
+            const result = await reconcileBacklogItemRun(ctx, item, runId);
+            return { item, result };
+          },
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else
+          ctx.output.write(
+            `${green('Reconciled')} ${cyan(item.sourceRef ?? item.id)} to run ${cyan(result.run.id.slice(0, 8))} (${result.item.status})\n`,
+          );
       } catch (err) {
         emit.fail(err);
       }

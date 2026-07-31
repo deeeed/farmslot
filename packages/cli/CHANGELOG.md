@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(backlog): add `farmslot backlog reconcile-run <ref> <run-id>` as a client of the shared repair action.
 - fix(workflows): route run decision resolution through the shared protocol action contract used by the operator clients.
 - fix(internal): allow non-Metro slots to export an empty `METRO_PORT`; hook expansion still fails with the existing teaching error when a template actually requires `{{metro_port}}`.
 - feat(graph): typed `farmslot graph` family (list/show/create/add-node/add-edge/remove-node/remove-edge/activate/pause/tick/gate-resolve) for workGraph.\* parity with machine envelope + planning-status teaching errors.

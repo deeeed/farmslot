@@ -13,6 +13,7 @@ import {
   type BacklogEnqueueParams,
   type BacklogListParams,
   type BacklogMarkReadyParams,
+  type BacklogReconcileRunParams,
   type BacklogSpecGetParams,
   type BacklogUpcomingParams,
   type BacklogUpdateParams,
@@ -208,6 +209,7 @@ import {
   backlogEnqueue,
   backlogList,
   backlogMarkReady,
+  backlogReconcileRun,
   backlogSpecGet,
   backlogUpcoming,
   backlogUpdate,
@@ -572,6 +574,8 @@ export async function routeMethod(
       return backlogUpcoming((p ?? {}) as BacklogUpcomingParams);
     case Methods.BACKLOG_SPEC_GET:
       return backlogSpecGet(p as BacklogSpecGetParams);
+    case Methods.BACKLOG_RECONCILE_RUN:
+      return backlogReconcileRun(p as BacklogReconcileRunParams, emit);
     case Methods.BACKLOG_CLOSE_SHIPPED:
       return backlogCloseShipped(p as BacklogCloseShippedParams);
 
