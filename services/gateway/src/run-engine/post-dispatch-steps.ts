@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-
 import {
   type ArtifactRef,
   type DiffStat,
@@ -15,8 +12,6 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
-import { loadSlotVars } from '../core/config.js';
-import { isLocal } from '../core/exec.js';
 import { markSlotBusy, markSlotHeld, updateSlotStatus } from '../core/index.js';
 import {
   finalizeEvalResultPackageForRun,
@@ -58,12 +53,14 @@ import {
 import { verifyWorkerPushedBranch } from './push-verification.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import { automaticPublicationReviewPlan, remainingExplicitReviewPlan } from './review-plan.js';
-import { type MonitorResult, monitorRun } from './run-monitor.js';
+import { type MonitorResult, monitorRun, probeWorkerSignalForRun } from './run-monitor.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }
+
+const S = PipelineSteps;
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 type MonitorTerminalErrorArgs = {
@@ -110,7 +107,16 @@ export interface PostDispatchStepContext {
   stepPartialIO: Map<string, StepIO>;
 }
 
-const S = PipelineSteps;
+function updateBranchWorkerSkippedSelfReview(run: Pick<Run, 'steps'>): boolean {
+  const monitorStep = run.steps.find((step) => step.name === S.MONITOR);
+  const workerSignal = monitorStep?.outputs?.workerSignal;
+  return (
+    monitorStep?.status === 'done' &&
+    typeof workerSignal === 'object' &&
+    workerSignal !== null &&
+    (workerSignal as { needsSelfReview?: unknown }).needsSelfReview === false
+  );
+}
 
 export function shouldSkipRetrospectiveAtComplete(run: Pick<Run, 'flowType'>): boolean {
   // CI-watch is the terminal PR lifecycle step for publishable flows. Defer the
@@ -447,25 +453,25 @@ export async function executeSelfReviewStep(
 
   // update-branch: check worker's signal to decide if self-review is needed
   if (current.flowType === 'update-branch') {
+    if (updateBranchWorkerSkippedSelfReview(current)) {
+      console.log(
+        `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (persisted monitor signal)`,
+      );
+      return {
+        inputs: { ...inputs, enabled: false },
+        outputs: { skipped: true, reason: 'worker-signal-trivial' },
+      };
+    }
     try {
-      const vars = await loadSlotVars(current.slotId);
-      const taskDir = current.taskFile ? path.dirname(current.taskFile) : null;
-      if (taskDir) {
-        const signalPath = isLocal(vars.host, vars.machine)
-          ? path.join(vars.remoteRepo, taskDir, 'SIGNAL.json')
-          : null;
-        if (signalPath) {
-          const signal = JSON.parse(await readFile(signalPath, 'utf-8'));
-          if (signal.needsSelfReview === false) {
-            console.log(
-              `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (trivial conflicts)`,
-            );
-            return {
-              inputs: { ...inputs, enabled: false },
-              outputs: { skipped: true, reason: 'worker-signal-trivial' },
-            };
-          }
-        }
+      const probe = await probeWorkerSignalForRun(runId, current.slotId);
+      if (probe.ok && probe.signal?.needsSelfReview === false) {
+        console.log(
+          `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (slot signal probe)`,
+        );
+        return {
+          inputs: { ...inputs, enabled: false },
+          outputs: { skipped: true, reason: 'worker-signal-trivial' },
+        };
       }
     } catch (err) {
       // Signal not found or unreadable — default to running self-review

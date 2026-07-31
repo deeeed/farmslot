@@ -46,6 +46,57 @@ test('complete-step retrospective gating defers only CI-watch flows', () => {
   );
 });
 
+test('executeSelfReviewStep honors a persisted update-branch skip signal', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'owner/repo#42',
+    runner: 'claude',
+    slotId: 'remote-mobile-1',
+  });
+  updateRun(run.id, {
+    steps: run.steps.map((step) =>
+      step.name === 'monitor'
+        ? {
+            ...step,
+            status: 'done',
+            outputs: {
+              workerSignal: { status: 'complete', needsSelfReview: false },
+            },
+          }
+        : step,
+    ),
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  const io = await executeSelfReviewStep(run.id, {
+    activeMonitors: new Map(),
+    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {},
+    createEngineDecision: async () => 'decision-1',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async () => [],
+    executeReadyGate: async () => 'ready',
+    executeReviewGate: async () => {},
+    getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => false,
+    latestResolvedHumanGateDecision: () => undefined,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    refreshRunLinks: async () => {},
+    reviewPlanFromSelection: () => [],
+    stepPartialIO: new Map(),
+  });
+
+  assert.deepEqual(io, {
+    inputs: { slotId: 'remote-mobile-1', enabled: false },
+    outputs: { skipped: true, reason: 'worker-signal-trivial' },
+  });
+});
+
 test('local-first complete contract uses gate-held disposition for dev and fix-bug', () => {
   assert.equal(shouldPrepareLocalFirstPackage(makeRun({ flowType: 'fix-bug' })), true);
   assert.equal(
