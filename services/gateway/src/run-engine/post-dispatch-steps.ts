@@ -115,7 +115,8 @@ export function updateBranchWorkerSkippedSelfReview(run: Pick<Run, 'steps'>): bo
   return (
     monitorStep?.status === 'done' &&
     workerSignal !== null &&
-    workerSignal?.needsSelfReview === false
+    typeof workerSignal === 'object' &&
+    workerSignal.needsSelfReview === false
   );
 }
 

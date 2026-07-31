@@ -100,7 +100,10 @@ test('executeSelfReviewStep honors a persisted update-branch skip signal', async
 
 test('updateBranchWorkerSkippedSelfReview requires a done monitor with an explicit skip', () => {
   const run = makeRun({ flowType: 'update-branch' });
-  const withMonitor = (status: 'running' | 'done', workerSignal?: Record<string, unknown>) => ({
+  const withMonitor = (
+    status: 'running' | 'done',
+    workerSignal?: Record<string, unknown> | null,
+  ) => ({
     ...run,
     steps: [{ name: 'monitor', status, outputs: { workerSignal } }],
   });
@@ -127,6 +130,7 @@ test('updateBranchWorkerSkippedSelfReview requires a done monitor with an explic
     updateBranchWorkerSkippedSelfReview(withMonitor('done', { status: 'complete' })),
     false,
   );
+  assert.equal(updateBranchWorkerSkippedSelfReview(withMonitor('done', null)), false);
 });
 
 test('executeSelfReviewStep honors the slot signal probe fallback', async (t) => {
@@ -142,6 +146,7 @@ test('executeSelfReviewStep honors the slot signal probe fallback', async (t) =>
     await deleteTestRunIfPresent(run.id);
   });
 
+  let probeCalls = 0;
   const io = await executeSelfReviewStep(run.id, {
     activeMonitors: new Map(),
     blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
@@ -156,17 +161,20 @@ test('executeSelfReviewStep honors the slot signal probe fallback', async (t) =>
     isHumanGateEnabled: async () => false,
     latestResolvedHumanGateDecision: () => undefined,
     monitorTerminalError: ({ reason }) => new Error(reason),
-    probeWorkerSignalForRun: async () => ({
-      ok: true,
-      code: 'ready',
-      message: 'ready',
-      status: 'complete',
-      signal: {
+    probeWorkerSignalForRun: async () => {
+      probeCalls += 1;
+      return {
+        ok: true,
+        code: 'ready',
+        message: 'ready',
         status: 'complete',
-        needsSelfReview: false,
-        timestamp: new Date().toISOString(),
-      },
-    }),
+        signal: {
+          status: 'complete',
+          needsSelfReview: false,
+          timestamp: new Date().toISOString(),
+        },
+      };
+    },
     refreshRunLinks: async () => {},
     reviewPlanFromSelection: () => [],
     stepPartialIO: new Map(),
@@ -176,6 +184,7 @@ test('executeSelfReviewStep honors the slot signal probe fallback', async (t) =>
     inputs: { slotId: 'remote-mobile-1', enabled: false },
     outputs: { skipped: true, reason: 'worker-signal-trivial' },
   });
+  assert.equal(probeCalls, 1);
 });
 
 test('local-first complete contract uses gate-held disposition for dev and fix-bug', () => {
