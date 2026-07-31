@@ -7,6 +7,7 @@ import {
   buildRecoveredReview,
   isRecoverableReviewerContext,
   recoveredReviewArtifactScope,
+  reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
 
@@ -40,15 +41,31 @@ function terminalSignal(overrides: Partial<WorkerSignal> = {}): WorkerSignal {
   };
 }
 
-test('isRecoverableReviewerContext accepts only in-flight self-review contexts', () => {
+test('isRecoverableReviewerContext accepts in-flight and completed self-review contexts', () => {
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'working' }), true);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'launching' }), true);
-  // Normal completion / failure already reconciled the context — never re-ingest.
-  assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'complete' }), false);
+  assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'complete' }), true);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'failed' }), false);
   // Other roles never produce a publish-gate independent review.
   assert.equal(isRecoverableReviewerContext({ role: 'primary', status: 'working' }), false);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review-fix', status: 'working' }), false);
+});
+
+test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact scope', () => {
+  const complete = reviewerContext({
+    status: 'complete',
+    artifactScope: 'independent-review-7',
+  });
+  assert.equal(reviewerContextNeedsRecovery(complete, []), true);
+  assert.equal(reviewerContextNeedsRecovery(complete, [{ id: 'independent-review-7' }]), false);
+  assert.equal(
+    reviewerContextNeedsRecovery(reviewerContext({ status: 'complete', artifactScope: null }), []),
+    false,
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(reviewerContext({ status: 'working', artifactScope: null }), []),
+    true,
+  );
 });
 
 test('restart recovery uses the reviewer-owned artifact scope instead of review-array length', () => {
@@ -57,6 +74,20 @@ test('restart recovery uses the reviewer-owned artifact scope instead of review-
     'independent-review-7',
   );
   assert.equal(recoveredReviewArtifactScope({}, 'independent-review-2'), 'independent-review-2');
+});
+
+test('buildRecoveredReview preserves the reviewer-owned artifact scope as the review id', () => {
+  const review = buildRecoveredReview({
+    run: makeRun({ engineState: { publishGate: { independentReviews: [] } } }),
+    ctx: reviewerContext({ artifactScope: 'independent-review-7' }),
+    signal: terminalSignal(),
+    feedback: { verdict: 'pass', issues: [] },
+    reviewedPackage: undefined,
+  });
+
+  assert.ok(review);
+  assert.equal(review.id, 'independent-review-7');
+  assert.equal(review.loopNumber, 7);
 });
 
 test('buildRecoveredReview returns null when the reviewer has not finished', () => {
@@ -91,6 +122,42 @@ test('buildRecoveredReview returns null when the reviewer has not finished', () 
     }),
     null,
   );
+});
+
+test('buildRecoveredReview accepts fresh completed runtime context when terminal signal was lost', () => {
+  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  const ctx = reviewerContext({
+    status: 'complete',
+    attemptStartedAt: '2026-07-16T10:00:00.000Z',
+    completedAt: '2026-07-16T10:40:00.000Z',
+  });
+  const review = buildRecoveredReview({
+    run,
+    ctx,
+    signal: undefined,
+    feedback: { verdict: 'issues', issues: [{ file: 'a.ts', description: 'bug' }] },
+    reviewedPackage: undefined,
+  });
+
+  assert.ok(review);
+  assert.equal(review.verdict, 'issues');
+});
+
+test('buildRecoveredReview rejects stale completed runtime context without a terminal signal', () => {
+  const run = makeRun({ engineState: { publishGate: { independentReviews: [] } } });
+  const review = buildRecoveredReview({
+    run,
+    ctx: reviewerContext({
+      status: 'complete',
+      attemptStartedAt: '2026-07-16T11:00:00.000Z',
+      completedAt: '2026-07-16T10:40:00.000Z',
+    }),
+    signal: undefined,
+    feedback: { verdict: 'pass', issues: [] },
+    reviewedPackage: undefined,
+  });
+
+  assert.equal(review, null);
 });
 
 test('buildRecoveredReview ingests a completed ISSUES review as an extra review', () => {

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(review): let operators omit visual evidence when publishing an approval, while preserving the choice across artifact refreshes.
 - feat(inventory): render Roadmap, Backlog, and Runs as dense sortable work tables with explicit project/state/activity columns, URL-persisted sorting, responsive selection detail, and no empty selection gutter.
 - feat(backlog): use a sortable work table as the primary scan surface while retaining the selected row's full right-hand detail panel; show status counts, flow/project columns, and exact-ref out-of-band activity. Run inference is activity-only, while detail/history remains anchored to durable linkage.
 - fix(runs): show active independent review/fix work ahead of the enclosing human gate in compact pipelines; reserve `publish ready` for gates that actually expose approval.

@@ -68,6 +68,13 @@ export const REVIEW_SOURCES: Readonly<Record<ReviewSourceKind, ReviewSource>> = 
   'extra-review': EXTRA_REVIEW_SOURCE,
 });
 
+export function reviewLoopNumberFromId(source: ReviewSource, id: string): number | null {
+  const prefix = `${source.idPrefix}-`;
+  if (!id.startsWith(prefix)) return null;
+  const loopNumber = Number(id.slice(prefix.length));
+  return Number.isInteger(loopNumber) && loopNumber > 0 ? loopNumber : null;
+}
+
 /**
  * Composite merge key used by `prepareCompletionPackage` when reconciling
  * priorReviews against materialized reviews. Keying on (sourceKind, loopNumber)

@@ -622,13 +622,14 @@ export async function executeHumanGateStep(
     };
   }
 
-  // Check if gate is disabled for this flow via project.json human_gates
+  // Review publication is always operator-owned. Runner mode may change how
+  // the review is produced, but it must never bypass the posting decision.
   const configuredGateEnabled = await isHumanGateEnabled(
     current.project,
     current.flowType,
     current.mode,
   );
-  const gateEnabled = noChangeGate || configuredGateEnabled;
+  const gateEnabled = noChangeGate || current.flowType === 'review-pr' || configuredGateEnabled;
   const inputs: Record<string, unknown> = {
     gateType: noChangeGate ? 'no-change' : gateType,
     gateEnabled,

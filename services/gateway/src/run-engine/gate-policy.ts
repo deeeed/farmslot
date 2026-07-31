@@ -17,7 +17,7 @@ import {
   independentReviewPolicySatisfied,
   isQualifyingIndependentReview,
 } from '../quality/review-policy.js';
-import { EXTRA_REVIEW_SOURCE } from '../quality/review-sources.js';
+import { EXTRA_REVIEW_SOURCE, reviewLoopNumberFromId } from '../quality/review-sources.js';
 import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
 import { normalizeRunner } from '../runners/registry.js';
 import type { SelfReviewResult } from '../self-review/orchestrator.js';
@@ -145,8 +145,9 @@ export function buildPublishGateReviewStatus({
         ];
   const finalAttempt = attempts.at(-1)!;
   const reviewRunner = reviewResult.runner ?? requestedRunner ?? workerRunner ?? null;
+  const resolvedReviewId = reviewId ?? EXTRA_REVIEW_SOURCE.artifactRefs(priorReviewCount + 1).id;
   const status: IndependentReviewStatus = {
-    id: reviewId ?? EXTRA_REVIEW_SOURCE.artifactRefs(priorReviewCount + 1).id,
+    id: resolvedReviewId,
     source,
     runner: reviewRunner,
     model: reviewResult.model ?? model ?? null,
@@ -155,7 +156,8 @@ export function buildPublishGateReviewStatus({
     crossRunner:
       reviewResult.crossRunner === true ||
       (!!requestedRunner && requestedRunner !== normalizeRunner(workerRunner)),
-    loopNumber: priorReviewCount + 1,
+    loopNumber:
+      reviewLoopNumberFromId(EXTRA_REVIEW_SOURCE, resolvedReviewId) ?? priorReviewCount + 1,
     verdict: finalAttempt.verdict,
     unresolvedCount: finalAttempt.unresolvedCount,
     issues:

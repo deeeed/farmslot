@@ -27,6 +27,7 @@ export abstract class ReviewWorkspaceState extends LitElement {
 
   @state() _includedComments = new Set<number>();
   @state() _selectedRecommendation = '';
+  @state() _includeEvidence = true;
   @state() _posting = false;
   @state() _refreshing = false;
   @state() _proposing = false;
