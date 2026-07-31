@@ -7,6 +7,7 @@ import {
   buildTimingArtifact,
   finish,
   isMainModule,
+  normalizeTimingsDir,
   renderTimingSummary,
   runTimedSteps,
   writeTimingArtifact,
@@ -68,6 +69,7 @@ export function workspaceTimingArtifact(records, failure) {
 }
 
 function main() {
+  normalizeTimingsDir();
   const repoRoot = process.cwd();
   const workspaces = discoverWorkspaces(repoRoot);
   const { records, failure } = runWorkspaceQuality(workspaces, { cwd: repoRoot });

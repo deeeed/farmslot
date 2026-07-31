@@ -7,6 +7,7 @@ import {
   finish,
   formatDuration,
   isMainModule,
+  normalizeTimingsDir,
   rankSlowest,
   writeTimingArtifact,
 } from './lib/step-timing.mjs';
@@ -307,6 +308,7 @@ export function summaryLines({
 
 export function buildArtifact({
   workspace,
+  invocation,
   workers,
   discovered,
   partition,
@@ -321,6 +323,7 @@ export function buildArtifact({
   return {
     kind: 'tsx-tests',
     workspace,
+    invocation: invocation ?? null,
     workers,
     discoveredCount: check.discoveredCount,
     assignedCount: check.assignedUniqueCount,
@@ -371,6 +374,7 @@ async function main() {
     return;
   }
 
+  normalizeTimingsDir();
   const workers = resolveWorkers(workersArg);
   const tests = discoverTests(roots, cwd);
   if (tests.length === 0) {
@@ -441,6 +445,7 @@ async function main() {
   const failures = labelled.filter((record) => record.status !== 0);
   const report = {
     workspace: basename(cwd),
+    invocation: roots.join(' '),
     workers,
     discovered: tests,
     partition,

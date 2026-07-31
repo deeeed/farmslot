@@ -4,7 +4,7 @@
 // child commands. This module owns the one implementation of "run them, time
 // them, print a concise ranked summary, and optionally drop a machine-readable
 // artifact" so the two entrypoints stay thin and stay consistent.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -132,18 +132,67 @@ export function buildTimingArtifact(options) {
   };
 }
 
+/** Repo root, derived from this file's own location (scripts/quality/lib/). */
+export const REPO_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+);
+
+/**
+ * Resolve the configured timings directory to one absolute path shared by the
+ * whole process tree.
+ *
+ * A relative value used to be re-resolved against each child's cwd, and the
+ * quality gates spawn children in every workspace — so one
+ * `FARMSLOT_QUALITY_TIMINGS_DIR=.sandbox/…/timings-final` scattered artifacts
+ * into a `.sandbox` tree under every workspace that ran (services/gateway,
+ * each package, each app) instead of the requested directory. Relative values therefore resolve against
+ * the repo root, which every process in the tree agrees on, and the absolute
+ * result is pinned back into `env` so spawned children inherit it already
+ * resolved. Pass an absolute path to place artifacts anywhere else.
+ */
+export function normalizeTimingsDir(env = process.env, repoRoot = REPO_ROOT) {
+  const configured = env[TIMINGS_DIR_ENV];
+  if (!configured) return null;
+  const absolute = path.isAbsolute(configured) ? configured : path.resolve(repoRoot, configured);
+  env[TIMINGS_DIR_ENV] = absolute;
+  return absolute;
+}
+
+/**
+ * First free `<stem>.json`, `<stem>-2.json`, … in `dir`.
+ *
+ * Several workspaces run the same runner, and a workspace can be invoked more
+ * than once in a single gate; a fixed name silently overwrote the earlier
+ * artifact, so the evidence described only the last invocation.
+ */
+export function uniqueArtifactPath(dir, name, exists = existsSync) {
+  const first = path.join(dir, name);
+  if (!exists(first)) return first;
+  const ext = path.extname(name);
+  const stem = ext ? name.slice(0, -ext.length) : name;
+  for (let n = 2; n <= 1000; n += 1) {
+    const candidate = path.join(dir, `${stem}-${n}${ext}`);
+    if (!exists(candidate)) return candidate;
+  }
+  throw new Error(`Could not find a free artifact name for ${name} in ${dir}`);
+}
+
 export function timingArtifactPath(name, env = process.env) {
   const dir = env[TIMINGS_DIR_ENV];
   if (!dir) return null;
-  return path.resolve(dir, name);
+  return path.resolve(normalizeTimingsDir(env), name);
 }
 
 /** Writes the artifact only when the operator/CI opted in via the env var. */
 export function writeTimingArtifact(name, payload, env = process.env) {
-  const target = timingArtifactPath(name, env);
-  if (!target) return null;
-  mkdirSync(path.dirname(target), { recursive: true });
-  writeFileSync(target, `${JSON.stringify(payload, null, 2)}\n`);
+  const dir = normalizeTimingsDir(env);
+  if (!dir) return null;
+  mkdirSync(dir, { recursive: true });
+  const target = uniqueArtifactPath(dir, name);
+  writeFileSync(target, `${JSON.stringify({ ...payload, artifactPath: target }, null, 2)}\n`);
   return target;
 }
 

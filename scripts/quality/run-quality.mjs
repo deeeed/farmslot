@@ -5,6 +5,7 @@ import {
   buildTimingArtifact,
   finish,
   isMainModule,
+  normalizeTimingsDir,
   renderTimingSummary,
   runTimedSteps,
   writeTimingArtifact,
@@ -51,6 +52,7 @@ export const STEPS = [
     'workspace quality instrumentation tests',
     ['node', '--test', 'scripts/quality/run-workspace-quality.test.mjs'],
   ],
+  ['step timing lib tests', ['node', '--test', 'scripts/quality/step-timing.test.mjs']],
   ['pre-push path filter tests', ['node', '--test', 'scripts/quality/prepush-quality.test.mjs']],
   ['tsx test partition tests', ['node', '--test', 'scripts/quality/run-tsx-tests.test.mjs']],
   ['worker template lint', ['node', 'scripts/quality/check-worker-template-contract.mjs']],
@@ -79,6 +81,9 @@ export function qualityTimingArtifact(records, failure) {
 }
 
 function main() {
+  // Pin the timings dir to one absolute path before spawning anything, so every
+  // child writes to the same place regardless of its own cwd.
+  normalizeTimingsDir();
   const { records, failure } = runQualitySteps();
   for (const line of qualitySummaryLines(records, failure)) console.log(line);
   const artifactPath = writeTimingArtifact(
