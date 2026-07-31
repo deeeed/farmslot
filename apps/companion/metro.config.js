@@ -2,9 +2,13 @@ const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
 const { createMetroRecipeBridgeMiddleware } = require('./metro-recipe-bridge.cjs');
+const { isProtocolSourceModule } = require('./metro-protocol-source.cjs');
 
+// Always anchored to this file — independent of process.cwd() / launch folder.
 const projectRoot = __dirname;
-const protocolRoot = path.resolve(projectRoot, '../../packages/protocol');
+const monorepoRoot = path.resolve(projectRoot, '../..');
+const protocolRoot = path.resolve(monorepoRoot, 'packages/protocol');
+const originResolveBases = [projectRoot, monorepoRoot, protocolRoot, process.cwd()];
 const configuredMetroPort = process.env.METRO_PORT;
 const metroPort = configuredMetroPort ? Number(configuredMetroPort) : undefined;
 const requiresConfiguredMetroPort =
@@ -25,13 +29,11 @@ if (
   );
 }
 
-function isProtocolModule(modulePath) {
-  if (!modulePath) return false;
+function shouldRewriteProtocolJsImport(originModulePath, moduleName) {
   return (
-    modulePath.includes('@farmslot/protocol') ||
-    modulePath.startsWith(protocolRoot + path.sep) ||
-    modulePath.includes(`${path.sep}packages${path.sep}protocol${path.sep}`) ||
-    modulePath.startsWith(`packages${path.sep}protocol${path.sep}`)
+    moduleName.startsWith('.') &&
+    moduleName.endsWith('.js') &&
+    isProtocolSourceModule(originModulePath, protocolRoot, originResolveBases)
   );
 }
 
@@ -60,16 +62,17 @@ config.resolver = {
   unstable_enablePackageExports: true,
   enablePackageExports: true,
   sourceExts: [...config.resolver.sourceExts, 'cjs', 'mjs'],
-  // Rewrite .js imports to .ts for @farmslot/protocol (ESM convention)
+  // Rewrite .js imports to .ts for @farmslot/protocol source (ESM convention).
+  // Nested deps under packages/protocol/node_modules are excluded; if a rewrite
+  // still misses, fall back to the original .js so third-party packages work.
   resolveRequest: (context, moduleName, platform) => {
-    // For protocol internal .js imports — rewrite to .ts
-    if (
-      isProtocolModule(context.originModulePath) &&
-      moduleName.startsWith('.') &&
-      moduleName.endsWith('.js')
-    ) {
+    if (shouldRewriteProtocolJsImport(context.originModulePath, moduleName)) {
       const tsName = moduleName.replace(/\.js$/, '.ts');
-      return context.resolveRequest(context, tsName, platform);
+      try {
+        return context.resolveRequest(context, tsName, platform);
+      } catch {
+        return context.resolveRequest(context, moduleName, platform);
+      }
     }
     return context.resolveRequest(context, moduleName, platform);
   },

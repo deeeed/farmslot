@@ -279,12 +279,13 @@ interface CdpCallSession {
 
 const COMPOSITOR_WORLD = 'farmslot-compositor-probe';
 const DOM_SETTLEMENT_WORLD = 'farmslot-dom-settlement';
+class CdpPageEvaluationError extends Error {}
 const isolatedWorldContexts = new WeakMap<
   CdpCallSession,
   Map<string, { executionContextId: number }>
 >();
 
-async function evaluateInIsolatedWorld<T>(
+async function evaluateCdpSessionInIsolatedWorld<T>(
   session: CdpCallSession,
   expression: string,
   worldName: string,
@@ -328,7 +329,7 @@ async function evaluateInIsolatedWorld<T>(
       { timeoutMs },
     );
     if (result.exceptionDetails) {
-      throw new Error(
+      throw new CdpPageEvaluationError(
         result.exceptionDetails.exception?.description ??
           result.exceptionDetails.text ??
           'CDP isolated-world evaluation failed.',
@@ -450,12 +451,9 @@ export async function probeCdpCompositorInteractivity(
         return retryTransientCdpContext(
           deadline,
           async (remainingMs): Promise<EvaluationResult> => {
-            const value = await evaluateInIsolatedWorld<Omit<CdpCompositorProbe, 'status'>>(
-              session,
-              expression,
-              COMPOSITOR_WORLD,
-              remainingMs,
-            );
+            const value = await evaluateCdpSessionInIsolatedWorld<
+              Omit<CdpCompositorProbe, 'status'>
+            >(session, expression, COMPOSITOR_WORLD, remainingMs);
             return { result: { value } };
           },
         );
@@ -598,7 +596,7 @@ export class CdpWebPage {
         async (attemptTimeoutMs) => {
           const expression = `new Promise((resolve, reject) => { const key = '__farmslotDomSettlementCancel'; globalThis[key]?.(); const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let observer; let finished = false; const cleanup = () => { observer?.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); if (globalThis[key] === cancel) delete globalThis[key]; }; const cancel = () => { if (finished) return; finished = true; cleanup(); resolve(false); }; globalThis[key] = cancel; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; const finiteAnimations = animations.filter((animation) => animation.effect?.getTiming().iterations !== Infinity); if (finiteAnimations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for this settlement attempt.')); }, ${attemptTimeoutMs}); })`;
           const settled = await withTimeout(
-            evaluateInIsolatedWorld<boolean>(
+            evaluateCdpSessionInIsolatedWorld<boolean>(
               this.session,
               expression,
               DOM_SETTLEMENT_WORLD,
@@ -637,6 +635,15 @@ export class CdpWebPage {
       );
     }
     return result.result?.value as T;
+  }
+
+  async evaluateInIsolatedWorld<T = unknown>(expression: string, worldName: string): Promise<T> {
+    try {
+      return await evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName);
+    } catch (error) {
+      if (!isTransientCdpContextError(error)) throw error;
+      return evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName);
+    }
   }
 
   async click(selector: string): Promise<unknown> {
@@ -856,6 +863,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 }
 
 function isTransientCdpContextError(error: unknown): boolean {
+  if (error instanceof CdpPageEvaluationError) return false;
   const message = error instanceof Error ? error.message : String(error);
   return /execution context was destroyed|execution context with given id not found|cannot find context with specified id|execution context is not available in detached frame|inspected target navigated or closed|not attached to an active page|session with given id not found|no frame (?:with|for) given id found|frame with the given id (?:is|was) not found/iu.test(
     message,
