@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(self-review): rediscover wrapped worker runners through the shared descendant-process probe so review-fix delivery can adopt Claude/Codex panes whose runner is not the tmux shell's direct child.
 - fix(run-engine): sync Farmslot setup hooks into remote node support for prepare while keeping runtime hooks checkout-local, and verify publish readiness from real content changes plus commits ahead of a trustworthy base instead of stale stat metadata or the branch's full history.
 - fix(self-review): write terminal artifact contracts per active checklist so concurrent or crashed nested reviewer contexts cannot leave the worker/reviewer marker enforcing another role's report contract.
 - fix(observability): poll thumbnails only for visual slot platforms instead of treating busy CLI slots as iOS simulators and repeatedly timing out on invalid `simctl` targets.

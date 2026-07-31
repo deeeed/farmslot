@@ -11,6 +11,7 @@ import {
   runnerPaneLooksIdle,
   runnerProcessPatternSource,
 } from '../runners/registry.js';
+import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 
 function recreateRoleWindowName(roleWindowName?: string | null, flowType?: string | null): string {
   const named = roleWindowName?.trim();
@@ -123,13 +124,15 @@ async function paneHostsRunnerProcess(
   if (paneCommand && matcherParts.some((part) => paneCommand.includes(part))) {
     return true;
   }
-  const result = await execOnSlot(
-    vars,
-    tmuxShellSnippet(
-      `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1 | xargs -I{} pgrep -P {} -f '${runnerProcessPatternSource(runner)}' 2>/dev/null | head -1`,
-    ),
-  );
-  return result.stdout.trim().length > 0;
+  const panePid = (
+    await execOnSlot(
+      vars,
+      tmuxShellSnippet(
+        `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1`,
+      ),
+    )
+  ).stdout.trim();
+  return await isRunnerAliveUnderPane(vars, panePid, runner);
 }
 
 export async function isWorkerAlive(

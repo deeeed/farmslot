@@ -87,6 +87,27 @@ mock.module('../core/exec.js', {
       if (cmdIncludes(cmd, 'capture-pane') && cmdIncludes(cmd, "'coredev-4:zsh.0'")) {
         return { exitCode: 0, stdout: '✻ Working… (esc to interrupt)\n', stderr: '' };
       }
+      // Claude's wrapped binary reports a semver pane command; the actual runner
+      // is a grandchild of the tmux shell and must be found through the shared
+      // descendant-tree probe rather than direct-child `pgrep -P`.
+      if (cmdIncludes(cmd, "list-panes -s -t 'coredev-5'")) {
+        return { exitCode: 0, stdout: '1|dev|0|zsh\n2|fix|0|2.1.220', stderr: '' };
+      }
+      if (cmdIncludes(cmd, 'display-message') && cmdIncludes(cmd, "'coredev-5:dev'")) {
+        return { exitCode: 0, stdout: 'zsh', stderr: '' };
+      }
+      if (cmdIncludes(cmd, 'display-message') && cmdIncludes(cmd, "'coredev-5:fix.0'")) {
+        return { exitCode: 0, stdout: '2.1.220', stderr: '' };
+      }
+      if (cmdIncludes(cmd, 'list-panes') && cmdIncludes(cmd, "'coredev-5:fix.0'")) {
+        return { exitCode: 0, stdout: '4242', stderr: '' };
+      }
+      if (cmdIncludes(cmd, "root='4242'")) {
+        return { exitCode: 0, stdout: '4343\n', stderr: '' };
+      }
+      if (cmdIncludes(cmd, 'capture-pane') && cmdIncludes(cmd, "'coredev-5:fix.0'")) {
+        return { exitCode: 0, stdout: 'Welcome back!\n❯\n', stderr: '' };
+      }
       return { exitCode: 1, stdout: '', stderr: 'unexpected command' };
     },
   },
@@ -152,4 +173,10 @@ test('rediscoverAcceptingWorkerPane returns null with the pane inventory when no
 test('rediscoverAcceptingWorkerPane does not adopt a runner pane that is mid-turn', async () => {
   const result = await rediscoverAcceptingWorkerPane(vars, 'coredev-4', 'claude', 'coredev-4:dev');
   assert.equal(result.target, null);
+});
+
+test('rediscoverAcceptingWorkerPane adopts a wrapped runner found below the pane shell', async () => {
+  const result = await rediscoverAcceptingWorkerPane(vars, 'coredev-5', 'claude', 'coredev-5:dev');
+  assert.equal(result.target, 'coredev-5:fix.0');
+  assert.equal(result.window, 'fix');
 });
