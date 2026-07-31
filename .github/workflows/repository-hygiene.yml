@@ -8,6 +8,13 @@ on:
     branches:
       - main
 
+# Cancel superseded runs for the same pull request (or ref, for pushes). See
+# farmslot-quality.yml — same rationale, kept identical so the two workflows do
+# not drift apart.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   hygiene:
     name: Repository hygiene gates
