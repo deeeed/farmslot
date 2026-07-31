@@ -22,7 +22,16 @@ import {
   WORKERS_ENV,
 } from './run-tsx-tests.mjs';
 
-const RUNNER_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'run-tsx-tests.mjs');
+const QUALITY_DIR = path.dirname(fileURLToPath(import.meta.url));
+const RUNNER_PATH = path.resolve(QUALITY_DIR, 'run-tsx-tests.mjs');
+// Every entrypoint that prints a timing summary and then exits shares the same
+// truncation hazard, so the guard covers all of them, not just this runner.
+const DRAIN_SAFE_ENTRYPOINTS = [
+  'run-tsx-tests.mjs',
+  'run-quality.mjs',
+  'run-workspace-quality.mjs',
+  'lib/step-timing.mjs',
+];
 
 const FILES = Array.from({ length: 10 }, (_, index) => `src/suite-${index}.test.ts`);
 
@@ -119,15 +128,44 @@ test('a failing run flushes its full output over a pipe before exiting', () => {
   );
 });
 
-test('the runner never calls process.exit()', () => {
-  const source = readFileSync(RUNNER_PATH, 'utf8');
-  const calls = source
-    .split('\n')
-    .filter((line) => /process\.exit\(/.test(line) && !line.trimStart().startsWith('*'));
+test('no quality entrypoint calls process.exit()', () => {
+  const offenders = [];
+  for (const entry of DRAIN_SAFE_ENTRYPOINTS) {
+    const source = readFileSync(path.resolve(QUALITY_DIR, entry), 'utf8');
+    for (const line of source.split('\n')) {
+      if (!/process\.exit\(/.test(line)) continue;
+      if (line.trimStart().startsWith('*')) continue; // doc comment
+      offenders.push(`${entry}: ${line.trim()}`);
+    }
+  }
   assert.deepEqual(
-    calls,
+    offenders,
     [],
     'use `process.exitCode` / finish() instead — process.exit() drops buffered stdout on a pipe',
+  );
+});
+
+// The shared finish() in lib/step-timing.mjs is the one mechanism all three
+// entrypoints exit through, so proving drainage once here plus the source guard
+// above (every entrypoint uses it, none calls process.exit) covers all of them.
+// Probing each entrypoint directly would mean re-exporting finish from modules
+// that have no other reason to expose it.
+test('the shared finish() flushes a large summary over a pipe', () => {
+  const probe = `
+    import { finish } from ${JSON.stringify(path.resolve(QUALITY_DIR, 'lib/step-timing.mjs'))};
+    process.stdout.write('x'.repeat(${LARGE_PAYLOAD_BYTES}));
+    process.stdout.write('\\n[quality] failed step="last" status=1\\n');
+    finish(1);
+  `;
+  const { stdout, status } = runDetached(probe);
+  assert.equal(status, 1, 'a failing run must still exit non-zero');
+  assert.ok(
+    stdout.length > LARGE_PAYLOAD_BYTES,
+    `stdout truncated to ${stdout.length} bytes — pending writes were dropped`,
+  );
+  assert.ok(
+    stdout.endsWith('[quality] failed step="last" status=1\n'),
+    'the trailing failure line must survive; it is written last and is dropped first',
   );
 });
 
@@ -148,12 +186,27 @@ test('finish sets the exit status without ending the process', () => {
 // test below fails both when a listed file loses its pragma and when a new file
 // gains one without being reviewed into the list. Keep it sorted.
 const GATEWAY_SERIAL_INVENTORY = [
-  'src/agents/contexts.test.ts', //          writes fixtures into the repo pool/
-  'src/agents/runtime-recovery.test.ts', //  real tmux sessions + repo pool/
-  'src/live-recipe/context.test.ts', //      writes fixtures into the repo pool/
-  'src/methods/filesystem.test.ts', //       writes fixtures into the repo pool/
-  'src/tasks/writer.test.ts', //             fixed-name file in templates/worker/
+  'src/agents/contexts.test.ts', //             writes fixtures into the repo pool/
+  'src/agents/runtime-recovery.test.ts', //     real tmux sessions + repo pool/
+  'src/core/state.test.ts', //                  rewrites the root .farm-status.json
+  'src/live-recipe/context.test.ts', //         writes fixtures into the repo pool/
+  'src/methods/filesystem.test.ts', //          writes fixtures into the repo pool/
+  'src/methods/run/replay-step.test.ts', //     rewrites the root .farm-status.json
+  'src/methods/slot/release.test.ts', //        rewrites the root .farm-status.json
+  'src/tasks/writer.test.ts', //                fixed-name file in templates/worker/
 ];
+
+// Discovery, not just a lock. The inventory above only catches a *lost* pragma;
+// three review rounds in a row found suites that were never listed because a
+// hand-written grep missed them (poolDir reached via a re-export, statusFile via
+// an imported symbol, then a dynamic import). Any gateway test that can reach the
+// shared root `.farm-status.json` or the shared repo `pool/` must therefore either
+// carry the pragma or be listed here with the reason it is safe.
+const SHARED_STATE_IDENTIFIERS = /\b(statusFile|poolDir)\b/;
+const SHARED_STATE_READ_ONLY = {
+  'src/projects/repo-root.test.ts': 'asserts resolved paths only; never writes',
+  'src/runtime/session-usage-script.test.ts': 'declares its own temp poolDir under a mkdtemp root',
+};
 
 test('the gateway serial lane matches its reviewed inventory', () => {
   const gatewaySrc = path.resolve(
@@ -170,6 +223,44 @@ test('the gateway serial lane matches its reviewed inventory', () => {
     'gateway serial pragmas drifted from the reviewed inventory — a suite that mutates shared ' +
       'state must be listed here and carry the pragma, or parallel lanes can corrupt it',
   );
+});
+
+test('every gateway suite that can reach shared state is serial or justified', () => {
+  const gatewaySrc = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../services/gateway/src',
+  );
+  const unguarded = [];
+  for (const file of discoverTests(['.'], gatewaySrc)) {
+    const source = readFileSync(file, 'utf8');
+    if (!SHARED_STATE_IDENTIFIERS.test(source)) continue;
+    const rel = `src/${path.relative(gatewaySrc, file).split(path.sep).join('/')}`;
+    if (source.includes(SERIAL_PRAGMA)) continue;
+    if (rel in SHARED_STATE_READ_ONLY) continue;
+    unguarded.push(rel);
+  }
+  assert.deepEqual(
+    unguarded,
+    [],
+    'these gateway suites touch the shared .farm-status.json or repo pool/ but run on parallel ' +
+      'lanes — add the @farmslot:serial pragma, or record why they are read-only in ' +
+      'SHARED_STATE_READ_ONLY',
+  );
+});
+
+test('the shared-state read-only allowlist stays honest', () => {
+  const gatewaySrc = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../services/gateway/src',
+  );
+  for (const [rel, reason] of Object.entries(SHARED_STATE_READ_ONLY)) {
+    const source = readFileSync(path.join(gatewaySrc, rel.replace(/^src\//, '')), 'utf8');
+    assert.ok(
+      SHARED_STATE_IDENTIFIERS.test(source),
+      `${rel} no longer touches shared state — drop it from the allowlist`,
+    );
+    assert.ok(reason.length > 0, `${rel} needs a reason`);
+  }
 });
 
 test('assignment verification compares the discovered set, not a self-derived count', () => {

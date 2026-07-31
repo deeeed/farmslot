@@ -4,11 +4,14 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, relative, resolve } from 'node:path';
 
 import {
+  finish,
   formatDuration,
   isMainModule,
   rankSlowest,
   writeTimingArtifact,
 } from './lib/step-timing.mjs';
+
+export { finish };
 
 /**
  * Opt-in marker for suites that mutate machine-wide or repo-wide state (tmux
@@ -348,21 +351,6 @@ export function buildArtifact({
       ms: Math.round(record.ms),
     })),
   };
-}
-
-/**
- * Set the exit status and let the event loop drain instead of calling
- * `process.exit()`.
- *
- * `process.exit()` tears the process down without flushing pending writes. When
- * stdout is a pipe — CI, `| tee`, a parent runner capturing output — that
- * truncates at the pipe buffer: a 1 MB payload arrived as 8 KB in a local probe.
- * This runner prints the aggregate failure list immediately before exiting, so
- * the dropped bytes were exactly the diagnostics a red build needs, while the
- * exit status still looked correct.
- */
-export function finish(code) {
-  process.exitCode = code;
 }
 
 async function main() {

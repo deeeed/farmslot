@@ -147,6 +147,21 @@ export function writeTimingArtifact(name, payload, env = process.env) {
   return target;
 }
 
+/**
+ * Set the exit status and let the event loop drain instead of calling
+ * `process.exit()`.
+ *
+ * `process.exit()` tears the process down without flushing pending writes. When
+ * stdout is a pipe — CI, `| tee`, a parent runner capturing output — that
+ * truncates at the pipe buffer: a 1 MB payload arrived as 8 KB in a local probe.
+ * Every quality entrypoint prints its timing summary (and, on failure, the
+ * failing step) immediately before exiting, so the dropped bytes are exactly the
+ * diagnostics a red build needs while the exit status still looks correct.
+ */
+export function finish(code) {
+  process.exitCode = code;
+}
+
 /** True when `metaUrl` is the process entrypoint (so exports stay importable). */
 export function isMainModule(metaUrl, argv = process.argv) {
   const entry = argv[1];

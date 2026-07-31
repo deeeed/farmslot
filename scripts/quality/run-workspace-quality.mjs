@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import {
   buildTimingArtifact,
+  finish,
   isMainModule,
   renderTimingSummary,
   runTimedSteps,
@@ -76,7 +77,10 @@ function main() {
     workspaceTimingArtifact(records, failure),
   );
   if (artifactPath) console.log(`[workspace-quality] timings artifact: ${artifactPath}`);
-  if (failure) process.exit(failure.status);
+  if (failure) {
+    finish(failure.status);
+    return;
+  }
   console.log(`\nWorkspace quality passed for ${workspaces.length} package/service workspaces.`);
 }
 

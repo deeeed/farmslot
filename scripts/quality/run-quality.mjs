@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 
 import {
   buildTimingArtifact,
+  finish,
   isMainModule,
   renderTimingSummary,
   runTimedSteps,
@@ -85,7 +86,7 @@ function main() {
     qualityTimingArtifact(records, failure),
   );
   if (artifactPath) console.log(`[quality] timings artifact: ${artifactPath}`);
-  process.exit(failure ? failure.status : 0);
+  finish(failure ? failure.status : 0);
 }
 
 if (isMainModule(import.meta.url)) main();

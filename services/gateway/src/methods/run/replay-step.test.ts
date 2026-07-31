@@ -1,3 +1,4 @@
+// @farmslot:serial — snapshots, overwrites, and restores the shared root `.farm-status.json`.
 import assert from 'node:assert/strict';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
