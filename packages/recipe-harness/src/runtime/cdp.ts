@@ -749,7 +749,7 @@ export class CdpWebPage {
       );
     }
     return this.evaluate(
-      `(() => { window.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)}); return { scrolled: true }; })()`,
+      `(() => { const root = document.scrollingElement || document.documentElement; root.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)}); return { scrolled: true }; })()`,
     );
   }
 
