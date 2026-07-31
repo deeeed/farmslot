@@ -41,22 +41,36 @@ import { buildPublishGateReviewStatus } from './gate-policy.js';
 import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
 
 /**
- * A reviewer context is a recovery candidate only while it is still marked
- * in-flight. A reviewer that completed normally is flipped to `complete` by
- * `waitForReviewCompletion`; one that failed is flipped to `failed`. Only a
- * reviewer whose awaiting call was interrupted mid-flight stays `working`/
- * `launching`, so this predicate is also the dedup key — once ingested, the
- * context is marked `complete` and no longer matches.
+ * A reviewer context can need recovery while in-flight or after its runner was
+ * reconciled to `complete`. The latter happens when the runner exits after
+ * writing feedback but before the awaiting publish-gate call persists the
+ * verdict. Recorded artifact scopes provide the dedup key for complete contexts.
  */
 export function isRecoverableReviewerContext(ctx: Pick<AgentContext, 'role' | 'status'>): boolean {
-  return ctx.role === 'self-review' && (ctx.status === 'working' || ctx.status === 'launching');
+  return (
+    ctx.role === 'self-review' &&
+    (ctx.status === 'working' || ctx.status === 'launching' || ctx.status === 'complete')
+  );
+}
+
+export function reviewerContextNeedsRecovery(
+  ctx: Pick<AgentContext, 'role' | 'status' | 'artifactScope'>,
+  reviews: Pick<IndependentReviewStatus, 'id'>[],
+): boolean {
+  if (!isRecoverableReviewerContext(ctx)) return false;
+  const artifactScope = ctx.artifactScope?.trim();
+  // Legacy complete contexts without a persisted scope cannot be distinguished
+  // from normally ingested reviews. In-flight contexts remain recoverable via
+  // the existing fallback id path.
+  if (!artifactScope) return ctx.status !== 'complete';
+  return !reviews.some((review) => review.id === artifactScope);
 }
 
 /**
  * Build the `IndependentReviewStatus` for a recovered reviewer, or `null` when
- * the reviewer has not actually finished (no fresh terminal signal, or feedback
- * that never parsed into a verdict). Pure so the recovery decision is unit
- * testable without slot I/O.
+ * the reviewer has not actually finished (no fresh terminal signal or completed
+ * runtime context, or feedback that never parsed into a verdict). Pure so the
+ * recovery decision is unit testable without slot I/O.
  *
  * `signalFreshSince(signal, ctx.attemptStartedAt ?? ctx.startedAt)` rejects a
  * stale signal left by an earlier loop — anchored on the current attempt's
@@ -86,12 +100,19 @@ export function buildRecoveredReview(params: {
   // reconciliation rewrites it before this recovery runs, which would reject
   // the genuine pre-restart signal this path exists to ingest).
   const freshnessAnchor = ctx.attemptStartedAt ?? ctx.startedAt;
-  if (!signal || !signalFreshSince(signal, freshnessAnchor)) return null;
+  const freshSignal = signal && signalFreshSince(signal, freshnessAnchor) ? signal : undefined;
+  const completedContextIsFresh =
+    ctx.status === 'complete' &&
+    !!ctx.completedAt &&
+    (!freshnessAnchor ||
+      new Date(ctx.completedAt).getTime() >= new Date(freshnessAnchor).getTime());
+  if (!freshSignal && !completedContextIsFresh) return null;
   // Only a cleanly completed reviewer may stamp a verdict. A failed/blocked
   // terminal signal can coexist with parseable feedback (e.g. a PASS draft
   // written before the reviewer died) — stamping it would certify a review
   // that never finished; skipping leaves the gate to request a fresh one.
-  if (signal.status !== 'complete' && signal.status !== 'done') return null;
+  if (freshSignal && freshSignal.status !== 'complete' && freshSignal.status !== 'done')
+    return null;
   if (feedback.incomplete) return null;
 
   const priorReviews = run.engineState?.publishGate?.independentReviews ?? [];
@@ -249,9 +270,9 @@ async function readSlotHeadSha(
 
 /**
  * Ingest any completed-but-lost publication reviews for a run into
- * `publishGate.independentReviews`. Idempotent: it only considers reviewer
- * contexts still marked in-flight and flips each to `complete` on ingest, so a
- * later re-entry re-scans nothing. Returns the ids of the reviews it recovered.
+ * `publishGate.independentReviews`. Idempotent: complete contexts are matched to
+ * their persisted artifact scope, while in-flight contexts are flipped to
+ * `complete` on ingest. Returns the ids of the reviews it recovered.
  */
 export async function recoverInflightPublicationReviews(
   runId: string,
@@ -259,7 +280,10 @@ export async function recoverInflightPublicationReviews(
 ): Promise<string[]> {
   const run = getRun(runId);
   if (!run) return [];
-  const candidates = (run.agentContexts ?? []).filter(isRecoverableReviewerContext);
+  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const candidates = (run.agentContexts ?? []).filter((ctx) =>
+    reviewerContextNeedsRecovery(ctx, reviews),
+  );
   if (candidates.length === 0) return [];
 
   const vars = await loadSlotVars(slotId);
@@ -305,7 +329,6 @@ async function ingestRecoveredReviewer(
   stampablePackage: ReadyGatePrPackage | undefined,
 ): Promise<string | null> {
   const signal = await readReviewerTerminalSignal(vars, ctx);
-  if (!signal || !signalFreshSince(signal, ctx.attemptStartedAt ?? ctx.startedAt)) return null; // reviewer still running
   // The reviewer's task dir is encoded in its stored task file path; feedback
   // is scoped to the reviewer's context id alongside it.
   const taskDir = ctx.taskFile ? path.posix.dirname(ctx.taskFile) : null;
