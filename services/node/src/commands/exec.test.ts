@@ -3,6 +3,24 @@ import test from 'node:test';
 
 import { exec, resolveLoginEnvironment, resolveLoginPath } from './exec.js';
 
+test('node command exec preserves a cached non-PATH login export', async () => {
+  const key = 'FARMSLOT_TEST_LOGIN_EXPORT';
+  const previous = process.env[key];
+  process.env[key] = 'captured-once';
+  try {
+    const expectedEnvironment = await resolveLoginEnvironment();
+    delete process.env[key];
+    const result = await exec({ cmd: `printf %s "$${key}"` });
+
+    assert.equal(expectedEnvironment[key], 'captured-once');
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout, 'captured-once');
+  } finally {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  }
+});
+
 test('node exec maxBuffer preserves bytes up to the limit and reports overflow', async () => {
   const result = await exec({ cmd: 'printf abcdef; sleep 1', maxBuffer: 4 });
 
@@ -46,7 +64,6 @@ test('node command exec reuses the cached login PATH without a login shell', asy
   assert.equal(pathResult.stdout, expectedPath);
   assert.equal(loginResult.exitCode, 0);
   assert.equal(loginResult.stdout, 'nonlogin');
-  assert.ok(Object.keys(expectedEnvironment).length > 0);
 });
 
 test('node exec captures stdout larger than one pipe chunk', async () => {

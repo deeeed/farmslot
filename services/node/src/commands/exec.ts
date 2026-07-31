@@ -21,6 +21,7 @@ const NON_LOGIN_SHELL_ARGS = IS_DARWIN ? ['-f', '-c'] : ['--noprofile', '--norc'
 const SYSTEM_PATH_FALLBACK = '/usr/sbin:/usr/bin:/sbin:/bin';
 
 const LOGIN_ENV_MARKER = 'FARMSLOT_LOGIN_ENV_BEGIN';
+const SHELL_BOOKKEEPING_ENV = new Set(['SHLVL', 'PWD', 'OLDPWD', '_']);
 let loginEnvironmentPromise: Promise<NodeJS.ProcessEnv> | undefined;
 
 export function resolveLoginEnvironment(): Promise<NodeJS.ProcessEnv> {
@@ -51,7 +52,9 @@ export function resolveLoginEnvironment(): Promise<NodeJS.ProcessEnv> {
       for (const field of fields.slice(markerIndex + 1)) {
         const separator = field.indexOf('=');
         if (separator <= 0) continue;
-        loginEnvironment[field.slice(0, separator)] = field.slice(separator + 1);
+        const name = field.slice(0, separator);
+        if (SHELL_BOOKKEEPING_ENV.has(name)) continue;
+        loginEnvironment[name] = field.slice(separator + 1);
       }
       const loginPath = loginEnvironment.PATH ?? process.env.PATH ?? '';
       resolve({ ...loginEnvironment, PATH: `${loginPath}:${SYSTEM_PATH_FALLBACK}` });
@@ -80,11 +83,12 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
   const loginEnvironment = await resolveLoginEnvironment();
   const { FORCE_COLOR: _droppedLoginForceColor, ...loginEnvNoForceColor } = loginEnvironment;
   void _droppedLoginForceColor;
-  const env = {
-    ...loginEnvNoForceColor,
-    ...envNoForceColor,
-    PATH: loginEnvironment.PATH,
-  };
+  const env: NodeJS.ProcessEnv = argvMode
+    ? { ...envNoForceColor, PATH: loginEnvironment.PATH }
+    : { ...loginEnvNoForceColor, ...envNoForceColor, PATH: loginEnvironment.PATH };
+  if (!argvMode) {
+    for (const name of SHELL_BOOKKEEPING_ENV) delete env[name];
+  }
 
   return new Promise((resolve) => {
     let stdout = '';
