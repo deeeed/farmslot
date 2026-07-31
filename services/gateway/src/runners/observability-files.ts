@@ -12,6 +12,7 @@ import type {
 } from './observability-types.js';
 
 export const OBSERVABILITY_SIGNAL_FRESH_MS = 120_000;
+export const OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS = 30 * 60_000;
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 
@@ -97,6 +98,7 @@ export function deriveRunnerActivity(
   let lastPreToolUse: { record: HookRecord; observedAt: number } | null = null;
   let lastPostToolUseAt: number | null = null;
   let lastTurnStop: { observedAt: number } | null = null;
+  let lastIdleNotification: { observedAt: number } | null = null;
   let lastComposing: { observedAt: number } | null = null;
 
   for (const record of hooks) {
@@ -108,28 +110,66 @@ export function deriveRunnerActivity(
       lastPostToolUseAt = null;
     } else if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
       lastPostToolUseAt = observedAt;
-    } else if (event === 'Stop' || event === 'SubagentStop') {
+    } else if (event === 'Stop') {
       lastTurnStop = { observedAt };
     } else if (event === 'UserPromptSubmit' || event === 'UserPromptExpansion') {
       lastComposing = { observedAt };
     } else if (event === 'Notification') {
-      lastComposing = { observedAt };
+      const turnWasIdle =
+        lastTurnStop != null &&
+        (lastComposing == null || lastComposing.observedAt < lastTurnStop.observedAt) &&
+        (lastPreToolUse == null ||
+          (lastPostToolUseAt != null && lastPostToolUseAt >= lastPreToolUse.observedAt));
+      if (
+        record.notification_type === 'idle_prompt' ||
+        (!record.notification_type && turnWasIdle)
+      ) {
+        lastIdleNotification = { observedAt };
+      } else {
+        lastComposing = { observedAt };
+      }
     }
   }
+
+  const lastIdle =
+    lastIdleNotification &&
+    (!lastTurnStop || lastIdleNotification.observedAt > lastTurnStop.observedAt)
+      ? lastIdleNotification
+      : lastTurnStop;
 
   const freshest = [
     lastPreToolUse?.observedAt,
     lastPostToolUseAt,
-    lastTurnStop?.observedAt,
+    lastIdle?.observedAt,
     lastComposing?.observedAt,
   ]
     .filter((value): value is number => value != null)
     .sort((a, b) => b - a)[0];
-  if (freshest == null || !isFreshObservedAt(freshest, now)) return null;
+  if (freshest == null) return null;
+  if (!isFreshObservedAt(freshest, now)) {
+    // A terminal idle hook remains useful as a low-confidence last-known state. The hook-only
+    // sender may use it only after its existing live-composer guard proves the input is empty;
+    // selectors continue to reject low-confidence readings everywhere else.
+    if (
+      lastIdle?.observedAt === freshest &&
+      now - freshest <= OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS
+    ) {
+      return {
+        value: 'idle',
+        source: 'hook',
+        confidence: 'low',
+        observedAt: freshest,
+        evidence: 'stale-terminal-idle',
+      };
+    }
+    return null;
+  }
 
   if (
     lastPreToolUse &&
-    (lastPostToolUseAt == null || lastPreToolUse.observedAt > lastPostToolUseAt)
+    (lastPostToolUseAt == null || lastPreToolUse.observedAt > lastPostToolUseAt) &&
+    (lastIdle == null || lastPreToolUse.observedAt > lastIdle.observedAt) &&
+    (lastComposing == null || lastPreToolUse.observedAt > lastComposing.observedAt)
   ) {
     return {
       value: 'tool-running',
@@ -138,10 +178,7 @@ export function deriveRunnerActivity(
       observedAt: lastPreToolUse.observedAt,
     };
   }
-  if (
-    lastComposing &&
-    (lastTurnStop == null || lastComposing.observedAt > lastTurnStop.observedAt)
-  ) {
+  if (lastComposing && (lastIdle == null || lastComposing.observedAt > lastIdle.observedAt)) {
     return {
       value: 'composing',
       source: 'hook',
@@ -149,12 +186,12 @@ export function deriveRunnerActivity(
       observedAt: lastComposing.observedAt,
     };
   }
-  if (lastTurnStop) {
+  if (lastIdle) {
     return {
       value: 'idle',
       source: 'hook',
       confidence: 'high',
-      observedAt: lastTurnStop.observedAt,
+      observedAt: lastIdle.observedAt,
     };
   }
   return null;
@@ -205,7 +242,7 @@ export function lastTurnCompletedFromHooks(
     const event = hookEventName(record);
     const observedAt = observedAtFromRecord(record);
     if (!event || observedAt == null) continue;
-    if (event !== 'Stop' && event !== 'SubagentStop') continue;
+    if (event !== 'Stop') continue;
     if (!isFreshObservedAt(observedAt, now)) return null;
     return {
       value: observedAt,

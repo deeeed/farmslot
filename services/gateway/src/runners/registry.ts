@@ -41,7 +41,11 @@ import {
   buildObservabilityDegradedRecovery,
   logObservabilityDegradedRecovery,
 } from './observability-degraded.js';
-import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
+import {
+  OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS,
+  runnerActivityIsBusy,
+  runnerObservabilityDirForSlot,
+} from './observability-files.js';
 import {
   instructionNeedle,
   normalizeInstructionText,
@@ -893,10 +897,19 @@ export function runnerPaneComposerDraftState(
   pane: string,
   runnerId?: string | null,
 ): ComposerDraftState {
-  if (paneShowsBusyComposer(pane)) return 'draft';
+  const normalizedPane = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+  if (paneShowsBusyComposer(normalizedPane)) return 'draft';
+  // Claude rotates whimsical active-turn verbs (for example `✽ Herding… (3m 12s)`). Keep this
+  // broader marker local to Claude's pre-send composer proof and to the live tail so transcript
+  // prose cannot make every runner's shared busy predicate stick indefinitely.
+  if (
+    normalizeRunner(runnerId) === 'claude' &&
+    /(?:^|\n)\s*[·*•✶✻✽✳]\s+\S+[…\.]{1,3}\s+\(\d+[hms]/iu.test(paneTailText(normalizedPane, 12))
+  ) {
+    return 'draft';
+  }
   const markers = normalizeRunner(runnerId) === 'codex' ? ['›', '❯'] : ['❯', '›'];
-  const lines = pane
-    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+  const lines = normalizedPane
     .split('\n')
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0);
@@ -1784,6 +1797,7 @@ async function sendRunnerInstructionHookOnly(
   // signal cannot see). A composer hold with a healthy hook must NOT be recorded as a hook lapse.
   let sawHookDegraded = false;
   let sawComposerHold = false;
+  let recordedStaleIdle = false;
   while (Date.now() < deadline) {
     // Idempotent re-nudge: a high-confidence digest match means this exact message already
     // landed — don't duplicate the send.
@@ -1807,7 +1821,27 @@ async function sendRunnerInstructionHookOnly(
 
     const activity = await readRunnerActivityFromObservability(vars, target, runner);
     const idleDecision = selectIdleFromObservabilityAndPane(activity, false, true);
-    if (idleDecision.degraded) {
+    // A stale terminal-idle hook is intentionally low-confidence, so the selector degrades it.
+    // It is still safe to continue to the existing exact-buffer and live-composer guards below:
+    // they must positively prove the composer empty before any fresh text is typed. Other stale
+    // or unknown activity remains fail-closed.
+    const staleTerminalIdle =
+      idleDecision.degraded &&
+      activity?.value === 'idle' &&
+      activity.confidence === 'low' &&
+      activity.evidence === 'stale-terminal-idle' &&
+      Date.now() - activity.observedAt <= OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS;
+    if (staleTerminalIdle && !recordedStaleIdle) {
+      await recordObservabilityDegradedDecision(
+        vars,
+        target,
+        runner,
+        { signal: 'activity', reading: activity },
+        logPrefix,
+      );
+      recordedStaleIdle = true;
+    }
+    if (idleDecision.degraded && !staleTerminalIdle) {
       sawHookDegraded = true;
       await recordObservabilityDegradedDecision(
         vars,
@@ -1819,7 +1853,7 @@ async function sendRunnerInstructionHookOnly(
       await new Promise((resolve) => setTimeout(resolve, 1500));
       continue;
     }
-    if (!idleDecision.idle) {
+    if (!idleDecision.idle && !staleTerminalIdle) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
       continue;
     }

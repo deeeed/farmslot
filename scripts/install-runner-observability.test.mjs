@@ -120,7 +120,7 @@ test('claude install preserves a non-symlink compatibility directory', () => {
   assert.equal(fs.readFileSync(path.join(compat, 'operator-file'), 'utf8'), 'keep\n');
 });
 
-test('installed hook appends real newlines so hooks.jsonl splits into records', () => {
+test('installed hook writes distinct JSONL records and preserves notification type', () => {
   const { obsDir, hookPath } = installToTempDir();
   const logPath = path.join(obsDir, 'hooks.jsonl');
   const hookSrc = fs.readFileSync(hookPath, 'utf8');
@@ -132,12 +132,18 @@ test('installed hook appends real newlines so hooks.jsonl splits into records', 
 
   runHook(hookPath, obsDir, { hook_event_name: 'SessionStart', session_id: 'a' });
   runHook(hookPath, obsDir, { hook_event_name: 'Stop', session_id: 'a' });
+  runHook(hookPath, obsDir, {
+    hook_event_name: 'Notification',
+    notification_type: 'idle_prompt',
+    session_id: 'a',
+  });
 
   const raw = fs.readFileSync(logPath, 'utf8');
   const lines = raw.split('\n').filter((line) => line.trim());
-  assert.equal(lines.length, 2, `expected 2 JSONL lines, got raw=${JSON.stringify(raw)}`);
+  assert.equal(lines.length, 3, `expected 3 JSONL lines, got raw=${JSON.stringify(raw)}`);
   assert.equal(JSON.parse(lines[0]).hook_event_name, 'SessionStart');
   assert.equal(JSON.parse(lines[1]).hook_event_name, 'Stop');
+  assert.equal(JSON.parse(lines[2]).notification_type, 'idle_prompt');
   assert.equal(raw.at(-1), '\n', 'each append should end with a real newline byte');
 });
 

@@ -1821,4 +1821,18 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
   it('reports draft for a busy/queued composer', () => {
     assert.equal(runnerPaneComposerDraftState('· Composing…\n❯\n', 'claude'), 'draft');
   });
+
+  it('confines Claude rotating-spinner detection to the live composer tail', () => {
+    assert.equal(runnerPaneComposerDraftState('✽ Herding… (3m 12s)\n❯\n', 'claude'), 'draft');
+    assert.equal(
+      runnerPaneComposerDraftState('\x1b[35m✽ Herding… (3m 12s)\x1b[0m\n❯\n', 'claude'),
+      'draft',
+    );
+    assert.equal(runnerPaneComposerDraftState('✽ Herding… (3m 12s)\n❯\n', 'codex'), 'empty');
+    const staleScrollback = `✽ Herding… (3m 12s)\n${Array.from(
+      { length: 13 },
+      (_, index) => `completed line ${index}`,
+    ).join('\n')}\n❯\n`;
+    assert.equal(runnerPaneComposerDraftState(staleScrollback, 'claude'), 'empty');
+  });
 });

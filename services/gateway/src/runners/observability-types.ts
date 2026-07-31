@@ -9,6 +9,8 @@ export interface ObservabilityReading<T> {
   confidence: ObservabilityConfidence;
   /** ms since epoch of the underlying event/file mtime. */
   observedAt: number;
+  /** Narrow provenance for a deliberately degraded reading that may enable guarded recovery. */
+  evidence?: 'stale-terminal-idle';
 }
 
 export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';
@@ -25,6 +27,7 @@ export interface HookRecord {
   hook_event_name?: string;
   event?: string;
   tool_name?: string;
+  notification_type?: string;
   tool_use_id?: string;
   session_id?: string;
   transcript_path?: string;

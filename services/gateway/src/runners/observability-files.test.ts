@@ -7,6 +7,7 @@ import {
   deriveRunnerActivity,
   filterHooksByPane,
   filterStatuslineByPane,
+  lastTurnCompletedFromHooks,
   parseHookJsonl,
   promptAcceptedFromHooks,
   promptTurnStartedFromHooks,
@@ -54,6 +55,111 @@ test('deriveRunnerActivity detects composing and tool-running from hooks', () =>
     NOW,
   );
   assert.equal(toolRunning?.value, 'tool-running');
+});
+
+test('deriveRunnerActivity treats an idle notification after Stop as terminal idle', () => {
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 80_000 },
+      { hook_event_name: 'Stop', observedAt: NOW - 70_000 },
+      {
+        hook_event_name: 'Notification',
+        notification_type: 'idle_prompt',
+        observedAt: NOW - 1_000,
+      },
+    ],
+    null,
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 1_000,
+  });
+});
+
+test('deriveRunnerActivity preserves stale terminal idle as low-confidence last-known state', () => {
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'Stop', observedAt: NOW - 240_000 },
+      // Hook logs written before the installer persisted notification_type have this legacy
+      // shape. A notification after a completed turn represents Claude's idle prompt there.
+      { hook_event_name: 'Notification', observedAt: NOW - 180_000 },
+    ],
+    null,
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'low',
+    observedAt: NOW - 180_000,
+    evidence: 'stale-terminal-idle',
+  });
+});
+
+test('deriveRunnerActivity does not treat SubagentStop as whole-turn idle', () => {
+  const reading = deriveRunnerActivity(
+    [{ hook_event_name: 'SubagentStop', observedAt: NOW - 180_000 }],
+    null,
+    NOW,
+  );
+  assert.equal(reading, null);
+});
+
+test('deriveRunnerActivity lets a later Stop close an unmatched tool hook', () => {
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'PreToolUse', observedAt: NOW - 70_000, tool_name: 'Bash' },
+      { hook_event_name: 'Stop', observedAt: NOW - 60_000 },
+    ],
+    null,
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 60_000,
+  });
+});
+
+test('deriveRunnerActivity rejects terminal idle older than the recovery window', () => {
+  const reading = deriveRunnerActivity(
+    [{ hook_event_name: 'Stop', observedAt: NOW - 31 * 60_000 }],
+    null,
+    NOW,
+  );
+  assert.equal(reading, null);
+});
+
+test('lastTurnCompletedFromHooks ignores subagent completion', () => {
+  const reading = lastTurnCompletedFromHooks(
+    [
+      { hook_event_name: 'Stop', observedAt: NOW - 90_000 },
+      { hook_event_name: 'SubagentStop', observedAt: NOW - 1_000 },
+    ],
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: NOW - 90_000,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 90_000,
+  });
+});
+
+test('deriveRunnerActivity does not recover stale non-terminal work as idle', () => {
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'Stop', observedAt: NOW - 300_000 },
+      { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 240_000 },
+    ],
+    null,
+    NOW,
+  );
+  assert.equal(reading, null);
 });
 
 test('activeToolFromHooks returns unmatched PreToolUse tool name', () => {

@@ -470,6 +470,142 @@ test('claude (hook-only) hook-idle with an EMPTY composer proves-empty then type
   );
 });
 
+test('claude (hook-only) stale terminal idle sends only after proving the composer empty', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'low',
+    observedAt: Date.now() - 240_000,
+    evidence: 'stale-terminal-idle',
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: Date.now(),
+  };
+  paneText = '❯\nctx:12%\n';
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+    forceBusyPoll: true,
+  });
+
+  assert.equal(sent, true);
+  assert.ok(callOrder.includes('pane:capture'));
+  assert.ok(callOrder.includes('tmux:send-literal'));
+});
+
+test('claude (hook-only) stale terminal idle still holds for a foreign composer draft', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'low',
+    observedAt: Date.now() - 240_000,
+    evidence: 'stale-terminal-idle',
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: Date.now(),
+  };
+  paneText = '❯ operator draft still in progress\nctx:12%\n';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+    });
+    assert.equal(sent, false);
+    assert.equal(callOrder.indexOf('tmux:send-literal'), -1);
+  } finally {
+    paneClearsAfterSubmit = true;
+  }
+});
+
+test('claude (hook-only) terminal idle older than the recovery window stays held', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'low',
+    observedAt: Date.now() - 31 * 60_000,
+    evidence: 'stale-terminal-idle',
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: Date.now(),
+  };
+  paneText = '❯\nctx:12%\n';
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+    forceBusyPoll: true,
+  });
+
+  assert.equal(sent, false);
+  assert.equal(callOrder.indexOf('tmux:send-literal'), -1);
+});
+
+test('claude (hook-only) low-confidence idle without terminal evidence stays held', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'low',
+    observedAt: Date.now() - 240_000,
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: Date.now(),
+  };
+  paneText = '❯\nctx:12%\n';
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+    forceBusyPoll: true,
+  });
+
+  assert.equal(sent, false);
+  assert.equal(callOrder.indexOf('tmux:send-literal'), -1);
+});
+
+test('claude (hook-only) stale terminal idle still holds while the live pane is active', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'low',
+    observedAt: Date.now() - 240_000,
+    evidence: 'stale-terminal-idle',
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: Date.now(),
+  };
+  paneText = '✽ Herding… (3m 12s)\n❯\nctx:12%\n';
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+    });
+    assert.equal(sent, false);
+    assert.equal(callOrder.indexOf('tmux:send-literal'), -1);
+  } finally {
+    paneClearsAfterSubmit = true;
+  }
+});
+
 test('claude (hook-only) hook-idle with a BUFFERED composer submits it without retyping (no concat)', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
