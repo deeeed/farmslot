@@ -2991,6 +2991,48 @@ test('CDP observations and selectors traverse open shadow roots', async () => {
   assert.doesNotMatch(observationExpression, /getAttribute\('value'\)/u);
 });
 
+test('CDP page evaluates through its public isolated-world API', async () => {
+  const calls: {
+    method: string;
+    params: Record<string, unknown>;
+  }[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      calls.push({ method, params });
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main-frame' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        return { executionContextId: 17 };
+      }
+      return { result: { value: { ready: true } } };
+    },
+  } as never);
+
+  const result = await page.evaluateInIsolatedWorld<{ ready: boolean }>(
+    'globalThis.ready',
+    'consumer-world',
+  );
+
+  assert.deepEqual(result, { ready: true });
+  assert.deepEqual(calls, [
+    { method: 'Page.getFrameTree', params: {} },
+    {
+      method: 'Page.createIsolatedWorld',
+      params: { frameId: 'main-frame', worldName: 'consumer-world' },
+    },
+    {
+      method: 'Runtime.evaluate',
+      params: {
+        expression: 'globalThis.ready',
+        contextId: 17,
+        awaitPromise: true,
+        returnByValue: true,
+      },
+    },
+  ]);
+});
+
 test('CDP navigation waits for the loaded document before returning', async () => {
   let loadHandler: (() => void) | undefined;
   let ready = false;
