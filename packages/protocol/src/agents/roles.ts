@@ -32,6 +32,20 @@ export const AGENT_ROLE_WINDOWS: Record<AgentRole, string | null> = {
   'ci-fix': 'ci-fix',
 };
 
+/** Stable session anchor used by orchestration flows without a role window. */
+export const PRIMARY_WORKER_WINDOW = 'worker';
+
+/**
+ * Concrete dispatch/shutdown target for a role. Unlike agentRoleWindow(), this
+ * resolves the primary role to the canonical session anchor. Secondary roles
+ * without their own pane (self-review-fix) still return null because they must
+ * share the owning run's persisted worker target.
+ */
+export function agentDispatchWindow(role: AgentRole): string | null {
+  if (role === 'primary') return PRIMARY_WORKER_WINDOW;
+  return AGENT_ROLE_WINDOWS[role];
+}
+
 // Rank groups keep the flow-owned worker first, then optional review/fix loops
 // in the order they are normally spawned. Gaps leave room for new intermediate
 // roles without reordering persisted/UI state.
@@ -50,7 +64,8 @@ export function primaryRoleForFlow(flowType?: FlowType | string | null): AgentRo
   if (flowType === 'fix-bug') return 'fix-bug';
   if (flowType === 'review-pr') return 'review';
   // Non-worker orchestration flows (pr-complete, update-branch) and null/undefined
-  // reuse the default session window instead of claiming a role-scoped worker window.
+  // use the canonical primary worker window. Warm handoff may still bind a
+  // chained run directly to its parent's flow-owned window.
   if (!flowType || flowType === 'pr-complete' || flowType === 'update-branch') return 'primary';
   throw new Error(`primaryRoleForFlow: unknown flow type '${flowType}'`);
 }

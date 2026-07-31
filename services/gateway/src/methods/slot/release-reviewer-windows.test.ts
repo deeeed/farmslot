@@ -17,7 +17,10 @@ test('shouldKillAgentWindowName covers role windows and short reviewer tabs', ()
   assert.equal(shouldKillAgentWindowName('self-review', { roleWindowNames }), true);
   assert.equal(shouldKillAgentWindowName('rev-codex', { roleWindowNames }), true);
   assert.equal(shouldKillAgentWindowName('rev1-claude', { roleWindowNames }), true);
+  assert.equal(shouldKillAgentWindowName('review-fix', { roleWindowNames }), true);
+  assert.equal(shouldKillAgentWindowName('review-fix-4', { roleWindowNames }), true);
   assert.equal(shouldKillAgentWindowName('worker', { roleWindowNames }), false);
+  assert.equal(shouldKillAgentWindowName('notes', { roleWindowNames }), false);
   assert.equal(shouldKillAgentWindowName('bugfix', { roleWindowNames, excluded }), false);
   assert.equal(isReviewerWindowName('rev-codex'), true);
 });

@@ -5,8 +5,8 @@ import path from 'node:path';
 import {
   type AgentContext,
   type AgentContextTarget,
+  agentDispatchWindow,
   type AgentRole,
-  agentRoleWindow,
   DEFAULT_CLAUDE_MODEL,
   type DispatchExecuteParams,
   primaryRoleForFlow,
@@ -302,7 +302,7 @@ done
  * them — so probing only the first pane (`list-panes … | head -1`) misreads a
  * live worker in a sibling pane as "no runner process".
  */
-async function isRunnerAliveInAnyPane(
+export async function isRunnerAliveInAnyPane(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
@@ -502,7 +502,7 @@ export async function ensureWorkerRoleTarget(
   runner: string,
   role: AgentRole,
 ): Promise<string> {
-  const windowName = agentRoleWindow(role);
+  const windowName = agentDispatchWindow(role);
   // Self-heal: if the tmux session doesn't exist, recreate it. Otherwise downstream calls
   // (firstWindowTarget, tmuxWindowExists) throw "has no windows — cannot resolve a worker
   // target" because list-windows on a missing session returns empty stdout. The session can
@@ -560,10 +560,9 @@ export async function ensureWorkerRoleTarget(
     return target;
   }
 
-  // Orchestration roles have no role-window — they share the session's first
-  // window with whatever the operator left open. Look up the actual first
-  // window target instead of assuming index 0 so this works on hosts where
-  // tmux is configured with `base-index 1`.
+  // Only secondary roles that explicitly share their owner's pane have no
+  // dispatch window. Resolve the actual first target for that legacy fallback;
+  // primary orchestration dispatches use the canonical `worker` anchor above.
   if (!windowName) return await firstWindowTarget(vars, session);
 
   const roleTarget = `${session}:${windowName}`;
@@ -1054,7 +1053,7 @@ export async function dispatchExecute(
     }
     const stillHasSession = await tmuxSessionExists(vars, session);
     if (stillHasSession) {
-      const existingRoleWindow = agentRoleWindow(workerRole);
+      const existingRoleWindow = agentDispatchWindow(workerRole);
       const exitTarget = existingRoleWindow
         ? `${session}:${existingRoleWindow}`
         : await optionalFirstWindowTarget(vars, session);
@@ -1064,7 +1063,7 @@ export async function dispatchExecute(
     }
   }
   workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
-  if (agentRoleWindow(workerRole)) {
+  if (agentDispatchWindow(workerRole)) {
     // Role windows can contain a different runner than the new dispatch when a
     // slot is reused across runners. Killing only the requested runner can
     // leave the stale foreground process in control; the launch prelude's C-c
@@ -1075,7 +1074,7 @@ export async function dispatchExecute(
   }
   primaryTarget = {
     session,
-    window: agentRoleWindow(workerRole),
+    window: agentDispatchWindow(workerRole),
     pane: null,
     target: workerTarget,
   };
@@ -1145,7 +1144,7 @@ export async function dispatchExecute(
   };
   let runnerProcessStarted = false;
   try {
-    const roleWindowName = agentRoleWindow(workerRole);
+    const roleWindowName = agentDispatchWindow(workerRole);
     const usesRoleWindow = Boolean(roleWindowName);
     const settleFreshRoleWindow = async () => {
       if (!usesRoleWindow) return;
