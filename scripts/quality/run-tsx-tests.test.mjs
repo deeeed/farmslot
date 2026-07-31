@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   assignmentDiagnosticLines,
@@ -65,6 +66,35 @@ test('classification keys off module mocks and the serial pragma', () => {
     classifyTest(`// ${SERIAL_PRAGMA}\nmock.module('./a.js', {});`),
     'module-mock',
     'module mocks need the batched runner even when also marked serial',
+  );
+});
+
+// Gateway runs at --workers 4, so any suite touching machine-wide or repo-wide
+// state must carry the serial pragma. This inventory is the reviewed list; the
+// test below fails both when a listed file loses its pragma and when a new file
+// gains one without being reviewed into the list. Keep it sorted.
+const GATEWAY_SERIAL_INVENTORY = [
+  'src/agents/contexts.test.ts', //          writes fixtures into the repo pool/
+  'src/agents/runtime-recovery.test.ts', //  real tmux sessions + repo pool/
+  'src/live-recipe/context.test.ts', //      writes fixtures into the repo pool/
+  'src/methods/filesystem.test.ts', //       writes fixtures into the repo pool/
+  'src/tasks/writer.test.ts', //             fixed-name file in templates/worker/
+];
+
+test('the gateway serial lane matches its reviewed inventory', () => {
+  const gatewaySrc = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../services/gateway/src',
+  );
+  const marked = discoverTests(['.'], gatewaySrc)
+    .filter((file) => readFileSync(file, 'utf8').includes(SERIAL_PRAGMA))
+    .map((file) => `src/${path.relative(gatewaySrc, file).split(path.sep).join('/')}`)
+    .sort();
+  assert.deepEqual(
+    marked,
+    GATEWAY_SERIAL_INVENTORY,
+    'gateway serial pragmas drifted from the reviewed inventory — a suite that mutates shared ' +
+      'state must be listed here and carry the pragma, or parallel lanes can corrupt it',
   );
 });
 

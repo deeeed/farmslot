@@ -1,3 +1,5 @@
+// @farmslot:serial — writes fixed-name template variants into the shared repo
+// `projects/<project>/templates/worker/` directory.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
