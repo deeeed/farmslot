@@ -85,7 +85,7 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
   void _droppedLoginForceColor;
   const env: NodeJS.ProcessEnv = argvMode
     ? { ...envNoForceColor, PATH: loginEnvironment.PATH }
-    : { ...loginEnvNoForceColor, ...envNoForceColor, PATH: loginEnvironment.PATH };
+    : { ...envNoForceColor, ...loginEnvNoForceColor, PATH: loginEnvironment.PATH };
   if (!argvMode) {
     for (const name of SHELL_BOOKKEEPING_ENV) delete env[name];
   }
