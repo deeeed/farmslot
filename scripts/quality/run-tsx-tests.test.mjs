@@ -18,6 +18,7 @@ import {
   resolveWorkers,
   SERIAL_PRAGMA,
   summaryLines,
+  testCommand,
   verifyAssignment,
   WORKERS_ENV,
 } from './run-tsx-tests.mjs';
@@ -556,6 +557,77 @@ test('failures are aggregated rather than reported one at a time', () => {
 // failure. Deliberately slower than the rest of this suite — it spawns real
 // `yarn exec tsx` processes — because that is the only way to prove the execution
 // contract rather than the reporting of it.
+// The module-mock lane used to batch every file into one
+// `node --import tsx --experimental-test-module-mocks --test <files...>` process.
+// Those files call test() at top level, so under --test node reported
+// "run() is being called recursively within a test file. skipping running files.",
+// executed nothing, and exited 0 — seven suites reported green for months while
+// three of them could not even be imported. These tests pin the command shape and
+// prove a skipped file cannot present as green.
+test('module-mock files run one per process and never under --test', () => {
+  const cmd = testCommand('/repo/src/a.test.ts', { cwd: '/repo', moduleMock: true });
+  assert.deepEqual(cmd, [
+    'exec',
+    'node',
+    '--import',
+    'tsx',
+    '--experimental-test-module-mocks',
+    'src/a.test.ts',
+  ]);
+  assert.ok(!cmd.includes('--test'), '--test makes node skip the file and still exit 0');
+  assert.equal(
+    cmd.filter((part) => part.endsWith('.test.ts')).length,
+    1,
+    'exactly one file per process — a shared process is what allowed the silent skip',
+  );
+
+  // The non-mock shape is unchanged.
+  assert.deepEqual(
+    testCommand('/repo/src/b.test.ts', { cwd: '/repo', tsconfig: 'tsconfig.json' }),
+    ['exec', 'tsx', '--tsconfig', 'tsconfig.json', 'src/b.test.ts'],
+  );
+});
+
+test('a module-mock file that fails cannot present as green', () => {
+  const fixtureDir = path.join(REPO_ROOT, 'temp', `tsx-runner-mm-${process.pid}`);
+  mkdirSync(fixtureDir, { recursive: true });
+  // Uses mock.module, so the runner classifies it into the module-mock lane, and
+  // calls test() at top level — exactly the shape that --test skipped.
+  writeFileSync(
+    path.join(fixtureDir, 'mm-fails.test.ts'),
+    [
+      "import { mock, test } from 'node:test';",
+      "mock.module('node:os', { namedExports: { hostname: () => 'fixture-host' } });",
+      "test('deliberately failing module-mock suite', () => {",
+      "  throw new Error('MM-FIXTURE-EXECUTED');",
+      '});',
+    ].join('\n') + '\n',
+  );
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', REPO_ROOT, path.relative(REPO_ROOT, fixtureDir)],
+      { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 180_000 },
+    );
+    const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+
+    assert.match(out, /module_mock=1/, `the fixture must land in the module-mock lane\n${out}`);
+    assert.notEqual(result.status, 0, `a failing module-mock file must fail the run\n${out}`);
+    assert.ok(
+      out.includes('MM-FIXTURE-EXECUTED'),
+      `the file must actually execute, not be skipped\n${out}`,
+    );
+    assert.ok(
+      !/skipping running files/.test(out),
+      `node must not report the recursive-run skip\n${out}`,
+    );
+    assert.match(out, /failed=1/, `the failure must be counted\n${out}`);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test('a failing run executes every file and aggregates all failures', () => {
   // temp/ is gitignored and inside the repo, so `yarn exec tsx` still resolves
   // the workspace. Cleanup removes only this uniquely named subdirectory.
@@ -642,27 +714,30 @@ test('a lost file surfaces in the artifact instead of a silent discovered===assi
   );
 });
 
-test('module-mock files share the batch verdict and carry no per-file duration', () => {
+test('module-mock files carry their own duration and verdict', () => {
+  // Previously these files shared one batch process, so the artifact recorded a
+  // single verdict and no per-file timing. One process per file means each has its
+  // own record — and a file with no record is a genuine skip, not a reporting gap.
   const files = ['src/m1.test.ts', 'src/m2.test.ts'];
-  const partition = partitionTests(files, {
-    workers: 2,
-    classify: () => 'module-mock',
-  });
+  const partition = partitionTests(files, { workers: 2, classify: () => 'module-mock' });
   const artifact = buildArtifact({
     workspace: 'gateway',
     workers: 2,
     discovered: files,
     partition,
-    records: [{ batch: true, label: 'module-mock batch (2 files)', ms: 900, status: 1 }],
-    failures: [{ label: 'module-mock batch (2 files)', status: 1 }],
-    totalMs: 900,
+    records: [
+      { file: 'src/m1.test.ts', label: 'src/m1.test.ts', ms: 900, status: 0 },
+      { file: 'src/m2.test.ts', label: 'src/m2.test.ts', ms: 400, status: 1 },
+    ],
+    failures: [{ label: 'src/m2.test.ts', status: 1 }],
+    totalMs: 1300,
     toLabel: (file) => file,
   });
   assert.deepEqual(
     artifact.files.map((entry) => [entry.file, entry.lane, entry.ms, entry.status]),
     [
-      ['src/m1.test.ts', 'module-mock', null, 'fail'],
-      ['src/m2.test.ts', 'module-mock', null, 'fail'],
+      ['src/m1.test.ts', 'module-mock', 900, 'ok'],
+      ['src/m2.test.ts', 'module-mock', 400, 'fail'],
     ],
   );
 });

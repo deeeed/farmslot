@@ -249,10 +249,28 @@ function runYarn(args, { cwd, env, buffered }) {
   });
 }
 
-function testCommand(file, { cwd, tsconfig }) {
+/**
+ * Command for one test file.
+ *
+ * Module-mock files need `--experimental-test-module-mocks`, which `tsx` does
+ * not forward, so they run through `node --import tsx` instead.
+ *
+ * They must NOT run under `--test`. These files call `test()` at the top level;
+ * under the node test runner that becomes a recursive `run()`, and node responds
+ * with "node:test run() is being called recursively within a test file. skipping
+ * running files." — printing a warning, executing nothing, and exiting 0. Batched
+ * that way, all seven module-mock suites reported green for months while three of
+ * them could not even be imported. Executing the file directly is what makes its
+ * assertions and its import errors real.
+ */
+export function testCommand(file, { cwd, tsconfig, moduleMock = false }) {
+  const relativeFile = relative(cwd, file);
+  if (moduleMock) {
+    return ['exec', 'node', '--import', 'tsx', '--experimental-test-module-mocks', relativeFile];
+  }
   const command = ['exec', 'tsx'];
   if (tsconfig) command.push('--tsconfig', tsconfig);
-  command.push(relative(cwd, file));
+  command.push(relativeFile);
   return command;
 }
 
@@ -283,9 +301,8 @@ async function runLaneSequentially(files, context) {
 /**
  * Reporting view over one run.
  *
- * `records` carries per-execution timings: one entry per file for the serial and
- * parallel lanes, plus a single entry for the module-mock batch (which is one
- * process, so per-file timings do not exist for it).
+ * `records` carries per-execution timings: one entry per file, in every lane —
+ * module-mock files included, now that they run one process per file.
  *
  * `discovered` is the pre-partition file list; reporting it separately from the
  * assignment count is what makes `discovered=N assigned=N` a real claim.
@@ -337,7 +354,6 @@ export function buildArtifact({
   toLabel,
 }) {
   const byFile = new Map(records.filter((record) => record.file).map((r) => [r.file, r]));
-  const batch = records.find((record) => record.batch);
   const check = verifyAssignment(discovered, partition);
   return {
     kind: 'tsx-tests',
@@ -355,15 +371,16 @@ export function buildArtifact({
     },
     status: failures.length > 0 ? 'fail' : 'ok',
     totalMs: Math.round(totalMs),
+    // Every lane now runs one process per file, so each file carries its own
+    // duration and verdict. A file with no record is genuinely 'skipped' — which
+    // is a real signal, not a reporting artefact of a shared batch process.
     files: assignments(partition).map((entry) => {
-      const record = entry.lane === 'module-mock' ? batch : byFile.get(entry.file);
+      const record = byFile.get(entry.file);
       return {
         file: toLabel(entry.file),
         lane: entry.lane,
         worker: entry.worker,
-        // The module-mock lane is a single batch process, so its files share the
-        // batch verdict and have no individual duration.
-        ms: entry.lane === 'module-mock' ? null : record ? Math.round(record.ms) : null,
+        ms: record ? Math.round(record.ms) : null,
         status: record ? (record.status === 0 ? 'ok' : 'fail') : 'skipped',
       };
     }),
@@ -428,27 +445,11 @@ async function main() {
   const started = performance.now();
   const records = [];
 
-  if (partition.moduleMock.length > 0) {
-    const batchStarted = performance.now();
-    const { status } = await runYarn(
-      [
-        'exec',
-        'node',
-        '--import',
-        'tsx',
-        '--experimental-test-module-mocks',
-        '--test',
-        ...partition.moduleMock.map(toLabel),
-      ],
-      { cwd, env, buffered: false },
-    );
-    records.push({
-      batch: true,
-      label: `module-mock batch (${partition.moduleMock.length} files)`,
-      ms: performance.now() - batchStarted,
-      status,
-    });
-  }
+  // One process per file, sequentially: module mocks are process-global, and a
+  // shared process is what let `--test` skip the whole batch silently.
+  records.push(
+    ...(await runLaneSequentially(partition.moduleMock, { ...context, moduleMock: true })),
+  );
 
   records.push(...(await runLaneSequentially(partition.serial, context)));
   const parallelRecords = await Promise.all(
@@ -457,10 +458,7 @@ async function main() {
   records.push(...parallelRecords.flat());
 
   const totalMs = performance.now() - started;
-  const labelled = records.map((record) => ({
-    ...record,
-    label: record.label ?? toLabel(record.file),
-  }));
+  const labelled = records.map((record) => ({ ...record, label: toLabel(record.file) }));
   const failures = labelled.filter((record) => record.status !== 0);
   const report = {
     workspace: basename(cwd),

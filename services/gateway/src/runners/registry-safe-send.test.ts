@@ -61,6 +61,9 @@ mock.module('../core/exec.js', {
   namedExports: {
     isLocal: () => true,
     execLocal: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+    // Reached transitively via methods/git.ts; kept consistent with execLocal above.
+    execArgvOnSlot: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+    execFileArgv: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execOnSlot: async (_slotVars: SlotVars, cmd: string) => {
       if (cmd.includes('capture-pane')) {
         callOrder.push('pane:capture');

@@ -6,11 +6,22 @@ import { mock, test } from 'node:test';
 
 import { PipelineSteps as PS } from '@farmslot/protocol';
 
+// mock.module replaces a module wholesale, so a partial namedExports map silently
+// deletes every export the subject's import graph still needs. These namespace
+// imports are evaluated before mock.module runs, so they hold the REAL modules;
+// spreading them keeps every export real and overrides only the fixtures this
+// test actually needs. Enumerating exports by hand is what produced the
+// missing-export chain (isLocal, resolveSlot, isIgnoredPoolFile, …).
+import * as realConfig from '../../core/config.js';
+import * as realCoreIndex from '../../core/index.js';
+import * as realOrchestrator from '../../run-engine/orchestrator.js';
+
 let workspace = '';
 let orchestratorTaskRoot = '';
 
 mock.module('../../core/config.js', {
   namedExports: {
+    ...realConfig,
     DEFAULT_TASK_DIR: '.task',
     loadSlotVars: async () => ({
       remoteRepo: workspace,
@@ -37,14 +48,26 @@ mock.module('../../core/config.js', {
   },
 });
 
+// mock.module replaces the module wholesale, so every export the subject's import
+// graph reaches must be listed here. methods/diagnostics.ts imports isLocal and
+// loadSlotVars from this barrel; omitting them made the file fail to import.
 mock.module('../../core/index.js', {
   namedExports: {
+    ...realCoreIndex,
     updateSlotStatusIf: async () => true,
+    loadSlotVars: async () => ({
+      remoteRepo: workspace,
+      host: 'localhost',
+      machine: os.hostname(),
+      slotId: 'macwork-ff-replay-checklist',
+      projectName: 'farmslot-farm',
+    }),
   },
 });
 
 mock.module('../../run-engine/orchestrator.js', {
   namedExports: {
+    ...realOrchestrator,
     cancelRunEngine: () => {},
     bumpRunGeneration: () => {},
     startRun: async () => {},
