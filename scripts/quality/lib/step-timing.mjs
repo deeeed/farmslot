@@ -180,12 +180,6 @@ export function uniqueArtifactPath(dir, name, exists = existsSync) {
   throw new Error(`Could not find a free artifact name for ${name} in ${dir}`);
 }
 
-export function timingArtifactPath(name, env = process.env) {
-  const dir = env[TIMINGS_DIR_ENV];
-  if (!dir) return null;
-  return path.resolve(normalizeTimingsDir(env), name);
-}
-
 /** Writes the artifact only when the operator/CI opted in via the env var. */
 export function writeTimingArtifact(name, payload, env = process.env) {
   const dir = normalizeTimingsDir(env);
