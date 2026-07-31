@@ -1,7 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { exec, resolveLoginPath } from './exec.js';
+import { exec, resolveLoginEnvironment, resolveLoginPath } from './exec.js';
+
+test('node command exec preserves a cached non-PATH login export', async () => {
+  const key = 'FARMSLOT_TEST_LOGIN_EXPORT';
+  const previous = process.env[key];
+  process.env[key] = 'captured-once';
+  try {
+    const expectedEnvironment = await resolveLoginEnvironment();
+    delete process.env[key];
+    const result = await exec({ cmd: `printf %s "$${key}"` });
+
+    assert.equal(expectedEnvironment[key], 'captured-once');
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout, 'captured-once');
+  } finally {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  }
+});
 
 test('node exec maxBuffer preserves bytes up to the limit and reports overflow', async () => {
   const result = await exec({ cmd: 'printf abcdef; sleep 1', maxBuffer: 4 });
@@ -32,6 +50,20 @@ test('node argv exec uses the login-shell PATH with the system fallback', async 
   const inheritedEntry = (process.env.PATH ?? '').split(':').find(Boolean);
   assert.ok(inheritedEntry);
   assert.ok(resolved.split(':').includes(inheritedEntry));
+});
+
+test('node command exec reuses the cached login PATH without a login shell', async () => {
+  const expectedEnvironment = await resolveLoginEnvironment();
+  const expectedPath = expectedEnvironment.PATH;
+  const pathResult = await exec({ cmd: 'printf %s "$PATH"' });
+  const loginResult = await exec({
+    cmd: 'if [ -n "$ZSH_VERSION" ]; then [[ -o login ]] && printf login || printf nonlogin; else shopt -q login_shell && printf login || printf nonlogin; fi',
+  });
+
+  assert.equal(pathResult.exitCode, 0);
+  assert.equal(pathResult.stdout, expectedPath);
+  assert.equal(loginResult.exitCode, 0);
+  assert.equal(loginResult.stdout, 'nonlogin');
 });
 
 test('node exec captures stdout larger than one pipe chunk', async () => {
