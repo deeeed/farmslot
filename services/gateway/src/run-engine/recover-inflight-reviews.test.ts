@@ -76,6 +76,19 @@ test('restart recovery uses the reviewer-owned artifact scope instead of review-
   assert.equal(recoveredReviewArtifactScope({}, 'independent-review-2'), 'independent-review-2');
 });
 
+test('buildRecoveredReview preserves the reviewer-owned artifact scope as the review id', () => {
+  const review = buildRecoveredReview({
+    run: makeRun({ engineState: { publishGate: { independentReviews: [] } } }),
+    ctx: reviewerContext({ artifactScope: 'independent-review-7' }),
+    signal: terminalSignal(),
+    feedback: { verdict: 'pass', issues: [] },
+    reviewedPackage: undefined,
+  });
+
+  assert.ok(review);
+  assert.equal(review.id, 'independent-review-7');
+});
+
 test('buildRecoveredReview returns null when the reviewer has not finished', () => {
   const run = makeRun();
   const ctx = reviewerContext();

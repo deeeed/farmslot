@@ -398,6 +398,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
             selectionData: {
               includedIndices: [...this._includedComments],
               recommendation: this._selectedRecommendation,
+              includeEvidence: this._includeEvidence,
               ...(this._evidenceOverrides.size > 0
                 ? { evidenceOverrides: Object.fromEntries(this._evidenceOverrides) }
                 : {}),
@@ -771,6 +772,11 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         this._selectedRecommendation = recommendation;
       },
       hasLearnings: Boolean(this._payload?.workerLearnings),
+      evidenceCount: this._mediaArtifacts.length,
+      includeEvidence: this._includeEvidence,
+      setIncludeEvidence: (includeEvidence) => {
+        this._includeEvidence = includeEvidence;
+      },
       posting: this._posting,
       recovering: this._isRecovering,
       refreshing: this._refreshing,

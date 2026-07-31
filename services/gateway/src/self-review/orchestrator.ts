@@ -802,6 +802,7 @@ async function recoverSelfReviewFixPass({
   validationDepth,
   artifactScope,
   sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
+  setProgressDetail = setSelfReviewProgressDetail,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
   taskDir: string;
@@ -816,6 +817,7 @@ async function recoverSelfReviewFixPass({
   validationDepth: ReviewValidationDepth;
   artifactScope?: string | null;
   sessionPolicy?: ReviewSessionPolicy;
+  setProgressDetail?: (runId: string, detail: string) => void;
 }): Promise<SelfReviewResult | null> {
   const run = getRun(runId);
   const fixContext = run?.agentContexts?.find((ctx) => canRecoverSelfReviewFixPass(ctx, taskDir));
@@ -844,7 +846,7 @@ async function recoverSelfReviewFixPass({
     debugSelfReviewLog(
       `[self-review] run ${runId.slice(0, 8)} — recovering self-review fix pass (${fixSignal ? 'signal-present' : 'waiting'})`,
     );
-    setSelfReviewProgressDetail(
+    setProgressDetail(
       runId,
       `Recovered reviewer findings; worker applying ${issues.length} fix(es)...`,
     );
@@ -939,10 +941,7 @@ async function recoverSelfReviewFixPass({
     );
     await unwatchContext(slotId, 'self-review-fix');
     const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
-    setSelfReviewProgressDetail(
-      runId,
-      `Worker fix complete; running ${reviewRunner} re-review (2)...`,
-    );
+    setProgressDetail(runId, `Worker fix complete; running ${reviewRunner} re-review (2)...`);
     const retryResult = await runReviewAgent(
       vars,
       reviewRunner,

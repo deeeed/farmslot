@@ -116,7 +116,10 @@ export function buildRecoveredReview(params: {
   if (feedback.incomplete) return null;
 
   const priorReviews = run.engineState?.publishGate?.independentReviews ?? [];
-  const reviewId = EXTRA_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id;
+  const reviewId = recoveredReviewArtifactScope(
+    ctx,
+    EXTRA_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id,
+  );
   const reviewResult: SelfReviewResult = {
     verdict: feedback.verdict,
     issues: feedback.issues,
