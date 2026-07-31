@@ -51,6 +51,7 @@ test('buildMonitorCommand embeds slot identity, task dir, repo, session, and run
   assert.match(cmd, /root="\$PANE_PID"/);
   assert.match(cmd, /pgrep -f 'claude\|codex\|scripted-runner'/);
   assert.doesNotMatch(cmd, /pgrep -P "\$PANE_PID"/);
+  assert.match(cmd, /\) >\/dev\/null 2>&1; then/);
 });
 
 test('validateHarnessRoot accepts the default and rejects escape attempts', () => {

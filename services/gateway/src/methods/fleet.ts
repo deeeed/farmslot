@@ -767,7 +767,11 @@ async function checkAgent(vars: SlotVars): Promise<string> {
     const panePid = r.stdout.trim();
     if (!panePid) return 'no-tmux';
     const runner = (await readSlotField(vars.slotId, 'runner')) as string | null;
-    const status = (await isRunnerAliveUnderPane(vars, panePid, runner)) ? 'working' : 'idle';
+    const status = (await isRunnerAliveUnderPane(vars, panePid, runner, {
+      timeout: SLOT_CHECK_TIMEOUT_MS,
+    }))
+      ? 'working'
+      : 'idle';
     if (status === 'working') {
       console.log(
         `[fleet] checkAgent ${vars.slotId}: working (panePid=${panePid}, session=${session}, runner=${runner ?? 'auto'})`,

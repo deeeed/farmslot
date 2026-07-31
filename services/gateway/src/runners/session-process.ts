@@ -1,7 +1,7 @@
 import { type Run } from '@farmslot/protocol';
 
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, type ExecOnSlotOptions } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
 import { parseHookJsonl, readRunnerObservabilityFiles } from './observability-files.js';
@@ -266,12 +266,13 @@ export async function findRunnerDescendantPid(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   panePid: string,
   runnerId?: string | null,
+  options?: ExecOnSlotOptions,
 ): Promise<string> {
   if (!panePid) return '';
   const pattern = runnerProcessPatternSource(runnerId);
   if (!pattern) return '';
   const cmd = buildFindRunnerDescendantPidCommand(panePid, pattern);
-  const result = await execOnSlot(vars, cmd);
+  const result = await execOnSlot(vars, cmd, options);
   if (result.exitCode !== 0) return '';
   return result.stdout.trim();
 }
@@ -330,6 +331,7 @@ export async function isRunnerAliveUnderPane(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   panePid: string,
   runnerId?: string | null,
+  options?: ExecOnSlotOptions,
 ): Promise<boolean> {
-  return (await findRunnerDescendantPid(vars, panePid, runnerId)).length > 0;
+  return (await findRunnerDescendantPid(vars, panePid, runnerId, options)).length > 0;
 }

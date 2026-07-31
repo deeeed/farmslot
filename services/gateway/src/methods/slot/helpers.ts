@@ -109,7 +109,7 @@ export function buildMonitorCommand(
     '  if [ -n "$PANE_PID" ]; then',
     '    if (',
     ...runnerProbe.split('\n').map((line) => `      ${line}`),
-    '    ); then',
+    '    ) >/dev/null 2>&1; then',
     '      echo "  Agent is running"',
     '    else',
     '      echo "  Agent idle (no runner process)"',
