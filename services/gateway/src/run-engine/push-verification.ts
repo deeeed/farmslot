@@ -133,7 +133,7 @@ export async function inspectWorktreePublishState(
     if (refExists(upstreamProbe, `rev-parse ${upstreamRef}`)) {
       return {
         dirtyFiles,
-        unpushedCommits: await countCommitsAhead(execute, upstreamRef, branchRef),
+        unpushedCommits: Math.max(1, await countCommitsAhead(execute, upstreamRef, branchRef)),
       };
     }
   }
@@ -143,7 +143,7 @@ export async function inspectWorktreePublishState(
   if (refExists(originHead, 'origin/HEAD probe') && originHeadRef) {
     return {
       dirtyFiles,
-      unpushedCommits: await countCommitsAhead(execute, originHeadRef, branchRef),
+      unpushedCommits: Math.max(1, await countCommitsAhead(execute, originHeadRef, branchRef)),
     };
   }
 

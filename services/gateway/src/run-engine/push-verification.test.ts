@@ -118,7 +118,7 @@ test('worktree inspection compares an existing feature remote with the local bra
   );
 });
 
-test('new branch inspection compares its configured upstream instead of all local history', async () => {
+test('new branch inspection keeps a missing feature remote blocked at its upstream', async () => {
   const script = scriptedExecutor([
     result(),
     result(),
@@ -127,7 +127,7 @@ test('new branch inspection compares its configured upstream instead of all loca
     result('', 1),
     result('origin/main\n'),
     result(),
-    result('1\n'),
+    result('0\n'),
   ]);
 
   const state = await inspectWorktreePublishState('feature', script.execute);
