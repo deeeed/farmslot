@@ -296,6 +296,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     artifactPaths: ['artifact-manifest.json', 'summary.json', 'trace.json'],
     recipe,
     recipeArtifactPresent: false,
+    trace,
     summary,
     manifest: {
       ...manifest,
