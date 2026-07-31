@@ -33,7 +33,7 @@ unrestricted control, revocable only by rotating the secret and re-pairing every
 rotation is collateral.
 
 The constraint shaping any answer is the solo path. A gateway on loopback with no credential is the
-normal, correct, zero-config way to run Farmslot, and today it is _more_ permissive than the above
+normal, correct, zero-config way to run Farmslot, and today it is *more* permissive than the above
 suggests: with `auth.mode === 'none'`, `server.ts:110` marks every new socket `authenticated: true`
 at connection time and sends the privileged hello immediately — `auth.connect` is never called.
 Meanwhile `assertGatewayBindAllowed()` (`auth.ts:123`) already encodes the principle that makes this
@@ -97,7 +97,7 @@ separations are load-bearing:
   explicit literal `{ kind: 'global' }`; there is no absent-means-global rule. Farm scoping later
   adds a farm scope **representation** — whether as a further variant or as a term in a composable
   set is that ADR's choice — letting a principal hold `admin` on one farm and `operator` on another,
-  because authority was already a _list of bindings_. The property that matters here holds either
+  because authority was already a *list of bindings*. The property that matters here holds either
   way: a representation is added without touching a stored record.
 - **Identity versus credential.** Many credentials may authenticate as one principal (§2), so
   rotating a secret is not a change of who acted.
@@ -120,7 +120,7 @@ operator or an admin principal; the axes stay orthogonal.
 
 The `node` subject variant carries `machine` **required inside the variant**, so the record shape is
 final. This ADR uses it for one check — that a principal may act as a node at all — and does not
-verify that a connecting node _is_ the machine it claims. That verification is deferred; because the
+verify that a connecting node *is* the machine it claims. That verification is deferred; because the
 field already exists and is required, adding it changes an authorization rule and no stored data.
 
 #### Virtual principals
@@ -128,10 +128,10 @@ field already exists and is required, adding it changes an authorization rule an
 **A virtual principal is a resolver answer with no stored record.** It is never persisted, never
 credentialed, never issuable, and cannot be authenticated as. There are exactly three:
 
-| Virtual principal | Subject                                    | Authority                                        | Returned when                                                             |
-| ----------------- | ------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------- |
-| `local-admin`     | `person`, display name `local`             | `[{ role: 'admin', scope: { kind: 'global' } }]` | solo mode, connection is not a node (§3)                                  |
-| `local-node`      | `node`, `machine` = the local machine name | `[]` — subject-authorized                        | solo mode, connection presents `clientKind: 'node'`                       |
+| Virtual principal | Subject                                    | Authority                                        | Returned when                                       |
+| ----------------- | ------------------------------------------ | ------------------------------------------------ | --------------------------------------------------- |
+| `local-admin`     | `person`, display name `local`             | `[{ role: 'admin', scope: { kind: 'global' } }]` | solo mode, connection is not a node (§3)            |
+| `local-node`      | `node`, `machine` = the local machine name | `[]` — subject-authorized                        | solo mode, connection presents `clientKind: 'node'` |
 | `system`          | `service`, display name `system`           | `[{ role: 'admin', scope: { kind: 'global' } }]` | the gateway acts on its own schedule over admin-authored work only (§5.5) |
 
 **Every virtual principal's id is reserved**, and the store writer refuses to create a stored
@@ -166,8 +166,8 @@ interface CredentialRecord {
 
 interface StoredSecret {
   scheme: 'scrypt-v1';
-  salt: string; // base64
-  hash: string; // base64
+  salt: string;   // base64
+  hash: string;   // base64
 }
 ```
 
@@ -186,7 +186,7 @@ One file, `<FARMSLOT_HOME>/credentials.json`:
 ```ts
 interface CredentialStore {
   schemaVersion: 1;
-  activatedAt: string | null; // the activation latch (§3)
+  activatedAt: string | null;   // the activation latch (§3)
   principals: Principal[];
   credentials: CredentialRecord[];
 }
@@ -209,7 +209,7 @@ resolves the `FARMSLOT_HOME` environment variable and falls back to `~/.farmslot
 (`packages/protocol/src/node/farmslot-home.ts:11-15`); its own contract calls it "the single source
 of truth for where gateway profiles, auth, logs, llm-config, and the gateway pid/log live", imported
 by both CLI and gateway precisely so a custom value "can never half-apply". So the store is
-machine-wide _by default_, not by design.
+machine-wide *by default*, not by design.
 
 That matters because **the credential store, the activation latch, `credentials.lock`, and the
 gateway presence marker all live in `FARMSLOT_HOME`** — they therefore share one scope by
@@ -229,7 +229,7 @@ supported separation mechanism, and it already exists.
   followed by `rename`.
 - **Write exclusion — `credentials.lock`, held only for each read-modify-write.** Atomic rename
   prevents a torn read, not a lost update, so exclusion needs a lock, and **the lock's scope must be
-  the store's scope**: it lives beside the store in `FARMSLOT_HOME` and _every_ writer
+  the store's scope**: it lives beside the store in `FARMSLOT_HOME` and *every* writer
   takes it — any running gateway, and the offline CLI. It is **exclusive but short-lived, held for
   the duration of a single read-modify-write and released**. This is all the store itself requires,
   and it is what keeps the lock compatible with the per-root, per-port gateway design: **a gateway
@@ -239,11 +239,10 @@ supported separation mechanism, and it already exists.
   **The gateway singleton lock cannot serve this purpose**, which is a symptom of the two being
   different concerns: `acquireGatewaySingletonLock()` writes
   `<farmslotRoot>/.runs/gateway-<PORT>.pid` (`services/gateway/src/index.ts:100-144`), scoped per
-  root _and_ per port, so gateways with different roots or ports hold different locks while sharing
+  root *and* per port, so gateways with different roots or ports hold different locks while sharing
   one `credentials.json`. Rescoping the store to a farmslot root would fix the locking and break the
   identity model — one `FARMSLOT_HOME`, one set of principals — so the lock moves to the store, not the
   store to the lock.
-
 - **Missing principal fails closed.** A credential whose `principalId` resolves to no principal does
   not authenticate. An unparseable record is rejected at load with the file named, and the gateway
   refuses to start rather than running with a silently truncated store.
@@ -267,9 +266,8 @@ supported separation mechanism, and it already exists.
   The narrowing is real and worth stating: **an `env-migrated` credential is presentable only to a
   gateway configured with that secret.** Other roots' migrated credentials remain valid records in
   the store, but they are not authenticable through this gateway. That is correct rather than
-  unfortunate — the environment variable _is_ the presentation mechanism for that credential, and a
+  unfortunate — the environment variable *is* the presentation mechanism for that credential, and a
   gateway never given it has no way to know it.
-
 - **Hash — `scrypt-v1` fully pinned**, because a version tag that does not name its parameters means
   nothing: `scrypt` from `node:crypto`, **N = 2^15 (32768), r = 8, p = 1, dkLen = 32, salt 16 random
   bytes**, `maxmem` set explicitly to 64 MiB because `128 · N · r` is exactly 32 MiB and sits on
@@ -314,7 +312,7 @@ recorded as assigned implementation work in the non-conformance record.
 There is deliberately **no `principal.self` method and no new allowlist entry**: the summary rides
 the frame that already establishes the session, so a caller learns its identity at the moment it
 authenticates and never needs a separate authorized read. `principal.list` stays admin-only, because
-enumerating _other_ principals is a different capability from knowing your own.
+enumerating *other* principals is a different capability from knowing your own.
 
 `auth status` therefore reports `mode: token` — the transport — alongside the principal's display
 name and role bindings — the authority. The two are reported separately because §1 keeps them
@@ -341,7 +339,7 @@ place this ADR can cheaply shrink its own self-admitted non-additive seam: the s
 1. **Live lookup per check** — an in-memory map read with the file as source of truth.
 2. **Authority changes invalidate live sessions.** Credential revocation, role-binding change, and
    the activation latch each close or downgrade every affected open session, including subscriptions.
-3. **Verification may be cached; authority may not.** `authorizeHttpRequest()` authenticates _every_
+3. **Verification may be cached; authority may not.** `authorizeHttpRequest()` authenticates *every*
    `/api/file` and `/api/run-artifact` request (`auth.ts:216-235`), and the Companion loads images
    through that path — so running `scrypt` at N = 2^15 per request would cost tens to hundreds of
    milliseconds each and is a visible regression. The gateway therefore keeps a **bounded in-memory
@@ -349,14 +347,14 @@ place this ADR can cheaply shrink its own self-admitted non-additive seam: the s
    **This does not weaken invariant 1**, because what is reused is only the KDF result: the principal
    and its role bindings are still resolved on every check, so a revoked credential or a changed
    binding takes effect on the next request regardless of what is cached. The distinction is the
-   whole point — caching _that this secret matches that credential_ is safe; caching _what that
-   credential may do_ would not be.
+   whole point — caching *that this secret matches that credential* is safe; caching *what that
+   credential may do* would not be.
 
    **Invalidation is change-based, not authorship-based**, and the difference matters because the
    store is shared across the identity domain: a gateway that only invalidated on **its own** writes would keep serving
    revoked authority after any external write — another gateway's, or an offline operation's. So a
    gateway invalidates its cached verification **and** its in-memory principal state on its own
-   writes _and_ whenever it observes that the store has changed underneath it. The observation is a
+   writes *and* whenever it observes that the store has changed underneath it. The observation is a
    cheap freshness check on store identity and modification metadata.
 
    **That check precedes every authority resolution, not merely every credential verification.** An
@@ -366,10 +364,9 @@ place this ADR can cheaply shrink its own self-admitted non-additive seam: the s
    decision the gateway confirms its cached principal state is current against the store and reloads
    when it is not. That is what invariant 1 actually promises; placed anywhere narrower it would hold
    only for new authentications, and only within one gateway's own view of the world.
-
 4. **Outbound is authorized too.** The privileged hello and every broadcast are filtered by the
    receiving session's principal. Today `broadcast()` reaches every authenticated socket — and
-   _every_ socket when `auth.mode === 'none'` (`server.ts:624-633`) — while `sendHello()` fires
+   *every* socket when `auth.mode === 'none'` (`server.ts:624-633`) — while `sendHello()` fires
    immediately after `auth.connect` (`server.ts:541`). A session receives only surfaces its principal
    may read; a principal with no roles receives none.
 
@@ -377,13 +374,13 @@ place this ADR can cheaply shrink its own self-admitted non-additive seam: the s
 
 **Activation is a latch, not a derived condition.** `activatedAt` latches on the first time a
 credential is issued, the bind is non-loopback, or proxy-header trust is declared, and **never
-silently unlatches**. A store holding only tombstones is a store that _was_ activated, so revoking
+silently unlatches**. A store holding only tombstones is a store that *was* activated, so revoking
 the last credential does not return the gateway to solo mode — falling back would mean revocation
-_increases_ what an unauthenticated caller can do.
+*increases* what an unauthenticated caller can do.
 
 **The latch is stored, so it is shared by the whole identity domain (§2), and that has a consequence
 worth meeting here rather than discovering later.** Issuing a credential from one deployment latches
-activation for _every_ deployment sharing that `FARMSLOT_HOME`: their virtual `local-admin` stops
+activation for *every* deployment sharing that `FARMSLOT_HOME`: their virtual `local-admin` stops
 resolving, and their co-launched nodes need issued credentials too. That is shared domain, shared
 activation — the same rule as shared principals, seen from the lifecycle side. **A deployment that
 needs its own solo-mode lifecycle sets its own `FARMSLOT_HOME`**, which is the same separation
@@ -392,12 +389,12 @@ mechanism §2 already describes, applied to activation rather than to identity.
 The rows key on **active admin** presence, not on active credentials generally — a store can hold
 active operator credentials and no admin, and that state needs its own answer.
 
-| State                                     | Condition                                                | Who may authenticate                                                 | Who may write the store                                    |
-| ----------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------- |
-| **Solo mode**                             | never latched; loopback-only bind; proxy trust off       | nobody needs to — resolver returns `local-admin` / `local-node` (§1) | a running gateway, acting for the virtual admin over RPC   |
-| **Never-latched, non-loopback**           | never latched; bind not loopback-only, or proxy trust on | nobody — the bind is refused before serving                          | offline CLI only (no gateway running)                      |
-| **Activated, ≥1 active admin credential** | latched; at least one **admin** credential active        | holders of active credentials                                        | any running gateway over RPC, serialized on the store lock |
-| **Activated, no active admin credential** | latched; every admin credential revoked or demoted       | active non-admin holders, if any — otherwise nobody                  | offline CLI only (every gateway stopped)                   |
+| State                                    | Condition                                                  | Who may authenticate                                                       | Who may write the store                                    |
+| ---------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| **Solo mode**                            | never latched; loopback-only bind; proxy trust off          | nobody needs to — resolver returns `local-admin` / `local-node` (§1)        | a running gateway, acting for the virtual admin over RPC    |
+| **Never-latched, non-loopback**          | never latched; bind not loopback-only, or proxy trust on    | nobody — the bind is refused before serving                                 | offline CLI only (no gateway running)                       |
+| **Activated, ≥1 active admin credential**| latched; at least one **admin** credential active           | holders of active credentials                                               | any running gateway over RPC, serialized on the store lock  |
+| **Activated, no active admin credential**| latched; every admin credential revoked or demoted          | active non-admin holders, if any — otherwise nobody                         | offline CLI only (every gateway stopped)                    |
 
 Rows one and two are unchanged. Row three narrows from "any active credential" to "any active
 **admin** credential"; row four widens correspondingly, and now covers both the everything-revoked
@@ -413,8 +410,8 @@ Two mechanisms govern writing, and they answer different questions:
   read-modify-write. That is what makes the write safe. It does not care whether a gateway is
   running, and running gateways do not hold it, so **the design's per-root, per-port gateways may
   run concurrently** without excluding each other.
-- **Offline operations additionally require that no gateway is running.** This is a _separate_
-  requirement with a _different_ reason: a running gateway holds in-memory state derived from the
+- **Offline operations additionally require that no gateway is running.** This is a *separate*
+  requirement with a *different* reason: a running gateway holds in-memory state derived from the
   store — §2's verification cache and resolved principals. §2's invalidation is change-based, so a
   live gateway does converge on an external write, but only at its next freshness check; requiring
   quiescence removes the window entirely for operations performed deliberately out-of-band. So this
@@ -445,8 +442,8 @@ owner, and no restriction placed there would constrain them.
 That single rule replaces the narrower "offline issuance only when no admin is active" predicate,
 which was wrong in a way worth recording: **losing or compromising an admin secret does not enter
 row four at all.** The credential record stays active until something tombstones it, so the gateway
-is still in row three, still accepting the compromised secret. Recovery is therefore _revoke, then
-issue_ — and a predicate permitting only issuance could never have performed the first step. One
+is still in row three, still accepting the compromised secret. Recovery is therefore *revoke, then
+issue* — and a predicate permitting only issuance could never have performed the first step. One
 coherent story: **stop every gateway, revoke the compromised credential, issue a replacement, start
 them again.**
 
@@ -455,7 +452,7 @@ to serve would convert a lost admin credential into a total outage for no securi
 operators already hold their credentials, and denying them changes nothing an attacker could
 exploit. `farmslot doctor` reports the state so it is visible rather than merely survivable.
 
-**Row four is reached two ways, and the gateway closes both.** The first is a _first_ issuance that
+**Row four is reached two ways, and the gateway closes both.** The first is a *first* issuance that
 mints only a non-admin credential: that latches activation while leaving no admin, so an operator
 can authenticate and nobody can manage the store. The activation flow below closes it by minting an
 admin credential for the owner alongside whatever was asked for — which is why that dual mint is a
@@ -587,15 +584,15 @@ bind and nothing more; a non-loopback bind latches activation, so it lands in th
 
 Frames and requests enter by **four** paths, and only one is `routeMethod()`.
 
-| Ingress                                                                 | Carries                                               | Principal resolution                               | Authorization                                                                                                 |
-| ----------------------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Pre-dispatch frames in `server.ts` — `auth.connect`, `pairing.exchange` | session establishment; pairing redemption             | none yet — these _create_ the session              | open by definition for **every** subject kind; `pairing.exchange`'s proof is the code                         |
-| `routeMethod()` (`route-method.ts:459`)                                 | the registry methods **and** `node.connect`           | session's cached `AuthenticationRef` → live lookup | §5, checked before the `routeRunMethod()` delegate at `:468`                                                  |
-| Node frame paths in `server.ts` — binary, `res` replies, events         | screen relay, RPC replies, node-pushed state          | same session lookup                                | requires a `node`-subject principal (§6)                                                                      |
-| HTTP via `authorizeHttpRequest()` (`auth.ts:216`)                       | `/api/file`, `/api/run-artifact` (`index.ts:394-429`) | Bearer/Basic/query/cookie credential per request   | §5; today returns `true` unconditionally when `auth.mode === 'none'` (`auth.ts:221`), which activation closes |
+| Ingress                                                                 | Carries                                              | Principal resolution                             | Authorization                                                                    |
+| ------------------------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Pre-dispatch frames in `server.ts` — `auth.connect`, `pairing.exchange` | session establishment; pairing redemption            | none yet — these *create* the session            | open by definition for **every** subject kind; `pairing.exchange`'s proof is the code |
+| `routeMethod()` (`route-method.ts:459`)                                 | the registry methods **and** `node.connect`          | session's cached `AuthenticationRef` → live lookup | §5, checked before the `routeRunMethod()` delegate at `:468`                        |
+| Node frame paths in `server.ts` — binary, `res` replies, events         | screen relay, RPC replies, node-pushed state         | same session lookup                              | requires a `node`-subject principal (§6)                                           |
+| HTTP via `authorizeHttpRequest()` (`auth.ts:216`)                       | `/api/file`, `/api/run-artifact` (`index.ts:394-429`) | Bearer/Basic/query/cookie credential per request | §5; today returns `true` unconditionally when `auth.mode === 'none'` (`auth.ts:221`), which activation closes |
 
 **Parameter types are not a validation boundary.** `routeMethod()` reaches every handler through type
-_assertions_, so a declared union like `direction: 'U' | 'D' | 'L' | 'R'`
+*assertions*, so a declared union like `direction: 'U' | 'D' | 'L' | 'R'`
 (`packages/protocol/src/rpc/git.ts:32`) is a compile-time claim about a value that arrives from the
 wire unchecked. Any §5 rule depending on a parameter's shape must be enforced by runtime validation.
 
@@ -613,7 +610,7 @@ This inversion is the core structural decision of this ADR. The alternative — 
 operator-reachable and enumerate the exceptions — requires the document to be exhaustively right
 about ~245 handlers and everything they transitively reach. That enumeration cannot be maintained by
 hand and cannot converge: each pass over the codebase finds another handler that spawns a process,
-composes a shell string, or resolves a path late. Any such handler discovered _after_ the document
+composes a shell string, or resolves a path late. Any such handler discovered *after* the document
 froze would have been silently operator-reachable.
 
 Under default-deny the same discovery is a non-event: an unproven method was already admin-only.
@@ -664,7 +661,7 @@ the executing side.
 the gateway writes to, creates, or overwrites outside a confined root.
 
 **I6 — Resolution precedes decision.** Any value participating in an authorization decision —
-defaults, stored values, expanded templates — is resolved to its effective form _before_ the
+defaults, stored values, expanded templates — is resolved to its effective form *before* the
 decision. A handler may not resolve a privileged value after its own authorization has passed. This
 covers the runner safety tier specifically: `sandboxed` is operator-reachable, `full-auto` and
 `dangerous` are not, and the tier that matters is the resolved one.
@@ -679,16 +676,16 @@ Every entry below was proven by reading its handler and everything it reaches. E
 gateway-process memory: none spawns a process, none performs path-addressed I/O, none invokes git,
 none accepts a caller-controlled path.
 
-| Method (exact registry name) | Handler evidence                                                                                      |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `nodes.list`                 | in-memory registry projection (`server/route-method.ts:899-900`)                                      |
-| `node.health`                | cached map lookup (`route-method.ts:1102-1107`; `fleet/node-health.ts:222-223`)                       |
-| `node.health.all`            | cached map enumeration (`route-method.ts:1108-1109`; `fleet/node-health.ts:226-227`)                  |
+| Method (exact registry name) | Handler evidence                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| `nodes.list`                 | in-memory registry projection (`server/route-method.ts:899-900`)                                    |
+| `node.health`                | cached map lookup (`route-method.ts:1102-1107`; `fleet/node-health.ts:222-223`)                     |
+| `node.health.all`            | cached map enumeration (`route-method.ts:1108-1109`; `fleet/node-health.ts:226-227`)                |
 | `run.list`                   | in-memory run filtering plus pure summaries (`methods/run/context.ts:55-62`; `runs/store.ts:671-752`) |
-| `dispatch.queue.list`        | in-memory filtered copy (`route-method.ts:533-536`; `backlog/dispatch-queue.ts:394-397`)              |
-| `backlog.list`               | in-memory filtering and sorting (`backlog/store.ts:943-958`)                                          |
-| `workGraph.get`              | in-memory projection (`work-graph/store.ts:314-315`)                                                  |
-| `workGraph.list`             | in-memory filtering (`work-graph/store.ts:297-312`)                                                   |
+| `dispatch.queue.list`        | in-memory filtered copy (`route-method.ts:533-536`; `backlog/dispatch-queue.ts:394-397`)            |
+| `backlog.list`               | in-memory filtering and sorting (`backlog/store.ts:943-958`)                                        |
+| `workGraph.get`              | in-memory projection (`work-graph/store.ts:314-315`)                                                |
+| `workGraph.list`             | in-memory filtering (`work-graph/store.ts:297-312`)                                                 |
 
 Event subscriptions are operator-reachable for these surfaces only, filtered per §2 invariant 3.
 
@@ -696,7 +693,7 @@ Event subscriptions are operator-reachable for these surfaces only, filtered per
 that were expected to qualify and did not, with the reason each failed.
 
 **The natural operator surface is artifact-reading observability, and it is not yet conformant.**
-Most of the methods that _should_ serve a second person — run detail, family observability, decision
+Most of the methods that *should* serve a second person — run detail, family observability, decision
 lists, analytics — fail I4 for one shared reason: they read run artifacts, task directories,
 analytics files, or spec paths from disk by pathname, and acting-call confinement does not exist
 today. This is a single implementation gap with a single fix, not ten separate problems. **Widening
@@ -732,12 +729,12 @@ forbidden primitives. Reaching any of them fails the entry:
 import, callback indirection, dispatch through a runtime predicate — fails the entry. The entry
 fails, so the method reverts to admin.
 
-**What the gate proves, stated precisely: it proves the _absence_ of forbidden reachability, not the
-_presence_ of safety.** That asymmetry is deliberate and is what makes the design tractable. Absence
+**What the gate proves, stated precisely: it proves the *absence* of forbidden reachability, not the
+*presence* of safety.** That asymmetry is deliberate and is what makes the design tractable. Absence
 of every primitive above is a **sufficient** condition for I1–I5: a handler that cannot spawn, cannot
 perform path I/O, cannot invoke git, and cannot reach node exec/fs has no mechanism by which to
 trigger execution, compose a shell string, invoke a repository-associated program, race a path, or
-write a caller-chosen location. It is not a _necessary_ condition — a method could be safe by
+write a caller-chosen location. It is not a *necessary* condition — a method could be safe by
 argument while touching one of these — but under default-deny that method simply stays admin, and
 that costs nothing but usability.
 
@@ -754,9 +751,9 @@ discharged as follows:
 
 **A constraint on the first conditioned allowlist entry, recorded because it is the moment this
 design changes shape.** §4's pre-dispatch check cannot decide a condition on a resolved value:
-`runCreate` resolves the effective safety tier _inside_ the handler (`methods/run.ts:227`), after
+`runCreate` resolves the effective safety tier *inside* the handler (`methods/run.ts:227`), after
 dispatch has already happened. So the first entry admitted on a condition — "operator may call this
-_when_ the resolved tier is `sandboxed`" — necessarily introduces a **second evaluation point inside
+*when* the resolved tier is `sandboxed`" — necessarily introduces a **second evaluation point inside
 the handler**, and at that moment default-deny stops being structural-at-one-place and starts
 depending on a handler remembering to re-check. That is precisely why I6 and I7 route through human
 review rather than the reachability query. **v2 remains coherent because no such entry exists**: the
@@ -767,8 +764,8 @@ without someone deciding to create it.
 handler that newly reaches a forbidden primitive drops off the allowlist automatically rather than
 silently retaining authority.
 
-Point three is the property that ends the enumeration problem: the allowlist is _derived_ from
-evidence and _invalidated_ by change, so it cannot silently drift the way a blocklist does.
+Point three is the property that ends the enumeration problem: the allowlist is *derived* from
+evidence and *invalidated* by change, so it cannot silently drift the way a blocklist does.
 
 #### 5.5 Provenance
 
@@ -781,7 +778,9 @@ write's origin.**
 
 ```ts
 // gateway-internal; stored on the work item itself, never on the public contract
-type WorkOriginator = { kind: 'principal'; principalId: string } | { kind: 'system' };
+type WorkOriginator =
+  | { kind: 'principal'; principalId: string }
+  | { kind: 'system' };
 ```
 
 - **A write arriving through an RPC method call carries the calling session's principal and
@@ -792,8 +791,8 @@ type WorkOriginator = { kind: 'principal'; principalId: string } | { kind: 'syst
 
 **The distinction is origin, not field semantics.** An implementer never has to judge whether a field
 is "definition" or "state" — a question with no stable answer, since a title reaches the worker's
-initial context and a spec path selects its input. The rule is mechanical: _did this write arrive on
-a session?_ If yes, re-stamp with that session's principal; if no, leave it. Nothing to classify and
+initial context and a spec path selects its input. The rule is mechanical: *did this write arrive on
+a session?* If yes, re-stamp with that session's principal; if no, leave it. Nothing to classify and
 nothing to maintain.
 
 - **Provenance is otherwise permanent.** An unchanged item's originator survives every tick, unlock,
@@ -897,7 +896,7 @@ because every later ADR inherits this surface.
 interface SelfPrincipalSummary {
   id: string;
   displayName: string;
-  subjectKind: PrincipalSubject['type']; // 'person' | 'service' | 'node'
+  subjectKind: PrincipalSubject['type'];   // 'person' | 'service' | 'node'
   roles: RoleBinding[];
 }
 
@@ -915,7 +914,7 @@ interface GatewayAuthConnectResult {
 **A conforming gateway always populates this for an authenticated session.** It describes whichever
 principal the resolver returned, and §3 guarantees resolution always yields one — stored for a
 migrated env admin or an issued credential, virtual for solo mode's `local-admin` and `local-node`
-(§1). "No stored principal" is never a reason for absence: the env secret _is_ a credential
+(§1). "No stored principal" is never a reason for absence: the env secret *is* a credential
 belonging to a stored `service` principal after migration, and virtual principals are principals.
 
 **The field is optional on the wire for exactly one reason: version skew.** An older gateway will
@@ -953,59 +952,32 @@ interface CredentialSummary {
 }
 
 interface PrincipalCreateParams {
-  subject: PrincipalSubject; // §1 discriminated union; `machine` required in the node variant
-  roles: RoleBinding[]; // required; [] is legal and authorizes nothing
+  subject: PrincipalSubject;   // §1 discriminated union; `machine` required in the node variant
+  roles: RoleBinding[];        // required; [] is legal and authorizes nothing
 }
-interface PrincipalCreateResult {
-  principal: Principal;
-}
+interface PrincipalCreateResult { principal: Principal }
 
 interface PrincipalListParams {}
-interface PrincipalListResult {
-  principals: Principal[];
-}
+interface PrincipalListResult { principals: Principal[] }
 
-interface PrincipalGrantParams {
-  principalId: string;
-  role: Role;
-  scope: RoleScope;
-}
-interface PrincipalGrantResult {
-  principal: Principal;
-}
+interface PrincipalGrantParams { principalId: string; role: Role; scope: RoleScope }
+interface PrincipalGrantResult { principal: Principal }
 
-interface PrincipalRevokeRoleParams {
-  principalId: string;
-  role: Role;
-  scope: RoleScope;
-}
-interface PrincipalRevokeRoleResult {
-  principal: Principal;
-}
+interface PrincipalRevokeRoleParams { principalId: string; role: Role; scope: RoleScope }
+interface PrincipalRevokeRoleResult { principal: Principal }
 
-interface CredentialIssueParams {
-  principalId: string;
-  displayName: string;
-}
+interface CredentialIssueParams { principalId: string; displayName: string }
 interface CredentialIssueResult {
   credential: CredentialSummary;
   /** Returned exactly once, at issuance. Never stored recoverably, never in --json output. */
   secret: string;
 }
 
-interface CredentialListParams {
-  includeRevoked?: boolean;
-}
-interface CredentialListResult {
-  credentials: CredentialSummary[];
-}
+interface CredentialListParams { includeRevoked?: boolean }
+interface CredentialListResult { credentials: CredentialSummary[] }
 
-interface CredentialRevokeParams {
-  credentialId: string;
-}
-interface CredentialRevokeResult {
-  credential: CredentialSummary;
-}
+interface CredentialRevokeParams { credentialId: string }
+interface CredentialRevokeResult { credential: CredentialSummary }
 ```
 
 `roles` and `scope` are required everywhere they appear: the fail-closed shape rule from §1 means no
@@ -1033,7 +1005,7 @@ interface PairingCreateParams {
   gatewayUrl: string;
   profileName?: string;
   ttlSeconds?: number;
-  authority: PairingAuthority; // required — a request without it is rejected
+  authority: PairingAuthority;   // required — a request without it is rejected
 }
 ```
 
@@ -1066,7 +1038,7 @@ Next: ask the gateway owner to dispatch, or the gateway owner runs
   farmslot principal grant sam --role admin --scope global
 ```
 
-Under default-deny a denial should also say _why_ a method is unavailable, since "not yet proven
+Under default-deny a denial should also say *why* a method is unavailable, since "not yet proven
 conformant" is a different situation from "deliberately privileged":
 
 ```
@@ -1100,61 +1072,61 @@ differ, the prose governs. What the index provides is findability, not authority
 **Worker session and project-step containment**
 
 - I1 must be satisfied for slot preparation — either sandbox preparation itself, or require operator
-  dispatch to target an already-prepared slot. _(Deferred: containment)_
+  dispatch to target an already-prepared slot. *(Deferred: containment)*
 - Confined artifact reads must exist before artifact-reading observability can qualify for the
-  allowlist; they are the single blocker on seven of the ten non-conformant methods. _(§5.3;
-  Assigned implementation work)_
+  allowlist; they are the single blocker on seven of the ten non-conformant methods. *(§5.3;
+  Assigned implementation work)*
 
 **Farm scoping**
 
 - The form of the farm scope representation — a further scope variant versus a composable term —
-  must be chosen before any farm record is persisted. _(Deferred: farm scoping)_
+  must be chosen before any farm record is persisted. *(Deferred: farm scoping)*
 
 **Node identity and machine binding**
 
 - Binding must be enforced on every node frame, not once at registration: `node.metrics` carries
-  `payload.machine` without passing through `node.connect`. _(Deferred: node identity)_
+  `payload.machine` without passing through `node.connect`. *(Deferred: node identity)*
 
 **Run attribution and reporting**
 
-- Attribution must stamp the **principal id**, never a credential id. _(Deferred: attribution)_
+- Attribution must stamp the **principal id**, never a credential id. *(Deferred: attribution)*
 - That work decides what becomes public payload and what a `system`-originated run records.
-  _(Deferred: attribution)_
+  *(Deferred: attribution)*
 
 **SSO / OIDC**
 
 - Break-glass must never depend on the identity provider; offline store management, with every
-  gateway in the identity domain stopped, is the IdP-independent path. _(Out of scope: SSO)_
+  gateway in the identity domain stopped, is the IdP-independent path. *(Out of scope: SSO)*
 - Token expiry must be built — `CredentialRecord` has no expiry field and live lookup covers
-  stored-credential tombstones and role changes only. _(Out of scope: SSO)_
+  stored-credential tombstones and role changes only. *(Out of scope: SSO)*
 - The external token grammar must be constrained so credential and IdP resolution stay unambiguous.
-  _(Out of scope: SSO)_
+  *(Out of scope: SSO)*
 - That work must choose between **materializing** IdP-derived bindings into stored `Principal.roles`
-  and **resolving** live claims per authorization check. _(Out of scope: SSO)_
+  and **resolving** live claims per authorization check. *(Out of scope: SSO)*
 
 **Group or team authority**
 
 - `RoleBinding` needs an optional `source` plus a dedupe rule for equal-valued bindings from
-  different origins, once derived bindings coexist. _(Deferred: groups)_
-- §3's last-admin accounting must count group-derived admins. _(Deferred: groups)_
+  different origins, once derived bindings coexist. *(Deferred: groups)*
+- §3's last-admin accounting must count group-derived admins. *(Deferred: groups)*
 - The group model must be decided together with SSO's materialize-versus-resolve choice — they are
-  one decision seen from two sides. _(Deferred: groups)_
+  one decision seen from two sides. *(Deferred: groups)*
 
 **Principal lifecycle**
 
-- Deactivating the last active admin must be refused exactly as revoking it is. _(Deferred:
-  lifecycle)_
+- Deactivating the last active admin must be refused exactly as revoking it is. *(Deferred:
+  lifecycle)*
 
 **Relational authority and steering**
 
 - The first conditioned allowlist entry introduces a second, in-handler evaluation point — the moment
-  default-deny stops being structural-at-one-place. _(§5.4)_
+  default-deny stops being structural-at-one-place. *(§5.4)*
 - Relational conditions and resolved-value conditions are one mechanism and should be decided
-  together. _(Deferred: relational authority)_
+  together. *(Deferred: relational authority)*
 - Candidate rule, recorded as a candidate: steering a run requires the authority that dispatching
-  that run at its effective tier would require. _(Deferred: relational authority)_
-- Session continuity is required — a steer must reach the _live_ session, or the use case that
-  motivates it is lost. _(Deferred: relational authority)_
+  that run at its effective tier would require. *(Deferred: relational authority)*
+- Session continuity is required — a steer must reach the *live* session, or the use case that
+  motivates it is lost. *(Deferred: relational authority)*
 
 **Binding implementation now, not a future ADR.** The Assigned implementation work table below lists
 the five changes this ADR's design requires but that have not been made: two CLI plumbing items for
@@ -1167,27 +1139,27 @@ Methods audited against §5.2 and found non-conformant. These are recorded becau
 to qualify — they are the operator role's natural surface — and because the reasons are the
 implementation backlog for widening the allowlist.
 
-| Method                     | Fails    | Reason                                                                                                                                         |
-| -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gateway.status`           | I3       | runs a real `git fetch` against the gateway's own clone (`methods/gateway-status.ts:86-158`)                                                   |
-| `fleet.status`             | I1/I3    | a stale read starts a background `fleetRefresh()`, which shell- and git-probes every slot (`methods/fleet.ts:73-91`, `:728-750`)               |
-| `run.get`                  | I4       | `presentRun()` loads local and node artifact paths (`methods/run/context.ts:30-52`; `live-recipe/context.ts:52-85`)                            |
-| `family.observability.get` | I4       | snapshot construction scans and reads task artifacts (`family-observability/snapshot.ts:242-318`)                                              |
-| `family.report.generate`   | I1/I2/I4 | inherits those reads and may interpolate the report prompt into unsandboxed CLI shell text (`llm/index.ts:156-176`, `:821-866`)                |
-| `backlog.upcoming`         | I4       | eligibility evaluation reads project config and validated-then-reopened spec paths (`backlog/store.ts:402-413`, `:1948-1967`)                  |
-| `decision.list`            | I4       | scans task directories and reads decision and retrospective artifacts (`methods/decisions.ts:33-50`; `observability/fleet-monitor.ts:154-185`) |
-| `analytics.query`          | I4       | enumerates and reads analytics paths directly (`runs/analytics.ts:271-310`)                                                                    |
-| `analytics.backfill`       | I4       | not a reader at all — appends analytics records and calls `updateRun` per seeded run (`methods/analytics.ts:24-54`)                            |
-| `operator.snapshot`        | I4       | transitively invokes `decisionList()` (`methods/operator.ts:43-49`)                                                                            |
+| Method                    | Fails | Reason                                                                                                   |
+| ------------------------- | ----- | ---------------------------------------------------------------------------------------------------------- |
+| `gateway.status`          | I3    | runs a real `git fetch` against the gateway's own clone (`methods/gateway-status.ts:86-158`)               |
+| `fleet.status`            | I1/I3 | a stale read starts a background `fleetRefresh()`, which shell- and git-probes every slot (`methods/fleet.ts:73-91`, `:728-750`) |
+| `run.get`                 | I4    | `presentRun()` loads local and node artifact paths (`methods/run/context.ts:30-52`; `live-recipe/context.ts:52-85`) |
+| `family.observability.get`| I4    | snapshot construction scans and reads task artifacts (`family-observability/snapshot.ts:242-318`)           |
+| `family.report.generate`  | I1/I2/I4 | inherits those reads and may interpolate the report prompt into unsandboxed CLI shell text (`llm/index.ts:156-176`, `:821-866`) |
+| `backlog.upcoming`        | I4    | eligibility evaluation reads project config and validated-then-reopened spec paths (`backlog/store.ts:402-413`, `:1948-1967`) |
+| `decision.list`           | I4    | scans task directories and reads decision and retrospective artifacts (`methods/decisions.ts:33-50`; `observability/fleet-monitor.ts:154-185`) |
+| `analytics.query`         | I4    | enumerates and reads analytics paths directly (`runs/analytics.ts:271-310`)                                |
+| `analytics.backfill`      | I4    | not a reader at all — appends analytics records and calls `updateRun` per seeded run (`methods/analytics.ts:24-54`) |
+| `operator.snapshot`       | I4    | transitively invokes `decisionList()` (`methods/operator.ts:43-49`)                                        |
 
 Two observations worth carrying forward. **Seven of the ten fail for the same reason** — artifact
 reads by pathname — which is why §5.3 treats confined artifact reads as one fix rather than ten.
 And `analytics.backfill` was swept in by an `analytics.*` wildcard in an earlier draft while being a
-_writer_; that is the concrete reason §5.1 forbids patterns in allowlist entries.
+*writer*; that is the concrete reason §5.1 forbids patterns in allowlist entries.
 
 `gateway.status` deserves a note because its failure is instructive rather than alarming: it uses
-`execFile` with argv and no shell, against a clone no operator can write. It is _probably_ safe. It
-is not _proven_ safe, because I3 is stated over the class of repository-associated programs rather
+`execFile` with argv and no shell, against a clone no operator can write. It is *probably* safe. It
+is not *proven* safe, because I3 is stated over the class of repository-associated programs rather
 than over reachability from an operator's pen, and "probably" is precisely what default-deny declines
 to accept. Its qualification path also differs from the artifact-read group: it needs a version check
 that does not invoke git, not confined reads.
@@ -1197,13 +1169,13 @@ that does not invoke git, not confined reads.
 Not conformance failures — these are places where this ADR's design requires a change that has not
 been made. Recorded so the gap is tracked rather than assumed.
 
-| Change                                                                                                     | Why                                                                                                 |
-| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Widen `GatewayAuthProbe` beyond `{ state, authMode?, detail? }` (`packages/cli/src/gateway-auth.ts:13-17`) | it projects the `auth.connect` result and drops the §7 `principal` summary                          |
-| Widen the `auth status` renderer (`packages/cli/src/commands/auth.ts:181-190`)                             | it maps only `state`, `authMode`, and `detail`, so the summary never reaches the operator           |
-| Confined artifact reads (I4)                                                                               | the single blocker on seven of the ten methods above                                                |
-| Atomic confinement on `fs.*` reads and writes, gateway-side and node-side (I4)                             | validate-then-act today (`methods/filesystem.ts:139-161`; `services/node/src/commands/fs.ts:70-72`) |
-| Argv conversion of the shared `resolvePrRef()` path (I2)                                                   | `JSON.stringify` into `execLocal` shell text (`methods/dispatch/ticket-ref.ts:49-59`)               |
+| Change                                                                                  | Why                                                                                                    |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Widen `GatewayAuthProbe` beyond `{ state, authMode?, detail? }` (`packages/cli/src/gateway-auth.ts:13-17`) | it projects the `auth.connect` result and drops the §7 `principal` summary                              |
+| Widen the `auth status` renderer (`packages/cli/src/commands/auth.ts:181-190`)          | it maps only `state`, `authMode`, and `detail`, so the summary never reaches the operator               |
+| Confined artifact reads (I4)                                                            | the single blocker on seven of the ten methods above                                                     |
+| Atomic confinement on `fs.*` reads and writes, gateway-side and node-side (I4)           | validate-then-act today (`methods/filesystem.ts:139-161`; `services/node/src/commands/fs.ts:70-72`)      |
+| Argv conversion of the shared `resolvePrRef()` path (I2)                                 | `JSON.stringify` into `execLocal` shell text (`methods/dispatch/ticket-ref.ts:49-59`)                    |
 
 The first two are CLI plumbing for a protocol field §7 already defines; without them the operator
 can authenticate but cannot discover what they hold, which makes every denial unactionable.
@@ -1216,28 +1188,28 @@ Each invariant exists because a concrete, verified path in the current code viol
 - **I1.** `run.create` starts the engine (`methods/run.ts:398-430`), whose PREPARE step calls
   `slotPrepare` (`run-engine/dispatch-lifecycle-steps.ts:40-190`), which expands and runs project
   hooks unsandboxed (`methods/slot/prepare.ts:431-434`). Nominally those commands are admin-authored
-  — but a prepare hook that installs dependencies executes scripts declared _in the repository_, so
-  the admin chose _which_ command runs while the repository chooses _what it does_.
+  — but a prepare hook that installs dependencies executes scripts declared *in the repository*, so
+  the admin chose *which* command runs while the repository chooses *what it does*.
 - **I2.** `dispatch.matchProject` interpolates caller-supplied `ticketOrPr` via `JSON.stringify` into
   `execLocal` shell text (`methods/dispatch/match-project.ts:98-105` → `core/exec.ts:57-63`,
-  `spawn('bash', ['-c', cmd])`) — a _local_ path, which is why I2 is not a remote-only rule. The
+  `spawn('bash', ['-c', cmd])`) — a *local* path, which is why I2 is not a remote-only rule. The
   shared `resolvePrRef()` helper (`methods/dispatch/ticket-ref.ts:49-59`) carries the same pattern
   into `run.*` and eval source resolution. Remote `gitExec` quotes an argument only when it contains
-  a space or a pipe (`methods/git.ts:47-63`). Generic remote `cmd` requests remain shell text, while
-  structured `argv` requests bypass the shell (`services/node/src/commands/exec.ts`).
-- **I3.** Stated over the _class_ rather than a list because the list kept growing: `checkout` fires
+  a space or a pipe (`methods/git.ts:47-63`) and the node runs the result through
+  `spawn(SHELL, ['-lc', …])` (`services/node/src/commands/exec.ts:26-48`).
+- **I3.** Stated over the *class* rather than a list because the list kept growing: `checkout` fires
   `post-checkout` even for file checkout, `status` may invoke a configured `fsmonitor`, index writes
   can fire `post-index-change`, and `diff`/`show` enable textconv by default. Disabling hooks via
   `core.hooksPath` addresses one mechanism and leaves the others.
 - **I4.** `fsWrite`, `fsRename`, `fsDelete`, `fsMkdir`, and the read paths each validate a path and
-  _then_ act on the same path string (`methods/filesystem.ts:139-161`, `:495-511`, `:525-583`). The
+  *then* act on the same path string (`methods/filesystem.ts:139-161`, `:495-511`, `:525-583`). The
   race is winnable in practice: every sandboxed worker has write access to the slot repository, so a
   caller who dispatches a run and then issues a filesystem call controls both ends of the window.
   Node-side there is no check at all (`services/node/src/commands/fs.ts:70-72`).
 - **I5.** `run.bundle.export` accepts an arbitrary `outputPath`, creates its parent directories, and
   invokes `zstd -f` to overwrite that path as the gateway user (`methods/run-bundle.ts:14-24`;
   `packages/run-bundle/src/archive.ts:39-55`).
-- **I6.** `runCreate` resolves the effective safety tier _inside_ the handler
+- **I6.** `runCreate` resolves the effective safety tier *inside* the handler
   (`methods/run.ts:227`); a check reading only wire params would authorize an omitted tier and then
   execute at a project default of `dangerous` (`runners/registry.ts:171-176`, `:201-210`). Queued
   items compound this: the fire path today passes no `safetyTier` at all (`index.ts:320-382`).
@@ -1278,7 +1250,7 @@ mechanical and needs no list.
 
 **Containment first, authorization second.** Run worker sessions and project steps as a separate OS
 user and let the single secret stand. This is the stronger security answer and would close §5.6's
-residual outright, and it would satisfy I1 arm (a) for preparation. Rejected as the _first_ step
+residual outright, and it would satisfy I1 arm (a) for preparation. Rejected as the *first* step
 because it does nothing for revocation — a contained gateway still has one secret that cannot be
 withdrawn from one holder — and because sequencing authorization first produces the conformance
 artifact containment work needs in order to know which capabilities to relocate.
@@ -1306,7 +1278,7 @@ and it turns ADR-046's zero-config local node into a setup step.
 
 - **The initial operator is a narrow observer.** Eight methods: node presence, run list, queue list,
   backlog list, and work-graph reads. Not run detail, not decisions, not analytics, not fleet status.
-  A second person can see _that_ work exists and its shape, and must ask an admin for anything that
+  A second person can see *that* work exists and its shape, and must ask an admin for anything that
   reads an artifact.
 - **Artifact-reading observability — the role's natural surface — is blocked on one missing
   primitive**, confined artifact reads. That is a single well-defined piece of work, but until it
@@ -1341,10 +1313,10 @@ and it turns ADR-046's zero-config local node into a setup step.
   preparation**: sandbox preparation itself, or require operator dispatch to target an
   already-prepared slot.
 - **Farm scoping.** Restricting a principal to named farms (`Run.project`), scoping reads as well as
-  writes. _Ships later without rework_ because authority is already `RoleBinding[]` with a
+  writes. *Ships later without rework* because authority is already `RoleBinding[]` with a
   discriminated `RoleScope`: it adds a farm scope representation and a per-method predicate at the
   §4 evaluation points. **That ADR must explicitly choose the form of that representation — a
-  further scope _variant_ versus a _composable term_ — before it persists a single farm record.** `RoleBinding[]` aggregates by union,
+  further scope *variant* versus a *composable term* — before it persists a single farm record.** `RoleBinding[]` aggregates by union,
   so a conjunction like "farm A, production only" is not two bindings, and independent dimensions
   (farm, node, environment) either multiply into cross-product variants or need a term language with
   AND/OR matching semantics — which §Alternatives already declined as premature policy machinery.
@@ -1353,7 +1325,7 @@ and it turns ADR-046's zero-config local node into a setup step.
   cheap moment, and this ADR deliberately does not spend it.
 - **Node identity and machine binding.** Enforcing that a connecting node is the machine its
   credential names, replacing the self-asserted registry entry and implementing the approval step
-  ADR-008 deferred. _Ships later without rework_ because `machine` is already required inside the
+  ADR-008 deferred. *Ships later without rework* because `machine` is already required inside the
   `node` subject variant. One constraint belongs to it: the machine name also arrives inside node
   event payloads that never pass through `node.connect` — `node.metrics` destructures
   `payload.machine` straight into `updateMachineMetrics()` (`server.ts:245`) — so binding must be
@@ -1377,7 +1349,6 @@ and it turns ADR-046's zero-config local node into a setup step.
   work adds an optional `source` on `RoleBinding` plus a dedupe rule for equal-valued bindings from
   different origins. And **§3's last-admin accounting must count group-derived admins**, or the
   invariant protects the wrong set.
-
 - **Principal lifecycle.** There is no deactivation. `principal.create/list/grant/revokeRole` and
   `credential.issue/list/revoke` (§7) offboard a person only by revoking every role binding and every
   credential individually. That is **capable but not atomic**: the end state authorizes nothing by
@@ -1386,11 +1357,10 @@ and it turns ADR-046's zero-config local node into a setup step.
   becomes, deactivating the last active admin must be refused exactly as revoking it is.
 
   A related absence worth naming rather than fixing: **`RoleBinding` records no granter and no
-  timestamp**, so "who granted this, and when" is unanswerable — and unanswerable _retroactively_,
+  timestamp**, so "who granted this, and when" is unanswerable — and unanswerable *retroactively*,
   since the information is not written anywhere to recover later. Whether that matters is a question
   for whoever needs the audit trail; it is noted here because the cost of adding it rises with every
   binding granted before it exists.
-
 - **Relational authority: view, dispatch-and-own, steer.** Three distinct authorities over a run are
   collapsed today, because the model cannot express any of them separately. **Viewing** a run's
   output and progress, **dispatching and owning** a run, and **steering** one — communicating with
@@ -1403,7 +1373,7 @@ and it turns ADR-046's zero-config local node into a setup step.
 
   **The workflow that makes this concrete.** A run is dispatched either by a person or automatically
   from a ticket, and the engineer who later steers it during review is frequently neither. It must be
-  the _original_ worker rather than a fresh one, because that worker holds the implementation context
+  the *original* worker rather than a fresh one, because that worker holds the implementation context
   and every review loop it has already been through — re-dispatching discards exactly what makes the
   steer valuable.
 
@@ -1433,8 +1403,8 @@ and it turns ADR-046's zero-config local node into a setup step.
   **Raw transport and structured instruction are different capabilities, and conflating them
   overstates the bound.** Sending keystrokes to a worker pane — `terminal.send`, `tmux.sendKeys` — is
   raw shell as the gateway OS user, so it fails I1 regardless of who dispatched the run: no
-  relational rule can make _that_ non-admin, and ownership cannot confer authority the role never
-  had. But steering _semantically_ is "deliver an instruction to the worker agent", which does not
+  relational rule can make *that* non-admin, and ownership cannot confer authority the role never
+  had. But steering *semantically* is "deliver an instruction to the worker agent", which does not
   require keystroke injection. A structured instruction channel routed to the runner's compose path
   is a different capability with a different ceiling — and that distinction is the difference between
   "steering can never be non-admin" and "steering has a form that could be proven conformant". This
@@ -1449,15 +1419,15 @@ and it turns ADR-046's zero-config local node into a setup step.
   dangerous-tier run is admin either way.
 
   **Session continuity is a requirement on that work, not an implementation detail.** The value is
-  the original worker's accumulated context, so whatever is decided must reach the _live_ session —
+  the original worker's accumulated context, so whatever is decided must reach the *live* session —
   the run's session has to remain addressable for a steer to mean anything. A design that answers the
   authorization question but loses session continuity fails the use case that motivated it.
 
   **Containment and relational authority stay orthogonal**, now in three parts: containment decides
   whether raw pane access can ever be non-admin, the structured-channel question decides whether
-  steering needs raw access at all, and relational authority decides only _whose_ runs — whichever
+  steering needs raw access at all, and relational authority decides only *whose* runs — whichever
   transport wins. Related to farm scoping but not the same axis either: per-farm authority answers
-  _which runs may I dispatch_, relational authority answers _which runs are mine to steer_. A
+  *which runs may I dispatch*, relational authority answers *which runs are mine to steer*. A
   farm-scoped operator still needs the second question answered.
 
 ### Out of scope
@@ -1469,7 +1439,7 @@ and it turns ADR-046's zero-config local node into a setup step.
 
   **What the design gives.** An IdP-verified subject resolves to a `Principal`, and §5's checks read
   the resolved principal and never how it was resolved — so an identity provider is a credential
-  _resolution_ strategy, not a second authorization model. `Principal.id` is stable and separate from
+  *resolution* strategy, not a second authorization model. `Principal.id` is stable and separate from
   any credential (§1), so one person keeps one identity across token rotations. §2's live lookup
   gives immediate effect to **stored-credential revocation and principal-role changes** — that, and
   no more.
@@ -1506,7 +1476,6 @@ and it turns ADR-046's zero-config local node into a setup step.
   IdP-driven mapping change would otherwise leave no reachable admin — and §3's last-admin protection
   binds a running gateway's writer, so it cannot by itself defend against an admin binding that
   vanishes because a group membership changed upstream.
-
 - **A managed or hosted gateway.** Multi-tenancy and tenant isolation are a different product shape.
 - **Audit logging.** A queryable, tamper-evident log of every authorization decision is its own
   decision.
@@ -1516,8 +1485,8 @@ and it turns ADR-046's zero-config local node into a setup step.
 Four decisions belong to the gateway's owner rather than to implementation.
 
 1. **Is independent revocation actually wanted?** Everything here rests on it. If the answer to
-   _"will there ever be more than one non-admin holder, or will one ever need withdrawing
-   independently"_ is permanently no, a second shared secret is the cheaper answer and this ADR
+   *"will there ever be more than one non-admin holder, or will one ever need withdrawing
+   independently"* is permanently no, a second shared secret is the cheaper answer and this ADR
    should be rejected in its favour (see Alternatives).
 2. **Is an eight-method observer worth shipping on its own?** That is what v2 starts as. Either ship
    it and widen as methods qualify, or hold v2 until confined artifact reads land so the operator
