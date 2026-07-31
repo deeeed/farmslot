@@ -7,9 +7,10 @@ export type { ExecResult };
 
 export type OutputCallback = (stream: 'stdout' | 'stderr', data: string) => void;
 
-// Resolve the operator's login PATH once, then reuse it for every command.
-// Resource health probes run frequently; starting each one as a login shell
-// repeatedly sources expensive dotfiles and can overwhelm the machine.
+// Resolve the operator's exported login environment once, then reuse it for
+// every command. Resource health probes run frequently; starting each command
+// as a login shell repeatedly sources expensive dotfiles and can overwhelm the
+// machine. Restart the node after changing shell-managed environment/toolchains.
 const IS_DARWIN = platform() === 'darwin';
 const SHELL = IS_DARWIN ? 'zsh' : 'bash';
 const NON_LOGIN_SHELL_ARGS = IS_DARWIN ? ['-f', '-c'] : ['--noprofile', '--norc', '-c'];
@@ -19,29 +20,53 @@ const NON_LOGIN_SHELL_ARGS = IS_DARWIN ? ['-f', '-c'] : ['--noprofile', '--norc'
 // so user-preferred toolchains (asdf/homebrew/nvm) still win on ties.
 const SYSTEM_PATH_FALLBACK = '/usr/sbin:/usr/bin:/sbin:/bin';
 
-let loginPathPromise: Promise<string> | undefined;
+const LOGIN_ENV_MARKER = 'FARMSLOT_LOGIN_ENV_BEGIN';
+let loginEnvironmentPromise: Promise<NodeJS.ProcessEnv> | undefined;
 
-export function resolveLoginPath(): Promise<string> {
-  loginPathPromise ??= new Promise((resolve) => {
-    const proc = spawn(SHELL, ['-lc', 'printf %s "$PATH"'], {
+export function resolveLoginEnvironment(): Promise<NodeJS.ProcessEnv> {
+  loginEnvironmentPromise ??= new Promise((resolve) => {
+    const proc = spawn(SHELL, ['-lc', `printf '\\0${LOGIN_ENV_MARKER}\\0'; env -0`], {
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let stdout = '';
+    const stdoutChunks: Buffer[] = [];
     proc.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
+      stdoutChunks.push(chunk);
     });
+    // Profiles sometimes print diagnostics. Drain stderr so a noisy profile
+    // cannot fill the pipe and deadlock this one-time initialization probe.
+    proc.stderr.resume();
     proc.on('close', (code) => {
-      const loginPath = code === 0 && stdout ? stdout : (process.env.PATH ?? '');
-      resolve(`${loginPath}:${SYSTEM_PATH_FALLBACK}`);
+      if (code !== 0) {
+        resolve({ ...process.env, PATH: `${process.env.PATH ?? ''}:${SYSTEM_PATH_FALLBACK}` });
+        return;
+      }
+      const fields = Buffer.concat(stdoutChunks).toString().split('\0');
+      const markerIndex = fields.lastIndexOf(LOGIN_ENV_MARKER);
+      if (markerIndex < 0) {
+        resolve({ ...process.env, PATH: `${process.env.PATH ?? ''}:${SYSTEM_PATH_FALLBACK}` });
+        return;
+      }
+      const loginEnvironment: NodeJS.ProcessEnv = {};
+      for (const field of fields.slice(markerIndex + 1)) {
+        const separator = field.indexOf('=');
+        if (separator <= 0) continue;
+        loginEnvironment[field.slice(0, separator)] = field.slice(separator + 1);
+      }
+      const loginPath = loginEnvironment.PATH ?? process.env.PATH ?? '';
+      resolve({ ...loginEnvironment, PATH: `${loginPath}:${SYSTEM_PATH_FALLBACK}` });
     });
     proc.on('error', () => {
-      // Falling back to the inherited PATH is correct when the login shell itself
-      // cannot start; the fixed system suffix still keeps core tools reachable.
-      resolve(`${process.env.PATH ?? ''}:${SYSTEM_PATH_FALLBACK}`);
+      // Falling back to the inherited environment is correct when the login
+      // shell itself cannot start; the fixed suffix keeps core tools reachable.
+      resolve({ ...process.env, PATH: `${process.env.PATH ?? ''}:${SYSTEM_PATH_FALLBACK}` });
     });
   });
-  return loginPathPromise;
+  return loginEnvironmentPromise;
+}
+
+export async function resolveLoginPath(): Promise<string> {
+  return (await resolveLoginEnvironment()).PATH ?? SYSTEM_PATH_FALLBACK;
 }
 
 export async function exec(params: NodeExecParams, onOutput?: OutputCallback): Promise<ExecResult> {
@@ -52,7 +77,14 @@ export async function exec(params: NodeExecParams, onOutput?: OutputCallback): P
   if (argvMode && params.argv.length === 0) {
     throw new Error('exec argv must contain at least one element');
   }
-  const env = { ...envNoForceColor, PATH: await resolveLoginPath() };
+  const loginEnvironment = await resolveLoginEnvironment();
+  const { FORCE_COLOR: _droppedLoginForceColor, ...loginEnvNoForceColor } = loginEnvironment;
+  void _droppedLoginForceColor;
+  const env = {
+    ...loginEnvNoForceColor,
+    ...envNoForceColor,
+    PATH: loginEnvironment.PATH,
+  };
 
   return new Promise((resolve) => {
     let stdout = '';

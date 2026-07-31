@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { exec, resolveLoginPath } from './exec.js';
+import { exec, resolveLoginEnvironment, resolveLoginPath } from './exec.js';
 
 test('node exec maxBuffer preserves bytes up to the limit and reports overflow', async () => {
   const result = await exec({ cmd: 'printf abcdef; sleep 1', maxBuffer: 4 });
@@ -35,7 +35,8 @@ test('node argv exec uses the login-shell PATH with the system fallback', async 
 });
 
 test('node command exec reuses the cached login PATH without a login shell', async () => {
-  const expectedPath = await resolveLoginPath();
+  const expectedEnvironment = await resolveLoginEnvironment();
+  const expectedPath = expectedEnvironment.PATH;
   const pathResult = await exec({ cmd: 'printf %s "$PATH"' });
   const loginResult = await exec({
     cmd: 'if [ -n "$ZSH_VERSION" ]; then [[ -o login ]] && printf login || printf nonlogin; else shopt -q login_shell && printf login || printf nonlogin; fi',
@@ -45,6 +46,7 @@ test('node command exec reuses the cached login PATH without a login shell', asy
   assert.equal(pathResult.stdout, expectedPath);
   assert.equal(loginResult.exitCode, 0);
   assert.equal(loginResult.stdout, 'nonlogin');
+  assert.ok(Object.keys(expectedEnvironment).length > 0);
 });
 
 test('node exec captures stdout larger than one pipe chunk', async () => {
