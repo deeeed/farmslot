@@ -110,7 +110,7 @@ export function autoResolveEngineDecision(
     return collisionAutoResolveAction(run);
   }
   if (run.mode !== 'validation' && run.mode !== 'autonomous') return null;
-  if (reason === 'review_posting' && ids.has('dismiss')) return 'dismiss';
+  if (reason === 'review_posting') return null;
   if (reason === 'human_gate') {
     return null;
   }
