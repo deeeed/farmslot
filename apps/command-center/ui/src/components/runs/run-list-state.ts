@@ -28,6 +28,12 @@ export type SortOption =
   | 'flow-desc'
   | 'status'
   | 'status-desc'
+  | 'ref'
+  | 'ref-desc'
+  | 'slot'
+  | 'slot-desc'
+  | 'runner'
+  | 'runner-desc'
   | 'duration'
   | 'grade';
 
@@ -62,6 +68,12 @@ export const SORT_OPTIONS: { label: string; value: SortOption }[] = [
   { label: 'Flow Z–A', value: 'flow-desc' },
   { label: 'Status A–Z', value: 'status' },
   { label: 'Status Z–A', value: 'status-desc' },
+  { label: 'Ref A–Z', value: 'ref' },
+  { label: 'Ref Z–A', value: 'ref-desc' },
+  { label: 'Slot A–Z', value: 'slot' },
+  { label: 'Slot Z–A', value: 'slot-desc' },
+  { label: 'Runner A–Z', value: 'runner' },
+  { label: 'Runner Z–A', value: 'runner-desc' },
   { label: 'Duration', value: 'duration' },
   { label: 'Grade', value: 'grade' },
 ];

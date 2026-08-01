@@ -3,7 +3,9 @@ import { resolveRunSlotId, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { sortInventoryRows } from '../shared/work-inventory-table-model.js';
 
+import { type RunInventorySortKey, runInventorySortValue } from './run-list-inventory.js';
 import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
 import { dispositionLabel } from './run-utils.js';
 
@@ -101,29 +103,26 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
     case 'duration':
       return [...result].sort((a, b) => (b.metrics.durationMs ?? 0) - (a.metrics.durationMs ?? 0));
     case 'project':
-      return [...result].sort(
-        (a, b) => a.project.localeCompare(b.project) || b.createdAt.localeCompare(a.createdAt),
-      );
     case 'project-desc':
-      return [...result].sort(
-        (a, b) => b.project.localeCompare(a.project) || b.createdAt.localeCompare(a.createdAt),
-      );
     case 'flow':
-      return [...result].sort(
-        (a, b) => a.flowType.localeCompare(b.flowType) || b.createdAt.localeCompare(a.createdAt),
-      );
     case 'flow-desc':
-      return [...result].sort(
-        (a, b) => b.flowType.localeCompare(a.flowType) || b.createdAt.localeCompare(a.createdAt),
-      );
     case 'status':
-      return [...result].sort(
-        (a, b) => a.status.localeCompare(b.status) || b.createdAt.localeCompare(a.createdAt),
-      );
     case 'status-desc':
-      return [...result].sort(
-        (a, b) => b.status.localeCompare(a.status) || b.createdAt.localeCompare(a.createdAt),
+    case 'ref':
+    case 'ref-desc':
+    case 'slot':
+    case 'slot-desc':
+    case 'runner':
+    case 'runner-desc': {
+      const inventoryKey = inventoryKeyForSortOption(input.sortBy);
+      const direction = input.sortBy.endsWith('-desc') ? 'desc' : 'asc';
+      return sortInventoryRows(
+        result,
+        (run) => runInventorySortValue(run, inventoryKey),
+        direction,
+        (run) => run.id,
       );
+    }
     case 'grade': {
       const order: Record<string, number> = { good: 3, ok: 2, bad: 1 };
       return [...result].sort(
@@ -135,4 +134,14 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
     default:
       return result;
   }
+}
+
+function inventoryKeyForSortOption(sortBy: SortOption): RunInventorySortKey {
+  if (sortBy === 'status' || sortBy === 'status-desc') return 'status';
+  if (sortBy === 'flow' || sortBy === 'flow-desc') return 'flow';
+  if (sortBy === 'project' || sortBy === 'project-desc') return 'project';
+  if (sortBy === 'ref' || sortBy === 'ref-desc') return 'ref';
+  if (sortBy === 'slot' || sortBy === 'slot-desc') return 'slot';
+  if (sortBy === 'runner' || sortBy === 'runner-desc') return 'runner';
+  return 'updated';
 }

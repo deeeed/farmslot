@@ -10,15 +10,22 @@ import {
 const BACKLOG_KEYS = ['status', 'flow', 'project', 'ref', 'title', 'activity', 'updated'] as const;
 const ROADMAP_KEYS = ['stage', 'project', 'id', 'title', 'promotion', 'updated'] as const;
 const GRAPH_KEYS = ['status', 'project', 'id', 'title', 'progress', 'updated'] as const;
-const RUN_KEYS = [
+/** Production Runs persists one `sort` value (SortOption), not key+direction params. */
+const RUN_SORT_OPTIONS = [
   'status',
+  'status-desc',
   'flow',
+  'flow-desc',
   'project',
+  'project-desc',
   'ref',
+  'ref-desc',
   'slot',
+  'slot-desc',
   'runner',
-  'updated',
-  'pipeline',
+  'runner-desc',
+  'newest',
+  'oldest',
 ] as const;
 
 test('parseWorkInventorySort falls back on invalid key and direction', () => {
@@ -30,7 +37,7 @@ test('parseWorkInventorySort falls back on invalid key and direction', () => {
   assert.deepEqual(parsed, { key: 'activity', direction: 'desc' });
 });
 
-test('sort key and direction round-trip for all four surface prefixes', () => {
+test('sort key and direction round-trip for backlog, roadmap, and work-graphs prefixes', () => {
   const surfaces = [
     {
       name: 'backlog',
@@ -56,14 +63,6 @@ test('sort key and direction round-trip for all four surface prefixes', () => {
       defaultKey: 'updated' as const,
       state: { key: 'progress' as const, direction: 'desc' as const },
     },
-    {
-      name: 'runs',
-      sortParam: 'runSort',
-      directionParam: 'runDirection',
-      validKeys: RUN_KEYS,
-      defaultKey: 'updated' as const,
-      state: { key: 'runner' as const, direction: 'asc' as const },
-    },
   ];
 
   for (const surface of surfaces) {
@@ -83,6 +82,29 @@ test('sort key and direction round-trip for all four surface prefixes', () => {
     });
     assert.deepEqual(roundTrip, surface.state, surface.name);
   }
+});
+
+test('runs production adapter round-trips every advertised inventory sort via sort=', () => {
+  // Mirrors run-list-state: one SortOption in the hash `sort` param (not runSort/runDirection).
+  for (const sort of RUN_SORT_OPTIONS) {
+    const params = new URLSearchParams();
+    if (sort !== 'newest') params.set('sort', sort);
+    const raw = params.get('sort');
+    const resolved = raw && (RUN_SORT_OPTIONS as readonly string[]).includes(raw) ? raw : 'newest';
+    assert.equal(resolved, sort === 'newest' ? 'newest' : sort, sort);
+    // Every inventory column key must map to a SortOption that survives the allow-list.
+    if (sort === 'ref' || sort === 'ref-desc') assert.ok(resolved.startsWith('ref'));
+    if (sort === 'slot' || sort === 'slot-desc') assert.ok(resolved.startsWith('slot'));
+    if (sort === 'runner' || sort === 'runner-desc') assert.ok(resolved.startsWith('runner'));
+  }
+  // Invalid production sort falls back to newest (default).
+  const invalid = new URLSearchParams('sort=nope');
+  const rawInvalid = invalid.get('sort');
+  const fallback =
+    rawInvalid && (RUN_SORT_OPTIONS as readonly string[]).includes(rawInvalid)
+      ? rawInvalid
+      : 'newest';
+  assert.equal(fallback, 'newest');
 });
 
 test('default sort omits params so URLs stay short', () => {

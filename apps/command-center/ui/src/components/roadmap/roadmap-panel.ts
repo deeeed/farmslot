@@ -65,8 +65,13 @@ import {
 } from '../shared/planning-projects.js';
 import {
   applyWorkInventorySort,
+  inventoryShowsBackAffordance,
+  inventoryShowsDetail,
+  inventoryShowsList,
   nextSortState,
   parseWorkInventorySort,
+  renderWorkInventoryBackButton,
+  renderWorkInventoryLayout,
   renderWorkInventoryRow,
   renderWorkInventoryTable,
   renderWorkInventoryTableHead,
@@ -179,6 +184,13 @@ export class RoadmapPanel extends LitElement {
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _selectedId = '';
+  @state() private _narrowViewport = false;
+  @state() private _forceInventoryList = false;
+  private _narrowMedia?: MediaQueryList;
+  private readonly _onNarrowChange = () => {
+    this._narrowViewport = this._narrowMedia?.matches ?? false;
+    if (!this._narrowViewport) this._forceInventoryList = false;
+  };
   /** The capture form used to sit permanently above the list, pushing the items
       most visits are here to read below the fold. Opened on demand instead. */
   @state() private _createPanelOpen = false;
@@ -740,6 +752,11 @@ export class RoadmapPanel extends LitElement {
     this._applyUrlStateFromHash();
     this._syncState(getState());
     this._unsubscribeState = subscribe((s) => this._syncState(s));
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      this._narrowMedia = window.matchMedia('(max-width: 860px)');
+      this._narrowViewport = this._narrowMedia.matches;
+      this._narrowMedia.addEventListener('change', this._onNarrowChange);
+    }
     window.addEventListener('keydown', this._onKeydown);
     window.addEventListener('hashchange', this._onHashChange);
     this._unsubscribeConnection = gateway.onConnectionChange((state) => {
@@ -752,6 +769,7 @@ export class RoadmapPanel extends LitElement {
     super.disconnectedCallback();
     this._unsubscribeConnection?.();
     this._unsubscribeState?.();
+    this._narrowMedia?.removeEventListener('change', this._onNarrowChange);
     window.removeEventListener('keydown', this._onKeydown);
     window.removeEventListener('hashchange', this._onHashChange);
     this._unsubscribeConnection = undefined;
@@ -1452,7 +1470,13 @@ export class RoadmapPanel extends LitElement {
   private _selectItem(item: RoadmapItem, mode: RoadmapEditorMode = 'view') {
     this._syncEditor(item);
     this._editorMode = mode;
+    this._forceInventoryList = false;
     this._writeUrlState();
+  }
+
+  private _backToInventoryList() {
+    this._forceInventoryList = true;
+    this.requestUpdate();
   }
 
   private _setEditorMode(mode: RoadmapEditorMode) {
@@ -2500,8 +2524,13 @@ export class RoadmapPanel extends LitElement {
         </button>
       </div>
       ${this._createPanelOpen ? this._renderCreateForm() : nothing} ${this._renderFilters()}
-      <div class="layout">
-        <div class="card">
+      ${(() => {
+        const layout = {
+          hasSelection: Boolean(this._selected),
+          narrowViewport: this._narrowViewport,
+          forceList: this._forceInventoryList,
+        };
+        const list = html`<div class="card">
           <h2>Items (${this._items.length})</h2>
           <div class="rows">
             ${renderWorkInventoryTable({
@@ -2514,9 +2543,22 @@ export class RoadmapPanel extends LitElement {
               minWidth: '820px',
             })}
           </div>
-        </div>
-        <div class="shell">${this._renderEditor()}</div>
-      </div>
+        </div>`;
+        const detail = html`${inventoryShowsBackAffordance(layout)
+            ? renderWorkInventoryBackButton({
+                testId: 'work-inventory-back',
+                onBack: () => this._backToInventoryList(),
+              })
+            : nothing}
+          <div class="shell">${this._renderEditor()}</div>`;
+        return renderWorkInventoryLayout({
+          list,
+          detail,
+          showList: inventoryShowsList(layout),
+          showDetail: inventoryShowsDetail(layout),
+          testId: 'work-inventory-layout',
+        });
+      })()}
       ${this._renderRunnerPicker()} ${this._renderPromptViewer()}
       ${this._renderPromotionAttachmentViewer()}
       ${this._selected ? this._renderPromotionDraftModal(this._selected) : nothing}

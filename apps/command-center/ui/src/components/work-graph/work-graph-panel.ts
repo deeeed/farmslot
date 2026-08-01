@@ -215,9 +215,12 @@ export class WorkGraphPanel extends LitElement {
     if (route !== 'work-graphs') return;
     if (this.selectedProject) params.set(WORK_GRAPH_PROJECT_PARAM, this.selectedProject);
     else params.delete(WORK_GRAPH_PROJECT_PARAM);
+    // Prefer the resolved inventory selection; never keep a node whose graph is
+    // outside the current project filter / selectedGraphId.
+    const graphId = this.selectedGraphId;
     const nodeGraphId = this.selectedNodeKey.split(':')[0] ?? '';
-    const nodeId = this.selectedNodeKey.split(':')[1] ?? '';
-    const graphId = this.selectedGraphId || nodeGraphId;
+    const nodeId =
+      graphId && nodeGraphId === graphId ? (this.selectedNodeKey.split(':')[1] ?? '') : '';
     if (graphId) params.set(WORK_GRAPH_GRAPH_PARAM, graphId);
     else params.delete(WORK_GRAPH_GRAPH_PARAM);
     if (graphId && nodeId) params.set(WORK_GRAPH_NODE_PARAM, nodeId);
@@ -246,6 +249,25 @@ export class WorkGraphPanel extends LitElement {
     this.selectedGraphId = graphId;
     this.showInventoryList = false;
     if (!this.selectedNodeKey.startsWith(`${graphId}:`)) this.selectedNodeKey = '';
+    this.writeUrlState();
+  }
+
+  private setProjectFilter(project: string) {
+    this.selectedProject = project;
+    const graphs = this.activeGraphs().filter(
+      (graph) => !project || graph.graph.project === project,
+    );
+    const { selectedId } = resolveWorkGraphSelection(
+      graphs.map((graph) => graph.graph.id),
+      this.selectedGraphId,
+    );
+    this.selectedGraphId = selectedId;
+    if (this.selectedNodeKey) {
+      const nodeGraphId = this.selectedNodeKey.split(':')[0] ?? '';
+      if (!selectedId || nodeGraphId !== selectedId) this.selectedNodeKey = '';
+    }
+    // Filtering must not leave the operator on a canvas they can no longer see.
+    if (!selectedId) this.showInventoryList = true;
     this.writeUrlState();
   }
 
@@ -1279,10 +1301,10 @@ export class WorkGraphPanel extends LitElement {
         </div>
         <select
           aria-label="Filter work graphs by project"
+          data-testid="work-graph-project-filter"
           .value=${this.selectedProject}
           @change=${(event: Event) => {
-            this.selectedProject = (event.target as HTMLSelectElement).value;
-            this.writeUrlState();
+            this.setProjectFilter((event.target as HTMLSelectElement).value);
           }}
         >
           <option value="">All projects</option>

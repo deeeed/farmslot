@@ -82,10 +82,13 @@ const TABLE_SORT_PAIRS = {
   project: 'project-desc',
   flow: 'flow-desc',
   status: 'status-desc',
+  ref: 'ref-desc',
+  slot: 'slot-desc',
+  runner: 'runner-desc',
   newest: 'oldest',
 } as const;
 
-/** Map inventory column keys onto existing SortOption values. */
+/** Map inventory column keys onto SortOption values used by filterRunList + URL. */
 function inventoryKeyToSortOption(key: RunInventorySortKey): SortOption {
   switch (key) {
     case 'status':
@@ -94,11 +97,14 @@ function inventoryKeyToSortOption(key: RunInventorySortKey): SortOption {
       return 'flow';
     case 'project':
       return 'project';
+    case 'ref':
+      return 'ref';
+    case 'slot':
+      return 'slot';
+    case 'runner':
+      return 'runner';
     case 'updated':
       return 'newest';
-    case 'ref':
-    case 'slot':
-    case 'runner':
     case 'pipeline':
       return 'newest';
   }
@@ -108,6 +114,9 @@ function sortOptionToInventoryKey(sort: SortOption): RunInventorySortKey {
   if (sort === 'status' || sort === 'status-desc') return 'status';
   if (sort === 'flow' || sort === 'flow-desc') return 'flow';
   if (sort === 'project' || sort === 'project-desc') return 'project';
+  if (sort === 'ref' || sort === 'ref-desc') return 'ref';
+  if (sort === 'slot' || sort === 'slot-desc') return 'slot';
+  if (sort === 'runner' || sort === 'runner-desc') return 'runner';
   return 'updated';
 }
 

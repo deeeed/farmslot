@@ -74,8 +74,13 @@ import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
 import {
   applyWorkInventorySort,
+  inventoryShowsBackAffordance,
+  inventoryShowsDetail,
+  inventoryShowsList,
   nextSortState,
   parseWorkInventorySort,
+  renderWorkInventoryBackButton,
+  renderWorkInventoryLayout,
   renderWorkInventoryRow,
   renderWorkInventoryTable,
   renderWorkInventoryTableHead,
@@ -250,6 +255,13 @@ export class BacklogPanel extends LitElement {
   @state() private _createPanelOpen = false;
   @state() private _selectedItemId = '';
   @state() private _selectedItemMode: BacklogDetailMode = 'view';
+  @state() private _narrowViewport = false;
+  @state() private _forceInventoryList = false;
+  private _narrowMedia?: MediaQueryList;
+  private readonly _onNarrowChange = () => {
+    this._narrowViewport = this._narrowMedia?.matches ?? false;
+    if (!this._narrowViewport) this._forceInventoryList = false;
+  };
   @state() private _slotSelectorOpen = false;
   @state() private _dispatchConfigOpen = false;
   @state() private _specViewerOpen = false;
@@ -1095,6 +1107,11 @@ export class BacklogPanel extends LitElement {
     super.connectedCallback();
     this._sync(getState());
     this._applyUrlStateFromHash();
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      this._narrowMedia = window.matchMedia('(max-width: 860px)');
+      this._narrowViewport = this._narrowMedia.matches;
+      this._narrowMedia.addEventListener('change', this._onNarrowChange);
+    }
     window.addEventListener('hashchange', this._onHashChange);
     window.addEventListener('keydown', this._onKeydown);
     this._unsub = subscribe((s) => this._sync(s));
@@ -1103,6 +1120,7 @@ export class BacklogPanel extends LitElement {
   disconnectedCallback() {
     this._unsub?.();
     this._confirmTimer.clear();
+    this._narrowMedia?.removeEventListener('change', this._onNarrowChange);
     window.removeEventListener('hashchange', this._onHashChange);
     window.removeEventListener('keydown', this._onKeydown);
     super.disconnectedCallback();
@@ -1415,7 +1433,13 @@ export class BacklogPanel extends LitElement {
     }
     this._selectedItemId = item.id;
     this._selectedItemMode = mode;
+    this._forceInventoryList = false;
     this._writeUrlState();
+  }
+
+  private _backToInventoryList() {
+    this._forceInventoryList = true;
+    this.requestUpdate();
   }
 
   private _setSelectedItemMode(mode: BacklogDetailMode) {
@@ -2806,6 +2830,32 @@ export class BacklogPanel extends LitElement {
     const candidates = this._filteredCandidates;
     const activityRuns = this._linkedActivityRuns();
     const filtered = this._sortFilteredCandidates(candidates, activityRuns);
+    const layout = {
+      hasSelection: hasDetail,
+      narrowViewport: this._narrowViewport,
+      forceList: this._forceInventoryList,
+    };
+    const showList = inventoryShowsList(layout);
+    const showDetail = inventoryShowsDetail(layout);
+    const list = html`<section class="list-panel">
+      <div class="scroll-column rows">
+        ${renderWorkInventoryTable({
+          columns: BACKLOG_INVENTORY_COLUMNS,
+          head: this._renderTableHead(),
+          rows: filtered.map((item) => this._renderCompactRow(item, activityRuns.get(item.id))),
+          isEmpty: filtered.length === 0,
+          empty: html`<div class="empty">No backlog items match this view.</div>`,
+          testId: 'work-inventory-table',
+          minWidth: '1040px',
+        })}
+      </div>
+    </section>`;
+    const detail = html`${inventoryShowsBackAffordance(layout)
+      ? renderWorkInventoryBackButton({
+          testId: 'work-inventory-back',
+          onBack: () => this._backToInventoryList(),
+        })
+      : nothing}${this._renderSelectedItemPanel()}`;
     return html`<section class="shell">
       <div class="header header-compact">
         <h1>Backlog</h1>
@@ -2814,22 +2864,13 @@ export class BacklogPanel extends LitElement {
       ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
       ${this._message ? html`<div class="message">${this._message}</div>` : nothing}
       ${this._renderFilterToolbar(filtered.length)} ${this._renderCreatePanel()}
-      <div class="main-area ${hasDetail ? 'has-detail' : ''}">
-        <section class="list-panel">
-          <div class="scroll-column rows">
-            ${renderWorkInventoryTable({
-              columns: BACKLOG_INVENTORY_COLUMNS,
-              head: this._renderTableHead(),
-              rows: filtered.map((item) => this._renderCompactRow(item, activityRuns.get(item.id))),
-              isEmpty: filtered.length === 0,
-              empty: html`<div class="empty">No backlog items match this view.</div>`,
-              testId: 'work-inventory-table',
-              minWidth: '1040px',
-            })}
-          </div>
-        </section>
-        ${hasDetail ? this._renderSelectedItemPanel() : nothing}
-      </div>
+      ${renderWorkInventoryLayout({
+        list,
+        detail,
+        showList,
+        showDetail,
+        testId: 'work-inventory-layout',
+      })}
       ${this._renderLaunchSlotSelectorModal()}
       ${this._selectedItem ? this._renderDispatchConfigModal(this._selectedItem) : nothing}
     </section>`;

@@ -96,3 +96,14 @@ test('resolveWorkGraphSelection clears stale multi-graph selection', () => {
   assert.equal(resolved.selectedId, '');
   assert.equal(resolved.autoSelected, false);
 });
+
+test('project filter selection drops graphs outside the filtered set', () => {
+  // After filtering to one project, a previously selected other-project graph
+  // must not remain selected (writeUrlState should persist the resolved id).
+  const filteredIds = ['solo-in-project'];
+  const stale = resolveWorkGraphSelection(filteredIds, 'other-project-graph');
+  assert.equal(stale.selectedId, 'solo-in-project');
+  assert.equal(stale.autoSelected, true);
+  const multi = resolveWorkGraphSelection(['a', 'b'], 'other-project-graph');
+  assert.equal(multi.selectedId, '');
+});

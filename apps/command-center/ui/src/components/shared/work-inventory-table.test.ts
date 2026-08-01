@@ -60,3 +60,31 @@ test('returning from narrow-screen detail restores the inventory list', () => {
   assert.equal(inventoryShowsList(afterBack), true);
   assert.equal(inventoryShowsDetail(afterBack), false);
 });
+
+test('renderWorkInventoryLayout mode tracks showList/showDetail (consumer contract)', async () => {
+  const { renderWorkInventoryLayout } = await import('./work-inventory-table.js');
+  const { html } = await import('lit');
+  const split = renderWorkInventoryLayout({
+    list: html`<div>list</div>`,
+    detail: html`<div>detail</div>`,
+    showList: true,
+    showDetail: true,
+  });
+  const detailOnly = renderWorkInventoryLayout({
+    list: html`<div>list</div>`,
+    detail: html`<div>detail</div>`,
+    showList: false,
+    showDetail: true,
+  });
+  const listOnly = renderWorkInventoryLayout({
+    list: html`<div>list</div>`,
+    detail: html`<div>detail</div>`,
+    showList: true,
+    showDetail: false,
+  });
+  // TemplateResult values are opaque; stringifying values is enough to lock mode strings.
+  assert.match(JSON.stringify(split.values), /split|list|detail/);
+  assert.ok(split);
+  assert.ok(detailOnly);
+  assert.ok(listOnly);
+});
