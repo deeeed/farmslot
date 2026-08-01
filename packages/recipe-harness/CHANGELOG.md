@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.11.0 - 2026-08-01
+
 - **BREAKING:** Run summaries now include structured totals and all four failure-cause counts required by the matching `@farmslot/protocol`; publish the protocol first and update harness consumers as one coordinated release.
 - feat: preserve structured failure ownership in run evidence and finalize frozen suite scopes from completed recipe results or explicit non-execution records.
 
