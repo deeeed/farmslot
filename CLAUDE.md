@@ -54,6 +54,20 @@ See `apps/command-center/CLAUDE.md` for the full protocol. If CDP is unreachable
 
 **Cross-model review is mandatory on top of the worker's own review pass.** After the implementing model reviews its diff, run at least one round of `/cross-review-orchestrator` (or equivalent) with a **different** model family — prefer Codex for speed, Claude when depth is needed. The cross-reviewer must inspect the same HEAD SHA; fix every blocking finding and nits before merge. Worker self-review alone is not sufficient.
 
+### PR Ship Checklist — HARD RULE
+
+**Opening a PR is fine. Claiming a PR is ready / done / mergeable is not until this checklist is complete.** Local unit tests or pre-push alone are never enough.
+
+Before saying a farmslot PR is ready (or suggesting merge):
+
+1. **Changelog** — if the diff touches a publishable workspace package (`apps/command-center/ui`, `services/gateway`, `packages/*`, etc.), add an **Unreleased** bullet to that package's `CHANGELOG.md` in the same PR. Hygiene CI runs `check-workspace-changelogs.mjs --pr-diff` and **fails** when the changelog is missing.
+2. **CI green** — wait for `gh pr checks` on the PR (hygiene + quality gates for the touched area). Do not claim ready while checks are pending, failed, or skipped-only for the relevant packages.
+3. **Independent review** — run at least one independent code-reviewer agent against the **same HEAD SHA** that is on the PR.
+4. **Cross-model review** — run at least one review with a **different** model family against that same SHA (see rule above).
+5. **Fix all findings** — blocking and nits, unless Arthur explicitly waives them. Re-run typecheck (and CDP for UI) after follow-up commits.
+
+If Arthur only says "open a PR", open it, then **continue** through this checklist before reporting completion. A PR URL alone is not done.
+
 ### Never Commit Directly to `main` — HARD RULE
 
 **Never commit or push to `main` on the farmslot root repo unless Arthur explicitly asks for it.** All farmslot changes go through a feature branch and a PR with review before merge.

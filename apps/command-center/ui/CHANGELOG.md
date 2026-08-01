@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(runs): mini-pipeline and canvas share one tone map so reworkable review `issues` and package-change publish failures render **orange** (another loop expected), while terminal failures stay **red**; open issues no longer paint as done/green on the canvas.
 - fix(review): let operators omit visual evidence when publishing an approval, while preserving the choice across artifact refreshes.
 - feat(inventory): render Roadmap, Backlog, and Runs as dense sortable work tables with explicit project/state/activity columns, URL-persisted sorting, responsive selection detail, and no empty selection gutter.
 - feat(backlog): use a sortable work table as the primary scan surface while retaining the selected row's full right-hand detail panel; show status counts, flow/project columns, and exact-ref out-of-band activity. Run inference is activity-only, while detail/history remains anchored to durable linkage.
