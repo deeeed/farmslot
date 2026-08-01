@@ -5,9 +5,7 @@ export function paneShowsBusyComposer(pane) {
     /tab to queue message/i.test(liveTail) ||
     /Working \(/i.test(liveTail) ||
     /background terminal running/i.test(liveTail) ||
-    /(?:^|\n)\s*(?:[·*•]|[✻✢✽✶✷✸✹✺✼✣∗])\s*Composing[…\.](?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*(?:\n|$)/iu.test(
-      liveTail,
-    )
+    /(?:^|\n)\s*[·*•✻✢✽✶✷✸✹✺✼✣∗]\s+Composing[…\.]/iu.test(liveTail)
   );
 }
 

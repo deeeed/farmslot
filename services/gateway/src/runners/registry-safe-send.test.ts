@@ -555,6 +555,13 @@ test('claude (hook-only) stale terminal idle checks the full recovery window for
 test('claude (hook-only) checks missing stale-prompt coverage once, then holds', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
+  const previousPromptAcceptedReading = promptAcceptedReading;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: Date.now(),
+  };
   activityReading = {
     value: 'idle',
     source: 'hook',
@@ -581,6 +588,7 @@ test('claude (hook-only) checks missing stale-prompt coverage once, then holds',
     assert.equal(callOrder.filter((entry) => entry === 'obs:promptDigestAccepted').length, 1);
     assert.equal(callOrder.indexOf('tmux:send-literal'), -1);
   } finally {
+    promptAcceptedReading = previousPromptAcceptedReading;
     promptDigestAcceptedReading = {
       value: false,
       source: 'hook',

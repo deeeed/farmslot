@@ -871,9 +871,7 @@ export function paneShowsBusyComposer(pane: string): boolean {
     /tab to queue message/i.test(liveTail) ||
     /Working \(/i.test(liveTail) ||
     /background terminal running/i.test(liveTail) ||
-    /(?:^|\n)\s*(?:[·*•]|[✻✢✽✶✷✸✹✺✼✣∗])\s*Composing[…\.](?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*(?:\n|$)/iu.test(
-      liveTail,
-    )
+    /(?:^|\n)\s*[·*•✻✢✽✶✷✸✹✺✼✣∗]\s+Composing[…\.]/iu.test(liveTail)
   );
 }
 
@@ -887,15 +885,6 @@ function lineShowsClaudeOrCodexProgress(line: string): boolean {
       line,
     )
   );
-}
-
-const CLAUDE_SPINNER_FRAME =
-  /^\s*[✻✢✽✶✷✸✹✺✼✣∗]\s+(?:Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating|Herding|Compacting(?: conversation)?|Herding files)[^\n(]*?[…\.]{1,3}(?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*$/iu;
-const CLAUDE_AMBIGUOUS_SPINNER_FRAME =
-  /^\s*[·*]\s+(?:Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating|Herding|Compacting(?: conversation)?|Herding files)[^\n(]*?[…\.]{1,3}\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\)\s*$/iu;
-
-function lineShowsClaudeSpinnerFrame(line: string): boolean {
-  return CLAUDE_SPINNER_FRAME.test(line) || CLAUDE_AMBIGUOUS_SPINNER_FRAME.test(line);
 }
 
 /**
@@ -919,12 +908,11 @@ export function runnerPaneComposerDraftState(
 ): ComposerDraftState {
   const normalizedPane = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
   if (paneShowsBusyComposer(normalizedPane)) return 'draft';
-  // Require an actual spinner-prefixed frame here. The broader progress predicate intentionally
-  // recognizes transcript lines such as "Running tests..." for readiness monitoring, but those
-  // lines are not proof that Claude's live composer is occupied.
   if (
     normalizeRunner(runnerId) === 'claude' &&
-    paneTailText(normalizedPane, 20).split('\n').some(lineShowsClaudeSpinnerFrame)
+    /(?:^|\n)\s*[·*•✻✢✽✶✷✸✹✺✼✣∗]\s+(?:Herding(?: files)?|Working|Reading|Compacting conversation)[…\.]/iu.test(
+      paneTailText(normalizedPane, 20),
+    )
   ) {
     return 'draft';
   }
