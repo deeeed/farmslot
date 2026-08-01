@@ -433,9 +433,11 @@ export function extractBacklogAcceptanceCriteria(markdown: string): string[] {
 
 async function assertBacklogSpecReady(item: BacklogItem): Promise<void> {
   if (!item.specPath) return;
-  if (item.sourceKind !== 'manual') {
-    throw new Error('Markdown-backed backlog specs must use manual sourceKind');
-  }
+  // Markdown specs are allowed on any sourceKind (manual, jira, github).
+  // Tracker identity (Jira key / GH issue) stays on sourceRef; the markdown
+  // file is additive AC/context and is injected into initialContext for all
+  // kinds. Structured ticketData remains manual-only so jira/github still
+  // fetch live ticket payloads at run time.
   const markdown = await readBacklogSpecMarkdown(item);
   const acceptanceCriteria = extractBacklogAcceptanceCriteria(markdown ?? '');
   if (acceptanceCriteria.length === 0) {

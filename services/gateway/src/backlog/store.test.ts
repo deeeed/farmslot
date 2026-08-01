@@ -156,6 +156,66 @@ test('markdown-backed backlog specs require acceptance criteria before ready', a
   assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'candidate');
 });
 
+test('markdown-backed backlog specs allow jira sourceKind when AC section is present', async () => {
+  const { backlog } = await freshStores();
+  const specPath = await writeSpec(
+    'jira-with-spec.md',
+    [
+      '# Jira-tracked fix with Farmslot AC',
+      '',
+      '## Acceptance Criteria',
+      '',
+      '- Controller maps the failure to a stable error code',
+      '- Regression test covers the recovery path',
+    ].join('\n'),
+  );
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Jira ticket with markdown AC',
+    sourceKind: 'jira',
+    sourceRef: 'TAT-78001',
+    flowType: 'fix-bug',
+    specPath,
+  });
+  assert.equal(created.item.sourceKind, 'jira');
+  assert.equal(created.item.sourceRef, 'TAT-78001');
+  assert.equal(created.item.specPath, specPath);
+
+  const ready = await backlog.markBacklogItemReady({ itemId: created.item.id });
+  assert.equal(ready.item.status, 'ready');
+
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(enqueued.item.status, 'queued');
+  assert.equal(enqueued.queueItem.ticketOrPr, 'TAT-78001');
+  // Jira items keep live ticket fetch; markdown is additive context only.
+  assert.equal(enqueued.queueItem.ticketData, undefined);
+  assert.match(enqueued.queueItem.initialContext ?? '', /Backlog markdown spec/);
+  assert.match(enqueued.queueItem.initialContext ?? '', /stable error code/);
+  assert.match(enqueued.queueItem.initialContext ?? '', /Backlog source: jira TAT-78001/);
+});
+
+test('markdown-backed backlog specs still reject jira items missing AC section', async () => {
+  const { backlog } = await freshStores();
+  const specPath = await writeSpec(
+    'jira-missing-ac.md',
+    '# Jira ticket\n\n## Problem\n\nNo AC yet.\n',
+  );
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Jira ticket missing AC',
+    sourceKind: 'jira',
+    sourceRef: 'TAT-78002',
+    flowType: 'fix-bug',
+    specPath,
+  });
+
+  await assert.rejects(
+    () => backlog.markBacklogItemReady({ itemId: created.item.id }),
+    /## Acceptance Criteria/,
+  );
+  assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'candidate');
+});
+
 test('markdown-backed backlog specs must stay within configured spec root', async () => {
   const { backlog } = await freshStores();
   const outsidePath = path.join(testDir, 'outside-spec.md');
