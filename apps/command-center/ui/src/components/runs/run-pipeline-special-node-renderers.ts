@@ -5,6 +5,11 @@ import type { Run, RunStep, RunStepStatus, TaskProgressStructured } from '@farms
 import { colors } from '../../styles/theme-tokens.js';
 
 import { NODE_H, type NodePos } from './run-pipeline-model.js';
+import {
+  pipelineStepTone,
+  pipelineToneColor,
+  pipelineToneFillStroke,
+} from './run-pipeline-status.js';
 import { formatDuration, formatElapsed, stepStatusColor } from './run-utils.js';
 
 export interface RunPipelineSpecialNodeRenderContext {
@@ -299,31 +304,38 @@ export function renderPublicationReviewPipelineNode(
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
+  // Shared with mini: issues → orange (warn), terminal failed → red.
+  const tone = pipelineStepTone(step, { runError: ctx.run.error });
   const accent = '#a78bfa';
-  const fillColor = isDone
-    ? `${colors.statusOk}12`
-    : isRunning
-      ? `${accent}1f`
-      : isFailed
-        ? `${colors.statusFail}12`
+  const { fill: toneFill, stroke: toneStroke } = pipelineToneFillStroke(tone);
+  const fillColor =
+    tone === 'ok' || tone === 'warn' || tone === 'fail' || tone === 'running'
+      ? toneFill
+      : isRunning
+        ? `${accent}1f`
         : `${accent}0c`;
-  const strokeColor = isDone
-    ? `${colors.statusOk}66`
-    : isRunning
-      ? accent
-      : isFailed
-        ? colors.statusFail
+  const strokeColor =
+    tone === 'ok' || tone === 'warn' || tone === 'fail' || tone === 'running'
+      ? toneStroke
+      : isRunning
+        ? accent
         : `${accent}55`;
   const statusLabel = isPending
     ? 'pre-gate'
     : isRunning
       ? 'running'
-      : isDone
-        ? 'done'
-        : isFailed
-          ? 'failed'
-          : '';
+      : tone === 'warn'
+        ? 'issues'
+        : isDone
+          ? 'done'
+          : isFailed
+            ? 'failed'
+            : '';
   const timing = stepTiming(step);
+  const metaColor =
+    tone === 'warn' || tone === 'fail' || tone === 'ok'
+      ? pipelineToneColor(tone)
+      : colors.textSecondary;
   return svg`
     <g class="${isRunning ? 'node-running-anim' : ''}"
        transform="translate(${n.x}, ${n.y})"
@@ -343,7 +355,7 @@ export function renderPublicationReviewPipelineNode(
       </text>
       <text class="node-meta" x="${n.w / 2}" y="27"
             text-anchor="middle" dominant-baseline="central"
-            fill="${isFailed ? colors.statusFail : isDone ? colors.statusOk : colors.textSecondary}">
+            fill="${metaColor}">
         ${(n.meta ?? step.detail ?? '').slice(0, 22)}
       </text>
     </g>
@@ -358,13 +370,19 @@ export function renderPackageRefreshPipelineNode(
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
-  const fillColor = isDone
-    ? `${colors.statusOk}12`
-    : isFailed
-      ? `${colors.statusFail}12`
-      : '#3b82f610';
-  const strokeColor = isDone ? `${colors.statusOk}66` : isFailed ? colors.statusFail : '#3b82f688';
+  const tone = pipelineStepTone(n.step, { runError: ctx.run.error });
+  const { fill: fillColor, stroke: strokeColor } =
+    tone === 'ok' || tone === 'warn' || tone === 'fail'
+      ? pipelineToneFillStroke(tone)
+      : { fill: '#3b82f610', stroke: '#3b82f688' };
   const timing = stepTiming(n.step);
+  const metaLabel = isDone
+    ? 'updated'
+    : tone === 'warn'
+      ? 'rework'
+      : isFailed
+        ? 'failed'
+        : 'after requested review';
   return svg`
     <g transform="translate(${n.x}, ${n.y})"
        style="opacity: ${isPending ? 0.72 : 1}; cursor: pointer"
@@ -389,8 +407,8 @@ export function renderPackageRefreshPipelineNode(
       }
       <text class="node-meta" x="${n.w / 2}" y="27"
             text-anchor="middle" dominant-baseline="central"
-            fill="${isFailed ? colors.statusFail : isDone ? colors.statusOk : colors.textSecondary}">
-        ${isDone ? 'updated' : isFailed ? 'failed' : 'after requested review'}
+            fill="${isDone || isFailed || tone === 'warn' ? pipelineToneColor(tone === 'muted' ? (isDone ? 'ok' : 'fail') : tone) : colors.textSecondary}">
+        ${metaLabel}
       </text>
     </g>
   `;
@@ -501,21 +519,14 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
   const isDone = vis === 'done';
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
-
-  const fillColor = isDone
-    ? `${colors.statusOk}12`
-    : isRunning
-      ? '#3b82f618'
-      : isFailed
-        ? `${colors.statusFail}12`
-        : 'transparent';
-  const strokeColor = isDone
-    ? `${colors.statusOk}66`
-    : isRunning
-      ? '#3b82f6'
-      : isFailed
-        ? colors.statusFail
-        : `${colors.textMuted}33`;
+  // Package-change / re-review publish failures are reworkable (orange), not terminal red.
+  const tone = pipelineStepTone(
+    { ...step, detail: step.detail ?? ctx.run.error ?? undefined },
+    { runError: ctx.run.error },
+  );
+  const toneColors = pipelineToneFillStroke(tone);
+  const fillColor = isDone || isFailed || isRunning ? toneColors.fill : 'transparent';
+  const strokeColor = isDone || isFailed || isRunning ? toneColors.stroke : `${colors.textMuted}33`;
 
   const elapsed = step.durationMs
     ? formatDuration(step.durationMs)
@@ -585,8 +596,18 @@ export function renderFinalizePipelineNode(n: NodePos, ctx: RunPipelineSpecialNo
             ? svg`
           <text class="node-meta" x="${n.w / 2}" y="27"
                 text-anchor="middle" dominant-baseline="central"
-                fill="${stepStatusColor(vis)}">
-            ${isDone ? 'v' : isRunning ? (step.detail ?? '*') : isFailed ? 'x' : ''}
+                fill="${pipelineToneColor(tone)}">
+            ${
+              isDone
+                ? 'v'
+                : isRunning
+                  ? (step.detail ?? '*')
+                  : tone === 'warn'
+                    ? '! rework'
+                    : isFailed
+                      ? 'x'
+                      : ''
+            }
           </text>
         `
             : nothing

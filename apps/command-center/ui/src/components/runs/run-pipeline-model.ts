@@ -1,5 +1,7 @@
 import type { FlowType, Run, RunStep, TaskProgressStructured } from '@farmslot/protocol';
 
+import { publicationReviewVerdictStatus } from './run-pipeline-status.js';
+
 type UnknownRecord = Record<string, unknown>;
 type PublishGate = NonNullable<NonNullable<Run['engineState']>['publishGate']>;
 type PublicationReviewStatus = NonNullable<PublishGate['independentReviews']>[number];
@@ -335,13 +337,17 @@ export function computeLayout(run: Run): PipelineLayout {
       }
       const refreshCol = postGateRefreshCol ?? pos.col + postGateReviewPlan.length + 1;
       const refreshStatus = postGateRefreshStatus(postGateReviewPlan);
+      const lastReviewVerdict = postGateLastReviewVerdict(postGateReviewPlan);
       nodes.push({
         id: 'package-refresh',
         x: colX(refreshCol),
         y: LANE_Y.post,
         w: MONITOR_W,
         lane: 'post',
-        step: syntheticStep('package-refresh', refreshStatus, 'package refresh'),
+        step: {
+          ...syntheticStep('package-refresh', refreshStatus, 'package refresh'),
+          outputs: lastReviewVerdict ? { lastReviewVerdict } : undefined,
+        },
         synthetic: true,
         label: 'package',
         meta: 'refresh after review',
@@ -445,6 +451,12 @@ function postGateRefreshStatus(nodes: PublicationReviewPlanNode[]): RunStep['sta
   return nodes.at(-1)?.step.status === 'failed' ? 'failed' : 'done';
 }
 
+function postGateLastReviewVerdict(nodes: PublicationReviewPlanNode[]): string | undefined {
+  const last = nodes.at(-1)?.step;
+  const verdict = last?.outputs?.verdict;
+  return typeof verdict === 'string' && verdict.trim() ? verdict.trim() : undefined;
+}
+
 function publicationReviewPlanNodes(
   run: Run,
   phase: 'pre-gate' | 'post-gate',
@@ -518,14 +530,10 @@ function publicationReviewPlanNodes(
         );
       const loopNumber = Number(review.loopNumber ?? index + 1);
       const order = Math.max(1, phase === 'pre-gate' ? loopNumber - minimum : index + 1);
-      const status: RunStep['status'] =
-        verdict === 'pass' || verdict === 'skipped'
-          ? 'done'
-          : verdict === 'failed'
-            ? 'failed'
-            : verdict === 'pending'
-              ? 'running'
-              : 'done';
+      // Shared with mini-pipeline: issues → failed status + warn tone (orange);
+      // terminal review failure stays failed + fail tone (red). Never map open
+      // issues to done/green — that hid reworkable findings on the canvas.
+      const status = publicationReviewVerdictStatus(verdict);
       const inferredStartedAt = reviewStartedAt(review, reviews);
       const meta = fixedByLoop
         ? `${runner} · fixed · ${verdict || 'pass'}`

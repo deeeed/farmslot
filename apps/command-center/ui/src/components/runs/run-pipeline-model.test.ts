@@ -148,3 +148,48 @@ test('computeLayout places post-gate review nodes after the worker lane to avoid
   assert.ok(packageRefresh.x > postGateReview.x + postGateReview.w);
   assert.ok(finalize.x > packageRefresh.x + packageRefresh.w);
 });
+
+test('computeLayout maps open review issues to failed status (warn tone), not done/green', () => {
+  const run = makeRun({
+    status: 'blocked',
+    steps: [
+      { name: 'self-review', status: 'done' },
+      { name: 'complete', status: 'done' },
+      { name: 'human-gate', status: 'running' },
+      { name: 'finalize', status: 'pending' },
+    ],
+    engineState: {
+      publishGate: {
+        reviewDepth: {
+          requestedBy: 'human-gate',
+          minimumIndependentReviews: 1,
+          requireCrossRunner: false,
+          extraLoopsRequested: 1,
+        },
+        independentReviews: [
+          {
+            id: 'independent-review-2',
+            source: 'human-gate',
+            runner: 'claude',
+            crossRunner: true,
+            loopNumber: 2,
+            verdict: 'issues',
+            unresolvedCount: 3,
+            validationDepth: 'full-live',
+            completedAt: '2026-05-14T00:00:30.000Z',
+          },
+        ],
+      },
+    },
+  });
+
+  const layout = computeLayout(run);
+  const review = layout.nodes.find((node) => node.id === 'post-gate-publication-review-1');
+  const packageRefresh = layout.nodes.find((node) => node.id === 'package-refresh');
+  assert.ok(review);
+  assert.equal(review.step.status, 'failed');
+  assert.equal(review.step.outputs?.verdict, 'issues');
+  assert.ok(packageRefresh);
+  assert.equal(packageRefresh.step.status, 'failed');
+  assert.equal(packageRefresh.step.outputs?.lastReviewVerdict, 'issues');
+});
