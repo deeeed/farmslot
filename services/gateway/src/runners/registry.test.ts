@@ -1835,4 +1835,18 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
     ).join('\n')}\n❯\n`;
     assert.equal(runnerPaneComposerDraftState(staleScrollback, 'claude'), 'empty');
   });
+
+  it('recognizes every captured Claude live-spinner form as a draft', () => {
+    for (const spinner of [
+      '✻ Working… (esc to interrupt)',
+      '✢ Herding… (12s · esc to interrupt)',
+      '∗ Herding… (12s · esc to interrupt)',
+      '✷ Herding… (12s · esc to interrupt)',
+      '✼ Herding… (12s · esc to interrupt)',
+      '✣ Herding… (12s · esc to interrupt)',
+      '✻ Reading…',
+    ]) {
+      assert.equal(runnerPaneComposerDraftState(`${spinner}\n❯\n`, 'claude'), 'draft', spinner);
+    }
+  });
 });

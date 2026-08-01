@@ -878,6 +878,18 @@ export function paneShowsBusyComposer(pane: string): boolean {
   );
 }
 
+function lineShowsClaudeOrCodexProgress(line: string): boolean {
+  return (
+    /(?:[·✻✢✽✶✷✸✹✺✼✣*•∗]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating)[…\.]?/iu.test(
+      line,
+    ) ||
+    /running in the background|esc to interrupt/i.test(line) ||
+    /^\s*[·✻✢✽✶✷✸✹✺✼✣*•∗]\s+\S+[…\.]{1,3}\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\)/iu.test(
+      line,
+    )
+  );
+}
+
 /**
  * ADR-032 Phase 3A: three-state read of the live composer. Only the LAST prompt-marker line (the
  * live composer) is inspected; transcript-history echoes above it are ignored. The hook-only send
@@ -899,12 +911,12 @@ export function runnerPaneComposerDraftState(
 ): ComposerDraftState {
   const normalizedPane = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
   if (paneShowsBusyComposer(normalizedPane)) return 'draft';
-  // Claude rotates whimsical active-turn verbs (for example `✽ Herding… (3m 12s)`). Keep this
-  // broader marker local to Claude's pre-send composer proof and to the live tail so transcript
-  // prose cannot make every runner's shared busy predicate stick indefinitely.
+  // Reuse the canonical live-progress predicate so every Claude spinner frame blocks fresh input.
+  // That predicate is tail-scoped and requires a live marker for unknown whimsical verbs, so stale
+  // transcript prose does not make the composer remain busy indefinitely.
   if (
     normalizeRunner(runnerId) === 'claude' &&
-    /(?:^|\n)\s*[·*•✶✻✽✳]\s+\S+[…\.]{1,3}\s+\(\d+[hms]/iu.test(paneTailText(normalizedPane, 12))
+    runnerPaneShowsCurrentInteractiveProgress(normalizedPane, 'claude')
   ) {
     return 'draft';
   }
@@ -1064,9 +1076,7 @@ export function runnerPaneShowsCurrentInteractiveProgress(
       // so it shares claude's matcher. Without this, codex progress is never recognized as
       // "task already running" and the readiness gate falsely times out against the timer.
       (runner === 'claude' || runner === 'codex'
-        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating)[…\.]?/i.test(
-            tail[i] ?? '',
-          ) || /running in the background|esc to interrupt/i.test(tail[i] ?? '')
+        ? lineShowsClaudeOrCodexProgress(tail[i] ?? '')
         : /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running|Starting session)\b(?:\s+\d+\s+tokens)?/i.test(
             tail[i] ?? '',
           )) ||

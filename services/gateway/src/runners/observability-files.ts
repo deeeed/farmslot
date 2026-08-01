@@ -150,8 +150,14 @@ export function deriveRunnerActivity(
     // A terminal idle hook remains useful as a low-confidence last-known state. The hook-only
     // sender may use it only after its existing live-composer guard proves the input is empty;
     // selectors continue to reject low-confidence readings everywhere else.
+    const freshestNonIdle = Math.max(
+      lastPreToolUse?.observedAt ?? Number.NEGATIVE_INFINITY,
+      lastPostToolUseAt ?? Number.NEGATIVE_INFINITY,
+      lastComposing?.observedAt ?? Number.NEGATIVE_INFINITY,
+    );
     if (
       lastIdle?.observedAt === freshest &&
+      lastIdle.observedAt > freshestNonIdle &&
       now - freshest <= OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS
     ) {
       return {

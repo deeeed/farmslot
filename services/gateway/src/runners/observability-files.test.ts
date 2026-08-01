@@ -99,6 +99,19 @@ test('deriveRunnerActivity preserves stale terminal idle as low-confidence last-
   });
 });
 
+test('deriveRunnerActivity does not recover stale idle tied with non-idle activity', () => {
+  const observedAt = NOW - 180_000;
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'Stop', observedAt },
+      { hook_event_name: 'PreToolUse', observedAt, tool_name: 'Read' },
+    ],
+    null,
+    NOW,
+  );
+  assert.equal(reading, null);
+});
+
 test('deriveRunnerActivity does not treat SubagentStop as whole-turn idle', () => {
   const reading = deriveRunnerActivity(
     [{ hook_event_name: 'SubagentStop', observedAt: NOW - 180_000 }],
