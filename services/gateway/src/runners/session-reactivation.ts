@@ -9,10 +9,12 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from './launch-command.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
+import { readLaunchAckSignalSnapshot } from './prompt-delivery-evidence.js';
 import {
   getRunnerObservability,
   normalizeRunner,
   resolveSafeSendTimeoutMs,
+  runnerHasDurablePromptHandoff,
   runnerRetainedSessionHandoff,
   type RunnerSendRecoveryContext,
   sendRunnerInstructionSafely,
@@ -35,6 +37,7 @@ export interface RunnerSessionReactivationOptions {
   safetyTier?: SafetyTier;
   runtimeDir?: string;
   taskDir?: string;
+  launchAckSignalPath?: string | null;
   timeoutMs?: number;
   recovery?: RunnerSendRecoveryContext;
 }
@@ -129,6 +132,9 @@ async function reactivateRunnerSessionWithPrompt(
       };
     }
 
+    const launchAckBaseline = options.launchAckSignalPath
+      ? await readLaunchAckSignalSnapshot(options.vars, options.launchAckSignalPath)
+      : null;
     const sentinel = await writeRunnerPromptSentinel(options.vars, options.prompt);
     const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       options.vars,
@@ -149,23 +155,25 @@ async function reactivateRunnerSessionWithPrompt(
 
     const deadline = Date.now() + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
     while (Date.now() < deadline) {
-      const accepted = await observability.promptAccepted(
+      const accepted = await runnerHasDurablePromptHandoff(
         options.vars,
         options.target,
-        sentinel.digest,
-        sentinel.sentAt - 500,
-        true,
+        runner,
         options.prompt,
+        sentinel.sentAt - 500,
+        {
+          launchAckSignalPath: options.launchAckSignalPath,
+          launchAckBaseline,
+          promptAcceptanceBaselineMs: sentinel.sentAt - 500,
+        },
       );
-      if (accepted?.value === true && accepted.confidence === 'high') {
-        return { delivered: true };
-      }
+      if (accepted.accepted) return { delivered: true };
       await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_ACCEPTANCE_POLL_MS));
     }
     return {
       delivered: false,
       disposition: 'hold',
-      reason: `Reloaded ${runner} session ${options.sessionId}, but no matching UserPromptSubmit hook arrived`,
+      reason: `Reloaded ${runner} session ${options.sessionId}, but no structured prompt or task-signal acknowledgement arrived`,
     };
   } catch (error) {
     return {

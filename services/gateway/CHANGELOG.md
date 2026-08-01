@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(self-review): deliver fix feedback through each runner's retained-session handoff capability when a persisted session is available, so an idle Claude worker with a stale composer is resumed with the fix prompt in argv instead of waiting 15 minutes on pane-retired safe-send retries.
 - fix(work-graph): reclaim `waiting` nodes when the backlog item is ready and the run/queue are gone, and retry stale completed-enqueue ledger entries for `waiting` as well as `ready`, so fail+delete no longer leaves Dispatch stuck reporting upstream wait with an empty `waitingOn`.
 - fix(ready-gate): restore finalize-step decision helper wiring and type-check review-plan decision fixtures after the dual-fix merge.
 - fix(ready-gate): honor the latest request-extra-review loop runner (e.g. codex after claude) instead of a stale pending plan or approval-only decision lookup that could re-launch the previous reviewer.

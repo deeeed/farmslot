@@ -47,9 +47,11 @@ import {
   runnerDefaultModel,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
+  runnerRetainedSessionHandoff,
   sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
+import { deliverPromptToRetainedRunnerSession } from '../runners/session-reactivation.js';
 import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
@@ -1136,9 +1138,12 @@ async function sendFeedbackToWorker(
     updateRun(runId, { activeTaskFile: fixTaskRel });
     const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
     const session = primaryTarget.session;
-    const roleWindowName =
-      getRun(runId)?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run?.flowType))
-        ?.target?.window ?? null;
+    const currentRun = getRun(runId);
+    const primaryRole = primaryRoleForFlow(run?.flowType);
+    const primaryContext = currentRun?.agentContexts?.find(
+      (ctx) => ctx.role === primaryRole || ctx.role === 'primary',
+    );
+    const roleWindowName = primaryContext?.target?.window ?? null;
     let workerTarget = await ensureTmuxTargetReadyForRelaunch(
       vars,
       session,
@@ -1169,16 +1174,45 @@ async function sendFeedbackToWorker(
       taskFile: fixTaskFile,
       taskDir,
     });
-    let sent = await sendRunnerInstructionSafely(
-      vars,
-      workerTarget,
-      normalizeRunner(run?.metrics.runner),
-      cmd,
-      'self-review',
-      undefined,
-      // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-      { recovery: { runId } },
-    );
+    const runner = normalizeRunner(run?.metrics.runner);
+    const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
+      if (
+        runnerRetainedSessionHandoff(runner) === 'resume-with-prompt' &&
+        primaryContext?.runnerSessionId &&
+        primaryContext.runnerSessionPath
+      ) {
+        const retained = await deliverPromptToRetainedRunnerSession({
+          vars,
+          target,
+          runnerId: runner,
+          sessionId: primaryContext.runnerSessionId,
+          sessionPath: primaryContext.runnerSessionPath,
+          model: run?.metrics.model,
+          prompt: cmd,
+          safetyTier: run?.safetyTier,
+          runtimeDir,
+          taskDir,
+          launchAckSignalPath: fixSignalPath,
+          recovery: { runId },
+        });
+        if (retained.delivered) return true;
+        if (retained.disposition === 'hold') {
+          console.warn(`[self-review] retained worker handoff held: ${retained.reason}`);
+          return false;
+        }
+      }
+      return sendRunnerInstructionSafely(
+        vars,
+        target,
+        runner,
+        cmd,
+        'self-review',
+        undefined,
+        // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
+        { forceBusyPoll, recovery: { runId } },
+      );
+    };
+    let sent = await deliverFixPrompt(workerTarget);
     let deliverySeenWindows: string[] = [];
     if (!sent) {
       // A busy worker is the NORMAL state of a healthy worker — it is usually
@@ -1192,24 +1226,9 @@ async function sendFeedbackToWorker(
       const retry = await retryDeferredFixDelivery({
         runId,
         target: workerTarget,
-        send: (retryTarget) =>
-          sendRunnerInstructionSafely(
-            vars,
-            retryTarget,
-            normalizeRunner(run?.metrics.runner),
-            cmd,
-            'self-review',
-            undefined,
-            // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-            { forceBusyPoll: true, recovery: { runId } },
-          ),
+        send: (retryTarget) => deliverFixPrompt(retryTarget, true),
         rediscover: (storedTarget) =>
-          rediscoverAcceptingWorkerPane(
-            vars,
-            session,
-            normalizeRunner(run?.metrics.runner),
-            storedTarget,
-          ),
+          rediscoverAcceptingWorkerPane(vars, session, runner, storedTarget),
         persistTarget: async (adopted, window) => {
           const corrected = { session, window, pane: null, target: adopted };
           await upsertAgentContext(runId, 'self-review-fix', { target: corrected });
