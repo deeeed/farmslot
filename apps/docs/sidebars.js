@@ -79,6 +79,7 @@ const sidebars = {
         'reference/template-variables.generated',
         'reference/worker-template-quality',
         'reference/worker-signal-protocol',
+        'reference/agent-runtime',
         'reference/domains',
         'reference/prepare-lifecycle',
         'reference/recipe-protocol-v1',

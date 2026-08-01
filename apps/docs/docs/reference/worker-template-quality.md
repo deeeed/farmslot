@@ -24,7 +24,7 @@ From a Farmslot checkout:
 yarn quality:worker-templates
 
 # Your pack (nested project repo or path)
-yarn quality:worker-templates projects/metamask-extension-farm
+yarn quality:worker-templates projects/my-farm
 
 # Single file
 node scripts/quality/check-worker-template-contract.mjs projects/my-farm/templates/worker/dev.md
@@ -68,11 +68,12 @@ See also [Worker signal protocol](worker-signal-protocol.md) and [Customize work
 
 | Flow            | Typical complete artifacts                                                       |
 | --------------- | -------------------------------------------------------------------------------- |
-| dev / fix-bug   | `learnings.md`, `report.md`                                                      |
+| dev / fix-bug   | `learnings.md`, `pr-description.md`                                              |
 | review-pr       | `learnings.md`, `review.md`, `line-comments.json` (when posting inline comments) |
 | pr-complete     | `learnings.md`, `comments-report.md`                                             |
 | update-branch   | `learnings.md`, `report.md`                                                      |
 | ci-fix          | `learnings.md`, `report.md`                                                      |
+| validate-dep    | `learnings.md`, `report.md`                                                      |
 | self-review     | `review-feedback.md` (reviewer flow — no learnings required)                     |
 | self-review-fix | `report.md` (reviewer-fix flow — no learnings required)                          |
 
