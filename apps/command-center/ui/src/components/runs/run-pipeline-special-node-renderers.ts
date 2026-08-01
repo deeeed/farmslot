@@ -369,11 +369,13 @@ export function renderPackageRefreshPipelineNode(
   const timing = stepTiming(n.step);
   const metaLabel = isDone
     ? 'updated'
-    : tone === 'warn'
-      ? 'rework'
-      : isFailed
-        ? 'failed'
-        : 'after requested review';
+    : isPending
+      ? 'waiting on review'
+      : tone === 'warn'
+        ? 'rework'
+        : isFailed
+          ? 'failed'
+          : 'after requested review';
   return svg`
     <g transform="translate(${n.x}, ${n.y})"
        style="opacity: ${isPending ? 0.72 : 1}; cursor: pointer"

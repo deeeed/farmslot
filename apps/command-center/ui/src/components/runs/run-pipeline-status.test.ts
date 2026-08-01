@@ -4,6 +4,8 @@ import test from 'node:test';
 import { colors } from '../../styles/theme-tokens.js';
 
 import {
+  computePackageRefreshStatus,
+  isPostGateReviewOrFixInFlight,
   isRecoverablePublishFailure,
   pipelineStepTone,
   pipelineToneColor,
@@ -118,5 +120,72 @@ test('self-review issues are orange until max retries exhausted (then red)', () 
       outputs: { verdict: 'issues', maxRetriesExhausted: true },
     }),
     'fail',
+  );
+});
+
+test('package-refresh stays pending while post-gate re-review or fix is in flight', () => {
+  const failedStatuses = ['failed', 'failed'] as const;
+  assert.equal(computePackageRefreshStatus(failedStatuses), 'failed');
+
+  // Sticky progress detail alone must NOT keep package-refresh pending after settle.
+  assert.equal(
+    computePackageRefreshStatus(failedStatuses, {
+      steps: [
+        {
+          name: 'human-gate',
+          status: 'running',
+          detail: 'Worker fix complete; running claude re-review (2)...',
+        },
+      ],
+      agentContexts: [{ id: 'rev1-claude', role: 'self-review', status: 'complete' } as never],
+      engineState: {},
+    }),
+    'failed',
+  );
+
+  assert.equal(
+    isPostGateReviewOrFixInFlight({
+      steps: [
+        {
+          name: 'human-gate',
+          status: 'running',
+          detail: 'Reviewer found 8 issue(s); worker applying fixes (1/3)...',
+        },
+      ],
+      agentContexts: [],
+      engineState: {},
+    }),
+    false,
+  );
+
+  assert.equal(
+    computePackageRefreshStatus(failedStatuses, {
+      steps: [{ name: 'human-gate', status: 'running', detail: 'waiting' }],
+      agentContexts: [{ id: 'rev1-claude', role: 'self-review', status: 'working' } as never],
+      engineState: {},
+    }),
+    'pending',
+  );
+
+  assert.equal(
+    computePackageRefreshStatus(failedStatuses, {
+      steps: [{ name: 'human-gate', status: 'running', detail: 'waiting' }],
+      agentContexts: [{ id: 'rev1-claude', role: 'self-review', status: 'launching' } as never],
+      engineState: {},
+    }),
+    'pending',
+  );
+
+  assert.equal(
+    computePackageRefreshStatus(failedStatuses, {
+      steps: [{ name: 'human-gate', status: 'running', detail: 'waiting' }],
+      agentContexts: [],
+      engineState: {
+        publishGate: {
+          pendingReviewPlan: [{ order: 1, runner: 'claude' }],
+        },
+      } as never,
+    }),
+    'pending',
   );
 });

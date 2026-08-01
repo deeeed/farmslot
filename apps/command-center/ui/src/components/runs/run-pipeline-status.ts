@@ -4,7 +4,7 @@
 // - orange (warn) = recoverable: review issues / package refresh / re-publish rework
 // - green (ok) / blue (running) / muted = success / in-flight / idle
 
-import type { RunStep, RunStepStatus } from '@farmslot/protocol';
+import type { Run, RunStep, RunStepStatus } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -61,6 +61,53 @@ export function isRecoverablePublishFailure(
   // Match gateway finalize-step / ready-gate package copy — keep tight to avoid
   // painting unrelated finalize crashes as rework orange.
   return /package changed|refresh package and re-review|publication.*mismatch/i.test(text);
+}
+
+/** Agent statuses that mean a review/fix context is still live (matches gate UI helpers). */
+const ACTIVE_REVIEW_AGENT_STATUSES = new Set(['launching', 'working', 'waiting']);
+
+/**
+ * True while a post-gate review or worker fix loop is still in flight.
+ * Used so the synthetic package-refresh node stays **pending** (not failed/red)
+ * even when earlier review loops ended in issues/failed.
+ *
+ * Prefer structured signals only (pending plan + live agents). Do **not** treat
+ * sticky human-gate progress detail alone as in-flight — gateway often leaves
+ * "running … re-review" on the step after the review completes.
+ */
+export function isPostGateReviewOrFixInFlight(
+  run: Pick<Run, 'steps' | 'agentContexts' | 'engineState'> | null | undefined,
+): boolean {
+  if (!run) return false;
+
+  const plan = run.engineState?.publishGate?.pendingReviewPlan;
+  if (Array.isArray(plan) && plan.length > 0) return true;
+
+  for (const agent of run.agentContexts ?? []) {
+    if (!ACTIVE_REVIEW_AGENT_STATUSES.has(String(agent.status ?? ''))) continue;
+    const id = String(agent.id ?? '');
+    const role = String(agent.role ?? '');
+    if (role === 'self-review' || role === 'self-review-fix') return true;
+    if (/^rev/i.test(id) || /review/i.test(id)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Synthetic package-refresh step status for canvas + mini.
+ * Prefer pending while any review/fix is in flight; only then mirror last review.
+ */
+export function computePackageRefreshStatus(
+  reviewStepStatuses: readonly RunStepStatus[],
+  run?: Pick<Run, 'steps' | 'agentContexts' | 'engineState'> | null,
+): RunStepStatus {
+  if (reviewStepStatuses.some((status) => status === 'running' || status === 'pending')) {
+    return 'pending';
+  }
+  if (isPostGateReviewOrFixInFlight(run)) return 'pending';
+  const last = reviewStepStatuses.at(-1);
+  return last === 'failed' ? 'failed' : 'done';
 }
 
 /**
