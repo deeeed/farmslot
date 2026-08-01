@@ -20,6 +20,14 @@ import type { GatewayProfile } from './gateway-profiles';
 
 export const isStoreScreenshotMode = process.env.EXPO_PUBLIC_STORE_SCREENSHOTS === '1';
 
+/**
+ * Quiet capture / recipe mode: keep the real gateway connection, but do not
+ * show first-run product chrome (What's New, App Updates, notification permission
+ * prompt). Set via EXPO_PUBLIC_UX_CAPTURE=1 or EXPO_PUBLIC_STORE_SCREENSHOTS=1.
+ */
+export const suppressFirstRunOverlays =
+  isStoreScreenshotMode || process.env.EXPO_PUBLIC_UX_CAPTURE === '1';
+
 const DEMO_PROFILE: GatewayProfile = {
   id: 'store-demo-gateway',
   name: 'Demo Gateway',

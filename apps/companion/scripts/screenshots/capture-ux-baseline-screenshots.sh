@@ -218,6 +218,7 @@ start_metro() {
       METRO_PORT="${METRO_PORT}" \
       RCT_METRO_PORT="${METRO_PORT}" \
       EXPO_PUBLIC_STORE_SCREENSHOTS=1 \
+      EXPO_PUBLIC_UX_CAPTURE=1 \
       yarn expo start --dev-client --port "${METRO_PORT}" --localhost
   ) >"${log}" 2>&1 &
   METRO_PID=$!

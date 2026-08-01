@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 
 import { getCompanionEnvironment } from '../lib/app-environment';
 import { COMPANION_RELEASE_NOTES, isVersionNewer } from '../lib/release-notes';
+import { suppressFirstRunOverlays } from '../lib/store-screenshot-mode';
 
 import { WhatsNewModal } from './WhatsNewModal';
 
@@ -12,6 +13,7 @@ export const WhatsNewMonitor = React.memo(function WhatsNewMonitor() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    if (suppressFirstRunOverlays) return;
     let disposed = false;
     const evaluate = async () => {
       const notes = COMPANION_RELEASE_NOTES;

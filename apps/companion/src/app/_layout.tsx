@@ -16,7 +16,11 @@ import { GlobalFilterCoordinator } from '../components/GlobalFilterCoordinator';
 import { WhatsNewMonitor } from '../components/WhatsNewMonitor';
 import { RecipeBridgeProvider } from '../farmslot';
 import { initNotifications } from '../lib/notifications';
-import { isStoreScreenshotMode, seedStoreScreenshotMode } from '../lib/store-screenshot-mode';
+import {
+  isStoreScreenshotMode,
+  seedStoreScreenshotMode,
+  suppressFirstRunOverlays,
+} from '../lib/store-screenshot-mode';
 import { colors } from '../lib/theme';
 import { buildWorkspaceCopilotDraftForRoute } from '../lib/workspace-copilot';
 import { useConnectionStore } from '../store/connection';
@@ -36,7 +40,10 @@ export default function RootLayout() {
     if (isStoreScreenshotMode) {
       seedStoreScreenshotMode();
     } else {
-      initNotifications();
+      // UX capture keeps live gateway data but skips the OS notification prompt.
+      if (!suppressFirstRunOverlays) {
+        initNotifications();
+      }
       init();
     }
     void initTerminalPrefs();
@@ -47,7 +54,7 @@ export default function RootLayout() {
       <RecipeBridgeProvider bridgeName="@farmslot/companion">
         <StatusBar style="light" />
         <GlobalFilterCoordinator />
-        {!isStoreScreenshotMode ? (
+        {!suppressFirstRunOverlays ? (
           <>
             <WhatsNewMonitor />
             <AppUpdatesMonitor />
