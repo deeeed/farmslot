@@ -7,7 +7,6 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - feat(recipe): validate structured run summaries and failure attribution when packaging recipe evidence.
 - fix(runners): recover prompt delivery for retained Claude workers after a recent terminal idle signal ages past hook freshness, bounded by a 30-minute window and an empty live composer.
 - fix(observability): preserve notification subtypes in installed hooks and stop treating `SubagentStop` as whole-turn idle.
-- fix(quality): execute module-mock test files without silently skipping their `node:test` declarations.
 - fix(run-engine): honor an update-branch worker's persisted `needsSelfReview: false` signal on remote slots instead of defaulting to an unnecessary review when the signal file is not local to the gateway.
 - fix(dispatch): bind fresh orchestration workers to the canonical `worker` tmux session anchor, reuse a chained run's persisted parent-worker target, and recognize legacy `review-fix[-N]` tabs during terminal slot cleanup so retries cannot inherit stale reviewer panes while the empty anchor remains available.
 - fix(work-graph): preserve durable completed-run outcomes when historical reconciliation reveals work that began before a start dependency. Scheduler-authorized work still surfaces prerequisite regressions.

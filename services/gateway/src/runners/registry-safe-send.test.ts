@@ -26,9 +26,13 @@ let promptAcceptedReading: ObservabilityReading<boolean> | null = {
   confidence: 'high',
   observedAt: Date.now(),
 };
-let promptAcceptedResolver: ((sinceMs: number) => ObservabilityReading<boolean> | null) | null =
-  null;
-let promptAcceptedSinceValues: number[] = [];
+let promptDigestAcceptedReading: ObservabilityReading<boolean> | null = {
+  value: false,
+  source: 'hook',
+  confidence: 'medium',
+  observedAt: Date.now(),
+};
+let promptDigestAcceptedSinceValues: number[] = [];
 
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
@@ -52,10 +56,19 @@ mock.module('./claude-observability.js', {
       async lastTurnCompletedAt() {
         return null;
       },
-      async promptAccepted(_vars: SlotVars, _target: string, _digest: string, sinceMs: number) {
+      async promptAccepted() {
         callOrder.push('obs:promptAccepted');
-        promptAcceptedSinceValues.push(sinceMs);
-        return promptAcceptedResolver?.(sinceMs) ?? promptAcceptedReading;
+        return promptAcceptedReading;
+      },
+      async promptDigestAccepted(
+        _vars: SlotVars,
+        _target: string,
+        _digest: string,
+        sinceMs: number,
+      ) {
+        callOrder.push('obs:promptDigestAccepted');
+        promptDigestAcceptedSinceValues.push(sinceMs);
+        return promptDigestAcceptedReading;
       },
     },
   },
@@ -504,7 +517,7 @@ test('claude (hook-only) stale terminal idle sends only after proving the compos
 test('claude (hook-only) stale terminal idle checks the full recovery window for an accepted prompt', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
-  promptAcceptedSinceValues = [];
+  promptDigestAcceptedSinceValues = [];
   const acceptedAt = Date.now() - 5 * 60_000;
   activityReading = {
     value: 'idle',
@@ -513,10 +526,12 @@ test('claude (hook-only) stale terminal idle checks the full recovery window for
     observedAt: acceptedAt + 1_000,
     evidence: 'stale-terminal-idle',
   };
-  promptAcceptedResolver = (sinceMs) =>
-    sinceMs <= acceptedAt
-      ? { value: true, source: 'hook', confidence: 'high', observedAt: acceptedAt }
-      : { value: false, source: 'hook', confidence: 'medium', observedAt: Date.now() };
+  promptDigestAcceptedReading = {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: acceptedAt,
+  };
   paneText = '❯\nctx:12%\n';
 
   try {
@@ -525,10 +540,15 @@ test('claude (hook-only) stale terminal idle checks the full recovery window for
     });
     assert.equal(sent, true);
     assert.equal(callOrder.indexOf('tmux:send-literal'), -1);
-    assert.ok(promptAcceptedSinceValues.length >= 2);
-    assert.ok(Math.min(...promptAcceptedSinceValues) <= acceptedAt);
+    assert.equal(promptDigestAcceptedSinceValues.length, 1);
+    assert.ok(promptDigestAcceptedSinceValues[0]! <= acceptedAt);
   } finally {
-    promptAcceptedResolver = null;
+    promptDigestAcceptedReading = {
+      value: false,
+      source: 'hook',
+      confidence: 'medium',
+      observedAt: Date.now(),
+    };
   }
 });
 

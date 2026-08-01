@@ -891,7 +891,7 @@ function lineShowsClaudeOrCodexProgress(line: string): boolean {
 }
 
 function lineShowsClaudeSpinnerFrame(line: string): boolean {
-  return /^\s*[·✻✢✽✶✷✸✹✺✼✣*•∗]\s+\S+[…\.]{1,3}(?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*$/iu.test(
+  return /^\s*[·✻✢✽✶✷✸✹✺✼✣*•∗]\s+[^\n(]+?[…\.]{1,3}(?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*$/iu.test(
     line,
   );
 }
@@ -922,7 +922,7 @@ export function runnerPaneComposerDraftState(
   // lines are not proof that Claude's live composer is occupied.
   if (
     normalizeRunner(runnerId) === 'claude' &&
-    paneTailText(normalizedPane, 12).split('\n').some(lineShowsClaudeSpinnerFrame)
+    paneTailText(normalizedPane, 20).split('\n').some(lineShowsClaudeSpinnerFrame)
   ) {
     return 'draft';
   }
@@ -1849,11 +1849,13 @@ async function sendRunnerInstructionHookOnly(
       activity?.value === 'idle' &&
       activity.confidence === 'low' &&
       activity.evidence === 'stale-terminal-idle' &&
+      // Re-check at the decision point so a reading at the boundary cannot age past the recovery
+      // window while the preceding digest lookup is in flight.
       Date.now() - activity.observedAt <= OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS;
     if (staleTerminalIdle && !checkedStalePromptHistory) {
       let historicalPromptReading: ObservabilityReading<boolean> | null = null;
       try {
-        historicalPromptReading = await observability.promptAccepted(
+        historicalPromptReading = await observability.promptDigestAccepted(
           vars,
           target,
           runnerPromptDigest(message),
@@ -1866,8 +1868,7 @@ async function sendRunnerInstructionHookOnly(
         );
       }
       const historicalReadingAuthoritative =
-        isObservabilityReadingAuthoritative(historicalPromptReading) &&
-        (historicalPromptReading.value === false || historicalPromptReading.confidence === 'high');
+        isObservabilityReadingAuthoritative(historicalPromptReading);
       if (!historicalReadingAuthoritative) {
         sawHookDegraded = true;
         await recordObservabilityDegradedDecision(

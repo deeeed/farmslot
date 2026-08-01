@@ -66,4 +66,12 @@ export interface RunnerObservability {
     // Phase-2 flag-off behavior byte-identical.
     paneRetired?: boolean,
   ): Promise<ObservabilityReading<boolean> | null>;
+  /** Exact digest-only lookup; never substitutes generic turn-start evidence. */
+  promptDigestAccepted(
+    vars: SlotVars,
+    target: string,
+    promptDigest: string,
+    sinceMs: number,
+    paneRetired?: boolean,
+  ): Promise<ObservabilityReading<boolean> | null>;
 }

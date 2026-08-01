@@ -1830,7 +1830,7 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
     );
     assert.equal(runnerPaneComposerDraftState('✽ Herding… (3m 12s)\n❯\n', 'codex'), 'empty');
     const staleScrollback = `✽ Herding… (3m 12s)\n${Array.from(
-      { length: 13 },
+      { length: 21 },
       (_, index) => `completed line ${index}`,
     ).join('\n')}\n❯\n`;
     assert.equal(runnerPaneComposerDraftState(staleScrollback, 'claude'), 'empty');
@@ -1845,6 +1845,8 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
       '✼ Herding… (12s · esc to interrupt)',
       '✣ Herding… (12s · esc to interrupt)',
       '✻ Reading…',
+      '✽ Compacting conversation…',
+      '✻ Herding files… (12s · esc to interrupt)',
     ]) {
       assert.equal(runnerPaneComposerDraftState(`${spinner}\n❯\n`, 'claude'), 'draft', spinner);
     }

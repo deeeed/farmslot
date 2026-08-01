@@ -451,3 +451,55 @@ export function promptAcceptedFromHooks(
     observedAt: latest.observedAt,
   };
 }
+
+/**
+ * Exact digest lookup for long-window idempotency checks.
+ *
+ * Unlike {@link promptAcceptedFromHooks}, this never substitutes generic turn-start evidence for
+ * a digest match. Any scoped hook inside the window proves the stream is readable; without a
+ * matching UserPromptSubmit record, the result is authoritative false.
+ */
+export function promptDigestAcceptedFromHooks(
+  hooks: readonly HookRecord[],
+  promptDigest: string,
+  sinceMs: number,
+  now = Date.now(),
+  paneId?: string | null,
+  paneRetired = false,
+): ObservabilityReading<boolean> | null {
+  const scoped = filterHooksByPane(hooks, paneId);
+  let latestObservedAt: number | null = null;
+  let latestMatchAt: number | null = null;
+  for (const record of scoped) {
+    const observedAt = observedAtFromRecord(record);
+    if (observedAt == null || observedAt < sinceMs) continue;
+    if (latestObservedAt == null || observedAt > latestObservedAt) latestObservedAt = observedAt;
+    if (hookEventName(record) !== 'UserPromptSubmit') continue;
+    const digest = record.runnerPromptDigest;
+    if (
+      typeof digest === 'string' &&
+      (digest === promptDigest || digest.startsWith(promptDigest)) &&
+      (latestMatchAt == null || observedAt > latestMatchAt)
+    ) {
+      latestMatchAt = observedAt;
+    }
+  }
+  if (latestMatchAt != null) {
+    return {
+      value: true,
+      source: 'hook',
+      confidence: 'high',
+      observedAt: latestMatchAt,
+    };
+  }
+  if (latestObservedAt != null) {
+    return {
+      value: false,
+      source: 'hook',
+      confidence: 'medium',
+      observedAt: latestObservedAt,
+    };
+  }
+  if (paneRetired || now < sinceMs) return null;
+  return { value: false, source: 'hook', confidence: 'medium', observedAt: now };
+}

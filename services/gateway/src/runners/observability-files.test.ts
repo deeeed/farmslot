@@ -10,6 +10,7 @@ import {
   lastTurnCompletedFromHooks,
   parseHookJsonl,
   promptAcceptedFromHooks,
+  promptDigestAcceptedFromHooks,
   promptTurnStartedFromHooks,
   runnerActivityIsBusy,
 } from './observability-files.js';
@@ -225,6 +226,54 @@ test('promptAcceptedFromHooks matches digest after grace window', () => {
     confidence: 'high',
     observedAt: NOW - 1_000,
   });
+});
+
+test('promptDigestAcceptedFromHooks never substitutes generic turn-start evidence', () => {
+  const since = NOW - 30 * 60_000;
+  const hooks = [
+    {
+      hook_event_name: 'UserPromptSubmit',
+      observedAt: NOW - 45 * 60_000,
+      runnerPromptDigest: 'other-digest',
+    },
+    { hook_event_name: 'PreToolUse', observedAt: NOW - 20 * 60_000, tool_name: 'Read' },
+    { hook_event_name: 'Stop', observedAt: NOW - 10 * 60_000 },
+  ];
+  assert.deepEqual(promptDigestAcceptedFromHooks(hooks, 'wanted-digest', since, NOW), {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: NOW - 10 * 60_000,
+  });
+});
+
+test('promptDigestAcceptedFromHooks distinguishes another digest from an exact match', () => {
+  const since = NOW - 30 * 60_000;
+  const other = {
+    hook_event_name: 'UserPromptSubmit',
+    observedAt: NOW - 12 * 60_000,
+    runnerPromptDigest: 'other-digest',
+  };
+  assert.deepEqual(promptDigestAcceptedFromHooks([other], 'wanted-digest', since, NOW), {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: other.observedAt,
+  });
+  const matching = { ...other, runnerPromptDigest: 'wanted-digest', observedAt: NOW - 11 * 60_000 };
+  assert.deepEqual(promptDigestAcceptedFromHooks([other, matching], 'wanted-digest', since, NOW), {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: matching.observedAt,
+  });
+});
+
+test('promptDigestAcceptedFromHooks keeps an absent pane-retired stream non-authoritative', () => {
+  assert.equal(
+    promptDigestAcceptedFromHooks([], 'wanted-digest', NOW - 30 * 60_000, NOW, undefined, true),
+    null,
+  );
 });
 
 test('filterHooksByPane scopes hook records to target pane', () => {

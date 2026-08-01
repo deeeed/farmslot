@@ -10,6 +10,7 @@ import {
   parseHookJsonl,
   parseStatuslineJson,
   promptAcceptedFromHooks,
+  promptDigestAcceptedFromHooks,
   readRunnerObservabilityFiles,
 } from './observability-files.js';
 import type { RunnerObservability, SlotVars } from './observability-types.js';
@@ -50,6 +51,18 @@ export const claudeHookObservability: RunnerObservability = {
       promptDigest,
       sinceMs,
       500,
+      Date.now(),
+      undefined,
+      paneRetired,
+    );
+  },
+
+  async promptDigestAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {
+    const { hooks } = await loadObservabilitySnapshot(vars, target);
+    return promptDigestAcceptedFromHooks(
+      hooks,
+      promptDigest,
+      sinceMs,
       Date.now(),
       undefined,
       paneRetired,
