@@ -2,10 +2,12 @@
 
 ## Unreleased
 
-- fix(recipe): pass structured run summaries into recipe artifact-package validation.
+## 0.5.0 - 2026-08-01
+
+- **BREAKING:** Require structured run summaries when validating recipe artifact packages.
 - fix(workers): resolve terminal artifact contracts by checklist so simultaneous worker, reviewer, review-fix, and CI-fix contexts cannot overwrite one shared contract.
 - fix(workers): validate terminal artifact dispositions and keep nested review checklist progress scoped to the active worker context.
-- Surface optional execution-template descriptions for selection guidance.
+- feat(execution-templates): surface optional descriptions for selection guidance.
 
 ## 0.4.0 - 2026-07-26
 
