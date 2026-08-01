@@ -4,8 +4,11 @@ import test from 'node:test';
 import {
   automaticPublicationReviewPlan,
   humanGateReviewDepth,
+  latestResolvedHumanGateReviewRequestDecision,
   recoveryReviewPlanForActiveFix,
   remainingExplicitReviewPlan,
+  resolveHumanGateReviewExecutionPlan,
+  reviewPlanFromSelection,
 } from './review-plan.js';
 
 test('automatic publication reviews materialize the policy as static independent work', () => {
@@ -146,6 +149,106 @@ test('explicit publication review recovery preserves a missing runner-specific p
     ),
     plan,
   );
+});
+
+test('reviewPlanFromSelection honors explicit loop runners', () => {
+  assert.deepEqual(
+    reviewPlanFromSelection({
+      reviewRequest: {
+        extraLoopsRequested: 1,
+        requireCrossRunner: true,
+        loops: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
+      },
+    }),
+    [{ order: 1, runner: 'codex', model: null, validationDepth: 'static-code' }],
+  );
+});
+
+test('resolveHumanGateReviewExecutionPlan prefers latest codex request over stale claude pending', () => {
+  // Reproduction of run 71803bd2: decision[1] requested codex while pending
+  // still held claude from the first request / wrong plan preference.
+  const stalePending = [
+    { order: 1, runner: 'claude' as const, validationDepth: 'static-code' as const },
+  ];
+  const decisions = [
+    {
+      id: 'd0',
+      type: 'engine_human_gate',
+      title: 'first',
+      description: '',
+      actions: [],
+      createdAt: '2026-08-01T13:41:00.000Z',
+      resolvedAt: '2026-08-01T13:41:47.116Z',
+      resolvedAction: 'request-extra-review',
+      selectionData: {
+        reviewRequest: {
+          extraLoopsRequested: 1,
+          requireCrossRunner: true,
+          loops: [{ order: 1, runner: 'claude', validationDepth: 'static-code' }],
+        },
+      },
+      context: { reviewRequestConsumedAt: '2026-08-01T13:41:47.119Z' },
+    },
+    {
+      id: 'd1',
+      type: 'engine_human_gate',
+      title: 'second',
+      description: '',
+      actions: [],
+      createdAt: '2026-08-01T14:07:13.000Z',
+      resolvedAt: '2026-08-01T14:19:17.296Z',
+      resolvedAction: 'request-extra-review',
+      selectionData: {
+        reviewRequest: {
+          extraLoopsRequested: 1,
+          requireCrossRunner: true,
+          loops: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
+        },
+      },
+    },
+  ] as const;
+
+  const plan = resolveHumanGateReviewExecutionPlan({
+    gateAction: 'request-extra-review',
+    pendingPlan: stalePending,
+    decisions: [...decisions],
+  });
+  assert.equal(plan[0]?.runner, 'codex', 'second request must launch codex, not stale claude');
+  assert.deepEqual(plan, [
+    { order: 1, runner: 'codex', model: null, validationDepth: 'static-code' },
+  ]);
+
+  // Old buggy path: prefer pending when non-empty, ignore decision selection.
+  const buggyPlan = stalePending.length
+    ? stalePending
+    : reviewPlanFromSelection(
+        latestResolvedHumanGateReviewRequestDecision([...decisions])?.selectionData,
+      );
+  assert.equal(buggyPlan[0]?.runner, 'claude', 'documents the pre-fix failure mode');
+});
+
+test('resolveHumanGateReviewExecutionPlan falls back to pending when selection has no explicit runner', () => {
+  const pending = [{ order: 1, runner: 'cursor' as const, validationDepth: 'full-live' as const }];
+  const plan = resolveHumanGateReviewExecutionPlan({
+    gateAction: 'request-extra-review',
+    pendingPlan: pending,
+    decisions: [
+      {
+        id: 'd0',
+        type: 'engine_human_gate',
+        title: 'count-only',
+        description: '',
+        actions: [],
+        createdAt: '2026-08-01T13:00:00.000Z',
+        resolvedAt: '2026-08-01T13:01:00.000Z',
+        resolvedAction: 'request-extra-review',
+        selectionData: {
+          reviewRequest: { extraLoopsRequested: 1, requireCrossRunner: true },
+        },
+      },
+    ],
+  });
+  assert.deepEqual(plan, pending);
 });
 
 test('humanGateReviewDepth makes explicit gate review requests temporary but required', () => {

@@ -173,6 +173,59 @@ export function humanGateReviewRequestFromDecision(
     : {};
 }
 
+const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set([
+  'request-extra-review',
+  'request-cross-runner-review',
+]);
+
+/**
+ * Latest resolved human-gate decision whose action was a review request
+ * (not an approval). Used when building the executable review plan so a
+ * second request-extra-review with a different runner is not ignored in
+ * favor of a stale pending plan or an approval-only lookup.
+ */
+export function latestResolvedHumanGateReviewRequestDecision(
+  decisions: readonly RunDecision[],
+): RunDecision | undefined {
+  return decisions
+    .filter(
+      (decision) =>
+        decision.type === 'engine_human_gate' &&
+        !!decision.resolvedAt &&
+        HUMAN_GATE_REVIEW_REQUEST_ACTIONS.has(decision.resolvedAction ?? ''),
+    )
+    .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0];
+}
+
+/**
+ * Choose the plan the publish-gate loop will execute after a human-gate
+ * review request.
+ *
+ * Live bug (MANUAL-000087 / run 71803bd2): operator requested codex on the
+ * second request-extra-review, but the loop preferred a stale pending plan
+ * (claude) and/or fell back via approval-only decision lookup, so Claude
+ * launched. The latest review-request decision's selectionData is
+ * authoritative when it carries explicit loops.
+ */
+export function resolveHumanGateReviewExecutionPlan(input: {
+  gateAction: string;
+  pendingPlan: readonly ReviewLoopRequest[];
+  decisions: readonly RunDecision[];
+}): ReviewLoopRequest[] {
+  const { gateAction, pendingPlan, decisions } = input;
+  if (!HUMAN_GATE_REVIEW_REQUEST_ACTIONS.has(gateAction)) {
+    return pendingPlan.length ? [...pendingPlan] : [];
+  }
+
+  const latestRequest = latestResolvedHumanGateReviewRequestDecision(decisions);
+  const fromDecision = reviewPlanFromSelection(latestRequest?.selectionData);
+  const decisionHasExplicitRunner = fromDecision.some((loop) => effectiveReviewRunner(loop));
+  if (decisionHasExplicitRunner) return fromDecision;
+
+  if (pendingPlan.length > 0) return [...pendingPlan];
+  return fromDecision;
+}
+
 const REVIEW_RUNNERS = new Set<ReviewRunnerId>(['claude', 'codex', 'cursor', 'grok', 'opencode']);
 
 function contextTimestamp(context: AgentContext): number {
