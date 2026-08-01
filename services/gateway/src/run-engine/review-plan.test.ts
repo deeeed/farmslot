@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { RunDecision } from '@farmslot/protocol';
+
 import {
   automaticPublicationReviewPlan,
   humanGateReviewDepth,
@@ -170,7 +172,7 @@ test('resolveHumanGateReviewExecutionPlan prefers latest codex request over stal
   const stalePending = [
     { order: 1, runner: 'claude' as const, validationDepth: 'static-code' as const },
   ];
-  const decisions = [
+  const decisions: RunDecision[] = [
     {
       id: 'd0',
       type: 'engine_human_gate',
@@ -206,12 +208,12 @@ test('resolveHumanGateReviewExecutionPlan prefers latest codex request over stal
         },
       },
     },
-  ] as const;
+  ];
 
   const plan = resolveHumanGateReviewExecutionPlan({
     gateAction: 'request-extra-review',
     pendingPlan: stalePending,
-    decisions: [...decisions],
+    decisions,
   });
   assert.equal(plan[0]?.runner, 'codex', 'second request must launch codex, not stale claude');
   assert.deepEqual(plan, [
@@ -222,31 +224,32 @@ test('resolveHumanGateReviewExecutionPlan prefers latest codex request over stal
   const buggyPlan = stalePending.length
     ? stalePending
     : reviewPlanFromSelection(
-        latestResolvedHumanGateReviewRequestDecision([...decisions])?.selectionData,
+        latestResolvedHumanGateReviewRequestDecision(decisions)?.selectionData,
       );
   assert.equal(buggyPlan[0]?.runner, 'claude', 'documents the pre-fix failure mode');
 });
 
 test('resolveHumanGateReviewExecutionPlan falls back to pending when selection has no explicit runner', () => {
   const pending = [{ order: 1, runner: 'cursor' as const, validationDepth: 'full-live' as const }];
+  const decisions: RunDecision[] = [
+    {
+      id: 'd0',
+      type: 'engine_human_gate',
+      title: 'count-only',
+      description: '',
+      actions: [],
+      createdAt: '2026-08-01T13:00:00.000Z',
+      resolvedAt: '2026-08-01T13:01:00.000Z',
+      resolvedAction: 'request-extra-review',
+      selectionData: {
+        reviewRequest: { extraLoopsRequested: 1, requireCrossRunner: true },
+      },
+    },
+  ];
   const plan = resolveHumanGateReviewExecutionPlan({
     gateAction: 'request-extra-review',
     pendingPlan: pending,
-    decisions: [
-      {
-        id: 'd0',
-        type: 'engine_human_gate',
-        title: 'count-only',
-        description: '',
-        actions: [],
-        createdAt: '2026-08-01T13:00:00.000Z',
-        resolvedAt: '2026-08-01T13:01:00.000Z',
-        resolvedAction: 'request-extra-review',
-        selectionData: {
-          reviewRequest: { extraLoopsRequested: 1, requireCrossRunner: true },
-        },
-      },
-    ],
+    decisions,
   });
   assert.deepEqual(plan, pending);
 });
