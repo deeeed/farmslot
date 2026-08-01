@@ -72,6 +72,16 @@ import {
 } from '../shared/planning-controls.js';
 import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
+import {
+  applyWorkInventorySort,
+  nextSortState,
+  parseWorkInventorySort,
+  renderWorkInventoryRow,
+  renderWorkInventoryTable,
+  renderWorkInventoryTableHead,
+  type WorkInventoryColumnDef,
+  workInventoryTableStyles,
+} from '../shared/work-inventory-table.js';
 import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
 
 import {
@@ -107,6 +117,34 @@ const BACKLOG_DISPATCH_CONFIG_PARAM = 'dispatchConfig';
 const BACKLOG_SPEC_PARAM = 'spec';
 const BACKLOG_SORT_PARAM = 'sort';
 const BACKLOG_SORT_DIRECTION_PARAM = 'direction';
+
+const BACKLOG_INVENTORY_COLUMNS: WorkInventoryColumnDef<BacklogSortKey>[] = [
+  { key: 'status', label: 'Status', width: '92px', testId: 'backlog-sort-status' },
+  { key: 'flow', label: 'Flow', width: '58px', testId: 'backlog-sort-flow' },
+  {
+    key: 'project',
+    label: 'Project',
+    width: 'minmax(130px, 180px)',
+    testId: 'backlog-sort-project',
+  },
+  { key: 'ref', label: 'Ref', width: '112px', testId: 'backlog-sort-ref' },
+  { key: 'title', label: 'Title', width: 'minmax(220px, 1fr)', testId: 'backlog-sort-title' },
+  {
+    key: 'activity',
+    label: 'Active run / slot',
+    width: '210px',
+    testId: 'backlog-sort-activity',
+  },
+  { key: 'updated', label: 'Updated', width: '86px', testId: 'backlog-sort-updated' },
+];
+
+const BACKLOG_SORT_URL = {
+  sortParam: BACKLOG_SORT_PARAM,
+  directionParam: BACKLOG_SORT_DIRECTION_PARAM,
+  validKeys: BACKLOG_SORT_KEYS,
+  defaultKey: 'activity' as const,
+  defaultDirection: 'desc' as const,
+};
 const NEW_PLAN_KEY = '__new__';
 const AUTO_DISPATCH_TOOLTIP =
   'Auto-dispatch enqueues ready backlog items only when the item has auto-dispatch enabled, the project allows it, and explicit allowed slots are set.';
@@ -272,6 +310,7 @@ export class BacklogPanel extends LitElement {
     planningBadgeStyles,
     flowBadgeStyles,
     planningChoiceStyles,
+    workInventoryTableStyles,
     css`
       :host {
         box-sizing: border-box;
@@ -1121,11 +1160,9 @@ export class BacklogPanel extends LitElement {
     this._dispatchConfigOpen =
       Boolean(this._selectedItemId) && params.get(BACKLOG_DISPATCH_CONFIG_PARAM) === '1';
     this._specViewerOpen = Boolean(this._selectedItemId) && params.get(BACKLOG_SPEC_PARAM) === '1';
-    const sortKey = params.get(BACKLOG_SORT_PARAM);
-    this._sortKey = BACKLOG_SORT_KEYS.includes(sortKey as BacklogSortKey)
-      ? (sortKey as BacklogSortKey)
-      : 'activity';
-    this._sortDirection = params.get(BACKLOG_SORT_DIRECTION_PARAM) === 'asc' ? 'asc' : 'desc';
+    const sort = parseWorkInventorySort(params, BACKLOG_SORT_URL);
+    this._sortKey = sort.key;
+    this._sortDirection = sort.direction;
     if (this._slotSelectorOpen) this._createPanelOpen = true;
   }
 
@@ -1156,10 +1193,11 @@ export class BacklogPanel extends LitElement {
     }
     if (this._specViewerOpen && this._selectedItemId) params.set(BACKLOG_SPEC_PARAM, '1');
     else params.delete(BACKLOG_SPEC_PARAM);
-    if (this._sortKey === 'activity') params.delete(BACKLOG_SORT_PARAM);
-    else params.set(BACKLOG_SORT_PARAM, this._sortKey);
-    if (this._sortDirection === 'desc') params.delete(BACKLOG_SORT_DIRECTION_PARAM);
-    else params.set(BACKLOG_SORT_DIRECTION_PARAM, this._sortDirection);
+    applyWorkInventorySort(
+      params,
+      { key: this._sortKey, direction: this._sortDirection },
+      BACKLOG_SORT_URL,
+    );
     const next = buildHash(route, params);
     if (location.hash !== next) history.replaceState(null, '', next);
   }
@@ -1322,27 +1360,12 @@ export class BacklogPanel extends LitElement {
   }
 
   private _setSort(key: BacklogSortKey): void {
-    if (this._sortKey === key) {
-      this._sortDirection = this._sortDirection === 'asc' ? 'desc' : 'asc';
-      this._writeUrlState();
-      return;
-    }
-    this._sortKey = key;
-    this._sortDirection = key === 'activity' || key === 'updated' ? 'desc' : 'asc';
+    const next = nextSortState({ key: this._sortKey, direction: this._sortDirection }, key, (k) =>
+      k === 'activity' || k === 'updated' ? 'desc' : 'asc',
+    );
+    this._sortKey = next.key;
+    this._sortDirection = next.direction;
     this._writeUrlState();
-  }
-
-  private _renderSortHeader(label: string, key: BacklogSortKey) {
-    const active = this._sortKey === key;
-    const arrow = active ? (this._sortDirection === 'asc' ? ' ↑' : ' ↓') : '';
-    return html`<button
-      class=${active ? 'active' : ''}
-      type="button"
-      data-testid=${`backlog-sort-${key}`}
-      @click=${() => this._setSort(key)}
-    >
-      ${label}${arrow}
-    </button>`;
   }
 
   private get _selectedItem(): BacklogItem | null {
@@ -2490,49 +2513,46 @@ export class BacklogPanel extends LitElement {
       activeRun && displayedFlow !== item.flowType
         ? `Active run flow: ${displayedFlow}; backlog flow: ${item.flowType}`
         : undefined;
-    return html`<div
-      class="compact-row ${selected ? 'selected' : ''} ${item.lastDispatchError ? 'has-error' : ''}"
-      role="button"
-      tabindex="0"
-      @click=${() => this._selectItem(item)}
-      @keydown=${(event: KeyboardEvent) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          this._selectItem(item);
-        }
-      }}
-    >
-      ${renderPlanningBadge(displayedStatus, tone)}
-      <span data-testid="backlog-flow"
-        >${renderFlowBadge(displayedFlow, flowTitle ? { title: flowTitle } : {})}</span
-      >
-      <span data-testid="backlog-project">${renderPlanningBadge(item.project)}</span>
-      <span class="item-ref" title=${item.sourceRef}>${item.sourceRef}</span>
-      <div class="title" title=${item.title}>${item.title}</div>
-      ${activeRun
-        ? html`<a
-            class="activity-link"
-            data-testid="backlog-active-run"
-            href=${`#run/${encodeURIComponent(activeRun.id)}`}
-            title=${`${activeRun.status} on ${activeRun.slotId ?? 'unassigned slot'}`}
-            @click=${(event: Event) => event.stopPropagation()}
-          >
-            ${renderPlanningBadge(activeRun.status, 'active')}
-            <span class="activity-slot">${activeRun.slotId ?? activeRun.id.slice(0, 8)}</span>
-          </a>`
-        : html`<span class="no-activity">—</span>`}
-      <span class="updated-cell" title=${item.updatedAt}>${item.updatedAt.slice(0, 10)}</span>
-    </div>`;
+    return renderWorkInventoryRow({
+      row: {
+        id: item.id,
+        selected,
+        className: item.lastDispatchError ? 'has-error' : '',
+        testId: `backlog-row-${item.id}`,
+        onActivate: () => this._selectItem(item),
+      },
+      cells: html`
+        ${renderPlanningBadge(displayedStatus, tone)}
+        <span data-testid="backlog-flow"
+          >${renderFlowBadge(displayedFlow, flowTitle ? { title: flowTitle } : {})}</span
+        >
+        <span data-testid="backlog-project">${renderPlanningBadge(item.project)}</span>
+        <span class="item-ref" title=${item.sourceRef}>${item.sourceRef}</span>
+        <div class="title" title=${item.title}>${item.title}</div>
+        ${activeRun
+          ? html`<a
+              class="activity-link"
+              data-testid="backlog-active-run"
+              href=${`#run/${encodeURIComponent(activeRun.id)}`}
+              title=${`${activeRun.status} on ${activeRun.slotId ?? 'unassigned slot'}`}
+              @click=${(event: Event) => event.stopPropagation()}
+            >
+              ${renderPlanningBadge(activeRun.status, 'active')}
+              <span class="activity-slot">${activeRun.slotId ?? activeRun.id.slice(0, 8)}</span>
+            </a>`
+          : html`<span class="no-activity">—</span>`}
+        <span class="updated-cell" title=${item.updatedAt}>${item.updatedAt.slice(0, 10)}</span>
+      `,
+    });
   }
 
   private _renderTableHead() {
-    return html`<div class="table-head" role="row">
-      ${this._renderSortHeader('Status', 'status')} ${this._renderSortHeader('Flow', 'flow')}
-      ${this._renderSortHeader('Project', 'project')} ${this._renderSortHeader('Ref', 'ref')}
-      ${this._renderSortHeader('Title', 'title')}
-      ${this._renderSortHeader('Active run / slot', 'activity')}
-      ${this._renderSortHeader('Updated', 'updated')}
-    </div>`;
+    return renderWorkInventoryTableHead({
+      columns: BACKLOG_INVENTORY_COLUMNS,
+      sort: { key: this._sortKey, direction: this._sortDirection },
+      onSort: (key) => this._setSort(key),
+      testIdPrefix: 'backlog',
+    });
   }
 
   private _renderCleanupActions(item: BacklogItem) {
@@ -2797,14 +2817,15 @@ export class BacklogPanel extends LitElement {
       <div class="main-area ${hasDetail ? 'has-detail' : ''}">
         <section class="list-panel">
           <div class="scroll-column rows">
-            ${filtered.length === 0
-              ? html`<div class="empty">No backlog items match this view.</div>`
-              : html`<div class="backlog-table">
-                  ${this._renderTableHead()}
-                  ${filtered.map((item) => {
-                    return this._renderCompactRow(item, activityRuns.get(item.id));
-                  })}
-                </div>`}
+            ${renderWorkInventoryTable({
+              columns: BACKLOG_INVENTORY_COLUMNS,
+              head: this._renderTableHead(),
+              rows: filtered.map((item) => this._renderCompactRow(item, activityRuns.get(item.id))),
+              isEmpty: filtered.length === 0,
+              empty: html`<div class="empty">No backlog items match this view.</div>`,
+              testId: 'work-inventory-table',
+              minWidth: '1040px',
+            })}
           </div>
         </section>
         ${hasDetail ? this._renderSelectedItemPanel() : nothing}

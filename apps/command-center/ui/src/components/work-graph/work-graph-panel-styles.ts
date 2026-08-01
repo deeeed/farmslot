@@ -51,6 +51,22 @@ export const workGraphPanelStyles = css`
     font: inherit;
   }
 
+  .inventory-panel {
+    border: 1px solid ${unsafeCSS(colors.bgCard)};
+    border-radius: ${unsafeCSS(radii.lg)};
+    background: ${unsafeCSS(colors.bgSurface)};
+    box-shadow: ${unsafeCSS(shadows.card)};
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: ${unsafeCSS(spacing.lg)};
+  }
+
+  .inventory-title {
+    margin: 0 0 ${unsafeCSS(spacing.md)};
+    font-size: ${unsafeCSS(fonts.sizeMd)};
+  }
+
   .empty,
   .graph {
     border: 1px solid ${unsafeCSS(colors.bgCard)};

@@ -10,6 +10,42 @@ import {
   sortRoadmapItems,
 } from './roadmap-panel-model.js';
 
+test('roadmap selection sort keeps stage/project columns stable for inventory selection', () => {
+  // Selection is host-owned; the inventory contract only requires deterministic
+  // row order so the selected id remains findable after sort toggles.
+  const items = [
+    {
+      id: 'ri_b',
+      kind: 'roadmap-item',
+      project: 'zeta',
+      title: 'Second',
+      stage: 'refined',
+      source: { kind: 'manual' },
+      body: '',
+      createdAt: '2026-07-28T00:00:00.000Z',
+      updatedAt: '2026-07-29T00:00:00.000Z',
+      filePath: '.roadmap/items/ri_b.md',
+      fileHash: 'b',
+    },
+    {
+      id: 'ri_a',
+      kind: 'roadmap-item',
+      project: 'alpha',
+      title: 'First',
+      stage: 'rough',
+      source: { kind: 'manual' },
+      body: '',
+      createdAt: '2026-07-28T00:00:00.000Z',
+      updatedAt: '2026-07-30T00:00:00.000Z',
+      filePath: '.roadmap/items/ri_a.md',
+      fileHash: 'a',
+    },
+  ] as RoadmapItem[];
+  const sorted = sortRoadmapItems(items, 'project', 'asc');
+  assert.equal(sorted[0]?.id, 'ri_a');
+  assert.ok(sorted.some((item) => item.id === 'ri_b'));
+});
+
 test('project filters keep unscoped global items visible', () => {
   const captured = {
     id: 'ri_global_capture',

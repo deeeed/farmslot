@@ -63,6 +63,16 @@ import {
   syncedDraftProject,
   syncedDraftTargetProjects,
 } from '../shared/planning-projects.js';
+import {
+  applyWorkInventorySort,
+  nextSortState,
+  parseWorkInventorySort,
+  renderWorkInventoryRow,
+  renderWorkInventoryTable,
+  renderWorkInventoryTableHead,
+  type WorkInventoryColumnDef,
+  workInventoryTableStyles,
+} from '../shared/work-inventory-table.js';
 import { encodeWorkerRouteParam } from '../terminal/split-view-model.js';
 
 import {
@@ -100,6 +110,26 @@ const ROADMAP_SORT_KEYS: RoadmapSortKey[] = [
   'promotion',
   'updated',
 ];
+const ROADMAP_INVENTORY_COLUMNS: WorkInventoryColumnDef<RoadmapSortKey>[] = [
+  { key: 'stage', label: 'Stage', width: '84px', testId: 'roadmap-sort-stage' },
+  {
+    key: 'project',
+    label: 'Project',
+    width: 'minmax(110px, 160px)',
+    testId: 'roadmap-sort-project',
+  },
+  { key: 'id', label: 'ID', width: '118px', testId: 'roadmap-sort-id' },
+  { key: 'title', label: 'Title', width: 'minmax(260px, 1fr)', testId: 'roadmap-sort-title' },
+  { key: 'promotion', label: 'Backlog', width: '112px', testId: 'roadmap-sort-promotion' },
+  { key: 'updated', label: 'Updated', width: '86px', testId: 'roadmap-sort-updated' },
+];
+const ROADMAP_SORT_URL = {
+  sortParam: ROADMAP_SORT_PARAM,
+  directionParam: ROADMAP_SORT_DIRECTION_PARAM,
+  validKeys: ROADMAP_SORT_KEYS,
+  defaultKey: 'updated' as const,
+  defaultDirection: 'desc' as const,
+};
 type RoadmapEditorMode = 'view' | 'edit';
 type PromptViewerMode = 'raw' | 'markdown';
 type PromotionDraftModalMode = 'view' | 'edit';
@@ -234,6 +264,7 @@ export class RoadmapPanel extends LitElement {
   static styles = [
     planningBadgeStyles,
     planningChoiceStyles,
+    workInventoryTableStyles,
     css`
       :host {
         box-sizing: border-box;
@@ -748,11 +779,9 @@ export class RoadmapPanel extends LitElement {
       params.get(ROADMAP_PROMOTE_PARAM) === '1' || this._promotionDraftModalIndex >= 0;
     this._promotionDraftModalMode =
       params.get(ROADMAP_DRAFT_MODE_PARAM) === 'edit' ? 'edit' : 'view';
-    const sortKey = params.get(ROADMAP_SORT_PARAM);
-    this._sortKey = ROADMAP_SORT_KEYS.includes(sortKey as RoadmapSortKey)
-      ? (sortKey as RoadmapSortKey)
-      : 'updated';
-    this._sortDirection = params.get(ROADMAP_SORT_DIRECTION_PARAM) === 'asc' ? 'asc' : 'desc';
+    const sort = parseWorkInventorySort(params, ROADMAP_SORT_URL);
+    this._sortKey = sort.key;
+    this._sortDirection = sort.direction;
     if (!selectedParam && this._selectedId) queueMicrotask(() => this._writeUrlState());
   }
 
@@ -780,10 +809,11 @@ export class RoadmapPanel extends LitElement {
       params.delete(ROADMAP_DRAFT_PARAM);
       params.delete(ROADMAP_DRAFT_MODE_PARAM);
     }
-    if (this._sortKey === 'updated') params.delete(ROADMAP_SORT_PARAM);
-    else params.set(ROADMAP_SORT_PARAM, this._sortKey);
-    if (this._sortDirection === 'desc') params.delete(ROADMAP_SORT_DIRECTION_PARAM);
-    else params.set(ROADMAP_SORT_DIRECTION_PARAM, this._sortDirection);
+    applyWorkInventorySort(
+      params,
+      { key: this._sortKey, direction: this._sortDirection },
+      ROADMAP_SORT_URL,
+    );
     const next = buildHash(route, params);
     if (location.hash !== next) history.replaceState(null, '', next);
   }
@@ -2052,61 +2082,46 @@ export class RoadmapPanel extends LitElement {
   }
 
   private _renderRow(item: RoadmapItem) {
-    return html`<div
-      class="row ${this._selectedId === item.id ? 'selected' : ''}"
-      role="button"
-      tabindex="0"
-      @click=${() => this._selectItem(item)}
-      @keydown=${(event: KeyboardEvent) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          this._selectItem(item);
-        }
-      }}
-    >
-      ${renderPlanningBadge(item.stage, statusTone(item.stage))}
-      <span data-testid="roadmap-project">${renderPlanningBadge(item.project)}</span>
-      <span class="item-ref" title=${item.id}>${item.id}</span>
-      <div class="title" title=${item.title}>${item.title}</div>
-      ${item.promotion?.length
-        ? renderPlanningBadge(
-            `${item.promotion.length} backlog link${item.promotion.length === 1 ? '' : 's'}`,
-            'positive',
-          )
-        : html`<span class="muted">—</span>`}
-      <span class="updated-cell" title=${item.updatedAt}>${item.updatedAt.slice(0, 10)}</span>
-    </div>`;
+    return renderWorkInventoryRow({
+      row: {
+        id: item.id,
+        selected: this._selectedId === item.id,
+        className: 'row',
+        testId: `roadmap-row-${item.id}`,
+        onActivate: () => this._selectItem(item),
+      },
+      cells: html`
+        ${renderPlanningBadge(item.stage, statusTone(item.stage))}
+        <span data-testid="roadmap-project">${renderPlanningBadge(item.project)}</span>
+        <span class="item-ref" title=${item.id}>${item.id}</span>
+        <div class="title" title=${item.title}>${item.title}</div>
+        ${item.promotion?.length
+          ? renderPlanningBadge(
+              `${item.promotion.length} backlog link${item.promotion.length === 1 ? '' : 's'}`,
+              'positive',
+            )
+          : html`<span class="muted">—</span>`}
+        <span class="updated-cell" title=${item.updatedAt}>${item.updatedAt.slice(0, 10)}</span>
+      `,
+    });
   }
 
   private _setSort(key: RoadmapSortKey) {
-    if (this._sortKey === key) {
-      this._sortDirection = this._sortDirection === 'asc' ? 'desc' : 'asc';
-    } else {
-      this._sortKey = key;
-      this._sortDirection = key === 'updated' || key === 'promotion' ? 'desc' : 'asc';
-    }
+    const next = nextSortState({ key: this._sortKey, direction: this._sortDirection }, key, (k) =>
+      k === 'updated' || k === 'promotion' ? 'desc' : 'asc',
+    );
+    this._sortKey = next.key;
+    this._sortDirection = next.direction;
     this._writeUrlState();
   }
 
-  private _renderSortHeader(label: string, key: RoadmapSortKey) {
-    const active = this._sortKey === key;
-    const arrow = active ? (this._sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
-    return html`<button
-      class=${active ? 'active' : ''}
-      type="button"
-      @click=${() => this._setSort(key)}
-    >
-      ${label}${arrow}
-    </button>`;
-  }
-
   private _renderTableHead() {
-    return html`<div class="table-head" role="row">
-      ${this._renderSortHeader('Stage', 'stage')} ${this._renderSortHeader('Project', 'project')}
-      ${this._renderSortHeader('ID', 'id')} ${this._renderSortHeader('Title', 'title')}
-      ${this._renderSortHeader('Backlog', 'promotion')}
-      ${this._renderSortHeader('Updated', 'updated')}
-    </div>`;
+    return renderWorkInventoryTableHead({
+      columns: ROADMAP_INVENTORY_COLUMNS,
+      sort: { key: this._sortKey, direction: this._sortDirection },
+      onSort: (key) => this._setSort(key),
+      testIdPrefix: 'roadmap',
+    });
   }
 
   private _renderPromotionDraftCards(item: RoadmapItem) {
@@ -2489,11 +2504,15 @@ export class RoadmapPanel extends LitElement {
         <div class="card">
           <h2>Items (${this._items.length})</h2>
           <div class="rows">
-            ${this._items.length === 0
-              ? html`<div class="empty">No roadmap items match this view.</div>`
-              : html`<div class="roadmap-table">
-                  ${this._renderTableHead()} ${this._items.map((item) => this._renderRow(item))}
-                </div>`}
+            ${renderWorkInventoryTable({
+              columns: ROADMAP_INVENTORY_COLUMNS,
+              head: this._renderTableHead(),
+              rows: this._items.map((item) => this._renderRow(item)),
+              isEmpty: this._items.length === 0,
+              empty: html`<div class="empty">No roadmap items match this view.</div>`,
+              testId: 'work-inventory-table',
+              minWidth: '820px',
+            })}
           </div>
         </div>
         <div class="shell">${this._renderEditor()}</div>

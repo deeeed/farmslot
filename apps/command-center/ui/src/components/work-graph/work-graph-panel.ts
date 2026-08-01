@@ -37,6 +37,18 @@ import type {
 import { summarizeBacklogDispatchConfig } from '../shared/dispatch-config-summary.js';
 import { labelWithRef } from '../shared/item-ref.js';
 import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
+import {
+  applyWorkInventorySort,
+  inventoryRetainsListAffordance,
+  nextSortState,
+  parseWorkInventorySort,
+  renderWorkInventoryBackButton,
+  renderWorkInventoryRow,
+  renderWorkInventoryTable,
+  renderWorkInventoryTableHead,
+  type WorkInventoryColumnDef,
+  workInventoryTableStyles,
+} from '../shared/work-inventory-table.js';
 import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
 
 import {
@@ -46,11 +58,44 @@ import {
   type WorkGraphNodeExecutionView,
 } from './work-graph-execution-overlay.js';
 import { computeWorkGraphLayout, type WorkGraphLayoutNode } from './work-graph-layout.js';
+import {
+  defaultWorkGraphSortDirection,
+  resolveWorkGraphSelection,
+  sortWorkGraphInventory,
+  WORK_GRAPH_SORT_KEYS,
+  workGraphInventoryStats,
+  type WorkGraphSortDirection,
+  type WorkGraphSortKey,
+} from './work-graph-panel-model.js';
 import { workGraphPanelStyles } from './work-graph-panel-styles.js';
 
 const WORK_GRAPH_PROJECT_PARAM = 'workGraphProject';
 const WORK_GRAPH_GRAPH_PARAM = 'graph';
 const WORK_GRAPH_NODE_PARAM = 'node';
+const WORK_GRAPH_SORT_PARAM = 'wgSort';
+const WORK_GRAPH_SORT_DIRECTION_PARAM = 'wgDirection';
+const WORK_GRAPH_INVENTORY_COLUMNS: WorkInventoryColumnDef<WorkGraphSortKey>[] = [
+  { key: 'status', label: 'Status', width: '88px', testId: 'work-graph-sort-status' },
+  {
+    key: 'project',
+    label: 'Project',
+    width: 'minmax(110px, 160px)',
+    testId: 'work-graph-sort-project',
+  },
+  { key: 'id', label: 'Graph id', width: '140px', testId: 'work-graph-sort-id' },
+  { key: 'title', label: 'Title', width: 'minmax(200px, 1fr)', testId: 'work-graph-sort-title' },
+  { key: 'progress', label: 'Progress', width: '88px', testId: 'work-graph-sort-progress' },
+  { key: 'active', label: 'Active', width: '72px', testId: 'work-graph-sort-active' },
+  { key: 'blocked', label: 'Blocked', width: '72px', testId: 'work-graph-sort-blocked' },
+  { key: 'updated', label: 'Updated', width: '96px', testId: 'work-graph-sort-updated' },
+];
+const WORK_GRAPH_SORT_URL = {
+  sortParam: WORK_GRAPH_SORT_PARAM,
+  directionParam: WORK_GRAPH_SORT_DIRECTION_PARAM,
+  validKeys: WORK_GRAPH_SORT_KEYS,
+  defaultKey: 'updated' as const,
+  defaultDirection: 'desc' as const,
+};
 const WORK_GRAPH_DISPATCH_CONFIG_CONTROLS: DispatchConfigEditorControls = {
   template: true,
   runnerModelEffort: true,
@@ -80,7 +125,11 @@ export class WorkGraphPanel extends LitElement {
   @state() private configTemplateOptionsError: Record<string, string> = {};
   @state() private configTemplateOptionsLoading: Record<string, boolean> = {};
   @state() private selectedProject = '';
+  @state() private selectedGraphId = '';
   @state() private selectedNodeKey = '';
+  @state() private sortKey: WorkGraphSortKey = 'updated';
+  @state() private sortDirection: WorkGraphSortDirection = 'desc';
+  @state() private showInventoryList = false;
   @state() private schedulerBusyKey = '';
   @state() private schedulerMessage = '';
   @state() private schedulerError = '';
@@ -93,7 +142,7 @@ export class WorkGraphPanel extends LitElement {
     }
   };
 
-  static styles = workGraphPanelStyles;
+  static styles = [workGraphPanelStyles, workInventoryTableStyles];
 
   connectedCallback() {
     super.connectedCallback();
@@ -121,6 +170,14 @@ export class WorkGraphPanel extends LitElement {
     const graphs = this.activeGraphs();
     const projects = new Set(graphs.map((graph) => graph.graph.project));
     if (this.selectedProject && !projects.has(this.selectedProject)) this.selectedProject = '';
+    const filtered = this.selectedProject
+      ? graphs.filter((graph) => graph.graph.project === this.selectedProject)
+      : graphs;
+    const { selectedId } = resolveWorkGraphSelection(
+      filtered.map((graph) => graph.graph.id),
+      this.selectedGraphId,
+    );
+    if (selectedId !== this.selectedGraphId) this.selectedGraphId = selectedId;
     const nodeKeys = new Set(
       graphs.flatMap((graph) => graph.nodes.map((node) => this.nodeKey(graph, node.id))),
     );
@@ -145,7 +202,11 @@ export class WorkGraphPanel extends LitElement {
     this.selectedProject = params.get(WORK_GRAPH_PROJECT_PARAM)?.trim() ?? '';
     const graphId = params.get(WORK_GRAPH_GRAPH_PARAM)?.trim() ?? '';
     const nodeId = params.get(WORK_GRAPH_NODE_PARAM)?.trim() ?? '';
+    this.selectedGraphId = graphId;
     this.selectedNodeKey = graphId && nodeId ? `${graphId}:${nodeId}` : '';
+    const sort = parseWorkInventorySort(params, WORK_GRAPH_SORT_URL);
+    this.sortKey = sort.key;
+    this.sortDirection = sort.direction;
   }
 
   private writeUrlState() {
@@ -154,16 +215,43 @@ export class WorkGraphPanel extends LitElement {
     if (route !== 'work-graphs') return;
     if (this.selectedProject) params.set(WORK_GRAPH_PROJECT_PARAM, this.selectedProject);
     else params.delete(WORK_GRAPH_PROJECT_PARAM);
-    const [graphId, nodeId] = this.selectedNodeKey.split(':');
-    if (graphId && nodeId) {
-      params.set(WORK_GRAPH_GRAPH_PARAM, graphId);
-      params.set(WORK_GRAPH_NODE_PARAM, nodeId);
-    } else {
-      params.delete(WORK_GRAPH_GRAPH_PARAM);
-      params.delete(WORK_GRAPH_NODE_PARAM);
-    }
+    const nodeGraphId = this.selectedNodeKey.split(':')[0] ?? '';
+    const nodeId = this.selectedNodeKey.split(':')[1] ?? '';
+    const graphId = this.selectedGraphId || nodeGraphId;
+    if (graphId) params.set(WORK_GRAPH_GRAPH_PARAM, graphId);
+    else params.delete(WORK_GRAPH_GRAPH_PARAM);
+    if (graphId && nodeId) params.set(WORK_GRAPH_NODE_PARAM, nodeId);
+    else params.delete(WORK_GRAPH_NODE_PARAM);
+    applyWorkInventorySort(
+      params,
+      { key: this.sortKey, direction: this.sortDirection },
+      WORK_GRAPH_SORT_URL,
+    );
     const next = buildHash(route, params);
     if (location.hash !== next) history.replaceState(null, '', next);
+  }
+
+  private setInventorySort(key: WorkGraphSortKey) {
+    const next = nextSortState(
+      { key: this.sortKey, direction: this.sortDirection },
+      key,
+      defaultWorkGraphSortDirection,
+    );
+    this.sortKey = next.key;
+    this.sortDirection = next.direction;
+    this.writeUrlState();
+  }
+
+  private selectGraph(graphId: string) {
+    this.selectedGraphId = graphId;
+    this.showInventoryList = false;
+    if (!this.selectedNodeKey.startsWith(`${graphId}:`)) this.selectedNodeKey = '';
+    this.writeUrlState();
+  }
+
+  private backToInventory() {
+    this.showInventoryList = true;
+    this.requestUpdate();
   }
 
   private activeGraphs(): WorkGraphProjection[] {
@@ -1097,12 +1185,89 @@ export class WorkGraphPanel extends LitElement {
     `;
   }
 
+  private renderInventoryRow(graph: WorkGraphProjection) {
+    const stats = workGraphInventoryStats(graph);
+    const selected = this.selectedGraphId === graph.graph.id && !this.showInventoryList;
+    return renderWorkInventoryRow({
+      row: {
+        id: graph.graph.id,
+        selected,
+        testId: `work-graph-row-${graph.graph.id}`,
+        onActivate: () => this.selectGraph(graph.graph.id),
+      },
+      cells: html`
+        <span class=${`badge ${graph.graph.status}`}>${graph.graph.status}</span>
+        <span data-testid="work-graph-project">${graph.graph.project}</span>
+        <span class="item-ref" title=${graph.graph.id}>${graph.graph.id}</span>
+        <div class="title" title=${graph.graph.title}>${graph.graph.title}</div>
+        <span data-testid="work-graph-progress">${stats.progress}%</span>
+        <span data-testid="work-graph-active">${stats.active}</span>
+        <span data-testid="work-graph-blocked">${stats.blocked}</span>
+        <span class="updated-cell" title=${graph.graph.updatedAt}
+          >${graph.graph.updatedAt.slice(0, 10)}</span
+        >
+      `,
+    });
+  }
+
+  private renderInventory(graphs: WorkGraphProjection[]) {
+    const sorted = sortWorkGraphInventory(graphs, this.sortKey, this.sortDirection);
+    return html`
+      <section class="inventory-panel" data-testid="work-graph-inventory">
+        <h2 class="inventory-title">Graph inventory (${sorted.length})</h2>
+        ${renderWorkInventoryTable({
+          columns: WORK_GRAPH_INVENTORY_COLUMNS,
+          head: renderWorkInventoryTableHead({
+            columns: WORK_GRAPH_INVENTORY_COLUMNS,
+            sort: { key: this.sortKey, direction: this.sortDirection },
+            onSort: (key) => this.setInventorySort(key),
+            testIdPrefix: 'work-graph',
+          }),
+          rows: sorted.map((graph) => this.renderInventoryRow(graph)),
+          isEmpty: sorted.length === 0,
+          empty: html`<div class="empty">
+            No work graphs found. Create a graph from backlog work to see the dependency map here.
+          </div>`,
+          testId: 'work-inventory-table',
+          minWidth: '960px',
+        })}
+      </section>
+    `;
+  }
+
   render() {
     const allGraphs = this.activeGraphs();
     const projects = [...new Set(allGraphs.map((graph) => graph.graph.project))].sort();
     const graphs = this.selectedProject
       ? allGraphs.filter((graph) => graph.graph.project === this.selectedProject)
       : allGraphs;
+    const graphIds = graphs.map((graph) => graph.graph.id);
+    const { selectedId, autoSelected } = resolveWorkGraphSelection(graphIds, this.selectedGraphId);
+    const effectiveSelectedId = selectedId || this.selectedGraphId;
+    const selectedGraph = graphs.find((graph) => graph.graph.id === effectiveSelectedId) ?? null;
+    const retainList = inventoryRetainsListAffordance({
+      selectedId: effectiveSelectedId,
+      rowCount: graphs.length,
+      autoSelected,
+    });
+    // Inventory is canonical when nothing is selected, the operator asked for
+    // Back, or multi-graph browse has no pick yet. Single-graph auto-select
+    // opens the canvas but keeps a visible back affordance.
+    const showCanvas = Boolean(selectedGraph) && !this.showInventoryList;
+    const body =
+      showCanvas && selectedGraph
+        ? html`
+            ${retainList
+              ? renderWorkInventoryBackButton({
+                  label: '← Back to graph inventory',
+                  testId: 'work-inventory-back',
+                  onBack: () => this.backToInventory(),
+                })
+              : nothing}
+            ${this.renderGraph(selectedGraph)}
+          `
+        : this.renderInventory(graphs);
+
     return html`
       <div class="header">
         <div>
@@ -1124,12 +1289,7 @@ export class WorkGraphPanel extends LitElement {
           ${projects.map((project) => html`<option value=${project}>${project}</option>`)}
         </select>
       </div>
-      ${graphs.length
-        ? graphs.map((graph) => this.renderGraph(graph))
-        : html`<div class="empty">
-            No work graphs found. Create a graph from backlog work to see the dependency map here.
-          </div>`}
-      ${this.renderOpenDispatchConfigModal()}
+      ${body} ${this.renderOpenDispatchConfigModal()}
     `;
   }
 }

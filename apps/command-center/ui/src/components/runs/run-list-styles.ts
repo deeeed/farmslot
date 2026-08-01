@@ -288,18 +288,34 @@ export const runListStyles = css`
     padding: ${unsafeCSS(spacing.xl)} 0;
     text-align: center;
   }
-  .runs-table {
-    min-width: 944px;
+  .runs-table,
+  .work-inventory-table {
+    min-width: 1100px;
   }
   .run-table-head,
-  .run-card {
+  .run-card,
+  .work-inventory-head,
+  .work-inventory-row.run-card {
     display: grid;
     gap: 6px;
-    grid-template-columns: 50px minmax(112px, 136px) minmax(390px, 1fr) 196px 156px;
+    grid-template-columns: var(
+      --work-inventory-columns,
+      100px 58px minmax(100px, 140px) 110px 120px 140px 86px minmax(140px, 1fr)
+    );
+    align-items: center;
   }
-  .run-table-head.with-selector,
-  .run-card.with-selector {
-    grid-template-columns: 30px 50px minmax(112px, 136px) minmax(390px, 1fr) 196px 156px;
+  .run-pipeline-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .pipeline-label {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .run-table-head {
     align-items: center;
