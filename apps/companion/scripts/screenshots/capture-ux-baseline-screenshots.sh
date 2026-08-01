@@ -275,10 +275,15 @@ capture_android() {
   done
 }
 
-rm -rf "${OUTPUT_DIR}"
-mkdir -p "${OUTPUT_DIR}"
-
-if [[ "${CATALOG_ONLY}" != "1" ]]; then
+if [[ "${CATALOG_ONLY}" == "1" ]]; then
+  # Preserve existing platform screenshot dirs; only refresh catalog metadata/report.
+  mkdir -p "${OUTPUT_DIR}"
+  rm -f "${OUTPUT_DIR}/manifest.json" "${OUTPUT_DIR}/index.html"
+  mkdir -p "${OUTPUT_DIR}/catalog"
+  echo "[ux-screenshots] catalog-only mode — skipping device capture (keeping existing platform PNGs)"
+else
+  rm -rf "${OUTPUT_DIR}"
+  mkdir -p "${OUTPUT_DIR}"
   start_metro
   if [[ "${CAPTURE_IOS}" == "1" ]]; then
     capture_ios
@@ -286,9 +291,6 @@ if [[ "${CATALOG_ONLY}" != "1" ]]; then
   if [[ "${CAPTURE_ANDROID}" == "1" ]]; then
     capture_android
   fi
-else
-  mkdir -p "${OUTPUT_DIR}/catalog"
-  echo "[ux-screenshots] catalog-only mode — skipping device capture"
 fi
 
 {

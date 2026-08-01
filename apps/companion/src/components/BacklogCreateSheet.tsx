@@ -12,9 +12,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
-  Methods,
   type BacklogCreateResult,
   type ConfigProjectsResult,
+  Methods,
 } from '@farmslot/protocol';
 
 import {
