@@ -18,7 +18,7 @@ export function resolveMetroRecipeBridgePort(
   const raw = env.FARMSLOT_RECIPE_METRO_PORT ?? env.METRO_PORT;
   if (!raw) {
     throw new Error(
-      'Metro recipe bridge port is missing; load the checkout-local .env.ports configuration.',
+      'Metro recipe bridge port is missing. Next: set FARMSLOT_RECIPE_METRO_PORT or METRO_PORT to the assigned port.',
     );
   }
   const port = Number(raw);

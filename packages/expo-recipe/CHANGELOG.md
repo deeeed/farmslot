@@ -4,10 +4,10 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
-## 0.4.1 - 2026-08-01
+## 0.5.0 - 2026-08-01
 
-- Require an explicit Metro bridge port only when a recipe executes Metro-backed UI actions.
-- Publish against `@farmslot/recipe-harness` 0.11.1 so Expo consumers receive idempotent iOS lifecycle restarts.
+- **BREAKING:** Require an explicit Metro bridge port only when a recipe executes Metro-backed UI actions; configure `FARMSLOT_RECIPE_METRO_PORT` or `METRO_PORT` before those actions run.
+- Publish against `@farmslot/protocol` 0.15.0 and `@farmslot/recipe-harness` 0.11.1 so Expo consumers receive structured suite evidence and idempotent iOS lifecycle restarts.
 
 ## 0.4.0 - 2026-07-24
 
