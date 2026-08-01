@@ -516,10 +516,21 @@ export async function executeSelfReviewStep(
       { id: 'send_feedback', label: 'Send feedback to worker', style: 'primary' },
       { id: 'skip', label: 'Skip — proceed to human gate', style: 'secondary' },
     ]);
-    // When human chooses "send_feedback", re-run self-review which will
-    // send feedback and wait for fix (existing retry logic)
+    // Continue from the findings the operator just accepted. Starting the
+    // top-level review again would spend another review pass before the worker
+    // ever sees the requested feedback.
     if (actionId === 'send_feedback') {
-      const retryResult = await executeSelfReviewForRun(runId, current.slotId);
+      const retryResult = await executeSelfReviewForRun(runId, current.slotId, {
+        initialReviewResult: {
+          verdict: 'issues',
+          issues: result.issues ?? [],
+          validationDepth: result.validationDepth,
+          usage: result.usage,
+          reviewSnapshot: result.reviewSnapshot,
+          taskProgressArtifactPath: result.taskProgressArtifactPath,
+          timeline: result.timeline,
+        },
+      });
       return {
         inputs: { ...inputs, enabled: true },
         outputs: {

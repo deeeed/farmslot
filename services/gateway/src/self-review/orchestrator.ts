@@ -24,6 +24,7 @@ import {
 import {
   markAgentContextStatus,
   resolveAgentTarget,
+  selectAgentContext,
   upsertAgentContext,
 } from '../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
@@ -122,6 +123,8 @@ export interface SelfReviewOptions {
   publicationReview?: boolean | null;
   /** Overrides project self_review.session_policy for this review loop. */
   reviewSessionPolicy?: ReviewSessionPolicy | null;
+  /** Continue an operator-approved fix loop from findings already produced by this run. */
+  initialReviewResult?: ReviewAgentResult;
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
@@ -247,6 +250,33 @@ export async function executeSelfReview(
         model,
         crossRunner: isCrossRunnerReview,
       };
+
+    if (options.initialReviewResult) {
+      const retryResult = await runSelfReviewRetryLoop({
+        vars,
+        taskDir,
+        slotId,
+        runId,
+        start,
+        workerRunner,
+        reviewRunner,
+        model,
+        maxRetries,
+        reviewTimeoutMs,
+        reviewResult: options.initialReviewResult,
+        retryCount: 0,
+        validationDepth,
+        artifactScope,
+        sessionPolicy,
+      });
+      return {
+        ...retryResult,
+        usage: retryResult.attempts?.at(-1)?.usage,
+        runner: reviewRunner,
+        model,
+        crossRunner: isCrossRunnerReview,
+      };
+    }
 
     // First review pass
     debugSelfReviewLog(
@@ -1139,10 +1169,7 @@ async function sendFeedbackToWorker(
     const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
     const session = primaryTarget.session;
     const currentRun = getRun(runId);
-    const primaryRole = primaryRoleForFlow(run?.flowType);
-    const primaryContext = currentRun?.agentContexts?.find(
-      (ctx) => ctx.role === primaryRole || ctx.role === 'primary',
-    );
+    const primaryContext = currentRun ? selectAgentContext(currentRun, { role: 'primary' }) : null;
     const roleWindowName = primaryContext?.target?.window ?? null;
     let workerTarget = await ensureTmuxTargetReadyForRelaunch(
       vars,
@@ -1175,6 +1202,7 @@ async function sendFeedbackToWorker(
       taskDir,
     });
     const runner = normalizeRunner(run?.metrics.runner);
+    let lastRetainedHoldReason: string | null = null;
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
       if (
         runnerRetainedSessionHandoff(runner) === 'resume-with-prompt' &&
@@ -1188,15 +1216,16 @@ async function sendFeedbackToWorker(
           sessionId: primaryContext.runnerSessionId,
           sessionPath: primaryContext.runnerSessionPath,
           model: run?.metrics.model,
+          effort: run?.effort,
           prompt: cmd,
           safetyTier: run?.safetyTier,
           runtimeDir,
           taskDir,
           launchAckSignalPath: fixSignalPath,
-          recovery: { runId },
         });
         if (retained.delivered) return true;
         if (retained.disposition === 'hold') {
+          lastRetainedHoldReason = retained.reason;
           console.warn(`[self-review] retained worker handoff held: ${retained.reason}`);
           return false;
         }
@@ -1260,8 +1289,11 @@ async function sendFeedbackToWorker(
       await unwatchContext(vars.slotId, 'self-review-fix');
       const seenSummary =
         deliverySeenWindows.length > 0 ? deliverySeenWindows.join('; ') : 'none inspected';
+      const retainedSummary = lastRetainedHoldReason
+        ? ` Retained-session handoff: ${lastRetainedHoldReason}.`
+        : '';
       throw new Error(
-        `self-review fix task delivery kept deferring for ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt (${fixTaskFile}). Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: deliver it manually (tell the worker to read that file in its session), then replay the self-review step.`,
+        `self-review fix task delivery kept deferring for ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt (${fixTaskFile}).${retainedSummary} Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: replay the self-review step after restoring runner observability.`,
       );
     }
     // sent=true only proves keystrokes were injected and Enter pressed. A

@@ -9,6 +9,7 @@ const commands: string[] = [];
 let paneCount = 1;
 let sessionPathExists = true;
 let promptAccepted = true;
+let launchSignalReadCount = 0;
 let sessionState: ObservabilityReading<RunnerSessionDeliveryState> | null = {
   value: 'idle',
   source: 'hook',
@@ -26,6 +27,16 @@ mock.module('../core/exec.js', {
       if (command.includes('list-panes')) {
         const panes = Array.from({ length: paneCount }, (_, index) => `%${index + 1}`).join('\n');
         return { exitCode: 0, stdout: panes ? `${panes}\n` : '', stderr: '' };
+      }
+      if (command.includes('SELF-REVIEW-FIX-SIGNAL.json')) {
+        launchSignalReadCount += 1;
+        return launchSignalReadCount === 1
+          ? { exitCode: 0, stdout: '__FARMSLOT_SIGNAL_MISSING__\n', stderr: '' }
+          : {
+              exitCode: 0,
+              stdout: '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n',
+              stderr: '',
+            };
       }
       if (command.startsWith('test -e ')) {
         return {
@@ -131,6 +142,36 @@ test('retained resume delivers the prompt through runner argv without send-keys'
   const promptIndex = command.indexOf('Read and execute TASK.md', sessionIndex);
   assert.ok(resumeIndex >= 0 && sessionIndex > resumeIndex && promptIndex > sessionIndex);
   assert.doesNotMatch(command, /send-keys/);
+});
+
+test('retained resume accepts a fresh structured task signal without hook acknowledgement', async (t) => {
+  commands.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
+  promptAccepted = false;
+  t.after(() => {
+    promptAccepted = true;
+  });
+  launchSignalReadCount = 0;
+  sessionState = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now() - 300_000,
+  };
+
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    sessionId: 'session-123',
+    sessionPath: '/sessions/session-123.jsonl',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+  });
+
+  assert.deepEqual(result, { delivered: true });
+  assert.equal(launchSignalReadCount, 2);
 });
 
 test('retained resume does not mutate an active session', async () => {

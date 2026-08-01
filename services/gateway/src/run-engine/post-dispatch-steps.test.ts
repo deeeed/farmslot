@@ -255,6 +255,58 @@ test('executeSelfReviewStep proceeds when the slot signal probe cannot approve a
   assert.equal(io.outputs?.verdict, 'pass');
 });
 
+test('interactive send-feedback continues from existing findings without another initial review', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'interactive',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-45',
+    runner: 'claude',
+    slotId: 'remote-mobile-1',
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  const issue = { file: 'src/example.ts', line: 12, description: 'Fix the stale state' };
+  const calls: unknown[][] = [];
+  const io = await executeSelfReviewStep(run.id, {
+    activeMonitors: new Map(),
+    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {},
+    createEngineDecision: async () => 'send_feedback',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async () => [],
+    executeReadyGate: async () => 'ready',
+    executeReviewGate: async () => {},
+    executeSelfReviewForRun: async (...args) => {
+      calls.push([...args]);
+      return calls.length === 1
+        ? { verdict: 'issues', issues: [issue], retryCount: 0 }
+        : { verdict: 'pass', issues: [], retryCount: 1 };
+    },
+    getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => false,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    refreshRunLinks: async () => {},
+    stepPartialIO: new Map(),
+  });
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual((calls[1]?.[2] as { initialReviewResult?: unknown })?.initialReviewResult, {
+    verdict: 'issues',
+    issues: [issue],
+    validationDepth: undefined,
+    usage: undefined,
+    reviewSnapshot: undefined,
+    taskProgressArtifactPath: undefined,
+    timeline: undefined,
+  });
+  assert.equal(io.outputs?.verdict, 'pass');
+  assert.equal(io.outputs?.interactiveRetry, true);
+});
+
 test('local-first complete contract uses gate-held disposition for dev and fix-bug', () => {
   assert.equal(shouldPrepareLocalFirstPackage(makeRun({ flowType: 'fix-bug' })), true);
   assert.equal(
