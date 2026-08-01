@@ -29,7 +29,8 @@ Optional route context:
   UX_WORKER_NODE_ID / UX_WORKER_SESSION / UX_WORKER_TARGET
                                Alternative to UX_WORKER_REF — discrete query params for
                                terminal/worker (only emitted when all three are set).
-  --review-flow                Require UX_RUN_ID, UX_SLOT_ID, UX_FAMILY_ID, and UX_DECISION_ID.
+  --review-flow                Require UX_RUN_ID, UX_SLOT_ID, UX_FAMILY_ID, UX_DECISION_ID,
+                               and worker context (UX_WORKER_REF or node/session/target triple).
   --catalog-only               Write route manifest + HTML report without device screenshots
                                (does not require Metro/port config).
 
@@ -85,8 +86,17 @@ if [[ "${REQUIRE_REVIEW_FLOW_CONTEXT}" == "1" ]]; then
   [[ -n "${UX_SLOT_ID:-}" ]] || missing+=("UX_SLOT_ID")
   [[ -n "${UX_FAMILY_ID:-}" ]] || missing+=("UX_FAMILY_ID")
   [[ -n "${UX_DECISION_ID:-}" ]] || missing+=("UX_DECISION_ID")
+  has_worker_ref=0
+  [[ -n "${UX_WORKER_REF:-}" ]] && has_worker_ref=1
+  has_worker_triple=0
+  if [[ -n "${UX_WORKER_NODE_ID:-}" && -n "${UX_WORKER_SESSION:-}" && -n "${UX_WORKER_TARGET:-}" ]]; then
+    has_worker_triple=1
+  fi
+  if (( has_worker_ref == 0 && has_worker_triple == 0 )); then
+    missing+=("UX_WORKER_REF|UX_WORKER_NODE_ID+UX_WORKER_SESSION+UX_WORKER_TARGET")
+  fi
   if (( ${#missing[@]} > 0 )); then
-    echo "ERROR: --review-flow requires ${missing[*]}." >&2
+    echo "ERROR: --review-flow requires ${missing[*]} (worker must be a real attachable target; no fabricated defaults)." >&2
     exit 1
   fi
 fi

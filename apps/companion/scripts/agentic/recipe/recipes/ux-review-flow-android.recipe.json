@@ -1,7 +1,7 @@
 {
   "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Companion Android review-flow UX screenshots",
-  "description": "Captures default and deep review-flow Mobile Companion Android screens for before/after UX review. Requires UX_RUN_ID, UX_SLOT_ID, UX_FAMILY_ID, and UX_DECISION_ID. Always supplies worker terminal context (UX_WORKER_NODE_ID/SESSION/TARGET, overridable) so 23_worker_terminal is emitted with attachable query params.",
+  "description": "Captures default and deep review-flow Mobile Companion Android screens for before/after UX review. Requires UX_RUN_ID, UX_SLOT_ID, UX_FAMILY_ID, UX_DECISION_ID, and a real worker target (UX_WORKER_REF or UX_WORKER_NODE_ID+UX_WORKER_SESSION+UX_WORKER_TARGET). Fails closed if worker context is missing — no fabricated demo targets.",
   "proofTargets": [
     {
       "id": "ux-baseline",
@@ -13,8 +13,8 @@
     "nodes": {
       "capture-baseline": {
         "action": "command",
-        "intent": "Capture default + review-flow Companion Android screens, including an attached worker-terminal route.",
-        "cmd": "UX_WORKER_NODE_ID=\"${UX_WORKER_NODE_ID:-ux-demo-node}\" UX_WORKER_SESSION=\"${UX_WORKER_SESSION:-ux-demo-session}\" UX_WORKER_TARGET=\"${UX_WORKER_TARGET:-0:0}\" FARMSLOT_UX_SCREENSHOT_DIR=.agent/ux-baseline-screenshots bash scripts/screenshots/capture-ux-baseline-screenshots.sh --android-only --review-flow",
+        "intent": "Capture default + review-flow Companion Android screens with a real attachable worker-terminal route.",
+        "cmd": "bash -c 'if [[ -z \"${UX_WORKER_REF:-}\" && ! ( -n \"${UX_WORKER_NODE_ID:-}\" && -n \"${UX_WORKER_SESSION:-}\" && -n \"${UX_WORKER_TARGET:-}\" ) ]]; then echo \"ERROR: set UX_WORKER_REF or UX_WORKER_NODE_ID+UX_WORKER_SESSION+UX_WORKER_TARGET to a real worker before review-flow capture.\" >&2; exit 1; fi; FARMSLOT_UX_SCREENSHOT_DIR=.agent/ux-baseline-screenshots bash scripts/screenshots/capture-ux-baseline-screenshots.sh --android-only --review-flow'",
         "timeout_ms": 240000,
         "next": "index-baseline",
         "proves": ["ux-baseline"]
@@ -96,7 +96,7 @@
           {
             "path": ".agent/ux-baseline-screenshots/android/23_worker_terminal.png",
             "type": "image",
-            "label": "Worker terminal (attached via UX_WORKER_* query params)"
+            "label": "Worker terminal (real UX_WORKER_* required; fail closed if unset)"
           },
           {
             "path": ".agent/ux-baseline-screenshots/android/30_family_workspace.png",
