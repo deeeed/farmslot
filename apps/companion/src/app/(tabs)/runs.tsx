@@ -31,7 +31,7 @@ import {
   type RunFamilyGroup,
   selectRecentRunFamilyGroups,
 } from '../../lib/run-family-groups';
-import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
+import { baseStyles, colors, fonts, radii, spacing, touchTargets } from '../../lib/theme';
 import {
   selectReadyWorkspaceDecision,
   selectRetrospectiveWorkspaceDecision,
@@ -230,11 +230,61 @@ function RunCard({
               hint={`${visualPairSummary.pairs.length} pair${
                 visualPairSummary.pairs.length === 1 ? '' : 's'
               }`}
-              imageHeight={54}
+              imageHeight={96}
             />
           </View>
         ) : null}
         <RunEvidenceSignals run={run} />
+        <View style={styles.primaryActionRow}>
+          <RunQuickAction
+            primary
+            label={artifactCount > 0 ? `Evidence ${artifactCount}` : 'Evidence'}
+            onPress={() =>
+              router.push({
+                pathname: '/artifacts/[runId]',
+                params: {
+                  runId: run.id,
+                  recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                  filter: artifactFilterParamForWorkspaceNav('review'),
+                },
+              })
+            }
+          />
+          {canOpenDiff ? (
+            <RunQuickAction
+              primary
+              label="Diff"
+              onPress={() =>
+                router.push({
+                  pathname: '/diff/[runId]',
+                  params: {
+                    runId: run.id,
+                    ...DIFF_ROUTE_CONTEXT,
+                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                    ...(diffArtifactPath ? { path: diffArtifactPath } : {}),
+                  },
+                })
+              }
+            />
+          ) : null}
+          {run.slotId ? (
+            <RunQuickAction
+              primary
+              label="Terminal"
+              onPress={() =>
+                router.push({
+                  pathname: '/terminal/[slotId]',
+                  params: {
+                    slotId: run.slotId!,
+                    runId: run.id,
+                    details: '1',
+                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                  },
+                })
+              }
+            />
+          ) : null}
+        </View>
         <View style={styles.quickActionRow}>
           <RunQuickAction
             label="Family"
@@ -247,19 +297,6 @@ function RunCard({
                   runId: run.id,
                   ...familySectionRouteContextParams('focus'),
                   section: 'focus',
-                },
-              })
-            }
-          />
-          <RunQuickAction
-            label={artifactCount > 0 ? `Evidence ${artifactCount}` : 'Evidence files'}
-            onPress={() =>
-              router.push({
-                pathname: '/artifacts/[runId]',
-                params: {
-                  runId: run.id,
-                  recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                  filter: artifactFilterParamForWorkspaceNav('review'),
                 },
               })
             }
@@ -325,52 +362,20 @@ function RunCard({
               }}
             />
           ) : null}
-          {canOpenDiff ? (
+          {run.slotId ? (
             <RunQuickAction
-              label="Diff view"
+              label="Slot"
               onPress={() =>
                 router.push({
-                  pathname: '/diff/[runId]',
+                  pathname: '/slot/[id]',
                   params: {
+                    id: run.slotId!,
                     runId: run.id,
-                    ...DIFF_ROUTE_CONTEXT,
                     recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    ...(diffArtifactPath ? { path: diffArtifactPath } : {}),
                   },
                 })
               }
             />
-          ) : null}
-          {run.slotId ? (
-            <>
-              <RunQuickAction
-                label="Slot"
-                onPress={() =>
-                  router.push({
-                    pathname: '/slot/[id]',
-                    params: {
-                      id: run.slotId!,
-                      runId: run.id,
-                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    },
-                  })
-                }
-              />
-              <RunQuickAction
-                label="Terminal"
-                onPress={() =>
-                  router.push({
-                    pathname: '/terminal/[slotId]',
-                    params: {
-                      slotId: run.slotId!,
-                      runId: run.id,
-                      details: '1',
-                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    },
-                  })
-                }
-              />
-            </>
           ) : null}
         </View>
       </Pressable>
@@ -524,10 +529,23 @@ function familyRetrospectiveLabel(group: RunFamilyGroup): string | null {
   return null;
 }
 
-function RunQuickAction({ label, onPress }: { label: string; onPress: () => void }) {
+function RunQuickAction({
+  label,
+  onPress,
+  primary = false,
+}: {
+  label: string;
+  onPress: () => void;
+  primary?: boolean;
+}) {
   return (
-    <Pressable style={styles.quickActionButton} onPress={onPress}>
-      <Text style={styles.quickActionText}>{label}</Text>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={[styles.quickActionButton, primary && styles.primaryActionButton]}
+      onPress={onPress}
+    >
+      <Text style={[styles.quickActionText, primary && styles.primaryActionText]}>{label}</Text>
     </Pressable>
   );
 }
@@ -610,45 +628,15 @@ function RecentFamilyShortcut({
             hint={`${visualPairSummary.pairs.length} pair${
               visualPairSummary.pairs.length === 1 ? '' : 's'
             }`}
-            imageHeight={54}
+            imageHeight={96}
           />
         </View>
       ) : null}
       <RunEvidenceSignals run={run} compact />
-      <View style={styles.quickActionRow}>
-        {run.slotId ? (
-          <>
-            <RunQuickAction
-              label="Slot"
-              onPress={() =>
-                router.push({
-                  pathname: '/slot/[id]',
-                  params: {
-                    id: run.slotId!,
-                    runId: run.id,
-                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                  },
-                })
-              }
-            />
-            <RunQuickAction
-              label="Terminal"
-              onPress={() =>
-                router.push({
-                  pathname: '/terminal/[slotId]',
-                  params: {
-                    slotId: run.slotId!,
-                    runId: run.id,
-                    details: '1',
-                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                  },
-                })
-              }
-            />
-          </>
-        ) : null}
+      <View style={styles.primaryActionRow}>
         <RunQuickAction
-          label={artifactManifest.length ? `Evidence ${artifactManifest.length}` : 'Evidence files'}
+          primary
+          label={artifactManifest.length ? `Evidence ${artifactManifest.length}` : 'Evidence'}
           onPress={() =>
             router.push({
               pathname: '/artifacts/[runId]',
@@ -660,22 +648,10 @@ function RecentFamilyShortcut({
             })
           }
         />
-        <RunQuickAction
-          label="Recipe files"
-          onPress={() =>
-            router.push({
-              pathname: '/artifacts/[runId]',
-              params: {
-                runId: run.id,
-                recipeRun: CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
-                filter: artifactFilterParamForWorkspaceNav('recipe'),
-              },
-            })
-          }
-        />
         {canOpenDiff ? (
           <RunQuickAction
-            label="Diff view"
+            primary
+            label="Diff"
             onPress={() =>
               router.push({
                 pathname: '/diff/[runId]',
@@ -689,6 +665,53 @@ function RecentFamilyShortcut({
             }
           />
         ) : null}
+        {run.slotId ? (
+          <RunQuickAction
+            primary
+            label="Terminal"
+            onPress={() =>
+              router.push({
+                pathname: '/terminal/[slotId]',
+                params: {
+                  slotId: run.slotId!,
+                  runId: run.id,
+                  details: '1',
+                  recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                },
+              })
+            }
+          />
+        ) : null}
+      </View>
+      <View style={styles.quickActionRow}>
+        {run.slotId ? (
+          <RunQuickAction
+            label="Slot"
+            onPress={() =>
+              router.push({
+                pathname: '/slot/[id]',
+                params: {
+                  id: run.slotId!,
+                  runId: run.id,
+                  recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                },
+              })
+            }
+          />
+        ) : null}
+        <RunQuickAction
+          label="Recipe files"
+          onPress={() =>
+            router.push({
+              pathname: '/artifacts/[runId]',
+              params: {
+                runId: run.id,
+                recipeRun: CURRENT_ARTIFACTS_RECIPE_RUN_PARAM,
+                filter: artifactFilterParamForWorkspaceNav('recipe'),
+              },
+            })
+          }
+        />
         {readyDecision ? (
           <RunQuickAction
             label="Ready"
@@ -1042,12 +1065,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     marginTop: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    minHeight: touchTargets.primaryMinHeight,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
   },
   emptyActionText: {
     color: colors.accent,
-    fontSize: fonts.sizeSm,
+    fontSize: fonts.sizeMd,
     fontWeight: '900',
   },
   listContent: { padding: spacing.lg, paddingBottom: spacing.xxxl },
@@ -1088,8 +1113,10 @@ const styles = StyleSheet.create({
     borderColor: colors.accent + '66',
     borderRadius: 999,
     borderWidth: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    minHeight: touchTargets.primaryMinHeight,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
   scopeToggleActive: {
     backgroundColor: colors.statusOk + '22',
@@ -1097,7 +1124,7 @@ const styles = StyleSheet.create({
   },
   scopeToggleText: {
     color: colors.accent,
-    fontSize: fonts.sizeXs,
+    fontSize: fonts.sizeSm,
     fontWeight: '900',
   },
   scopeToggleTextActive: {
@@ -1207,12 +1234,14 @@ const styles = StyleSheet.create({
     borderColor: colors.accent + '66',
     borderRadius: 999,
     borderWidth: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    minHeight: touchTargets.primaryMinHeight,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
   familyOpenText: {
     color: colors.accent,
-    fontSize: fonts.sizeXs,
+    fontSize: fonts.sizeSm,
     fontWeight: '900',
   },
   recentFamiliesBlock: {
@@ -1403,23 +1432,41 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: spacing.sm,
   },
-  quickActionRow: {
+  primaryActionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
     marginTop: spacing.md,
+  },
+  quickActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
   },
   quickActionButton: {
     backgroundColor: colors.accent + '14',
     borderColor: colors.accent + '55',
     borderRadius: 999,
     borderWidth: 1,
+    minHeight: touchTargets.secondaryMinHeight,
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
+  primaryActionButton: {
+    backgroundColor: colors.accent + '22',
+    borderColor: colors.accent + '88',
+    minHeight: touchTargets.primaryMinHeight,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
   quickActionText: {
     color: colors.accent,
     fontSize: fonts.sizeXs,
     fontWeight: '900',
+  },
+  primaryActionText: {
+    fontSize: fonts.sizeSm,
   },
 });

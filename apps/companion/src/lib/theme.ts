@@ -39,6 +39,14 @@ export const fonts = {
   sizeXl: 20,
 } as const;
 
+/** Default-path touch targets (iOS HIG / Material ~44pt primary). */
+export const touchTargets = {
+  primaryMin: 44,
+  primaryMinHeight: 44,
+  primaryMinWidth: 44,
+  secondaryMinHeight: 36,
+} as const;
+
 export function lifecycleColor(state: string): string {
   const phaseMap: Record<string, string> = {
     preparing: colors.lifecycleDispatching,

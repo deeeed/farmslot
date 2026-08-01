@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
+import { BacklogCreateSheet } from '../../components/BacklogCreateSheet';
+import { baseStyles, colors, fonts, radii, spacing, touchTargets } from '../../lib/theme';
 
 type AdvancedRoute = {
   title: string;
@@ -43,40 +44,64 @@ const ADVANCED_ROUTES: AdvancedRoute[] = [
 export default function AdvancedScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const [backlogOpen, setBacklogOpen] = useState(false);
 
   return (
-    <ScrollView
-      style={baseStyles.container}
-      contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + spacing.xxxl }]}
-    >
-      <View style={styles.heroCard}>
-        <Text style={styles.eyebrow}>Advanced mode</Text>
-        <Text style={styles.title}>Command Center parity lives here.</Text>
-        <Text style={styles.subtitle}>
-          Review and Terminals stay focused by default. Use these raw dashboards when you need
-          broader fleet context, global filters, or diagnostics.
-        </Text>
-      </View>
+    <>
+      <ScrollView
+        style={baseStyles.container}
+        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + spacing.xxxl }]}
+      >
+        <View style={styles.heroCard}>
+          <Text style={styles.eyebrow}>Advanced mode</Text>
+          <Text style={styles.title}>Command Center parity lives here.</Text>
+          <Text style={styles.subtitle}>
+            Review and Terminals stay focused by default. Use these raw dashboards when you need
+            broader fleet context, global filters, or diagnostics. Advanced remains one tab tap from
+            Review.
+          </Text>
+        </View>
 
-      <View style={styles.routeList}>
-        {ADVANCED_ROUTES.map((route) => (
-          <Pressable
-            key={route.pathname}
-            style={styles.routeCard}
-            onPress={() => router.push({ pathname: route.pathname })}
-          >
-            <View style={styles.iconBadge}>
-              <Ionicons name={route.icon} size={22} color={colors.accent} />
-            </View>
-            <View style={styles.routeText}>
-              <Text style={styles.routeTitle}>{route.title}</Text>
-              <Text style={styles.routeSubtitle}>{route.subtitle}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-          </Pressable>
-        ))}
-      </View>
-    </ScrollView>
+        <Pressable
+          testID="companion-backlog-create-open"
+          accessibilityRole="button"
+          accessibilityLabel="Create backlog item"
+          style={styles.primaryAction}
+          onPress={() => setBacklogOpen(true)}
+        >
+          <View style={styles.iconBadge}>
+            <Ionicons name="add-circle-outline" size={22} color={colors.accent} />
+          </View>
+          <View style={styles.routeText}>
+            <Text style={styles.routeTitle}>Create backlog item</Text>
+            <Text style={styles.routeSubtitle}>
+              Title + notes → gateway backlog.create. Project follows the active filter when set.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </Pressable>
+
+        <View style={styles.routeList}>
+          {ADVANCED_ROUTES.map((route) => (
+            <Pressable
+              key={route.pathname}
+              style={styles.routeCard}
+              onPress={() => router.push({ pathname: route.pathname })}
+            >
+              <View style={styles.iconBadge}>
+                <Ionicons name={route.icon} size={22} color={colors.accent} />
+              </View>
+              <View style={styles.routeText}>
+                <Text style={styles.routeTitle}>{route.title}</Text>
+                <Text style={styles.routeSubtitle}>{route.subtitle}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+            </Pressable>
+          ))}
+        </View>
+      </ScrollView>
+      <BacklogCreateSheet open={backlogOpen} onClose={() => setBacklogOpen(false)} />
+    </>
   );
 }
 
@@ -115,6 +140,17 @@ const styles = StyleSheet.create({
   routeList: {
     gap: spacing.lg,
   },
+  primaryAction: {
+    alignItems: 'center',
+    backgroundColor: colors.accent + '12',
+    borderColor: colors.accent + '66',
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.lg,
+    minHeight: touchTargets.primaryMinHeight + spacing.xl,
+    padding: spacing.xl,
+  },
   routeCard: {
     alignItems: 'center',
     backgroundColor: colors.bgSurface,
@@ -123,15 +159,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     gap: spacing.lg,
+    minHeight: touchTargets.primaryMinHeight + spacing.lg,
     padding: spacing.xl,
   },
   iconBadge: {
     alignItems: 'center',
     backgroundColor: colors.bgCard,
     borderRadius: 999,
-    height: 44,
+    height: touchTargets.primaryMin,
     justifyContent: 'center',
-    width: 44,
+    width: touchTargets.primaryMin,
   },
   routeText: {
     flex: 1,

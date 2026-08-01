@@ -21,12 +21,17 @@
       },
       "index-baseline": {
         "action": "index_artifacts",
-        "intent": "Attach baseline screenshots to the recipe artifact package.",
+        "intent": "Attach baseline screenshots and offline HTML catalog to the recipe artifact package.",
         "artifacts": [
           {
             "path": ".agent/ux-baseline-screenshots/manifest.json",
             "type": "json",
             "label": "UX baseline route manifest"
+          },
+          {
+            "path": ".agent/ux-baseline-screenshots/index.html",
+            "type": "other",
+            "label": "Offline UX catalog HTML report"
           },
           {
             "path": ".agent/ux-baseline-screenshots/android/01_review.png",

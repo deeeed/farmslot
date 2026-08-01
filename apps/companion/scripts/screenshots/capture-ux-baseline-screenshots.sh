@@ -4,13 +4,94 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUTPUT_DIR="${FARMSLOT_UX_SCREENSHOT_DIR:-${APP_DIR}/.agent/ux-baseline-screenshots}"
-# shellcheck source=../agentic/agentic.conf
-source "${SCRIPT_DIR}/../agentic/agentic.conf"
 OPEN_DEV_CLIENT="${OPEN_DEV_CLIENT:-1}"
 START_METRO="${START_METRO:-1}"
 CAPTURE_IOS="${CAPTURE_IOS:-1}"
 CAPTURE_ANDROID="${CAPTURE_ANDROID:-1}"
 REQUIRE_REVIEW_FLOW_CONTEXT="${REQUIRE_REVIEW_FLOW_CONTEXT:-0}"
+CATALOG_ONLY="${CATALOG_ONLY:-0}"
+
+usage() {
+  cat <<USAGE
+Usage: $(basename "$0") [--ios-only|--android-only|--no-metro|--review-flow|--catalog-only]
+
+Captures current Companion UX baseline screenshots for design review.
+Always writes an offline-openable HTML catalog (index.html) next to screenshots.
+Output defaults to: ${OUTPUT_DIR}
+
+Optional route context:
+  UX_RUN_ID=<run id>           Capture run detail, evidence, and run diff routes.
+  UX_SLOT_ID=<slot id>         Capture slot workspace, terminal, slot diff, and worker terminal.
+  UX_FAMILY_ID=<family id>     Capture family workspace route.
+  UX_DECISION_ID=<decision id> Capture decision workspace route.
+  --review-flow                Require UX_RUN_ID, UX_SLOT_ID, UX_FAMILY_ID, and UX_DECISION_ID.
+  --catalog-only               Write route manifest + HTML report without device screenshots
+                               (does not require Metro/port config).
+
+Environment overrides (device capture):
+  METRO_PORT / GATEWAY_PORT from slot port configuration (agentic.conf)
+  APP_VARIANT, SCHEME, DEV_CLIENT_SCHEME, IOS_BUNDLE_ID, ANDROID_PACKAGE, ANDROID_SERIAL
+  START_METRO
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --ios-only)
+      CAPTURE_IOS=1
+      CAPTURE_ANDROID=0
+      shift
+      ;;
+    --android-only)
+      CAPTURE_IOS=0
+      CAPTURE_ANDROID=1
+      shift
+      ;;
+    --no-metro)
+      START_METRO=0
+      shift
+      ;;
+    --review-flow)
+      REQUIRE_REVIEW_FLOW_CONTEXT=1
+      shift
+      ;;
+    --catalog-only)
+      CATALOG_ONLY=1
+      CAPTURE_IOS=0
+      CAPTURE_ANDROID=0
+      START_METRO=0
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown argument '$1'" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "${REQUIRE_REVIEW_FLOW_CONTEXT}" == "1" ]]; then
+  missing=()
+  [[ -n "${UX_RUN_ID:-}" ]] || missing+=("UX_RUN_ID")
+  [[ -n "${UX_SLOT_ID:-}" ]] || missing+=("UX_SLOT_ID")
+  [[ -n "${UX_FAMILY_ID:-}" ]] || missing+=("UX_FAMILY_ID")
+  [[ -n "${UX_DECISION_ID:-}" ]] || missing+=("UX_DECISION_ID")
+  if (( ${#missing[@]} > 0 )); then
+    echo "ERROR: --review-flow requires ${missing[*]}." >&2
+    exit 1
+  fi
+fi
+
+if [[ "${CATALOG_ONLY}" == "1" ]]; then
+  : "${APP_VARIANT:=development}"
+else
+  # shellcheck source=../agentic/agentic.conf
+  source "${SCRIPT_DIR}/../agentic/agentic.conf"
+fi
 
 case "${APP_VARIANT}" in
   development)
@@ -58,77 +139,13 @@ if [[ -n "${UX_SLOT_ID:-}" ]]; then
   ROUTES+=("20_slot_workspace|slot/${UX_SLOT_ID}")
   ROUTES+=("21_slot_terminal|terminal/${UX_SLOT_ID}")
   ROUTES+=("22_slot_diff|diff/slot/${UX_SLOT_ID}")
+  ROUTES+=("23_worker_terminal|terminal/worker")
 fi
 if [[ -n "${UX_FAMILY_ID:-}" ]]; then
   ROUTES+=("30_family_workspace|family/${UX_FAMILY_ID}")
 fi
-
-usage() {
-  cat <<USAGE
-Usage: $(basename "$0") [--ios-only|--android-only|--no-metro|--review-flow]
-
-Captures current Companion UX baseline screenshots for design review.
-Output defaults to: ${OUTPUT_DIR}
-
-Optional route context:
-  UX_RUN_ID=<run id>       Capture run detail, evidence, and run diff routes.
-  UX_SLOT_ID=<slot id>     Capture slot workspace, terminal, and slot diff routes.
-  UX_FAMILY_ID=<family id> Capture family workspace route.
-  --review-flow            Require all route context IDs above.
-
-Environment overrides:
-  METRO_PORT=${METRO_PORT}
-  APP_VARIANT=${APP_VARIANT}
-  SCHEME=${SCHEME}
-  DEV_CLIENT_SCHEME=${DEV_CLIENT_SCHEME}
-  IOS_BUNDLE_ID=${IOS_BUNDLE_ID}
-  ANDROID_PACKAGE=${ANDROID_PACKAGE}
-  ANDROID_SERIAL=${ANDROID_SERIAL:-auto}
-  START_METRO=${START_METRO}
-USAGE
-}
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --ios-only)
-      CAPTURE_IOS=1
-      CAPTURE_ANDROID=0
-      shift
-      ;;
-    --android-only)
-      CAPTURE_IOS=0
-      CAPTURE_ANDROID=1
-      shift
-      ;;
-    --no-metro)
-      START_METRO=0
-      shift
-      ;;
-    --review-flow)
-      REQUIRE_REVIEW_FLOW_CONTEXT=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "ERROR: unknown argument '$1'" >&2
-      usage >&2
-      exit 1
-      ;;
-  esac
-done
-
-if [[ "${REQUIRE_REVIEW_FLOW_CONTEXT}" == "1" ]]; then
-  missing=()
-  [[ -n "${UX_RUN_ID:-}" ]] || missing+=("UX_RUN_ID")
-  [[ -n "${UX_SLOT_ID:-}" ]] || missing+=("UX_SLOT_ID")
-  [[ -n "${UX_FAMILY_ID:-}" ]] || missing+=("UX_FAMILY_ID")
-  if (( ${#missing[@]} > 0 )); then
-    echo "ERROR: --review-flow requires ${missing[*]}." >&2
-    exit 1
-  fi
+if [[ -n "${UX_DECISION_ID:-}" ]]; then
+  ROUTES+=("40_decision|decision/${UX_DECISION_ID}")
 fi
 
 wait_for_port() {
@@ -260,18 +277,31 @@ capture_android() {
 
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}"
-start_metro
-if [[ "${CAPTURE_IOS}" == "1" ]]; then
-  capture_ios
-fi
-if [[ "${CAPTURE_ANDROID}" == "1" ]]; then
-  capture_android
+
+if [[ "${CATALOG_ONLY}" != "1" ]]; then
+  start_metro
+  if [[ "${CAPTURE_IOS}" == "1" ]]; then
+    capture_ios
+  fi
+  if [[ "${CAPTURE_ANDROID}" == "1" ]]; then
+    capture_android
+  fi
+else
+  mkdir -p "${OUTPUT_DIR}/catalog"
+  echo "[ux-screenshots] catalog-only mode — skipping device capture"
 fi
 
 {
   printf '{\n'
   printf '  "capturedAt": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf '  "variant": "%s",\n' "${APP_VARIANT}"
+  printf '  "catalogOnly": %s,\n' "$([[ "${CATALOG_ONLY}" == "1" ]] && echo true || echo false)"
+  printf '  "context": {\n'
+  printf '    "runId": %s,\n' "$(if [[ -n "${UX_RUN_ID:-}" ]]; then printf '"%s"' "${UX_RUN_ID}"; else printf 'null'; fi)"
+  printf '    "slotId": %s,\n' "$(if [[ -n "${UX_SLOT_ID:-}" ]]; then printf '"%s"' "${UX_SLOT_ID}"; else printf 'null'; fi)"
+  printf '    "familyId": %s,\n' "$(if [[ -n "${UX_FAMILY_ID:-}" ]]; then printf '"%s"' "${UX_FAMILY_ID}"; else printf 'null'; fi)"
+  printf '    "decisionId": %s\n' "$(if [[ -n "${UX_DECISION_ID:-}" ]]; then printf '"%s"' "${UX_DECISION_ID}"; else printf 'null'; fi)"
+  printf '  },\n'
   printf '  "routes": [\n'
   index=0
   for route in "${ROUTES[@]}"; do
@@ -285,4 +315,7 @@ fi
   printf '}\n'
 } >"${OUTPUT_DIR}/manifest.json"
 
+node "${SCRIPT_DIR}/generate-ux-catalog-html.mjs" --output-dir "${OUTPUT_DIR}"
+
 echo "[ux-screenshots] wrote ${OUTPUT_DIR}"
+echo "[ux-screenshots] open ${OUTPUT_DIR}/index.html for the offline catalog report"
