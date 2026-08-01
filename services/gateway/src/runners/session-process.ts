@@ -181,7 +181,7 @@ async function tryHookSessionBinding(
     slotId?: string | null;
   },
 ): Promise<RunnerSessionBinding | null> {
-  if (!getRunnerDefinition(runner).emitsHookEvents) return null;
+  if (getRunnerDefinition(runner).observabilityScope !== 'event-driven') return null;
   const { hooksRaw } = await readRunnerObservabilityFiles(vars);
   const hookBinding = findSessionStartFromHooks(parseHookJsonl(hooksRaw), options);
   if (!hookBinding) return null;

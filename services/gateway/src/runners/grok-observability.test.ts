@@ -15,10 +15,17 @@ import {
 import { makeVars } from './test-fixtures.js';
 
 describe('Grok structured prompt observability', () => {
-  it('parses a pane-bound prompt signal', () => {
+  it('parses a structured session signal', () => {
     assert.deepEqual(
-      parseGrokPromptSignalProbe(JSON.stringify({ status: 'matched', promptAcceptedAt: 1234 })),
-      { status: 'matched', promptAcceptedAt: 1234 },
+      parseGrokPromptSignalProbe(
+        JSON.stringify({
+          status: 'matched',
+          promptAcceptedAt: 1234,
+          activity: 'composing',
+          activityAt: 1234,
+        }),
+      ),
+      { status: 'matched', promptAcceptedAt: 1234, activity: 'composing', activityAt: 1234 },
     );
   });
 
@@ -27,7 +34,7 @@ describe('Grok structured prompt observability', () => {
       assert.equal(target, 'core-3:bugfix');
       assert.equal(sinceMs, 1000);
       assert.equal(promptText, 'Read TASK.md');
-      return { status: 'matched', promptAcceptedAt: 1200 };
+      return { status: 'matched', promptAcceptedAt: 1200, activity: 'composing', activityAt: 1200 };
     });
 
     assert.deepEqual(
@@ -43,9 +50,30 @@ describe('Grok structured prompt observability', () => {
     );
   });
 
+  it('reports activity from the bound Grok session event stream', async () => {
+    const observability = createGrokLogObservability(async () => ({
+      status: 'matched',
+      promptAcceptedAt: null,
+      activity: 'tool-running',
+      activityAt: 1300,
+    }));
+
+    assert.deepEqual(await observability.getActivity(makeVars(), 'core-3:bugfix'), {
+      value: 'tool-running',
+      source: 'signal',
+      confidence: 'high',
+      observedAt: 1300,
+    });
+  });
+
   it('captures the provider clock for prompt acceptance cutoffs', async () => {
     const observability = createGrokLogObservability(
-      async () => ({ status: 'matched', promptAcceptedAt: null }),
+      async () => ({
+        status: 'matched',
+        promptAcceptedAt: null,
+        activity: 'idle',
+        activityAt: 987_000,
+      }),
       async () => 987_654,
     );
 
@@ -59,6 +87,8 @@ describe('Grok structured prompt observability', () => {
     const noChange = createGrokLogObservability(async () => ({
       status: 'matched',
       promptAcceptedAt: null,
+      activity: 'idle',
+      activityAt: 1000,
     }));
     const ambiguous = createGrokLogObservability(async () => ({ status: 'ambiguous' }));
 
@@ -88,23 +118,6 @@ describe('Grok structured prompt observability', () => {
     );
   });
 
-  it('bounds the log scan and binds events to the active session process', () => {
-    const command = buildGrokPromptSignalProbeCommand(
-      makeVars(),
-      'core-3:bugfix',
-      1000,
-      'Read TASK.md',
-    );
-
-    assert.match(command, /max_scan_bytes = 1024 \* 1024/);
-    assert.match(command, /quote\(repo, safe=''\)/);
-    assert.match(command, /quote\(os\.path\.realpath\(repo\), safe=''\)/);
-    assert.match(command, /if len\(candidates\) != 1/);
-    assert.match(command, /event\.get\('session_id'\) != candidate\['session_id'\]/);
-    assert.match(command, /event_ms < max\(candidate\['opened_at_ms'\], since_ms\)/);
-    assert.match(command, /event\.get\('prompt'\) == expected_prompt/);
-  });
-
   it('executes the generated probe against pane-bound Grok fixtures', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-grok-probe-'));
     const home = path.join(root, 'home');
@@ -114,15 +127,16 @@ describe('Grok structured prompt observability', () => {
     const prompt = 'Read TASK.md';
     const openedAt = '2026-08-01T12:00:00+00:00';
     const acceptedAt = '2026-08-01T12:00:01+00:00';
-    const historyDir = path.join(home, '.grok', 'sessions', encodeURIComponent(repo));
+    const sessionDir = path.join(home, '.grok', 'sessions', encodeURIComponent(repo), sessionId);
     const activePath = path.join(home, '.grok', 'active_sessions.json');
-    const historyPath = path.join(historyDir, 'prompt_history.jsonl');
+    const eventsPath = path.join(sessionDir, 'events.jsonl');
+    const chatPath = path.join(sessionDir, 'chat_history.jsonl');
 
     try {
       await Promise.all([
         mkdir(bin, { recursive: true }),
         mkdir(repo, { recursive: true }),
-        mkdir(historyDir, { recursive: true }),
+        mkdir(sessionDir, { recursive: true }),
       ]);
       const tmuxPath = path.join(bin, 'tmux');
       const psPath = path.join(bin, 'ps');
@@ -136,8 +150,29 @@ describe('Grok structured prompt observability', () => {
           JSON.stringify([{ cwd: repo, pid: 222, session_id: sessionId, opened_at: openedAt }]),
         ),
         writeFile(
-          historyPath,
-          `${JSON.stringify({ session_id: sessionId, timestamp: acceptedAt, prompt, is_bash: false })}\n{"partial":`,
+          eventsPath,
+          [
+            JSON.stringify({
+              type: 'turn_started',
+              ts: acceptedAt,
+              session_id: sessionId,
+              turn_number: 0,
+            }),
+            JSON.stringify({
+              type: 'tool_started',
+              ts: '2026-08-01T12:00:01.500+00:00',
+              tool_name: 'read_file',
+            }),
+            '{"partial":',
+          ].join('\n'),
+        ),
+        writeFile(
+          chatPath,
+          `${JSON.stringify({
+            type: 'user',
+            prompt_index: 0,
+            content: [{ type: 'text', text: prompt }],
+          })}\n`,
         ),
       ]);
       await Promise.all([chmod(tmuxPath, 0o755), chmod(psPath, 0o755), chmod(pythonPath, 0o755)]);
@@ -161,21 +196,36 @@ describe('Grok structured prompt observability', () => {
       assert.deepEqual(parseGrokPromptSignalProbe(matched.stdout.trim()), {
         status: 'matched',
         promptAcceptedAt: Date.parse(acceptedAt),
+        activity: 'tool-running',
+        activityAt: Date.parse('2026-08-01T12:00:01.500+00:00'),
       });
 
       await writeFile(
-        historyPath,
+        chatPath,
         `${JSON.stringify({
-          session_id: sessionId,
-          timestamp: '2026-08-01T12:00:02',
-          prompt,
-          is_bash: false,
+          type: 'user',
+          prompt_index: 0,
+          content: [{ type: 'text', text: 'Different prompt' }],
         })}\n`,
       );
-      const naiveTimestamp = await runProbe();
-      assert.deepEqual(parseGrokPromptSignalProbe(naiveTimestamp.stdout.trim()), {
+      await writeFile(
+        eventsPath,
+        [
+          JSON.stringify({
+            type: 'turn_started',
+            ts: acceptedAt,
+            session_id: sessionId,
+            turn_number: 0,
+          }),
+          JSON.stringify({ type: 'turn_ended', ts: '2026-08-01T12:00:02+00:00' }),
+        ].join('\n'),
+      );
+      const idleMismatch = await runProbe();
+      assert.deepEqual(parseGrokPromptSignalProbe(idleMismatch.stdout.trim()), {
         status: 'matched',
         promptAcceptedAt: null,
+        activity: 'idle',
+        activityAt: Date.parse('2026-08-01T12:00:02+00:00'),
       });
 
       await writeFile(

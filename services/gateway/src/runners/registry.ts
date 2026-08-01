@@ -136,8 +136,6 @@ export interface RunnerDefinition {
    * provider capability, so a pane-backed runner such as Grok may still expose it.
    */
   observabilityScope: ObservabilityScope;
-  /** Runner emits Farmslot hook records that may be used for prompt/session correlation. */
-  emitsHookEvents: boolean;
   /** Post-send hook heartbeat window for degraded-mode detection (ADR-032). Null skips check. */
   observabilityHeartbeatMs?: number | null;
 }
@@ -203,7 +201,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: DEFAULT_CLAUDE_MODEL,
     acceptsModel: (model) => model === 'unknown' || CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
-    emitsHookEvents: true,
     observabilityHeartbeatMs: 5000,
   },
   codex: {
@@ -240,7 +237,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: DEFAULT_CODEX_MODEL,
     acceptsModel: (model) => model === 'unknown' || !CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
-    emitsHookEvents: true,
     observabilityHeartbeatMs: 5000,
   },
   cursor: {
@@ -268,7 +264,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: DEFAULT_CURSOR_MODEL,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'pane-only',
-    emitsHookEvents: false,
   },
   grok: {
     id: 'grok',
@@ -296,7 +291,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: DEFAULT_GROK_MODEL,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
     observabilityScope: 'pane-only',
-    emitsHookEvents: false,
   },
   opencode: {
     id: 'opencode',
@@ -316,7 +310,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: null,
     acceptsModel: () => true,
     observabilityScope: 'none',
-    emitsHookEvents: false,
   },
   none: {
     id: 'none',
@@ -336,7 +329,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: null,
     acceptsModel: () => true,
     observabilityScope: 'none',
-    emitsHookEvents: false,
   },
   scripted: {
     id: 'scripted',
@@ -356,7 +348,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: null,
     acceptsModel: () => true,
     observabilityScope: 'none',
-    emitsHookEvents: false,
   },
 };
 
@@ -416,7 +407,7 @@ export function isRunnerPaneRetired(runnerId?: string | null): boolean {
 
 export function resolveSafeSendTimeoutMs(runnerId: string): number {
   const def = getRunnerDefinition(runnerId);
-  if (def.emitsHookEvents && getRunnerObservability(runnerId)) {
+  if (def.observabilityScope === 'event-driven' && getRunnerObservability(runnerId)) {
     return RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS;
   }
   return RUNNER_PANE_SAFE_SEND_TIMEOUT_MS;
@@ -1305,7 +1296,7 @@ async function readRunnerActivityFromObservability(
 
 type HookPendingDecision =
   | { kind: 'delivered' }
-  | { kind: 'hook'; pending: boolean }
+  | { kind: 'hook' }
   | { kind: 'native-deferred' }
   | { kind: 'fallback' };
 
@@ -1334,7 +1325,7 @@ async function resolvePendingInstructionObsFirst(
     if (reading.value === true) {
       return reading.source === 'signal' ? { kind: 'delivered' } : { kind: 'fallback' };
     }
-    return { kind: 'hook', pending: true };
+    return { kind: 'hook' };
   } catch (error) {
     console.warn(
       `[runner-observability] promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
@@ -1396,7 +1387,7 @@ async function sendRunnerInstructionWhenPaneClear(
     return true;
   }
   const hasPending =
-    delivery.kind === 'hook' && delivery.pending
+    delivery.kind === 'hook'
       ? runnerPaneHasPendingInstruction(pane, message, runner)
       : await runnerHasPendingInstruction(
           vars,
@@ -1513,13 +1504,14 @@ export async function runnerHasDurablePromptHandoff(
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
   const def = getRunnerDefinition(runner);
-  const paneId = def.emitsHookEvents ? await resolveTmuxPaneId(vars, target) : null;
+  const paneId =
+    def.observabilityScope === 'event-driven' ? await resolveTmuxPaneId(vars, target) : null;
   const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
     paneId,
     launchAckSignalPath: opts.launchAckSignalPath,
     launchAckBaseline: opts.launchAckBaseline,
     requirePromptDigest: opts.requirePromptDigest,
-    preferHooks: def.emitsHookEvents,
+    preferHooks: def.observabilityScope === 'event-driven',
   });
   if (handoff.accepted) {
     return handoff;
@@ -2072,9 +2064,10 @@ export async function sendRunnerInstructionSafely(
   // exact-text history is not: an identical operator nudge may be intentional,
   // so only a native acceptance from this send call can suppress it.
   const hookPromptAcceptedSinceMs = computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
-  const promptAcceptedSinceMs = def.emitsHookEvents
-    ? hookPromptAcceptedSinceMs
-    : await captureRunnerPromptAcceptanceBaseline(vars, target, runner, loopStartMs);
+  const promptAcceptedSinceMs =
+    def.observabilityScope === 'event-driven'
+      ? hookPromptAcceptedSinceMs
+      : await captureRunnerPromptAcceptanceBaseline(vars, target, runner, loopStartMs);
   // ADR-032 Phase 3: hook-capable runners that don't need the busy-composer poll (Claude) resolve
   // the decision from hooks only. Runners that require the poll (Codex) take the pane-fallback path
   // below.
@@ -2105,7 +2098,7 @@ export async function sendRunnerInstructionSafely(
       promptAcceptedSinceMs,
     );
     if (pendingObs.kind === 'delivered') return true;
-    if (pendingObs.kind === 'hook' && pendingObs.pending) {
+    if (pendingObs.kind === 'hook') {
       // An authoritative not-accepted reading only means the runner never saw
       // the digest — it does NOT prove text is buffered in the composer. An
       // Enter on an empty composer reports success while the instruction was
@@ -2147,7 +2140,11 @@ export async function sendRunnerInstructionSafely(
     }
   }
   const deadline = loopStartMs + effectiveTimeoutMs;
-  const deferNativePromptProbe = !def.emitsHookEvents && getRunnerObservability(runner) != null;
+  // Native history providers can scan bounded log files. Probe once while
+  // the composer remains busy; sendRunnerInstructionWhenPaneClear performs
+  // the required final native recheck immediately before any fresh send.
+  const deferNativePromptProbe =
+    def.observabilityScope !== 'event-driven' && getRunnerObservability(runner) != null;
   let nativePromptProbeCompleted = false;
   while (Date.now() < deadline) {
     const pendingObs =
@@ -2168,7 +2165,7 @@ export async function sendRunnerInstructionSafely(
       return pane;
     };
 
-    if (pendingObs.kind === 'hook' && pendingObs.pending) {
+    if (pendingObs.kind === 'hook') {
       // Same pane-evidence rule as the fast path; with nothing buffered, fall
       // through to the busy-aware delivery below instead of a blind Enter.
       const captured = await ensurePane();
@@ -2186,16 +2183,17 @@ export async function sendRunnerInstructionSafely(
       }
     } else if (pendingObs.kind === 'fallback') {
       const captured = await ensurePane();
-      const hasPending = def.emitsHookEvents
-        ? await runnerHasPendingInstruction(
-            vars,
-            target,
-            runner,
-            message,
-            captured,
-            promptAcceptedSinceMs,
-          )
-        : runnerPaneHasPendingInstruction(captured, message, runner);
+      const hasPending =
+        def.observabilityScope === 'event-driven'
+          ? await runnerHasPendingInstruction(
+              vars,
+              target,
+              runner,
+              message,
+              captured,
+              promptAcceptedSinceMs,
+            )
+          : runnerPaneHasPendingInstruction(captured, message, runner);
       if (hasPending) {
         return (
           (await submitRunnerInstruction(
@@ -2209,10 +2207,6 @@ export async function sendRunnerInstructionSafely(
         );
       }
     }
-
-    // Native history providers can scan bounded log files. Probe once while
-    // the composer remains busy; sendRunnerInstructionWhenPaneClear performs
-    // the required final native recheck immediately before any fresh send.
 
     const busyObs = await resolveBusyComposerObsFirst(vars, target, runner);
     if (busyObs.kind === 'hook') {

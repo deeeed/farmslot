@@ -1049,7 +1049,7 @@ describe('grok runner', () => {
     assert.equal(runnerSupportsTmuxNudges('grok'), true);
     assert.equal(runnerContinueCommand('grok'), null);
     assert.equal(getRunnerDefinition('grok').requiresBusyComposerPoll, true);
-    assert.equal(getRunnerDefinition('grok').emitsHookEvents, false);
+    assert.equal(getRunnerDefinition('grok').observabilityScope, 'pane-only');
     assert.equal(runnerPersistsSessionFiles('grok'), true);
   });
 

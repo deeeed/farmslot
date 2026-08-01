@@ -1,9 +1,14 @@
 import { execOnSlot } from '../core/exec.js';
 
-import type { RunnerObservability, SlotVars } from './observability-types.js';
+import type { RunnerActivity, RunnerObservability, SlotVars } from './observability-types.js';
 
 type GrokPromptSignalProbe =
-  | { status: 'matched'; promptAcceptedAt: number | null }
+  | {
+      status: 'matched';
+      promptAcceptedAt: number | null;
+      activity: Extract<RunnerActivity, 'idle' | 'composing' | 'tool-running'>;
+      activityAt: number;
+    }
   | { status: 'unavailable' | 'ambiguous' };
 
 type ProbeGrokPromptSignal = (
@@ -22,11 +27,20 @@ export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
   }
   if (
     value.status !== 'matched' ||
-    (value.promptAcceptedAt !== null && typeof value.promptAcceptedAt !== 'number')
+    (value.promptAcceptedAt !== null && typeof value.promptAcceptedAt !== 'number') ||
+    (value.activity !== 'idle' &&
+      value.activity !== 'composing' &&
+      value.activity !== 'tool-running') ||
+    typeof value.activityAt !== 'number'
   ) {
     throw new Error(`Invalid Grok prompt signal probe: ${raw}`);
   }
-  return { status: 'matched', promptAcceptedAt: value.promptAcceptedAt };
+  return {
+    status: 'matched',
+    promptAcceptedAt: value.promptAcceptedAt,
+    activity: value.activity,
+    activityAt: value.activityAt,
+  };
 }
 
 async function probeGrokPromptSignal(
@@ -85,13 +99,12 @@ since_ms = ${Math.floor(sinceMs)}
 expected_prompt = ${JSON.stringify(promptText)}
 home = Path.home()
 active_path = home / '.grok' / 'active_sessions.json'
-history_paths = list(dict.fromkeys([
-    home / '.grok' / 'sessions' / quote(repo, safe='') / 'prompt_history.jsonl',
-    home / '.grok' / 'sessions' / quote(os.path.realpath(repo), safe='') / 'prompt_history.jsonl',
+session_roots = list(dict.fromkeys([
+    home / '.grok' / 'sessions' / quote(repo, safe=''),
+    home / '.grok' / 'sessions' / quote(os.path.realpath(repo), safe=''),
 ]))
-history_paths = [path for path in history_paths if path.is_file()]
 
-if not active_path.is_file() or not history_paths:
+if not active_path.is_file():
     print(json.dumps({'status': 'unavailable'}))
     raise SystemExit(0)
 
@@ -154,41 +167,102 @@ if len(candidates) != 1:
     raise SystemExit(0)
 
 candidate = candidates[0]
+session_dirs = list(dict.fromkeys([
+    root / candidate['session_id'] for root in session_roots
+]))
+session_dirs = [path for path in session_dirs if path.is_dir()]
+if len(session_dirs) != 1:
+    print(json.dumps({'status': 'ambiguous' if session_dirs else 'unavailable'}))
+    raise SystemExit(0)
+
+session_dir = session_dirs[0]
+events_path = session_dir / 'events.jsonl'
+chat_path = session_dir / 'chat_history.jsonl'
+if not events_path.is_file() or not chat_path.is_file():
+    print(json.dumps({'status': 'unavailable'}))
+    raise SystemExit(0)
+
 accepted_at = None
 max_scan_bytes = 1024 * 1024
-for history_path in history_paths:
-    with history_path.open('rb') as handle:
+
+def read_jsonl_tail(path):
+    with path.open('rb') as handle:
         size = handle.seek(0, 2)
         start = max(0, size - max_scan_bytes)
         handle.seek(start)
         if start:
-            # The bounded tail starts in an arbitrary record; discard that fragment.
             handle.readline()
         lines = handle.readlines()
-        for index, raw_line in enumerate(lines):
-            line = raw_line.decode('utf-8', errors='replace')
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                # Grok appends this file live. Only an unterminated final record is expected.
-                if index == len(lines) - 1 and not raw_line.endswith(b'\\n'):
-                    continue
-                raise
-            if event.get('session_id') != candidate['session_id']:
+    records = []
+    for index, raw_line in enumerate(lines):
+        try:
+            records.append(json.loads(raw_line.decode('utf-8', errors='replace')))
+        except json.JSONDecodeError:
+            if index == len(lines) - 1 and not raw_line.endswith(b'\\n'):
                 continue
-            timestamp = event.get('timestamp')
-            event_ms = parse_aware_timestamp_ms(timestamp)
-            if event_ms is None:
-                continue
-            if event_ms < max(candidate['opened_at_ms'], since_ms):
-                continue
-            if (
-                event.get('prompt') == expected_prompt
-                and event.get('is_bash') is False
-            ):
-                accepted_at = max(event_ms, accepted_at or 0)
+            raise
+    return records
 
-print(json.dumps({'status': 'matched', 'promptAcceptedAt': accepted_at}))
+latest_start = None
+latest_end = None
+latest_tool_start = None
+latest_tool_end = None
+for event in read_jsonl_tail(events_path):
+    event_ms = parse_aware_timestamp_ms(event.get('ts'))
+    if event_ms is None or event_ms < candidate['opened_at_ms']:
+        continue
+    event_type = event.get('type')
+    if event_type == 'turn_started' and isinstance(event.get('turn_number'), int):
+        if latest_start is None or event_ms > latest_start['at']:
+            latest_start = {'at': event_ms, 'turn_number': event['turn_number']}
+    elif event_type == 'turn_ended':
+        latest_end = max(event_ms, latest_end or 0)
+    elif event_type == 'tool_started':
+        latest_tool_start = max(event_ms, latest_tool_start or 0)
+    elif event_type == 'tool_completed':
+        latest_tool_end = max(event_ms, latest_tool_end or 0)
+
+latest_user = None
+for message in read_jsonl_tail(chat_path):
+    prompt_index = message.get('prompt_index')
+    content = message.get('content')
+    if message.get('type') != 'user' or not isinstance(prompt_index, int) or not isinstance(content, list):
+        continue
+    texts = [item.get('text') for item in content if isinstance(item, dict) and item.get('type') == 'text']
+    if not texts or not all(isinstance(text, str) for text in texts):
+        continue
+    if latest_user is None or prompt_index > latest_user['prompt_index']:
+        latest_user = {'prompt_index': prompt_index, 'text': ''.join(texts)}
+
+if latest_start is None or (latest_end is not None and latest_end >= latest_start['at']):
+    activity = 'idle'
+    activity_at = max(latest_end or 0, candidate['opened_at_ms'])
+elif (
+    latest_tool_start is not None
+    and latest_tool_start >= latest_start['at']
+    and (latest_tool_end is None or latest_tool_start > latest_tool_end)
+):
+    activity = 'tool-running'
+    activity_at = latest_tool_start
+else:
+    activity = 'composing'
+    activity_at = latest_start['at']
+
+if (
+    latest_start is not None
+    and latest_user is not None
+    and latest_start['turn_number'] == latest_user['prompt_index']
+    and latest_start['at'] >= max(candidate['opened_at_ms'], since_ms)
+    and latest_user['text'] == expected_prompt
+):
+    accepted_at = latest_start['at']
+
+print(json.dumps({
+    'status': 'matched',
+    'promptAcceptedAt': accepted_at,
+    'activity': activity,
+    'activityAt': activity_at,
+}))
 PY`;
 }
 
@@ -197,8 +271,15 @@ export function createGrokLogObservability(
   readClock: ReadGrokClockMs = readGrokClockMs,
 ): RunnerObservability {
   return {
-    async getActivity() {
-      return null;
+    async getActivity(vars, target) {
+      const signal = await probe(vars, target, 0, '');
+      if (signal.status !== 'matched') return null;
+      return {
+        value: signal.activity,
+        source: 'signal',
+        confidence: 'high',
+        observedAt: signal.activityAt,
+      };
     },
     async getContextPct() {
       return null;

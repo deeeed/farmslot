@@ -38,6 +38,8 @@ let grokPromptAcceptedCalls = 0;
 let grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
 let grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
 let grokPromptAcceptanceBaselineMs = Date.now();
+let grokActivityReads = 0;
+let grokActivitySequence: RunnerActivity[] = ['idle'];
 
 mock.module('./claude-observability.js', {
   namedExports: {
@@ -70,7 +72,14 @@ mock.module('./grok-observability.js', {
   namedExports: {
     grokLogObservability: {
       async getActivity() {
-        return null;
+        const index = Math.min(grokActivityReads, grokActivitySequence.length - 1);
+        grokActivityReads += 1;
+        return {
+          value: grokActivitySequence[index] ?? 'idle',
+          source: 'signal',
+          confidence: 'high',
+          observedAt: Date.now(),
+        };
       },
       async getContextPct() {
         return null;
@@ -298,11 +307,7 @@ test('sendRunnerPostLaunchPrompt rechecks delayed Grok acceptance before retryin
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false;
-  paneText = `
-  ╭────────────────────────────────────────────╮
-  │ ❯                                          │
-  ╰───────────────────────────── Grok Build ───╯
-  `;
+  paneText = '';
   grokPromptAcceptedCalls = 0;
   grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
   paneTextByCapture = null;
@@ -329,17 +334,12 @@ test('sendRunnerPostLaunchPrompt rechecks delayed Grok acceptance before retryin
   grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
 });
 
-test('sendRunnerPostLaunchPrompt does not treat unrelated pre-send activity as delivery', async () => {
+test('sendRunnerPostLaunchPrompt does not treat native idle state as exact delivery', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneClearsAfterSubmit = false;
-  const idlePane = `
-  ╭────────────────────────────────────────────╮
-  │ ❯                                          │
-  ╰───────────────────────────── Grok Build ───╯
-  `;
-  paneText = idlePane;
-  paneTextByCapture = [idlePane, '#1 Initializing MCP tools…', idlePane, idlePane];
+  paneText = '';
+  paneTextByCapture = null;
   grokPromptAcceptedCalls = 0;
   grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
   grokPromptAcceptedAfterCall = 3;
@@ -355,7 +355,7 @@ test('sendRunnerPostLaunchPrompt does not treat unrelated pre-send activity as d
   assert.equal(
     callOrder.filter((entry) => entry === 'tmux:send-literal').length,
     1,
-    `unrelated pane activity must not suppress the first send; order=${callOrder.join(',')}`,
+    `native idle state must not substitute for exact prompt acceptance; order=${callOrder.join(',')}`,
   );
   paneTextByCapture = null;
   paneClearsAfterSubmit = true;
@@ -390,7 +390,7 @@ test('sendRunnerInstructionSafely does not suppress an intentional identical Gro
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneTextByCapture = null;
-  paneText = '❯\nctx:12%\n';
+  paneText = '';
   grokPromptAcceptedCalls = 0;
   grokPromptAcceptedAfterCall = 1;
   grokPromptAcceptanceBaselineMs = 10_000;
@@ -435,29 +435,33 @@ test('sendRunnerInstructionSafely bounds native Grok probes while the composer s
   callOrder.length = 0;
   paneCaptureCount = 0;
   paneTextByCapture = null;
-  paneText = 'Working (waiting for tool)';
+  paneText = '';
   grokPromptAcceptedCalls = 0;
   grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
   grokPromptAcceptanceBaselineMs = 10_000;
   grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  grokActivityReads = 0;
+  grokActivitySequence = ['tool-running'];
 
   const delivered = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 50);
 
   assert.equal(delivered, false);
   assert.equal(grokPromptAcceptedCalls, 1, 'busy polling must not repeatedly scan Grok history');
   assert.equal(callOrder.includes('tmux:send-literal'), false);
-  paneText = '❯\nctx:12%\n';
   grokPromptAcceptanceBaselineMs = Date.now();
 });
 
 test('sendRunnerInstructionSafely honors native Grok acceptance after a busy wait', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
-  paneTextByCapture = ['Working (waiting for tool)', '❯\nctx:12%\n'];
+  paneTextByCapture = null;
+  paneText = '';
   grokPromptAcceptedCalls = 0;
   grokPromptAcceptedAfterCall = 2;
   grokPromptAcceptanceBaselineMs = 10_000;
   grokPromptAcceptedAtMs = 10_001;
+  grokActivityReads = 0;
+  grokActivitySequence = ['tool-running', 'idle'];
 
   const delivered = await sendRunnerInstructionSafely(
     vars,

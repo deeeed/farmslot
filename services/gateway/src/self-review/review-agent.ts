@@ -30,7 +30,6 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
   runnerSupportsSessionReload,
 } from '../runners/launch-command.js';
-import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
   runnerHasDurablePromptHandoff,
@@ -401,8 +400,7 @@ export async function runReviewAgent(
       // Use the same runner-neutral post-launch protocol as dispatch: wait for a
       // stable runner prompt, send, then verify that the pane echoes our marker.
       if (runnerNeedsPostLaunchPrompt(runner)) {
-        const launchAckSignalPath = taskDirRelPath(taskDir, reviewChecklistTarget.signal);
-        const launchAckBaseline = await readLaunchAckSignalSnapshot(vars, launchAckSignalPath);
+        const signalPath = taskDirRelPath(taskDir, reviewChecklistTarget.signal);
         const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
           vars,
           reviewTarget,
@@ -421,9 +419,7 @@ export async function runReviewAgent(
               readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
               maxAttempts: 5,
               blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
-              signalPath: launchAckSignalPath,
-              launchAckSignalPath,
-              launchAckBaseline,
+              signalPath,
               promptAcceptanceBaselineMs,
               requirePromptDigest: true,
               handoffAckSinceMs,
@@ -439,8 +435,6 @@ export async function runReviewAgent(
             prompt,
             handoffAckSinceMs,
             {
-              launchAckSignalPath,
-              launchAckBaseline,
               promptAcceptanceBaselineMs,
               requirePromptDigest: true,
             },
