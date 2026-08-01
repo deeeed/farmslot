@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- fix: keep iOS Simulator lifecycle restarts idempotent when `simctl` reports that it found nothing to terminate.
+
 ## 0.11.0 - 2026-08-01
 
 - **BREAKING:** Run summaries now include structured totals and all four failure-cause counts required by the matching `@farmslot/protocol`; publish the protocol first and update harness consumers as one coordinated release.

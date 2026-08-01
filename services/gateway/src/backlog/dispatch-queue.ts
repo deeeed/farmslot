@@ -22,8 +22,6 @@ import { evalSuiteCapUsage } from '../evals/suite-cap-store.js';
 import { farmslotRoot, loadFleetStatus } from '../fleet/state.js';
 import { resolveDispatchPreviewFromFleet } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
-import { detectProfileFit } from '../run-engine/profile-fit-gate.js';
-import { fetchTicketData } from '../run-engine/ticket-data.js';
 import { discardUndurableRun, getAllRuns, getRun, runRecordPath } from '../runs/store.js';
 
 function shouldUseIsolatedQueueFile(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
@@ -42,8 +40,6 @@ function resolveQueueFile(): string {
 const QUEUE_FILE = resolveQueueFile();
 const queue: QueueItem[] = [];
 let queuePersistChain: Promise<void> = Promise.resolve();
-const queueProfileFitCache = new Map<string, string | null>();
-const queueProfileFitDeferUntil = new Map<string, number>();
 
 /** Default exclusive-claim TTL. Holders must re-validate before createRun. */
 export const DEFAULT_QUEUE_CLAIM_TTL_MS = 60_000;
@@ -129,7 +125,6 @@ export function reclaimExpiredClaims(nowMs = Date.now()): number {
     if (item.runId) {
       const stamped = getRun(item.runId);
       if (stamped) {
-        clearQueueProfileFitCache(item);
         queue.splice(i, 1);
         dropped += 1;
         continue;
@@ -193,22 +188,6 @@ function enqueuePersist(reason: string): Promise<void> {
 
 function schedulePersist(reason: string): void {
   enqueuePersist(reason).catch(() => undefined);
-}
-
-function queueProfileFitCacheKey(item: QueueItem): string {
-  return [item.id, item.ticketOrPr, item.app ?? '', item.prepareProfile ?? '', item.createdAt].join(
-    '\0',
-  );
-}
-
-function clearQueueProfileFitCache(item: QueueItem): void {
-  const prefix = `${item.id}\0`;
-  for (const key of queueProfileFitCache.keys()) {
-    if (key.startsWith(prefix)) queueProfileFitCache.delete(key);
-  }
-  for (const key of queueProfileFitDeferUntil.keys()) {
-    if (key.startsWith(prefix)) queueProfileFitDeferUntil.delete(key);
-  }
 }
 
 export async function persistQueueNow(): Promise<void> {
@@ -480,7 +459,6 @@ function removeItemAtIndex(idx: number, reason: string): void {
   // Bump epoch so any holder still holding a token discovers the loss.
   removed.claimEpoch = (removed.claimEpoch ?? 0) + 1;
   clearClaimFields(removed);
-  clearQueueProfileFitCache(removed);
   schedulePersist(reason);
   console.log(`[dispatch-queue] removed item ${removed.id.slice(0, 8)} (${reason})`);
   broadcastQueue();
@@ -712,7 +690,6 @@ export async function cancelGraphQueuedItem(params: {
   // Revoke claim so any in-flight dispatcher fails re-validation.
   item.claimEpoch = (item.claimEpoch ?? 0) + 1;
   clearClaimFields(item);
-  clearQueueProfileFitCache(item);
 
   // Durable removal first — if this throws, restore memory so the row is not lost.
   try {
@@ -843,85 +820,20 @@ export function buildQueuePreviewParams(item: QueueItem) {
   };
 }
 
-async function requiredPrepareProfileForQueueItem(item: QueueItem): Promise<string | null> {
-  if (item.prepareProfile) return item.prepareProfile;
-  const cacheKey = queueProfileFitCacheKey(item);
-  if (queueProfileFitCache.has(cacheKey)) {
-    return queueProfileFitCache.get(cacheKey) ?? null;
-  }
-  const deferUntil = queueProfileFitDeferUntil.get(cacheKey);
-  if (deferUntil && deferUntil > Date.now()) {
-    throw new Error(
-      `Ticket metadata unavailable for ${item.ticketOrPr}; retrying profile fit after ${new Date(deferUntil).toISOString()}`,
-    );
-  }
-  if (item.project !== 'farmslot-farm') {
-    queueProfileFitCache.set(cacheKey, null);
-    return null;
-  }
-  const previewRun = {
-    id: item.runId ?? item.id,
-    familyId: item.familyId ?? item.id,
-    lane: item.lane ?? 'production',
-    flowType: item.flowType,
-    status: 'created',
-    project: item.project,
-    ticketOrPr: item.ticketOrPr,
-    slotId: item.slotId ?? null,
-    branch: item.branch ?? null,
-    taskFile: null,
-    steps: [],
-    decisions: [],
-    metrics: { nudgeCount: 0, model: item.model ?? null, runner: item.runner ?? null },
-    createdAt: item.createdAt,
-    updatedAt: item.createdAt,
-    prepareProfile: item.prepareProfile,
-    app: item.app,
-  } as Run;
-  // Prefer the payload persisted at intake (manual backlog metadata is richer than
-  // anything a re-fetch of a free-form ticket string can produce).
-  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = item.ticketData ?? null;
-  if (!ticketData) {
-    try {
-      ticketData = await fetchTicketData(previewRun);
-    } catch {
-      // Queue metadata can outlive network/GitHub availability; explicit app/profile still gate.
-    }
-  }
-  // Strict ref shape only (`#123` / `owner/repo#123`): free-form titles that merely
-  // contain '#' (e.g. "improve the #runs view") must not trigger metadata deferral.
-  const githubRef = /^(?:[\w.-]+\/[\w.-]+)?#\d+$/.test(item.ticketOrPr.trim());
-  const onlyFallbackTicketData =
-    ticketData?.source === 'manual' &&
-    ticketData.title === item.ticketOrPr &&
-    !ticketData.description &&
-    (ticketData.acceptanceCriteria?.length ?? 0) === 0 &&
-    (ticketData.labels?.length ?? 0) === 0;
-  if (githubRef && onlyFallbackTicketData) {
-    queueProfileFitDeferUntil.set(cacheKey, Date.now() + 60_000);
-    throw new Error(
-      `Ticket metadata unavailable for ${item.ticketOrPr}; deferring queued dispatch so implicit profile fit cannot bind the wrong slot`,
-    );
-  }
-  const profileFit = detectProfileFit(previewRun, ticketData, {
-    prepareProfile: item.prepareProfile,
-    app: item.app,
-    slotPlatform: null,
-  });
-  const requiredPrepareProfile = profileFit?.suggestedPrepareProfile ?? null;
-  queueProfileFitCache.set(cacheKey, requiredPrepareProfile);
-  if (requiredPrepareProfile) {
-    item.prepareProfile = requiredPrepareProfile;
-    schedulePersist('profile-fit');
-  }
-  return requiredPrepareProfile;
+/**
+ * Queue/slot resource gating uses explicit operator prepare only.
+ * Profile-fit may advise in dispatch preview UI; it must never stamp queue items
+ * or narrow free-slot eligibility (ADR-037 advisory-only follow-up).
+ */
+function requiredPrepareProfileForQueueItem(item: QueueItem): string | null {
+  return item.prepareProfile ?? null;
 }
 
 export async function selectQueueDispatchSlot(
   slots: SlotStatus[],
   item: QueueItem,
 ): Promise<string | null> {
-  const requiredPrepareProfile = await requiredPrepareProfileForQueueItem(item);
+  const requiredPrepareProfile = requiredPrepareProfileForQueueItem(item);
   if (item.launchSlotPolicy === 'spread' && item.launchGroupId) {
     const activeSiblingSlots = new Set(
       getAllRuns()
@@ -1107,7 +1019,6 @@ async function tryDispatchNextOnce(): Promise<void> {
       // successful handoff never leaves a dispatching row for requeue.
       const idx = queue.findIndex((q) => q.id === item.id);
       if (idx >= 0) {
-        clearQueueProfileFitCache(queue[idx]);
         queue.splice(idx, 1);
         schedulePersist('auto-dispatch-success');
         _broadcast('queue.updated', { items: listItems() });
@@ -1131,7 +1042,6 @@ async function tryDispatchNextOnce(): Promise<void> {
           item.status = 'cancelled';
           item.runId = undefined;
           clearClaimFields(item);
-          clearQueueProfileFitCache(item);
           schedulePersist(
             isStartRefPolicyError(err)
               ? 'auto-dispatch-start-ref-policy-failure'

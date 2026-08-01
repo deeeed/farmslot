@@ -256,8 +256,8 @@ function iosSimulatorLifecycleCalls(
       {
         file: 'xcrun',
         args: ['simctl', 'terminate', device, target.appId],
-        // simctl terminate exits non-zero when the app is already stopped; restart should remain idempotent.
-        ignoreFailureWhenOutputIncludes: ['not running'],
+        // simctl exits non-zero when the app is already stopped; terminate and restart remain idempotent.
+        ignoreFailureWhenOutputIncludes: ['not running', 'found nothing to terminate'],
       },
     ];
   }
