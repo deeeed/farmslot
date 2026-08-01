@@ -204,7 +204,10 @@ function isSuppressedRecipeProtocolFinding(
     (finding.code === 'artifact_package.missing_required_file' &&
       missingArtifactPaths.has(finding.path)) ||
     (finding.code === 'artifact_package.missing_manifest' &&
-      artifactReadErrorPaths.has('artifact-manifest.json'))
+      artifactReadErrorPaths.has('artifact-manifest.json')) ||
+    (finding.code === 'artifact_package.invalid_summary' &&
+      artifactReadErrorPaths.has('summary.json')) ||
+    (finding.code === 'artifact_package.invalid_trace' && artifactReadErrorPaths.has('trace.json'))
   );
 }
 
@@ -295,6 +298,7 @@ export function validateRecipeRunArtifactPackageOutput(
   const recipe = validateRecipeArtifactPackage({
     recipe: input.recipeArtifactPresent ? input.recipe : undefined,
     trace: input.trace,
+    summary: input.summary,
     recipeResolution: input.recipeResolution,
     resolvedRecipes: input.resolvedRecipes,
     manifest: input.manifest,

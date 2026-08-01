@@ -319,6 +319,7 @@ export async function validateRecipeArtifactDirectory(
   const recipeValidation = validateRecipeArtifactPackage({
     recipe,
     trace,
+    summary,
     manifest,
     artifactPaths,
     recipeResolution,

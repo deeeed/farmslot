@@ -1,9 +1,11 @@
 import {
   normalizeRecipeRef,
   type RecipeActionManifestDocument,
+  type RecipeFailureCause,
   validateResolvedRecipeActionNode,
 } from '@farmslot/protocol';
 
+import { RecipeExecutionError, recipeFailureCause } from './failure.js';
 import { extractWorkflowGraph, resolveNextNode } from './graph.js';
 import { isRecord } from './json.js';
 import type { ResolvedLibraryRecipe } from './library.js';
@@ -68,6 +70,7 @@ export interface ExecuteRecipeOptions {
 
 export interface ExecuteRecipeResult {
   status: RecipeRunStatus;
+  failureCause?: RecipeFailureCause;
   output: Record<string, unknown>;
   outputs: ReadonlyMap<string, unknown>;
 }
@@ -100,6 +103,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
     throw new Error(`No output recorded for node ${nodeId}.`);
   };
   const nextCallStack = [...callStack, options.ref];
+  let failureCause: RecipeFailureCause | undefined;
 
   const runGraph = async (entry: string, nodeCount: number): Promise<RecipeRunStatus> => {
     let currentNodeId: string | undefined = entry;
@@ -115,7 +119,10 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           options.traceWriter,
           namespacedNodeId,
           new Error(`Recipe ${options.ref} exceeded its acyclic graph size.`),
+          'unknown',
+          'harness',
         );
+        failureCause ??= 'harness';
         return 'fail';
       }
 
@@ -125,7 +132,10 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           options.traceWriter,
           namespacedNodeId,
           new Error(`Recipe ${options.ref} node ${localNodeId} does not exist.`),
+          'unknown',
+          'harness',
         );
+        failureCause ??= 'harness';
         return 'fail';
       }
       let resolvedNode: unknown;
@@ -137,7 +147,9 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           namespacedNodeId,
           error instanceof Error ? error : new Error(String(error)),
           typeof rawNode.action === 'string' ? rawNode.action : undefined,
+          'harness',
         );
+        failureCause ??= 'harness';
         return 'fail';
       }
       if (!isRecord(resolvedNode)) {
@@ -145,7 +157,10 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           options.traceWriter,
           namespacedNodeId,
           new Error(`Recipe ${options.ref} node ${localNodeId} did not resolve to an object.`),
+          'unknown',
+          'harness',
         );
+        failureCause ??= 'harness';
         return 'fail';
       }
 
@@ -154,15 +169,18 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
       const startedAt = new Date();
       if (action === 'end') {
         const status = terminalStatus(node.status);
+        const failed = status === 'fail';
         options.traceWriter.record({
           nodeId: namespacedNodeId,
           action,
           startedAt: startedAt.toISOString(),
           endedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAt.getTime(),
-          ok: true,
+          ok: !failed,
+          ...(failed ? { cause_class: 'subject' as const } : {}),
           status,
         });
+        if (failed) failureCause ??= 'subject';
         return status;
       }
 
@@ -173,7 +191,9 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           namespacedNodeId,
           new Error(`No adapter registered for action ${action}.`),
           action,
+          'harness',
         );
+        failureCause ??= 'harness';
         return 'fail';
       }
 
@@ -181,13 +201,16 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
       try {
         const resolvedValidation = validateResolvedRecipeActionNode(node, options.actionManifest);
         if (resolvedValidation.status === 'invalid') {
-          throw new RecipeResolutionError(
+          const resolutionError = new RecipeResolutionError(
             'RECIPE_PARAMS_INVALID',
             `Resolved parameters for ${action} are invalid: ${resolvedValidation.findings
               .map((finding) => `${finding.code} ${finding.path}: ${finding.message}`)
               .join('; ')}`,
             `inspect ${action} with actions --action ${action}`,
           );
+          throw new RecipeExecutionError('harness', resolutionError.message, {
+            cause: resolutionError,
+          });
         }
         if (options.publishHudProgress) {
           const ok = await options.publishHudProgress('running', {
@@ -199,7 +222,12 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
             total: nodeCount,
             context,
           });
-          if (!ok) throw new Error(`app.hud running update failed for ${namespacedNodeId}.`);
+          if (!ok) {
+            throw new RecipeExecutionError(
+              'harness',
+              `app.hud running update failed for ${namespacedNodeId}.`,
+            );
+          }
         }
 
         const result =
@@ -229,7 +257,12 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
         }
         if (result.artifacts?.length) options.registerArtifacts(result.artifacts);
         const next = resolveNextNode(node, result);
-        if (!next) throw new Error(`Recipe node ${localNodeId} has no next target.`);
+        if (!next) {
+          throw new RecipeExecutionError(
+            'harness',
+            `Recipe node ${localNodeId} has no next target.`,
+          );
+        }
         const { observations, observationWarnings } = finalizeNodeObservations({
           result,
           observationResult,
@@ -260,11 +293,18 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
             total: nodeCount,
             context,
           });
-          if (!ok) throw new Error(`app.hud completion update failed for ${namespacedNodeId}.`);
+          if (!ok) {
+            throw new RecipeExecutionError(
+              'harness',
+              `app.hud completion update failed for ${namespacedNodeId}.`,
+            );
+          }
         }
         currentNodeId = next;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const causeClass = recipeFailureCause(error);
+        failureCause ??= causeClass;
         if (options.publishHudProgress) {
           try {
             await options.publishHudProgress('fail', {
@@ -292,6 +332,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           endedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAt.getTime(),
           ok: false,
+          cause_class: causeClass,
           error: message,
         });
         return 'fail';
@@ -307,6 +348,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
   const status = combineStatuses(mainStatus, teardownStatus);
   return {
     status,
+    ...(status === 'fail' ? { failureCause: failureCause ?? 'unknown' } : {}),
     output: recipeOutput(options.ref, status, localOutputs),
     outputs,
   };
@@ -320,9 +362,14 @@ async function executeRecipeCall(
   },
 ): Promise<ActionResult> {
   const ref = typeof options.node.ref === 'string' ? normalizeRecipeRef(options.node.ref) : '';
-  if (!ref) throw new Error('call.ref must be a non-empty recipe id.');
+  if (!ref) throw new RecipeExecutionError('harness', 'call.ref must be a non-empty recipe id.');
   const resolved = options.recipes.get(ref);
-  if (!resolved) throw new Error(`Recipe ${ref} is not available from the configured libraries.`);
+  if (!resolved) {
+    throw new RecipeExecutionError(
+      'harness',
+      `Recipe ${ref} is not available from the configured libraries.`,
+    );
+  }
   const result = await executeRecipe({
     ...options,
     ref,
@@ -332,7 +379,10 @@ async function executeRecipeCall(
     callStack: options.callStack,
   });
   if (result.status !== 'pass') {
-    throw new Error(`Recipe ${ref} finished with status ${result.status}.`);
+    throw new RecipeExecutionError(
+      result.failureCause ?? 'unknown',
+      `Recipe ${ref} finished with status ${result.status}.`,
+    );
   }
   return { output: result.output };
 }

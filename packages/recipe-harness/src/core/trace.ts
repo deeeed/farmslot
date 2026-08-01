@@ -1,19 +1,23 @@
+import type { RecipeFailureCause } from '@farmslot/protocol';
+
 import type { ActionResult, TraceEntry, TraceWriter } from './types.js';
 
 export function recordSyntheticFailure(
   traceWriter: TraceWriter,
   nodeId: string,
   error: Error,
-  action = 'unknown',
+  action: string | undefined,
+  causeClass: RecipeFailureCause,
 ): void {
   const now = new Date().toISOString();
   traceWriter.record({
     nodeId,
-    action,
+    action: action ?? 'unknown',
     startedAt: now,
     endedAt: now,
     durationMs: 0,
     ok: false,
+    cause_class: causeClass,
     error: error.message,
   });
 }

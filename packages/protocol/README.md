@@ -38,6 +38,7 @@ import {
   validateRecipeActionManifestDocument,
   validateRecipeArtifactPackage,
   validateRecipeDocument,
+  validateRecipeSuitePackage,
   validateRecipeWithManifest,
   type OfficialActionName,
   type RecipeActionManifestDocument,
@@ -46,20 +47,22 @@ import {
 
 ## Public API map
 
-| Import path                                                 | Use for                                                                                                  |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `@farmslot/protocol`                                        | Root import for common recipe validators, constants, shared contracts, RPC names, and transport helpers. |
-| `@farmslot/protocol/contracts`                              | Shared domain data contracts.                                                                            |
-| `@farmslot/protocol/contracts/runs`                         | Run, run-family, evidence, and publication contracts.                                                    |
-| `@farmslot/protocol/contracts/slots`                        | Slot and slot-adjacent contracts.                                                                        |
-| `@farmslot/protocol/rpc`                                    | Gateway RPC method registry and typed method maps.                                                       |
-| `@farmslot/protocol/rpc/run`                                | Run RPC params/results and run method names.                                                             |
-| `@farmslot/protocol/recipe`                                 | Recipe Protocol v1 validation, action vocabulary, schema URL mapping, and manifest helpers.              |
-| `@farmslot/protocol/schemas/recipe-v1.schema.json`          | Published JSON Schema for Recipe Protocol v1.                                                            |
-| `@farmslot/protocol/schemas/action-manifest-v1.schema.json` | Published JSON Schema for Action Manifest v1.                                                            |
-| `@farmslot/protocol/recipes/step-io`                        | Runner recipe artifact reference contracts.                                                              |
-| `@farmslot/protocol/surfaces/command-center`                | Command Center client surface registry used to build safe chat context.                                  |
-| `@farmslot/protocol/transport/events`                       | Gateway event contracts.                                                                                 |
+| Import path                                                     | Use for                                                                                                  |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `@farmslot/protocol`                                            | Root import for common recipe validators, constants, shared contracts, RPC names, and transport helpers. |
+| `@farmslot/protocol/contracts`                                  | Shared domain data contracts.                                                                            |
+| `@farmslot/protocol/contracts/runs`                             | Run, run-family, evidence, and publication contracts.                                                    |
+| `@farmslot/protocol/contracts/slots`                            | Slot and slot-adjacent contracts.                                                                        |
+| `@farmslot/protocol/rpc`                                        | Gateway RPC method registry and typed method maps.                                                       |
+| `@farmslot/protocol/rpc/run`                                    | Run RPC params/results and run method names.                                                             |
+| `@farmslot/protocol/recipe`                                     | Recipe Protocol v1 validation, action vocabulary, schema URL mapping, and manifest helpers.              |
+| `@farmslot/protocol/schemas/recipe-v1.schema.json`              | Published JSON Schema for Recipe Protocol v1.                                                            |
+| `@farmslot/protocol/schemas/action-manifest-v1.schema.json`     | Published JSON Schema for Action Manifest v1.                                                            |
+| `@farmslot/protocol/schemas/recipe-suite-scope-v1.schema.json`  | Published JSON Schema for immutable recipe-suite case scope.                                             |
+| `@farmslot/protocol/schemas/recipe-suite-result-v1.schema.json` | Published JSON Schema for reconciled recipe-suite results.                                               |
+| `@farmslot/protocol/recipes/step-io`                            | Runner recipe artifact reference contracts.                                                              |
+| `@farmslot/protocol/surfaces/command-center`                    | Command Center client surface registry used to build safe chat context.                                  |
+| `@farmslot/protocol/transport/events`                           | Gateway event contracts.                                                                                 |
 
 Public subpaths are explicit and extensionless. There are no `types`, `methods`,
 or `recipe-compat` package aliases.
@@ -189,10 +192,36 @@ const result = validateRecipeArtifactPackage({
   ],
   recipe: recipeJson,
   trace: traceJson,
+  summary: summaryJson,
   recipeResolution: recipeResolutionJson,
   resolvedRecipes: resolvedRecipeDocumentsByDigest,
 });
 ```
+
+Failed trace entries require `cause_class` (`subject`, `harness`, `environment`,
+or `unknown`); successful entries omit it. `summary.json` carries matching
+`cause_counts`, and package validation reconciles both documents.
+
+## Recipe suite validation
+
+Suite scope and result documents cover multiple completed recipe runs without
+changing Recipe v1 or scheduling cases:
+
+```ts
+import { digestRecipeSuiteScope, validateRecipeSuitePackage } from '@farmslot/protocol';
+
+const scopeDigest = digestRecipeSuiteScope(scopeJson);
+const validation = validateRecipeSuitePackage({
+  scope: scopeJson,
+  result: { ...resultJson, scope_digest: scopeDigest },
+  summaries: {
+    'summaries/0001.json': retainedSummaryJson,
+  },
+});
+```
+
+The validator requires exactly one resolution per frozen case. Non-execution is
+always explicit; `oversight` remains representable but makes the suite invalid.
 
 ## Maintenance rules
 

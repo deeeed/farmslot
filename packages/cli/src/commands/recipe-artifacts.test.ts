@@ -70,8 +70,10 @@ async function createArtifactPackage(
     startedAt: '2026-05-30T15:00:00Z',
     completedAt: '2026-05-30T15:00:01Z',
     durationMs: 1000,
+    total: 1,
     passed: 1,
     failed: 0,
+    cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
     runner: overrides.summaryRunner ?? runner,
   });
   await writeJson(path.join(artifactDir, 'trace.json'), trace);

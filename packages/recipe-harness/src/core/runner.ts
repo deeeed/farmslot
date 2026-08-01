@@ -25,6 +25,7 @@ import {
   validateRecipeDependencyParams,
 } from './compose.js';
 import { executeRecipe } from './execution.js';
+import { RecipeExecutionError, recipeFailureCause } from './failure.js';
 import { extractWorkflowGraph, type WorkflowGraph } from './graph.js';
 import { buildHudNode } from './hud.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
@@ -334,6 +335,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         });
       } catch (error) {
         const message = errorMessage(error);
+        const causeClass = recipeFailureCause(error, 'harness');
         traceWriter.record({
           nodeId: 'recipe-run:video',
           action: 'record.video',
@@ -341,6 +343,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           endedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAt.getTime(),
           ok: false,
+          cause_class: causeClass,
           error: message,
         });
         this.#logger.error(`record.video start failed: ${message}`);
@@ -414,6 +417,7 @@ class DefaultRecipeRunner implements RecipeRunner {
             endedAt: new Date().toISOString(),
             durationMs: Date.now() - runHudStartedAt.getTime(),
             ok: false,
+            cause_class: 'harness',
             error: message,
           });
           this.#logger.error(`app.hud complete update failed: ${message}`);
@@ -437,6 +441,7 @@ class DefaultRecipeRunner implements RecipeRunner {
             endedAt: new Date().toISOString(),
             durationMs: Date.now() - startedAt.getTime(),
             ok: false,
+            cause_class: recipeFailureCause(error, 'harness'),
             error: message,
           });
           this.#logger.error(`record.video failed: ${message}`);
@@ -453,11 +458,18 @@ class DefaultRecipeRunner implements RecipeRunner {
     const endedAt = new Date();
     const tracePath = await traceWriter.write();
     const trace = traceWriter.list();
+    const causeCounts = {
+      subject: trace.filter((entry) => !entry.ok && entry.cause_class === 'subject').length,
+      harness: trace.filter((entry) => !entry.ok && entry.cause_class === 'harness').length,
+      environment: trace.filter((entry) => !entry.ok && entry.cause_class === 'environment').length,
+      unknown: trace.filter((entry) => !entry.ok && entry.cause_class === 'unknown').length,
+    };
     const summary: SummaryDocument = {
       status,
       total: trace.length,
       passed: trace.filter((entry) => entry.ok).length,
       failed: trace.filter((entry) => !entry.ok).length,
+      cause_counts: causeCounts,
       startedAt: startedAt.toISOString(),
       endedAt: endedAt.toISOString(),
       durationMs: endedAt.getTime() - startedAt.getTime(),
@@ -484,6 +496,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       ),
       recipeResolution: dependencyResolution.document,
       trace,
+      summary,
       manifest: {
         version: 1,
         runStatus: status,
@@ -576,7 +589,8 @@ class DefaultRecipeRunner implements RecipeRunner {
   }): Promise<RunVideoRecording> {
     const doctor = await recorder.doctor?.();
     if (doctor && !doctor.ok) {
-      throw new Error(
+      throw new RecipeExecutionError(
+        'environment',
         `${recorder.name} doctor ${doctor.code}: ${doctor.message}${
           doctor.suggestedFix ? ` Suggested fix: ${doctor.suggestedFix}` : ''
         }`,
@@ -700,6 +714,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         endedAt: new Date().toISOString(),
         durationMs: Date.now() - startedAt.getTime(),
         ok: false,
+        cause_class: 'harness',
         error: message,
       });
       this.#logger.error(`app.hud ${status} update failed for ${event.nodeId}: ${message}`);

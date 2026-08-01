@@ -121,6 +121,39 @@ Each run writes:
 
 Only reachable recipes are retained. Artifact validation verifies every recipe, digest, and edge.
 
+Failed trace entries also record an explicit ownership class. Assertion
+mismatches are `subject`; harness-owned machinery and unavailable prerequisites
+must emit their structured classes; untyped failures remain `unknown`. Summary
+cause counts reconcile exactly with the failed trace entries.
+
+A non-zero `command` exit is untyped and remains `unknown`; callers that can
+prove ownership must raise `RecipeExecutionError` with the appropriate class.
+
+## Suite evidence
+
+Freeze scope before executing cases, then finalize already-completed runs. The
+finalizer copies retained summaries into one portable suite package; it never
+schedules cases or invents non-execution reasons.
+
+```ts
+import { finalizeRecipeSuite, freezeRecipeSuiteScope } from '@farmslot/recipe-harness';
+
+const frozen = freezeRecipeSuiteScope(scopeJson);
+const suite = await finalizeRecipeSuite({
+  scope: frozen,
+  outputDir: 'artifacts/suite',
+  resolutions: [
+    { id: 'smoke', kind: 'verdict', result: completedRun },
+    {
+      id: 'hardware',
+      kind: 'not_executed',
+      reason_class: 'needs_manual',
+      detail: 'Requires hardware confirmation.',
+    },
+  ],
+});
+```
+
 ## Custom action
 
 ```ts

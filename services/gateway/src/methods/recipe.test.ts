@@ -250,7 +250,13 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
       nodes: { done: { action: 'end', status: 'pass' } },
     },
   };
-  const summary = { status: 'pass', passed: 1, failed: 0, total: 1 };
+  const summary = {
+    status: 'pass',
+    passed: 1,
+    failed: 0,
+    total: 1,
+    cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+  };
   const manifest = {
     version: 1,
     runStatus: 'pass',
@@ -290,6 +296,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     artifactPaths: ['artifact-manifest.json', 'summary.json', 'trace.json'],
     recipe,
     recipeArtifactPresent: false,
+    trace,
     summary,
     manifest: {
       ...manifest,
@@ -390,6 +397,37 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
       ?.status,
     'pass',
   );
+
+  for (const artifact of ['summary.json', 'trace.json'] as const) {
+    const malformedEvidence = validateRecipeRunArtifactPackageOutput({
+      artifactPaths: [
+        'artifact-manifest.json',
+        'recipe.json',
+        'recipe-resolution.json',
+        'summary.json',
+        'trace.json',
+      ],
+      recipe,
+      recipeArtifactPresent: true,
+      recipeResolution,
+      trace: artifact === 'trace.json' ? undefined : trace,
+      summary: artifact === 'summary.json' ? undefined : summary,
+      manifest,
+      readErrors: { [artifact]: 'Unexpected token' },
+    });
+    assert.equal(malformedEvidence.status, 'fail');
+    assert.equal(
+      malformedEvidence.checks.find((check) => check.id === `recipe_run.artifact.${artifact}`)
+        ?.status,
+      'fail',
+    );
+    assert.equal(
+      malformedEvidence.checks.find(
+        (check) => check.id === 'recipe_run.artifact_manifest.validation',
+      )?.status,
+      'pass',
+    );
+  }
 
   const badRecipe = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
@@ -524,7 +562,13 @@ test('validateRecipeRunArtifactPackageOutput requires exact recipe dependency ev
       },
       { nodeId: 'done', action: 'end', ok: true, artifacts: [] },
     ],
-    summary: { status: 'pass', passed: 1, failed: 0, total: 1 },
+    summary: {
+      status: 'pass',
+      passed: 3,
+      failed: 0,
+      total: 3,
+      cause_counts: { subject: 0, harness: 0, environment: 0, unknown: 0 },
+    },
     manifest,
   });
   assert.equal(valid.status, 'pass', JSON.stringify(valid.recipe?.findings));

@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.io/schemas/recipe-suite-result-v1.schema.json",
+  "title": "Farmslot Recipe Suite Result v1",
+  "description": "A fail-closed resolution for every case in an immutable recipe suite scope.",
+  "type": "object",
+  "required": ["$schema", "suite_id", "scope_digest", "totals", "resolutions"],
+  "properties": {
+    "$schema": {
+      "const": "https://farmslot.io/schemas/recipe-suite-result-v1.schema.json",
+      "description": "Canonical Recipe Suite Result v1 schema URL."
+    },
+    "suite_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Suite identifier copied from the frozen scope."
+    },
+    "scope_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "SHA-256 digest of the canonical frozen scope document."
+    },
+    "totals": {
+      "$ref": "#/$defs/totals",
+      "description": "Derived counts that must reconcile with the scope and resolutions."
+    },
+    "resolutions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Exactly one verdict or explicit non-execution record per declared case.",
+      "items": {
+        "oneOf": [{ "$ref": "#/$defs/verdict" }, { "$ref": "#/$defs/notExecuted" }]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "totals": {
+      "type": "object",
+      "required": ["declared", "executed", "not_executed"],
+      "properties": {
+        "declared": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of cases in the frozen scope."
+        },
+        "executed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of cases resolved by retained recipe-run summaries."
+        },
+        "not_executed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of cases carrying explicit non-execution records."
+        }
+      },
+      "additionalProperties": false
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["id", "kind", "status", "summary_path", "summary_digest"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Declared case identifier this verdict resolves."
+        },
+        "kind": {
+          "const": "verdict",
+          "description": "Marks a case resolved by a completed recipe run."
+        },
+        "status": {
+          "enum": ["pass", "fail", "unknown"],
+          "description": "Terminal status copied from the retained summary."
+        },
+        "summary_path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$",
+          "description": "Safe relative path to the retained summary in the suite package."
+        },
+        "summary_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "description": "SHA-256 digest of the canonical retained summary document."
+        }
+      },
+      "additionalProperties": false
+    },
+    "notExecuted": {
+      "type": "object",
+      "required": ["id", "kind", "reason_class", "detail"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Declared case identifier that was not executed."
+        },
+        "kind": {
+          "const": "not_executed",
+          "description": "Marks a case resolved by an explicit non-execution reason."
+        },
+        "reason_class": {
+          "enum": ["prerequisite_missing", "ordering_dependent", "needs_manual", "oversight"],
+          "description": "Machine-readable reason the case did not execute."
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Specific explanation for this non-execution decision."
+        },
+        "blocked_by": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Declared case IDs blocking an ordering-dependent case."
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "reason_class": { "const": "ordering_dependent" } },
+            "required": ["reason_class"]
+          },
+          "then": { "properties": { "blocked_by": true }, "required": ["blocked_by"] },
+          "else": { "not": { "required": ["blocked_by"] } }
+        }
+      ]
+    }
+  }
+}
