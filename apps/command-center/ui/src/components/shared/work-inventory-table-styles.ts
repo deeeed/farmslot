@@ -24,7 +24,10 @@ export const workInventoryTableStyles = css`
   }
   .work-inventory-head > [role='columnheader'],
   .work-inventory-row > [role='gridcell'] {
+    /* Grid items default to min-width:auto; without 0 + clip, long mono
+       refs expand the track and paint into the next column. */
     min-width: 0;
+    overflow: hidden;
   }
   .work-inventory-head {
     background: ${unsafeCSS(colors.bgCard)};
@@ -76,6 +79,7 @@ export const workInventoryTableStyles = css`
     outline-offset: 1px;
   }
   .work-inventory-row .title {
+    display: block;
     font-size: ${unsafeCSS(fonts.sizeSm)};
     font-weight: 500;
     min-width: 0;
@@ -84,7 +88,9 @@ export const workInventoryTableStyles = css`
     white-space: nowrap;
   }
   .work-inventory-row .item-ref {
+    /* span defaults to inline; ellipsis only applies to block boxes. */
     color: ${unsafeCSS(colors.textSecondary)};
+    display: block;
     font-family: ${unsafeCSS(fonts.mono)};
     font-size: ${unsafeCSS(fonts.sizeXs)};
     min-width: 0;

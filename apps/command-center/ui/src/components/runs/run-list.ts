@@ -29,6 +29,7 @@ import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../stat
 import { colors } from '../../styles/theme-tokens.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import {
+  renderWorkInventoryRow,
   renderWorkInventoryTable,
   renderWorkInventoryTableHead,
   workInventoryTableStyles,
@@ -625,28 +626,10 @@ export class RunList extends RunListState {
       ? `${engine.runner ?? 'runner'}/${engine.model}`
       : (engine.runner ?? '—');
     const runningDetail = run.steps.find((s) => s.status === 'running')?.detail;
-    return html`
-      <div
-        class="work-inventory-row run-card ${isSelected ? 'selected' : ''} ${this.manageMode
-          ? 'manage-mode'
-          : ''}"
-        role="row"
-        tabindex="0"
-        data-testid=${`runs-row-${run.id}`}
-        data-row-id=${run.id}
-        aria-selected=${isSelected ? 'true' : 'false'}
-        @click=${() => {
-          this.manageMode ? this.toggleSelectId(run.id) : (location.hash = routeForRun(run));
-        }}
-        @keydown=${(event: KeyboardEvent) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            this.manageMode ? this.toggleSelectId(run.id) : (location.hash = routeForRun(run));
-          }
-        }}
-      >
-        ${showCheckbox
-          ? html`<div class="selector-cell">
+    const cells = [
+      ...(showCheckbox
+        ? [
+            html`<div class="selector-cell">
               <button
                 class="selector-btn ${isSelected ? 'selected' : ''} ${!isTerminal
                   ? 'disabled'
@@ -656,91 +639,103 @@ export class RunList extends RunListState {
               >
                 ${isSelected ? '✓' : '+'}
               </button>
-            </div>`
-          : nothing}
-        <span
-          class="badge status-badge"
-          data-testid="runs-lifecycle"
-          style="--status-color:${sc}"
-          title=${run.status}
-          >${run.status}</span
-        >
-        <span data-testid="runs-flow"
-          >${renderFlowBadge(run.flowType, {
-            color: fc,
-            label: runDisplayLabel(run),
-            title: runDisplayTitle(run),
-          })}</span
-        >
-        <span class="run-project" data-testid="runs-project" title=${`Project: ${run.project}`}
-          >${run.project}</span
-        >
-        <span class="item-ref" data-testid="runs-ref" title=${run.ticketOrPr}
-          >${run.ticketOrPr}</span
-        >
-        <span class="slot-id" data-testid="runs-slot" title=${slotId ?? 'unassigned'}
-          >${slotId ?? '—'}</span
-        >
-        <span data-testid="runs-runner" title=${runnerLabel}>${runnerLabel}</span>
-        <span class="updated-cell" data-testid="runs-updated" title=${run.updatedAt}
-          >${run.updatedAt.slice(0, 10)}</span
-        >
-        <div class="run-pipeline-cell" data-testid="runs-pipeline" title=${pipelineLabel}>
-          <run-pipeline-mini
-            .run=${run}
-            .steps=${run.steps}
-            .flowType=${run.flowType}
-          ></run-pipeline-mini>
-          <span class="pipeline-label">${pipelineLabel}</span>
-          <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
-            ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
-            <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>
-            ${disposition
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${dispositionColor(run.metrics.disposition)}"
-                  >${disposition}</span
-                >`
-              : nothing}
-            ${run.humanGrade
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${runGradeColor(run.humanGrade.recipe_semantic)}"
-                  >${run.humanGrade.recipe_semantic}</span
-                >`
-              : nothing}
-            ${run.engineState?.intelligenceAuditDegraded
-              ? html`<span class="badge status-badge" style="--status-color:${colors.statusWarn}"
-                  >audit degraded</span
-                >`
-              : nothing}
-            ${isPrLinkageMissing(run)
-              ? html`<button
-                  class="inline-action"
-                  type="button"
-                  title="Re-run PR lookup and kick CI watch"
-                  @click=${() => this._rescueLinkage(run.id)}
-                >
-                  PR missing
-                </button>`
-              : nothing}
-            ${showStopAutoRecovery
-              ? html`<button
-                  class="inline-action"
-                  type="button"
-                  @click=${() => this._stopAutoRecovery(run.id)}
-                >
-                  Stop auto-recovering
-                </button>`
-              : nothing}
-            ${runningDetail ? html`<span class="step-detail">${runningDetail}</span>` : nothing}
-            ${run.summary
-              ? html`<span class="summary" title=${run.summary}>${run.summary}</span>`
-              : nothing}
-          </div>
+            </div>`,
+          ]
+        : []),
+      html`<span
+        class="badge status-badge"
+        data-testid="runs-lifecycle"
+        style="--status-color:${sc}"
+        title=${run.status}
+        >${run.status}</span
+      >`,
+      html`<span data-testid="runs-flow"
+        >${renderFlowBadge(run.flowType, {
+          color: fc,
+          label: runDisplayLabel(run),
+          title: runDisplayTitle(run),
+        })}</span
+      >`,
+      html`<span class="run-project" data-testid="runs-project" title=${`Project: ${run.project}`}
+        >${run.project}</span
+      >`,
+      html`<span class="item-ref" data-testid="runs-ref" title=${run.ticketOrPr}
+        >${run.ticketOrPr}</span
+      >`,
+      html`<span class="slot-id" data-testid="runs-slot" title=${slotId ?? 'unassigned'}
+        >${slotId ?? '—'}</span
+      >`,
+      html`<span data-testid="runs-runner" title=${runnerLabel}>${runnerLabel}</span>`,
+      html`<span class="updated-cell" data-testid="runs-updated" title=${run.updatedAt}
+        >${run.updatedAt.slice(0, 10)}</span
+      >`,
+      html`<div class="run-pipeline-cell" data-testid="runs-pipeline" title=${pipelineLabel}>
+        <run-pipeline-mini
+          .run=${run}
+          .steps=${run.steps}
+          .flowType=${run.flowType}
+        ></run-pipeline-mini>
+        <span class="pipeline-label">${pipelineLabel}</span>
+        <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
+          ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
+          <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>
+          ${disposition
+            ? html`<span
+                class="badge status-badge"
+                style="--status-color:${dispositionColor(run.metrics.disposition)}"
+                >${disposition}</span
+              >`
+            : nothing}
+          ${run.humanGrade
+            ? html`<span
+                class="badge status-badge"
+                style="--status-color:${runGradeColor(run.humanGrade.recipe_semantic)}"
+                >${run.humanGrade.recipe_semantic}</span
+              >`
+            : nothing}
+          ${run.engineState?.intelligenceAuditDegraded
+            ? html`<span class="badge status-badge" style="--status-color:${colors.statusWarn}"
+                >audit degraded</span
+              >`
+            : nothing}
+          ${isPrLinkageMissing(run)
+            ? html`<button
+                class="inline-action"
+                type="button"
+                title="Re-run PR lookup and kick CI watch"
+                @click=${() => this._rescueLinkage(run.id)}
+              >
+                PR missing
+              </button>`
+            : nothing}
+          ${showStopAutoRecovery
+            ? html`<button
+                class="inline-action"
+                type="button"
+                @click=${() => this._stopAutoRecovery(run.id)}
+              >
+                Stop auto-recovering
+              </button>`
+            : nothing}
+          ${runningDetail ? html`<span class="step-detail">${runningDetail}</span>` : nothing}
+          ${run.summary
+            ? html`<span class="summary" title=${run.summary}>${run.summary}</span>`
+            : nothing}
         </div>
-      </div>
-    `;
+      </div>`,
+    ];
+    return renderWorkInventoryRow({
+      row: {
+        id: run.id,
+        selected: isSelected,
+        className: `run-card ${this.manageMode ? 'manage-mode' : ''}`,
+        testId: `runs-row-${run.id}`,
+        onActivate: () => {
+          this.manageMode ? this.toggleSelectId(run.id) : (location.hash = routeForRun(run));
+        },
+      },
+      cells,
+    });
   }
 
   private async setRunTags(run: Run, tags: string[]) {
