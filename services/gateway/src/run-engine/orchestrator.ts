@@ -39,7 +39,7 @@ import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
 import { executeCIWatchStep } from './ci-watch-step.js';
-import { requiresCollisionPrecheck } from './decision-replay.js';
+import { latestResolvedHumanGateDecision, requiresCollisionPrecheck } from './decision-replay.js';
 import { executeDispatchStep, executePrepareStep } from './dispatch-lifecycle-steps.js';
 import {
   buildDispatchPreviewParamsForRun,
@@ -1123,6 +1123,7 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
       return executeFinalizeStep(runId, {
         blockedRunError: (message, reason) => new BlockedRunError(message, reason),
         broadcastFn,
+        latestResolvedHumanGateDecision,
         loadProjectVarsOrNull,
         readPreparedPackage,
         refreshRunLinks,

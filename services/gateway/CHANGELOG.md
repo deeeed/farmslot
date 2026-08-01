@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - fix(backlog): markdown-backed specs are allowed on jira/github items — mark ready only requires a non-empty `## Acceptance Criteria` section when `specPath` is set; tracker identity stays on `sourceRef` and markdown AC is injected as additive `initialContext` (not as manual `ticketData`).
 - fix(work-graph): reclaim `waiting` nodes when the backlog item is ready and the run/queue are gone, and retry stale completed-enqueue ledger entries for `waiting` as well as `ready`, so fail+delete no longer leaves Dispatch stuck reporting upstream wait with an empty `waitingOn`.
+- fix(ready-gate): restore finalize-step decision helper wiring and type-check review-plan decision fixtures after the dual-fix merge.
 - fix(ready-gate): honor the latest request-extra-review loop runner (e.g. codex after claude) instead of a stale pending plan or approval-only decision lookup that could re-launch the previous reviewer.
 - fix(dispatch): prepare profile is explicit-only — queue dispatch, FIND_SLOT, resource eligibility, and branch-affinity nudge no longer apply `detectProfileFit` suggestions; `dispatch.preview` may still attach a non-binding `profileFit` UI hint; empty prepare resolves to `project.prepare.default` (MANUAL-000088).
 - fix(runners): treat a task-scoped worker signal change as runner-agnostic prompt-delivery evidence, including self-review and terminal signals, while rejecting unchanged signals left by an earlier attempt.
