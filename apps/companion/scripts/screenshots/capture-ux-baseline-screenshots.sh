@@ -21,9 +21,14 @@ Output defaults to: ${OUTPUT_DIR}
 
 Optional route context:
   UX_RUN_ID=<run id>           Capture run detail, evidence, and run diff routes.
-  UX_SLOT_ID=<slot id>         Capture slot workspace, terminal, slot diff, and worker terminal.
+  UX_SLOT_ID=<slot id>         Capture slot workspace, slot terminal, and slot diff routes.
   UX_FAMILY_ID=<family id>     Capture family workspace route.
   UX_DECISION_ID=<decision id> Capture decision workspace route.
+  UX_WORKER_REF=<json>         Capture worker terminal with encoded TmuxWorkerRef JSON
+                               (nodeId/session/target). URI-encoded into ?workerRef=.
+  UX_WORKER_NODE_ID / UX_WORKER_SESSION / UX_WORKER_TARGET
+                               Alternative to UX_WORKER_REF — discrete query params for
+                               terminal/worker (only emitted when all three are set).
   --review-flow                Require UX_RUN_ID, UX_SLOT_ID, UX_FAMILY_ID, and UX_DECISION_ID.
   --catalog-only               Write route manifest + HTML report without device screenshots
                                (does not require Metro/port config).
@@ -130,6 +135,10 @@ ROUTES=(
   "07_raw_inbox|inbox"
 )
 
+ux_urlencode() {
+  python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+}
+
 if [[ -n "${UX_RUN_ID:-}" ]]; then
   ROUTES+=("10_run_detail|run/${UX_RUN_ID}")
   ROUTES+=("11_run_evidence|artifacts/${UX_RUN_ID}")
@@ -139,7 +148,17 @@ if [[ -n "${UX_SLOT_ID:-}" ]]; then
   ROUTES+=("20_slot_workspace|slot/${UX_SLOT_ID}")
   ROUTES+=("21_slot_terminal|terminal/${UX_SLOT_ID}")
   ROUTES+=("22_slot_diff|diff/slot/${UX_SLOT_ID}")
-  ROUTES+=("23_worker_terminal|terminal/worker")
+fi
+# Worker terminal needs a real workerRef (or nodeId+session+target). Bare
+# terminal/worker always renders "Missing worker target" — do not emit it from
+# slot context alone.
+if [[ -n "${UX_WORKER_REF:-}" ]]; then
+  ROUTES+=("23_worker_terminal|terminal/worker?workerRef=$(ux_urlencode "${UX_WORKER_REF}")")
+elif [[ -n "${UX_WORKER_NODE_ID:-}" && -n "${UX_WORKER_SESSION:-}" && -n "${UX_WORKER_TARGET:-}" ]]; then
+  worker_query="nodeId=$(ux_urlencode "${UX_WORKER_NODE_ID}")"
+  worker_query+="&session=$(ux_urlencode "${UX_WORKER_SESSION}")"
+  worker_query+="&target=$(ux_urlencode "${UX_WORKER_TARGET}")"
+  ROUTES+=("23_worker_terminal|terminal/worker?${worker_query}")
 fi
 if [[ -n "${UX_FAMILY_ID:-}" ]]; then
   ROUTES+=("30_family_workspace|family/${UX_FAMILY_ID}")
