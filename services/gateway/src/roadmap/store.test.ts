@@ -1,3 +1,4 @@
+// @farmslot:serial — creates and removes real directories under the shared repo `projects/`.
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';

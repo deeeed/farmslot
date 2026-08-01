@@ -8,7 +8,7 @@
     "dev": "tsx watch --exclude .runs --exclude .backlog --exclude projects --exclude repos --exclude pool --exclude temp src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit --project tsconfig.json",
-    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src",
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json --workers 4 src",
     "quality": "yarn typecheck && yarn test",
     "postinstall": "node scripts/fix-node-pty-spawn-helper.mjs"
   },

@@ -1,7 +1,19 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 
-const STEPS = [
+import {
+  buildTimingArtifact,
+  finish,
+  isMainModule,
+  normalizeTimingsDir,
+  renderTimingSummary,
+  runTimedSteps,
+  writeTimingArtifact,
+} from './lib/step-timing.mjs';
+
+export const TIMINGS_ARTIFACT_NAME = 'quality-steps.json';
+
+export const STEPS = [
   ['format', ['yarn', 'format:check']],
   ['ESLint cache guard tests', ['node', '--test', 'scripts/quality/check-eslint-ratchet.test.mjs']],
   ['lint', ['yarn', 'lint']],
@@ -10,6 +22,7 @@ const STEPS = [
   ['import boundaries', ['yarn', 'quality:imports']],
   ['large-file warning', ['yarn', 'quality:large-files']],
   ['type-escape lint', ['yarn', 'lint:type-escapes']],
+  ['review-loop validation contract', ['yarn', 'quality:review-loop']],
   ['package/service workspace quality', ['yarn', 'quality:workspaces']],
   ['theme quality', ['yarn', 'workspace', '@farmslot/theme', 'quality']],
   ['recipe harness quality', ['yarn', 'workspace', '@farmslot/recipe-harness', 'quality']],
@@ -31,6 +44,17 @@ const STEPS = [
     'role template mark guard',
     ['node', '--test', 'scripts/quality/role-template-mark-guard.test.mjs'],
   ],
+  [
+    'quality gate instrumentation tests',
+    ['node', '--test', 'scripts/quality/run-quality.test.mjs'],
+  ],
+  [
+    'workspace quality instrumentation tests',
+    ['node', '--test', 'scripts/quality/run-workspace-quality.test.mjs'],
+  ],
+  ['step timing lib tests', ['node', '--test', 'scripts/quality/step-timing.test.mjs']],
+  ['pre-push path filter tests', ['node', '--test', 'scripts/quality/prepush-quality.test.mjs']],
+  ['tsx test partition tests', ['node', '--test', 'scripts/quality/run-tsx-tests.test.mjs']],
   ['worker template lint', ['node', 'scripts/quality/check-worker-template-contract.mjs']],
   ['template variable docs', ['node', 'scripts/quality/check-template-variables-docs.mjs']],
   ['shell script tests', ['bash', 'scripts/tests/run-shell-tests.sh']],
@@ -44,9 +68,30 @@ const STEPS = [
   ['docs build', ['yarn', 'docs:build']],
 ];
 
-for (const [label, command] of STEPS) {
-  console.log(`\n[quality] ${label}: ${command.join(' ')}`);
-  const result = spawnSync(command[0], command.slice(1), { stdio: 'inherit' });
-  if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+export function runQualitySteps(steps = STEPS, options = {}) {
+  return runTimedSteps(steps, { prefix: 'quality', spawn: spawnSync, ...options });
 }
+
+export function qualitySummaryLines(records, failure) {
+  return renderTimingSummary({ prefix: 'quality', records, failure });
+}
+
+export function qualityTimingArtifact(records, failure) {
+  return buildTimingArtifact({ kind: 'quality-steps', records, failure });
+}
+
+function main() {
+  // Pin the timings dir to one absolute path before spawning anything, so every
+  // child writes to the same place regardless of its own cwd.
+  normalizeTimingsDir();
+  const { records, failure } = runQualitySteps();
+  for (const line of qualitySummaryLines(records, failure)) console.log(line);
+  const artifactPath = writeTimingArtifact(
+    TIMINGS_ARTIFACT_NAME,
+    qualityTimingArtifact(records, failure),
+  );
+  if (artifactPath) console.log(`[quality] timings artifact: ${artifactPath}`);
+  finish(failure ? failure.status : 0);
+}
+
+if (isMainModule(import.meta.url)) main();

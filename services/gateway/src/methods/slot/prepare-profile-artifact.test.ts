@@ -19,6 +19,13 @@ mock.module('../../core/exec.js', {
       return nextResult;
     },
     execLocal: async (): Promise<ExecResult> => nextResult,
+    // Reached transitively via methods/git.ts. Mirrors the execOnSlot mock above so
+    // the recorded command log stays coherent whichever entrypoint the subject uses.
+    execArgvOnSlot: async (_vars: unknown, argv: string[]): Promise<ExecResult> => {
+      execCommands.push(argv.join(' '));
+      return nextResult;
+    },
+    execFileArgv: async (): Promise<ExecResult> => nextResult,
     isLocal: () => false,
   },
 });

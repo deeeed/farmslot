@@ -16,7 +16,7 @@ import type {
   SlotStatus,
 } from '@farmslot/protocol';
 
-import { isMissingProjectConfigError } from '../core/config.js';
+import { isMissingProjectConfigError, SlotConfigError } from '../core/config.js';
 import {
   executeResourceControl,
   getResourceWatchRuntimeState,
@@ -257,11 +257,23 @@ export async function resourcePressureSnapshot(
   };
 }
 
-async function resolvePressureSlotResources(slotId: string) {
+// The fleet snapshot and slot-config resolution do not see the same set of
+// slots: a pool file can be gated (pool/farmslot-demo.json needs
+// FARMSLOT_DEMO_POOL=1), removed, or renamed after the snapshot was written, and
+// a slot can be listed without a resolvable project config. A read-only
+// whole-fleet aggregation must report on the slots it can resolve rather than
+// failing outright because one of N is unresolvable — otherwise a single
+// unreadable slot blanks the entire pressure snapshot.
+export function isUnresolvableSlotError(err: unknown): boolean {
+  if (isMissingProjectConfigError(err)) return true;
+  return err instanceof SlotConfigError && err.code === 'SLOT_NOT_FOUND';
+}
+
+export async function resolvePressureSlotResources(slotId: string) {
   try {
     return await resolveSlotResources(slotId);
   } catch (err) {
-    if (!isMissingProjectConfigError(err)) throw err;
+    if (!isUnresolvableSlotError(err)) throw err;
     console.warn(`[resource] skipping pressure resources for ${slotId}: ${(err as Error).message}`);
     return [];
   }
