@@ -10,10 +10,10 @@ Use this when authoring or reviewing templates before merge.
 
 ## Two layers
 
-| Layer                  | What                                       | When                                          |
-| ---------------------- | ------------------------------------------ | --------------------------------------------- |
-| **Deterministic lint** | Script checks contract + structure         | Always — fast, no model                       |
-| **Heuristic review**   | Agent skill (`fs-worker-template-quality`) | Optional — succinctness, contradictions, flow |
+| Layer                  | What                                                  | When                                          |
+| ---------------------- | ----------------------------------------------------- | --------------------------------------------- |
+| **Deterministic lint** | Script checks contract + structure                    | Always — fast, no model                       |
+| **Heuristic review**   | Repo-local agent skill (`fs-worker-template-quality`) | Optional — succinctness, contradictions, flow |
 
 ## Deterministic lint
 
@@ -46,7 +46,7 @@ Failing lint should be fixed before merge. Farmslot’s own repo runs this in `y
 
 ## Heuristic review (skill)
 
-In Cursor / Claude Code, invoke the **`fs-worker-template-quality`** skill when you want a second pass:
+From a Farmslot checkout, invoke the **`fs-worker-template-quality`** skill in Cursor / Claude Code when you want a second pass. It lives at `.agents/skills/fs-worker-template-quality/` in this repository and is **not** shipped in the `@farmslot/skills` package, so it is available to contributors working in the repo rather than to package consumers:
 
 1. Run the deterministic script (skill Step 1)
 2. Critique against the rubric: succinct steps, no contradictions, clear stop conditions, consistent finish contract
@@ -66,15 +66,15 @@ See also [Worker signal protocol](worker-signal-protocol.md) and [Customize work
 
 ## Flow artifact quick reference
 
-| Flow            | Typical complete artifacts                                                       |
-| --------------- | -------------------------------------------------------------------------------- |
-| dev / fix-bug   | `learnings.md`, `pr-description.md`                                              |
-| review-pr       | `learnings.md`, `review.md`, `line-comments.json` (when posting inline comments) |
-| pr-complete     | `learnings.md`, `comments-report.md`                                             |
-| update-branch   | `learnings.md`, `report.md`                                                      |
-| ci-fix          | `learnings.md`, `report.md`                                                      |
-| validate-dep    | `learnings.md`, `report.md`                                                      |
-| self-review     | `review-feedback.md` (reviewer flow — no learnings required)                     |
-| self-review-fix | `report.md` (reviewer-fix flow — no learnings required)                          |
+| Flow            | Typical complete artifacts                                                      |
+| --------------- | ------------------------------------------------------------------------------- |
+| dev / fix-bug   | `learnings.md`, `pr-description.md`                                             |
+| review-pr       | `learnings.md`, `review.md`, `line-comments.json` (always — write `[]` if none) |
+| pr-complete     | `learnings.md`, `comments-report.md`                                            |
+| update-branch   | `learnings.md`, `report.md`                                                     |
+| ci-fix          | `learnings.md`, `report.md`                                                     |
+| validate-dep    | `learnings.md`, `report.md`                                                     |
+| self-review     | `review-feedback.md` (reviewer flow — no learnings required)                    |
+| self-review-fix | `report.md` (reviewer-fix flow — no learnings required)                         |
 
 Projects may override lists via `worker_terminal` in `project.json` — see [ADR-045](https://github.com/deeeed/farmslot/blob/main/docs/adr/045-worker-terminal-contract.md).

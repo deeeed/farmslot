@@ -24,6 +24,7 @@ A runtime-compatible task directory contains:
 - `TASK.md` or `CHECKLIST.md` with `- [ ]` checklist items;
 - `artifacts/` for reports, learnings, recipe outputs, and evidence;
 - `SIGNAL.json`, written by `mark` only;
+- `checklist-target.json`, written by the gateway at task creation or role switch, naming the checklist and signal file the task-local `mark` resolves to;
 - optional `inputs/worker-terminal-contract.json` for project-specific terminal requirements;
 - `mark`, a task-local executable shim installed by the gateway or `farmslot-agent install-mark`.
 
@@ -42,13 +43,18 @@ For the terminal status shape see [Worker signal protocol](worker-signal-protoco
 ## CLI
 
 ```bash
-farmslot-agent install-mark <task-dir> --task TASK.md --signal SIGNAL.json
-farmslot-agent mark <task-md> <signal-json> complete --mark-last
+farmslot-agent install-mark <task-dir>
+farmslot-agent mark <task-dir> complete --mark-last
+farmslot-agent mark <task-dir> --checklist TASK.md complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
 farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json
 farmslot-agent contract resolve --flow fix-bug
 farmslot-agent execution-template <list|materialize|lint|new> [options]
 ```
+
+`mark` takes a **task directory**, not individual file paths — its first argument must be an existing directory or the command exits with the usage error. In task-dir mode it resolves which checklist and signal file to use from `checklist-target.json`, which the gateway writes at task creation or role switch. Outside a gateway-managed task, pass `--checklist` to select the checklist explicitly; the signal filename is then derived from it (`TASK.md` yields `SIGNAL.json`, other checklists get a role-scoped signal), and no `checklist-target.json` is needed.
+
+`install-mark` writes only the task-local `mark` shim into the directory, so the shim can be invoked as `./mark <step>` from inside the task. It does not write `checklist-target.json` and does not accept checklist or signal overrides, so a directory bootstrapped this way needs either a gateway-written manifest or an explicit `--checklist` on each call.
 
 `artifact-check` validates task closeout files. When recipe artifacts exist, `recipe-quality.json` must satisfy the shared `RecipeQualityArtifact` validator from `@farmslot/protocol`.
 
