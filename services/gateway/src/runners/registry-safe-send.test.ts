@@ -26,6 +26,9 @@ let promptAcceptedReading: ObservabilityReading<boolean> | null = {
   confidence: 'high',
   observedAt: Date.now(),
 };
+let promptAcceptedResolver: ((sinceMs: number) => ObservabilityReading<boolean> | null) | null =
+  null;
+let promptAcceptedSinceValues: number[] = [];
 
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
@@ -49,9 +52,10 @@ mock.module('./claude-observability.js', {
       async lastTurnCompletedAt() {
         return null;
       },
-      async promptAccepted() {
+      async promptAccepted(_vars: SlotVars, _target: string, _digest: string, sinceMs: number) {
         callOrder.push('obs:promptAccepted');
-        return promptAcceptedReading;
+        promptAcceptedSinceValues.push(sinceMs);
+        return promptAcceptedResolver?.(sinceMs) ?? promptAcceptedReading;
       },
     },
   },
@@ -495,6 +499,37 @@ test('claude (hook-only) stale terminal idle sends only after proving the compos
   assert.equal(sent, true);
   assert.ok(callOrder.includes('pane:capture'));
   assert.ok(callOrder.includes('tmux:send-literal'));
+});
+
+test('claude (hook-only) stale terminal idle checks the full recovery window for an accepted prompt', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  promptAcceptedSinceValues = [];
+  const acceptedAt = Date.now() - 5 * 60_000;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'low',
+    observedAt: acceptedAt + 1_000,
+    evidence: 'stale-terminal-idle',
+  };
+  promptAcceptedResolver = (sinceMs) =>
+    sinceMs <= acceptedAt
+      ? { value: true, source: 'hook', confidence: 'high', observedAt: acceptedAt }
+      : { value: false, source: 'hook', confidence: 'medium', observedAt: Date.now() };
+  paneText = '❯\nctx:12%\n';
+
+  try {
+    const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+      forceBusyPoll: true,
+    });
+    assert.equal(sent, true);
+    assert.equal(callOrder.indexOf('tmux:send-literal'), -1);
+    assert.ok(promptAcceptedSinceValues.length >= 2);
+    assert.ok(Math.min(...promptAcceptedSinceValues) <= acceptedAt);
+  } finally {
+    promptAcceptedResolver = null;
+  }
 });
 
 test('claude (hook-only) stale terminal idle still holds for a foreign composer draft', async () => {

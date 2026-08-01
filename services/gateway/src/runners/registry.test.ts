@@ -1849,4 +1849,14 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
       assert.equal(runnerPaneComposerDraftState(`${spinner}\n❯\n`, 'claude'), 'draft', spinner);
     }
   });
+
+  it('does not treat ordinary transcript progress prose as a live composer draft', () => {
+    for (const pane of [
+      '⏺ Bash(yarn test)\n⎿ Running 188 tests...\n⏺ All green.\n❯\n',
+      '⎿ Reading 240 lines…\n⏺ Done\n❯\n',
+      '> Continue working on the PR... then run tests\n⏺ Done\n❯\n',
+    ]) {
+      assert.equal(runnerPaneComposerDraftState(pane, 'claude'), 'empty', pane);
+    }
+  });
 });

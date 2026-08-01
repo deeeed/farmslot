@@ -890,6 +890,12 @@ function lineShowsClaudeOrCodexProgress(line: string): boolean {
   );
 }
 
+function lineShowsClaudeSpinnerFrame(line: string): boolean {
+  return /^\s*[·✻✢✽✶✷✸✹✺✼✣*•∗]\s+\S+[…\.]{1,3}(?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*$/iu.test(
+    line,
+  );
+}
+
 /**
  * ADR-032 Phase 3A: three-state read of the live composer. Only the LAST prompt-marker line (the
  * live composer) is inspected; transcript-history echoes above it are ignored. The hook-only send
@@ -911,12 +917,12 @@ export function runnerPaneComposerDraftState(
 ): ComposerDraftState {
   const normalizedPane = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
   if (paneShowsBusyComposer(normalizedPane)) return 'draft';
-  // Reuse the canonical live-progress predicate so every Claude spinner frame blocks fresh input.
-  // That predicate is tail-scoped and requires a live marker for unknown whimsical verbs, so stale
-  // transcript prose does not make the composer remain busy indefinitely.
+  // Require an actual spinner-prefixed frame here. The broader progress predicate intentionally
+  // recognizes transcript lines such as "Running tests..." for readiness monitoring, but those
+  // lines are not proof that Claude's live composer is occupied.
   if (
     normalizeRunner(runnerId) === 'claude' &&
-    runnerPaneShowsCurrentInteractiveProgress(normalizedPane, 'claude')
+    paneTailText(normalizedPane, 12).split('\n').some(lineShowsClaudeSpinnerFrame)
   ) {
     return 'draft';
   }
@@ -1783,9 +1789,11 @@ async function waitForPaneAfterClassifierAction(
  * ADR-032 Phase 3 hook-only send loop. Reached only when {@link isRunnerPaneRetired} is true.
  * The decision to send/hold uses hook readings ONLY — the pane predicates
  * (`paneShowsBusyComposer` / `runnerPaneHasPendingInstruction` / `runnerPaneLooksIdle`) are
- * never consulted for the decision. Degraded readings (hook `unknown`/absent/stale) resolve to
- * busy: the send holds, and on timeout an ADR-031 deterministic recovery + attention is emitted
- * instead of falling back to the pane. Post-send delivery verification inside
+ * never consulted for the decision. Unknown/absent activity resolves to busy. A stale terminal
+ * idle hook may continue only after a widened digest lookup proves this instruction was not
+ * already accepted and the live composer positively proves empty. On timeout, ADR-031 recovery +
+ * attention is emitted instead of falling back to a pane-only send decision. Post-send delivery
+ * verification inside
  * {@link submitRunnerInstruction} still reads the pane, which is confirmation, not a decision.
  */
 async function sendRunnerInstructionHookOnly(
@@ -1808,6 +1816,7 @@ async function sendRunnerInstructionHookOnly(
   let sawHookDegraded = false;
   let sawComposerHold = false;
   let recordedStaleIdle = false;
+  let checkedStalePromptHistory = false;
   while (Date.now() < deadline) {
     // Idempotent re-nudge: a high-confidence digest match means this exact message already
     // landed — don't duplicate the send.
@@ -1841,6 +1850,39 @@ async function sendRunnerInstructionHookOnly(
       activity.confidence === 'low' &&
       activity.evidence === 'stale-terminal-idle' &&
       Date.now() - activity.observedAt <= OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS;
+    if (staleTerminalIdle && !checkedStalePromptHistory) {
+      let historicalPromptReading: ObservabilityReading<boolean> | null = null;
+      try {
+        historicalPromptReading = await observability.promptAccepted(
+          vars,
+          target,
+          runnerPromptDigest(message),
+          loopStartMs - OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS,
+          true,
+        );
+      } catch (error) {
+        console.warn(
+          `[runner-observability] historical promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
+        );
+      }
+      const historicalReadingAuthoritative =
+        isObservabilityReadingAuthoritative(historicalPromptReading) &&
+        (historicalPromptReading.value === false || historicalPromptReading.confidence === 'high');
+      if (!historicalReadingAuthoritative) {
+        sawHookDegraded = true;
+        await recordObservabilityDegradedDecision(
+          vars,
+          target,
+          runner,
+          { signal: 'pending', reading: historicalPromptReading },
+          logPrefix,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        continue;
+      }
+      checkedStalePromptHistory = true;
+      if (historicalPromptReading?.value) return true;
+    }
     if (staleTerminalIdle && !recordedStaleIdle) {
       await recordObservabilityDegradedDecision(
         vars,
