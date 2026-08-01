@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(inventory): extract a domain-neutral shared work-inventory table shell and migrate Backlog, Roadmap, Work Graph, and Runs onto it with shared sort/selection/ARIA/overflow tokens (MANUAL-000074).
 - fix(runs): keep the synthetic package-refresh node **pending** (not failed/red) while a post-gate re-review or worker fix is still in flight, even if an earlier review loop ended in issues/failed.
 - fix(runs): mini-pipeline and canvas share one tone map so reworkable review `issues` and package-change publish failures render **orange** (another loop expected), while terminal failures stay **red**; open issues no longer paint as done/green on the canvas.
 - fix(review): let operators omit visual evidence when publishing an approval, while preserving the choice across artifact refreshes.

@@ -25,4 +25,4 @@
     hasBack: Boolean(back),
     tableText: (table?.textContent || '').slice(0, 200),
   };
-})();
+})()
