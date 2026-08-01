@@ -87,9 +87,10 @@ start_metro_background() {
     tmux kill-session -t "=${metro_session}"
   fi
   local metro_command
+  # Do not set CI=1: Expo Metro CI mode disables file watch, so new modules added
+  # mid-session (common on external volumes) fail with "Unable to resolve module".
   printf -v metro_command '%q ' \
     env \
-    CI=1 \
     APP_VARIANT="${APP_VARIANT}" \
     METRO_PORT="${METRO_PORT}" \
     GATEWAY_PORT="${GATEWAY_PORT}" \

@@ -112,24 +112,25 @@ case "${APP_VARIANT}" in
   development)
     DEFAULT_APP_ID="net.siteed.farmslot.development"
     DEFAULT_SCHEME="farmslot-development"
-    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot-development"
+    # Must match Expo slug `farmslot-companion` (app.config.ts APP_SLUG), not the URL scheme.
+    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot-companion"
     ;;
   preview)
     DEFAULT_APP_ID="net.siteed.farmslot.preview"
     DEFAULT_SCHEME="farmslot-preview"
-    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot-preview"
+    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot-companion"
     ;;
   production)
     DEFAULT_APP_ID="net.siteed.farmslot"
     DEFAULT_SCHEME="farmslot"
-    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot"
+    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot-companion"
     ;;
   *) echo "ERROR: unsupported APP_VARIANT '${APP_VARIANT}' (expected development, preview, or production)." >&2; exit 1 ;;
 esac
 
 SCHEME="${SCHEME:-${DEFAULT_SCHEME}}"
 DEV_CLIENT_SCHEME="${DEV_CLIENT_SCHEME:-${DEFAULT_DEV_CLIENT_SCHEME}}"
-DEV_CLIENT_SCHEME_FALLBACK="${DEV_CLIENT_SCHEME_FALLBACK:-exp+farmslot}"
+DEV_CLIENT_SCHEME_FALLBACK="${DEV_CLIENT_SCHEME_FALLBACK:-exp+farmslot-companion}"
 IOS_BUNDLE_ID="${IOS_BUNDLE_ID:-${DEFAULT_APP_ID}}"
 ANDROID_PACKAGE="${ANDROID_PACKAGE:-${DEFAULT_APP_ID}}"
 IOS_DEVICE="${IOS_DEVICE:-booted}"
