@@ -8,13 +8,11 @@ import type {
   HookRecord,
   ObservabilityReading,
   RunnerActivity,
+  RunnerSessionDeliveryState,
   StatuslineRecord,
 } from './observability-types.js';
 
 export const OBSERVABILITY_SIGNAL_FRESH_MS = 120_000;
-export const OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS = 30 * 60_000;
-const OBSERVABILITY_HOOK_TAIL_BYTES = 65_536;
-export const OBSERVABILITY_DIGEST_TAIL_BYTES = 10 * 1024 * 1024;
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 
@@ -117,15 +115,7 @@ export function deriveRunnerActivity(
     } else if (event === 'UserPromptSubmit' || event === 'UserPromptExpansion') {
       lastComposing = { observedAt };
     } else if (event === 'Notification') {
-      const notificationMessage =
-        typeof record.notification_message === 'string' ? record.notification_message : '';
-      const notificationIndicatesIdle = /\bwaiting for your input\b/i.test(notificationMessage);
-      const turnWasIdle =
-        lastTurnStop != null &&
-        (lastComposing == null || lastComposing.observedAt < lastTurnStop.observedAt) &&
-        (lastPreToolUse == null ||
-          (lastPostToolUseAt != null && lastPostToolUseAt >= lastPreToolUse.observedAt));
-      if (notificationIndicatesIdle || (!notificationMessage && turnWasIdle)) {
+      if (record.notification_type === 'idle_prompt') {
         lastIdleNotification = { observedAt };
       } else {
         lastComposing = { observedAt };
@@ -147,31 +137,7 @@ export function deriveRunnerActivity(
   ]
     .filter((value): value is number => value != null)
     .sort((a, b) => b - a)[0];
-  if (freshest == null) return null;
-  if (!isFreshObservedAt(freshest, now)) {
-    // A terminal idle hook remains useful as a low-confidence last-known state. The hook-only
-    // sender may use it only after its existing live-composer guard proves the input is empty;
-    // selectors continue to reject low-confidence readings everywhere else.
-    const freshestNonIdle = Math.max(
-      lastPreToolUse?.observedAt ?? Number.NEGATIVE_INFINITY,
-      lastPostToolUseAt ?? Number.NEGATIVE_INFINITY,
-      lastComposing?.observedAt ?? Number.NEGATIVE_INFINITY,
-    );
-    if (
-      lastIdle?.observedAt === freshest &&
-      lastIdle.observedAt > freshestNonIdle &&
-      now - freshest <= OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS
-    ) {
-      return {
-        value: 'idle',
-        source: 'hook',
-        confidence: 'low',
-        observedAt: freshest,
-        evidence: 'stale-terminal-idle',
-      };
-    }
-    return null;
-  }
+  if (freshest == null || !isFreshObservedAt(freshest, now)) return null;
 
   if (
     lastPreToolUse &&
@@ -203,6 +169,51 @@ export function deriveRunnerActivity(
     };
   }
   return null;
+}
+
+/**
+ * Resolve whether a persisted runner session can be safely reactivated.
+ *
+ * Activity freshness and session delivery state are different contracts: a
+ * busy heartbeat can expire, but a whole-turn Stop remains the latest state of
+ * that session until a later hook supersedes it. Scoping by session id prevents
+ * a reused tmux pane from inheriting an older process's terminal state.
+ */
+export function deriveRunnerSessionDeliveryState(
+  hooks: readonly HookRecord[],
+  sessionId: string,
+): ObservabilityReading<RunnerSessionDeliveryState> | null {
+  let latest: { value: RunnerSessionDeliveryState; observedAt: number } | null = null;
+  for (const record of hooks) {
+    if (record.session_id !== sessionId) continue;
+    const event = hookEventName(record);
+    const observedAt = observedAtFromRecord(record);
+    if (!event || observedAt == null) continue;
+
+    let value: RunnerSessionDeliveryState | null = null;
+    if (
+      event === 'Stop' ||
+      (event === 'Notification' && record.notification_type === 'idle_prompt')
+    ) {
+      value = 'idle';
+    } else if (event !== 'SubagentStop') {
+      // Any other parent-session event invalidates an older terminal state.
+      // This is deliberately future-safe: a new runner hook cannot inherit
+      // permission to replace the session merely because it is unknown here.
+      value = 'active';
+    }
+    // SubagentStop does not end or reactivate the parent turn.
+    if (value && (!latest || observedAt > latest.observedAt)) {
+      latest = { value, observedAt };
+    }
+  }
+  if (!latest) return null;
+  return {
+    value: latest.value,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: latest.observedAt,
+  };
 }
 
 export function runnerActivityIsBusy(activity: RunnerActivity): boolean {
@@ -298,17 +309,12 @@ export async function runnerObservabilityDirForSlot(vars: SlotVars): Promise<str
 export async function readRunnerObservabilityFiles(
   vars: SlotVars,
   repoPath = vars.remoteRepo,
-  hooksTailBytes = OBSERVABILITY_HOOK_TAIL_BYTES,
 ): Promise<{ hooksRaw: string; statuslineRaw: string }> {
   const obsDir = shellQuote(await runnerObservabilityDirForSlot({ ...vars, remoteRepo: repoPath }));
   const hooksPath = `${obsDir}/hooks.jsonl`;
   const statuslinePath = `${obsDir}/statusline.json`;
   const [hooksResult, statuslineResult] = await Promise.all([
-    execOnSlot(
-      vars,
-      `{ tail -c ${hooksTailBytes} ${hooksPath}.1 2>/dev/null || true; tail -c ${hooksTailBytes} ${hooksPath} 2>/dev/null || true; } | tail -c ${hooksTailBytes}`,
-      { maxBuffer: hooksTailBytes + 1024 },
-    ),
+    execOnSlot(vars, `tail -c 65536 ${hooksPath} 2>/dev/null || true`),
     execOnSlot(vars, `cat ${statuslinePath} 2>/dev/null || true`),
   ]);
   return {
@@ -457,64 +463,4 @@ export function promptAcceptedFromHooks(
     confidence: latest.digest ? 'high' : 'medium',
     observedAt: latest.observedAt,
   };
-}
-
-/**
- * Exact digest lookup for long-window idempotency checks.
- *
- * Unlike {@link promptAcceptedFromHooks}, this never substitutes generic turn-start evidence for
- * a digest match. A negative result is authoritative only when the retained hook tail starts at or
- * before the requested window. Otherwise the matching prompt may have scrolled out of the bounded
- * read, so the caller must degrade instead of resending it.
- */
-export function promptDigestAcceptedFromHooks(
-  hooks: readonly HookRecord[],
-  promptDigest: string,
-  sinceMs: number,
-  now = Date.now(),
-  paneId?: string | null,
-  paneRetired = false,
-): ObservabilityReading<boolean> | null {
-  const scoped = filterHooksByPane(hooks, paneId);
-  let oldestObservedAt: number | null = null;
-  for (const record of hooks) {
-    const observedAt = observedAtFromRecord(record);
-    if (observedAt == null) continue;
-    if (oldestObservedAt == null || observedAt < oldestObservedAt) oldestObservedAt = observedAt;
-  }
-  let latestObservedAt: number | null = null;
-  let latestMatchAt: number | null = null;
-  for (const record of scoped) {
-    const observedAt = observedAtFromRecord(record);
-    if (observedAt == null || observedAt < sinceMs) continue;
-    if (latestObservedAt == null || observedAt > latestObservedAt) latestObservedAt = observedAt;
-    if (hookEventName(record) !== 'UserPromptSubmit') continue;
-    const digest = record.runnerPromptDigest;
-    if (
-      typeof digest === 'string' &&
-      (digest === promptDigest || digest.startsWith(promptDigest)) &&
-      (latestMatchAt == null || observedAt > latestMatchAt)
-    ) {
-      latestMatchAt = observedAt;
-    }
-  }
-  if (latestMatchAt != null) {
-    return {
-      value: true,
-      source: 'hook',
-      confidence: 'high',
-      observedAt: latestMatchAt,
-    };
-  }
-  if (oldestObservedAt == null || oldestObservedAt > sinceMs) return null;
-  if (latestObservedAt != null) {
-    return {
-      value: false,
-      source: 'hook',
-      confidence: 'medium',
-      observedAt: latestObservedAt,
-    };
-  }
-  if (paneRetired) return null;
-  return { value: false, source: 'hook', confidence: 'medium', observedAt: now };
 }

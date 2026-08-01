@@ -1752,11 +1752,12 @@ describe('buildRunnerSessionReloadCommand', () => {
     const cmd = buildRunnerSessionReloadCommand(vars, 'claude', 'sonnet', 'session-123', {
       safetyTier: 'dangerous',
       runtimeDir: '.agent',
+      initialPrompt: 'Read and execute TASK.md',
     });
     assert.match(cmd, /install-runner-observability\.mjs/);
     assert.match(
       cmd,
-      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --resume 'session-123'$/,
+      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --resume 'session-123' 'Read and execute TASK.md'$/,
     );
   });
 
@@ -1794,6 +1795,13 @@ describe('buildRunnerSessionReloadCommand', () => {
       /does not support persisted session reload/,
     );
   });
+
+  it('declares retained handoff and reload behavior in the runner capability registry', () => {
+    assert.equal(getRunnerDefinition('claude').retainedSessionHandoff, 'resume-with-prompt');
+    assert.equal(getRunnerDefinition('claude').sessionReload, 'with-prompt');
+    assert.equal(getRunnerDefinition('cursor').retainedSessionHandoff, 'in-place');
+    assert.equal(getRunnerDefinition('cursor').sessionReload, 'none');
+  });
 });
 
 describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer read)', () => {
@@ -1819,56 +1827,6 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
   });
 
   it('reports draft for a busy/queued composer', () => {
-    for (const glyph of ['·', '*', '•']) {
-      assert.equal(
-        runnerPaneComposerDraftState(` ${glyph} Composing…\n❯\n`, 'claude'),
-        'draft',
-        glyph,
-      );
-    }
-  });
-
-  it('confines Claude rotating-spinner detection to the live composer tail', () => {
-    assert.equal(runnerPaneComposerDraftState('✽ Herding… (3m 12s)\n❯\n', 'claude'), 'draft');
-    assert.equal(
-      runnerPaneComposerDraftState('\x1b[35m✽ Herding… (3m 12s)\x1b[0m\n❯\n', 'claude'),
-      'draft',
-    );
-    assert.equal(runnerPaneComposerDraftState('✽ Herding… (3m 12s)\n❯\n', 'codex'), 'empty');
-    const staleScrollback = `✽ Herding… (3m 12s)\n${Array.from(
-      { length: 21 },
-      (_, index) => `completed line ${index}`,
-    ).join('\n')}\n❯\n`;
-    assert.equal(runnerPaneComposerDraftState(staleScrollback, 'claude'), 'empty');
-  });
-
-  it('recognizes every captured Claude live-spinner form as a draft', () => {
-    for (const spinner of [
-      '✻ Working… (esc to interrupt)',
-      '✢ Herding… (12s · esc to interrupt)',
-      '∗ Herding… (12s · esc to interrupt)',
-      '✷ Herding… (12s · esc to interrupt)',
-      '✼ Herding… (12s · esc to interrupt)',
-      '✣ Herding… (12s · esc to interrupt)',
-      '✻ Reading…',
-      '✽ Compacting conversation…',
-      '✻ Herding files… (12s · esc to interrupt)',
-      '· Herding… (12s · esc to interrupt)',
-      '* Herding… (12s · esc to interrupt)',
-    ]) {
-      assert.equal(runnerPaneComposerDraftState(`${spinner}\n❯\n`, 'claude'), 'draft', spinner);
-    }
-  });
-
-  it('does not treat ordinary transcript progress prose as a live composer draft', () => {
-    for (const pane of [
-      '⏺ Bash(yarn test)\n⎿ Running 188 tests...\n⏺ All green.\n❯\n',
-      '⎿ Reading 240 lines…\n⏺ Done\n❯\n',
-      '> Continue working on the PR... then run tests\n⏺ Done\n❯\n',
-      '• Added tests.\n❯\n',
-      '* done.\n❯\n',
-    ]) {
-      assert.equal(runnerPaneComposerDraftState(pane, 'claude'), 'empty', pane);
-    }
+    assert.equal(runnerPaneComposerDraftState('· Composing…\n❯\n', 'claude'), 'draft');
   });
 });

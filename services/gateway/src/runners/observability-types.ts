@@ -9,11 +9,10 @@ export interface ObservabilityReading<T> {
   confidence: ObservabilityConfidence;
   /** ms since epoch of the underlying event/file mtime. */
   observedAt: number;
-  /** Narrow provenance for a deliberately degraded reading that may enable guarded recovery. */
-  evidence?: 'stale-terminal-idle';
 }
 
 export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';
+export type RunnerSessionDeliveryState = 'idle' | 'active' | 'unknown';
 
 export type ObservabilityScope = 'event-driven' | 'pane-only' | 'none';
 
@@ -27,6 +26,7 @@ export interface HookRecord {
   hook_event_name?: string;
   event?: string;
   tool_name?: string;
+  notification_type?: string;
   notification_message?: string;
   tool_use_id?: string;
   session_id?: string;
@@ -66,12 +66,14 @@ export interface RunnerObservability {
     // Phase-2 flag-off behavior byte-identical.
     paneRetired?: boolean,
   ): Promise<ObservabilityReading<boolean> | null>;
-  /** Exact digest-only lookup; never substitutes generic turn-start evidence. */
-  promptDigestAccepted(
+  /**
+   * Durable delivery state for one persisted runner session. Unlike transient
+   * activity, a terminal Stop remains idle until a later event in that same
+   * session supersedes it.
+   */
+  getSessionDeliveryState(
     vars: SlotVars,
     target: string,
-    promptDigest: string,
-    sinceMs: number,
-    paneRetired?: boolean,
-  ): Promise<ObservabilityReading<boolean> | null>;
+    sessionId: string,
+  ): Promise<ObservabilityReading<RunnerSessionDeliveryState> | null>;
 }

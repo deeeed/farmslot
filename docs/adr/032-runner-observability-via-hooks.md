@@ -88,27 +88,22 @@ Full matrix (29 hook events, full payload fields, full statusline JSON contract)
 
 All "Hook JSONL" rows below are written by **Farmslot-owned hook scripts** declared in the slot's `.claude/settings.json` fixture; Claude triggers the script on the named event, the script appends one JSON line per event. We own the schema.
 
-| Question                                             | Authoritative source (Farmslot-emitted unless noted)                                                                                                                | Fallback                          |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| Is the worker idle (ready to accept tmux send-keys)? | Hook JSONL emit on whole-turn `Stop` or an idle `Notification` with no later `UserPromptSubmit`; `SubagentStop` does not end the parent turn                        | `paneShowsBusyComposer`           |
-| Is the worker busy / composing / running a tool?     | Hook JSONL emit on `UserPromptSubmit` / `PreToolUse` without matching `PostToolUse`; statusline JSON `busy:true` (Farmslot script writes both)                      | pane regex set                    |
-| Did my last submitted prompt actually land?          | Hook JSONL `UserPromptSubmit` event with `runnerPromptDigest` matching the value the gateway wrote to a per-send sentinel file (see "Prompt digest contract" below) | `runnerPaneHasPendingInstruction` |
-| Is the current model turn complete?                  | Hook JSONL `Stop` event timestamp greater than the matching `UserPromptSubmit`                                                                                      | pane heuristics                   |
-| What is context-% utilization?                       | Statusline JSON `ctxPct` (Farmslot statusline command writes this)                                                                                                  | `parseClaudeCtxPctFromPane`       |
-| Is a tool active? Which one?                         | Hook JSONL: most recent `PreToolUse` without matching `PostToolUse`                                                                                                 | none                              |
-| Did the worker reach a task milestone?               | Extended `SIGNAL.json` (`phase: 'busy'` / `'idle'` / `'done'`) written by **worker** task template — separate from runner-process events                            | existing `SIGNAL.json` shape      |
+| Question                                             | Authoritative source (Farmslot-emitted unless noted)                                                                                                                     | Fallback                          |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| Is the worker idle (ready to accept tmux send-keys)? | Hook JSONL emit on whole-turn `Stop` or `Notification.notification_type === "idle_prompt"` with no later `UserPromptSubmit`; `SubagentStop` does not end the parent turn | `paneShowsBusyComposer`           |
+| Is the worker busy / composing / running a tool?     | Hook JSONL emit on `UserPromptSubmit` / `PreToolUse` without matching `PostToolUse`; statusline JSON `busy:true` (Farmslot script writes both)                           | pane regex set                    |
+| Did my last submitted prompt actually land?          | Hook JSONL `UserPromptSubmit` event with `runnerPromptDigest` matching the value the gateway wrote to a per-send sentinel file (see "Prompt digest contract" below)      | `runnerPaneHasPendingInstruction` |
+| Is the current model turn complete?                  | Hook JSONL `Stop` event timestamp greater than the matching `UserPromptSubmit`                                                                                           | pane heuristics                   |
+| What is context-% utilization?                       | Statusline JSON `ctxPct` (Farmslot statusline command writes this)                                                                                                       | `parseClaudeCtxPctFromPane`       |
+| Is a tool active? Which one?                         | Hook JSONL: most recent `PreToolUse` without matching `PostToolUse`                                                                                                      | none                              |
+| Did the worker reach a task milestone?               | Extended `SIGNAL.json` (`phase: 'busy'` / `'idle'` / `'done'`) written by **worker** task template — separate from runner-process events                                 | existing `SIGNAL.json` shape      |
 
-A whole-turn idle event older than the normal freshness window may recover a retained Claude
-worker for at most 30 minutes. Before sending, the gateway requires an exact prompt-digest lookup
-whose retained JSONL tail covers that full window, then positively confirms that the live composer
-is empty. The digest lookup reads up to 10 MiB across `hooks.jsonl.1` and the current file; hot
-activity polling remains capped at 64 KiB. Missing window coverage or an unverified composer holds
-the send for operator attention; generic tool or turn activity never substitutes for the digest
-match.
-
-Agreement logs written before this recovery shipped treated any flag-off activity reading as
-comparable. New rows require an authoritative reading, so soak reports spanning the change may
-contain a lower comparable-row count; raw source, confidence, and timestamp remain available.
+Transient activity and retained-session delivery use different clocks. Busy/idle monitoring still
+requires fresh hooks, but a whole-turn `Stop` is durable for its exact `session_id` until a later
+event in that session supersedes it. A retained-session handoff never infers safety from Claude TUI
+text: the runner capability resumes the persisted session with the new prompt in argv, then requires
+a matching `UserPromptSubmit` digest before the handoff succeeds. Unknown or active session state
+holds for operator attention instead of replacing the live process.
 
 ### Addendum: checklist timing stays task-owned (2026-06-25)
 
@@ -140,7 +135,7 @@ Correlation flow:
 2. Hook script on `UserPromptSubmit` reads the gateway-written sentinel matching the prompt (matched by needle prefix), and re-emits `{event: 'UserPromptSubmit', runnerPromptDigest, sentAt, observedAt}` into `hooks.jsonl`.
 3. `RunnerObservability.promptAccepted(digest, sinceMs)` checks `hooks.jsonl` for an emit with that digest after `sinceMs`.
 
-If the sentinel file is missing (e.g. the gateway crashed mid-send), the hook still emits the event without `sentAt` — observability falls back to pane regex for that prompt only.
+If the sentinel file is missing (e.g. the gateway crashed mid-send), the hook still emits the event without `sentAt`, but it is not authoritative for a gateway delivery decision.
 
 Hook files and statusline JSON are written by **Farmslot's hook scripts** (shipped via the slot's `.claude/settings.json` fixture) — triggered by the runner, but with schema, format, and rotation owned by us. They reflect runner-process truth (turn boundaries, tool calls, token usage) because the runner invokes the hooks at those exact moments. `SIGNAL.json` is written by the **worker** (the LLM via its task template) and reflects task-template truth (recipe pass, report.md written, etc.). Keeping them separated preserves the existing ADR-024 family-observability ledger model — the worker still owns task semantics; runner-process semantics now have their own channel.
 
@@ -154,10 +149,8 @@ Hook files and statusline JSON are written by **Farmslot's hook scripts** (shipp
 SIGNAL.json (existing)     # extended with phase: busy|idle|done
 ```
 
-`hooks.jsonl` rotates when it exceeds 5 MB (rename → `.1`, truncate). A later rotation overwrites
-that single `.1` generation, so long-window readers must verify timestamp coverage and fail closed
-when the retained pair no longer reaches the requested boundary. `statusline.json` is atomically
-replaced (write-temp-then-rename) so a reader never observes a half-written object.
+`hooks.jsonl` rotates when it exceeds 5 MB (rename → `.1`, truncate). `statusline.json` is
+atomically replaced (write-temp-then-rename) so a reader never observes a half-written object.
 
 ### Gateway integration
 

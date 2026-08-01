@@ -41,11 +41,7 @@ import {
   buildObservabilityDegradedRecovery,
   logObservabilityDegradedRecovery,
 } from './observability-degraded.js';
-import {
-  OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS,
-  runnerActivityIsBusy,
-  runnerObservabilityDirForSlot,
-} from './observability-files.js';
+import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
 import {
   instructionNeedle,
   normalizeInstructionText,
@@ -82,6 +78,9 @@ import { buildRunnerObservabilityInstallCommand } from './runner-observability.j
 export const WORKER_ENV_PREFIX =
   'export DISABLE_OMC=1 DISABLE_OMX=1; ASDF_SHIMS="${ASDF_DATA_DIR:-$HOME/.asdf}/shims"; if [ -d "$ASDF_SHIMS" ]; then export PATH="$ASDF_SHIMS:$PATH"; fi';
 
+export type RetainedSessionHandoff = 'resume-with-prompt' | 'in-place' | 'unsupported';
+export type SessionReloadCapability = 'with-prompt' | 'none';
+
 export interface RunnerDefinition {
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
@@ -94,6 +93,10 @@ export interface RunnerDefinition {
   continueCommand: string | null;
   /** Runner writes session files on disk (e.g. resumable session state). */
   persistsSessionFiles: boolean;
+  /** Whether persisted sessions can be reloaded with an initial prompt in argv. */
+  sessionReload: SessionReloadCapability;
+  /** How a completed worker session receives a chained task without TUI parsing. */
+  retainedSessionHandoff: RetainedSessionHandoff;
   /** Runner's TUI can show a busy "composer" pane that swallows send-keys — poll before sending. */
   requiresBusyComposerPoll: boolean;
   /**
@@ -173,6 +176,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: true,
     continueCommand: '/continue',
     persistsSessionFiles: true,
+    sessionReload: 'with-prompt',
+    retainedSessionHandoff: 'resume-with-prompt',
     requiresBusyComposerPoll: false,
     // Claude has no "more dangerous" mode beyond --dangerously-skip-permissions,
     // so full-auto and dangerous collapse onto the same flag. Sandboxed drops it.
@@ -203,6 +208,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // launcher, or the text gets inserted into chat instead of executed by zsh.
     continueCommand: 'Continue the current task from where you left off.',
     persistsSessionFiles: true,
+    sessionReload: 'with-prompt',
+    retainedSessionHandoff: 'resume-with-prompt',
     requiresBusyComposerPoll: true,
     // Codex tier mapping:
     //   sandboxed  — default; Codex CLI prompts for approvals on destructive ops.
@@ -237,6 +244,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: false,
+    sessionReload: 'none',
+    retainedSessionHandoff: 'in-place',
     requiresBusyComposerPoll: false,
     flagsByTier: {
       sandboxed: ['--sandbox', 'enabled'],
@@ -262,6 +271,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: true,
+    sessionReload: 'with-prompt',
+    retainedSessionHandoff: 'in-place',
     requiresBusyComposerPoll: false,
     flagsByTier: {
       sandboxed: [],
@@ -283,6 +294,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
+    sessionReload: 'none',
+    retainedSessionHandoff: 'unsupported',
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -300,6 +313,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
+    sessionReload: 'none',
+    retainedSessionHandoff: 'unsupported',
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -317,6 +332,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
+    sessionReload: 'none',
+    retainedSessionHandoff: 'unsupported',
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -501,6 +518,16 @@ export function runnerPersistsSessionFiles(runnerId?: string | null): boolean {
   // runnerSessionPath to the run. Known built-ins carry their registry flag.
   if (!isKnownRunner(runnerId)) return false;
   return getRunnerDefinition(runnerId).persistsSessionFiles;
+}
+
+export function runnerRetainedSessionHandoff(runnerId?: string | null): RetainedSessionHandoff {
+  if (!isKnownRunner(runnerId)) return 'unsupported';
+  return getRunnerDefinition(runnerId).retainedSessionHandoff;
+}
+
+export function runnerSessionReloadCapability(runnerId?: string | null): SessionReloadCapability {
+  if (!isKnownRunner(runnerId)) return 'none';
+  return getRunnerDefinition(runnerId).sessionReload;
 }
 
 export function runnerProcessPattern(runnerId?: string | null): RegExp {
@@ -866,24 +893,15 @@ async function writeRunnerLaunchBlockerSnapshot(
 }
 
 export function paneShowsBusyComposer(pane: string): boolean {
-  const liveTail = paneTailText(pane, 20);
   return (
-    /tab to queue message/i.test(liveTail) ||
-    /Working \(/i.test(liveTail) ||
-    /background terminal running/i.test(liveTail) ||
-    /(?:^|\n)\s*[·*•✻✢✽✶✷✸✹✺✼✣∗]\s+Composing[…\.]/iu.test(liveTail)
-  );
-}
-
-function lineShowsClaudeOrCodexProgress(line: string): boolean {
-  return (
-    /(?:[·✻✢✽✶✷✸✹✺✼✣*•∗]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating)[…\.]?/iu.test(
-      line,
-    ) ||
-    /running in the background|esc to interrupt/i.test(line) ||
-    /^\s*[·✻✢✽✶✷✸✹✺✼✣*•∗]\s+\S+[…\.]{1,3}\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\)/iu.test(
-      line,
-    )
+    /tab to queue message/i.test(pane) ||
+    /Working \(/i.test(pane) ||
+    /background terminal running/i.test(pane) ||
+    // Claude mid-turn spinner — added 2026-05-21 after the mm-3 regression where the new
+    // `· Composing…` marker (first appeared in the operator's most recent Claude version
+    // upgrade) was not in the busy set, causing nudge send-keys to land while the runner was
+    // still composing and Enter to be buffered. Matches spinner-prefixed forms across glyphs.
+    /[·*•✶]\s*Composing[…\.]/i.test(pane)
   );
 }
 
@@ -906,18 +924,10 @@ export function runnerPaneComposerDraftState(
   pane: string,
   runnerId?: string | null,
 ): ComposerDraftState {
-  const normalizedPane = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-  if (paneShowsBusyComposer(normalizedPane)) return 'draft';
-  if (
-    normalizeRunner(runnerId) === 'claude' &&
-    /(?:^|\n)\s*[·*•✻✢✽✶✷✸✹✺✼✣∗]\s+(?:Herding(?: files)?|Working|Reading|Compacting conversation)[…\.]/iu.test(
-      paneTailText(normalizedPane, 20),
-    )
-  ) {
-    return 'draft';
-  }
+  if (paneShowsBusyComposer(pane)) return 'draft';
   const markers = normalizeRunner(runnerId) === 'codex' ? ['›', '❯'] : ['❯', '›'];
-  const lines = normalizedPane
+  const lines = pane
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
     .split('\n')
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0);
@@ -1072,7 +1082,9 @@ export function runnerPaneShowsCurrentInteractiveProgress(
       // so it shares claude's matcher. Without this, codex progress is never recognized as
       // "task already running" and the readiness gate falsely times out against the timer.
       (runner === 'claude' || runner === 'codex'
-        ? lineShowsClaudeOrCodexProgress(tail[i] ?? '')
+        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating)[…\.]?/i.test(
+            tail[i] ?? '',
+          ) || /running in the background|esc to interrupt/i.test(tail[i] ?? '')
         : /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running|Starting session)\b(?:\s+\d+\s+tokens)?/i.test(
             tail[i] ?? '',
           )) ||
@@ -1574,31 +1586,6 @@ async function recordObservabilityDegradedDecision(
   );
 }
 
-async function recordObservabilityRecoveredDecision(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  target: string,
-  runner: string,
-  reading: ObservabilityReading<RunnerActivity>,
-  pane: string,
-  logPrefix: string,
-): Promise<void> {
-  const def = getRunnerDefinition(runner);
-  if (def.observabilityScope !== 'event-driven') return;
-  logRunnerObservabilityAgreement({
-    ...buildRunnerObservabilityAgreementEntry({
-      slotId: vars.slotId,
-      runner,
-      target,
-      logPrefix,
-      paneBusy: paneShowsBusyComposer(pane),
-      reading,
-      paneRetired: true,
-      timestamp: Date.now(),
-    }),
-    recoveryOutcome: 'sent-after-stale-idle',
-  });
-}
-
 /**
  * ADR-032 Phase 3A terminal degraded record. When the hook-only send holds through its whole
  * window, emit the ADR-031 deterministic-recovery "hold-send" action. It is always logged for the
@@ -1804,11 +1791,9 @@ async function waitForPaneAfterClassifierAction(
  * ADR-032 Phase 3 hook-only send loop. Reached only when {@link isRunnerPaneRetired} is true.
  * The decision to send/hold uses hook readings ONLY — the pane predicates
  * (`paneShowsBusyComposer` / `runnerPaneHasPendingInstruction` / `runnerPaneLooksIdle`) are
- * never consulted for the decision. Unknown/absent activity resolves to busy. A stale terminal
- * idle hook may continue only after a widened digest lookup proves this instruction was not
- * already accepted and the live composer positively proves empty. On timeout, ADR-031 recovery +
- * attention is emitted instead of falling back to a pane-only send decision. Post-send delivery
- * verification inside
+ * never consulted for the decision. Degraded readings (hook `unknown`/absent/stale) resolve to
+ * busy: the send holds, and on timeout an ADR-031 deterministic recovery + attention is emitted
+ * instead of falling back to the pane. Post-send delivery verification inside
  * {@link submitRunnerInstruction} still reads the pane, which is confirmation, not a decision.
  */
 async function sendRunnerInstructionHookOnly(
@@ -1830,8 +1815,6 @@ async function sendRunnerInstructionHookOnly(
   // signal cannot see). A composer hold with a healthy hook must NOT be recorded as a hook lapse.
   let sawHookDegraded = false;
   let sawComposerHold = false;
-  let checkedStalePromptHistory = false;
-  let stalePromptHistoryMissing = false;
   while (Date.now() < deadline) {
     // Idempotent re-nudge: a high-confidence digest match means this exact message already
     // landed — don't duplicate the send.
@@ -1855,57 +1838,7 @@ async function sendRunnerInstructionHookOnly(
 
     const activity = await readRunnerActivityFromObservability(vars, target, runner);
     const idleDecision = selectIdleFromObservabilityAndPane(activity, false, true);
-    // A stale terminal-idle hook is intentionally low-confidence, so the selector degrades it.
-    // It is still safe to continue to the existing exact-buffer and live-composer guards below:
-    // they must positively prove the composer empty before any fresh text is typed. Other stale
-    // or unknown activity remains fail-closed.
-    const staleTerminalIdle =
-      idleDecision.degraded &&
-      activity?.value === 'idle' &&
-      activity.confidence === 'low' &&
-      activity.evidence === 'stale-terminal-idle' &&
-      // Re-check at the decision point so a reading at the boundary cannot age past the recovery
-      // window while the preceding digest lookup is in flight.
-      Date.now() - activity.observedAt <= OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS;
-    if (staleTerminalIdle && stalePromptHistoryMissing) {
-      sawHookDegraded = true;
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      continue;
-    }
-    if (staleTerminalIdle && !checkedStalePromptHistory) {
-      let historicalPromptReading: ObservabilityReading<boolean> | null = null;
-      try {
-        historicalPromptReading = await observability.promptDigestAccepted(
-          vars,
-          target,
-          runnerPromptDigest(message),
-          loopStartMs - OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS,
-          true,
-        );
-      } catch (error) {
-        console.warn(
-          `[runner-observability] historical promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
-        );
-      }
-      const historicalReadingAuthoritative =
-        isObservabilityReadingAuthoritative(historicalPromptReading);
-      if (!historicalReadingAuthoritative) {
-        sawHookDegraded = true;
-        stalePromptHistoryMissing = true;
-        await recordObservabilityDegradedDecision(
-          vars,
-          target,
-          runner,
-          { signal: 'pending', reading: historicalPromptReading },
-          logPrefix,
-        );
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        continue;
-      }
-      checkedStalePromptHistory = true;
-      if (historicalPromptReading?.value) return true;
-    }
-    if (idleDecision.degraded && !staleTerminalIdle) {
+    if (idleDecision.degraded) {
       sawHookDegraded = true;
       await recordObservabilityDegradedDecision(
         vars,
@@ -1917,7 +1850,7 @@ async function sendRunnerInstructionHookOnly(
       await new Promise((resolve) => setTimeout(resolve, 1500));
       continue;
     }
-    if (!idleDecision.idle && !staleTerminalIdle) {
+    if (!idleDecision.idle) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
       continue;
     }
@@ -1979,25 +1912,9 @@ async function sendRunnerInstructionHookOnly(
       continue;
     }
     // Composer proven empty (or nothing was pending) → type fresh.
-    const submitResult = await submitRunnerInstruction(
-      vars,
-      target,
-      runner,
-      message,
-      logPrefix,
-      'send',
+    return (
+      (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok'
     );
-    if (submitResult === 'ok' && staleTerminalIdle && activity) {
-      await recordObservabilityRecoveredDecision(
-        vars,
-        target,
-        runner,
-        activity,
-        preSendPane,
-        logPrefix,
-      );
-    }
-    return submitResult === 'ok';
   }
   if (sawHookDegraded) {
     // Hook lapse held the window: emit the ADR-031 deterministic recovery + audit as a hook lapse.

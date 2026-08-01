@@ -1,11 +1,10 @@
 // Keep in sync with services/gateway/src/runners/registry.ts paneShowsBusyComposer.
 export function paneShowsBusyComposer(pane) {
-  const liveTail = pane.split('\n').slice(-20).join('\n');
   return (
-    /tab to queue message/i.test(liveTail) ||
-    /Working \(/i.test(liveTail) ||
-    /background terminal running/i.test(liveTail) ||
-    /(?:^|\n)\s*[·*•✻✢✽✶✷✸✹✺✼✣∗]\s+Composing[…\.]/iu.test(liveTail)
+    /tab to queue message/i.test(pane) ||
+    /Working \(/i.test(pane) ||
+    /background terminal running/i.test(pane) ||
+    /[·*•✶]\s*Composing[…\.]/i.test(pane)
   );
 }
 

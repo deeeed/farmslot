@@ -5,9 +5,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - feat(recipe): validate structured run summaries and failure attribution when packaging recipe evidence.
-- fix(runners): recover retained Claude prompt delivery after a recent terminal-idle signal ages past normal hook freshness. Recovery requires 30 minutes of digest coverage and an empty live composer; incomplete history holds instead of duplicating the prompt.
-- fix(runners): keep captured Claude spinner forms busy while excluding ordinary transcript bullets from live-composer detection.
-- fix(observability): preserve notification messages in installed hooks, recognize Claude's actual idle-notification message, record guarded stale-idle recovery separately, keep non-authoritative flag-off readings out of comparable agreement rows, and stop treating `SubagentStop` as whole-turn idle.
+- fix(runners): reactivate retained event-driven sessions through the runner capability by resuming the exact persisted session with the next prompt in argv and verifying its hook digest, without parsing TUI glyphs.
+- fix(observability): preserve structured notification types in installed hooks and stop treating `SubagentStop` as whole-turn idle.
 - fix(run-engine): honor an update-branch worker's persisted `needsSelfReview: false` signal on remote slots instead of defaulting to an unnecessary review when the signal file is not local to the gateway.
 - fix(dispatch): bind fresh orchestration workers to the canonical `worker` tmux session anchor, reuse a chained run's persisted parent-worker target, and recognize legacy `review-fix[-N]` tabs during terminal slot cleanup so retries cannot inherit stale reviewer panes while the empty anchor remains available.
 - fix(work-graph): preserve durable completed-run outcomes when historical reconciliation reveals work that began before a start dependency. Scheduler-authorized work still surfaces prerequisite regressions.

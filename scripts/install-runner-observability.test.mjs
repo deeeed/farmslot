@@ -134,6 +134,7 @@ test('installed hook writes distinct JSONL records and preserves notification de
   runHook(hookPath, obsDir, { hook_event_name: 'Stop', session_id: 'a' });
   runHook(hookPath, obsDir, {
     hook_event_name: 'Notification',
+    notification_type: 'idle_prompt',
     message: 'Claude is waiting for your input',
     session_id: 'a',
   });
@@ -144,6 +145,7 @@ test('installed hook writes distinct JSONL records and preserves notification de
   assert.equal(JSON.parse(lines[0]).hook_event_name, 'SessionStart');
   assert.equal(JSON.parse(lines[1]).hook_event_name, 'Stop');
   assert.equal(JSON.parse(lines[2]).notification_message, 'Claude is waiting for your input');
+  assert.equal(JSON.parse(lines[2]).notification_type, 'idle_prompt');
   assert.equal(raw.at(-1), '\n', 'each append should end with a real newline byte');
 });
 

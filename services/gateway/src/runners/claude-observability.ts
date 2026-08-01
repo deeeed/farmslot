@@ -4,29 +4,23 @@ import {
   activeToolFromHooks,
   contextPctFromStatusline,
   deriveRunnerActivity,
+  deriveRunnerSessionDeliveryState,
   filterHooksByPane,
   filterStatuslineByPane,
   lastTurnCompletedFromHooks,
-  OBSERVABILITY_DIGEST_TAIL_BYTES,
   parseHookJsonl,
   parseStatuslineJson,
   promptAcceptedFromHooks,
-  promptDigestAcceptedFromHooks,
   readRunnerObservabilityFiles,
 } from './observability-files.js';
 import type { RunnerObservability, SlotVars } from './observability-types.js';
 
-async function loadObservabilitySnapshot(vars: SlotVars, target: string, hooksTailBytes?: number) {
-  const { hooksRaw, statuslineRaw } = await readRunnerObservabilityFiles(
-    vars,
-    vars.remoteRepo,
-    hooksTailBytes,
-  );
+async function loadObservabilitySnapshot(vars: SlotVars, target: string) {
+  const { hooksRaw, statuslineRaw } = await readRunnerObservabilityFiles(vars);
   const paneId = await resolveTmuxPaneId(vars, target);
-  const allHooks = parseHookJsonl(hooksRaw);
-  const hooks = filterHooksByPane(allHooks, paneId);
+  const hooks = filterHooksByPane(parseHookJsonl(hooksRaw), paneId);
   const statusline = filterStatuslineByPane(parseStatuslineJson(statuslineRaw), paneId);
-  return { allHooks, hooks, paneId, statusline };
+  return { hooks, statusline };
 }
 
 export const claudeHookObservability: RunnerObservability = {
@@ -63,21 +57,8 @@ export const claudeHookObservability: RunnerObservability = {
     );
   },
 
-  async promptDigestAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {
-    // This long-window idempotency lookup runs once per stale-idle recovery attempt. Read both
-    // retained generations so busy workers are not limited by the 64 KiB hot polling tail.
-    const { allHooks, paneId } = await loadObservabilitySnapshot(
-      vars,
-      target,
-      OBSERVABILITY_DIGEST_TAIL_BYTES,
-    );
-    return promptDigestAcceptedFromHooks(
-      allHooks,
-      promptDigest,
-      sinceMs,
-      Date.now(),
-      paneId,
-      paneRetired,
-    );
+  async getSessionDeliveryState(vars, target, sessionId) {
+    const { hooks } = await loadObservabilitySnapshot(vars, target);
+    return deriveRunnerSessionDeliveryState(hooks, sessionId);
   },
 };

@@ -5,12 +5,12 @@ import {
   activeToolFromHooks,
   contextPctFromStatusline,
   deriveRunnerActivity,
+  deriveRunnerSessionDeliveryState,
   filterHooksByPane,
   filterStatuslineByPane,
   lastTurnCompletedFromHooks,
   parseHookJsonl,
   promptAcceptedFromHooks,
-  promptDigestAcceptedFromHooks,
   promptTurnStartedFromHooks,
   runnerActivityIsBusy,
 } from './observability-files.js';
@@ -58,35 +58,14 @@ test('deriveRunnerActivity detects composing and tool-running from hooks', () =>
   assert.equal(toolRunning?.value, 'tool-running');
 });
 
-test('deriveRunnerActivity treats an idle notification after Stop as terminal idle', () => {
-  const reading = deriveRunnerActivity(
-    [
-      { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 80_000 },
-      { hook_event_name: 'Stop', observedAt: NOW - 70_000 },
-      {
-        hook_event_name: 'Notification',
-        notification_message: 'Claude is waiting for your input',
-        observedAt: NOW - 1_000,
-      },
-    ],
-    null,
-    NOW,
-  );
-  assert.deepEqual(reading, {
-    value: 'idle',
-    source: 'hook',
-    confidence: 'high',
-    observedAt: NOW - 1_000,
-  });
-});
-
-test('deriveRunnerActivity recognizes the installed idle notification message', () => {
+test('deriveRunnerActivity recognizes the structured idle notification type', () => {
   const reading = deriveRunnerActivity(
     [
       { hook_event_name: 'PreToolUse', observedAt: NOW - 70_000, tool_name: 'Read' },
       { hook_event_name: 'PostToolUse', observedAt: NOW - 60_000, tool_name: 'Read' },
       {
         hook_event_name: 'Notification',
+        notification_type: 'idle_prompt',
         notification_message: 'Claude is waiting for your input',
         observedAt: NOW - 1_000,
       },
@@ -103,6 +82,7 @@ test('deriveRunnerActivity does not treat an unrelated notification as idle', ()
       { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 2_000 },
       {
         hook_event_name: 'Notification',
+        notification_type: 'permission_prompt',
         notification_message: 'Claude needs permission to use Bash',
         observedAt: NOW - 1_000,
       },
@@ -111,39 +91,6 @@ test('deriveRunnerActivity does not treat an unrelated notification as idle', ()
     NOW,
   );
   assert.equal(reading?.value, 'composing');
-});
-
-test('deriveRunnerActivity preserves stale terminal idle as low-confidence last-known state', () => {
-  const reading = deriveRunnerActivity(
-    [
-      { hook_event_name: 'Stop', observedAt: NOW - 240_000 },
-      // Hook logs written before the installer persisted notification messages have this legacy
-      // shape. A notification after a completed turn represents Claude's idle prompt there.
-      { hook_event_name: 'Notification', observedAt: NOW - 180_000 },
-    ],
-    null,
-    NOW,
-  );
-  assert.deepEqual(reading, {
-    value: 'idle',
-    source: 'hook',
-    confidence: 'low',
-    observedAt: NOW - 180_000,
-    evidence: 'stale-terminal-idle',
-  });
-});
-
-test('deriveRunnerActivity does not recover stale idle tied with non-idle activity', () => {
-  const observedAt = NOW - 180_000;
-  const reading = deriveRunnerActivity(
-    [
-      { hook_event_name: 'Stop', observedAt },
-      { hook_event_name: 'PreToolUse', observedAt, tool_name: 'Read' },
-    ],
-    null,
-    NOW,
-  );
-  assert.equal(reading, null);
 });
 
 test('deriveRunnerActivity does not treat SubagentStop as whole-turn idle', () => {
@@ -172,15 +119,6 @@ test('deriveRunnerActivity lets a later Stop close an unmatched tool hook', () =
   });
 });
 
-test('deriveRunnerActivity rejects terminal idle older than the recovery window', () => {
-  const reading = deriveRunnerActivity(
-    [{ hook_event_name: 'Stop', observedAt: NOW - 31 * 60_000 }],
-    null,
-    NOW,
-  );
-  assert.equal(reading, null);
-});
-
 test('lastTurnCompletedFromHooks ignores subagent completion', () => {
   const reading = lastTurnCompletedFromHooks(
     [
@@ -197,16 +135,74 @@ test('lastTurnCompletedFromHooks ignores subagent completion', () => {
   });
 });
 
-test('deriveRunnerActivity does not recover stale non-terminal work as idle', () => {
-  const reading = deriveRunnerActivity(
+test('deriveRunnerSessionDeliveryState keeps terminal Stop durable within one session', () => {
+  const reading = deriveRunnerSessionDeliveryState(
     [
-      { hook_event_name: 'Stop', observedAt: NOW - 300_000 },
-      { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 240_000 },
+      { hook_event_name: 'Stop', session_id: 'old', observedAt: NOW - 1_000 },
+      { hook_event_name: 'UserPromptSubmit', session_id: 'wanted', observedAt: NOW - 300_000 },
+      { hook_event_name: 'Stop', session_id: 'wanted', observedAt: NOW - 240_000 },
     ],
-    null,
-    NOW,
+    'wanted',
   );
-  assert.equal(reading, null);
+  assert.deepEqual(reading, {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 240_000,
+  });
+});
+
+test('deriveRunnerSessionDeliveryState refuses a session with later active work', () => {
+  const reading = deriveRunnerSessionDeliveryState(
+    [
+      { hook_event_name: 'Stop', session_id: 'wanted', observedAt: NOW - 300_000 },
+      { hook_event_name: 'UserPromptSubmit', session_id: 'wanted', observedAt: NOW - 240_000 },
+      { hook_event_name: 'SubagentStop', session_id: 'wanted', observedAt: NOW - 1_000 },
+    ],
+    'wanted',
+  );
+  assert.equal(reading?.value, 'active');
+});
+
+test('deriveRunnerSessionDeliveryState invalidates an older Stop on any later parent event', () => {
+  const reading = deriveRunnerSessionDeliveryState(
+    [
+      { hook_event_name: 'Stop', session_id: 'wanted', observedAt: NOW - 300_000 },
+      { hook_event_name: 'SessionStart', session_id: 'wanted', observedAt: NOW - 1_000 },
+    ],
+    'wanted',
+  );
+  assert.equal(reading?.value, 'active');
+});
+
+test('deriveRunnerSessionDeliveryState uses structured notifications, not message text', () => {
+  const idle = deriveRunnerSessionDeliveryState(
+    [
+      {
+        hook_event_name: 'Notification',
+        notification_type: 'idle_prompt',
+        notification_message: 'localized text is irrelevant',
+        session_id: 'wanted',
+        observedAt: NOW - 2_000,
+      },
+    ],
+    'wanted',
+  );
+  assert.equal(idle?.value, 'idle');
+
+  const active = deriveRunnerSessionDeliveryState(
+    [
+      {
+        hook_event_name: 'Notification',
+        notification_type: 'permission_prompt',
+        notification_message: 'Claude is waiting for your input',
+        session_id: 'wanted',
+        observedAt: NOW - 1_000,
+      },
+    ],
+    'wanted',
+  );
+  assert.equal(active?.value, 'active');
 });
 
 test('activeToolFromHooks returns unmatched PreToolUse tool name', () => {
@@ -259,69 +255,6 @@ test('promptAcceptedFromHooks matches digest after grace window', () => {
     confidence: 'high',
     observedAt: NOW - 1_000,
   });
-});
-
-test('promptDigestAcceptedFromHooks never substitutes generic turn-start evidence', () => {
-  const since = NOW - 30 * 60_000;
-  const hooks = [
-    {
-      hook_event_name: 'UserPromptSubmit',
-      observedAt: NOW - 45 * 60_000,
-      runnerPromptDigest: 'other-digest',
-    },
-    { hook_event_name: 'PreToolUse', observedAt: NOW - 20 * 60_000, tool_name: 'Read' },
-    { hook_event_name: 'Stop', observedAt: NOW - 10 * 60_000 },
-  ];
-  assert.deepEqual(promptDigestAcceptedFromHooks(hooks, 'wanted-digest', since, NOW), {
-    value: false,
-    source: 'hook',
-    confidence: 'medium',
-    observedAt: NOW - 10 * 60_000,
-  });
-});
-
-test('promptDigestAcceptedFromHooks requires full window coverage before rejecting a digest', () => {
-  const since = NOW - 30 * 60_000;
-  const other = {
-    hook_event_name: 'UserPromptSubmit',
-    observedAt: NOW - 12 * 60_000,
-    runnerPromptDigest: 'other-digest',
-  };
-  assert.equal(promptDigestAcceptedFromHooks([other], 'wanted-digest', since, NOW), null);
-  const windowBoundary = {
-    hook_event_name: 'Stop',
-    observedAt: since,
-    tmuxPane: '%other-pane',
-  };
-  assert.deepEqual(
-    promptDigestAcceptedFromHooks(
-      [windowBoundary, { ...other, tmuxPane: '%target-pane' }],
-      'wanted-digest',
-      since,
-      NOW,
-      '%target-pane',
-    ),
-    {
-      value: false,
-      source: 'hook',
-      confidence: 'medium',
-      observedAt: other.observedAt,
-    },
-  );
-  const matching = { ...other, runnerPromptDigest: 'wanted-digest', observedAt: NOW - 11 * 60_000 };
-  assert.deepEqual(promptDigestAcceptedFromHooks([other, matching], 'wanted-digest', since, NOW), {
-    value: true,
-    source: 'hook',
-    confidence: 'high',
-    observedAt: matching.observedAt,
-  });
-});
-
-test('promptDigestAcceptedFromHooks keeps an absent pane-retired stream non-authoritative', () => {
-  assert.equal(
-    promptDigestAcceptedFromHooks([], 'wanted-digest', NOW - 30 * 60_000, NOW, undefined, true),
-    null,
-  );
 });
 
 test('filterHooksByPane scopes hook records to target pane', () => {
