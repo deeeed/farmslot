@@ -54,6 +54,14 @@ Pass typed values with `--param key=value`. A task recipe at `artifacts/recipe.j
 and app bridge actions. Command output is sanitized before recipe artifacts are
 written so public Expo config secrets do not leak into `trace.json`.
 
+### Metro bridge port
+
+Recipes that execute Metro-backed actions such as `app.status`, `app.hud`, or
+`app.trace` must set `FARMSLOT_RECIPE_METRO_PORT` or `METRO_PORT` to the
+assigned port (1–65535). `FARMSLOT_RECIPE_METRO_PORT` takes precedence. There
+is no default port or `WATCHER_PORT` fallback. The port is resolved only when a
+Metro-backed action runs, so headless and native-only recipes do not need it.
+
 When asserting command output that may be redacted, prefer stable substrings or structured fields over exact pretty-printed JSON whitespace.
 
 For motion-sensitive visual proof, `farmslot-expo-recipe run --record-video`

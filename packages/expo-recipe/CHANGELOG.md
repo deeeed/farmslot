@@ -4,7 +4,10 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
-- Require an explicit Metro bridge port only when a recipe executes Metro-backed UI actions.
+## 0.5.0 - 2026-08-01
+
+- **BREAKING:** Remove the `WATCHER_PORT` fallback and implicit port `7677`; Metro-backed actions now require `FARMSLOT_RECIPE_METRO_PORT` or `METRO_PORT` set to an integer from 1 through 65535. Port resolution remains lazy, so headless and native-only runs do not require either variable.
+- Publish against `@farmslot/protocol` 0.15.0 and `@farmslot/recipe-harness` 0.11.1 so Expo consumers receive structured suite evidence and idempotent iOS lifecycle restarts.
 
 ## 0.4.0 - 2026-07-24
 

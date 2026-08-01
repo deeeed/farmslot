@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the explicit Metro bridge port contract for Expo recipe consumers.
 - Regenerate the Gateway API reference for protocol `0.15.0`.
 - docs: document reconciled recipe failure causes and standalone suite evidence contracts.
 - Document the authenticated `gateway.ping` liveness method as read-only and regenerate the Gateway API reference.
