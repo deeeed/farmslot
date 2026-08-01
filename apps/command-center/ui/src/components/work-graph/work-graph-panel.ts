@@ -60,6 +60,7 @@ import {
 import { computeWorkGraphLayout, type WorkGraphLayoutNode } from './work-graph-layout.js';
 import {
   defaultWorkGraphSortDirection,
+  resolveWorkGraphHashSelection,
   resolveWorkGraphSelection,
   sortWorkGraphInventory,
   WORK_GRAPH_SORT_KEYS,
@@ -195,18 +196,39 @@ export class WorkGraphPanel extends LitElement {
     if (key && nodeKeys.has(key)) this.selectedNodeKey = key;
   }
 
+  private filteredActiveGraphs(): WorkGraphProjection[] {
+    const all = this.activeGraphs();
+    return this.selectedProject
+      ? all.filter((graph) => graph.graph.project === this.selectedProject)
+      : all;
+  }
+
   private applyUrlStateFromHash() {
     if (typeof location === 'undefined') return;
     const { route, params } = parseHashRoute();
     if (route !== 'work-graphs') return;
     this.selectedProject = params.get(WORK_GRAPH_PROJECT_PARAM)?.trim() ?? '';
-    const graphId = params.get(WORK_GRAPH_GRAPH_PARAM)?.trim() ?? '';
-    const nodeId = params.get(WORK_GRAPH_NODE_PARAM)?.trim() ?? '';
-    this.selectedGraphId = graphId;
-    this.selectedNodeKey = graphId && nodeId ? `${graphId}:${nodeId}` : '';
+    const rawGraphId = params.get(WORK_GRAPH_GRAPH_PARAM)?.trim() ?? '';
+    const rawNodeId = params.get(WORK_GRAPH_NODE_PARAM)?.trim() ?? '';
+    const filtered = this.filteredActiveGraphs();
+    const resolved = resolveWorkGraphHashSelection({
+      filteredGraphIds: filtered.map((graph) => graph.graph.id),
+      rawGraphId,
+      rawNodeId,
+      nodeExists: (graphId, nodeId) =>
+        Boolean(
+          filtered
+            .find((graph) => graph.graph.id === graphId)
+            ?.nodes.some((node) => node.id === nodeId),
+        ),
+    });
+    this.selectedGraphId = resolved.selectedGraphId;
+    this.selectedNodeKey = resolved.selectedNodeKey;
     const sort = parseWorkInventorySort(params, WORK_GRAPH_SORT_URL);
     this.sortKey = sort.key;
     this.sortDirection = sort.direction;
+    // Rewrite hash when the URL carried a graph outside the filtered set.
+    if (resolved.changed) queueMicrotask(() => this.writeUrlState());
   }
 
   private writeUrlState() {
@@ -215,12 +237,29 @@ export class WorkGraphPanel extends LitElement {
     if (route !== 'work-graphs') return;
     if (this.selectedProject) params.set(WORK_GRAPH_PROJECT_PARAM, this.selectedProject);
     else params.delete(WORK_GRAPH_PROJECT_PARAM);
-    // Prefer the resolved inventory selection; never keep a node whose graph is
-    // outside the current project filter / selectedGraphId.
+    // Always re-resolve against the filtered project set before persisting.
+    const filtered = this.filteredActiveGraphs();
+    const resolved = resolveWorkGraphHashSelection({
+      filteredGraphIds: filtered.map((graph) => graph.graph.id),
+      rawGraphId: this.selectedGraphId,
+      rawNodeId: this.selectedNodeKey.split(':')[1] ?? '',
+      nodeExists: (graphId, nodeId) =>
+        Boolean(
+          filtered
+            .find((graph) => graph.graph.id === graphId)
+            ?.nodes.some((node) => node.id === nodeId),
+        ),
+    });
+    if (resolved.selectedGraphId !== this.selectedGraphId) {
+      this.selectedGraphId = resolved.selectedGraphId;
+    }
+    if (resolved.selectedNodeKey !== this.selectedNodeKey) {
+      this.selectedNodeKey = resolved.selectedNodeKey;
+    }
     const graphId = this.selectedGraphId;
-    const nodeGraphId = this.selectedNodeKey.split(':')[0] ?? '';
-    const nodeId =
-      graphId && nodeGraphId === graphId ? (this.selectedNodeKey.split(':')[1] ?? '') : '';
+    const nodeId = this.selectedNodeKey.startsWith(`${graphId}:`)
+      ? this.selectedNodeKey.slice(graphId.length + 1)
+      : '';
     if (graphId) params.set(WORK_GRAPH_GRAPH_PARAM, graphId);
     else params.delete(WORK_GRAPH_GRAPH_PARAM);
     if (graphId && nodeId) params.set(WORK_GRAPH_NODE_PARAM, nodeId);

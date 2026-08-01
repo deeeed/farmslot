@@ -29,10 +29,16 @@ export function renderWorkInventorySortHeader<TSortKey extends string>(options: 
 }): TemplateResult {
   const active = options.sort.key === options.columnKey;
   const arrow = active ? sortArrow(options.sort.direction) : '';
+  const ariaSort = active
+    ? options.sort.direction === 'asc'
+      ? 'ascending'
+      : 'descending'
+    : 'none';
   return html`<button
     class=${active ? 'active' : ''}
     type="button"
     data-testid=${options.testId ?? `work-inventory-sort-${options.columnKey}`}
+    aria-sort=${ariaSort}
     @click=${() => options.onSort(options.columnKey)}
   >
     ${options.label}${arrow}
@@ -89,7 +95,7 @@ export function renderWorkInventoryRow(options: {
     tabindex=${row.disabled ? -1 : 0}
     data-testid=${row.testId ?? `work-inventory-row-${row.id}`}
     data-row-id=${row.id}
-    aria-selected=${row.selected ? 'true' : 'false'}
+    aria-pressed=${row.selected ? 'true' : 'false'}
     @click=${() => {
       if (!row.disabled) row.onActivate();
     }}
@@ -163,11 +169,28 @@ export function renderWorkInventoryLayout(options: {
       : options.showDetail
         ? 'detail-only'
         : 'list-only';
+  // Always mount list + detail slots. Hiding with CSS (not unmounting) keeps
+  // list scrollTop and DOM selection state across narrow detail ↔ Back.
   return html`<div
     class="work-inventory-layout ${mode}"
     data-testid=${options.testId ?? 'work-inventory-layout'}
     data-layout=${mode}
   >
-    ${options.showList ? options.list : nothing} ${options.showDetail ? options.detail : nothing}
+    <div
+      class="work-inventory-list-slot ${options.showList ? '' : 'is-visually-hidden'}"
+      data-testid="work-inventory-list-slot"
+      aria-hidden=${options.showList ? 'false' : 'true'}
+      ?inert=${!options.showList}
+    >
+      ${options.list}
+    </div>
+    <div
+      class="work-inventory-detail-slot ${options.showDetail ? '' : 'is-visually-hidden'}"
+      data-testid="work-inventory-detail-slot"
+      aria-hidden=${options.showDetail ? 'false' : 'true'}
+      ?inert=${!options.showDetail}
+    >
+      ${options.detail}
+    </div>
   </div>`;
 }

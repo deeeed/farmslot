@@ -107,3 +107,35 @@ export function defaultWorkGraphSortDirection(key: WorkGraphSortKey): WorkGraphS
     ? 'desc'
     : 'asc';
 }
+
+/**
+ * Resolve graph (and optional node) selection against the currently filtered
+ * graph set. Prevents URL/hash from retaining a graph outside the project filter
+ * while the canvas shows a different resolved graph.
+ */
+export function resolveWorkGraphHashSelection(options: {
+  filteredGraphIds: readonly string[];
+  rawGraphId: string;
+  rawNodeId?: string;
+  nodeExists?: (graphId: string, nodeId: string) => boolean;
+}): { selectedGraphId: string; selectedNodeKey: string; changed: boolean } {
+  const { selectedId, autoSelected } = resolveWorkGraphSelection(
+    options.filteredGraphIds,
+    options.rawGraphId,
+  );
+  let selectedNodeKey = '';
+  const rawNodeId = options.rawNodeId?.trim() ?? '';
+  if (selectedId && rawNodeId) {
+    const ok = options.nodeExists
+      ? options.nodeExists(selectedId, rawNodeId)
+      : options.rawGraphId === selectedId;
+    if (ok) selectedNodeKey = `${selectedId}:${rawNodeId}`;
+  }
+  const changed =
+    selectedId !== options.rawGraphId ||
+    Boolean(rawNodeId && !selectedNodeKey) ||
+    // Auto-selected single graph still counts as a resolution change when the
+    // raw URL had no graph id.
+    (autoSelected && !options.rawGraphId && Boolean(selectedId));
+  return { selectedGraphId: selectedId, selectedNodeKey, changed };
+}

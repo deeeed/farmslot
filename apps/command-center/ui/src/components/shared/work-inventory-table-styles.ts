@@ -79,6 +79,9 @@ export const workInventoryTableStyles = css`
     color: ${unsafeCSS(colors.textSecondary)};
     font-family: ${unsafeCSS(fonts.mono)};
     font-size: ${unsafeCSS(fonts.sizeXs)};
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
   .work-inventory-row .updated-cell {
@@ -114,5 +117,16 @@ export const workInventoryTableStyles = css`
   .work-inventory-layout.list-only,
   .work-inventory-layout.detail-only {
     grid-template-columns: 1fr;
+  }
+  /* Keep list/detail slots mounted while hidden so scrollTop and selection
+     survive narrow detail ↔ list round-trips (display:none retains scroll). */
+  .work-inventory-list-slot,
+  .work-inventory-detail-slot {
+    min-height: 0;
+    min-width: 0;
+  }
+  .work-inventory-list-slot.is-visually-hidden,
+  .work-inventory-detail-slot.is-visually-hidden {
+    display: none;
   }
 `;

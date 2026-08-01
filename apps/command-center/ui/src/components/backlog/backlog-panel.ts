@@ -2542,7 +2542,7 @@ export class BacklogPanel extends LitElement {
         id: item.id,
         selected,
         className: item.lastDispatchError ? 'has-error' : '',
-        testId: `backlog-row-${item.id}`,
+        testId: `backlog-row-${item.sourceRef || item.id}`,
         onActivate: () => this._selectItem(item),
       },
       cells: html`

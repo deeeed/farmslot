@@ -61,30 +61,37 @@ test('returning from narrow-screen detail restores the inventory list', () => {
   assert.equal(inventoryShowsDetail(afterBack), false);
 });
 
-test('renderWorkInventoryLayout mode tracks showList/showDetail (consumer contract)', async () => {
+test('renderWorkInventoryLayout keeps list mounted when hidden for detail-only', async () => {
   const { renderWorkInventoryLayout } = await import('./work-inventory-table.js');
   const { html } = await import('lit');
-  const split = renderWorkInventoryLayout({
-    list: html`<div>list</div>`,
-    detail: html`<div>detail</div>`,
-    showList: true,
-    showDetail: true,
-  });
   const detailOnly = renderWorkInventoryLayout({
-    list: html`<div>list</div>`,
-    detail: html`<div>detail</div>`,
+    list: html`<div data-list-scroll>list-body</div>`,
+    detail: html`<div data-detail>detail-body</div>`,
     showList: false,
     showDetail: true,
   });
-  const listOnly = renderWorkInventoryLayout({
-    list: html`<div>list</div>`,
-    detail: html`<div>detail</div>`,
-    showList: true,
-    showDetail: false,
+  const serialized = JSON.stringify(detailOnly);
+  // List template remains in the tree (not replaced with nothing) so scroll can survive.
+  assert.match(serialized, /list-body/);
+  assert.match(serialized, /detail-body/);
+  assert.match(serialized, /is-visually-hidden/);
+  assert.match(serialized, /detail-only/);
+});
+
+test('renderWorkInventorySortHeader exposes aria-sort for the active column', async () => {
+  const { renderWorkInventorySortHeader } = await import('./work-inventory-table.js');
+  const active = renderWorkInventorySortHeader({
+    label: 'Title',
+    columnKey: 'title',
+    sort: { key: 'title', direction: 'desc' },
+    onSort: () => undefined,
   });
-  // TemplateResult values are opaque; stringifying values is enough to lock mode strings.
-  assert.match(JSON.stringify(split.values), /split|list|detail/);
-  assert.ok(split);
-  assert.ok(detailOnly);
-  assert.ok(listOnly);
+  const inactive = renderWorkInventorySortHeader({
+    label: 'Status',
+    columnKey: 'status',
+    sort: { key: 'title', direction: 'desc' },
+    onSort: () => undefined,
+  });
+  assert.match(JSON.stringify(active.values), /descending/);
+  assert.match(JSON.stringify(inactive.values), /none/);
 });
