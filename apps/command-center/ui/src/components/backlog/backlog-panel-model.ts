@@ -2,8 +2,8 @@ import {
   ARCHIVABLE_BACKLOG_STATUSES,
   BACKLOG_STATUSES,
   type BacklogItem,
-  type BacklogRefineResult,
   type BacklogRefinementSessionGetResult,
+  type BacklogRefineResult,
   type BacklogStatus,
   isTerminalRunStatus,
   type Run,
@@ -227,11 +227,10 @@ export function backlogRefinementPickerView(state: {
 
 /** Message shown after a refine RPC returns (launch vs resume vs prompt-only). */
 export function backlogRefineResultMessage(result: BacklogRefineResult, launch: boolean): string {
-  const selectedRunner = [result.runner, result.model, result.safetyTier]
-    .filter(Boolean)
-    .join(' ');
+  const selectedRunner = [result.runner, result.model, result.safetyTier].filter(Boolean).join(' ');
   const runnerSuffix = selectedRunner ? ` (${selectedRunner})` : '';
   if (!launch) return `Refinement prompt ready${runnerSuffix}: ${result.promptPath}`;
-  if (result.launched) return `Refinement terminal launched${runnerSuffix}: ${result.attachCommand}`;
+  if (result.launched)
+    return `Refinement terminal launched${runnerSuffix}: ${result.attachCommand}`;
   return `Refinement terminal reopened${runnerSuffix}: ${result.attachCommand}`;
 }

@@ -13,8 +13,8 @@ import type {
   BacklogItem,
   BacklogListResult,
   BacklogReconcileRunResult,
-  BacklogRefineResult,
   BacklogRefinementSessionGetResult,
+  BacklogRefineResult,
   BacklogSpecGetResult,
   BacklogUpcomingResult,
   BacklogUpdateResult,
@@ -562,26 +562,21 @@ export function registerBacklogCommand(program: Command): void {
             `Refining ${ref}`,
             async () => {
               const item = await resolveItem(ctx, ref);
-              return ctx.client.call<BacklogRefineResult>('backlog.refine', {
-                itemId: item.id,
-                ...(opts.runner ? { runner: opts.runner } : {}),
-                ...(opts.model ? { model: opts.model } : {}),
-                ...(opts.runnerCommand ? { runnerCommand: opts.runnerCommand } : {}),
-                ...(opts.launch ? { launch: true } : {}),
-              });
+              return ctx.client.call<BacklogRefineResult>(
+                'backlog.refine',
+                backlogRefineRpcParams(item.id, opts),
+              );
             },
             !emit.machine,
           );
           if (emit.machine) emit.ok(result);
           else {
-            const verb = result.launched
-              ? 'Launched'
-              : result.attachedExisting
-                ? 'Reopened'
-                : 'Prepared';
+            const [verbLine, promptLine, attachLine] =
+              formatBacklogRefineOutput(result).split('\n');
+            const verb = verbLine?.split(' ')[0] ?? 'Prepared';
             ctx.output.write(`${green(verb)} refinement for ${cyan(result.item.sourceRef)}\n`);
-            ctx.output.write(`${dim(`prompt: ${result.promptPath}`)}\n`);
-            ctx.output.write(`${dim(`attach: ${result.attachCommand}`)}\n`);
+            if (promptLine) ctx.output.write(`${dim(promptLine)}\n`);
+            if (attachLine) ctx.output.write(`${dim(attachLine)}\n`);
           }
         } catch (err) {
           emit.fail(err);
@@ -609,10 +604,10 @@ export function registerBacklogCommand(program: Command): void {
         );
         if (emit.machine) emit.ok(result);
         else {
-          ctx.output.write(
-            `${result.exists ? green('running') : yellow('absent')}  ${result.tmuxSession}\n`,
-          );
-          ctx.output.write(`${dim(result.attachCommand)}\n`);
+          const [statusLine, attachLine] = formatBacklogRefinementSessionOutput(result).split('\n');
+          const status = statusLine?.startsWith('running') ? green('running') : yellow('absent');
+          ctx.output.write(`${status}  ${result.tmuxSession}\n`);
+          if (attachLine) ctx.output.write(`${dim(attachLine)}\n`);
         }
       } catch (err) {
         emit.fail(err);

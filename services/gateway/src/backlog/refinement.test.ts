@@ -4,8 +4,8 @@ import { mkdtempSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
@@ -115,7 +115,12 @@ test('backlog refinement prepares prompt with bounded context and fs-backlog-spe
   assert.equal(result.launched, false);
   assert.equal(result.runner, 'codex');
   assert.equal(result.model, 'gpt-5.6-sol');
-  assert.equal(result.tmuxSession, `backlog-${created.item.sourceRef.toLowerCase()}`);
+  assert.equal(
+    result.tmuxSession,
+    refinement.__backlogRefinementTest.backlogRefinementSessionName(created.item),
+  );
+  assert.match(result.tmuxSession, /^backlog-/);
+  assert.doesNotMatch(result.tmuxSession, /manual-000001/);
   assert.match(result.promptPath, /backlog-refine-prompts-\d+\//);
 
   const prompt = await readFile(path.join(farmslotRoot, result.promptPath), 'utf8');

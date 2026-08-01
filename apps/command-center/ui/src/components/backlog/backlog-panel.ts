@@ -14,8 +14,8 @@ import type {
   BacklogLaunchPlan,
   BacklogLaunchSlotPolicy,
   BacklogMarkReadyResult,
-  BacklogRefineResult,
   BacklogRefinementSessionGetResult,
+  BacklogRefineResult,
   BacklogSourceKind,
   BacklogSpecGetResult,
   BacklogStatus,
@@ -54,12 +54,11 @@ import { renderMarkdown } from '../../utils/markdown.js';
 import {
   DEFAULT_MODEL,
   modelForRunnerChange,
-  modelsForRunner,
   MODELS_BY_RUNNER,
+  modelsForRunner,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
-import { encodeWorkerRouteParam } from '../terminal/split-view-model.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
 import { templateOptionsRequestKey } from '../dispatch/dispatch-wizard-template-options.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
@@ -99,13 +98,16 @@ import {
   type WorkInventoryColumnDef,
   workInventoryTableStyles,
 } from '../shared/work-inventory-table.js';
-import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
+import {
+  encodeWorkerRouteParam,
+  filterSlotsByGlobalFilters,
+} from '../terminal/split-view-model.js';
 
 import {
   BACKLOG_SORT_KEYS,
   backlogItemMatchesStatusFilter,
-  backlogRefineResultMessage,
   backlogRefinementPickerView,
+  backlogRefineResultMessage,
   type BacklogSortDirection,
   type BacklogSortKey,
   backlogStatusCounts,
@@ -2759,17 +2761,7 @@ export class BacklogPanel extends LitElement {
         ...(this._refineSafetyTier ? { safetyTier: this._refineSafetyTier as SafetyTier } : {}),
       });
       this._message = backlogRefineResultMessage(result, launch);
-      if (launch) {
-        this._existingRefinementSession = {
-          itemId: result.item.id,
-          tmuxSession: result.tmuxSession,
-          tmuxTarget: result.tmuxTarget,
-          exists: true,
-          ...(result.tmuxWorker ? { tmuxWorker: result.tmuxWorker } : {}),
-          attachCommand: result.attachCommand,
-        };
-        this._setRunnerPickerOpen(false);
-      }
+      if (launch) this._setRunnerPickerOpen(false);
       if (launch && result.tmuxWorker) this._navigateToWorkerTerminal(result.tmuxWorker);
     } catch (err) {
       this._error = (err as Error).message;
@@ -2928,7 +2920,7 @@ export class BacklogPanel extends LitElement {
               value: this._refineSafetyTier,
               options: SAFETY_TIERS,
               onChange: (tier) => {
-                this._refineSafetyTier = tier === DEFAULT_REFINEMENT_CHOICE ? '' : tier;
+                this._refineSafetyTier = tier;
               },
             })}
           </div>
@@ -2973,7 +2965,7 @@ export class BacklogPanel extends LitElement {
     const hideDispatchActions = item.status === 'done' || item.status === 'archived';
     const refineButton = html`<button
       class="secondary"
-      data-testid="backlog-refine-runner"
+      data-testid="backlog-refine-open-picker"
       type="button"
       title="Choose a runner/model, then launch or attach the tmux refinement session for this backlog item."
       ?disabled=${item.status === 'archived' || this._busy.endsWith(item.id)}

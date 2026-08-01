@@ -6,10 +6,10 @@ import path from 'node:path';
 
 import {
   type BacklogItem,
-  type BacklogRefineParams,
-  type BacklogRefineResult,
   type BacklogRefinementSessionGetParams,
   type BacklogRefinementSessionGetResult,
+  type BacklogRefineParams,
+  type BacklogRefineResult,
   DEFAULT_BACKLOG_REFINEMENT_MODEL,
   DEFAULT_BACKLOG_REFINEMENT_RUNNER,
 } from '@farmslot/protocol';
@@ -45,8 +45,9 @@ function repoRelative(filePath: string): string {
   return relative.startsWith('..') ? filePath : relative;
 }
 
-export function backlogRefinementSessionName(item: Pick<BacklogItem, 'id' | 'sourceRef'>): string {
-  return `backlog-${slugify(item.sourceRef || item.id)}`;
+export function backlogRefinementSessionName(item: Pick<BacklogItem, 'id'>): string {
+  // Key on item id (not sourceRef): sourceRef is not unique across backlog items.
+  return `backlog-${slugify(item.id)}`;
 }
 
 async function allocateRefinementPromptPath(item: BacklogItem): Promise<string> {

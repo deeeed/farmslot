@@ -5,8 +5,8 @@ import type { CommandContext } from '../context.js';
 
 import {
   backlogRefineRpcParams,
-  formatBacklogRefineOutput,
   formatBacklogRefinementSessionOutput,
+  formatBacklogRefineOutput,
   reconcileBacklogItemRun,
   resolveItem,
 } from './backlog.js';
