@@ -47,11 +47,11 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
 
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
 - [ ] **2. Update status** — set `STATUS: working` in this file, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
-- [ ] **3. Read the bug description** — understand the reported issue, affected area, and expected behavior.
-- [ ] **4. Reproduce** — write `{{TASK_DIR}}/artifacts/recipe.json` from acceptance criteria using the required `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, `description`, and `workflow`, then run it against current code (must fail before the fix). Use state/command actions for backend and CLI bugs; browser actions are required only for visual claims. Omit the recipe only when no declared project action can exercise the bug, and record the exact limitation plus replacement deterministic reproduction. Read `{{recipe_quality_path}}` first.
+- [ ] **3. Read the bug + required surfaces** — understand the issue and record **which surfaces it needs** (only what ACs require): `gateway-cli` | `command-center` | `companion-device` (Companion on sim/device: install + launch; Metro alone ≠ ready). Boot/install **only** those surfaces: `command-center` → sandbox UI + CDP; `companion-device` → Companion **installed** on slot sim/device (`companion-prepare.sh full` or install scripts if missing; verify simctl/adb); `gateway-cli` → skip boots/installs. Block if a required surface cannot be made ready. Do not start unrelated runtimes.
+- [ ] **4. Reproduce** — write `{{TASK_DIR}}/artifacts/recipe.json` from acceptance criteria using the required `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, `description`, and `workflow`, then run it against current code (must fail before the fix). Use state/command actions for backend and CLI bugs; browser/device actions only for visual claims on those surfaces. Omit the recipe only when no declared project action can exercise the bug, and record the exact limitation plus replacement deterministic reproduction. Read `{{recipe_quality_path}}` first.
   ```bash
   cd {{REPO}}
-  # UI bugs only:
+  # command-center bugs only (skip when step 3 is not command-center):
   bash apps/command-center/scripts/debug-chrome.sh
   bash {{recipe_validate_wrapper}} \
     --recipe {{TASK_DIR}}/artifacts/recipe.json \
@@ -80,11 +80,11 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
   cd apps/command-center && yarn typecheck
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
-- [ ] **8b. PR-grade proof run** (UI bugs) — slow + video, then sync evidence:
+- [ ] **8b. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only: skip and state why.
   ```bash
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
-- [ ] **8c. Evidence manifest** — `evidence-manifest.json` with before/after pairs + `videos.after: artifacts/after.mp4` for gateway PR embed.
+- [ ] **8c. Evidence manifest** — when step 3 listed a UI/device surface, `evidence-manifest.json` must reference real screenshots/video (empty pairs are not proof). Gateway-cli-only may omit visual evidence.
 - [ ] **8d. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` (gateway computes recipe-quality) and run `check-task-artifact-contract.mjs --require-recipe-coverage-if-recipe`.
 - [ ] **9. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
 - [ ] **10. Commit** — single commit following the repo's Lore commit protocol.

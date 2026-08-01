@@ -60,16 +60,23 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
 
 ### Phase 1: Setup
 
-- [ ] **1. Read requirements** — map acceptance criteria to proof mode (`state`, `visual`, `mixed`) in this TASK file, and record whether any AC has a Command Center surface. Recipe proof is the default for every mode; the UI classification decides whether browser doctor/video steps apply.
+- [ ] **1. Read requirements** — map acceptance criteria to proof mode (`state`, `visual`, `mixed`) in this TASK file. Record **which surfaces the ticket actually needs** (choose only what ACs require; default is none extra):
+  - `gateway-cli` — backend/gateway/scripts/tests only
+  - `command-center` — Command Center browser UI (CDP / Vite)
+  - `companion-device` — Companion app UX on the slot sim/device (install + launch; Metro alone is not enough)
+  Recipe proof is the default for every mode; surface list decides what (if anything) to boot in step 4 and which evidence Phase 5 needs.
 - [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
 - [ ] **3. Update status** — set `STATUS: working`, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
-- [ ] **4. Confirm recipe runtime** — required only when step 1 found at least one AC with a Command Center surface. When every AC is backend-only, state that reason in this TASK file and skip this step; it gates the UI proof in Phase 2, which is skipped for the same reason.
-  ```bash
-  cd {{REPO}}
-  node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
-  bash apps/command-center/scripts/debug-chrome.sh
-  ```
-  If CDP or the sandbox UI is down and any AC needs a Command Center surface, set `STATUS: blocked` with the failing check and stop.
+- [ ] **4. Confirm required surfaces only** — boot or install **only** what step 1 listed. Do **not** start Companion, Command Center UI, CDP Chrome, or device installs when the ticket does not need them. Record skips in this TASK file.
+  - **`command-center` only when listed:**
+    ```bash
+    cd {{REPO}}
+    node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
+    bash apps/command-center/scripts/debug-chrome.sh
+    ```
+    If CDP or the sandbox UI is down and ACs need Command Center, set `STATUS: blocked` with the failing check and stop.
+  - **`companion-device` only when listed:** Companion must be **installed and launchable** on the slot sim/device (`ios-sim` / adb). Prepare “healthy” / Metro listening ≠ app installed. If missing, install via project prepare (`companion-prepare.sh full` with slot gateway/metro/sim or adb) or the Companion install scripts — then verify with `simctl listapps` / `adb` that the Companion bundle is present. Do not treat `--catalog-only`, typecheck, or unit tests as device UX proof. If install is required and fails, set `STATUS: blocked` and stop.
+  - **`gateway-cli` only:** skip this step’s boots/installs entirely.
 - [ ] **5. Create branch** — `git checkout -b {{BRANCH}}`
 
 ### Phase 2: Baseline recipe (all executable ACs)
@@ -115,9 +122,9 @@ Skip Phase 2 only when no declared project recipe action can exercise the change
     --slot-id {{SLOT}}
   ```
 
-### Phase 5: PR-grade recipe evidence (required for Command Center UI)
+### Phase 5: PR-grade recipe evidence (required when step 1 listed a UI/device surface)
 
-Skip only when every AC is backend-only with zero UI surface — state why in this TASK file.
+Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion device ACs) — state why in this TASK file. For `command-center`, keep the CDP video path below. For `companion-device`, capture real device/sim screenshots (not catalog-only HTML) into `artifacts/` and list them in `evidence-manifest.json`.
 
 - [ ] **12. Proof run with video** — slow playback + full-run MP4 for publication:
   ```bash
@@ -162,4 +169,5 @@ Skip only when every AC is backend-only with zero UI surface — state why in th
 - Use only manifest-declared actions.
 - Never inject UI/store state to manufacture proof — drive the real flow via recipe/CDP.
 - If you remove your code, the recipe must fail.
-- Companion/mobile ACs: switch to companion runner via the same `{{recipe_validate_wrapper}}` on an `ios`/`android` slot when the ticket requires device proof.
+- Boot/install only surfaces step 1 required — no opportunistic Companion or CC bring-up.
+- Companion/mobile ACs (`companion-device`): app must be installed on the slot device before proof; use the same `{{recipe_validate_wrapper}}` / companion capture path for device evidence, not catalog-only stubs.
