@@ -344,29 +344,6 @@ export const runListStyles = css`
     color: ${unsafeCSS(colors.accent)};
     font-size: 10px;
   }
-  .run-table-head {
-    align-items: center;
-    background: ${unsafeCSS(colors.bgCard)};
-    border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}33;
-    color: ${unsafeCSS(colors.textMuted)};
-    font-size: ${unsafeCSS(fonts.sizeXs)};
-    padding: 4px 8px 6px;
-    position: sticky;
-    top: 0;
-    z-index: 1;
-  }
-  .run-table-head button {
-    background: transparent;
-    border: 0;
-    color: inherit;
-    cursor: pointer;
-    font: inherit;
-    padding: 0;
-    text-align: left;
-  }
-  .run-table-head button.active {
-    color: ${unsafeCSS(colors.textPrimary)};
-  }
   .run-card {
     align-items: start;
     background: ${unsafeCSS(colors.bgCard)};

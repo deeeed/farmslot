@@ -1054,9 +1054,7 @@ export class BacklogPanel extends LitElement {
       .notes-field textarea {
         min-height: 180px;
       }
-      @media (max-width: 1450px) {
-      }
-      @media (max-width: 860px) {
+@media (max-width: 860px) {
         .filter-toolbar {
           position: static;
         }

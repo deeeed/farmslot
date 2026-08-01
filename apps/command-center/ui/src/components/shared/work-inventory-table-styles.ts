@@ -52,6 +52,9 @@ export const workInventoryTableStyles = css`
     border: 1px solid transparent;
     border-radius: ${unsafeCSS(radii.sm)};
     cursor: pointer;
+    /* Base text size for cells without their own rule (slot/runner/project/etc).
+       Without this, those cells inherit browser 16px next to 10.4–12px siblings. */
+    font-size: ${unsafeCSS(fonts.sizeXs)};
     min-height: 28px;
     padding: 4px 8px;
   }

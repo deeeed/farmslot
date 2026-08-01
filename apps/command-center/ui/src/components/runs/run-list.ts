@@ -627,7 +627,7 @@ export class RunList extends RunListState {
     const runningDetail = run.steps.find((s) => s.status === 'running')?.detail;
     return html`
       <div
-        class="work-inventory-row run-card ${showCheckbox ? 'with-selector' : ''} ${isSelected
+        class="work-inventory-row run-card ${showCheckbox ? '' : ''} ${isSelected
           ? 'selected'
           : ''} ${this.manageMode ? 'manage-mode' : ''}"
         role="row"
