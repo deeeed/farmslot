@@ -279,7 +279,11 @@ if [[ "${CATALOG_ONLY}" == "1" ]]; then
   # Preserve existing platform screenshot dirs; only refresh catalog metadata/report.
   mkdir -p "${OUTPUT_DIR}"
   rm -f "${OUTPUT_DIR}/manifest.json" "${OUTPUT_DIR}/index.html"
-  mkdir -p "${OUTPUT_DIR}/catalog"
+  # Synthetic catalog/ only when no real capture dirs exist — otherwise HTML doubles
+  # every route with empty "No screenshot" cards under platform "catalog".
+  if [[ ! -d "${OUTPUT_DIR}/ios" && ! -d "${OUTPUT_DIR}/android" ]]; then
+    mkdir -p "${OUTPUT_DIR}/catalog"
+  fi
   echo "[ux-screenshots] catalog-only mode — skipping device capture (keeping existing platform PNGs)"
 else
   rm -rf "${OUTPUT_DIR}"

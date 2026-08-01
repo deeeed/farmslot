@@ -75,6 +75,11 @@ function parseRouteSpec(spec) {
   };
 }
 
+function platformDirHasPngs(dir) {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return false;
+  return fs.readdirSync(dir).some((name) => name.toLowerCase().endsWith('.png'));
+}
+
 function discoverPlatforms(outputDir, requested) {
   if (requested) {
     return requested
@@ -82,10 +87,11 @@ function discoverPlatforms(outputDir, requested) {
       .map((p) => p.trim())
       .filter(Boolean);
   }
+  // Prefer platform dirs that actually contain captures; skip empty synthetic dirs
+  // (e.g. leftover catalog/ next to android/) so the report is not doubled with blanks.
   const found = [];
   for (const name of ['ios', 'android', 'catalog']) {
-    const dir = path.join(outputDir, name);
-    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+    if (platformDirHasPngs(path.join(outputDir, name))) {
       found.push(name);
     }
   }
