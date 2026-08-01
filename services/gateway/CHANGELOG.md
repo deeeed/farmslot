@@ -5,6 +5,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - fix(dispatch): prepare profile is explicit-only — queue dispatch, FIND_SLOT, resource eligibility, and branch-affinity nudge no longer apply `detectProfileFit` suggestions; `dispatch.preview` may still attach a non-binding `profileFit` UI hint; empty prepare resolves to `project.prepare.default` (MANUAL-000088).
+- fix(runners): treat a task-scoped worker signal change as runner-agnostic prompt-delivery evidence, including self-review and terminal signals, while rejecting unchanged signals left by an earlier attempt.
+- fix(runners): consume Grok's pane-bound structured session events for activity and exact prompt acceptance instead of retrying a task that Grok already accepted, using a provider-clock baseline across nodes and the generic pane fallback only when native activity is unknown.
+- fix(resources): let dry-run cleanup and pressure previews skip fleet rows whose slot config was removed or gated after the fleet snapshot, while live cleanup still fails closed.
 - feat(recipe): validate structured run summaries and failure attribution when packaging recipe evidence.
 - fix(runners): reactivate retained event-driven sessions through the runner capability by preflighting exact persisted state, resuming with the next prompt in argv, and verifying its hook digest, without parsing TUI glyphs.
 - fix(observability): preserve structured notification types in installed hooks and stop treating `SubagentStop` as whole-turn idle.

@@ -59,7 +59,11 @@ function invalidNoChangeSignal(signal: WorkerSignal, reason: string): WorkerSign
 }
 
 function validateNoChangeEvidence(signal: WorkerSignal): string | null {
-  const reportPath = signal.evidence?.reportPath?.trim();
+  const rawReportPath = signal.evidence?.reportPath;
+  if (rawReportPath != null && typeof rawReportPath !== 'string') {
+    return 'evidence.reportPath must be a string';
+  }
+  const reportPath = rawReportPath?.trim();
   if (!reportPath) {
     return 'evidence.reportPath is required (use ./mark no-change after writing artifacts/no-change-report.md)';
   }
@@ -75,16 +79,20 @@ export type WorkerSignalNormalizationResult =
   | { ok: true; signal: WorkerSignal; warning?: string }
   | { ok: false; reason: string };
 
-export function normalizeWorkerSignal(signal: WorkerSignal): WorkerSignalNormalizationResult {
-  const rawStatus = String((signal as { status?: unknown }).status ?? '');
+export function normalizeWorkerSignal(signal: unknown): WorkerSignalNormalizationResult {
+  if (typeof signal !== 'object' || signal === null || Array.isArray(signal)) {
+    return { ok: false, reason: 'signal must be an object' };
+  }
+  const workerSignal = signal as WorkerSignal;
+  const rawStatus = String((workerSignal as { status?: unknown }).status ?? '');
   if (!rawStatus) return { ok: false, reason: 'missing status' };
 
-  const status = signal.status;
+  const status = workerSignal.status;
   if (!['running', 'blocked', 'complete', 'failed', 'done'].includes(status)) {
     return { ok: false, reason: `unknown status: ${status}` };
   }
 
-  const disposition = signal.disposition;
+  const disposition = workerSignal.disposition;
   if (
     disposition &&
     !['fixed', 'already_fixed', 'not_reproducible', 'blocked', 'failed'].includes(disposition)
@@ -97,54 +105,58 @@ export function normalizeWorkerSignal(signal: WorkerSignal): WorkerSignalNormali
       return {
         ok: true,
         signal: invalidNoChangeSignal(
-          signal,
+          workerSignal,
           `status ${status} is incompatible with ${disposition}`,
         ),
       };
     }
-    if (signal.outcome && signal.outcome !== 'success') {
+    if (workerSignal.outcome && workerSignal.outcome !== 'success') {
       return {
         ok: true,
         signal: invalidNoChangeSignal(
-          signal,
-          `outcome ${signal.outcome} is incompatible with ${disposition}`,
+          workerSignal,
+          `outcome ${workerSignal.outcome} is incompatible with ${disposition}`,
         ),
       };
     }
-    const evidenceError = validateNoChangeEvidence(signal);
-    if (evidenceError) return { ok: true, signal: invalidNoChangeSignal(signal, evidenceError) };
-    return { ok: true, signal };
+    const evidenceError = validateNoChangeEvidence(workerSignal);
+    if (evidenceError)
+      return { ok: true, signal: invalidNoChangeSignal(workerSignal, evidenceError) };
+    return { ok: true, signal: workerSignal };
   }
 
   if (status === 'complete' || status === 'done') {
-    if (signal.outcome && signal.outcome !== 'success') {
-      return { ok: false, reason: `terminal success status cannot use outcome ${signal.outcome}` };
+    if (workerSignal.outcome && workerSignal.outcome !== 'success') {
+      return {
+        ok: false,
+        reason: `terminal success status cannot use outcome ${workerSignal.outcome}`,
+      };
     }
     if (disposition && disposition !== 'fixed') {
       return { ok: false, reason: `status ${status} cannot use disposition ${disposition}` };
     }
-    return { ok: true, signal };
+    return { ok: true, signal: workerSignal };
   }
 
   if (status === 'blocked') {
-    if (signal.outcome && signal.outcome !== 'partial')
+    if (workerSignal.outcome && workerSignal.outcome !== 'partial')
       return { ok: false, reason: 'blocked status requires partial outcome when outcome is set' };
     if (disposition && disposition !== 'blocked')
       return { ok: false, reason: `blocked status cannot use disposition ${disposition}` };
-    return { ok: true, signal };
+    return { ok: true, signal: workerSignal };
   }
 
   if (status === 'failed') {
-    if (signal.outcome && signal.outcome !== 'failure')
+    if (workerSignal.outcome && workerSignal.outcome !== 'failure')
       return { ok: false, reason: 'failed status requires failure outcome when outcome is set' };
     if (disposition && disposition !== 'failed')
       return { ok: false, reason: `failed status cannot use disposition ${disposition}` };
-    return { ok: true, signal };
+    return { ok: true, signal: workerSignal };
   }
 
-  if (signal.outcome || signal.disposition)
+  if (workerSignal.outcome || workerSignal.disposition)
     return { ok: false, reason: 'running status cannot include outcome or disposition' };
-  return { ok: true, signal };
+  return { ok: true, signal: workerSignal };
 }
 
 export function signalFreshSince(

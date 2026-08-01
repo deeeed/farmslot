@@ -278,9 +278,11 @@ Per-runner behavioral differences (how to launch in tmux, whether compose buffer
 
 **Empirical rules encoded in adapters (not shared assumptions):**
 
+The runner protocol boundary is normative: activity, prompt acceptance, turn completion, and delivery proof come from `RunnerObservability`, native session events, hooks, or task-scoped worker signals. Rendered TUI text is transport/debug context only and cannot provide a positive workflow verdict. New runner-contract behavior must be exercised by its live `scripts/runner-validation/` scenario through the production gateway adapter; fixture tests cover structured event schemas rather than terminal wording or glyphs.
+
 - **Claude tmux:** interactive `❯` compose often buffers without submitting; one-shot `-p` in a **shell pane** is the reliable hook-smoke path.
 - **Codex tmux:** bare tmux lacks shell `codex` function — use full `node …/codex.js`; require git repo; set `CODEX_HOME={{runtime_dir}}/codex-home`; prefer `codex exec --disable plugin_hooks`.
-- **Grok tmux (pane-only, priority):** production uses interactive TUI + post-launch prompt + project-directory blocker. Harness validates **`grok -p`** (`pane-smoke`) and **interactive compose** (`interaction-smoke`) separately. See [runner-validation-harness.md](../operations/runner-validation-harness.md).
+- **Grok tmux (native session activity and prompt acceptance):** production uses the interactive TUI + post-launch prompt + project-directory blocker. Activity and exact prompt acceptance come from the uniquely pane-bound Grok session event/history protocol; unknown or unavailable native state falls back to the generic worker signal and pane checks. Harness validates **`grok -p`** (`pane-smoke`) and **interactive compose** (`interaction-smoke`) separately. See [runner-validation-harness.md](../operations/runner-validation-harness.md).
 - **Cursor tmux (pane-only):** argv/`--print` launch; hook scenarios skip; `pane-smoke` uses `cursor-agent --print --trust`.
 
 Scenarios that are runner-inapplicable (Codex busy-composer, Codex mode-switch; hook scenarios on pane-only runners) **skip with `pass: true` and an explicit `skipReason`** rather than fake success. Live mid-turn busy capture remains a fixture-tier test until a stable recipe exists.

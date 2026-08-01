@@ -47,6 +47,29 @@ test('normalizeWorkerSignal rejects unknown terminal statuses', () => {
   assert.match(result.ok ? '' : result.reason, /unknown status/);
 });
 
+test('normalizeWorkerSignal rejects non-object JSON values', () => {
+  assert.deepEqual(normalizeWorkerSignal(null), {
+    ok: false,
+    reason: 'signal must be an object',
+  });
+  assert.deepEqual(normalizeWorkerSignal([]), {
+    ok: false,
+    reason: 'signal must be an object',
+  });
+});
+
+test('normalizeWorkerSignal handles malformed nested evidence without throwing', () => {
+  const result = normalizeWorkerSignal({
+    status: 'complete',
+    disposition: 'already_fixed',
+    evidence: { reportPath: 42 },
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.signal.status, 'blocked');
+  assert.match(result.signal.reason ?? '', /evidence\.reportPath must be a string/);
+});
+
 test('parseStrictIsoMs accepts ISO-8601 shapes and rejects what bare Date.parse tolerates', () => {
   assert.equal(typeof parseStrictIsoMs('2026-05-05T01:08:16Z'), 'number');
   assert.equal(typeof parseStrictIsoMs('2026-05-05T01:08:16.123Z'), 'number');

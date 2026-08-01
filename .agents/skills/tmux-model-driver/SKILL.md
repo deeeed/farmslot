@@ -184,21 +184,23 @@ Scriptable validation path:
   with zero output (observed: a 3-hour silent hang that looked like a long-running review)
 - wait for **Stop hook** or a pane marker — marker alone is not enough for hook-driven runs
 
-### Grok Pane (`pane-only`) — priority runner
+### Grok Pane (native session observability) — priority runner
 
 Grok is interactive-first in production (`needsPostLaunchPrompt: true`). Treat it differently from Claude/Codex.
 
 Signals:
 
 - pane current command is `grok`
+- `events.jsonl` records structured turn/tool activity; indexed user messages in
+  `chat_history.jsonl` correlate exact accepted prompts to their turn
 - project-directory prompt: `Run Grok Build in a project directory`, `(current)`, `Enter:submit`
 - compose ready after blocker clears
 
 Two validated paths:
 
-1. **Fast smoke (shell):** `grok -p '<prompt>' --model grok-build` — single-turn, proves binary + response marker.
+1. **Fast smoke (shell):** `grok -p '<prompt>' --model grok-4.5` — single-turn, proves binary + response marker.
 2. **Production-parity (interactive):**
-   - launch `grok --model grok-build` from shell
+   - launch `grok --model grok-4.5` from shell
    - run [scripts/resolve-launch-blockers.sh](scripts/resolve-launch-blockers.sh) `<pane> grok` — sends `Enter` on the `(current)` project row
    - submit prompt with `send-keys -l` + Enter
    - wait for response marker in pane output
@@ -206,6 +208,9 @@ Two validated paths:
 Rules:
 
 - do not assume Claude `❯` semantics
+- native observations are authoritative only when one active Grok session binds to the pane;
+  ambiguous or unavailable session metadata fails closed, with the generic worker signal as the
+  runner-agnostic delivery fallback
 - after interactive launch, **always** check `launch_blocker` before composing
 - `git init` in the launch repo so Grok sees a project directory
 - binary default: `~/.grok/bin/grok`

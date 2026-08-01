@@ -30,8 +30,9 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
   runnerSupportsSessionReload,
 } from '../runners/launch-command.js';
-import { probeRunnerHandoffAck } from '../runners/prompt-delivery-evidence.js';
 import {
+  captureRunnerPromptAcceptanceBaseline,
+  runnerHasDurablePromptHandoff,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
   runnerPaneShowsCurrentInteractiveProgress,
@@ -399,6 +400,13 @@ export async function runReviewAgent(
       // Use the same runner-neutral post-launch protocol as dispatch: wait for a
       // stable runner prompt, send, then verify that the pane echoes our marker.
       if (runnerNeedsPostLaunchPrompt(runner)) {
+        const signalPath = taskDirRelPath(taskDir, reviewChecklistTarget.signal);
+        const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
+          vars,
+          reviewTarget,
+          runner,
+          handoffAckSinceMs,
+        );
         try {
           await sendRunnerPostLaunchPrompt(
             vars,
@@ -411,8 +419,8 @@ export async function runReviewAgent(
               readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
               maxAttempts: 5,
               blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
-              signalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
-              launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+              signalPath,
+              promptAcceptanceBaselineMs,
               requirePromptDigest: true,
               handoffAckSinceMs,
               softAcceptOnHandoffAck: true,
@@ -420,20 +428,20 @@ export async function runReviewAgent(
             },
           );
         } catch (err) {
-          const handoff = await probeRunnerHandoffAck(
+          const handoff = await runnerHasDurablePromptHandoff(
             vars,
             reviewTarget,
+            runner,
             prompt,
             handoffAckSinceMs,
             {
-              launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
-              preferHooks: true,
+              promptAcceptanceBaselineMs,
               requirePromptDigest: true,
             },
           );
           if (!handoff.accepted) throw err;
           console.warn(
-            `[self-review] prompt delivery verifier failed but continuing: ${handoff.reason}`,
+            `[self-review] prompt delivery verifier failed but durable handoff passed via ${handoff.source}: ${handoff.reason}`,
           );
         }
       }
