@@ -31,7 +31,7 @@ import { resolveTmuxPaneId, resolveTmuxSession, shellQuote } from '../../core/tm
 import { normalizeRunner, runnerRetainedSessionHandoff } from '../../runners/registry.js';
 import { resolvePersistedRunnerSessionBinding } from '../../runners/session-process.js';
 import {
-  deliverPromptToRetainedRunnerSession,
+  deliverPromptWithRetainedFallback,
   type RetainedSessionDeliveryResult,
 } from '../../runners/session-reactivation.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
@@ -327,7 +327,7 @@ export async function warmSessionHandoffDispatch(
     runTier: requestingRun.safetyTier ?? parentRun?.safetyTier,
     projectDefaultRaw: projectJson.default_safety_tier,
   });
-  const delivery = await deliverPromptToRetainedRunnerSession({
+  const deliveryOptions = {
     vars,
     target: workerTarget,
     runnerId: runner,
@@ -339,7 +339,8 @@ export async function warmSessionHandoffDispatch(
     safetyTier,
     taskDir: workerTaskAbs,
     recovery: { runId: params.runId, emit },
-  });
+  };
+  const delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
   if (!delivery.delivered) {
     return warmHandoffFailureFromRetainedDelivery(delivery);
   }

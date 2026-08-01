@@ -217,10 +217,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     continueCommand: 'Continue the current task from where you left off.',
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
-    // Codex can reload a session when explicitly requested, but its production
-    // `--disable plugin_hooks` launch currently emits no structured idle proof.
-    // Keep automatic retained delivery in-place until that live contract exists.
-    retainedSessionHandoff: 'in-place',
+    retainedSessionHandoff: 'resume-with-prompt',
     requiresBusyComposerPoll: true,
     // Codex tier mapping:
     //   sandboxed  — default; Codex CLI prompts for approvals on destructive ops.
@@ -758,15 +755,18 @@ export async function confirmTrustPromptWithFreshEvidence(opts: {
     tmuxCommand: string,
   ) => Promise<{ exitCode: number; stdout: string; stderr?: string | undefined }>;
   refreshCodexHooks?: () => Promise<void>;
+  logNoFreshEvidence?: boolean;
 }): Promise<{ outcome: 'sent'; key: string } | { outcome: 'no-fresh-evidence' }> {
   const fresh = await opts.exec(`capture-pane -p -t ${shellQuote(opts.target)} 2>/dev/null`);
   const runner = normalizeRunner(opts.runnerId);
   const blocker = detectRunnerLaunchBlocker(fresh.stdout, runner);
   const key = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null, fresh.stdout);
   if (!key) {
-    console.log(
-      `[${opts.logPrefix}] classifier reported a trust prompt in ${opts.target} but the fresh capture shows no actionable trust blocker; not sending`,
-    );
+    if (opts.logNoFreshEvidence !== false) {
+      console.log(
+        `[${opts.logPrefix}] classifier reported a trust prompt in ${opts.target} but the fresh capture shows no actionable trust blocker; not sending`,
+      );
+    }
     return { outcome: 'no-fresh-evidence' };
   }
   if (blocker?.autoAction === 'codex-refresh-hooks-and-trust') {

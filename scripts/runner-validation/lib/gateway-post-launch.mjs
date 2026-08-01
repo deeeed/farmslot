@@ -115,6 +115,7 @@ export function runGatewayRetainedHandoff({
   sessionPath,
   prompt,
   runnerPath,
+  model,
   timeoutMs = 120_000,
 }) {
   const snippet = `
@@ -128,8 +129,8 @@ const vars = {
   host: 'localhost',
   sshUser: os.userInfo().username,
   osType: process.platform === 'darwin' ? 'darwin' : 'linux',
-  claudePath: ${JSON.stringify(runnerPath)},
-  codexPath: '',
+  claudePath: ${JSON.stringify(runner === 'claude' ? runnerPath : '')},
+  codexPath: ${JSON.stringify(runner === 'codex' ? runnerPath : '')},
   opencodePath: '',
   cursorPath: '',
   grokPath: '',
@@ -151,7 +152,7 @@ const result = await deliverPromptToRetainedRunnerSession({
   runnerId: ${JSON.stringify(runner)},
   sessionId: ${JSON.stringify(sessionId)},
   sessionPath: ${JSON.stringify(sessionPath)},
-  model: 'opus',
+  model: ${JSON.stringify(model)},
   prompt: ${JSON.stringify(prompt)},
   runtimeDir: '.agent',
   timeoutMs: ${timeoutMs},

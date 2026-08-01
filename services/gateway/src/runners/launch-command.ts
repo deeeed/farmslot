@@ -192,7 +192,7 @@ export function buildRunnerSessionReloadCommand(
       withRunnerObservabilityInstall(
         `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
           vars.codexPath,
-        )} resume --disable plugin_hooks${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
+        )} resume${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
         installCommand,
       ),
       repo,
@@ -264,7 +264,7 @@ export function buildCodexExecLaunch(options: {
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const prompt = options.prompt?.trim() ? ` ${shellQuote(options.prompt)}` : '';
   const codexHomeSetup = buildCodexHomeSetup(options.repo, options.runtimeDir ?? '.agent');
-  return `unset CLAUDECODE && cd ${shellQuote(options.repo)} && ${codexHomeSetup} && ${options.binary} --disable plugin_hooks${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
+  return `unset CLAUDECODE && cd ${shellQuote(options.repo)} && ${codexHomeSetup} && ${options.binary}${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
 }
 
 function codexReasoningEffortFlag(effort?: string | null): string {

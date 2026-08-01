@@ -75,7 +75,7 @@ mock.module('./claude-observability.js', {
       async promptAccepted() {
         return {
           value: promptAccepted,
-          source: 'hook',
+          source: 'signal',
           confidence: 'high',
           observedAt: Date.now(),
         };
@@ -87,7 +87,8 @@ mock.module('./claude-observability.js', {
   },
 });
 
-const { deliverPromptToRetainedRunnerSession } = await import('./session-reactivation.js');
+const { deliverPromptToRetainedRunnerSession, deliverPromptWithRetainedFallback } =
+  await import('./session-reactivation.js');
 
 const vars = {
   slotId: 'runner-local-test-1',
@@ -144,14 +145,11 @@ test('retained resume delivers the prompt through runner argv without send-keys'
   assert.doesNotMatch(command, /send-keys/);
 });
 
-test('retained resume accepts a fresh structured task signal without hook acknowledgement', async (t) => {
+test('retained resume requires exact prompt acknowledgement despite a fresh task signal', async () => {
   commands.length = 0;
   paneCount = 1;
   sessionPathExists = true;
-  promptAccepted = false;
-  t.after(() => {
-    promptAccepted = true;
-  });
+  promptAccepted = true;
   launchSignalReadCount = 0;
   sessionState = {
     value: 'idle',
@@ -171,7 +169,7 @@ test('retained resume accepts a fresh structured task signal without hook acknow
   });
 
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
-  assert.equal(launchSignalReadCount, 2);
+  assert.equal(launchSignalReadCount, 1);
 });
 
 test('retained resume defers an active session to the safe in-place delivery contract', async () => {
@@ -198,6 +196,34 @@ test('retained resume defers an active session to the safe in-place delivery con
     assert.equal(result.disposition, 'safe-send');
     assert.match(result.reason, /is active; refusing to replace/);
   }
+  assert.equal(
+    commands.some((command) => command.includes('respawn-window')),
+    false,
+  );
+});
+
+test('retained fallback delivers in place when a live session cannot be respawned', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
+  promptAccepted = true;
+  sessionState = {
+    value: 'active',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    sessionId: 'session-123',
+    sessionPath: '/sessions/session-123.jsonl',
+    prompt: 'Read and execute TASK.md',
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'safe-send' });
   assert.equal(
     commands.some((command) => command.includes('respawn-window')),
     false,

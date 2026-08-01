@@ -35,7 +35,7 @@ export async function writeTextFileOnSlot(
   await execOnSlot(vars, remoteScript);
 }
 
-/** Write a potentially multi-megabyte artifact without embedding it in process argv. */
+/** Write a potentially multi-megabyte artifact without a shell-string or Python round-trip. */
 export async function writeLargeTextFileOnSlot(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   relativePath: string,

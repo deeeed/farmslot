@@ -138,7 +138,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     });
     assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(cmd, /\/usr\/local\/bin\/codex --disable plugin_hooks .*--model gpt-5/);
+    assert.match(cmd, /\/usr\/local\/bin\/codex .*--model gpt-5/);
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
     // Omitted effort defaults to xhigh for Codex.
     assert.match(cmd, /model_reasoning_effort="xhigh"/);
@@ -149,10 +149,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { safetyTier: 'full-auto' });
     assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(
-      cmd,
-      /codex --disable plugin_hooks --sandbox workspace-write --ask-for-approval never .*--model gpt-5/,
-    );
+    assert.match(cmd, /codex --sandbox workspace-write --ask-for-approval never .*--model gpt-5/);
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
     assert.match(cmd, /model_reasoning_effort="xhigh"/);
   });
@@ -161,10 +158,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const vars = makeVars({ dispatchCmd: '' });
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { effort: 'xhigh' });
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(
-      cmd,
-      /codex --disable plugin_hooks --config 'model_reasoning_effort="xhigh"' .*--model gpt-5/,
-    );
+    assert.match(cmd, /codex --config 'model_reasoning_effort="xhigh"' .*--model gpt-5/);
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
   });
 
@@ -180,7 +174,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const vars = makeVars({ dispatchCmd: '' });
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { safetyTier: 'dangerous' });
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(cmd, /codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox/);
+    assert.match(cmd, /codex --dangerously-bypass-approvals-and-sandbox/);
   });
 
   it('codex inline fallback: does not hardcode Homebrew when codexPath is unset', () => {
@@ -191,7 +185,7 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { safetyTier: 'dangerous' });
     assert.doesNotMatch(cmd, /\/opt\/homebrew\/bin\/codex/);
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(cmd, /codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox/);
+    assert.match(cmd, /codex --dangerously-bypass-approvals-and-sandbox/);
   });
 
   it('resolveCodexBinary does not infer a node-sibling codex binary', () => {

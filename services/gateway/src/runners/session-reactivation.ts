@@ -11,6 +11,7 @@ import {
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
 import { readLaunchAckSignalSnapshot } from './prompt-delivery-evidence.js';
 import {
+  confirmTrustPromptWithFreshEvidence,
   getRunnerObservability,
   normalizeRunner,
   resolveSafeSendTimeoutMs,
@@ -20,6 +21,7 @@ import {
   sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from './registry.js';
+import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
 import { resumableSessionProbeCommand } from './session-process.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
@@ -139,7 +141,7 @@ async function reactivateRunnerSessionWithPrompt(
       ? await readLaunchAckSignalSnapshot(options.vars, options.launchAckSignalPath)
       : null;
     const launchAckUnavailable = Boolean(options.launchAckSignalPath && !launchAckBaseline);
-    const sentinel = await writeRunnerPromptSentinel(options.vars, options.prompt);
+    await writeRunnerPromptSentinel(options.vars, options.prompt);
     const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       options.vars,
       runner,
@@ -156,6 +158,7 @@ async function reactivateRunnerSessionWithPrompt(
     )}`;
     paneMutationStarted = true;
     await respawnTmuxWindowWithCommand(options.vars, options.target, command);
+    const respawnedAt = Date.now();
 
     const deadline = Date.now() + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
     while (Date.now() < deadline) {
@@ -164,16 +167,44 @@ async function reactivateRunnerSessionWithPrompt(
         options.target,
         runner,
         options.prompt,
-        sentinel.sentAt - 500,
+        respawnedAt,
         {
           launchAckSignalPath: options.launchAckSignalPath,
           launchAckBaseline,
-          promptAcceptanceBaselineMs: sentinel.sentAt - 500,
+          requirePromptDigest: true,
+          promptAcceptanceBaselineMs: respawnedAt,
         },
       );
       // A post-respawn hook turn/activity or task signal is durable evidence
       // from the resumed process itself; no pane-text reaction proof is needed.
       if (accepted.accepted) return { delivered: true, acknowledgement: 'structured' };
+      await confirmTrustPromptWithFreshEvidence({
+        runnerId: runner,
+        target: options.target,
+        logPrefix: 'retained-handoff',
+        exec: (tmuxCommand) =>
+          execOnSlot(options.vars, tmuxShellSnippet(tmuxCommand), options.vars.remoteRepo),
+        refreshCodexHooks:
+          runner === 'codex'
+            ? async () => {
+                const refreshed = await execOnSlot(
+                  options.vars,
+                  buildRunnerObservabilityInstallCommand(
+                    options.vars,
+                    runner,
+                    options.vars.remoteRepo,
+                    options.runtimeDir,
+                  ),
+                );
+                if (refreshed.exitCode !== 0) {
+                  throw new Error(
+                    `Failed to refresh trusted Codex hooks: ${refreshed.stderr || refreshed.stdout || `exit ${refreshed.exitCode}`}`,
+                  );
+                }
+              }
+            : undefined,
+        logNoFreshEvidence: false,
+      });
       await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_ACCEPTANCE_POLL_MS));
     }
     return {
@@ -213,38 +244,57 @@ export async function deliverPromptToRetainedRunnerSession(
     return reactivateRunnerSessionWithPrompt({ ...options, sessionId });
   }
   if (handoff === 'in-place') {
-    try {
-      const timeoutMs = options.timeoutMs ?? resolveSafeSendTimeoutMs(runner);
-      const accepted = await sendRunnerInstructionSafely(
-        options.vars,
-        options.target,
-        runner,
-        options.prompt,
-        options.sendLogPrefix ?? '[retained-handoff]',
-        timeoutMs,
-        {
-          forceBusyPoll: options.forceBusyPoll ?? true,
-          recovery: options.recovery,
-        },
-      );
-      if (accepted) return { delivered: true, acknowledgement: 'safe-send' };
-      return {
-        delivered: false,
-        disposition: 'hold',
-        reason: `Live ${runner} retained handoff was not accepted; refusing a destructive fresh-dispatch fallback`,
-        retryable: true,
-      };
-    } catch (error) {
-      return {
-        delivered: false,
-        disposition: 'hold',
-        reason: `Live ${runner} retained handoff failed: ${(error as Error).message}`,
-      };
-    }
+    return deliverPromptInPlace(options);
   }
   return {
     delivered: false,
     disposition: 'safe-send',
     reason: `Runner '${runner}' does not support retained-session handoff`,
   };
+}
+
+/** Deliver through the shared non-destructive in-place runner contract. */
+export async function deliverPromptInPlace(
+  options: RunnerSessionReactivationOptions,
+): Promise<RetainedSessionDeliveryResult> {
+  const runner = normalizeRunner(options.runnerId);
+  try {
+    const timeoutMs = options.timeoutMs ?? resolveSafeSendTimeoutMs(runner);
+    const accepted = await sendRunnerInstructionSafely(
+      options.vars,
+      options.target,
+      runner,
+      options.prompt,
+      options.sendLogPrefix ?? '[retained-handoff]',
+      timeoutMs,
+      {
+        forceBusyPoll: options.forceBusyPoll ?? true,
+        recovery: options.recovery,
+      },
+    );
+    if (accepted) return { delivered: true, acknowledgement: 'safe-send' };
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Live ${runner} retained handoff was not accepted; refusing a destructive fresh-dispatch fallback`,
+      retryable: true,
+    };
+  } catch (error) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Live ${runner} retained handoff failed: ${(error as Error).message}`,
+    };
+  }
+}
+
+/** Prefer native retained resume, then use the shared non-destructive in-place contract. */
+export async function deliverPromptWithRetainedFallback(
+  options: RunnerSessionReactivationOptions,
+): Promise<RetainedSessionDeliveryResult> {
+  const retained = await deliverPromptToRetainedRunnerSession(options);
+  if (!retained.delivered && retained.disposition === 'safe-send') {
+    return deliverPromptInPlace(options);
+  }
+  return retained;
 }

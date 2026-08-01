@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DEFAULT_PROMPT, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { runGatewayRetainedHandoff } from '../lib/gateway-post-launch.mjs';
-import { readHookLines } from '../lib/hooks.mjs';
+import { eventName, readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
 import {
@@ -14,13 +14,13 @@ import {
   runnerSessionIdForPath,
 } from '../lib/session-attribution.mjs';
 import { capturePane, ensureShellSession, hasSession, killSession, tmux } from '../lib/tmux.mjs';
-import { waitForRunnerCompletion } from '../lib/wait.mjs';
+import { pollHookRows } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'retained-handoff-smoke';
 
 export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
-  if (runner !== 'claude') {
+  if (runner !== 'claude' && runner !== 'codex') {
     const report = {
       runner,
       skipped: true,
@@ -32,7 +32,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
   }
 
   const host = os.hostname().replace(/\.local$/, '');
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-validate-claude-retained-'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), `runner-validate-${runner}-retained-`));
   const runtimeDir = '.agent';
   const slotId = `runner-validate-${host}-${runner}`;
   const session = `runner-validate-${runner}-${SCENARIO_ID}-${process.pid}`;
@@ -61,9 +61,10 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const dispatchMs = Date.now();
     const beforeCount = readHookLines(logPath).length;
 
-    runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT, { model: 'opus' });
-    const initial = waitForRunnerCompletion({ paneId, logPath, beforeCount, timeoutMs });
-    report.initialCompleted = initial.sawStop;
+    const model = runner === 'claude' ? 'opus' : undefined;
+    runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT, { model });
+    const initialRows = pollHookRows(logPath, beforeCount, ['Stop'], timeoutMs);
+    report.initialCompleted = initialRows.some((row) => eventName(row) === 'Stop');
     sleepMs(2000);
 
     const binding = resolveSessionBinding({
@@ -76,7 +77,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       paneId,
       slotId,
     });
-    if (!binding) throw new Error('initial Claude session binding was not captured');
+    if (!binding) throw new Error(`initial ${runner} session binding was not captured`);
     report.sessionPath = binding.runnerSessionPath;
     report.sessionId = binding.runnerSessionId ?? runnerSessionIdForPath(binding.runnerSessionPath);
 
@@ -88,6 +89,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       sessionPath: report.sessionPath,
       prompt: DEFAULT_PROMPT,
       runnerPath: runnerAdapter.binaryPath(),
+      model,
       timeoutMs: Math.min(timeoutMs, 120_000),
     });
     report.handoffDelivered = Boolean(handoff.result?.delivered);

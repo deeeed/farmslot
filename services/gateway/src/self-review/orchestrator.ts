@@ -48,10 +48,9 @@ import {
   runnerDefaultModel,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
-  sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
-import { deliverPromptToRetainedRunnerSession } from '../runners/session-reactivation.js';
+import { deliverPromptWithRetainedFallback } from '../runners/session-reactivation.js';
 import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
@@ -251,6 +250,17 @@ export async function executeSelfReview(
       };
 
     if (options.resumeFromResult) {
+      if (
+        options.resumeFromResult.verdict !== 'issues' ||
+        !options.resumeFromResult.issues?.length
+      ) {
+        return {
+          ...options.resumeFromResult,
+          runner: reviewRunner,
+          model,
+          crossRunner: isCrossRunnerReview,
+        };
+      }
       const priorAttempts = options.resumeFromResult.attempts ?? [];
       const priorRetryCount = options.resumeFromResult.retryCount;
       const previousAttempt = options.resumeFromResult.attempts?.at(-1);
@@ -283,6 +293,7 @@ export async function executeSelfReview(
         reviewResult: initialReviewResult,
         retryCount: priorRetryCount,
         priorAttempts,
+        feedbackAlreadySent: options.resumeFromResult.feedbackSent,
         validationDepth,
         artifactScope,
         sessionPolicy,
@@ -1237,7 +1248,7 @@ async function sendFeedbackToWorker(
       const latestPrimaryContext = latestRun
         ? selectAgentContext(latestRun, { role: 'primary' })
         : null;
-      const retained = await deliverPromptToRetainedRunnerSession({
+      const deliveryOptions = {
         vars,
         target,
         runnerId: runner,
@@ -1253,7 +1264,8 @@ async function sendFeedbackToWorker(
         recovery: { runId },
         sendLogPrefix: 'self-review',
         forceBusyPoll,
-      });
+      };
+      const retained = await deliverPromptWithRetainedFallback(deliveryOptions);
       if (retained.delivered) {
         structuredDeliveryAccepted = retained.acknowledgement === 'structured';
         return true;
@@ -1267,16 +1279,7 @@ async function sendFeedbackToWorker(
         }
         return false;
       }
-      return sendRunnerInstructionSafely(
-        vars,
-        target,
-        runner,
-        cmd,
-        'self-review',
-        undefined,
-        // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-        { forceBusyPoll, recovery: { runId } },
-      );
+      return false;
     };
     let sent = await deliverFixPrompt(workerTarget);
     let deliverySeenWindows: string[] = [];
@@ -1314,7 +1317,7 @@ async function sendFeedbackToWorker(
       console.log(
         `[self-review] run ${runId.slice(0, 8)} — fix task ${sent ? `sent after ${retry.attempts} attempt(s)` : `NOT delivered after ${retry.attempts} attempt(s) over ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min`}: ${fixTaskFile}`,
       );
-    } else {
+    } else if (sent) {
       // Always-on: delivery state is the first question when a fix loop stalls.
       console.log(`[self-review] run ${runId.slice(0, 8)} — fix task sent: ${fixTaskFile}`);
     }

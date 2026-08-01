@@ -128,7 +128,7 @@ Encoded in `scripts/runner-validation/runners/<id>.mjs` — **not** shared assum
 
 - Bare tmux lacks shell `codex` function — use full `node …/codex.js`.
 - Requires `git init`; isolated `CODEX_HOME={{runtime_dir}}/codex-home` with canonical `trusted_hash` (realpath-safe paths on macOS).
-- Smoke: `codex exec --disable plugin_hooks --sandbox workspace-write '<prompt>'`.
+- Smoke: `codex exec --sandbox workspace-write '<prompt>'` from the isolated validation `CODEX_HOME` so repository hooks remain active.
 
 ### Grok (pane-backed activity + native prompt acceptance) — priority runner
 
