@@ -9,7 +9,6 @@ import {
   type ReadyGatePrPackage,
   type ReviewLoopRequest,
   type Run,
-  type RunDecision,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -102,15 +101,10 @@ export interface PostDispatchStepContext {
     flowType: Run['flowType'],
     mode: Run['mode'],
   ) => Promise<boolean>;
-  latestResolvedHumanGateDecision: (
-    decisions: RunDecision[],
-    approvalOnly?: boolean,
-  ) => RunDecision | undefined;
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
   executeSelfReviewForRun?: typeof executeSelfReview;
   probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
   refreshRunLinks: (runId: string) => Promise<void>;
-  reviewPlanFromSelection: (selection: RunDecision['selectionData']) => ReviewLoopRequest[];
   stepPartialIO: Map<string, StepIO>;
 }
 

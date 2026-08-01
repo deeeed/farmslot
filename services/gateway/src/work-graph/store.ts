@@ -719,18 +719,17 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
     // particularly because the scheduler tick skips nodes already in that state,
     // so nothing else would ever re-evaluate it.
     //
-    // `waiting` is included for the same orphan path: after fail + run delete the
-    // node can remain `waiting` with an empty waitingOn and a completed enqueue
-    // ledger entry. Without reclaim, stale-enqueue retry requires status `ready`
-    // and never fires, so Dispatch reports "still waiting on upstream" forever.
-    // Reclaim to ready; this tick's computeWaiting re-applies `waiting` if start
-    // edges are still unsatisfied.
+    // Stuck shape after fail + run delete: `waiting` with empty waitingOn and a
+    // completed enqueue ledger. Only reclaim that shape — legitimate upstream
+    // blocks keep non-empty waitingOn and must not thrash ready every tick.
+    // Stale-enqueue retry also accepts `waiting` so unlock can re-queue once
+    // waitingOn is empty after computeWaiting.
     (node.status === 'failed' ||
       node.status === 'needs-attention' ||
       node.status === 'queued' ||
       node.status === 'running' ||
       node.status === 'gated' ||
-      node.status === 'waiting' ||
+      (node.status === 'waiting' && node.waitingOn.length === 0) ||
       // `succeeded` belongs here, but only when the node HELD a run that has
       // since gone. Deleting a run leaves its node succeeded and nothing else
       // reconsiders it, so reopening the backlog item and dispatching did

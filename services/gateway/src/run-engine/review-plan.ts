@@ -16,6 +16,8 @@ import {
 } from '../quality/review-policy.js';
 import { defaultAlternateReviewRunner, normalizeRunner } from '../runners/registry.js';
 
+import { isHumanGateReviewRequestAction } from './decision-replay.js';
+
 export function reviewPlanFromSelection(
   selectionData: Record<string, unknown> | undefined,
 ): ReviewLoopRequest[] {
@@ -173,11 +175,6 @@ export function humanGateReviewRequestFromDecision(
     : {};
 }
 
-const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set([
-  'request-extra-review',
-  'request-cross-runner-review',
-]);
-
 /**
  * Latest resolved human-gate decision whose action was a review request
  * (not an approval). Used when building the executable review plan so a
@@ -186,13 +183,15 @@ const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set([
  */
 export function latestResolvedHumanGateReviewRequestDecision(
   decisions: readonly RunDecision[],
+  gateAction?: string,
 ): RunDecision | undefined {
   return decisions
     .filter(
       (decision) =>
         decision.type === 'engine_human_gate' &&
         !!decision.resolvedAt &&
-        HUMAN_GATE_REVIEW_REQUEST_ACTIONS.has(decision.resolvedAction ?? ''),
+        isHumanGateReviewRequestAction(decision.resolvedAction) &&
+        (!gateAction || decision.resolvedAction === gateAction),
     )
     .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0];
 }
@@ -213,11 +212,13 @@ export function resolveHumanGateReviewExecutionPlan(input: {
   decisions: readonly RunDecision[];
 }): ReviewLoopRequest[] {
   const { gateAction, pendingPlan, decisions } = input;
-  if (!HUMAN_GATE_REVIEW_REQUEST_ACTIONS.has(gateAction)) {
+  if (!isHumanGateReviewRequestAction(gateAction)) {
     return pendingPlan.length ? [...pendingPlan] : [];
   }
 
-  const latestRequest = latestResolvedHumanGateReviewRequestDecision(decisions);
+  const latestRequest =
+    latestResolvedHumanGateReviewRequestDecision(decisions, gateAction) ??
+    latestResolvedHumanGateReviewRequestDecision(decisions);
   const fromDecision = reviewPlanFromSelection(latestRequest?.selectionData);
   const decisionHasExplicitRunner = fromDecision.some((loop) => effectiveReviewRunner(loop));
   if (decisionHasExplicitRunner) return fromDecision;

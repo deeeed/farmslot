@@ -39,7 +39,7 @@ import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
 import { executeCIWatchStep } from './ci-watch-step.js';
-import { latestResolvedHumanGateDecision, requiresCollisionPrecheck } from './decision-replay.js';
+import { requiresCollisionPrecheck } from './decision-replay.js';
 import { executeDispatchStep, executePrepareStep } from './dispatch-lifecycle-steps.js';
 import {
   buildDispatchPreviewParamsForRun,
@@ -88,7 +88,6 @@ import {
 } from './recovery.js';
 import { copyWorkerArtifacts, readReviewArtifacts } from './review-artifacts.js';
 import { executeReviewGate, setReviewGateBroadcast } from './review-gate.js';
-import { reviewPlanFromSelection } from './review-plan.js';
 import { refreshRunLinks } from './run-links.js';
 import { rearmInteractiveHandoffAutoRecovery } from './run-monitor.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
@@ -1054,10 +1053,8 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         getDiffStat,
         interactiveLightweightSkipOutputs,
         isHumanGateEnabled,
-        latestResolvedHumanGateDecision,
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
-        reviewPlanFromSelection,
         stepPartialIO,
       });
     case S.SELF_REVIEW:
@@ -1073,10 +1070,8 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         getDiffStat,
         interactiveLightweightSkipOutputs,
         isHumanGateEnabled,
-        latestResolvedHumanGateDecision,
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
-        reviewPlanFromSelection,
         stepPartialIO,
       });
     case S.HUMAN_GATE:
@@ -1092,10 +1087,8 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         getDiffStat,
         interactiveLightweightSkipOutputs,
         isHumanGateEnabled,
-        latestResolvedHumanGateDecision,
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
-        reviewPlanFromSelection,
         stepPartialIO,
       });
     case S.COMPLETE:
@@ -1111,10 +1104,8 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         getDiffStat,
         interactiveLightweightSkipOutputs,
         isHumanGateEnabled,
-        latestResolvedHumanGateDecision,
         monitorTerminalError: (args) => new MonitorTerminalError(args),
         refreshRunLinks,
-        reviewPlanFromSelection,
         stepPartialIO,
       });
     case S.CI_WATCH:
@@ -1132,7 +1123,6 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
       return executeFinalizeStep(runId, {
         blockedRunError: (message, reason) => new BlockedRunError(message, reason),
         broadcastFn,
-        latestResolvedHumanGateDecision,
         loadProjectVarsOrNull,
         readPreparedPackage,
         refreshRunLinks,
