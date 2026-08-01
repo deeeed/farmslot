@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0 - 2026-08-01
+
 - **BREAKING:** Recipe artifact-package validation requires structured run totals and all four failure-cause counts in `summary.json`; publish `@farmslot/protocol` first, then `@farmslot/recipe-harness`, before updating CLI, agent-runtime, and Gateway consumers as one coordinated release.
 - feat(recipe): publish fail-closed suite scope/result contracts and reconcile trace failure causes with run summaries.
 - fix(protocol): declare the optional worker `needsSelfReview` signal already emitted by the agent runtime so remote update-branch review skips remain type-safe on clean builds.
