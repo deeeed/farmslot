@@ -88,15 +88,15 @@ Full matrix (29 hook events, full payload fields, full statusline JSON contract)
 
 All "Hook JSONL" rows below are written by **Farmslot-owned hook scripts** declared in the slot's `.claude/settings.json` fixture; Claude triggers the script on the named event, the script appends one JSON line per event. We own the schema.
 
-| Question                                             | Authoritative source (Farmslot-emitted unless noted)                                                                                                                     | Fallback                          |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------- |
-| Is the worker idle (ready to accept tmux send-keys)? | Hook JSONL emit on whole-turn `Stop` or `Notification.notification_type === "idle_prompt"` with no later `UserPromptSubmit`; `SubagentStop` does not end the parent turn | `paneShowsBusyComposer`           |
-| Is the worker busy / composing / running a tool?     | Hook JSONL emit on `UserPromptSubmit` / `PreToolUse` without matching `PostToolUse`; statusline JSON `busy:true` (Farmslot script writes both)                           | pane regex set                    |
-| Did my last submitted prompt actually land?          | Hook JSONL `UserPromptSubmit` event with `runnerPromptDigest` matching the value the gateway wrote to a per-send sentinel file (see "Prompt digest contract" below)      | `runnerPaneHasPendingInstruction` |
-| Is the current model turn complete?                  | Hook JSONL `Stop` event timestamp greater than the matching `UserPromptSubmit`                                                                                           | pane heuristics                   |
-| What is context-% utilization?                       | Statusline JSON `ctxPct` (Farmslot statusline command writes this)                                                                                                       | `parseClaudeCtxPctFromPane`       |
-| Is a tool active? Which one?                         | Hook JSONL: most recent `PreToolUse` without matching `PostToolUse`                                                                                                      | none                              |
-| Did the worker reach a task milestone?               | Extended `SIGNAL.json` (`phase: 'busy'` / `'idle'` / `'done'`) written by **worker** task template — separate from runner-process events                                 | existing `SIGNAL.json` shape      |
+| Question                                             | Authoritative source (Farmslot-emitted unless noted)                                                                                                                                                                          | Fallback                          |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| Is the worker idle (ready to accept tmux send-keys)? | Hook JSONL emit on whole-turn `Stop`; when a runner emits a structured `Notification.notification_type === "idle_prompt"`, Farmslot accepts it as an optional equivalent signal. `SubagentStop` does not end the parent turn. | `paneShowsBusyComposer`           |
+| Is the worker busy / composing / running a tool?     | Hook JSONL emit on `UserPromptSubmit` / `PreToolUse` without matching `PostToolUse`; statusline JSON `busy:true` (Farmslot script writes both)                                                                                | pane regex set                    |
+| Did my last submitted prompt actually land?          | Hook JSONL `UserPromptSubmit` event with `runnerPromptDigest` matching the value the gateway wrote to a per-send sentinel file (see "Prompt digest contract" below)                                                           | `runnerPaneHasPendingInstruction` |
+| Is the current model turn complete?                  | Hook JSONL `Stop` event timestamp greater than the matching `UserPromptSubmit`                                                                                                                                                | pane heuristics                   |
+| What is context-% utilization?                       | Statusline JSON `ctxPct` (Farmslot statusline command writes this)                                                                                                                                                            | `parseClaudeCtxPctFromPane`       |
+| Is a tool active? Which one?                         | Hook JSONL: most recent `PreToolUse` without matching `PostToolUse`                                                                                                                                                           | none                              |
+| Did the worker reach a task milestone?               | Extended `SIGNAL.json` (`phase: 'busy'` / `'idle'` / `'done'`) written by **worker** task template — separate from runner-process events                                                                                      | existing `SIGNAL.json` shape      |
 
 Transient activity and retained-session delivery use different clocks. Busy/idle monitoring still
 requires fresh hooks, but a whole-turn `Stop` is durable for its exact `session_id` until a later
@@ -104,8 +104,9 @@ event in that session supersedes it. A retained-session handoff never infers saf
 text: the runner capability resumes the persisted session with the new prompt in argv, then requires
 a matching `UserPromptSubmit` digest before the handoff succeeds. Unknown or active session state
 holds for operator attention instead of replacing the live process. The hook writer atomically
-materializes the last event for each session, so this decision never depends on a historical log
-tail or age window.
+materializes the last event for each session and pane. A handoff requires both snapshots to match
+the persisted session id, transcript path, and live pane, so this decision never depends on a
+historical log tail or age window.
 
 ### Addendum: checklist timing stays task-owned (2026-06-25)
 
@@ -147,6 +148,7 @@ Hook files and statusline JSON are written by **Farmslot's hook scripts** (shipp
 {{runtime_dir}}/.observability/
   hooks.jsonl              # append-only, one JSON event per line, rotates at 5 MB
   sessions/<encoded-id>.json # atomic last-event snapshot for exact-session delivery decisions
+  panes/<encoded-pane>.json  # atomic last-event snapshot for live pane/session binding
   statusline.json          # last-write-wins; ctxPct, model, mode, busy, mtime
   presence.json            # gateway-written: last-known runner PID, launched-at
 SIGNAL.json (existing)     # extended with phase: busy|idle|done

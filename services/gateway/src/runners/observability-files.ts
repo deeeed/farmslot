@@ -180,39 +180,24 @@ export function deriveRunnerActivity(
  * a reused tmux pane from inheriting an older process's terminal state.
  */
 export function deriveRunnerSessionDeliveryState(
-  hooks: readonly HookRecord[],
+  record: HookRecord | null,
   sessionId: string,
 ): ObservabilityReading<RunnerSessionDeliveryState> | null {
-  let latest: { value: RunnerSessionDeliveryState; observedAt: number } | null = null;
-  for (const record of hooks) {
-    if (record.session_id !== sessionId) continue;
-    const event = hookEventName(record);
-    const observedAt = observedAtFromRecord(record);
-    if (!event || observedAt == null) continue;
-
-    let value: RunnerSessionDeliveryState | null = null;
-    if (
-      event === 'Stop' ||
-      (event === 'Notification' && record.notification_type === 'idle_prompt')
-    ) {
-      value = 'idle';
-    } else if (event !== 'SubagentStop') {
-      // Any other parent-session event invalidates an older terminal state.
-      // This is deliberately future-safe: a new runner hook cannot inherit
-      // permission to replace the session merely because it is unknown here.
-      value = 'active';
-    }
-    // SubagentStop does not end or reactivate the parent turn.
-    if (value && (!latest || observedAt > latest.observedAt)) {
-      latest = { value, observedAt };
-    }
-  }
-  if (!latest) return null;
+  if (!record || record.session_id !== sessionId) return null;
+  const event = hookEventName(record);
+  const observedAt = observedAtFromRecord(record);
+  if (!event || observedAt == null) return null;
+  const value: RunnerSessionDeliveryState =
+    event === 'Stop' || (event === 'Notification' && record.notification_type === 'idle_prompt')
+      ? 'idle'
+      : event === 'SubagentStop'
+        ? 'unknown'
+        : 'active';
   return {
-    value: latest.value,
+    value,
     source: 'hook',
     confidence: 'high',
-    observedAt: latest.observedAt,
+    observedAt,
   };
 }
 
@@ -332,6 +317,28 @@ export async function readRunnerSessionObservabilityState(
   const statePath = path.posix.join(obsDir, 'sessions', `${encodeURIComponent(sessionId)}.json`);
   const result = await execOnSlot(vars, `cat ${shellQuote(statePath)} 2>/dev/null || true`);
   return parseHookJsonl(result.stdout)[0] ?? null;
+}
+
+/** Read the bounded last-event snapshot for the runner currently occupying one tmux pane. */
+export async function readRunnerPaneObservabilityState(
+  vars: SlotVars,
+  paneId: string,
+): Promise<HookRecord | null> {
+  const obsDir = await runnerObservabilityDirForSlot(vars);
+  const statePath = path.posix.join(obsDir, 'panes', `${encodeURIComponent(paneId)}.json`);
+  const result = await execOnSlot(vars, `cat ${shellQuote(statePath)} 2>/dev/null || true`);
+  return parseHookJsonl(result.stdout)[0] ?? null;
+}
+
+export function hookRecordMatchesRunnerSession(
+  record: HookRecord | null,
+  expected: { sessionId: string; sessionPath: string; paneId: string },
+): record is HookRecord {
+  return (
+    record?.session_id === expected.sessionId &&
+    record.transcript_path === expected.sessionPath &&
+    record.tmuxPane === expected.paneId
+  );
 }
 
 export function filterHooksByPane(

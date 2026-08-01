@@ -4,7 +4,10 @@ import test from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
-import { buildFindRunnerDescendantPidCommand } from './session-process.js';
+import {
+  buildFindRunnerDescendantPidCommand,
+  resolvePersistedRunnerSessionBinding,
+} from './session-process.js';
 
 const execFile = promisify(execFileCb);
 
@@ -32,4 +35,46 @@ test('runner descendant scan ignores the diagnostic wrapper after child exit', a
   } finally {
     wrapper.kill('SIGKILL');
   }
+});
+
+test('persisted runner session binding selects id and path from one source', () => {
+  assert.deepEqual(
+    resolvePersistedRunnerSessionBinding([
+      { label: 'context' },
+      {
+        label: 'parent metrics',
+        runnerSessionId: ' session-parent ',
+        runnerSessionPath: ' /sessions/parent.jsonl ',
+      },
+      {
+        label: 'requesting metrics',
+        runnerSessionId: 'session-requesting',
+        runnerSessionPath: '/sessions/requesting.jsonl',
+      },
+    ]),
+    {
+      binding: {
+        runnerSessionId: 'session-parent',
+        runnerSessionPath: '/sessions/parent.jsonl',
+      },
+      reason: null,
+    },
+  );
+});
+
+test('persisted runner session binding rejects a partial higher-priority source', () => {
+  assert.deepEqual(
+    resolvePersistedRunnerSessionBinding([
+      { label: 'context', runnerSessionId: 'session-context' },
+      {
+        label: 'parent metrics',
+        runnerSessionId: 'session-parent',
+        runnerSessionPath: '/sessions/parent.jsonl',
+      },
+    ]),
+    {
+      binding: null,
+      reason: 'context has incomplete retained session metadata',
+    },
+  );
 });

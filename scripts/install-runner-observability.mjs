@@ -81,6 +81,14 @@ function rotateIfLarge(filePath) {
   }
 }
 
+function writeSnapshot(directory, key, record) {
+  fs.mkdirSync(directory, { recursive: true });
+  const statePath = path.join(directory, encodeURIComponent(key) + '.json');
+  const pendingPath = statePath + '.' + process.pid + '.tmp';
+  fs.writeFileSync(pendingPath, \`\${JSON.stringify(record)}\n\`);
+  fs.renameSync(pendingPath, statePath);
+}
+
 try {
   const raw = readStdin();
   const payload = raw.trim() ? JSON.parse(raw) : {};
@@ -122,12 +130,10 @@ try {
   };
   fs.appendFileSync(logPath, \`\${JSON.stringify(record)}\n\`);
   if (typeof record.session_id === 'string' && record.session_id) {
-    const sessionsDir = path.join(obsDir, 'sessions');
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    const statePath = path.join(sessionsDir, encodeURIComponent(record.session_id) + '.json');
-    const pendingPath = statePath + '.' + process.pid + '.tmp';
-    fs.writeFileSync(pendingPath, \`\${JSON.stringify(record)}\n\`);
-    fs.renameSync(pendingPath, statePath);
+    writeSnapshot(path.join(obsDir, 'sessions'), record.session_id, record);
+  }
+  if (typeof record.tmuxPane === 'string' && record.tmuxPane) {
+    writeSnapshot(path.join(obsDir, 'panes'), record.tmuxPane, record);
   }
 } catch (error) {
   console.error('[farmslot-observability] ' + (error?.message || String(error)));

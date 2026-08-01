@@ -21,6 +21,7 @@ import {
 import { resumableSessionProbeCommand } from './session-process.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
+const RUNNER_SESSION_ACCEPTANCE_POLL_MS = 2_000;
 
 export interface RunnerSessionReactivationOptions {
   vars: SlotVars;
@@ -93,10 +94,20 @@ async function reactivateRunnerSessionWithPrompt(
       };
     }
 
+    const sessionPath = options.sessionPath?.trim();
+    if (!sessionPath) {
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Retained ${runner} session ${options.sessionId} has no resumable session path`,
+      };
+    }
+
     const state = await observability.getSessionDeliveryState(
       options.vars,
       options.target,
       options.sessionId,
+      sessionPath,
     );
     if (state?.value !== 'idle' || state.confidence !== 'high') {
       return {
@@ -107,14 +118,6 @@ async function reactivateRunnerSessionWithPrompt(
     }
     idleProven = true;
 
-    const sessionPath = options.sessionPath?.trim();
-    if (!sessionPath) {
-      return {
-        delivered: false,
-        disposition: 'fresh-dispatch',
-        reason: `Retained ${runner} session ${options.sessionId} has no resumable session path`,
-      };
-    }
     const probe = await execOnSlot(options.vars, resumableSessionProbeCommand(sessionPath), {
       timeout: 10_000,
     });
@@ -156,7 +159,7 @@ async function reactivateRunnerSessionWithPrompt(
       if (accepted?.value === true && accepted.confidence === 'high') {
         return { delivered: true };
       }
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_ACCEPTANCE_POLL_MS));
     }
     return {
       delivered: false,

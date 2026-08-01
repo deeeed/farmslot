@@ -8,6 +8,7 @@ import {
   deriveRunnerSessionDeliveryState,
   filterHooksByPane,
   filterStatuslineByPane,
+  hookRecordMatchesRunnerSession,
   lastTurnCompletedFromHooks,
   parseHookJsonl,
   promptAcceptedFromHooks,
@@ -133,13 +134,9 @@ test('lastTurnCompletedFromHooks ignores subagent completion', () => {
   });
 });
 
-test('deriveRunnerSessionDeliveryState keeps terminal Stop durable within one session', () => {
+test('deriveRunnerSessionDeliveryState reads a terminal session snapshot as idle', () => {
   const reading = deriveRunnerSessionDeliveryState(
-    [
-      { hook_event_name: 'Stop', session_id: 'old', observedAt: NOW - 1_000 },
-      { hook_event_name: 'UserPromptSubmit', session_id: 'wanted', observedAt: NOW - 300_000 },
-      { hook_event_name: 'Stop', session_id: 'wanted', observedAt: NOW - 240_000 },
-    ],
+    { hook_event_name: 'Stop', session_id: 'wanted', observedAt: NOW - 240_000 },
     'wanted',
   );
   assert.deepEqual(reading, {
@@ -150,55 +147,70 @@ test('deriveRunnerSessionDeliveryState keeps terminal Stop durable within one se
   });
 });
 
-test('deriveRunnerSessionDeliveryState refuses a session with later active work', () => {
+test('deriveRunnerSessionDeliveryState reads an active session snapshot as active', () => {
   const reading = deriveRunnerSessionDeliveryState(
-    [
-      { hook_event_name: 'Stop', session_id: 'wanted', observedAt: NOW - 300_000 },
-      { hook_event_name: 'UserPromptSubmit', session_id: 'wanted', observedAt: NOW - 240_000 },
-      { hook_event_name: 'SubagentStop', session_id: 'wanted', observedAt: NOW - 1_000 },
-    ],
+    { hook_event_name: 'UserPromptSubmit', session_id: 'wanted', observedAt: NOW - 240_000 },
     'wanted',
   );
   assert.equal(reading?.value, 'active');
 });
 
-test('deriveRunnerSessionDeliveryState invalidates an older Stop on any later parent event', () => {
+test('deriveRunnerSessionDeliveryState treats SubagentStop as unknown parent state', () => {
   const reading = deriveRunnerSessionDeliveryState(
-    [
-      { hook_event_name: 'Stop', session_id: 'wanted', observedAt: NOW - 300_000 },
-      { hook_event_name: 'SessionStart', session_id: 'wanted', observedAt: NOW - 1_000 },
-    ],
+    { hook_event_name: 'SubagentStop', session_id: 'wanted', observedAt: NOW - 1_000 },
     'wanted',
   );
-  assert.equal(reading?.value, 'active');
+  assert.equal(reading?.value, 'unknown');
 });
 
 test('deriveRunnerSessionDeliveryState uses structured notification types', () => {
   const idle = deriveRunnerSessionDeliveryState(
-    [
-      {
-        hook_event_name: 'Notification',
-        notification_type: 'idle_prompt',
-        session_id: 'wanted',
-        observedAt: NOW - 2_000,
-      },
-    ],
+    {
+      hook_event_name: 'Notification',
+      notification_type: 'idle_prompt',
+      session_id: 'wanted',
+      observedAt: NOW - 2_000,
+    },
     'wanted',
   );
   assert.equal(idle?.value, 'idle');
 
   const active = deriveRunnerSessionDeliveryState(
-    [
-      {
-        hook_event_name: 'Notification',
-        notification_type: 'permission_prompt',
-        session_id: 'wanted',
-        observedAt: NOW - 1_000,
-      },
-    ],
+    {
+      hook_event_name: 'Notification',
+      notification_type: 'permission_prompt',
+      session_id: 'wanted',
+      observedAt: NOW - 1_000,
+    },
     'wanted',
   );
   assert.equal(active?.value, 'active');
+});
+
+test('hookRecordMatchesRunnerSession binds a snapshot to exact session, path, and pane', () => {
+  const record = {
+    hook_event_name: 'Stop',
+    session_id: 'wanted',
+    transcript_path: '/sessions/wanted.jsonl',
+    tmuxPane: '%2',
+    observedAt: NOW,
+  };
+  assert.equal(
+    hookRecordMatchesRunnerSession(record, {
+      sessionId: 'wanted',
+      sessionPath: '/sessions/wanted.jsonl',
+      paneId: '%2',
+    }),
+    true,
+  );
+  assert.equal(
+    hookRecordMatchesRunnerSession(record, {
+      sessionId: 'wanted',
+      sessionPath: '/sessions/wanted.jsonl',
+      paneId: '%3',
+    }),
+    false,
+  );
 });
 
 test('activeToolFromHooks returns unmatched PreToolUse tool name', () => {

@@ -234,6 +234,28 @@ test('retained resume holds before inspection when the persisted session id is m
   assert.deepEqual(commands, []);
 });
 
+test('retained resume holds before session proof when the persisted session path is missing', async () => {
+  commands.length = 0;
+
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    sessionId: 'session-123',
+    prompt: 'Read and execute TASK.md',
+  });
+
+  assert.deepEqual(result, {
+    delivered: false,
+    disposition: 'hold',
+    reason: 'Retained claude session session-123 has no resumable session path',
+  });
+  assert.equal(
+    commands.some((command) => command.includes('respawn-window')),
+    false,
+  );
+});
+
 test('retained resume refuses window-wide replacement when the target has multiple panes', async () => {
   commands.length = 0;
   paneCount = 2;

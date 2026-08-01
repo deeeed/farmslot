@@ -74,5 +74,6 @@ export interface RunnerObservability {
     vars: SlotVars,
     target: string,
     sessionId: string,
+    sessionPath: string,
   ): Promise<ObservabilityReading<RunnerSessionDeliveryState> | null>;
 }

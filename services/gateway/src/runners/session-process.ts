@@ -29,6 +29,48 @@ export interface RunnerSessionBinding {
   source: RunnerSessionBindingSource;
 }
 
+export interface PersistedRunnerSessionCandidate {
+  label: string;
+  runnerSessionId?: string | null;
+  runnerSessionPath?: string | null;
+}
+
+export type PersistedRunnerSessionBindingResult =
+  | {
+      binding: { runnerSessionId: string; runnerSessionPath: string };
+      reason: null;
+    }
+  | {
+      binding: null;
+      reason: string | null;
+    };
+
+/**
+ * Resolve retained-session metadata as one atomic binding. A higher-priority
+ * source with only half of the pair is unsafe and must not borrow the missing
+ * field from a different run or context.
+ */
+export function resolvePersistedRunnerSessionBinding(
+  candidates: readonly PersistedRunnerSessionCandidate[],
+): PersistedRunnerSessionBindingResult {
+  for (const candidate of candidates) {
+    const runnerSessionId = candidate.runnerSessionId?.trim() ?? '';
+    const runnerSessionPath = candidate.runnerSessionPath?.trim() ?? '';
+    if (!runnerSessionId && !runnerSessionPath) continue;
+    if (!runnerSessionId || !runnerSessionPath) {
+      return {
+        binding: null,
+        reason: `${candidate.label} has incomplete retained session metadata`,
+      };
+    }
+    return {
+      binding: { runnerSessionId, runnerSessionPath },
+      reason: null,
+    };
+  }
+  return { binding: null, reason: null };
+}
+
 /** Files for Claude/Codex and directories for Grok are both resumable state. */
 export function resumableSessionProbeCommand(runnerSessionPath: string): string {
   return `test -e ${shellQuote(runnerSessionPath)}`;
