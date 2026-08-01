@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Replace the unregistered `farmslot api list`/`describe` commands with the real `farmslot rpc` escape hatch and the build-time capability snapshot, correct the dev/fix-bug complete artifact to `pr-description.md` in the worker-template-quality reference, and publish the `@farmslot/agent-runtime` reference the published package README links to.
 - Document the explicit Metro bridge port contract for Expo recipe consumers.
 - Regenerate the Gateway API reference for protocol `0.15.0`.
 - docs: document reconciled recipe failure causes and standalone suite evidence contracts.
