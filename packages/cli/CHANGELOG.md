@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(backlog): `farmslot backlog refine` and `backlog refinement-session` commands for prompt-only, launch, and existing-session inspection.
+
 - feat(recipe): validate structured run summaries and failure attribution alongside recipe artifacts.
 - feat(backlog): add `farmslot backlog reconcile-run <ref> <run-id>` as a client of the shared repair action.
 - fix(workflows): route run decision resolution through the shared protocol action contract used by the operator clients.

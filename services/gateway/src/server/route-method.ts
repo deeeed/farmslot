@@ -14,6 +14,8 @@ import {
   type BacklogListParams,
   type BacklogMarkReadyParams,
   type BacklogReconcileRunParams,
+  type BacklogRefineParams,
+  type BacklogRefinementSessionGetParams,
   type BacklogSpecGetParams,
   type BacklogUpcomingParams,
   type BacklogUpdateParams,
@@ -210,6 +212,8 @@ import {
   backlogList,
   backlogMarkReady,
   backlogReconcileRun,
+  backlogRefine,
+  backlogRefinementSessionGet,
   backlogSpecGet,
   backlogUpcoming,
   backlogUpdate,
@@ -578,6 +582,10 @@ export async function routeMethod(
       return backlogReconcileRun(p as BacklogReconcileRunParams, emit);
     case Methods.BACKLOG_CLOSE_SHIPPED:
       return backlogCloseShipped(p as BacklogCloseShippedParams);
+    case Methods.BACKLOG_REFINE:
+      return backlogRefine(p as BacklogRefineParams);
+    case Methods.BACKLOG_REFINEMENT_SESSION_GET:
+      return backlogRefinementSessionGet(p as BacklogRefinementSessionGetParams);
 
     // Work Graph
     case Methods.WORK_GRAPH_CREATE:

@@ -16,6 +16,10 @@ test('backlog protocol exports method constants and statuses', () => {
   assert.equal(BacklogMethods.enqueue, 'backlog.enqueue');
   assert.equal(BacklogMethods.dequeue, 'backlog.dequeue');
   assert.equal(BacklogMethods.reconcileRun, 'backlog.reconcileRun');
+  assert.equal(BacklogMethods.refine, 'backlog.refine');
+  assert.equal(BacklogMethods.refinementSessionGet, 'backlog.refinementSession.get');
+  assert.equal(Methods.BACKLOG_REFINE, 'backlog.refine');
+  assert.equal(Methods.BACKLOG_REFINEMENT_SESSION_GET, 'backlog.refinementSession.get');
   assert.equal(Events.BACKLOG_UPDATED, 'backlog.updated');
   assert.deepEqual(BACKLOG_STATUSES, [
     'candidate',
@@ -29,6 +33,49 @@ test('backlog protocol exports method constants and statuses', () => {
     'archived',
   ]);
   assert.deepEqual(BACKLOG_SOURCE_KINDS, ['jira', 'github', 'manual']);
+});
+
+test('backlog refinement contracts carry runner/model overrides and session identity', () => {
+  const refineParams = {
+    itemId: 'backlog-1',
+    runner: 'codex',
+    model: 'gpt-5.6-sol',
+    launch: true,
+  };
+  const refineResult = {
+    item: {
+      id: 'backlog-1',
+      project: 'farmslot-farm',
+      title: 'Refine me',
+      sourceKind: 'manual',
+      sourceRef: 'MANUAL-000087',
+      flowType: 'dev',
+      status: 'candidate',
+      priority: 10,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+    } satisfies BacklogItem,
+    promptPath: '.backlog/refinement-prompts/example.md',
+    tmuxSession: 'backlog-manual-000087',
+    tmuxTarget: 'backlog-manual-000087:0.0',
+    launched: true,
+    attachCommand: "tmux attach -t ='backlog-manual-000087'",
+    runner: 'codex',
+    model: 'gpt-5.6-sol',
+  };
+  const session = {
+    itemId: 'backlog-1',
+    tmuxSession: 'backlog-manual-000087',
+    tmuxTarget: 'backlog-manual-000087:0.0',
+    exists: true,
+    attachCommand: "tmux attach -t ='backlog-manual-000087'",
+  };
+
+  assert.equal(refineParams.runner, 'codex');
+  assert.equal(refineParams.model, 'gpt-5.6-sol');
+  assert.equal(refineResult.tmuxSession, session.tmuxSession);
+  assert.equal(refineResult.tmuxTarget, session.tmuxTarget);
+  assert.equal(session.exists, true);
 });
 
 test('backlog protocol carries optional roadmap spec metadata and tags', () => {

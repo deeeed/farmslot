@@ -9,12 +9,18 @@ import {
   type BacklogListParams,
   type BacklogMarkReadyParams,
   type BacklogReconcileRunParams,
+  type BacklogRefineParams,
+  type BacklogRefinementSessionGetParams,
   type BacklogSpecGetParams,
   type BacklogUpcomingParams,
   type BacklogUpdateParams,
   Events,
 } from '@farmslot/protocol';
 
+import {
+  getBacklogRefinementSession,
+  startBacklogRefinement,
+} from '../backlog/refinement.js';
 import {
   archiveBacklogItem,
   autoDispatchBacklogReady,
@@ -53,3 +59,6 @@ export const backlogReconcileRun = async (
 };
 export const backlogCloseShipped = (params: BacklogCloseShippedParams) =>
   closeShippedBacklogItem(params);
+export const backlogRefine = (params: BacklogRefineParams) => startBacklogRefinement(params);
+export const backlogRefinementSessionGet = (params: BacklogRefinementSessionGetParams) =>
+  getBacklogRefinementSession(params);

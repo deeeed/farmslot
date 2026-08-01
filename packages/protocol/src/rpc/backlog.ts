@@ -1,3 +1,4 @@
+import type { SafetyTier } from '../contracts/agents.js';
 import type {
   BacklogBlockedItem,
   BacklogCreateInput,
@@ -10,6 +11,7 @@ import type { OkResult } from '../contracts/index.js';
 import type { Run } from '../contracts/runs.js';
 
 import { Methods } from './registry.js';
+import type { TmuxWorkerRef } from './tmux.js';
 
 export const BacklogMethods = {
   create: Methods.BACKLOG_CREATE,
@@ -25,7 +27,12 @@ export const BacklogMethods = {
   upcoming: Methods.BACKLOG_UPCOMING,
   specGet: Methods.BACKLOG_SPEC_GET,
   reconcileRun: Methods.BACKLOG_RECONCILE_RUN,
+  refine: Methods.BACKLOG_REFINE,
+  refinementSessionGet: Methods.BACKLOG_REFINEMENT_SESSION_GET,
 } as const;
+
+export const DEFAULT_BACKLOG_REFINEMENT_RUNNER = 'codex';
+export const DEFAULT_BACKLOG_REFINEMENT_MODEL = 'gpt-5.6-sol';
 
 export interface BacklogCreateParams extends BacklogCreateInput {}
 export interface BacklogCreateResult {
@@ -125,4 +132,47 @@ export interface BacklogReconcileRunParams {
 export interface BacklogReconcileRunResult {
   item: BacklogItem;
   run: Run;
+}
+
+export interface BacklogRefineParams {
+  itemId: string;
+  /** Optional runner override for this refinement session. */
+  runner?: string;
+  /** Optional model override for this refinement session. */
+  model?: string;
+  /** Optional shell command template. Supports {{runner}}, {{model}}, {{prompt_path}}, and {{item_file}}. */
+  runnerCommand?: string;
+  /** Optional runner safety tier for the refinement launch. */
+  safetyTier?: SafetyTier;
+  /** Default false for API safety; true creates or attaches the tmux session. */
+  launch?: boolean;
+}
+
+export interface BacklogRefineResult {
+  item: BacklogItem;
+  promptPath: string;
+  tmuxSession: string;
+  tmuxTarget: string;
+  tmuxWorker?: TmuxWorkerRef;
+  launched: boolean;
+  /** True when launch attached to an already-running refinement session. */
+  attachedExisting?: boolean;
+  attachCommand: string;
+  runner?: string;
+  model?: string;
+  runnerCommand?: string;
+  safetyTier?: SafetyTier;
+}
+
+export interface BacklogRefinementSessionGetParams {
+  itemId: string;
+}
+
+export interface BacklogRefinementSessionGetResult {
+  itemId: string;
+  tmuxSession: string;
+  tmuxTarget: string;
+  exists: boolean;
+  tmuxWorker?: TmuxWorkerRef;
+  attachCommand: string;
 }

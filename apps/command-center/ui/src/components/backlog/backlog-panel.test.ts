@@ -5,6 +5,8 @@ import type { BacklogItem, BacklogStatus, Run } from '@farmslot/protocol';
 
 import {
   backlogItemMatchesStatusFilter,
+  backlogRefineResultMessage,
+  backlogRefinementPickerView,
   backlogStatusCounts,
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
@@ -328,5 +330,65 @@ test('backlog activity sorting treats terminal linked runs as inactive', () => {
   assert.deepEqual(
     sortBacklogItems([terminal, idle], [terminalRun], 'activity', 'desc').map((item) => item.id),
     ['idle', 'terminal'],
+  );
+});
+
+test('backlog refine picker covers launch and resume states', () => {
+  const launchView = backlogRefinementPickerView({
+    pickerOpen: true,
+    selectedItemId: 'item-1',
+    sessionLoadingItemId: '',
+    existingSession: null,
+  });
+  assert.equal(launchView.showPicker, true);
+  assert.equal(launchView.showContinueExisting, false);
+  assert.equal(launchView.primaryLaunchLabel, 'Launch runner');
+
+  const resumeView = backlogRefinementPickerView({
+    pickerOpen: true,
+    selectedItemId: 'item-1',
+    sessionLoadingItemId: '',
+    existingSession: {
+      itemId: 'item-1',
+      tmuxSession: 'backlog-manual-000087',
+      tmuxTarget: 'backlog-manual-000087:0.0',
+      exists: true,
+      attachCommand: "tmux attach -t ='backlog-manual-000087'",
+    },
+  });
+  assert.equal(resumeView.showContinueExisting, true);
+  assert.equal(resumeView.primaryLaunchLabel, 'Continue existing session');
+  assert.equal(resumeView.existingSessionId, 'backlog-manual-000087');
+
+  assert.match(
+    backlogRefineResultMessage(
+      {
+        item: { id: 'item-1', sourceRef: 'MANUAL-000087' } as never,
+        promptPath: '.backlog/refinement-prompts/x.md',
+        tmuxSession: 'backlog-manual-000087',
+        tmuxTarget: 'backlog-manual-000087',
+        launched: true,
+        attachCommand: "tmux attach -t ='backlog-manual-000087'",
+        runner: 'codex',
+        model: 'gpt-5.6-sol',
+      },
+      true,
+    ),
+    /Refinement terminal launched \(codex gpt-5.6-sol\)/,
+  );
+  assert.match(
+    backlogRefineResultMessage(
+      {
+        item: { id: 'item-1', sourceRef: 'MANUAL-000087' } as never,
+        promptPath: '.backlog/refinement-prompts/x.md',
+        tmuxSession: 'backlog-manual-000087',
+        tmuxTarget: 'backlog-manual-000087',
+        launched: false,
+        attachedExisting: true,
+        attachCommand: "tmux attach -t ='backlog-manual-000087'",
+      },
+      true,
+    ),
+    /Refinement terminal reopened/,
   );
 });
