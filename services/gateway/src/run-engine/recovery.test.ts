@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Run, RunStep, SubStepRecord } from '@farmslot/protocol';
 
 import {
+  hasRecoverablePublicationReviewer,
   prepareSubstepsShowCompletion,
   recoverActiveRuns,
   recoveryHealthIsReady,
@@ -15,6 +16,116 @@ test('recoveryHealthIsReady requires configured ready indicator to match', () =>
   assert.equal(recoveryHealthIsReady({ exitCode: 0, stdout: 'MANIFEST_ONLY\n' }, 'OK'), false);
   assert.equal(recoveryHealthIsReady({ exitCode: 0, stdout: '' }, 'OK'), false);
   assert.equal(recoveryHealthIsReady({ exitCode: 1, stdout: 'OK\n' }, 'OK'), false);
+});
+
+test('hasRecoverablePublicationReviewer ignores an already-ingested completed context', () => {
+  const context = {
+    id: 'rev7-codex',
+    role: 'self-review' as const,
+    label: 'Reviewer',
+    status: 'complete' as const,
+    slotId: 'macwork-ff-2',
+    runId: 'run-1',
+    artifactScope: 'independent-review-7',
+  };
+  const run = minimalActiveRun({
+    agentContexts: [context],
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-7',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 7,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(hasRecoverablePublicationReviewer(run), false);
+  assert.equal(
+    hasRecoverablePublicationReviewer({
+      ...run,
+      engineState: { publishGate: { independentReviews: [] } },
+    }),
+    true,
+  );
+});
+
+test('recoverActiveRuns re-presents a blocked gate after its completed review was ingested', async () => {
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-INGESTED-REVIEW',
+    familyRootTicketOrPr: 'RECOVERY-INGESTED-REVIEW',
+    taskFile: '/tmp/farmslot-recovery-ingested-review/TASK.md',
+    status: 'blocked',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [
+      {
+        id: 'decision-1',
+        type: 'engine_human_gate',
+        title: 'Review publish package',
+        description: 'Review publish package',
+        actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+        createdAt: '2026-06-30T14:20:00.000Z',
+      },
+    ],
+    agentContexts: [
+      {
+        id: 'rev7-codex',
+        role: 'self-review',
+        label: 'Reviewer',
+        status: 'complete',
+        slotId: 'macwork-ff-2',
+        runId: 'run-1',
+        artifactScope: 'independent-review-7',
+      },
+    ],
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-7',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 7,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+  let rearmed = false;
+  let broadcasted = false;
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
+    }),
+    reconcileRunAgentRuntime: async () => {},
+    rearmPublicationReviewRecovery: () => {
+      rearmed = true;
+      return () => {};
+    },
+    updateRun: () => {},
+    updateRunStep: () => {},
+    broadcast: () => {
+      broadcasted = true;
+    },
+    setPrHealthOverlay: () => {},
+    quarantineLeakedRun: async () => {},
+    recoverInflightPublicationReviews: async () => [],
+    replayHumanGate: async () => {},
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.equal(rearmed, false);
+  assert.equal(broadcasted, true);
 });
 
 function minimalActiveRun(overrides: Partial<Run> = {}): Run {

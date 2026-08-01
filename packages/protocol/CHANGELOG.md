@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- fix(protocol): declare the optional worker `needsSelfReview` signal already emitted by the agent runtime so remote update-branch review skips remain type-safe on clean builds.
+- fix(agents): expose the canonical primary `worker` tmux session anchor separately from disposable role windows, and recognize legacy `review-fix[-N]` reviewer windows for lifecycle cleanup.
+- fix(work-graph): persist scheduler authorization on nodes so historical reconciliation cannot suppress prerequisite-regression alarms for scheduled work.
+- feat(backlog): add the typed `backlog.reconcileRun` repair action for existing run/backlog handoffs.
 - fix(protocol): expose checklist-scoped terminal contract paths and persist each agent context's artifact scope for restart-safe independent review recovery.
 - feat(protocol): `RunEngineState.flags.warmSessionReuse` for CI-watch chained follow-ups that hand off into a parent worker kept warm through finalize (MANUAL-000065).
 - fix(runners): update the shared Grok default to the installed CLI's `grok-4.5` model so launches do not silently fall back from retired `grok-build`.

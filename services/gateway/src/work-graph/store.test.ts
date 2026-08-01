@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -304,7 +304,7 @@ test('reference blockers are v1 graph nodes but never dispatchable', async () =>
 
 /* Reference evidence can change after a graph looked complete. Re-evaluate instead of leaving stale done state. */
 test('reference updates reactivate done graphs and surface regressed dependencies', async () => {
-  const { backlog, workGraph } = await freshStores();
+  const { backlog, queue, runs, workGraph } = await freshStores();
   const downstream = await createReadyBacklogItem(backlog, 'Client already completed');
   const graph = await workGraph.createWorkGraph({
     project: 'cross-project-epic',
@@ -336,16 +336,49 @@ test('reference updates reactivate done graphs and surface regressed dependencie
     condition: { kind: 'reference-status' },
     unlock: { kind: 'enqueue' },
   });
-  await workGraph.updateWorkGraphNode({
-    graphId,
-    nodeId: 'wn_client_release',
-    status: 'succeeded',
-  });
   await workGraph.activateWorkGraph({ graphId });
+
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === 'wn_client_release');
+  assert.ok(queued);
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: downstream.item.sourceRef,
+    backlogItemId: downstream.item.id,
+    workGraphId: graphId,
+    workNodeId: 'wn_client_release',
+  });
+  await backlog.markBacklogRunStarted(queued, run);
+  queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
+  runs.updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
   await workGraph.schedulerTick({ graphId });
 
   let projection = workGraph.getWorkGraph({ graphId }).graph;
   assert.equal(projection.graph.status, 'done');
+  assert.ok(
+    projection.nodes.find((node) => node.id === 'wn_client_release')?.schedulerAuthorizedAt,
+  );
+
+  // Simulate a snapshot written before schedulerAuthorizedAt existed. The
+  // completed enqueue ledger must restore scheduler ownership on reload so a
+  // later prerequisite regression is still surfaced.
+  const graphFile = path.join(process.env.FARMSLOT_WORK_GRAPH_DIR!, `${graphId}.json`);
+  const persisted = JSON.parse(await readFile(graphFile, 'utf-8')) as {
+    nodes: Array<{ id: string; schedulerAuthorizedAt?: string }>;
+  };
+  const persistedNode = persisted.nodes.find((node) => node.id === 'wn_client_release');
+  assert.ok(persistedNode);
+  delete persistedNode.schedulerAuthorizedAt;
+  await writeFile(graphFile, JSON.stringify(persisted, null, 2), 'utf-8');
+  workGraph.initWorkGraphStore(() => {});
+  await workGraph.loadWorkGraphs();
+  assert.equal(
+    workGraph.getWorkGraph({ graphId }).graph.nodes.find((node) => node.id === 'wn_client_release')
+      ?.schedulerAuthorizedAt,
+    undefined,
+  );
 
   await workGraph.updateWorkGraphNode({
     graphId,
@@ -365,6 +398,109 @@ test('reference updates reactivate done graphs and surface regressed dependencie
   assert.equal(projection.edges.find((edge) => edge.id === 'we_pr_to_release')?.status, 'pending');
   assert.equal(
     projection.nodes.find((node) => node.id === 'wn_client_release')?.status,
+    'needs-attention',
+  );
+  assert.ok(
+    projection.nodes.find((node) => node.id === 'wn_client_release')?.schedulerAuthorizedAt,
+  );
+});
+
+test('completed runs stay succeeded when historical reconciliation bypassed a start dependency', async () => {
+  const { backlog, runs, workGraph } = await freshStores();
+  const downstream = await createReadyBacklogItem(backlog, 'Historically completed work');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Historical reconciliation graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_external_pr',
+    kind: 'reference',
+    reference: {
+      kind: 'github-pr',
+      title: 'Pending prerequisite',
+      ref: 'metamask/core#1842',
+      status: 'pending',
+      project: 'metamask-core',
+    },
+  });
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_historical_run',
+    backlogItemId: downstream.item.id,
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_pr_to_historical_run',
+    fromNodeId: 'wn_external_pr',
+    toNodeId: 'wn_historical_run',
+    condition: { kind: 'reference-status' },
+    unlock: { kind: 'enqueue' },
+  });
+  await workGraph.activateWorkGraph({ graphId });
+
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: downstream.item.sourceRef,
+    backlogItemId: downstream.item.id,
+    workGraphId: graphId,
+    workNodeId: 'wn_historical_run',
+  });
+  runs.updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+
+  const projection = await workGraph.schedulerTick({ graphId });
+  const node = projection.graphs[0]?.nodes.find(
+    (candidate) => candidate.id === 'wn_historical_run',
+  );
+  assert.equal(node?.status, 'succeeded');
+  assert.deepEqual(node?.waitingOn, []);
+  assert.equal(node?.schedulerAuthorizedAt, undefined);
+  assert.equal(projection.graphs[0]?.graph.status, 'waiting');
+});
+
+test('failed required edges targeting reference nodes keep graph attention visible', async () => {
+  const { workGraph } = await freshStores();
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Failed reference dependency graph',
+  });
+  const graphId = graph.graph.graph.id;
+  for (const id of ['wn_reference_upstream', 'wn_reference_downstream']) {
+    await workGraph.addWorkGraphNode({
+      graphId,
+      id,
+      kind: 'reference',
+      reference: {
+        kind: 'github-pr',
+        title: id,
+        ref: `metamask/core#${id === 'wn_reference_upstream' ? '1842' : '1843'}`,
+        status: 'satisfied',
+        project: 'metamask-core',
+      },
+    });
+  }
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_failed_reference_gate',
+    fromNodeId: 'wn_reference_upstream',
+    toNodeId: 'wn_reference_downstream',
+    condition: { kind: 'manual', gateId: 'reference-gate' },
+  });
+  await workGraph.gateResolve({
+    graphId,
+    edgeId: 'we_failed_reference_gate',
+    gateId: 'reference-gate',
+    reason: 'reference dependency rejected',
+    decision: 'rejected',
+  });
+  await workGraph.activateWorkGraph({ graphId });
+
+  const projection = await workGraph.schedulerTick({ graphId });
+  assert.equal(projection.graphs[0]?.graph.status, 'needs-attention');
+  assert.equal(
+    projection.graphs[0]?.nodes.find((node) => node.id === 'wn_reference_downstream')?.status,
     'needs-attention',
   );
 });
@@ -1361,4 +1497,5 @@ test('a targeted tick recomputes a graph stranded in needs-attention', async () 
     0,
     'a targeted tick must recompute the node instead of leaving the policy strand pinned',
   );
+  assert.equal(stranded.graph.status, 'waiting');
 });

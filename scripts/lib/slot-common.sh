@@ -223,10 +223,23 @@ kill_agent_in_session() {
     "tmux list-panes -t '${session}' -F '#{pane_pid}' 2>/dev/null | head -1" || true)
   [ -z "$pane_pid" ] && return 0
 
-  # Check for agent process (claude, codex, or opencode) under the pane shell
+  # Find the agent anywhere below the pane shell. Runner launch commands often
+  # add one or more wrapper shells, so pgrep -P would miss the real process.
   local agent_pid
   agent_pid=$(run_on "$host" "$machine" "$ssh_user" \
-    "pgrep -P '${pane_pid}' -f 'claude|codex|opencode' 2>/dev/null | head -1" || true)
+    "root='${pane_pid}'
+for pid in \$(pgrep -f 'claude|codex|opencode|cursor-agent|grok|scripted-runner' 2>/dev/null); do
+  command=\$(ps -o command= -p \"\$pid\" 2>/dev/null || true)
+  case \"\$command\" in
+    *'__farmslot_status'*) continue ;;
+  esac
+  cur=\$pid
+  while [ -n \"\$cur\" ] && [ \"\$cur\" != \"\$root\" ] && [ \"\$cur\" != '0' ] && [ \"\$cur\" != '1' ]; do
+    cur=\$(ps -o ppid= -p \"\$cur\" 2>/dev/null | tr -d ' \n\r\t')
+  done
+  if [ \"\$cur\" = \"\$root\" ]; then echo \"\$pid\"; exit 0; fi
+done
+exit 1" || true)
 
   if [ -n "$agent_pid" ]; then
     # Send /exit to the agent first (graceful shutdown)

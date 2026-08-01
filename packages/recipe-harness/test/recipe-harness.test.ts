@@ -2919,6 +2919,30 @@ test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () =
   ]);
 });
 
+test('CDP page scroll uses the document root when window globals are unavailable', async () => {
+  const scrolls: Array<[number, number]> = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      assert.equal(method, 'Runtime.evaluate');
+      const context = vm.createContext({
+        document: {
+          scrollingElement: {
+            scrollBy(x: number, y: number) {
+              scrolls.push([x, y]);
+            },
+          },
+          documentElement: null,
+        },
+      });
+      return { result: { value: vm.runInContext(String(params.expression), context) } };
+    },
+  } as never);
+
+  const result = (await page.scroll({ deltaX: 4, deltaY: 120 })) as { scrolled: boolean };
+  assert.equal(result.scrolled, true);
+  assert.deepEqual(scrolls, [[4, 120]]);
+});
+
 test('maps typed numeric recipe parameters to CDP input text', async () => {
   const values: string[] = [];
   const transport = createCdpWebUiTransport({
@@ -2989,6 +3013,110 @@ test('CDP observations and selectors traverse open shadow roots', async () => {
   assert.match(observationExpression, /shadowHostFor/u);
   assert.doesNotMatch(observationExpression, /ShadowRoot/u);
   assert.doesNotMatch(observationExpression, /getAttribute\('value'\)/u);
+});
+
+test('CDP public isolated-world evaluation recovers on its first call after navigation', async () => {
+  const calls: {
+    method: string;
+    params: Record<string, unknown>;
+  }[] = [];
+  let frame = 1;
+  let staleEvaluationPending = false;
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      calls.push({ method, params });
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: `main-frame-${frame}` } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        return { executionContextId: 16 + frame };
+      }
+      if (staleEvaluationPending) {
+        staleEvaluationPending = false;
+        throw new Error('Execution context was destroyed.');
+      }
+      return { result: { value: { frame } } };
+    },
+  } as never);
+
+  const first = await page.evaluateInIsolatedWorld<{ frame: number }>(
+    'globalThis.ready',
+    'consumer-world',
+  );
+  frame = 2;
+  staleEvaluationPending = true;
+  const afterNavigation = await page.evaluateInIsolatedWorld<{ frame: number }>(
+    'globalThis.ready',
+    'consumer-world',
+  );
+
+  assert.deepEqual(first, { frame: 1 });
+  assert.deepEqual(afterNavigation, { frame: 2 });
+  assert.deepEqual(calls, [
+    { method: 'Page.getFrameTree', params: {} },
+    {
+      method: 'Page.createIsolatedWorld',
+      params: { frameId: 'main-frame-1', worldName: 'consumer-world' },
+    },
+    {
+      method: 'Runtime.evaluate',
+      params: {
+        expression: 'globalThis.ready',
+        contextId: 17,
+        awaitPromise: true,
+        returnByValue: true,
+      },
+    },
+    {
+      method: 'Runtime.evaluate',
+      params: {
+        expression: 'globalThis.ready',
+        contextId: 17,
+        awaitPromise: true,
+        returnByValue: true,
+      },
+    },
+    { method: 'Page.getFrameTree', params: {} },
+    {
+      method: 'Page.createIsolatedWorld',
+      params: { frameId: 'main-frame-2', worldName: 'consumer-world' },
+    },
+    {
+      method: 'Runtime.evaluate',
+      params: {
+        expression: 'globalThis.ready',
+        contextId: 18,
+        awaitPromise: true,
+        returnByValue: true,
+      },
+    },
+  ]);
+});
+
+test('CDP public isolated-world evaluation does not retry page-authored exceptions', async () => {
+  let evaluationCount = 0;
+  const page = new CdpWebPage({
+    async call(method: string) {
+      if (method === 'Page.getFrameTree') {
+        return { frameTree: { frame: { id: 'main-frame' } } };
+      }
+      if (method === 'Page.createIsolatedWorld') {
+        return { executionContextId: 17 };
+      }
+      evaluationCount += 1;
+      return {
+        exceptionDetails: {
+          exception: { description: 'Execution context was destroyed.' },
+        },
+      };
+    },
+  } as never);
+
+  await assert.rejects(
+    page.evaluateInIsolatedWorld('throw new Error("Execution context was destroyed.")', 'consumer'),
+    /Execution context was destroyed\./u,
+  );
+  assert.equal(evaluationCount, 1);
 });
 
 test('CDP navigation waits for the loaded document before returning', async () => {

@@ -325,6 +325,7 @@ interface CallLog {
   waitBaselines: string[]; // baseline forwarded into waitForWorkerSignal on each iteration
   artifactScopes: Array<string | null | undefined>;
   sessionPolicies: Array<string | undefined>; // 11th runReviewAgent arg per re-review
+  progressDetails: string[];
 }
 
 function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; calls: CallLog } {
@@ -337,6 +338,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     waitBaselines: [],
     artifactScopes: [],
     sessionPolicies: [],
+    progressDetails: [],
   };
   let reviewIdx = 0;
   let signalIdx = 0;
@@ -388,6 +390,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
     },
     captureHeadSha: async () => 'base-head',
     restoreWorkerChecklistTargetFromSlot: async () => {},
+    setProgressDetail: (_runId, detail) => calls.progressDetails.push(detail),
     runReviewAgent: async (
       _vars,
       runner,
@@ -514,6 +517,8 @@ test('runSelfReviewRetryLoop: stops as soon as a re-review verdict is pass', asy
   assert.equal(result.retryCount, 1);
   assert.equal(result.feedbackSent, true);
   assert.equal(calls.sendFeedback, 1);
+  assert.match(calls.progressDetails[0] ?? '', /worker applying fixes/);
+  assert.match(calls.progressDetails[1] ?? '', /running claude re-review/);
   assert.equal(result.attempts?.length, 2);
   assert.equal(result.attempts?.[1]?.fixDelta?.fixBaseSha, 'base-head');
   assert.equal(result.attempts?.[1]?.fixDelta?.diffPath, 'artifacts/review-loop-2/fix-delta.diff');

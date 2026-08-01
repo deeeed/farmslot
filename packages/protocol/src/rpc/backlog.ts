@@ -7,6 +7,7 @@ import type {
   BacklogUpdateInput,
 } from '../contracts/backlog.js';
 import type { OkResult } from '../contracts/index.js';
+import type { Run } from '../contracts/runs.js';
 
 import { Methods } from './registry.js';
 
@@ -23,6 +24,7 @@ export const BacklogMethods = {
   autoDispatchTick: Methods.BACKLOG_AUTO_DISPATCH_TICK,
   upcoming: Methods.BACKLOG_UPCOMING,
   specGet: Methods.BACKLOG_SPEC_GET,
+  reconcileRun: Methods.BACKLOG_RECONCILE_RUN,
 } as const;
 
 export interface BacklogCreateParams extends BacklogCreateInput {}
@@ -114,4 +116,13 @@ export interface BacklogSpecGetResult {
   path: string;
   content: string;
   hash: string;
+}
+
+export interface BacklogReconcileRunParams {
+  itemId: string;
+  runId: string;
+}
+export interface BacklogReconcileRunResult {
+  item: BacklogItem;
+  run: Run;
 }

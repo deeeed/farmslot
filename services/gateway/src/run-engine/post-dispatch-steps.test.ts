@@ -12,6 +12,7 @@ import { createRun, updateRun } from '../runs/store.js';
 import {
   executeHumanGateStep,
   executeSelfReviewStep,
+  persistedUpdateBranchNeedsSelfReview,
   readyGateReviewSubjectMatches,
   shouldSkipRetrospectiveAtComplete,
 } from './post-dispatch-steps.js';
@@ -44,6 +45,220 @@ test('complete-step retrospective gating defers only CI-watch flows', () => {
     false,
     'review-pr has human-gate but no CI-watch, so complete is terminal',
   );
+});
+
+test('executeSelfReviewStep honors a persisted update-branch skip signal', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'owner/repo#42',
+    runner: 'claude',
+    slotId: 'remote-mobile-1',
+  });
+  updateRun(run.id, {
+    steps: run.steps.map((step) =>
+      step.name === 'monitor'
+        ? {
+            ...step,
+            status: 'done',
+            outputs: {
+              workerSignal: { status: 'complete', needsSelfReview: false },
+            },
+          }
+        : step,
+    ),
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  let probeCalls = 0;
+  const io = await executeSelfReviewStep(run.id, {
+    activeMonitors: new Map(),
+    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {},
+    createEngineDecision: async () => 'decision-1',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async () => [],
+    executeReadyGate: async () => 'ready',
+    executeReviewGate: async () => {},
+    getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => false,
+    latestResolvedHumanGateDecision: () => undefined,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    probeWorkerSignalForRun: async () => {
+      probeCalls += 1;
+      throw new Error('persisted decision must avoid a redundant slot probe');
+    },
+    refreshRunLinks: async () => {},
+    reviewPlanFromSelection: () => [],
+    stepPartialIO: new Map(),
+  });
+
+  assert.deepEqual(io, {
+    inputs: { slotId: 'remote-mobile-1', enabled: false },
+    outputs: {
+      skipped: true,
+      reason: 'worker-signal-trivial',
+      workerSignalSource: 'persisted-monitor',
+    },
+  });
+  assert.equal(probeCalls, 0);
+});
+
+test('persistedUpdateBranchNeedsSelfReview requires a terminal update-branch signal', () => {
+  const run = makeRun({ flowType: 'update-branch' });
+  const withMonitor = (
+    status: 'running' | 'done',
+    workerSignal?: Record<string, unknown> | null,
+  ) => ({
+    ...run,
+    steps: [{ name: 'monitor', status, outputs: { workerSignal } }],
+  });
+
+  assert.equal(
+    persistedUpdateBranchNeedsSelfReview(
+      withMonitor('done', { status: 'complete', needsSelfReview: false }),
+    ),
+    false,
+  );
+  assert.equal(
+    persistedUpdateBranchNeedsSelfReview(
+      withMonitor('running', { status: 'complete', needsSelfReview: false }),
+    ),
+    undefined,
+  );
+  assert.equal(
+    persistedUpdateBranchNeedsSelfReview(
+      withMonitor('done', { status: 'complete', needsSelfReview: true }),
+    ),
+    true,
+  );
+  assert.equal(
+    persistedUpdateBranchNeedsSelfReview(withMonitor('done', { status: 'complete' })),
+    undefined,
+  );
+  assert.equal(persistedUpdateBranchNeedsSelfReview(withMonitor('done', null)), undefined);
+  assert.equal(
+    persistedUpdateBranchNeedsSelfReview(
+      withMonitor('done', { status: 'running', needsSelfReview: false }),
+    ),
+    undefined,
+  );
+  assert.equal(
+    persistedUpdateBranchNeedsSelfReview({
+      ...withMonitor('done', { status: 'complete', needsSelfReview: false }),
+      flowType: 'dev',
+    }),
+    undefined,
+  );
+});
+
+test('executeSelfReviewStep honors the slot signal probe fallback', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'owner/repo#43',
+    runner: 'claude',
+    slotId: 'remote-mobile-1',
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  let probeCalls = 0;
+  const io = await executeSelfReviewStep(run.id, {
+    activeMonitors: new Map(),
+    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {},
+    createEngineDecision: async () => 'decision-1',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async () => [],
+    executeReadyGate: async () => 'ready',
+    executeReviewGate: async () => {},
+    getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => false,
+    latestResolvedHumanGateDecision: () => undefined,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    probeWorkerSignalForRun: async () => {
+      probeCalls += 1;
+      return {
+        ok: true,
+        code: 'ready',
+        message: 'ready',
+        status: 'complete',
+        signal: {
+          status: 'complete',
+          needsSelfReview: false,
+          timestamp: new Date().toISOString(),
+        },
+      };
+    },
+    refreshRunLinks: async () => {},
+    reviewPlanFromSelection: () => [],
+    stepPartialIO: new Map(),
+  });
+
+  assert.deepEqual(io, {
+    inputs: { slotId: 'remote-mobile-1', enabled: false },
+    outputs: {
+      skipped: true,
+      reason: 'worker-signal-trivial',
+      workerSignalSource: 'slot-probe',
+    },
+  });
+  assert.equal(probeCalls, 1);
+});
+
+test('executeSelfReviewStep proceeds when the slot signal probe cannot approve a skip', async (t) => {
+  const run = createRun({
+    flowType: 'update-branch',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'owner/repo#44',
+    runner: 'claude',
+    slotId: 'remote-mobile-1',
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  let selfReviewCalls = 0;
+  const io = await executeSelfReviewStep(run.id, {
+    activeMonitors: new Map(),
+    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {},
+    createEngineDecision: async () => 'decision-1',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async () => [],
+    executeReadyGate: async () => 'ready',
+    executeReviewGate: async () => {},
+    executeSelfReviewForRun: async () => {
+      selfReviewCalls += 1;
+      return { verdict: 'pass', retryCount: 0 };
+    },
+    getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => false,
+    latestResolvedHumanGateDecision: () => undefined,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    probeWorkerSignalForRun: async () => ({
+      ok: false,
+      code: 'missing',
+      message: 'signal missing',
+    }),
+    refreshRunLinks: async () => {},
+    reviewPlanFromSelection: () => [],
+    stepPartialIO: new Map(),
+  });
+
+  assert.equal(selfReviewCalls, 1);
+  assert.equal(io.inputs?.enabled, true);
+  assert.equal(io.outputs?.verdict, 'pass');
 });
 
 test('local-first complete contract uses gate-held disposition for dev and fix-bug', () => {
@@ -103,6 +318,45 @@ test('human-gate can approve a prepared local-first package when slot was detach
   assert.deepEqual(io.inputs, { gateType: 'ready', gateEnabled: true, forced: false });
   assert.equal(io.outputs?.resolvedAction, null);
   assert.equal(typeof io.outputs?.waitDurationMs, 'number');
+});
+
+test('review-pr always presents its publication gate in autonomous mode', async (t) => {
+  const run = createRun({
+    flowType: 'review-pr',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'example/mobile#123',
+    runner: 'grok',
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  let reviewGateCalls = 0;
+  const io = await executeHumanGateStep(run.id, {
+    activeMonitors: new Map(),
+    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {},
+    createEngineDecision: async () => 'decision-1',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async () => [],
+    executeReadyGate: async () => 'ready',
+    executeReviewGate: async () => {
+      reviewGateCalls++;
+    },
+    getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => false,
+    latestResolvedHumanGateDecision: () => undefined,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    refreshRunLinks: async () => {},
+    reviewPlanFromSelection: () => [],
+    stepPartialIO: new Map(),
+  });
+
+  assert.equal(reviewGateCalls, 1);
+  assert.deepEqual(io.inputs, { gateType: 'review', gateEnabled: true, forced: false });
+  assert.equal(io.outputs?.resolvedAction, null);
 });
 
 test('readyGateReviewSubjectMatches ignores review-loop metadata but rejects subject drift', () => {

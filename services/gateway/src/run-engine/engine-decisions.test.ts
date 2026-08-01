@@ -113,3 +113,27 @@ test('autoResolveEngineDecision never auto-resolves human gates', () => {
     null,
   );
 });
+
+test('autoResolveEngineDecision never auto-dismisses review publication', () => {
+  const actions = [
+    { id: 'post', label: 'Post to PR', style: 'primary' as const },
+    { id: 'dismiss', label: 'Dismiss', style: 'secondary' as const },
+  ];
+
+  assert.equal(
+    autoResolveEngineDecision(
+      makeRun({ mode: 'autonomous', flowType: 'review-pr' }),
+      'review_posting',
+      actions,
+    ),
+    null,
+  );
+  assert.equal(
+    autoResolveEngineDecision(
+      makeRun({ mode: 'validation', flowType: 'review-pr' }),
+      'review_posting',
+      actions,
+    ),
+    null,
+  );
+});

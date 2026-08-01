@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import {
   AGENT_ROLES,
+  agentDispatchWindow,
   type AgentRole,
   agentRoleWindow,
   DEFAULT_BRANCH,
@@ -548,7 +549,7 @@ export async function killAgentInSession(
 ): Promise<void> {
   const TMUX_CMD_TIMEOUT = 10_000;
   const session = await resolveTmuxSession(vars.slotId, vars);
-  const roleWindow = agentRoleWindow(role);
+  const roleWindow = agentDispatchWindow(role);
   const hasSession =
     (
       await execOnSlot(

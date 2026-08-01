@@ -6,6 +6,7 @@ import {
   inferReviewSourceKind,
   REVIEW_SOURCES,
   reviewCompositeKey,
+  reviewLoopNumberFromId,
   type ReviewSourceKind,
   SELF_REVIEW_SOURCE,
 } from './review-sources.js';
@@ -43,6 +44,13 @@ test('reviewCompositeKey distinguishes streams sharing a loopNumber', () => {
   assert.notEqual(reviewCompositeKey('self-review', 2), reviewCompositeKey('extra-review', 2));
   assert.equal(reviewCompositeKey('self-review', 2), 'self-review::2');
   assert.equal(reviewCompositeKey('extra-review', 2), 'extra-review::2');
+});
+
+test('reviewLoopNumberFromId parses only the source-owned positive suffix', () => {
+  assert.equal(reviewLoopNumberFromId(EXTRA_REVIEW_SOURCE, 'independent-review-7'), 7);
+  assert.equal(reviewLoopNumberFromId(EXTRA_REVIEW_SOURCE, 'self-review-7'), null);
+  assert.equal(reviewLoopNumberFromId(EXTRA_REVIEW_SOURCE, 'independent-review-0'), null);
+  assert.equal(reviewLoopNumberFromId(EXTRA_REVIEW_SOURCE, 'independent-review-x'), null);
 });
 
 test('inferReviewSourceKind classifies by id prefix from the registry', () => {

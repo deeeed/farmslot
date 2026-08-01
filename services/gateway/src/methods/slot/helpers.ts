@@ -39,6 +39,7 @@ import {
 } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 import { runnerProcessPatternSource } from '../../runners/registry.js';
+import { buildFindRunnerDescendantPidFromVariableCommand } from '../../runners/session-process.js';
 
 import type { EventEmitter } from './shared.js';
 
@@ -84,6 +85,7 @@ export function buildMonitorCommand(
   const repo = shellQuote(vars.remoteRepo);
   const taskRoot = shellQuote(`${vars.remoteRepo}/${taskDirName}`);
   const session = shellQuote(vars.session);
+  const runnerProbe = buildFindRunnerDescendantPidFromVariableCommand('PANE_PID', processPattern);
   return [
     'set -uo pipefail',
     `echo "=== Monitor: ${vars.slotId} on ${vars.machine} (${vars.platform}) ==="`,
@@ -105,7 +107,9 @@ export function buildMonitorCommand(
     `if tmux has-session -t ${session} 2>/dev/null; then`,
     `  PANE_PID=$(tmux list-panes -t ${session} -F '#{pane_pid}' 2>/dev/null | head -1 || true)`,
     '  if [ -n "$PANE_PID" ]; then',
-    `    if pgrep -P "$PANE_PID" -f '${processPattern}' >/dev/null 2>&1; then`,
+    '    if (',
+    ...runnerProbe.split('\n').map((line) => `      ${line}`),
+    '    ) >/dev/null 2>&1; then',
     '      echo "  Agent is running"',
     '    else',
     '      echo "  Agent idle (no runner process)"',

@@ -10,6 +10,7 @@ import {
   type AgentContext,
   type IndependentReviewAttempt,
   isTerminalRunStatus,
+  PipelineSteps,
   primaryRoleForFlow,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
@@ -51,7 +52,7 @@ import {
 } from '../runners/registry.js';
 import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
-import { getRun, updateRun } from '../runs/store.js';
+import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import {
   restoreWorkerChecklistTargetFromSlot,
   SELF_REVIEW_FIX_CHECKLIST_TARGET,
@@ -401,7 +402,19 @@ export interface SelfReviewRetryDeps {
     taskDir: string,
     terminal?: { flowType: string; mode?: string | null },
   ) => Promise<void>;
+  setProgressDetail?: (runId: string, detail: string) => void;
   getRun: typeof getRun;
+}
+
+function setSelfReviewProgressDetail(runId: string, detail: string): void {
+  const run = getRun(runId);
+  if (!run) return;
+  const step = run.steps.find(
+    (candidate) => candidate.name === PipelineSteps.HUMAN_GATE && candidate.status === 'running',
+  )
+    ? PipelineSteps.HUMAN_GATE
+    : PipelineSteps.SELF_REVIEW;
+  updateRunStep(runId, step, { detail });
 }
 
 // Module-level constant — wiring is fixed at module load. Tests pass their own deps struct
@@ -421,6 +434,7 @@ const PRODUCTION_DEPS: SelfReviewRetryDeps = {
   captureHeadSha: captureCurrentHeadSha,
   getWorkerContextPct: readWorkerContextPct,
   restoreWorkerChecklistTargetFromSlot,
+  setProgressDetail: setSelfReviewProgressDetail,
   getRun,
 };
 
@@ -548,6 +562,10 @@ export async function runSelfReviewRetryLoop({
     retryCount += 1;
     feedbackSent = true;
     const nextLoopNumber = retryCount + 1;
+    deps.setProgressDetail?.(
+      runId,
+      `Reviewer found ${result.issues.length} issue(s); worker applying fixes (${retryCount}/${maxRetries})...`,
+    );
     console.log(
       `[self-review] run ${runId.slice(0, 8)} — feedback sent to worker, waiting for fix`,
     );
@@ -666,6 +684,10 @@ export async function runSelfReviewRetryLoop({
         artifactPaths: fixDelta.artifactPaths,
       };
       debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — re-reviewing after worker fix`);
+      deps.setProgressDetail?.(
+        runId,
+        `Worker fix complete; running ${reviewRunner} re-review (${nextLoopNumber})...`,
+      );
       result = await deps.runReviewAgent(
         vars,
         reviewRunner,
@@ -780,6 +802,7 @@ async function recoverSelfReviewFixPass({
   validationDepth,
   artifactScope,
   sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
+  setProgressDetail = setSelfReviewProgressDetail,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
   taskDir: string;
@@ -794,6 +817,7 @@ async function recoverSelfReviewFixPass({
   validationDepth: ReviewValidationDepth;
   artifactScope?: string | null;
   sessionPolicy?: ReviewSessionPolicy;
+  setProgressDetail?: (runId: string, detail: string) => void;
 }): Promise<SelfReviewResult | null> {
   const run = getRun(runId);
   const fixContext = run?.agentContexts?.find((ctx) => canRecoverSelfReviewFixPass(ctx, taskDir));
@@ -821,6 +845,10 @@ async function recoverSelfReviewFixPass({
     const issues = await readSelfReviewFixIssues(vars, taskDir);
     debugSelfReviewLog(
       `[self-review] run ${runId.slice(0, 8)} — recovering self-review fix pass (${fixSignal ? 'signal-present' : 'waiting'})`,
+    );
+    setProgressDetail(
+      runId,
+      `Recovered reviewer findings; worker applying ${issues.length} fix(es)...`,
     );
 
     if (!fixSignal) {
@@ -913,6 +941,7 @@ async function recoverSelfReviewFixPass({
     );
     await unwatchContext(slotId, 'self-review-fix');
     const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
+    setProgressDetail(runId, `Worker fix complete; running ${reviewRunner} re-review (2)...`);
     const retryResult = await runReviewAgent(
       vars,
       reviewRunner,

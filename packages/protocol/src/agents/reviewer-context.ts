@@ -31,11 +31,12 @@ export function reviewerWindowName(runner: string | null | undefined, ordinal = 
 }
 
 const REVIEWER_WINDOW_RE = /^rev(?:(\d+))?-([a-z0-9][a-z0-9-]{0,23})$/;
+const LEGACY_REVIEW_FIX_WINDOW_RE = /^review-fix(?:-\d+)?$/;
 
 export function isReviewerWindowName(windowName: string | null | undefined): boolean {
   if (!windowName) return false;
   if (windowName === LEGACY_SELF_REVIEW_WINDOW) return true;
-  return REVIEWER_WINDOW_RE.test(windowName);
+  return REVIEWER_WINDOW_RE.test(windowName) || LEGACY_REVIEW_FIX_WINDOW_RE.test(windowName);
 }
 
 export function parseReviewerWindowName(

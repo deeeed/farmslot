@@ -55,6 +55,14 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
       font-size: 11px;
       color: ${colors.textSecondary};
     }
+    review-workspace .rw-evidence-post-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: ${spacing.xs};
+      font-size: 11px;
+      color: ${colors.textSecondary};
+      white-space: nowrap;
+    }
     review-workspace .rw-sev-pill {
       font-size: 9px;
       font-weight: 700;

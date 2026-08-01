@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-
 import {
   type ArtifactRef,
   type DiffStat,
@@ -13,10 +10,9 @@ import {
   type ReviewLoopRequest,
   type Run,
   type RunDecision,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 
-import { loadSlotVars } from '../core/config.js';
-import { isLocal } from '../core/exec.js';
 import { markSlotBusy, markSlotHeld, updateSlotStatus } from '../core/index.js';
 import {
   finalizeEvalResultPackageForRun,
@@ -58,12 +54,14 @@ import {
 import { verifyWorkerPushedBranch } from './push-verification.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import { automaticPublicationReviewPlan, remainingExplicitReviewPlan } from './review-plan.js';
-import { type MonitorResult, monitorRun } from './run-monitor.js';
+import { type MonitorResult, monitorRun, probeWorkerSignalForRun } from './run-monitor.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }
+
+const S = PipelineSteps;
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 type MonitorTerminalErrorArgs = {
@@ -105,12 +103,26 @@ export interface PostDispatchStepContext {
     approvalOnly?: boolean,
   ) => RunDecision | undefined;
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
+  executeSelfReviewForRun?: typeof executeSelfReview;
+  probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
   refreshRunLinks: (runId: string) => Promise<void>;
   reviewPlanFromSelection: (selection: RunDecision['selectionData']) => ReviewLoopRequest[];
   stepPartialIO: Map<string, StepIO>;
 }
 
-const S = PipelineSteps;
+export function persistedUpdateBranchNeedsSelfReview(
+  run: Pick<Run, 'flowType' | 'steps'>,
+): boolean | undefined {
+  if (run.flowType !== 'update-branch') return undefined;
+  const monitorStep = run.steps.find((step) => step.name === S.MONITOR);
+  if (monitorStep?.status !== 'done') return undefined;
+  const workerSignal = monitorStep.outputs?.workerSignal as WorkerSignal | undefined;
+  if (workerSignal === null || typeof workerSignal !== 'object') return undefined;
+  if (workerSignal.status !== 'complete' && workerSignal.status !== 'done') return undefined;
+  return typeof workerSignal.needsSelfReview === 'boolean'
+    ? workerSignal.needsSelfReview
+    : undefined;
+}
 
 export function shouldSkipRetrospectiveAtComplete(run: Pick<Run, 'flowType'>): boolean {
   // CI-watch is the terminal PR lifecycle step for publishable flows. Defer the
@@ -447,35 +459,50 @@ export async function executeSelfReviewStep(
 
   // update-branch: check worker's signal to decide if self-review is needed
   if (current.flowType === 'update-branch') {
-    try {
-      const vars = await loadSlotVars(current.slotId);
-      const taskDir = current.taskFile ? path.dirname(current.taskFile) : null;
-      if (taskDir) {
-        const signalPath = isLocal(vars.host, vars.machine)
-          ? path.join(vars.remoteRepo, taskDir, 'SIGNAL.json')
-          : null;
-        if (signalPath) {
-          const signal = JSON.parse(await readFile(signalPath, 'utf-8'));
-          if (signal.needsSelfReview === false) {
-            console.log(
-              `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (trivial conflicts)`,
-            );
-            return {
-              inputs: { ...inputs, enabled: false },
-              outputs: { skipped: true, reason: 'worker-signal-trivial' },
-            };
-          }
-        }
-      }
-    } catch (err) {
-      // Signal not found or unreadable — default to running self-review
-      console.warn(
-        `[run-engine] update-branch worker signal unavailable for ${runId.slice(0, 8)}; running self-review: ${(err as Error).message.slice(0, 200)}`,
+    const persistedNeedsSelfReview = persistedUpdateBranchNeedsSelfReview(current);
+    if (persistedNeedsSelfReview === false) {
+      console.log(
+        `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (persisted monitor signal)`,
       );
+      return {
+        inputs: { ...inputs, enabled: false },
+        outputs: {
+          skipped: true,
+          reason: 'worker-signal-trivial',
+          workerSignalSource: 'persisted-monitor',
+        },
+      };
+    }
+    if (persistedNeedsSelfReview === undefined) {
+      try {
+        const probe = await (context.probeWorkerSignalForRun ?? probeWorkerSignalForRun)(
+          runId,
+          current.slotId,
+        );
+        if (probe.ok && probe.signal?.needsSelfReview === false) {
+          console.log(
+            `[run-engine] run ${runId.slice(0, 8)} — update-branch worker says self-review not needed (slot signal probe)`,
+          );
+          return {
+            inputs: { ...inputs, enabled: false },
+            outputs: {
+              skipped: true,
+              reason: 'worker-signal-trivial',
+              workerSignalSource: 'slot-probe',
+            },
+          };
+        }
+      } catch (err) {
+        // Signal not found or unreadable — default to running self-review
+        console.warn(
+          `[run-engine] update-branch worker signal unavailable for ${runId.slice(0, 8)}; running self-review: ${(err as Error).message.slice(0, 200)}`,
+        );
+      }
     }
   }
 
-  const result = await executeSelfReview(runId, current.slotId);
+  const executeSelfReviewForRun = context.executeSelfReviewForRun ?? executeSelfReview;
+  const result = await executeSelfReviewForRun(runId, current.slotId);
   const cliCommand = `farmslot rpc self-review.run '{"runId":"${runId}"}'`;
 
   // Interactive mode: present self-review results as a decision before proceeding
@@ -494,7 +521,7 @@ export async function executeSelfReviewStep(
     // When human chooses "send_feedback", re-run self-review which will
     // send feedback and wait for fix (existing retry logic)
     if (actionId === 'send_feedback') {
-      const retryResult = await executeSelfReview(runId, current.slotId);
+      const retryResult = await executeSelfReviewForRun(runId, current.slotId);
       return {
         inputs: { ...inputs, enabled: true },
         outputs: {
@@ -622,13 +649,14 @@ export async function executeHumanGateStep(
     };
   }
 
-  // Check if gate is disabled for this flow via project.json human_gates
+  // Review publication is always operator-owned. Runner mode may change how
+  // the review is produced, but it must never bypass the posting decision.
   const configuredGateEnabled = await isHumanGateEnabled(
     current.project,
     current.flowType,
     current.mode,
   );
-  const gateEnabled = noChangeGate || configuredGateEnabled;
+  const gateEnabled = noChangeGate || current.flowType === 'review-pr' || configuredGateEnabled;
   const inputs: Record<string, unknown> = {
     gateType: noChangeGate ? 'no-change' : gateType,
     gateEnabled,
