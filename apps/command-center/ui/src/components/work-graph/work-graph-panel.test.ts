@@ -19,12 +19,10 @@ function workGraphInventoryView(state: {
   filteredGraphIds: string[];
   selectedGraphId: string;
   showInventoryList: boolean;
-  autoSelected: boolean;
 }) {
   const retainList = inventoryRetainsListAffordance({
     selectedId: state.selectedGraphId,
     rowCount: state.filteredGraphIds.length,
-    autoSelected: state.autoSelected,
   });
   const showCanvas = Boolean(state.selectedGraphId) && !state.showInventoryList;
   const showBack = showCanvas && retainList;
@@ -99,7 +97,6 @@ test('single-graph auto-selection opens canvas with Back affordance to inventory
     filteredGraphIds: ['wg_solo'],
     selectedGraphId: selectedId,
     showInventoryList: false,
-    autoSelected,
   });
   assert.equal(open.showCanvas, true);
   assert.equal(open.showBack, true);
@@ -108,7 +105,6 @@ test('single-graph auto-selection opens canvas with Back affordance to inventory
     filteredGraphIds: ['wg_solo'],
     selectedGraphId: selectedId,
     showInventoryList: true,
-    autoSelected,
   });
   assert.equal(afterBack.showCanvas, false);
   assert.equal(afterBack.showBack, false);
@@ -119,7 +115,6 @@ test('multi-graph inventory selection opens canvas and Back returns to table', (
     filteredGraphIds: ['wg_a', 'wg_b'],
     selectedGraphId: 'wg_b',
     showInventoryList: false,
-    autoSelected: false,
   });
   assert.equal(open.showCanvas, true);
   assert.equal(open.showBack, true);
@@ -128,7 +123,6 @@ test('multi-graph inventory selection opens canvas and Back returns to table', (
     filteredGraphIds: ['wg_a', 'wg_b'],
     selectedGraphId: 'wg_b',
     showInventoryList: true,
-    autoSelected: false,
   });
   assert.equal(list.showCanvas, false);
 });

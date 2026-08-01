@@ -111,11 +111,7 @@ export function inventoryShowsBackAffordance(layout: WorkInventoryLayoutState): 
 export function inventoryRetainsListAffordance(options: {
   selectedId: string;
   rowCount: number;
-  autoSelected: boolean;
 }): boolean {
-  // autoSelected is reserved for callers that still pass it; list stays
-  // reachable whenever any rows exist (including single-row auto-select).
-  void options.autoSelected;
   if (!options.selectedId) return true;
   return options.rowCount > 0;
 }

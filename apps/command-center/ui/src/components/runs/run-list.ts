@@ -120,7 +120,8 @@ function inventoryKeyToSortOption(key: RunInventorySortKey): SortOption {
   }
 }
 
-function sortOptionToInventoryKey(sort: SortOption): RunInventorySortKey {
+/** Inventory column for the active SortOption, or null when sort is not a column (newest/oldest/…). */
+function sortOptionToInventoryKey(sort: SortOption): RunInventorySortKey | null {
   if (sort === 'status' || sort === 'status-desc') return 'status';
   if (sort === 'flow' || sort === 'flow-desc') return 'flow';
   if (sort === 'project' || sort === 'project-desc') return 'project';
@@ -128,7 +129,8 @@ function sortOptionToInventoryKey(sort: SortOption): RunInventorySortKey {
   if (sort === 'slot' || sort === 'slot-desc') return 'slot';
   if (sort === 'runner' || sort === 'runner-desc') return 'runner';
   if (sort === 'updated' || sort === 'updated-desc') return 'updated';
-  return 'updated';
+  // newest / oldest / duration / grade — no inventory column owns these.
+  return null;
 }
 
 function sortOptionDirection(sort: SortOption): 'asc' | 'desc' {
@@ -596,10 +598,12 @@ export class RunList extends RunListState {
   }
 
   private renderTableHead(showCheckbox: boolean) {
+    // Non-column sorts (newest/oldest/duration/grade) must not light up Updated.
+    const columnKey = sortOptionToInventoryKey(this.sortBy);
     return renderWorkInventoryTableHead({
       columns: RUN_INVENTORY_COLUMNS,
       sort: {
-        key: sortOptionToInventoryKey(this.sortBy),
+        key: columnKey ?? ('' as RunInventorySortKey),
         direction: sortOptionDirection(this.sortBy),
       },
       onSort: (key) => this.setInventorySort(key),
@@ -828,84 +832,86 @@ export class RunList extends RunListState {
     return html`
       <section class="family-section" role="rowgroup">
         <div class="family-header" role="row">
-          <span class="family-title">${group.familyRootTicketOrPr}</span>
-          <a
-            class="family-link"
-            href=${`#runs?family=${encodeURIComponent(group.familyId)}`}
-            @click=${(e: Event) => {
-              e.stopPropagation();
-              this.familyFilter = group.familyId;
-              void this.refreshFamilyFilter();
-              this._persistHashState();
-            }}
-          >
-            family:${shortId(group.familyId)}
-          </a>
-          <a
-            class="family-link"
-            href=${`#family/${group.familyId}`}
-            @click=${(e: Event) => e.stopPropagation()}
-          >
-            retrospective
-          </a>
-          <span>${group.runs.length} run${group.runs.length !== 1 ? 's' : ''}</span>
-          ${this.renderFamilyReadinessBadges(group)}
-          ${group.activeCount ? html`<span>${group.activeCount} active</span>` : nothing}
-          ${group.comparisonCount
-            ? html`<span>${group.comparisonCount} comparison</span>`
-            : nothing}
-          ${group.variants.length
-            ? html`<span>variants: ${group.variants.join(', ')}</span>`
-            : nothing}
-          ${familyPR?.mergeState
-            ? html`<span>merge: ${familyPR.mergeState.replace(/_/g, ' ')}</span>`
-            : nothing}
-          ${group.latestCreatedAt
-            ? html`<span>latest ${elapsed(group.latestCreatedAt)}</span>`
-            : nothing}
-          ${this.manageMode
-            ? html`
-                <button
-                  class="action-secondary"
-                  @click=${(e: Event) => {
-                    e.stopPropagation();
-                    this.selectFamilyRuns(group.familyId, false);
-                  }}
-                >
-                  select family
-                </button>
-                <button
-                  class="action-secondary"
-                  @click=${(e: Event) => {
-                    e.stopPropagation();
-                    this.selectFamilyRuns(group.familyId, true);
-                  }}
-                >
-                  select terminal
-                </button>
-              `
-            : nothing}
-          ${group.comparisonCount >= 2
-            ? html`
-                <a
-                  class="family-link"
-                  href=${`#family/${group.familyId}`}
-                  @click=${(e: Event) => e.stopPropagation()}
-                >
-                  compare ${group.comparisonCount} runs
-                </a>
-              `
-            : comparePair
+          <div role="gridcell" class="family-header-cell">
+            <span class="family-title">${group.familyRootTicketOrPr}</span>
+            <a
+              class="family-link"
+              href=${`#runs?family=${encodeURIComponent(group.familyId)}`}
+              @click=${(e: Event) => {
+                e.stopPropagation();
+                this.familyFilter = group.familyId;
+                void this.refreshFamilyFilter();
+                this._persistHashState();
+              }}
+            >
+              family:${shortId(group.familyId)}
+            </a>
+            <a
+              class="family-link"
+              href=${`#family/${group.familyId}`}
+              @click=${(e: Event) => e.stopPropagation()}
+            >
+              retrospective
+            </a>
+            <span>${group.runs.length} run${group.runs.length !== 1 ? 's' : ''}</span>
+            ${this.renderFamilyReadinessBadges(group)}
+            ${group.activeCount ? html`<span>${group.activeCount} active</span>` : nothing}
+            ${group.comparisonCount
+              ? html`<span>${group.comparisonCount} comparison</span>`
+              : nothing}
+            ${group.variants.length
+              ? html`<span>variants: ${group.variants.join(', ')}</span>`
+              : nothing}
+            ${familyPR?.mergeState
+              ? html`<span>merge: ${familyPR.mergeState.replace(/_/g, ' ')}</span>`
+              : nothing}
+            ${group.latestCreatedAt
+              ? html`<span>latest ${elapsed(group.latestCreatedAt)}</span>`
+              : nothing}
+            ${this.manageMode
+              ? html`
+                  <button
+                    class="action-secondary"
+                    @click=${(e: Event) => {
+                      e.stopPropagation();
+                      this.selectFamilyRuns(group.familyId, false);
+                    }}
+                  >
+                    select family
+                  </button>
+                  <button
+                    class="action-secondary"
+                    @click=${(e: Event) => {
+                      e.stopPropagation();
+                      this.selectFamilyRuns(group.familyId, true);
+                    }}
+                  >
+                    select terminal
+                  </button>
+                `
+              : nothing}
+            ${group.comparisonCount >= 2
               ? html`
                   <a
                     class="family-link"
-                    href=${`#runs/compare?a=${comparePair[0].id}&b=${comparePair[1].id}`}
+                    href=${`#family/${group.familyId}`}
                     @click=${(e: Event) => e.stopPropagation()}
                   >
-                    compare latest siblings
+                    compare ${group.comparisonCount} runs
                   </a>
                 `
-              : nothing}
+              : comparePair
+                ? html`
+                    <a
+                      class="family-link"
+                      href=${`#runs/compare?a=${comparePair[0].id}&b=${comparePair[1].id}`}
+                      @click=${(e: Event) => e.stopPropagation()}
+                    >
+                      compare latest siblings
+                    </a>
+                  `
+                : nothing}
+          </div>
         </div>
         ${this.renderFamilySummaryRow(group, familyPR)}
         ${group.runs.map((run) => this.renderCard(run, showCheckbox))}
@@ -921,36 +927,38 @@ export class RunList extends RunListState {
     if (!hasSummary && !hasLinks) return nothing;
     return html`
       <div class="family-summary-row" role="row">
-        ${hasSummary
-          ? html`<div class="family-summary-text">${group.familySummary}</div>`
-          : nothing}
-        ${hasLinks
-          ? html`
-              <div class="family-summary-links">
-                ${repLinks.map(
-                  (l) =>
-                    html`<a
-                      class="ext-link"
-                      href=${l.url}
-                      target="_blank"
-                      rel="noopener"
-                      @click=${(e: Event) => e.stopPropagation()}
-                      >${l.label}</a
-                    >`,
-                )}
-                ${rep.prNumber != null && !repLinks.some((l) => /^pr\b/i.test(l.label.trim()))
-                  ? html`<span>PR #${rep.prNumber}</span>`
-                  : nothing}
-                ${familyPR?.title
-                  ? html`<span title=${familyPR.title}
-                      >${familyPR.title.length > 80
-                        ? familyPR.title.slice(0, 80) + '…'
-                        : familyPR.title}</span
-                    >`
-                  : nothing}
-              </div>
-            `
-          : nothing}
+        <div role="gridcell" class="family-summary-cell">
+          ${hasSummary
+            ? html`<div class="family-summary-text">${group.familySummary}</div>`
+            : nothing}
+          ${hasLinks
+            ? html`
+                <div class="family-summary-links">
+                  ${repLinks.map(
+                    (l) =>
+                      html`<a
+                        class="ext-link"
+                        href=${l.url}
+                        target="_blank"
+                        rel="noopener"
+                        @click=${(e: Event) => e.stopPropagation()}
+                        >${l.label}</a
+                      >`,
+                  )}
+                  ${rep.prNumber != null && !repLinks.some((l) => /^pr\b/i.test(l.label.trim()))
+                    ? html`<span>PR #${rep.prNumber}</span>`
+                    : nothing}
+                  ${familyPR?.title
+                    ? html`<span title=${familyPR.title}
+                        >${familyPR.title.length > 80
+                          ? familyPR.title.slice(0, 80) + '…'
+                          : familyPR.title}</span
+                      >`
+                    : nothing}
+                </div>
+              `
+            : nothing}
+        </div>
       </div>
     `;
   }

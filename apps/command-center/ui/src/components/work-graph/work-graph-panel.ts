@@ -1315,13 +1315,12 @@ export class WorkGraphPanel extends LitElement {
       ? allGraphs.filter((graph) => graph.graph.project === this.selectedProject)
       : allGraphs;
     const graphIds = graphs.map((graph) => graph.graph.id);
-    const { selectedId, autoSelected } = resolveWorkGraphSelection(graphIds, this.selectedGraphId);
+    const { selectedId } = resolveWorkGraphSelection(graphIds, this.selectedGraphId);
     const effectiveSelectedId = selectedId || this.selectedGraphId;
     const selectedGraph = graphs.find((graph) => graph.graph.id === effectiveSelectedId) ?? null;
     const retainList = inventoryRetainsListAffordance({
       selectedId: effectiveSelectedId,
       rowCount: graphs.length,
-      autoSelected,
     });
     // Inventory is canonical when nothing is selected, the operator asked for
     // Back, or multi-graph browse has no pick yet. Single-graph auto-select

@@ -1,8 +1,12 @@
 /**
  * CDP probe: shared work inventory tables across backlog / roadmap / work-graphs / runs.
  * Usage: node apps/command-center/scripts/cdp.mjs eval backlog --file probes/work-inventory-table.js
+ *
+ * Top-level `return` + IIFE: Prettier accepts it (`allowReturnOutsideFunction`) and
+ * `cdp.mjs` stmtForm fallback returns the value. Bare `})()` fails format:check;
+ * bare `})();` breaks the implicit-return form of cdp.mjs.
  */
-(() => {
+return (() => {
   const host =
     document.querySelector('backlog-panel') ||
     document.querySelector('roadmap-panel') ||
@@ -25,4 +29,4 @@
     hasBack: Boolean(back),
     tableText: (table?.textContent || '').slice(0, 200),
   };
-})()
+})();
