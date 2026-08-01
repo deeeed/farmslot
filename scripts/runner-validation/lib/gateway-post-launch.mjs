@@ -115,11 +115,11 @@ export function runGatewayRetainedHandoff({
   sessionId,
   sessionPath,
   prompt,
+  runnerPath,
   timeoutMs = 120_000,
 }) {
   const snippet = `
 import os from 'node:os';
-import path from 'node:path';
 import { deliverPromptToRetainedRunnerSession } from './services/gateway/src/runners/session-reactivation.ts';
 
 const vars = {
@@ -129,7 +129,7 @@ const vars = {
   host: 'localhost',
   sshUser: os.userInfo().username,
   osType: process.platform === 'darwin' ? 'darwin' : 'linux',
-  claudePath: path.join(os.homedir(), '.npm-global/bin/claude'),
+  claudePath: ${JSON.stringify(runnerPath)},
   codexPath: '',
   opencodePath: '',
   cursorPath: '',

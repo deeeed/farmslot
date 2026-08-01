@@ -274,6 +274,8 @@ export async function executeSelfReview(
         workerRunner,
         reviewRunner,
         model,
+        // An explicit operator "send feedback" action authorizes one fix pass
+        // even when automatic self-review retries are disabled for the project.
         maxRetries: Math.max(1, maxRetries),
         reviewTimeoutMs,
         reviewResult: initialReviewResult,
@@ -1216,8 +1218,11 @@ async function sendFeedbackToWorker(
     });
     const runner = normalizeRunner(run?.metrics.runner);
     let lastRetainedHoldReason: string | null = null;
+    let terminalRetainedHoldReason: string | null = null;
+    let structuredDeliveryAccepted = false;
     const loggedRetainedHoldReasons = new Set<string>();
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
+      if (terminalRetainedHoldReason) return false;
       const latestRun = getRun(runId);
       const latestPrimaryContext = latestRun
         ? selectAgentContext(latestRun, { role: 'primary' })
@@ -1235,10 +1240,17 @@ async function sendFeedbackToWorker(
         runtimeDir,
         taskDir,
         launchAckSignalPath: fixSignalPath,
+        recovery: { runId },
+        sendLogPrefix: 'self-review',
+        forceBusyPoll,
       });
-      if (retained.delivered) return true;
+      if (retained.delivered) {
+        structuredDeliveryAccepted = retained.acknowledgement === 'structured';
+        return true;
+      }
       if (retained.disposition === 'hold') {
         lastRetainedHoldReason = retained.reason;
+        if (retained.retryable === false) terminalRetainedHoldReason = retained.reason;
         if (!loggedRetainedHoldReasons.has(retained.reason)) {
           loggedRetainedHoldReasons.add(retained.reason);
           console.warn(`[self-review] retained worker handoff held: ${retained.reason}`);
@@ -1258,7 +1270,7 @@ async function sendFeedbackToWorker(
     };
     let sent = await deliverFixPrompt(workerTarget);
     let deliverySeenWindows: string[] = [];
-    if (!sent) {
+    if (!sent && !terminalRetainedHoldReason) {
       // A busy worker is the NORMAL state of a healthy worker — it is usually
       // busy doing this very run's work when the review lands. Two immediate
       // probes failed the same run three times in one day (02866fe6) while the
@@ -1307,10 +1319,14 @@ async function sendFeedbackToWorker(
       const retainedSummary = lastRetainedHoldReason
         ? ` Retained-session handoff: ${lastRetainedHoldReason}.`
         : '';
+      const failureSummary = terminalRetainedHoldReason
+        ? 'self-review fix task delivery stopped after the retained runner was replaced but did not acknowledge the prompt'
+        : `self-review fix task delivery kept deferring for ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt`;
       throw new Error(
-        `self-review fix task delivery kept deferring for ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt (${fixTaskFile}).${retainedSummary} Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: replay the self-review step after restoring runner observability.`,
+        `${failureSummary} (${fixTaskFile}).${retainedSummary} Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: replay the self-review step after restoring runner observability.`,
       );
     }
+    if (structuredDeliveryAccepted) return fixSignalBaseline;
     // sent=true only proves keystrokes were injected and Enter pressed. A
     // context-saturated REPL swallows delivered prompts with a frozen pane —
     // require FURTHER pane activity after the send. The

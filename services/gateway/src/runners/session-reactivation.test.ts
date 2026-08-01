@@ -134,7 +134,7 @@ test('retained resume delivers the prompt through runner argv without send-keys'
     prompt: 'Read and execute TASK.md',
     runtimeDir: '.farmslot/runtime/test-project',
   });
-  assert.deepEqual(result, { delivered: true });
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
 
   const command = commands.join('\n');
   const resumeIndex = command.indexOf('--resume');
@@ -170,7 +170,7 @@ test('retained resume accepts a fresh structured task signal without hook acknow
     launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
   });
 
-  assert.deepEqual(result, { delivered: true });
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
   assert.equal(launchSignalReadCount, 2);
 });
 

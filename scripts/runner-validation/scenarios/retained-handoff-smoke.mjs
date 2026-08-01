@@ -87,6 +87,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       sessionId: report.sessionId,
       sessionPath: report.sessionPath,
       prompt: DEFAULT_PROMPT,
+      runnerPath: runnerAdapter.binaryPath(),
       timeoutMs: Math.min(timeoutMs, 120_000),
     });
     report.handoffDelivered = Boolean(handoff.result?.delivered);

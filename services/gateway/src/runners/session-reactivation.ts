@@ -40,14 +40,17 @@ export interface RunnerSessionReactivationOptions {
   launchAckSignalPath?: string | null;
   timeoutMs?: number;
   recovery?: RunnerSendRecoveryContext;
+  sendLogPrefix?: string;
+  forceBusyPoll?: boolean;
 }
 
 export type RetainedSessionDeliveryResult =
-  | { delivered: true }
+  | { delivered: true; acknowledgement: 'structured' | 'safe-send' }
   | {
       delivered: false;
       disposition: 'safe-send' | 'hold';
       reason: string;
+      retryable?: boolean;
     };
 
 /**
@@ -168,19 +171,21 @@ async function reactivateRunnerSessionWithPrompt(
           promptAcceptanceBaselineMs: sentinel.sentAt - 500,
         },
       );
-      if (accepted.accepted) return { delivered: true };
+      if (accepted.accepted) return { delivered: true, acknowledgement: 'structured' };
       await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_ACCEPTANCE_POLL_MS));
     }
     return {
       delivered: false,
       disposition: 'hold',
       reason: `Reloaded ${runner} session ${options.sessionId}, but no structured prompt or task-signal acknowledgement arrived${launchAckUnavailable ? '; the task-signal baseline was unavailable' : ''}`,
+      retryable: false,
     };
   } catch (error) {
     return {
       delivered: false,
       disposition: idleProven && !paneMutationStarted ? 'safe-send' : 'hold',
       reason: `Retained ${runner} handoff failed: ${(error as Error).message}`,
+      ...(paneMutationStarted ? { retryable: false } : {}),
     };
   }
 }
@@ -213,15 +218,19 @@ export async function deliverPromptToRetainedRunnerSession(
         options.target,
         runner,
         options.prompt,
-        '[retained-handoff]',
+        options.sendLogPrefix ?? '[retained-handoff]',
         timeoutMs,
-        { forceBusyPoll: true, recovery: options.recovery },
+        {
+          forceBusyPoll: options.forceBusyPoll ?? true,
+          recovery: options.recovery,
+        },
       );
-      if (accepted) return { delivered: true };
+      if (accepted) return { delivered: true, acknowledgement: 'safe-send' };
       return {
         delivered: false,
         disposition: 'hold',
         reason: `Live ${runner} retained handoff was not accepted; refusing a destructive fresh-dispatch fallback`,
+        retryable: true,
       };
     } catch (error) {
       return {

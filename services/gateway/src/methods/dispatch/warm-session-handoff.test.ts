@@ -3,7 +3,10 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import { resolveWarmWorkerBinding } from './warm-session-handoff.js';
+import {
+  resolveWarmWorkerBinding,
+  warmHandoffFailureFromRetainedDelivery,
+} from './warm-session-handoff.js';
 
 function run(overrides: Partial<Run>): Pick<Run, 'flowType' | 'agentContexts'> {
   return {
@@ -80,4 +83,19 @@ test('resolveWarmWorkerBinding falls back to canonical primary role without a pa
   const binding = resolveWarmWorkerBinding('mme-2', null, 'pr-complete', 'pr-complete');
   assert.equal(binding.role, 'primary');
   assert.equal(binding.target, null);
+});
+
+test('warm handoff holds a live worker when retained delivery permits only in-place fallback', () => {
+  assert.deepEqual(
+    warmHandoffFailureFromRetainedDelivery({
+      delivered: false,
+      disposition: 'safe-send',
+      reason: 'retained session state is unknown',
+    }),
+    {
+      handedOff: false,
+      disposition: 'hold',
+      reason: 'retained session state is unknown',
+    },
+  );
 });
