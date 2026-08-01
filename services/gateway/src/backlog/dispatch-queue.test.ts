@@ -622,12 +622,12 @@ test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls b
   assert.equal(await selectQueueDispatchSlot(slots, item), 'ready-slot');
 });
 
-function plainCliSlot(slotId: string, project = 'farmslot-farm'): SlotStatus {
+function plainCliSlot(slotId: string): SlotStatus {
   return {
     slot: slotId,
     machine: 'demo',
     platform: 'cli',
-    project,
+    project: 'farmslot-farm',
     health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
     branch: 'main',
     agent: 'idle',
@@ -652,7 +652,7 @@ function plainCliSlot(slotId: string, project = 'farmslot-farm'): SlotStatus {
     deviceName: null,
     taskPhase: null,
     taskStepProgress: null,
-  } as SlotStatus;
+  };
 }
 
 test('selectQueueDispatchSlot never stamps profileFit onto unset prepareProfile', async () => {
