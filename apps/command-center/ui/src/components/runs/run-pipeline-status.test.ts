@@ -92,4 +92,31 @@ test('finalize package-changed failure is recoverable orange', () => {
     pipelineStepTone({ name: 'finalize', status: 'failed', detail: 'hard crash' }),
     'fail',
   );
+  assert.equal(
+    pipelineStepTone({
+      name: 'publish',
+      status: 'failed',
+      detail: 'Package changed; refresh package and re-review before publishing',
+    }),
+    'warn',
+  );
+});
+
+test('self-review issues are orange until max retries exhausted (then red)', () => {
+  assert.equal(
+    pipelineStepTone({
+      name: 'self-review',
+      status: 'failed',
+      outputs: { verdict: 'issues', maxRetriesExhausted: false },
+    }),
+    'warn',
+  );
+  assert.equal(
+    pipelineStepTone({
+      name: 'self-review',
+      status: 'failed',
+      outputs: { verdict: 'issues', maxRetriesExhausted: true },
+    }),
+    'fail',
+  );
 });

@@ -126,25 +126,22 @@ export function renderSelfReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecial
   const isFailed = vis === 'failed';
   const isPending = vis === 'pending';
   const isSkipped = vis === 'skipped';
+  // Shared tone map with mini (issues → orange unless maxRetriesExhausted).
+  const tone = pipelineStepTone(step, { runError: ctx.run.error });
+  const toneColors = pipelineToneFillStroke(tone);
 
-  const fillColor = isDone
-    ? `${colors.statusOk}12`
-    : isRunning
-      ? '#3b82f618'
-      : isFailed
-        ? `${colors.statusFail}12`
-        : isSkipped
-          ? `${colors.textMuted}12`
-          : 'transparent';
-  const strokeColor = isDone
-    ? `${colors.statusOk}66`
-    : isRunning
-      ? '#3b82f6'
-      : isFailed
-        ? colors.statusFail
-        : isSkipped
-          ? `${colors.textMuted}66`
-          : `${colors.textMuted}33`;
+  const fillColor =
+    isDone || isRunning || isFailed || isSkipped
+      ? isSkipped && tone === 'muted'
+        ? `${colors.textMuted}12`
+        : toneColors.fill
+      : 'transparent';
+  const strokeColor =
+    isDone || isRunning || isFailed || isSkipped
+      ? isSkipped && tone === 'muted'
+        ? `${colors.textMuted}66`
+        : toneColors.stroke
+      : `${colors.textMuted}33`;
 
   const elapsed = step.durationMs
     ? formatDuration(step.durationMs)
@@ -174,13 +171,7 @@ export function renderSelfReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecial
   const maxRetries = typeof outputs.maxRetries === 'number' ? outputs.maxRetries : undefined;
   const maxRetriesExhausted = outputs.maxRetriesExhausted === true;
   const verdictColor =
-    verdict === 'pass'
-      ? colors.statusOk
-      : verdict === 'issues'
-        ? isFailed
-          ? colors.statusFail
-          : colors.statusWarn
-        : '';
+    verdict === 'pass' ? colors.statusOk : verdict === 'issues' ? pipelineToneColor(tone) : '';
 
   return svg`
     <g class="${isRunning ? 'node-running-anim' : ''}"
@@ -227,7 +218,7 @@ export function renderSelfReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecial
             ? svg`
         <text class="node-meta" x="${n.w / 2}" y="27"
               text-anchor="middle" dominant-baseline="central"
-              fill="${colors.statusFail}">
+              fill="${pipelineToneColor('fail')}">
           ! MAX RETRIES (${retryCount}${maxRetries !== undefined ? `/${maxRetries}` : ''})
         </text>
       `
@@ -235,7 +226,7 @@ export function renderSelfReviewPipelineNode(n: NodePos, ctx: RunPipelineSpecial
               ? svg`
         <text class="node-meta" x="${n.w / 2}" y="27"
               text-anchor="middle" dominant-baseline="central"
-              fill="${colors.statusFail}">
+              fill="${pipelineToneColor(tone)}">
           ! ISSUES${retryCount > 0 ? ` (${retryCount}x)` : ''}
         </text>
       `

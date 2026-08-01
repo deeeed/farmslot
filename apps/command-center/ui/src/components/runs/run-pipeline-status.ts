@@ -58,14 +58,15 @@ export function isRecoverablePublishFailure(
   error?: string | null,
 ): boolean {
   const text = `${detail ?? ''} ${error ?? ''}`;
-  return /package changed|refresh package|re-review|rework|publication.*mismatch|package hash/i.test(
-    text,
-  );
+  // Match gateway finalize-step / ready-gate package copy — keep tight to avoid
+  // painting unrelated finalize crashes as rework orange.
+  return /package changed|refresh package and re-review|publication.*mismatch/i.test(text);
 }
 
 /**
  * Visual tone for any pipeline step/node (canvas + mini).
- * Prefer explicit verdict on outputs when present (publication reviews).
+ * Prefer explicit verdict on outputs when present (publication reviews), but
+ * self-review must honor maxRetriesExhausted before treating issues as orange.
  */
 export function pipelineStepTone(
   step: Pick<RunStep, 'name' | 'status' | 'detail'> & {
@@ -80,6 +81,15 @@ export function pipelineStepTone(
       : typeof outputs?.reviewVerdict === 'string'
         ? outputs.reviewVerdict
         : null;
+  const verdictLower = (verdict ?? '').trim().toLowerCase();
+
+  // Self-review first: terminal exhaustion is red even when verdict is still "issues".
+  if (step.name === 'self-review' && step.status === 'failed') {
+    if (outputs?.maxRetriesExhausted === true) return 'fail';
+    if (verdictLower === 'issues' || /issues/i.test(step.detail ?? '')) return 'warn';
+    return 'fail';
+  }
+
   if (verdict) return publicationReviewVerdictTone(verdict);
 
   // package-refresh after issues/review rework is recoverable, not terminal red
@@ -99,24 +109,6 @@ export function pipelineStepTone(
       return isRecoverablePublishFailure(step.detail, opts?.runError) ? 'warn' : 'fail';
     }
     return stepStatusTone(step.status);
-  }
-
-  // self-review: issues without max-retries-exhausted is reworkable
-  if (step.name === 'self-review' && step.status === 'failed') {
-    const maxRetriesExhausted = outputs?.maxRetriesExhausted === true;
-    if (!maxRetriesExhausted && (verdict === 'issues' || outputs?.verdict === 'issues')) {
-      return 'warn';
-    }
-    if (
-      !maxRetriesExhausted &&
-      typeof outputs?.verdict === 'string' &&
-      outputs.verdict === 'issues'
-    ) {
-      return 'warn';
-    }
-    // detail-only path: gateway sometimes leaves issues only in detail
-    if (!maxRetriesExhausted && /issues/i.test(step.detail ?? '')) return 'warn';
-    return 'fail';
   }
 
   return stepStatusTone(step.status);

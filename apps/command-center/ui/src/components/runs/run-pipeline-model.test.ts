@@ -8,6 +8,7 @@ import {
   effectiveTaskProgressForRun,
   publicationReviewStepForName,
 } from './run-pipeline-model.js';
+import { pipelineStepTone } from './run-pipeline-status.js';
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {
@@ -192,4 +193,6 @@ test('computeLayout maps open review issues to failed status (warn tone), not do
   assert.ok(packageRefresh);
   assert.equal(packageRefresh.step.status, 'failed');
   assert.equal(packageRefresh.step.outputs?.lastReviewVerdict, 'issues');
+  assert.equal(pipelineStepTone(review.step), 'warn');
+  assert.equal(pipelineStepTone(packageRefresh.step), 'warn');
 });
