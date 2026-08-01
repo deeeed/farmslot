@@ -50,10 +50,10 @@ Agents and scripts can call protocol methods directly:
 
 ```bash
 farmslot rpc fleet.status '{}'
-farmslot rpc protocol.capabilities '{}'
+farmslot rpc gateway.status '{}'
 ```
 
-`protocol.capabilities` is the discovery entry point for available gateway methods, safety tiers, and method metadata. See [Gateway API capability surface](../reference/gateway-api.md) for the curated API overview.
+There is no runtime discovery method, so look the method set up ahead of time: see [Gateway API capability surface](../reference/gateway-api.md) for the curated API overview, including safety tiers.
 
 ## Slot lifecycle commands
 

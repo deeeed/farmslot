@@ -121,48 +121,51 @@ The protocol package is becoming the canonical source for method metadata.
 flowchart TD
   TSDoc[TSDoc on protocol method contracts]
   Registry[Method metadata registry]
-  JSON[Generated capabilities JSON]
+  JSON[Capabilities snapshot]
   Docs[Generated API docs]
-  Gateway[protocol.capabilities method]
-  CLI[CLI api list/describe]
+  CLI[CLI raw rpc]
   LLM[LLM tool adapter]
 
   TSDoc --> Registry
   Registry --> JSON
   Registry --> Docs
-  JSON --> Gateway
-  JSON --> CLI
-  JSON --> LLM
+  JSON --> Docs
+  Docs --> CLI
+  Docs --> LLM
 ```
 
-## Implemented contract
+## Generated capability snapshot
 
-`protocol.capabilities` is the gateway discovery method. It returns protocol-generated
-metadata that the CLI, docs site, Command Center, Mobile Companion, or a direct LLM
-client can consume:
+Capability metadata is produced at **build time**, not served by a runtime discovery
+method. `apps/docs/scripts/generate-gateway-api-docs.ts` reads the `Methods` and
+`Events` registries from `@farmslot/protocol` together with TSDoc comments on the
+protocol interfaces, and emits the raw table at
+[Gateway API generated reference](/docs/reference/gateway-api.generated):
 
 ```ts
-interface GatewayCapabilitiesResult {
+interface GatewayCapabilitiesSnapshot {
   protocolVersion: string;
-  methods: GatewayMethodCapability[];
-  events: GatewayEventCapability[];
+  methods: CapabilityMethod[];
+  events: CapabilityEvent[];
 }
 
-interface GatewayMethodCapability {
+interface CapabilityMethod {
   method: string;
   category: string;
-  summary: string;
+  safetyTier: string;
   paramsType?: string;
   resultType?: string;
-  safetyTier: 'read-only' | 'bounded-write' | 'lifecycle' | 'high-impact';
-  authRequired: boolean;
-  emits?: string[];
-  examples?: Array<{
-    label: string;
-    params: unknown;
-  }>;
+  summary: string;
 }
 ```
+
+`category` is derived from the method namespace (the segment before the first dot) and
+`safetyTier` is inferred from the method name by the generator.
+
+A runtime discovery method that serves this snapshot over the wire — so that a client
+can ask a live gateway what it supports instead of reading a generated page — is still
+a design goal, not a shipped one. See the security boundary below for why discovery
+would not grant authority on its own.
 
 ## TSDoc source style
 
@@ -193,13 +196,19 @@ That turns Farmslot into an interoperable agentic engineering framework rather t
 
 ## Current implementation
 
-The protocol package owns method/event capability metadata and frame comments. The gateway exposes that metadata through `protocol.capabilities`, and the CLI consumes it through:
+The protocol package owns method/event capability metadata and frame comments. That
+metadata reaches readers through the generated reference page; the CLI's access to the
+gateway is the raw RPC escape hatch:
 
 ```bash
-farmslot api list
-farmslot api describe <method>
-farmslot rpc <method> <params-json>
+farmslot rpc <method> [params-json]
 ```
+
+For example, `farmslot rpc gateway.status '{}'` returns the running gateway's version
+and update state. To find out which methods exist, read the curated
+[Gateway API capability surface](/docs/reference/gateway-api) or the raw
+[generated reference](/docs/reference/gateway-api.generated); the CLI has no
+capability-listing subcommand.
 
 The public docs expose a curated capability surface while lower-level generated metadata continues to mature.
 
