@@ -240,6 +240,25 @@ test('filterRunList sorts ref/slot/runner inventory columns (not newest)', () =>
   );
 });
 
+test('filterRunList sorts Updated column by updatedAt not createdAt', () => {
+  const olderUpdate = run('older-update', {
+    createdAt: '2026-07-20T00:00:00.000Z',
+    updatedAt: '2026-07-21T00:00:00.000Z',
+  });
+  const newerUpdate = run('newer-update', {
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+  });
+  assert.deepEqual(
+    filter({ runs: [olderUpdate, newerUpdate], sortBy: 'updated-desc' }).map((item) => item.id),
+    ['newer-update', 'older-update'],
+  );
+  assert.deepEqual(
+    filter({ runs: [olderUpdate, newerUpdate], sortBy: 'updated' }).map((item) => item.id),
+    ['older-update', 'newer-update'],
+  );
+});
+
 test('filterRunList applies exact tag filters and includes tags in text search', () => {
   const demo = run('demo', { tags: ['demo', 'launch-review'] });
   const other = run('other', { tags: ['regression'] });

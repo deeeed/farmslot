@@ -125,7 +125,9 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
     case 'slot':
     case 'slot-desc':
     case 'runner':
-    case 'runner-desc': {
+    case 'runner-desc':
+    case 'updated':
+    case 'updated-desc': {
       const inventoryKey = inventoryKeyForSortOption(input.sortBy);
       const direction = input.sortBy.endsWith('-desc') ? 'desc' : 'asc';
       return sortInventoryRows(
@@ -155,5 +157,6 @@ function inventoryKeyForSortOption(sortBy: SortOption): RunInventorySortKey {
   if (sortBy === 'ref' || sortBy === 'ref-desc') return 'ref';
   if (sortBy === 'slot' || sortBy === 'slot-desc') return 'slot';
   if (sortBy === 'runner' || sortBy === 'runner-desc') return 'runner';
+  if (sortBy === 'updated' || sortBy === 'updated-desc') return 'updated';
   return 'updated';
 }

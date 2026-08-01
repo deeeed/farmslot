@@ -94,12 +94,10 @@ export function resolveWorkGraphSelection(
   graphIds: readonly string[],
   selectedId: string,
 ): { selectedId: string; autoSelected: boolean } {
-  const previous = selectedId;
   const next = resolveSelectedRowId(graphIds, selectedId, { autoSelectSingle: true });
-  const autoSelected = Boolean(next) && (!previous || previous !== next) && graphIds.length === 1;
-  // Also treat "already selected the only graph" as auto-selected for the affordance.
-  const singleAuto = graphIds.length === 1 && next === graphIds[0];
-  return { selectedId: next, autoSelected: autoSelected || singleAuto };
+  // Single remaining graph is always auto-selected for list/back affordance.
+  const autoSelected = graphIds.length === 1 && next === graphIds[0];
+  return { selectedId: next, autoSelected };
 }
 
 export function defaultWorkGraphSortDirection(key: WorkGraphSortKey): WorkGraphSortDirection {

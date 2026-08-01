@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import {
-  applyWorkInventorySort,
-  mergeInventoryReturnParams,
-  parseWorkInventorySort,
-} from './work-inventory-url-state.js';
+import { applyWorkInventorySort, parseWorkInventorySort } from './work-inventory-url-state.js';
 
 const BACKLOG_KEYS = ['status', 'flow', 'project', 'ref', 'title', 'activity', 'updated'] as const;
 const ROADMAP_KEYS = ['stage', 'project', 'id', 'title', 'promotion', 'updated'] as const;
@@ -24,6 +20,8 @@ const RUN_SORT_OPTIONS = [
   'slot-desc',
   'runner',
   'runner-desc',
+  'updated',
+  'updated-desc',
   'newest',
   'oldest',
 ] as const;
@@ -119,28 +117,4 @@ test('default sort omits params so URLs stay short', () => {
   );
   assert.equal(params.get('sort'), null);
   assert.equal(params.get('direction'), null);
-});
-
-test('return-from-detail preservation restores sort and selection without dropping unrelated params', () => {
-  const current = new URLSearchParams('status=ready&tab=active');
-  const merged = mergeInventoryReturnParams(current, {
-    sortKey: 'project',
-    sortDirection: 'asc',
-    selectedId: 'item-42',
-    selectedParam: 'item',
-  });
-  assert.equal(merged.get('status'), 'ready');
-  assert.equal(merged.get('tab'), 'active');
-  assert.equal(merged.get('sort'), 'project');
-  assert.equal(merged.get('direction'), 'asc');
-  assert.equal(merged.get('item'), 'item-42');
-
-  const cleared = mergeInventoryReturnParams(merged, {
-    sortKey: null,
-    sortDirection: null,
-    selectedId: null,
-  });
-  assert.equal(cleared.get('sort'), null);
-  assert.equal(cleared.get('item'), null);
-  assert.equal(cleared.get('status'), 'ready');
 });

@@ -94,6 +94,8 @@ const TABLE_SORT_PAIRS = {
   slot: 'slot-desc',
   runner: 'runner-desc',
   newest: 'oldest',
+  // Desc-first for the Updated column (matches visible updatedAt dates).
+  'updated-desc': 'updated',
 } as const;
 
 /** Map inventory column keys onto SortOption values used by filterRunList + URL. */
@@ -112,7 +114,7 @@ function inventoryKeyToSortOption(key: RunInventorySortKey): SortOption {
     case 'runner':
       return 'runner';
     case 'updated':
-      return 'newest';
+      return 'updated-desc';
     case 'pipeline':
       return 'newest';
   }
@@ -125,6 +127,7 @@ function sortOptionToInventoryKey(sort: SortOption): RunInventorySortKey {
   if (sort === 'ref' || sort === 'ref-desc') return 'ref';
   if (sort === 'slot' || sort === 'slot-desc') return 'slot';
   if (sort === 'runner' || sort === 'runner-desc') return 'runner';
+  if (sort === 'updated' || sort === 'updated-desc') return 'updated';
   return 'updated';
 }
 
@@ -601,7 +604,9 @@ export class RunList extends RunListState {
       },
       onSort: (key) => this.setInventorySort(key),
       testIdPrefix: 'runs',
-      leadingCells: showCheckbox ? html`<span aria-hidden="true"></span>` : nothing,
+      leadingCells: showCheckbox
+        ? html`<span role="columnheader" aria-hidden="true"></span>`
+        : nothing,
     });
   }
 
@@ -821,8 +826,8 @@ export class RunList extends RunListState {
     ];
     const familyPR = this.prs.find((pr) => prNumbers.includes(pr.pr)) ?? null;
     return html`
-      <section class="family-section">
-        <div class="family-header">
+      <section class="family-section" role="rowgroup">
+        <div class="family-header" role="row">
           <span class="family-title">${group.familyRootTicketOrPr}</span>
           <a
             class="family-link"
@@ -915,7 +920,7 @@ export class RunList extends RunListState {
     const hasLinks = repLinks.length > 0 || rep.prNumber != null || familyPR != null;
     if (!hasSummary && !hasLinks) return nothing;
     return html`
-      <div class="family-summary-row">
+      <div class="family-summary-row" role="row">
         ${hasSummary
           ? html`<div class="family-summary-text">${group.familySummary}</div>`
           : nothing}

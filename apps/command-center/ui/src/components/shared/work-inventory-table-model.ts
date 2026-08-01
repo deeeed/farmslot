@@ -113,8 +113,9 @@ export function inventoryRetainsListAffordance(options: {
   rowCount: number;
   autoSelected: boolean;
 }): boolean {
+  // autoSelected is reserved for callers that still pass it; list stays
+  // reachable whenever any rows exist (including single-row auto-select).
+  void options.autoSelected;
   if (!options.selectedId) return true;
-  // Auto-selected single row still keeps the inventory reachable.
-  if (options.autoSelected && options.rowCount === 1) return true;
   return options.rowCount > 0;
 }

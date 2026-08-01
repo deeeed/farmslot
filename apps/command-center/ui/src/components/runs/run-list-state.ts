@@ -34,6 +34,8 @@ export type SortOption =
   | 'slot-desc'
   | 'runner'
   | 'runner-desc'
+  | 'updated'
+  | 'updated-desc'
   | 'duration'
   | 'grade';
 
@@ -74,6 +76,8 @@ export const SORT_OPTIONS: { label: string; value: SortOption }[] = [
   { label: 'Slot Z–A', value: 'slot-desc' },
   { label: 'Runner A–Z', value: 'runner' },
   { label: 'Runner Z–A', value: 'runner-desc' },
+  { label: 'Updated (newest)', value: 'updated-desc' },
+  { label: 'Updated (oldest)', value: 'updated' },
   { label: 'Duration', value: 'duration' },
   { label: 'Grade', value: 'grade' },
 ];

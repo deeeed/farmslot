@@ -58,37 +58,3 @@ export function applyWorkInventorySort<TSortKey extends string>(
 
   return params;
 }
-
-/**
- * Prove return-from-detail preservation: filters, sort, and selection survive
- * a round-trip when the operator leaves detail and comes back to inventory.
- * Surfaces pass their own param keys; this only merges without clobbering
- * unrelated keys.
- */
-export function mergeInventoryReturnParams(
-  current: URLSearchParams,
-  preserved: {
-    sortKey?: string | null;
-    sortDirection?: string | null;
-    selectedId?: string | null;
-    selectedParam?: string;
-    sortParam?: string;
-    directionParam?: string;
-  },
-): URLSearchParams {
-  const next = new URLSearchParams(current.toString());
-  const sortParam = preserved.sortParam ?? DEFAULT_SORT_PARAM;
-  const directionParam = preserved.directionParam ?? DEFAULT_DIRECTION_PARAM;
-  const selectedParam = preserved.selectedParam ?? 'item';
-
-  if (preserved.sortKey) next.set(sortParam, preserved.sortKey);
-  else next.delete(sortParam);
-
-  if (preserved.sortDirection) next.set(directionParam, preserved.sortDirection);
-  else next.delete(directionParam);
-
-  if (preserved.selectedId) next.set(selectedParam, preserved.selectedId);
-  else next.delete(selectedParam);
-
-  return next;
-}
