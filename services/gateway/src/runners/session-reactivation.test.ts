@@ -9,7 +9,8 @@ const commands: string[] = [];
 let paneCount = 1;
 let sessionPathExists = true;
 let promptAccepted = true;
-let launchSignalReadCount = 0;
+let capturedPane = '';
+let trustSendCount = 0;
 let sessionState: ObservabilityReading<RunnerSessionDeliveryState> | null = {
   value: 'idle',
   source: 'hook',
@@ -28,15 +29,20 @@ mock.module('../core/exec.js', {
         const panes = Array.from({ length: paneCount }, (_, index) => `%${index + 1}`).join('\n');
         return { exitCode: 0, stdout: panes ? `${panes}\n` : '', stderr: '' };
       }
+      if (command.includes('capture-pane')) {
+        return { exitCode: 0, stdout: capturedPane, stderr: '' };
+      }
+      if (command.includes('send-keys')) {
+        trustSendCount += 1;
+        promptAccepted = true;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }
       if (command.includes('SELF-REVIEW-FIX-SIGNAL.json')) {
-        launchSignalReadCount += 1;
-        return launchSignalReadCount === 1
-          ? { exitCode: 0, stdout: '__FARMSLOT_SIGNAL_MISSING__\n', stderr: '' }
-          : {
-              exitCode: 0,
-              stdout: '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n',
-              stderr: '',
-            };
+        return {
+          exitCode: 0,
+          stdout: '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n',
+          stderr: '',
+        };
       }
       if (command.startsWith('test -e ')) {
         return {
@@ -119,6 +125,8 @@ test('retained resume delivers the prompt through runner argv without send-keys'
   paneCount = 1;
   sessionPathExists = true;
   promptAccepted = true;
+  capturedPane = '';
+  trustSendCount = 0;
   sessionState = {
     value: 'idle',
     source: 'hook',
@@ -145,12 +153,50 @@ test('retained resume delivers the prompt through runner argv without send-keys'
   assert.doesNotMatch(command, /send-keys/);
 });
 
-test('retained resume requires exact prompt acknowledgement despite a fresh task signal', async () => {
+test('retained resume confirms a Codex hooks-review prompt only once', async (t) => {
+  commands.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
+  promptAccepted = false;
+  capturedPane = `
+Hooks need review
+1. Review hooks
+2. Trust all and continue
+3. Continue without trusting (hooks won't run)
+Press enter to confirm or esc to go back
+`;
+  trustSendCount = 0;
+  sessionState = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now() - 300_000,
+  };
+  t.after(() => {
+    promptAccepted = true;
+    capturedPane = '';
+    trustSendCount = 0;
+  });
+
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'codex',
+    sessionId: 'session-123',
+    sessionPath: '/sessions/session-123.jsonl',
+    prompt: 'Read and execute TASK.md',
+    runtimeDir: '.farmslot/runtime/test-project',
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.equal(trustSendCount, 1);
+});
+
+test('retained resume does not consult a generic task signal for exact prompt acknowledgement', async () => {
   commands.length = 0;
   paneCount = 1;
   sessionPathExists = true;
   promptAccepted = true;
-  launchSignalReadCount = 0;
   sessionState = {
     value: 'idle',
     source: 'hook',
@@ -169,7 +215,10 @@ test('retained resume requires exact prompt acknowledgement despite a fresh task
   });
 
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
-  assert.equal(launchSignalReadCount, 1);
+  assert.equal(
+    commands.some((command) => command.includes('SELF-REVIEW-FIX-SIGNAL.json')),
+    false,
+  );
 });
 
 test('retained resume defers an active session to the safe in-place delivery contract', async () => {

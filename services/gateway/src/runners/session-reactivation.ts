@@ -9,7 +9,6 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from './launch-command.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
-import { readLaunchAckSignalSnapshot } from './prompt-delivery-evidence.js';
 import {
   confirmTrustPromptWithFreshEvidence,
   getRunnerObservability,
@@ -137,10 +136,6 @@ async function reactivateRunnerSessionWithPrompt(
       };
     }
 
-    const launchAckBaseline = options.launchAckSignalPath
-      ? await readLaunchAckSignalSnapshot(options.vars, options.launchAckSignalPath)
-      : null;
-    const launchAckUnavailable = Boolean(options.launchAckSignalPath && !launchAckBaseline);
     await writeRunnerPromptSentinel(options.vars, options.prompt);
     const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       options.vars,
@@ -159,6 +154,7 @@ async function reactivateRunnerSessionWithPrompt(
     paneMutationStarted = true;
     await respawnTmuxWindowWithCommand(options.vars, options.target, command);
     const respawnedAt = Date.now();
+    let trustPromptConfirmed = false;
 
     const deadline = Date.now() + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
     while (Date.now() < deadline) {
@@ -169,48 +165,49 @@ async function reactivateRunnerSessionWithPrompt(
         options.prompt,
         respawnedAt,
         {
-          launchAckSignalPath: options.launchAckSignalPath,
-          launchAckBaseline,
           requirePromptDigest: true,
           promptAcceptanceBaselineMs: respawnedAt,
         },
       );
-      // A post-respawn hook turn/activity or task signal is durable evidence
-      // from the resumed process itself; no pane-text reaction proof is needed.
+      // Only exact post-respawn prompt evidence is accepted; generic activity,
+      // task signals, and pane text cannot acknowledge this resumed prompt.
       if (accepted.accepted) return { delivered: true, acknowledgement: 'structured' };
-      await confirmTrustPromptWithFreshEvidence({
-        runnerId: runner,
-        target: options.target,
-        logPrefix: 'retained-handoff',
-        exec: (tmuxCommand) =>
-          execOnSlot(options.vars, tmuxShellSnippet(tmuxCommand), options.vars.remoteRepo),
-        refreshCodexHooks:
-          runner === 'codex'
-            ? async () => {
-                const refreshed = await execOnSlot(
-                  options.vars,
-                  buildRunnerObservabilityInstallCommand(
+      if (!trustPromptConfirmed) {
+        const trustResult = await confirmTrustPromptWithFreshEvidence({
+          runnerId: runner,
+          target: options.target,
+          logPrefix: 'retained-handoff',
+          exec: (tmuxCommand) =>
+            execOnSlot(options.vars, tmuxShellSnippet(tmuxCommand), options.vars.remoteRepo),
+          refreshCodexHooks:
+            runner === 'codex'
+              ? async () => {
+                  const refreshed = await execOnSlot(
                     options.vars,
-                    runner,
-                    options.vars.remoteRepo,
-                    options.runtimeDir,
-                  ),
-                );
-                if (refreshed.exitCode !== 0) {
-                  throw new Error(
-                    `Failed to refresh trusted Codex hooks: ${refreshed.stderr || refreshed.stdout || `exit ${refreshed.exitCode}`}`,
+                    buildRunnerObservabilityInstallCommand(
+                      options.vars,
+                      runner,
+                      options.vars.remoteRepo,
+                      options.runtimeDir,
+                    ),
                   );
+                  if (refreshed.exitCode !== 0) {
+                    throw new Error(
+                      `Failed to refresh trusted Codex hooks: ${refreshed.stderr || refreshed.stdout || `exit ${refreshed.exitCode}`}`,
+                    );
+                  }
                 }
-              }
-            : undefined,
-        logNoFreshEvidence: false,
-      });
+              : undefined,
+          logNoFreshEvidence: false,
+        });
+        trustPromptConfirmed = trustResult.outcome === 'sent';
+      }
       await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_ACCEPTANCE_POLL_MS));
     }
     return {
       delivered: false,
       disposition: 'hold',
-      reason: `Reloaded ${runner} session ${options.sessionId}, but no structured prompt or task-signal acknowledgement arrived${launchAckUnavailable ? '; the task-signal baseline was unavailable' : ''}`,
+      reason: `Reloaded ${runner} session ${options.sessionId}, but no exact structured prompt acknowledgement arrived`,
       retryable: false,
     };
   } catch (error) {
