@@ -63,10 +63,17 @@ export function isRecoverablePublishFailure(
   return /package changed|refresh package and re-review|publication.*mismatch/i.test(text);
 }
 
+/** Agent statuses that mean a review/fix context is still live (matches gate UI helpers). */
+const ACTIVE_REVIEW_AGENT_STATUSES = new Set(['launching', 'working', 'waiting']);
+
 /**
  * True while a post-gate review or worker fix loop is still in flight.
  * Used so the synthetic package-refresh node stays **pending** (not failed/red)
  * even when earlier review loops ended in issues/failed.
+ *
+ * Prefer structured signals only (pending plan + live agents). Do **not** treat
+ * sticky human-gate progress detail alone as in-flight — gateway often leaves
+ * "running … re-review" on the step after the review completes.
  */
 export function isPostGateReviewOrFixInFlight(
   run: Pick<Run, 'steps' | 'agentContexts' | 'engineState'> | null | undefined,
@@ -76,22 +83,8 @@ export function isPostGateReviewOrFixInFlight(
   const plan = run.engineState?.publishGate?.pendingReviewPlan;
   if (Array.isArray(plan) && plan.length > 0) return true;
 
-  const humanGate = run.steps?.find((step) => step.name === 'human-gate');
-  if (humanGate?.status === 'running' && typeof humanGate.detail === 'string') {
-    const detail = humanGate.detail;
-    // Gateway uses several phrasings during the review↔fix loop.
-    if (
-      /re-?review|running\s+\S+\s+review|worker applying fixes|worker fix complete|reviewer found/i.test(
-        detail,
-      )
-    ) {
-      return true;
-    }
-  }
-
   for (const agent of run.agentContexts ?? []) {
-    const status = agent.status;
-    if (status !== 'working' && status !== 'pending') continue;
+    if (!ACTIVE_REVIEW_AGENT_STATUSES.has(String(agent.status ?? ''))) continue;
     const id = String(agent.id ?? '');
     const role = String(agent.role ?? '');
     if (role === 'self-review' || role === 'self-review-fix') return true;

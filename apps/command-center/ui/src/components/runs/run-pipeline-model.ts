@@ -662,14 +662,28 @@ function activeReviewFromHumanGateDetail(
   }
 
   // Informal human-gate copy: "Worker fix complete; running claude re-review (2)..."
+  // Only inject when a review/fix agent is still live — sticky detail alone must not
+  // create a phantom running node after the loop settles.
   if (phase !== 'post-gate' || humanGate?.status !== 'running' || !humanGate.detail) return null;
+  const hasLiveReviewAgent = (run.agentContexts ?? []).some((agent) => {
+    const status = String(agent.status ?? '');
+    if (status !== 'launching' && status !== 'working' && status !== 'waiting') return false;
+    const id = String(agent.id ?? '');
+    const role = String(agent.role ?? '');
+    return role === 'self-review' || role === 'self-review-fix' || /^rev/i.test(id);
+  });
+  if (!hasLiveReviewAgent) return null;
   const informal = humanGate.detail.match(
     /running\s+([\w.-]+)\s+re-?review\s*(?:\((\d+)(?:\/(\d+))?\))?/i,
   );
   if (!informal) return null;
   const runner = informal[1];
-  const current = Number(informal[2] || 1);
-  const order = Math.max(1, Number.isFinite(current) ? current : 1);
+  // Layout order is index-based among post-gate nodes; place after existing completed
+  // reviews rather than trusting the detail's loop counter (avoids colliding with order 1).
+  const completedPostGate = (run.engineState?.publishGate?.independentReviews ?? []).filter(
+    (review) => review.source === 'human-gate',
+  ).length;
+  const order = Math.max(1, completedPostGate + 1);
   const id = `${phase}-publication-review-${order}`;
   const step = syntheticStep(id, 'running', runner);
   step.startedAt = humanGate.startedAt;

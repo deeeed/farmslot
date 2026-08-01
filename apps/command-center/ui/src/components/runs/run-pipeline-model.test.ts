@@ -197,7 +197,7 @@ test('computeLayout maps open review issues to failed status (warn tone), not do
   assert.equal(pipelineStepTone(packageRefresh.step), 'warn');
 });
 
-test('computeLayout keeps package-refresh pending during informal claude re-review', () => {
+test('computeLayout keeps package-refresh pending when a review agent is working', () => {
   const run = makeRun({
     status: 'human-gating',
     steps: [
@@ -226,7 +226,6 @@ test('computeLayout keeps package-refresh pending during informal claude re-revi
           requireCrossRunner: false,
           extraLoopsRequested: 1,
         },
-        pendingReviewPlan: [{ order: 1, runner: 'claude', validationDepth: 'static-code' }],
         independentReviews: [
           {
             id: 'independent-review-6',
@@ -249,4 +248,60 @@ test('computeLayout keeps package-refresh pending during informal claude re-revi
   assert.ok(packageRefresh);
   assert.equal(packageRefresh.step.status, 'pending');
   assert.match(packageRefresh.step.detail ?? '', /waiting for review/i);
+});
+
+test('computeLayout does not keep package-refresh pending on sticky re-review detail alone', () => {
+  const run = makeRun({
+    status: 'human-gating',
+    steps: [
+      { name: 'self-review', status: 'done' },
+      { name: 'complete', status: 'done' },
+      {
+        name: 'human-gate',
+        status: 'running',
+        detail: 'Worker fix complete; running claude re-review (2)...',
+      },
+      { name: 'finalize', status: 'pending' },
+    ],
+    agentContexts: [
+      {
+        id: 'rev1-claude',
+        role: 'self-review',
+        status: 'complete',
+        runner: 'claude',
+      } as never,
+    ],
+    engineState: {
+      publishGate: {
+        reviewDepth: {
+          requestedBy: 'human-gate',
+          minimumIndependentReviews: 1,
+          requireCrossRunner: false,
+          extraLoopsRequested: 1,
+        },
+        independentReviews: [
+          {
+            id: 'independent-review-6',
+            source: 'human-gate',
+            runner: 'codex',
+            crossRunner: true,
+            loopNumber: 6,
+            verdict: 'failed',
+            unresolvedCount: 0,
+            validationDepth: 'static-code',
+            completedAt: '2026-08-01T06:29:15.182Z',
+          },
+        ],
+      },
+    },
+  });
+
+  const layout = computeLayout(run);
+  const packageRefresh = layout.nodes.find((node) => node.id === 'package-refresh');
+  const runningReview = layout.nodes.find(
+    (node) => node.id.startsWith('post-gate-publication-review-') && node.step.status === 'running',
+  );
+  assert.ok(packageRefresh);
+  assert.equal(packageRefresh.step.status, 'failed');
+  assert.equal(runningReview, undefined);
 });

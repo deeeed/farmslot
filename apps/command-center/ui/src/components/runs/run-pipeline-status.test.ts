@@ -127,6 +127,7 @@ test('package-refresh stays pending while post-gate re-review or fix is in fligh
   const failedStatuses = ['failed', 'failed'] as const;
   assert.equal(computePackageRefreshStatus(failedStatuses), 'failed');
 
+  // Sticky progress detail alone must NOT keep package-refresh pending after settle.
   assert.equal(
     computePackageRefreshStatus(failedStatuses, {
       steps: [
@@ -136,10 +137,10 @@ test('package-refresh stays pending while post-gate re-review or fix is in fligh
           detail: 'Worker fix complete; running claude re-review (2)...',
         },
       ],
-      agentContexts: [],
+      agentContexts: [{ id: 'rev1-claude', role: 'self-review', status: 'complete' } as never],
       engineState: {},
     }),
-    'pending',
+    'failed',
   );
 
   assert.equal(
@@ -154,13 +155,22 @@ test('package-refresh stays pending while post-gate re-review or fix is in fligh
       agentContexts: [],
       engineState: {},
     }),
-    true,
+    false,
   );
 
   assert.equal(
     computePackageRefreshStatus(failedStatuses, {
       steps: [{ name: 'human-gate', status: 'running', detail: 'waiting' }],
       agentContexts: [{ id: 'rev1-claude', role: 'self-review', status: 'working' } as never],
+      engineState: {},
+    }),
+    'pending',
+  );
+
+  assert.equal(
+    computePackageRefreshStatus(failedStatuses, {
+      steps: [{ name: 'human-gate', status: 'running', detail: 'waiting' }],
+      agentContexts: [{ id: 'rev1-claude', role: 'self-review', status: 'launching' } as never],
       engineState: {},
     }),
     'pending',
