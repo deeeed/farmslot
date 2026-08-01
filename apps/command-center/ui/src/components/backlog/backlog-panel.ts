@@ -1054,7 +1054,7 @@ export class BacklogPanel extends LitElement {
       .notes-field textarea {
         min-height: 180px;
       }
-@media (max-width: 860px) {
+      @media (max-width: 860px) {
         .filter-toolbar {
           position: static;
         }
@@ -2510,15 +2510,15 @@ export class BacklogPanel extends LitElement {
         testId: `backlog-row-${item.sourceRef || item.id}`,
         onActivate: () => this._selectItem(item),
       },
-      cells: html`
-        ${renderPlanningBadge(displayedStatus, tone)}
-        <span data-testid="backlog-flow"
+      cells: [
+        renderPlanningBadge(displayedStatus, tone),
+        html`<span data-testid="backlog-flow"
           >${renderFlowBadge(displayedFlow, flowTitle ? { title: flowTitle } : {})}</span
-        >
-        <span data-testid="backlog-project">${renderPlanningBadge(item.project)}</span>
-        <span class="item-ref" title=${item.sourceRef}>${item.sourceRef}</span>
-        <div class="title" title=${item.title}>${item.title}</div>
-        ${activeRun
+        >`,
+        html`<span data-testid="backlog-project">${renderPlanningBadge(item.project)}</span>`,
+        html`<span class="item-ref" title=${item.sourceRef}>${item.sourceRef}</span>`,
+        html`<div class="title" title=${item.title}>${item.title}</div>`,
+        activeRun
           ? html`<a
               class="activity-link"
               data-testid="backlog-active-run"
@@ -2529,9 +2529,11 @@ export class BacklogPanel extends LitElement {
               ${renderPlanningBadge(activeRun.status, 'active')}
               <span class="activity-slot">${activeRun.slotId ?? activeRun.id.slice(0, 8)}</span>
             </a>`
-          : html`<span class="no-activity">—</span>`}
-        <span class="updated-cell" title=${item.updatedAt}>${item.updatedAt.slice(0, 10)}</span>
-      `,
+          : html`<span class="no-activity">—</span>`,
+        html`<span class="updated-cell" title=${item.updatedAt}
+          >${item.updatedAt.slice(0, 10)}</span
+        >`,
+      ],
     });
   }
 

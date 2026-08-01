@@ -34,17 +34,18 @@ export function renderWorkInventorySortHeader<TSortKey extends string>(options: 
       ? 'ascending'
       : 'descending'
     : 'none';
-  // role=columnheader is the element aria-sort is defined on (not bare buttons).
-  return html`<button
-    class=${active ? 'active' : ''}
-    type="button"
-    role="columnheader"
-    data-testid=${options.testId ?? `work-inventory-sort-${options.columnKey}`}
-    aria-sort=${ariaSort}
-    @click=${() => options.onSort(options.columnKey)}
-  >
-    ${options.label}${arrow}
-  </button>`;
+  // aria-sort lives on columnheader; keep a plain button so AT still hears
+  // an activatable control.
+  return html`<div role="columnheader" aria-sort=${ariaSort}>
+    <button
+      class=${active ? 'active' : ''}
+      type="button"
+      data-testid=${options.testId ?? `work-inventory-sort-${options.columnKey}`}
+      @click=${() => options.onSort(options.columnKey)}
+    >
+      ${options.label}${arrow}
+    </button>
+  </div>`;
 }
 
 export function renderWorkInventoryTableHead<TSortKey extends string>(options: {
@@ -83,7 +84,8 @@ export function renderWorkInventoryTableHead<TSortKey extends string>(options: {
 
 export function renderWorkInventoryRow(options: {
   row: WorkInventoryRowRenderOptions;
-  cells: TemplateResult | Array<TemplateResult | typeof nothing | string>;
+  /** One entry per column track so each becomes a `role="gridcell"`. */
+  cells: ReadonlyArray<TemplateResult | typeof nothing | string>;
 }): TemplateResult {
   const { row, cells } = options;
   const className = [
@@ -112,7 +114,7 @@ export function renderWorkInventoryRow(options: {
       }
     }}
   >
-    ${cells}
+    ${cells.map((cell) => html`<div role="gridcell">${cell}</div>`)}
   </div>`;
 }
 

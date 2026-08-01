@@ -3,7 +3,7 @@ import { resolveRunSlotId, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
-import { sortInventoryRows } from '../shared/work-inventory-table-model.js';
+import { compareInventoryValues, sortInventoryRows } from '../shared/work-inventory-table-model.js';
 
 import { type RunInventorySortKey, runInventorySortValue } from './run-list-inventory.js';
 import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
@@ -107,7 +107,19 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
     case 'flow':
     case 'flow-desc':
     case 'status':
-    case 'status-desc':
+    case 'status-desc': {
+      // Preserve main's recency-aware secondary order (newest first on ties).
+      const inventoryKey = inventoryKeyForSortOption(input.sortBy);
+      const multiplier = input.sortBy.endsWith('-desc') ? -1 : 1;
+      return [...result].sort((a, b) => {
+        const primary = compareInventoryValues(
+          runInventorySortValue(a, inventoryKey),
+          runInventorySortValue(b, inventoryKey),
+        );
+        if (primary !== 0) return primary * multiplier;
+        return b.createdAt.localeCompare(a.createdAt);
+      });
+    }
     case 'ref':
     case 'ref-desc':
     case 'slot':

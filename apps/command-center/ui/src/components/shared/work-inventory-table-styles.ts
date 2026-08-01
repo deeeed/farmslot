@@ -22,6 +22,10 @@ export const workInventoryTableStyles = css`
     gap: 8px;
     grid-template-columns: var(--work-inventory-columns, minmax(0, 1fr));
   }
+  .work-inventory-head > [role='columnheader'],
+  .work-inventory-row > [role='gridcell'] {
+    min-width: 0;
+  }
   .work-inventory-head {
     background: ${unsafeCSS(colors.bgCard)};
     border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}33;
@@ -39,6 +43,7 @@ export const workInventoryTableStyles = css`
     font-size: ${unsafeCSS(fonts.sizeXs)};
     padding: 2px 0;
     text-align: left;
+    width: 100%;
   }
   .work-inventory-head button.active {
     color: ${unsafeCSS(colors.textPrimary)};

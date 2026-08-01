@@ -2094,19 +2094,21 @@ export class RoadmapPanel extends LitElement {
         testId: `roadmap-row-${item.id}`,
         onActivate: () => this._selectItem(item),
       },
-      cells: html`
-        ${renderPlanningBadge(item.stage, statusTone(item.stage))}
-        <span data-testid="roadmap-project">${renderPlanningBadge(item.project)}</span>
-        <span class="item-ref" title=${item.id}>${item.id}</span>
-        <div class="title" title=${item.title}>${item.title}</div>
-        ${item.promotion?.length
+      cells: [
+        renderPlanningBadge(item.stage, statusTone(item.stage)),
+        html`<span data-testid="roadmap-project">${renderPlanningBadge(item.project)}</span>`,
+        html`<span class="item-ref" title=${item.id}>${item.id}</span>`,
+        html`<div class="title" title=${item.title}>${item.title}</div>`,
+        item.promotion?.length
           ? renderPlanningBadge(
               `${item.promotion.length} backlog link${item.promotion.length === 1 ? '' : 's'}`,
               'positive',
             )
-          : html`<span class="muted">—</span>`}
-        <span class="updated-cell" title=${item.updatedAt}>${item.updatedAt.slice(0, 10)}</span>
-      `,
+          : html`<span class="muted">—</span>`,
+        html`<span class="updated-cell" title=${item.updatedAt}
+          >${item.updatedAt.slice(0, 10)}</span
+        >`,
+      ],
     });
   }
 

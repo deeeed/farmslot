@@ -1268,18 +1268,18 @@ export class WorkGraphPanel extends LitElement {
         testId: `work-graph-row-${graph.graph.id}`,
         onActivate: () => this.selectGraph(graph.graph.id),
       },
-      cells: html`
-        <span class=${`badge ${graph.graph.status}`}>${graph.graph.status}</span>
-        <span data-testid="work-graph-project">${graph.graph.project}</span>
-        <span class="item-ref" title=${graph.graph.id}>${graph.graph.id}</span>
-        <div class="title" title=${graph.graph.title}>${graph.graph.title}</div>
-        <span data-testid="work-graph-progress">${stats.progress}%</span>
-        <span data-testid="work-graph-active">${stats.active}</span>
-        <span data-testid="work-graph-blocked">${stats.blocked}</span>
-        <span class="updated-cell" title=${graph.graph.updatedAt}
+      cells: [
+        html`<span class=${`badge ${graph.graph.status}`}>${graph.graph.status}</span>`,
+        html`<span data-testid="work-graph-project">${graph.graph.project}</span>`,
+        html`<span class="item-ref" title=${graph.graph.id}>${graph.graph.id}</span>`,
+        html`<div class="title" title=${graph.graph.title}>${graph.graph.title}</div>`,
+        html`<span data-testid="work-graph-progress">${stats.progress}%</span>`,
+        html`<span data-testid="work-graph-active">${stats.active}</span>`,
+        html`<span data-testid="work-graph-blocked">${stats.blocked}</span>`,
+        html`<span class="updated-cell" title=${graph.graph.updatedAt}
           >${graph.graph.updatedAt.slice(0, 10)}</span
-        >
-      `,
+        >`,
+      ],
     });
   }
 
