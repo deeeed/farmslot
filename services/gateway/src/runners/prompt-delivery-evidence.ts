@@ -8,6 +8,7 @@ import {
   filterHooksByPane,
   parseHookJsonl,
   promptAcceptedFromHooks,
+  promptDigestMatchedFromHooks,
   promptTurnStartedFromHooks,
   readRunnerObservabilityFiles,
   runnerActivityIsBusy,
@@ -164,19 +165,33 @@ export async function probeRunnerHandoffAck(
   const { hooksRaw } = await readRunnerObservabilityFiles(vars);
   const hooks = parseHookJsonl(hooksRaw);
   const digest = runnerPromptDigest(message);
+  const digestMatched = promptDigestMatchedFromHooks(hooks, digest, sinceMs, paneId);
+
+  if (opts.requirePromptDigest) {
+    return digestMatched
+      ? {
+          accepted: true,
+          reason: paneId
+            ? `hook prompt digest matched on pane ${paneId}`
+            : 'hook prompt digest matched',
+          source: 'hook-digest',
+        }
+      : { accepted: false, reason: 'prompt digest did not match handoff evidence' };
+  }
 
   const digestReading = promptAcceptedFromHooks(hooks, digest, sinceMs, 500, Date.now(), paneId);
   if (isObservabilityReadingAuthoritative(digestReading) && digestReading.value === true) {
     return {
       accepted: true,
-      reason: paneId
-        ? `hook prompt digest matched on pane ${paneId}`
-        : 'hook prompt digest matched',
-      source: digestReading.confidence === 'high' ? 'hook-digest' : 'hook-turn',
+      reason: digestMatched
+        ? paneId
+          ? `hook prompt digest matched on pane ${paneId}`
+          : 'hook prompt digest matched'
+        : paneId
+          ? `hook turn started on pane ${paneId}`
+          : 'hook turn started after prompt send',
+      source: digestMatched ? 'hook-digest' : 'hook-turn',
     };
-  }
-  if (opts.requirePromptDigest) {
-    return { accepted: false, reason: 'prompt digest did not match handoff evidence' };
   }
 
   const turnReading = promptTurnStartedFromHooks(hooks, sinceMs, paneId);

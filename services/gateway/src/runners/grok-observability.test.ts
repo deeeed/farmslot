@@ -129,7 +129,7 @@ describe('Grok structured prompt observability', () => {
       const pythonPath = path.join(bin, 'python3');
       await Promise.all([
         writeFile(tmuxPath, "#!/bin/sh\nprintf '111\\n'\n"),
-        writeFile(psPath, "#!/bin/sh\nprintf '111 1\\n222 111\\n'\n"),
+        writeFile(psPath, "#!/bin/sh\nprintf '111 1\\n222 111\\n223 111\\n333 1\\n'\n"),
         writeFile(pythonPath, '#!/bin/sh\nexec /usr/bin/python3 "$@"\n'),
         writeFile(
           activePath,
@@ -185,6 +185,27 @@ describe('Grok structured prompt observability', () => {
       const missingCwd = await runProbe();
       assert.deepEqual(parseGrokPromptSignalProbe(missingCwd.stdout.trim()), {
         status: 'unavailable',
+      });
+
+      await writeFile(
+        activePath,
+        JSON.stringify([{ cwd: repo, pid: 333, session_id: sessionId, opened_at: openedAt }]),
+      );
+      const otherPane = await runProbe();
+      assert.deepEqual(parseGrokPromptSignalProbe(otherPane.stdout.trim()), {
+        status: 'unavailable',
+      });
+
+      await writeFile(
+        activePath,
+        JSON.stringify([
+          { cwd: repo, pid: 222, session_id: sessionId, opened_at: openedAt },
+          { cwd: repo, pid: 223, session_id: 'session-2', opened_at: openedAt },
+        ]),
+      );
+      const ambiguous = await runProbe();
+      assert.deepEqual(parseGrokPromptSignalProbe(ambiguous.stdout.trim()), {
+        status: 'ambiguous',
       });
     } finally {
       await rm(root, { recursive: true, force: true });

@@ -1384,9 +1384,29 @@ async function sendRunnerInstructionWhenPaneClear(
   promptAcceptedSinceMs: number | null,
   logPrefix: string,
 ): Promise<boolean> {
-  if (
-    await runnerHasPendingInstruction(vars, target, runner, message, pane, promptAcceptedSinceMs)
-  ) {
+  const delivery = await resolvePendingInstructionObsFirst(
+    vars,
+    target,
+    runner,
+    message,
+    promptAcceptedSinceMs,
+  );
+  if (delivery.kind === 'delivered') {
+    console.log(`[${logPrefix}] runner-native evidence shows instruction already delivered`);
+    return true;
+  }
+  const hasPending =
+    delivery.kind === 'hook' && delivery.pending
+      ? runnerPaneHasPendingInstruction(pane, message, runner)
+      : await runnerHasPendingInstruction(
+          vars,
+          target,
+          runner,
+          message,
+          pane,
+          promptAcceptedSinceMs,
+        );
+  if (hasPending) {
     const submitted = await submitRunnerInstruction(
       vars,
       target,
@@ -1529,10 +1549,13 @@ export async function runnerHasDurablePromptHandoff(
         reason: `digest-required handoff rejected non-native ${reading.source} activity`,
       };
     }
+    const nativeSignal = reading.source === 'signal';
     return {
       accepted: true,
-      reason: `exact prompt accepted by runner-native ${reading.source} provider`,
-      source: reading.source === 'signal' ? 'native-signal' : 'hook-activity',
+      reason: nativeSignal
+        ? 'exact prompt accepted by runner-native signal provider'
+        : `runner ${reading.source} activity observed after prompt handoff`,
+      source: nativeSignal ? 'native-signal' : 'hook-activity',
     };
   } catch (error) {
     console.warn(
@@ -2124,10 +2147,11 @@ export async function sendRunnerInstructionSafely(
     }
   }
   const deadline = loopStartMs + effectiveTimeoutMs;
+  const deferNativePromptProbe = !def.emitsHookEvents && getRunnerObservability(runner) != null;
   let nativePromptProbeCompleted = false;
   while (Date.now() < deadline) {
     const pendingObs =
-      !def.emitsHookEvents && nativePromptProbeCompleted
+      deferNativePromptProbe && nativePromptProbeCompleted
         ? ({ kind: 'native-deferred' } as const)
         : await resolvePendingInstructionObsFirst(
             vars,
@@ -2136,7 +2160,7 @@ export async function sendRunnerInstructionSafely(
             message,
             promptAcceptedSinceMs,
           );
-    if (!def.emitsHookEvents) nativePromptProbeCompleted = true;
+    if (deferNativePromptProbe) nativePromptProbeCompleted = true;
     if (pendingObs.kind === 'delivered') return true;
     let pane: string | null = null;
     const ensurePane = async (): Promise<string> => {

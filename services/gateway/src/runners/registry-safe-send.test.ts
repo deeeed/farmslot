@@ -450,6 +450,62 @@ test('sendRunnerInstructionSafely bounds native Grok probes while the composer s
   grokPromptAcceptanceBaselineMs = Date.now();
 });
 
+test('sendRunnerInstructionSafely honors native Grok acceptance after a busy wait', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneTextByCapture = ['Working (waiting for tool)', '❯\nctx:12%\n'];
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = 2;
+  grokPromptAcceptanceBaselineMs = 10_000;
+  grokPromptAcceptedAtMs = 10_001;
+
+  const delivered = await sendRunnerInstructionSafely(
+    vars,
+    target,
+    'grok',
+    message,
+    '[test]',
+    2_000,
+  );
+
+  assert.equal(delivered, true);
+  assert.equal(grokPromptAcceptedCalls, 2);
+  assert.equal(
+    callOrder.includes('tmux:send-literal'),
+    false,
+    `the final native recheck must stop a duplicate send; order=${callOrder.join(',')}`,
+  );
+  paneTextByCapture = null;
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  grokPromptAcceptanceBaselineMs = Date.now();
+});
+
+test('sendRunnerInstructionSafely keeps checking a buffered Cursor composer', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneTextByCapture = null;
+  paneText = `❯ ${message}`;
+
+  const delivered = await sendRunnerInstructionSafely(
+    vars,
+    target,
+    'cursor',
+    message,
+    '[test]',
+    50,
+    { forceBusyPoll: true },
+  );
+
+  assert.equal(delivered, true);
+  assert.equal(
+    callOrder.includes('tmux:send-literal'),
+    false,
+    `buffered Cursor text must be submitted, not duplicated; order=${callOrder.join(',')}`,
+  );
+  paneText = '❯\nctx:12%\n';
+});
+
 test('digest-required recovery still accepts native Grok prompt evidence', async () => {
   handoffRequirePromptDigestValues = [];
   grokPromptAcceptedCalls = 0;

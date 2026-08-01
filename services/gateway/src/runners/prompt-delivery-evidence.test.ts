@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,6 +10,7 @@ import {
   promptAcceptedFromHooks,
   promptTurnStartedFromHooks,
 } from './observability-files.js';
+import { runnerPromptDigest } from './observability-prompt-digest.js';
 import {
   buildLaunchAckSignalReadCommand,
   launchAckSignalAdvanced,
@@ -183,6 +184,46 @@ test('task signal proves generic delivery but cannot satisfy digest-required rev
       requirePromptDigest: true,
     });
     assert.equal(digestRequired.accepted, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('digest-required handoff rejects generic hook activity and accepts only the exact digest', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'farmslot-digest-handoff-'));
+  const observabilityDir = join(dir, '.agent', '.observability');
+  const hooksPath = join(observabilityDir, 'hooks.jsonl');
+  const prompt = 'Read SELF-REVIEW.md';
+  const sinceMs = Date.now() - 1_000;
+  const vars = makeVars({ repo: dir, remoteRepo: dir, projectName: 'missing-project-xyz' });
+  try {
+    mkdirSync(observabilityDir, { recursive: true });
+    writeFileSync(
+      hooksPath,
+      `${JSON.stringify({ hook_event_name: 'PreToolUse', observedAt: Date.now(), tmuxPane: '%129' })}\n`,
+    );
+
+    const activityOnly = await probeRunnerHandoffAck(vars, 'unused', prompt, sinceMs, {
+      paneId: '%129',
+      requirePromptDigest: true,
+    });
+    assert.equal(activityOnly.accepted, false);
+
+    writeFileSync(
+      hooksPath,
+      `${JSON.stringify({
+        hook_event_name: 'UserPromptSubmit',
+        observedAt: Date.now(),
+        tmuxPane: '%129',
+        runnerPromptDigest: runnerPromptDigest(prompt),
+      })}\n`,
+    );
+    const exactDigest = await probeRunnerHandoffAck(vars, 'unused', prompt, sinceMs, {
+      paneId: '%129',
+      requirePromptDigest: true,
+    });
+    assert.equal(exactDigest.accepted, true);
+    assert.equal(exactDigest.source, 'hook-digest');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
