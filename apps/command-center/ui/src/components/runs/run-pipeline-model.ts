@@ -1,6 +1,9 @@
 import type { FlowType, Run, RunStep, TaskProgressStructured } from '@farmslot/protocol';
 
-import { publicationReviewVerdictStatus } from './run-pipeline-status.js';
+import {
+  computePackageRefreshStatus,
+  publicationReviewVerdictStatus,
+} from './run-pipeline-status.js';
 
 type UnknownRecord = Record<string, unknown>;
 type PublishGate = NonNullable<NonNullable<Run['engineState']>['publishGate']>;
@@ -336,8 +339,17 @@ export function computeLayout(run: Run): PipelineLayout {
         if (planPos.col > maxCol) maxCol = planPos.col;
       }
       const refreshCol = postGateRefreshCol ?? pos.col + postGateReviewPlan.length + 1;
-      const refreshStatus = postGateRefreshStatus(postGateReviewPlan);
+      const refreshStatus = computePackageRefreshStatus(
+        postGateReviewPlan.map((node) => node.step.status),
+        run,
+      );
       const lastReviewVerdict = postGateLastReviewVerdict(postGateReviewPlan);
+      const refreshDetail =
+        refreshStatus === 'pending'
+          ? 'waiting for review/fix before package rebuild'
+          : refreshStatus === 'failed'
+            ? 'package not ready — last review needs rework'
+            : 'package refresh';
       nodes.push({
         id: 'package-refresh',
         x: colX(refreshCol),
@@ -345,12 +357,17 @@ export function computeLayout(run: Run): PipelineLayout {
         w: MONITOR_W,
         lane: 'post',
         step: {
-          ...syntheticStep('package-refresh', refreshStatus, 'package refresh'),
+          ...syntheticStep('package-refresh', refreshStatus, refreshDetail),
           outputs: lastReviewVerdict ? { lastReviewVerdict } : undefined,
         },
         synthetic: true,
         label: 'package',
-        meta: 'refresh after review',
+        meta:
+          refreshStatus === 'pending'
+            ? 'waiting on review'
+            : refreshStatus === 'failed'
+              ? 'rework needed'
+              : 'refresh after review',
       });
       lanesUsed.add('post');
       if (refreshCol > maxCol) maxCol = refreshCol;
@@ -443,12 +460,6 @@ interface PublicationReviewPlanNode {
   label: string;
   meta: string;
   step: RunStep;
-}
-
-function postGateRefreshStatus(nodes: PublicationReviewPlanNode[]): RunStep['status'] {
-  if (nodes.some((node) => node.step.status === 'running')) return 'pending';
-  if (nodes.some((node) => node.step.status === 'pending')) return 'pending';
-  return nodes.at(-1)?.step.status === 'failed' ? 'failed' : 'done';
 }
 
 function postGateLastReviewVerdict(nodes: PublicationReviewPlanNode[]): string | undefined {
@@ -619,27 +630,53 @@ function activeReviewFromHumanGateDetail(
   const candidates = [selfReview, humanGate].filter(
     (step): step is RunStep => step?.status === 'running' && typeof step.detail === 'string',
   );
-  const carrier = candidates.find((step) =>
+
+  // Canonical: "Running human-gate claude review (1/1)"
+  const formal = candidates.find((step) =>
     step.detail?.match(/Running (dispatch|human-gate) ([\w.-]+) review \((\d+)\/(\d+)\)/i),
   );
-  if (!carrier?.detail) return null;
-  const match = carrier.detail.match(
-    /Running (dispatch|human-gate) ([\w.-]+) review \((\d+)\/(\d+)\)/i,
+  if (formal?.detail) {
+    const match = formal.detail.match(
+      /Running (dispatch|human-gate) ([\w.-]+) review \((\d+)\/(\d+)\)/i,
+    );
+    if (match) {
+      const source = match[1].toLowerCase() === 'human-gate' ? 'human-gate' : 'dispatch';
+      if ((phase === 'post-gate') === (source === 'human-gate')) {
+        const runner = match[2];
+        const current = Number(match[3]);
+        if (Number.isFinite(current) && current > 0) {
+          const order = Math.max(1, current);
+          const id = `${phase}-publication-review-${order}`;
+          const step = syntheticStep(id, 'running', runner);
+          step.startedAt = formal.startedAt;
+          return {
+            id,
+            order,
+            label: phase === 'post-gate' ? `requested ${current}` : `review ${current}`,
+            meta: `${runner} · running`,
+            step,
+          };
+        }
+      }
+    }
+  }
+
+  // Informal human-gate copy: "Worker fix complete; running claude re-review (2)..."
+  if (phase !== 'post-gate' || humanGate?.status !== 'running' || !humanGate.detail) return null;
+  const informal = humanGate.detail.match(
+    /running\s+([\w.-]+)\s+re-?review\s*(?:\((\d+)(?:\/(\d+))?\))?/i,
   );
-  if (!match) return null;
-  const source = match[1].toLowerCase() === 'human-gate' ? 'human-gate' : 'dispatch';
-  if ((phase === 'post-gate') !== (source === 'human-gate')) return null;
-  const runner = match[2];
-  const current = Number(match[3]);
-  if (!Number.isFinite(current) || current <= 0) return null;
-  const order = Math.max(1, current);
+  if (!informal) return null;
+  const runner = informal[1];
+  const current = Number(informal[2] || 1);
+  const order = Math.max(1, Number.isFinite(current) ? current : 1);
   const id = `${phase}-publication-review-${order}`;
   const step = syntheticStep(id, 'running', runner);
-  step.startedAt = carrier.startedAt;
+  step.startedAt = humanGate.startedAt;
   return {
     id,
     order,
-    label: phase === 'post-gate' ? `requested ${current}` : `review ${current}`,
+    label: `requested ${order}`,
     meta: `${runner} · running`,
     step,
   };

@@ -11,6 +11,7 @@ import {
 } from '../../utils/review-gate-display.js';
 
 import {
+  computePackageRefreshStatus,
   pipelineStepTone,
   pipelineToneColor,
   publicationReviewVerdictStatus,
@@ -170,10 +171,8 @@ export class RunPipelineMini extends LitElement {
         const extraReviews = this.reviewSegments('human-gate', 'requested review');
         segments.push(...extraReviews);
         if (extraReviews.length > 0) {
-          // Mirror canvas postGateRefreshStatus + lastReviewVerdict for tone.
-          const anyOpen = extraReviews.some(
-            (s) => s.status === 'running' || s.status === 'pending',
-          );
+          // Shared with canvas: stay pending while re-review/fix is in flight,
+          // even if earlier loops ended in issues/failed.
           const lastReview =
             [...extraReviews].reverse().find((s) => s.outputs?.verdict) ??
             extraReviews[extraReviews.length - 1];
@@ -181,16 +180,22 @@ export class RunPipelineMini extends LitElement {
             typeof lastReview?.outputs?.verdict === 'string'
               ? lastReview.outputs.verdict
               : undefined;
-          const refreshStatus: RunStep['status'] = anyOpen
-            ? 'pending'
-            : lastReview?.status === 'failed'
-              ? 'failed'
-              : 'done';
+          const refreshStatus = computePackageRefreshStatus(
+            extraReviews.map((s) => s.status),
+            this.run,
+          );
           segments.push({
             name: 'package refresh',
             status: refreshStatus,
-            title: 'package refresh: rebuild package after requested review',
+            title:
+              refreshStatus === 'pending'
+                ? 'package refresh: waiting for review/fix before rebuild'
+                : 'package refresh: rebuild package after requested review',
             outputs: lastVerdict ? { lastReviewVerdict: lastVerdict } : undefined,
+            detail:
+              refreshStatus === 'pending'
+                ? 'waiting for review/fix before package rebuild'
+                : undefined,
           });
         }
       }
