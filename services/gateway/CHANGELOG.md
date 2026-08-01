@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(work-graph): reclaim `waiting` nodes when the backlog item is ready and the run/queue are gone, and retry stale completed-enqueue ledger entries for `waiting` as well as `ready`, so fail+delete no longer leaves Dispatch stuck reporting upstream wait with an empty `waitingOn`.
 - fix(dispatch): prepare profile is explicit-only — queue dispatch, FIND_SLOT, resource eligibility, and branch-affinity nudge no longer apply `detectProfileFit` suggestions; `dispatch.preview` may still attach a non-binding `profileFit` UI hint; empty prepare resolves to `project.prepare.default` (MANUAL-000088).
 - feat(recipe): validate structured run summaries and failure attribution when packaging recipe evidence.
 - fix(runners): reactivate retained event-driven sessions through the runner capability by preflighting exact persisted state, resuming with the next prompt in argv, and verifying its hook digest, without parsing TUI glyphs.

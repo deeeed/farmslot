@@ -718,11 +718,19 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
     // otherwise the node stays permanently un-dispatchable. `gated` matters
     // particularly because the scheduler tick skips nodes already in that state,
     // so nothing else would ever re-evaluate it.
+    //
+    // `waiting` is included for the same orphan path: after fail + run delete the
+    // node can remain `waiting` with an empty waitingOn and a completed enqueue
+    // ledger entry. Without reclaim, stale-enqueue retry requires status `ready`
+    // and never fires, so Dispatch reports "still waiting on upstream" forever.
+    // Reclaim to ready; this tick's computeWaiting re-applies `waiting` if start
+    // edges are still unsatisfied.
     (node.status === 'failed' ||
       node.status === 'needs-attention' ||
       node.status === 'queued' ||
       node.status === 'running' ||
       node.status === 'gated' ||
+      node.status === 'waiting' ||
       // `succeeded` belongs here, but only when the node HELD a run that has
       // since gone. Deleting a run leaves its node succeeded and nothing else
       // reconsiders it, so reopening the backlog item and dispatching did
@@ -1008,12 +1016,15 @@ async function executeNodeUnlock(
   );
   if (completedEntry) {
     backfillSchedulerAuthorization(snapshot, node);
+    // `waiting` with no queue/run is the post-delete stuck shape before reclaim
+    // (or if reclaim missed a tick). Same retry as ready: clear the ledger key
+    // and re-enqueue.
     const retryableStaleEnqueue =
       actionKind === 'enqueue' &&
       !existingQueue &&
       !existingRun &&
       backlogItem?.status === 'ready' &&
-      node.status === 'ready';
+      (node.status === 'ready' || node.status === 'waiting');
     if (!retryableStaleEnqueue) return;
     snapshot.ledger = snapshot.ledger.filter((entry) => entry.key !== actionKey);
   }
