@@ -7,6 +7,7 @@ import {
   filterHooksByPane,
   filterStatuslineByPane,
   lastTurnCompletedFromHooks,
+  OBSERVABILITY_DIGEST_TAIL_BYTES,
   parseHookJsonl,
   parseStatuslineJson,
   promptAcceptedFromHooks,
@@ -15,8 +16,12 @@ import {
 } from './observability-files.js';
 import type { RunnerObservability, SlotVars } from './observability-types.js';
 
-async function loadObservabilitySnapshot(vars: SlotVars, target: string) {
-  const { hooksRaw, hooksTailComplete, statuslineRaw } = await readRunnerObservabilityFiles(vars);
+async function loadObservabilitySnapshot(vars: SlotVars, target: string, hooksTailBytes?: number) {
+  const { hooksRaw, hooksTailComplete, statuslineRaw } = await readRunnerObservabilityFiles(
+    vars,
+    vars.remoteRepo,
+    hooksTailBytes,
+  );
   const paneId = await resolveTmuxPaneId(vars, target);
   const allHooks = parseHookJsonl(hooksRaw);
   const hooks = filterHooksByPane(allHooks, paneId);
@@ -59,7 +64,13 @@ export const claudeHookObservability: RunnerObservability = {
   },
 
   async promptDigestAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {
-    const { allHooks, hooksTailComplete, paneId } = await loadObservabilitySnapshot(vars, target);
+    // This long-window idempotency lookup runs once per stale-idle recovery attempt. Read both
+    // retained generations so busy workers are not limited by the 64 KiB hot polling tail.
+    const { allHooks, hooksTailComplete, paneId } = await loadObservabilitySnapshot(
+      vars,
+      target,
+      OBSERVABILITY_DIGEST_TAIL_BYTES,
+    );
     return promptDigestAcceptedFromHooks(
       allHooks,
       promptDigest,

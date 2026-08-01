@@ -4,7 +4,9 @@ export function paneShowsBusyComposer(pane) {
     /tab to queue message/i.test(pane) ||
     /Working \(/i.test(pane) ||
     /background terminal running/i.test(pane) ||
-    /[·*•✶]\s*Composing[…\.]/i.test(pane)
+    /(?:^|\n)\s*(?:·|[✻✢✽✶✷✸✹✺✼✣∗])\s*Composing[…\.](?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*(?:\n|$)/iu.test(
+      pane,
+    )
   );
 }
 

@@ -65,7 +65,7 @@ test('deriveRunnerActivity treats an idle notification after Stop as terminal id
       { hook_event_name: 'Stop', observedAt: NOW - 70_000 },
       {
         hook_event_name: 'Notification',
-        notification_type: 'idle_prompt',
+        notification_message: 'Claude is waiting for your input',
         observedAt: NOW - 1_000,
       },
     ],
@@ -103,7 +103,6 @@ test('deriveRunnerActivity does not treat an unrelated notification as idle', ()
       { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 2_000 },
       {
         hook_event_name: 'Notification',
-        notification_type: 'permission_prompt',
         notification_message: 'Claude needs permission to use Bash',
         observedAt: NOW - 1_000,
       },
@@ -118,7 +117,7 @@ test('deriveRunnerActivity preserves stale terminal idle as low-confidence last-
   const reading = deriveRunnerActivity(
     [
       { hook_event_name: 'Stop', observedAt: NOW - 240_000 },
-      // Hook logs written before the installer persisted notification_type have this legacy
+      // Hook logs written before the installer persisted notification messages have this legacy
       // shape. A notification after a completed turn represents Claude's idle prompt there.
       { hook_event_name: 'Notification', observedAt: NOW - 180_000 },
     ],

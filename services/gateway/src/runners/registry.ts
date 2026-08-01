@@ -870,7 +870,9 @@ export function paneShowsBusyComposer(pane: string): boolean {
     /tab to queue message/i.test(pane) ||
     /Working \(/i.test(pane) ||
     /background terminal running/i.test(pane) ||
-    /[✻✢✽✶✷✸✹✺✼✣∗]\s*Composing[…\.]/iu.test(pane)
+    /(?:^|\n)\s*(?:·|[✻✢✽✶✷✸✹✺✼✣∗])\s*Composing[…\.](?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*(?:\n|$)/iu.test(
+      pane,
+    )
   );
 }
 
@@ -886,15 +888,13 @@ function lineShowsClaudeOrCodexProgress(line: string): boolean {
   );
 }
 
+const CLAUDE_SPINNER_FRAME =
+  /^\s*[✻✢✽✶✷✸✹✺✼✣∗]\s+(?:Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating|Herding|Compacting(?: conversation)?|Herding files)[^\n(]*?[…\.]{1,3}(?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*$/iu;
+const CLAUDE_AMBIGUOUS_SPINNER_FRAME =
+  /^\s*[·*]\s+(?:Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating|Herding|Compacting(?: conversation)?|Herding files)[^\n(]*?[…\.]{1,3}\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\)\s*$/iu;
+
 function lineShowsClaudeSpinnerFrame(line: string): boolean {
-  return (
-    /^\s*[✻✢✽✶✷✸✹✺✼✣∗]\s+[^\n(]+?[…\.]{1,3}(?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*$/iu.test(
-      line,
-    ) ||
-    /^\s*[·*]\s+[^\n(]+?[…\.]{1,3}\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\)\s*$/iu.test(
-      line,
-    )
-  );
+  return CLAUDE_SPINNER_FRAME.test(line) || CLAUDE_AMBIGUOUS_SPINNER_FRAME.test(line);
 }
 
 /**

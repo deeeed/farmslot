@@ -13,6 +13,8 @@ import type {
 
 export const OBSERVABILITY_SIGNAL_FRESH_MS = 120_000;
 export const OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS = 30 * 60_000;
+const OBSERVABILITY_HOOK_TAIL_BYTES = 65_536;
+export const OBSERVABILITY_DIGEST_TAIL_BYTES = 10 * 1024 * 1024;
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 
@@ -125,11 +127,7 @@ export function deriveRunnerActivity(
         (lastComposing == null || lastComposing.observedAt < lastTurnStop.observedAt) &&
         (lastPreToolUse == null ||
           (lastPostToolUseAt != null && lastPostToolUseAt >= lastPreToolUse.observedAt));
-      if (
-        record.notification_type === 'idle_prompt' ||
-        notificationIndicatesIdle ||
-        (!record.notification_type && !notificationMessage && turnWasIdle)
-      ) {
+      if (notificationIndicatesIdle || (!notificationMessage && turnWasIdle)) {
         lastIdleNotification = { observedAt };
       } else {
         lastComposing = { observedAt };
@@ -302,6 +300,7 @@ export async function runnerObservabilityDirForSlot(vars: SlotVars): Promise<str
 export async function readRunnerObservabilityFiles(
   vars: SlotVars,
   repoPath = vars.remoteRepo,
+  hooksTailBytes = OBSERVABILITY_HOOK_TAIL_BYTES,
 ): Promise<{ hooksRaw: string; hooksTailComplete: boolean; statuslineRaw: string }> {
   const obsDir = shellQuote(await runnerObservabilityDirForSlot({ ...vars, remoteRepo: repoPath }));
   const hooksPath = `${obsDir}/hooks.jsonl`;
@@ -309,7 +308,7 @@ export async function readRunnerObservabilityFiles(
   const [hooksResult, statuslineResult] = await Promise.all([
     execOnSlot(
       vars,
-      `{ cat ${hooksPath}.1 2>/dev/null || true; cat ${hooksPath} 2>/dev/null || true; } | tail -c 65536`,
+      `{ tail -c ${hooksTailBytes} ${hooksPath}.1 2>/dev/null || true; tail -c ${hooksTailBytes} ${hooksPath} 2>/dev/null || true; } | tail -c ${hooksTailBytes}`,
     ),
     execOnSlot(vars, `cat ${statuslinePath} 2>/dev/null || true`),
   ]);
@@ -318,7 +317,7 @@ export async function readRunnerObservabilityFiles(
     // An exact-size tail may be truncated, so only a shorter read proves the combined retained
     // history was read in full. This lets short/fresh logs answer long-window digest lookups while
     // exact-size tails remain fail-closed.
-    hooksTailComplete: Buffer.byteLength(hooksResult.stdout, 'utf8') < 65_536,
+    hooksTailComplete: Buffer.byteLength(hooksResult.stdout, 'utf8') < hooksTailBytes,
     statuslineRaw: statuslineResult.stdout,
   };
 }

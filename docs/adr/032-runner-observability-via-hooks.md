@@ -101,8 +101,10 @@ All "Hook JSONL" rows below are written by **Farmslot-owned hook scripts** decla
 A whole-turn idle event older than the normal freshness window may recover a retained Claude
 worker for at most 30 minutes. Before sending, the gateway requires an exact prompt-digest lookup
 whose retained JSONL tail covers that full window, then positively confirms that the live composer
-is empty. Missing window coverage or an unverified composer holds the send for operator attention;
-generic tool or turn activity never substitutes for the digest match.
+is empty. The digest lookup reads up to 10 MiB across `hooks.jsonl.1` and the current file; hot
+activity polling remains capped at 64 KiB. Missing window coverage or an unverified composer holds
+the send for operator attention; generic tool or turn activity never substitutes for the digest
+match.
 
 ### Addendum: checklist timing stays task-owned (2026-06-25)
 
@@ -148,7 +150,10 @@ Hook files and statusline JSON are written by **Farmslot's hook scripts** (shipp
 SIGNAL.json (existing)     # extended with phase: busy|idle|done
 ```
 
-`hooks.jsonl` rotates when it exceeds 5 MB (rename → `.1`, truncate). `statusline.json` is atomically replaced (write-temp-then-rename) so a reader never observes a half-written object.
+`hooks.jsonl` rotates when it exceeds 5 MB (rename → `.1`, truncate). A later rotation overwrites
+that single `.1` generation, so long-window readers must verify timestamp coverage and fail closed
+when the retained pair no longer reaches the requested boundary. `statusline.json` is atomically
+replaced (write-temp-then-rename) so a reader never observes a half-written object.
 
 ### Gateway integration
 

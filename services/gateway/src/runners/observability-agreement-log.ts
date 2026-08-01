@@ -18,6 +18,8 @@ export interface ObservabilityAgreementAggregate {
    * independently of `hookBusy`, so degraded holds recorded mid-loop still register.
    */
   wouldConsultPane: number;
+  /** Guarded sends that recovered from a recent stale terminal-idle signal. */
+  recoveredAfterStaleIdle: number;
   disagreementReasons: Record<string, number>;
 }
 
@@ -102,8 +104,10 @@ export function aggregateAgreementEntries(
   let disagreed = 0;
   let hookUnavailable = 0;
   let wouldConsultPane = 0;
+  let recoveredAfterStaleIdle = 0;
   for (const entry of entries) {
     if (entry.wouldConsultPane === true) wouldConsultPane += 1;
+    if (entry.recoveryOutcome === 'sent-after-stale-idle') recoveredAfterStaleIdle += 1;
     if (entry.hookBusy == null) {
       hookUnavailable += 1;
       continue;
@@ -121,6 +125,7 @@ export function aggregateAgreementEntries(
     disagreed,
     hookUnavailable,
     wouldConsultPane,
+    recoveredAfterStaleIdle,
     disagreementReasons,
   };
 }
