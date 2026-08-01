@@ -34,9 +34,11 @@ export function renderWorkInventorySortHeader<TSortKey extends string>(options: 
       ? 'ascending'
       : 'descending'
     : 'none';
+  // role=columnheader is the element aria-sort is defined on (not bare buttons).
   return html`<button
     class=${active ? 'active' : ''}
     type="button"
+    role="columnheader"
     data-testid=${options.testId ?? `work-inventory-sort-${options.columnKey}`}
     aria-sort=${ariaSort}
     @click=${() => options.onSort(options.columnKey)}
@@ -61,7 +63,10 @@ export function renderWorkInventoryTableHead<TSortKey extends string>(options: {
     ${options.leadingCells ?? nothing}
     ${options.columns.map((column) => {
       if (column.sortable === false) {
-        return html`<span class="col-label" data-testid=${column.testId ?? nothing}
+        return html`<span
+          class="col-label"
+          role="columnheader"
+          data-testid=${column.testId ?? nothing}
           >${column.label}</span
         >`;
       }
@@ -91,11 +96,11 @@ export function renderWorkInventoryRow(options: {
     .join(' ');
   return html`<div
     class=${className}
-    role="button"
+    role="row"
     tabindex=${row.disabled ? -1 : 0}
     data-testid=${row.testId ?? `work-inventory-row-${row.id}`}
     data-row-id=${row.id}
-    aria-pressed=${row.selected ? 'true' : 'false'}
+    aria-selected=${row.selected ? 'true' : 'false'}
     @click=${() => {
       if (!row.disabled) row.onActivate();
     }}
@@ -129,6 +134,7 @@ export function renderWorkInventoryTable(options: {
   >
     <div
       class="work-inventory-table"
+      role="grid"
       style=${`--work-inventory-columns:${columnsStyle}; min-width:${minWidth}`}
     >
       ${options.head}

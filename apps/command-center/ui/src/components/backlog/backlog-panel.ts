@@ -769,36 +769,16 @@ export class BacklogPanel extends LitElement {
       .launch-row .wide {
         grid-column: span 2;
       }
-      .backlog-table {
-        min-width: 1040px;
-      }
+      /* Column tracks come from --work-inventory-columns on the shared shell.
+         Do not hardcode a second grid here or the TS column widths go dead. */
       .compact-row,
-      .table-head {
+      .table-head,
+      .work-inventory-head,
+      .work-inventory-row {
         align-items: center;
         display: grid;
         gap: 8px;
-        grid-template-columns: 92px 58px minmax(130px, 180px) 112px minmax(220px, 1fr) 210px 86px;
-      }
-      .table-head {
-        background: ${unsafeCSS(colors.bgCard)};
-        border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}33;
-        padding: 3px 8px 6px;
-        position: sticky;
-        top: 0;
-        z-index: 1;
-      }
-      .table-head button {
-        background: transparent;
-        border: 0;
-        color: ${unsafeCSS(colors.textMuted)};
-        cursor: pointer;
-        font-family: inherit;
-        font-size: ${unsafeCSS(fonts.sizeXs)};
-        padding: 2px 0;
-        text-align: left;
-      }
-      .table-head button.active {
-        color: ${unsafeCSS(colors.textPrimary)};
+        grid-template-columns: var(--work-inventory-columns);
       }
       .compact-row {
         background: ${unsafeCSS(colors.bgSurface)};
@@ -906,16 +886,6 @@ export class BacklogPanel extends LitElement {
       .empty {
         color: ${unsafeCSS(colors.textMuted)};
         padding: ${unsafeCSS(spacing.md)};
-      }
-      .main-area {
-        display: grid;
-        flex: 1 1 auto;
-        gap: ${unsafeCSS(spacing.sm)};
-        grid-template-columns: minmax(0, 1fr);
-        min-height: 0;
-      }
-      .main-area.has-detail {
-        grid-template-columns: minmax(0, 1.55fr) minmax(280px, 1fr);
       }
       .list-panel {
         border: 1px solid ${unsafeCSS(colors.textMuted)}22;
@@ -1085,9 +1055,6 @@ export class BacklogPanel extends LitElement {
         min-height: 180px;
       }
       @media (max-width: 1450px) {
-        .main-area.has-detail {
-          grid-template-columns: 1fr;
-        }
       }
       @media (max-width: 860px) {
         .filter-toolbar {

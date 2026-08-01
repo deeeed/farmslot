@@ -288,12 +288,9 @@ export const runListStyles = css`
     padding: ${unsafeCSS(spacing.xl)} 0;
     text-align: center;
   }
-  .runs-table,
   .work-inventory-table {
     min-width: 1100px;
   }
-  .run-table-head,
-  .run-card,
   .work-inventory-head,
   .work-inventory-row.run-card {
     display: grid;
@@ -316,6 +313,36 @@ export const runListStyles = css`
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .run-row-affordances {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    min-width: 0;
+  }
+  .run-row-affordances .summary,
+  .run-row-affordances .step-detail {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .run-row-affordances .inline-action {
+    background: transparent;
+    border: 1px solid ${unsafeCSS(colors.statusWarn)}66;
+    border-radius: 3px;
+    color: ${unsafeCSS(colors.statusWarn)};
+    cursor: pointer;
+    font: inherit;
+    font-size: 10px;
+    padding: 1px 6px;
+  }
+  .run-row-affordances .ext-link {
+    color: ${unsafeCSS(colors.accent)};
+    font-size: 10px;
   }
   .run-table-head {
     align-items: center;

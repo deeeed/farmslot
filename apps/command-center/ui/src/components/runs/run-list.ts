@@ -12,7 +12,12 @@ import type {
   RunListResult,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
-import { Methods, normalizeRunTags, resolveRunSlotId } from '@farmslot/protocol';
+import {
+  Methods,
+  normalizeRunTags,
+  resolveRunSlotId,
+  summarizeRunEvidence,
+} from '@farmslot/protocol';
 
 import './run-pipeline-mini.js';
 import './run-tag-editor.js';
@@ -20,7 +25,7 @@ import '../shared/hydrating-placeholder.js';
 import '../queue/dispatch-queue-panel.js';
 
 import { gateway } from '../../gateway-client.js';
-import { getState, isHydrating, subscribe } from '../../state.js';
+import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import {
@@ -41,7 +46,7 @@ import {
   RUN_INVENTORY_COLUMNS,
   type RunInventorySortKey,
 } from './run-list-inventory.js';
-import { filterRunList, TERMINAL_STATUSES } from './run-list-model.js';
+import { filterRunList, runGradeColor, TERMINAL_STATUSES } from './run-list-model.js';
 import {
   FLOW_OPTIONS,
   LANE_OPTIONS,
@@ -57,6 +62,8 @@ import {
 } from './run-list-summary-renderers.js';
 import {
   canCompareRuns,
+  dispositionColor,
+  dispositionLabel,
   elapsed,
   eligibilityColor,
   eligibilityLabel,
@@ -605,17 +612,29 @@ export class RunList extends RunListState {
     const engine = resolveRunEngine(run);
     const slotId = resolveRunSlotId(run);
     const pipelineLabel = compactRunPipelineLabel(run);
+    const disposition = dispositionLabel(run.metrics.disposition);
+    const evidenceSummary = summarizeRunEvidence(run);
+    const hasAutoRecoveryAttempt =
+      run.recoveryAttempts?.some((a) => a.triggeredBy === 'auto-recovery') ?? false;
+    const showStopAutoRecovery =
+      run.recoveryProposal?.status === 'auto-in-progress' ||
+      (run.status === 'failed' &&
+        !run.autoRecoveryDisabled &&
+        (hasAutoRecoveryAttempt || Boolean(run.recoveryProposal)));
     const runnerLabel = engine.model
       ? `${engine.runner ?? 'runner'}/${engine.model}`
       : (engine.runner ?? '—');
+    const runningDetail = run.steps.find((s) => s.status === 'running')?.detail;
     return html`
       <div
         class="work-inventory-row run-card ${showCheckbox ? 'with-selector' : ''} ${isSelected
           ? 'selected'
           : ''} ${this.manageMode ? 'manage-mode' : ''}"
-        role="button"
+        role="row"
         tabindex="0"
         data-testid=${`runs-row-${run.id}`}
+        data-row-id=${run.id}
+        aria-selected=${isSelected ? 'true' : 'false'}
         @click=${() => {
           this.manageMode ? this.toggleSelectId(run.id) : (location.hash = routeForRun(run));
         }}
@@ -673,6 +692,52 @@ export class RunList extends RunListState {
             .flowType=${run.flowType}
           ></run-pipeline-mini>
           <span class="pipeline-label">${pipelineLabel}</span>
+          <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
+            ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
+            <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>
+            ${disposition
+              ? html`<span
+                  class="badge status-badge"
+                  style="--status-color:${dispositionColor(run.metrics.disposition)}"
+                  >${disposition}</span
+                >`
+              : nothing}
+            ${run.humanGrade
+              ? html`<span
+                  class="badge status-badge"
+                  style="--status-color:${runGradeColor(run.humanGrade.recipe_semantic)}"
+                  >${run.humanGrade.recipe_semantic}</span
+                >`
+              : nothing}
+            ${run.engineState?.intelligenceAuditDegraded
+              ? html`<span class="badge status-badge" style="--status-color:${colors.statusWarn}"
+                  >audit degraded</span
+                >`
+              : nothing}
+            ${isPrLinkageMissing(run)
+              ? html`<button
+                  class="inline-action"
+                  type="button"
+                  title="Re-run PR lookup and kick CI watch"
+                  @click=${() => this._rescueLinkage(run.id)}
+                >
+                  PR missing
+                </button>`
+              : nothing}
+            ${showStopAutoRecovery
+              ? html`<button
+                  class="inline-action"
+                  type="button"
+                  @click=${() => this._stopAutoRecovery(run.id)}
+                >
+                  Stop auto-recovering
+                </button>`
+              : nothing}
+            ${runningDetail ? html`<span class="step-detail">${runningDetail}</span>` : nothing}
+            ${run.summary
+              ? html`<span class="summary" title=${run.summary}>${run.summary}</span>`
+              : nothing}
+          </div>
         </div>
       </div>
     `;

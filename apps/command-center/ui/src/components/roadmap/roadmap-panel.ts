@@ -321,18 +321,6 @@ export class RoadmapPanel extends LitElement {
         gap: ${unsafeCSS(spacing.sm)};
         align-items: flex-start;
       }
-      .layout {
-        display: grid;
-        grid-template-columns: minmax(640px, 1.5fr) minmax(360px, 1fr);
-        gap: ${unsafeCSS(spacing.md)};
-        align-items: start;
-        min-height: 0;
-      }
-      @media (max-width: 1350px) {
-        .layout {
-          grid-template-columns: 1fr;
-        }
-      }
       h1,
       h2,
       h3,
@@ -439,23 +427,15 @@ export class RoadmapPanel extends LitElement {
         gap: 4px;
         overflow-x: auto;
       }
-      .roadmap-table {
-        min-width: 820px;
-      }
+      /* Column tracks come from --work-inventory-columns on the shared shell. */
       .row,
-      .table-head {
+      .table-head,
+      .work-inventory-head,
+      .work-inventory-row {
         align-items: center;
         display: grid;
         gap: 8px;
-        grid-template-columns: 84px minmax(110px, 160px) 118px minmax(260px, 1fr) 112px 86px;
-      }
-      .table-head {
-        background: ${unsafeCSS(colors.bgCard)};
-        border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}33;
-        padding: 3px 8px 6px;
-        position: sticky;
-        top: 0;
-        z-index: 1;
+        grid-template-columns: var(--work-inventory-columns);
       }
       .table-head button {
         background: transparent;

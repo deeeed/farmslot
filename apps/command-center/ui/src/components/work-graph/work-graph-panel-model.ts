@@ -119,6 +119,16 @@ export function resolveWorkGraphHashSelection(options: {
   rawNodeId?: string;
   nodeExists?: (graphId: string, nodeId: string) => boolean;
 }): { selectedGraphId: string; selectedNodeKey: string; changed: boolean } {
+  // While graphs are still hydrating, keep the raw URL selection intact so a
+  // microtask rewrite cannot delete deep-link params before data arrives.
+  if (options.filteredGraphIds.length === 0) {
+    const rawNodeId = options.rawNodeId?.trim() ?? '';
+    return {
+      selectedGraphId: options.rawGraphId,
+      selectedNodeKey: options.rawGraphId && rawNodeId ? `${options.rawGraphId}:${rawNodeId}` : '',
+      changed: false,
+    };
+  }
   const { selectedId, autoSelected } = resolveWorkGraphSelection(
     options.filteredGraphIds,
     options.rawGraphId,

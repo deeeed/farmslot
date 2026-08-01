@@ -74,8 +74,7 @@ export function resolveSelectedRowId(
 ): string {
   if (selectedId && rowIds.includes(selectedId)) return selectedId;
   if (options.autoSelectSingle && rowIds.length === 1) return rowIds[0] ?? '';
-  if (selectedId && !rowIds.includes(selectedId)) return '';
-  return selectedId && rowIds.includes(selectedId) ? selectedId : '';
+  return '';
 }
 
 /** Enter/Space activate a focused inventory row (not pointer-only). */

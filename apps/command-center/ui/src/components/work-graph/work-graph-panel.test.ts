@@ -53,6 +53,23 @@ test('work-graph hash selection drops graphs outside the filtered project set', 
   assert.equal(resolved.changed, true);
 });
 
+test('deep-link graph id is preserved until the filtered graph set hydrates', () => {
+  const beforeData = resolveWorkGraphHashSelection({
+    filteredGraphIds: [],
+    rawGraphId: 'wg_inventory-graph-proof-b',
+    rawNodeId: '',
+  });
+  assert.equal(beforeData.selectedGraphId, 'wg_inventory-graph-proof-b');
+  assert.equal(beforeData.changed, false);
+  const afterData = resolveWorkGraphHashSelection({
+    filteredGraphIds: ['wg_inventory-graph-proof-a', 'wg_inventory-graph-proof-b'],
+    rawGraphId: 'wg_inventory-graph-proof-b',
+    rawNodeId: '',
+  });
+  assert.equal(afterData.selectedGraphId, 'wg_inventory-graph-proof-b');
+  assert.equal(afterData.changed, false);
+});
+
 test('work-graph hash selection keeps node only when it belongs to the resolved graph', () => {
   const ok = resolveWorkGraphHashSelection({
     filteredGraphIds: ['wg_a', 'wg_b'],

@@ -162,6 +162,7 @@ export class WorkGraphPanel extends LitElement {
   }
 
   private sync(state: AppState) {
+    const hadNoActiveGraphs = this.activeGraphs().length === 0;
     this.graphs = state.workGraphs;
     this.backlogItems = state.backlogItems;
     this.queueItems = state.queueItems;
@@ -169,6 +170,11 @@ export class WorkGraphPanel extends LitElement {
     this.slots = state.fleet?.slots ?? [];
     this.globalFilters = state.globalFilters;
     const graphs = this.activeGraphs();
+    // First hydrate after empty: re-apply hash so deep links survive the
+    // connectedCallback → applyUrlStateFromHash path that ran with no graphs.
+    if (hadNoActiveGraphs && graphs.length > 0) {
+      this.applyUrlStateFromHash();
+    }
     const projects = new Set(graphs.map((graph) => graph.graph.project));
     if (this.selectedProject && !projects.has(this.selectedProject)) this.selectedProject = '';
     const filtered = this.selectedProject
@@ -210,6 +216,15 @@ export class WorkGraphPanel extends LitElement {
     this.selectedProject = params.get(WORK_GRAPH_PROJECT_PARAM)?.trim() ?? '';
     const rawGraphId = params.get(WORK_GRAPH_GRAPH_PARAM)?.trim() ?? '';
     const rawNodeId = params.get(WORK_GRAPH_NODE_PARAM)?.trim() ?? '';
+    const sort = parseWorkInventorySort(params, WORK_GRAPH_SORT_URL);
+    this.sortKey = sort.key;
+    this.sortDirection = sort.direction;
+    // Before graphs hydrate, keep raw URL selection and never rewrite the hash.
+    if (this.activeGraphs().length === 0) {
+      this.selectedGraphId = rawGraphId;
+      this.selectedNodeKey = rawGraphId && rawNodeId ? `${rawGraphId}:${rawNodeId}` : '';
+      return;
+    }
     const filtered = this.filteredActiveGraphs();
     const resolved = resolveWorkGraphHashSelection({
       filteredGraphIds: filtered.map((graph) => graph.graph.id),
@@ -224,10 +239,7 @@ export class WorkGraphPanel extends LitElement {
     });
     this.selectedGraphId = resolved.selectedGraphId;
     this.selectedNodeKey = resolved.selectedNodeKey;
-    const sort = parseWorkInventorySort(params, WORK_GRAPH_SORT_URL);
-    this.sortKey = sort.key;
-    this.sortDirection = sort.direction;
-    // Rewrite hash when the URL carried a graph outside the filtered set.
+    // Rewrite hash only when the URL carried a graph outside the filtered set.
     if (resolved.changed) queueMicrotask(() => this.writeUrlState());
   }
 

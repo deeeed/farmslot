@@ -6,6 +6,7 @@ import type { WorkGraphProjection } from '@farmslot/protocol';
 import { inventoryRetainsListAffordance } from '../shared/work-inventory-table.js';
 
 import {
+  resolveWorkGraphHashSelection,
   resolveWorkGraphSelection,
   sortWorkGraphInventory,
   workGraphInventoryStats,
@@ -106,4 +107,15 @@ test('project filter selection drops graphs outside the filtered set', () => {
   assert.equal(stale.autoSelected, true);
   const multi = resolveWorkGraphSelection(['a', 'b'], 'other-project-graph');
   assert.equal(multi.selectedId, '');
+});
+
+test('hash selection while graphs are empty keeps raw deep-link ids (no rewrite)', () => {
+  const pending = resolveWorkGraphHashSelection({
+    filteredGraphIds: [],
+    rawGraphId: 'wg_inventory-graph-proof-b',
+    rawNodeId: 'node-1',
+  });
+  assert.equal(pending.selectedGraphId, 'wg_inventory-graph-proof-b');
+  assert.equal(pending.selectedNodeKey, 'wg_inventory-graph-proof-b:node-1');
+  assert.equal(pending.changed, false);
 });
