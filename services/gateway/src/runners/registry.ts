@@ -132,8 +132,8 @@ export interface RunnerDefinition {
   /**
    * How runner activity and composer liveness are observed. Event-driven runners
    * use structured activity signals; pane-only runners use tmux capture; none
-   * skips activity reads. Exact prompt-acceptance evidence is an orthogonal
-   * provider capability, so a pane-backed runner such as Grok may still expose it.
+   * skips activity reads. A runner may still require the generic pane fallback
+   * when its structured signal is temporarily unknown.
    */
   observabilityScope: ObservabilityScope;
   /** Post-send hook heartbeat window for degraded-mode detection (ADR-032). Null skips check. */
@@ -290,7 +290,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_GROK_MODEL,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
-    observabilityScope: 'pane-only',
+    observabilityScope: 'event-driven',
   },
   opencode: {
     id: 'opencode',
@@ -1334,36 +1334,6 @@ async function resolvePendingInstructionObsFirst(
   }
 }
 
-async function runnerHasPendingInstruction(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  target: string,
-  runner: string,
-  message: string,
-  pane: string,
-  sinceMs: number | null,
-): Promise<boolean> {
-  const panePending = runnerPaneHasPendingInstruction(pane, message, runner);
-  const observability = getRunnerObservability(runner);
-  if (!observability) return panePending;
-  if (sinceMs == null) return panePending;
-  try {
-    const reading = await observability.promptAccepted(
-      vars,
-      target,
-      runnerPromptDigest(message),
-      sinceMs,
-      undefined,
-      message,
-    );
-    return selectPendingFromObservabilityAndPane(reading, panePending).pending;
-  } catch (error) {
-    console.warn(
-      `[runner-observability] promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
-    );
-    return panePending;
-  }
-}
-
 type HookBusyDecision = { kind: 'hook'; busy: boolean } | { kind: 'fallback' };
 
 async function sendRunnerInstructionWhenPaneClear(
@@ -1389,14 +1359,7 @@ async function sendRunnerInstructionWhenPaneClear(
   const hasPending =
     delivery.kind === 'hook'
       ? runnerPaneHasPendingInstruction(pane, message, runner)
-      : await runnerHasPendingInstruction(
-          vars,
-          target,
-          runner,
-          message,
-          pane,
-          promptAcceptedSinceMs,
-        );
+      : runnerPaneHasPendingInstruction(pane, message, runner);
   if (hasPending) {
     const submitted = await submitRunnerInstruction(
       vars,
@@ -1503,20 +1466,19 @@ export async function runnerHasDurablePromptHandoff(
     promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
-  const def = getRunnerDefinition(runner);
-  const paneId =
-    def.observabilityScope === 'event-driven' ? await resolveTmuxPaneId(vars, target) : null;
+  const observability = getRunnerObservability(runner);
+  const usesNativePromptAcceptance = observability?.capturePromptAcceptanceBaseline !== undefined;
+  const paneId = usesNativePromptAcceptance ? null : await resolveTmuxPaneId(vars, target);
   const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
     paneId,
     launchAckSignalPath: opts.launchAckSignalPath,
     launchAckBaseline: opts.launchAckBaseline,
     requirePromptDigest: opts.requirePromptDigest,
-    preferHooks: def.observabilityScope === 'event-driven',
+    preferHooks: !usesNativePromptAcceptance,
   });
   if (handoff.accepted) {
     return handoff;
   }
-  const observability = getRunnerObservability(runner);
   if (!observability) return { accepted: false, reason: 'no runner observability provider' };
   const promptAcceptedSinceMs =
     opts.promptAcceptanceBaselineMs === undefined ? sinceMs : opts.promptAcceptanceBaselineMs;
@@ -2064,10 +2026,12 @@ export async function sendRunnerInstructionSafely(
   // exact-text history is not: an identical operator nudge may be intentional,
   // so only a native acceptance from this send call can suppress it.
   const hookPromptAcceptedSinceMs = computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
-  const promptAcceptedSinceMs =
-    def.observabilityScope === 'event-driven'
-      ? hookPromptAcceptedSinceMs
-      : await captureRunnerPromptAcceptanceBaseline(vars, target, runner, loopStartMs);
+  const promptAcceptedSinceMs = await captureRunnerPromptAcceptanceBaseline(
+    vars,
+    target,
+    runner,
+    hookPromptAcceptedSinceMs,
+  );
   // ADR-032 Phase 3: hook-capable runners that don't need the busy-composer poll (Claude) resolve
   // the decision from hooks only. Runners that require the poll (Codex) take the pane-fallback path
   // below.
@@ -2144,7 +2108,7 @@ export async function sendRunnerInstructionSafely(
   // the composer remains busy; sendRunnerInstructionWhenPaneClear performs
   // the required final native recheck immediately before any fresh send.
   const deferNativePromptProbe =
-    def.observabilityScope !== 'event-driven' && getRunnerObservability(runner) != null;
+    getRunnerObservability(runner)?.capturePromptAcceptanceBaseline !== undefined;
   let nativePromptProbeCompleted = false;
   while (Date.now() < deadline) {
     const pendingObs =
@@ -2183,17 +2147,7 @@ export async function sendRunnerInstructionSafely(
       }
     } else if (pendingObs.kind === 'fallback') {
       const captured = await ensurePane();
-      const hasPending =
-        def.observabilityScope === 'event-driven'
-          ? await runnerHasPendingInstruction(
-              vars,
-              target,
-              runner,
-              message,
-              captured,
-              promptAcceptedSinceMs,
-            )
-          : runnerPaneHasPendingInstruction(captured, message, runner);
+      const hasPending = runnerPaneHasPendingInstruction(captured, message, runner);
       if (hasPending) {
         return (
           (await submitRunnerInstruction(

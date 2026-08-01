@@ -110,12 +110,9 @@ export async function readLaunchAckSignalSnapshot(
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      // SIGNAL.json can be observed between truncate and rename/write completion.
-      return { raw, status: null, mtimeNs };
-    }
-    throw error;
+  } catch {
+    // SIGNAL.json can be observed between truncate and rename/write completion.
+    return { raw, status: null, mtimeNs };
   }
   const normalized = normalizeWorkerSignal(parsed);
   return {

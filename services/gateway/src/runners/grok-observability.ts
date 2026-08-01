@@ -6,7 +6,7 @@ type GrokPromptSignalProbe =
   | {
       status: 'matched';
       promptAcceptedAt: number | null;
-      activity: Extract<RunnerActivity, 'idle' | 'composing' | 'tool-running'>;
+      activity: Extract<RunnerActivity, 'idle' | 'composing' | 'tool-running' | 'unknown'>;
       activityAt: number;
     }
   | { status: 'unavailable' | 'ambiguous' };
@@ -30,7 +30,8 @@ export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
     (value.promptAcceptedAt !== null && typeof value.promptAcceptedAt !== 'number') ||
     (value.activity !== 'idle' &&
       value.activity !== 'composing' &&
-      value.activity !== 'tool-running') ||
+      value.activity !== 'tool-running' &&
+      value.activity !== 'unknown') ||
     typeof value.activityAt !== 'number'
   ) {
     throw new Error(`Invalid Grok prompt signal probe: ${raw}`);
@@ -52,6 +53,7 @@ async function probeGrokPromptSignal(
   const result = await execOnSlot(
     vars,
     buildGrokPromptSignalProbeCommand(vars, target, sinceMs, promptText),
+    { timeout: 10_000 },
   );
   if (result.exitCode !== 0) {
     throw new Error(
@@ -65,6 +67,7 @@ async function readGrokClockMs(vars: SlotVars): Promise<number> {
   const result = await execOnSlot(
     vars,
     `python3 -c 'import time; print(time.time_ns() // 1000000)'`,
+    { timeout: 10_000 },
   );
   if (result.exitCode !== 0) {
     throw new Error(
@@ -234,9 +237,12 @@ for message in read_jsonl_tail(chat_path):
     if latest_user is None or prompt_index > latest_user['prompt_index']:
         latest_user = {'prompt_index': prompt_index, 'text': ''.join(texts)}
 
-if latest_start is None or (latest_end is not None and latest_end >= latest_start['at']):
+if latest_start is None:
+    activity = 'unknown'
+    activity_at = candidate['opened_at_ms']
+elif latest_end is not None and latest_end >= latest_start['at']:
     activity = 'idle'
-    activity_at = max(latest_end or 0, candidate['opened_at_ms'])
+    activity_at = latest_end
 elif (
     latest_tool_start is not None
     and latest_tool_start >= latest_start['at']

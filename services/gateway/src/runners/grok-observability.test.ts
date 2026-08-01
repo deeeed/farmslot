@@ -66,6 +66,22 @@ describe('Grok structured prompt observability', () => {
     });
   });
 
+  it('does not claim the runner is idle before its first turn event', async () => {
+    const observability = createGrokLogObservability(async () => ({
+      status: 'matched',
+      promptAcceptedAt: null,
+      activity: 'unknown',
+      activityAt: 1300,
+    }));
+
+    assert.deepEqual(await observability.getActivity(makeVars(), 'core-3:bugfix'), {
+      value: 'unknown',
+      source: 'signal',
+      confidence: 'high',
+      observedAt: 1300,
+    });
+  });
+
   it('captures the provider clock for prompt acceptance cutoffs', async () => {
     const observability = createGrokLogObservability(
       async () => ({

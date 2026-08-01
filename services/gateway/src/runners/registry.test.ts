@@ -1049,7 +1049,7 @@ describe('grok runner', () => {
     assert.equal(runnerSupportsTmuxNudges('grok'), true);
     assert.equal(runnerContinueCommand('grok'), null);
     assert.equal(getRunnerDefinition('grok').requiresBusyComposerPoll, true);
-    assert.equal(getRunnerDefinition('grok').observabilityScope, 'pane-only');
+    assert.equal(getRunnerDefinition('grok').observabilityScope, 'event-driven');
     assert.equal(runnerPersistsSessionFiles('grok'), true);
   });
 
@@ -1497,14 +1497,14 @@ describe('buildLaunchCommand', () => {
   });
 
   describe('ADR-032 phase 2 safe-send timeouts', () => {
-    it('uses hook timeout only for runners that emit hook events', () => {
+    it('uses signal timeout for event-driven runners', () => {
       assert.equal(resolveSafeSendTimeoutMs('claude'), RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS);
       assert.equal(resolveSafeSendTimeoutMs('codex'), RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS);
+      assert.equal(resolveSafeSendTimeoutMs('grok'), RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS);
     });
 
     it('uses pane timeout for pane-backed runners', () => {
       assert.equal(resolveSafeSendTimeoutMs('cursor'), RUNNER_PANE_SAFE_SEND_TIMEOUT_MS);
-      assert.equal(resolveSafeSendTimeoutMs('grok'), RUNNER_PANE_SAFE_SEND_TIMEOUT_MS);
     });
   });
 
@@ -1522,7 +1522,7 @@ describe('buildLaunchCommand', () => {
     });
 
     it('keeps Grok on the pane fallback while retaining its native signal provider', () => {
-      assert.equal(getRunnerDefinition('grok').observabilityScope, 'pane-only');
+      assert.equal(getRunnerDefinition('grok').observabilityScope, 'event-driven');
       assert.equal(getRunnerDefinition('grok').requiresBusyComposerPoll, true);
       assert.ok(getRunnerObservability('grok'));
       assert.equal(isRunnerPaneRetired('grok'), false);
