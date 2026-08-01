@@ -1048,7 +1048,8 @@ describe('grok runner', () => {
     assert.equal(runnerSupportsInteractivePrompt('grok'), true);
     assert.equal(runnerSupportsTmuxNudges('grok'), true);
     assert.equal(runnerContinueCommand('grok'), null);
-    assert.equal(getRunnerDefinition('grok').requiresBusyComposerPoll, false);
+    assert.equal(getRunnerDefinition('grok').requiresBusyComposerPoll, true);
+    assert.equal(getRunnerDefinition('grok').observabilityScope, 'event-driven');
     assert.equal(runnerPersistsSessionFiles('grok'), true);
   });
 
@@ -1496,13 +1497,13 @@ describe('buildLaunchCommand', () => {
   });
 
   describe('ADR-032 phase 2 safe-send timeouts', () => {
-    it('uses hook timeout for event-driven runners with observability', () => {
+    it('uses signal timeout for event-driven runners', () => {
       assert.equal(resolveSafeSendTimeoutMs('claude'), RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS);
       assert.equal(resolveSafeSendTimeoutMs('codex'), RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS);
+      assert.equal(resolveSafeSendTimeoutMs('grok'), RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS);
     });
 
-    it('uses pane timeout for pane-only runners', () => {
-      assert.equal(resolveSafeSendTimeoutMs('grok'), RUNNER_PANE_SAFE_SEND_TIMEOUT_MS);
+    it('uses pane timeout for pane-backed runners', () => {
       assert.equal(resolveSafeSendTimeoutMs('cursor'), RUNNER_PANE_SAFE_SEND_TIMEOUT_MS);
     });
   });
@@ -1520,9 +1521,14 @@ describe('buildLaunchCommand', () => {
       assert.equal(isRunnerPaneRetired('codex'), false);
     });
 
-    it('never retires pane-only or observability-less runners', () => {
-      // grok/cursor are pane-only (no hook provider); opencode/none have no observability at all.
+    it('keeps Grok on the pane fallback while retaining its native signal provider', () => {
+      assert.equal(getRunnerDefinition('grok').observabilityScope, 'event-driven');
+      assert.equal(getRunnerDefinition('grok').requiresBusyComposerPoll, true);
+      assert.ok(getRunnerObservability('grok'));
       assert.equal(isRunnerPaneRetired('grok'), false);
+    });
+
+    it('never retires pane-only or observability-less runners', () => {
       assert.equal(isRunnerPaneRetired('cursor'), false);
       assert.equal(isRunnerPaneRetired('opencode'), false);
       assert.equal(isRunnerPaneRetired('none'), false);

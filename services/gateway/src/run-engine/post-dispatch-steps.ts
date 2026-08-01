@@ -9,7 +9,6 @@ import {
   type ReadyGatePrPackage,
   type ReviewLoopRequest,
   type Run,
-  type RunDecision,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -53,7 +52,11 @@ import {
 } from './publication-policy.js';
 import { verifyWorkerPushedBranch } from './push-verification.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
-import { automaticPublicationReviewPlan, remainingExplicitReviewPlan } from './review-plan.js';
+import {
+  automaticPublicationReviewPlan,
+  remainingExplicitReviewPlan,
+  resolveHumanGateReviewExecutionPlan,
+} from './review-plan.js';
 import { type MonitorResult, monitorRun, probeWorkerSignalForRun } from './run-monitor.js';
 
 interface StepIO {
@@ -98,15 +101,10 @@ export interface PostDispatchStepContext {
     flowType: Run['flowType'],
     mode: Run['mode'],
   ) => Promise<boolean>;
-  latestResolvedHumanGateDecision: (
-    decisions: RunDecision[],
-    approvalOnly?: boolean,
-  ) => RunDecision | undefined;
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
   executeSelfReviewForRun?: typeof executeSelfReview;
   probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
   refreshRunLinks: (runId: string) => Promise<void>;
-  reviewPlanFromSelection: (selection: RunDecision['selectionData']) => ReviewLoopRequest[];
   stepPartialIO: Map<string, StepIO>;
 }
 
@@ -610,8 +608,6 @@ export async function executeHumanGateStep(
     executeReviewGate,
     getDiffStat,
     isHumanGateEnabled,
-    latestResolvedHumanGateDecision,
-    reviewPlanFromSelection,
   } = context;
   const current = getRun(runId)!;
   const gateType = current.flowType === 'review-pr' ? 'review' : 'ready';
@@ -813,12 +809,17 @@ export async function executeHumanGateStep(
           );
         }
         const beforeReviewPlan = getRun(runId)!;
-        const latestGateDecision = latestResolvedHumanGateDecision(getRun(runId)!.decisions, true);
         const reviewedPackage = await readReadyGatePreparedPackage(beforeReviewPlan);
-        const pendingPlan = beforeReviewPlan.engineState?.publishGate?.pendingReviewPlan ?? [];
-        const plan = pendingPlan.length
-          ? pendingPlan
-          : reviewPlanFromSelection(latestGateDecision?.selectionData);
+        // Prefer the latest request-extra-review / request-cross-runner-review
+        // decision's selectionData over a stale pending plan. Pending alone
+        // previously won, so a second request that changed runner (claude→codex)
+        // could still launch the old runner. Approval-only decision lookup was
+        // also wrong as a fallback — it never sees review-request decisions.
+        const plan = resolveHumanGateReviewExecutionPlan({
+          gateAction,
+          pendingPlan: beforeReviewPlan.engineState?.publishGate?.pendingReviewPlan ?? [],
+          decisions: beforeReviewPlan.decisions ?? [],
+        });
         const remainingBudget = Math.max(0, MAX_PUBLISH_GATE_REVIEW_LOOPS - reviewRequestLoops);
         const boundedPlan = plan.slice(0, remainingBudget);
         if (!boundedPlan.length) {

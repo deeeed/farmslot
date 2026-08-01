@@ -86,14 +86,12 @@ test('executeSelfReviewStep honors a persisted update-branch skip signal', async
     getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
     interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
     isHumanGateEnabled: async () => false,
-    latestResolvedHumanGateDecision: () => undefined,
     monitorTerminalError: ({ reason }) => new Error(reason),
     probeWorkerSignalForRun: async () => {
       probeCalls += 1;
       throw new Error('persisted decision must avoid a redundant slot probe');
     },
     refreshRunLinks: async () => {},
-    reviewPlanFromSelection: () => [],
     stepPartialIO: new Map(),
   });
 
@@ -182,7 +180,6 @@ test('executeSelfReviewStep honors the slot signal probe fallback', async (t) =>
     getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
     interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
     isHumanGateEnabled: async () => false,
-    latestResolvedHumanGateDecision: () => undefined,
     monitorTerminalError: ({ reason }) => new Error(reason),
     probeWorkerSignalForRun: async () => {
       probeCalls += 1;
@@ -199,7 +196,6 @@ test('executeSelfReviewStep honors the slot signal probe fallback', async (t) =>
       };
     },
     refreshRunLinks: async () => {},
-    reviewPlanFromSelection: () => [],
     stepPartialIO: new Map(),
   });
 
@@ -244,7 +240,6 @@ test('executeSelfReviewStep proceeds when the slot signal probe cannot approve a
     getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
     interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
     isHumanGateEnabled: async () => false,
-    latestResolvedHumanGateDecision: () => undefined,
     monitorTerminalError: ({ reason }) => new Error(reason),
     probeWorkerSignalForRun: async () => ({
       ok: false,
@@ -252,7 +247,6 @@ test('executeSelfReviewStep proceeds when the slot signal probe cannot approve a
       message: 'signal missing',
     }),
     refreshRunLinks: async () => {},
-    reviewPlanFromSelection: () => [],
     stepPartialIO: new Map(),
   });
 
@@ -307,10 +301,8 @@ test('human-gate can approve a prepared local-first package when slot was detach
     getDiffStat: async () => ({ files: 1, additions: 2, deletions: 0 }),
     interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
     isHumanGateEnabled: async () => true,
-    latestResolvedHumanGateDecision: () => undefined,
     monitorTerminalError: ({ reason }) => new Error(reason),
     refreshRunLinks: async () => {},
-    reviewPlanFromSelection: () => [],
     stepPartialIO: new Map(),
   });
 
@@ -347,10 +339,8 @@ test('review-pr always presents its publication gate in autonomous mode', async 
     getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
     interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
     isHumanGateEnabled: async () => false,
-    latestResolvedHumanGateDecision: () => undefined,
     monitorTerminalError: ({ reason }) => new Error(reason),
     refreshRunLinks: async () => {},
-    reviewPlanFromSelection: () => [],
     stepPartialIO: new Map(),
   });
 
@@ -535,10 +525,8 @@ test('executeSelfReviewStep skips eval packages with review axis none', async (t
     getDiffStat: async () => ({ files: 0, additions: 0, deletions: 0 }),
     interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
     isHumanGateEnabled: async () => false,
-    latestResolvedHumanGateDecision: () => undefined,
     monitorTerminalError: ({ reason }) => new Error(reason),
     refreshRunLinks: async () => {},
-    reviewPlanFromSelection: () => [],
     stepPartialIO: new Map(),
   });
 

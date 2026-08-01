@@ -349,6 +349,23 @@ export function filterHooksByPane(
   return hooks.filter((record) => !record.tmuxPane || record.tmuxPane === paneId);
 }
 
+export function promptDigestMatchedFromHooks(
+  hooks: readonly HookRecord[],
+  promptDigest: string,
+  sinceMs: number,
+  paneId?: string | null,
+): boolean {
+  return filterHooksByPane(hooks, paneId).some((record) => {
+    if (hookEventName(record) !== 'UserPromptSubmit') return false;
+    const observedAt = observedAtFromRecord(record);
+    if (observedAt == null || observedAt < sinceMs) return false;
+    const digest = record.runnerPromptDigest;
+    return (
+      typeof digest === 'string' && (digest === promptDigest || digest.startsWith(promptDigest))
+    );
+  });
+}
+
 export function promptTurnStartedFromHooks(
   hooks: readonly HookRecord[],
   sinceMs: number,

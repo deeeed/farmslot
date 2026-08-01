@@ -4,7 +4,7 @@ title: Finish a worker run
 
 # Finish a worker run
 
-Short checklist for **template authors**, **workers**, and **standalone skill runs** (e.g. MetaMask agentic skills under `consensys-skills/domains/agentic/skills`, or `@farmslot/skills` installed in a repo). The **same finish shape** works inside and outside Farmslot.
+Short checklist for **template authors**, **workers**, and **standalone skill runs** (e.g. agent skills vendored in your own skills repository checkout, or `@farmslot/skills` installed in a repo). The **same finish shape** works inside and outside Farmslot.
 
 **Per-flow artifact list:** [Worker artifacts by flow](worker-artifacts-by-flow.md)
 
@@ -39,12 +39,14 @@ The finish contract is **not Farmslot-specific**. It is a small, portable conven
 
 ```bash
 # Standalone (skills-only) — no gateway, no slot
-.agents/skills/mms-recipe-dev/scripts/init-checklist.sh --platform mobile --slug my-task
-# → temp/tasks/recipe-dev/<timestamp>-my-task/
-cd temp/tasks/recipe-dev/...
-./mark start
-./mark 1
-./mark complete --mark-last
+mkdir -p temp/tasks/my-task/artifacts
+# write TASK.md with `- [ ]` steps, then install the task-local shim
+farmslot-agent install-mark temp/tasks/my-task
+cd temp/tasks/my-task
+# no gateway means no checklist-target.json, so name the checklist explicitly
+./mark --checklist TASK.md start
+./mark --checklist TASK.md 1
+./mark --checklist TASK.md complete --mark-last
 ```
 
 ```bash

@@ -33,10 +33,10 @@ PR-producing flows use **`pr-description.md`** as the single outcome artifact (i
 
 ### Standalone recipe skills (no Farmslot dispatch)
 
-`recipe-dev` and `recipe-fix-ticket` under consensys-skills typically **do not** open a PR automatically. They use:
+Recipe-authoring skills such as `recipe-dev` and `recipe-fix-ticket`, run from your own skills repository checkout, typically **do not** open a PR automatically. They use:
 
 - `artifacts/learnings.md` — always
-- `artifacts/report.md` — short run summary for the human reviewer (no `pr-description.md` unless you later open a PR via `/mms-recipe-evidence`)
+- `artifacts/report.md` — short run summary for the human reviewer (no `pr-description.md` unless you later open a PR with your skills repository's PR-evidence skill)
 
 When the same run is later imported into Farmslot or promoted to a farm worker flow, rename or copy into `pr-description.md` if publishing.
 

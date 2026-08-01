@@ -55,6 +55,12 @@ export interface RunnerObservability {
   getContextPct(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
   activeTool(vars: SlotVars, target: string): Promise<ObservabilityReading<string> | null>;
   lastTurnCompletedAt(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
+  /**
+   * Capture the provider's own clock immediately before prompt delivery. Native
+   * session histories must compare against this baseline instead of the
+   * gateway clock because fleet nodes can be skewed.
+   */
+  capturePromptAcceptanceBaseline?(vars: SlotVars, target: string): Promise<number>;
   promptAccepted(
     vars: SlotVars,
     target: string,
@@ -64,6 +70,8 @@ export interface RunnerObservability {
     // (non-authoritative → degrade/hold) instead of main's medium-`false`. Default false keeps
     // Phase-2 flag-off behavior byte-identical.
     paneRetired?: boolean,
+    /** Exact prompt text for native providers whose session protocol exposes it. */
+    promptText?: string,
   ): Promise<ObservabilityReading<boolean> | null>;
   /**
    * Durable delivery state for one persisted runner session. Unlike transient

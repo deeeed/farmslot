@@ -30,7 +30,16 @@ const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
 let paneCaptureCount = 0;
 let paneClearsAfterSubmit = true;
+let paneTextByCapture: string[] | null = null;
 let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
+let acceptDigestHandoff = false;
+let launchAckSnapshotReads = 0;
+let grokPromptAcceptedCalls = 0;
+let grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+let grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+let grokPromptAcceptanceBaselineMs = Date.now();
+let grokActivityReads = 0;
+let grokActivitySequence: RunnerActivity[] = ['idle'];
 
 mock.module('./claude-observability.js', {
   namedExports: {
@@ -59,6 +68,56 @@ mock.module('./claude-observability.js', {
   },
 });
 
+mock.module('./grok-observability.js', {
+  namedExports: {
+    grokLogObservability: {
+      async getActivity() {
+        const index = Math.min(grokActivityReads, grokActivitySequence.length - 1);
+        grokActivityReads += 1;
+        return {
+          value: grokActivitySequence[index] ?? 'idle',
+          source: 'signal',
+          confidence: 'high',
+          observedAt: Date.now(),
+        };
+      },
+      async getContextPct() {
+        return null;
+      },
+      async activeTool() {
+        return null;
+      },
+      async lastTurnCompletedAt() {
+        return null;
+      },
+      async capturePromptAcceptanceBaseline() {
+        callOrder.push('grok:baseline');
+        return grokPromptAcceptanceBaselineMs;
+      },
+      async promptAccepted(
+        _vars: SlotVars,
+        _target: string,
+        _promptDigest: string,
+        sinceMs: number,
+      ) {
+        grokPromptAcceptedCalls += 1;
+        const accepted =
+          grokPromptAcceptedCalls >= grokPromptAcceptedAfterCall &&
+          grokPromptAcceptedAtMs >= sinceMs;
+        return {
+          value: accepted,
+          source: 'signal',
+          confidence: accepted ? 'high' : 'medium',
+          observedAt: accepted ? grokPromptAcceptedAtMs : Date.now(),
+        };
+      },
+      async getSessionDeliveryState() {
+        return null;
+      },
+    },
+  },
+});
+
 mock.module('../core/exec.js', {
   namedExports: {
     isLocal: () => true,
@@ -70,6 +129,10 @@ mock.module('../core/exec.js', {
       if (cmd.includes('capture-pane')) {
         callOrder.push('pane:capture');
         paneCaptureCount += 1;
+        const scriptedPane = paneTextByCapture?.[paneCaptureCount - 1];
+        if (scriptedPane !== undefined) {
+          return { exitCode: 0, stdout: scriptedPane, stderr: '' };
+        }
         // Captures 1-2 show the scenario pane (decision + submit pre-check);
         // later captures model the composer clearing after a submit key —
         // unless a test pins paneClearsAfterSubmit=false to model a stuck buffer.
@@ -89,8 +152,8 @@ mock.module('../core/exec.js', {
         if (cmd.includes(' -l ')) callOrder.push('tmux:send-literal');
         return { exitCode: 0, stdout: '', stderr: '' };
       }
-      if (cmd.includes('python3 -')) {
-        callOrder.push('sentinel:write');
+      if (cmd.includes("python3 - <<'PY'")) {
+        callOrder.push('python:write');
         return { exitCode: 0, stdout: '', stderr: '' };
       }
       if (cmd.includes('hooks.jsonl') || cmd.includes('stat -')) {
@@ -103,6 +166,10 @@ mock.module('../core/exec.js', {
 
 mock.module('./prompt-delivery-evidence.js', {
   namedExports: {
+    readLaunchAckSignalSnapshot: async () => {
+      launchAckSnapshotReads += 1;
+      return { raw: null, status: null, mtimeNs: '0' };
+    },
     probeRunnerHandoffAck: async (
       _slotVars: SlotVars,
       _target: string,
@@ -111,13 +178,24 @@ mock.module('./prompt-delivery-evidence.js', {
       opts: { requirePromptDigest?: boolean } = {},
     ) => {
       handoffRequirePromptDigestValues.push(opts.requirePromptDigest);
+      if (acceptDigestHandoff && opts.requirePromptDigest) {
+        return {
+          accepted: true,
+          reason: 'mocked exact prompt digest',
+          source: 'hook-digest',
+        };
+      }
       return { accepted: false, reason: 'mocked handoff miss' };
     },
   },
 });
 
-const { resolvePrimaryWorkerTarget, sendRunnerInstructionSafely, sendRunnerPostLaunchPrompt } =
-  await import('./registry.js');
+const {
+  resolvePrimaryWorkerTarget,
+  runnerHasDurablePromptHandoff,
+  sendRunnerInstructionSafely,
+  sendRunnerPostLaunchPrompt,
+} = await import('./registry.js');
 
 test('sendRunnerInstructionSafely consults observability before pane on hook-authoritative idle', async () => {
   callOrder.length = 0;
@@ -185,6 +263,7 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
 
   handoffRequirePromptDigestValues = [];
   paneCaptureCount = 0;
+  acceptDigestHandoff = true;
 
   await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'SELF-REVIEW.md', '[test]', {
     readyTimeoutMs: 100,
@@ -199,6 +278,272 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
     handoffRequirePromptDigestValues.some((value) => value === true),
     'self-review sends can require prompt digest explicitly',
   );
+  acceptDigestHandoff = false;
+});
+
+test('sendRunnerPostLaunchPrompt honors an explicit null launch-ack baseline', async () => {
+  launchAckSnapshotReads = 0;
+  promptAcceptedReading = {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+    launchAckSignalPath: '/tmp/SIGNAL.json',
+    launchAckBaseline: null,
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 0,
+    verifyWaitMs: 0,
+    maxAttempts: 1,
+  });
+
+  assert.equal(launchAckSnapshotReads, 0);
+});
+
+test('sendRunnerPostLaunchPrompt rechecks delayed Grok acceptance before retrying', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  paneText = '';
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  paneTextByCapture = null;
+  // First pre-send probe and first post-send verification miss. The retry probe sees
+  // the delayed native prompt-history record and must not type the task a second time.
+  grokPromptAcceptedAfterCall = 4;
+
+  await sendRunnerPostLaunchPrompt(vars, target, 'grok', message, 'TASK.md', '[test]', {
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 0,
+    verifyWaitMs: 0,
+    maxAttempts: 2,
+  });
+
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send-literal').length,
+    1,
+    `delayed native acceptance must prevent duplicate typing; order=${callOrder.join(',')}`,
+  );
+  assert.equal(grokPromptAcceptedCalls, 4, 'the second attempt must observe native acceptance');
+  paneClearsAfterSubmit = true;
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+});
+
+test('sendRunnerPostLaunchPrompt does not treat native idle state as exact delivery', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  paneText = '';
+  paneTextByCapture = null;
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAfterCall = 3;
+
+  await sendRunnerPostLaunchPrompt(vars, target, 'grok', message, 'TASK.md', '[test]', {
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 0,
+    verifyWaitMs: 0,
+    maxAttempts: 1,
+  });
+
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send-literal').length,
+    1,
+    `native idle state must not substitute for exact prompt acceptance; order=${callOrder.join(',')}`,
+  );
+  paneTextByCapture = null;
+  paneClearsAfterSubmit = true;
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+});
+
+test('sendRunnerInstructionSafely stops after exact native Grok acceptance', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneTextByCapture = null;
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = 1;
+  grokPromptAcceptanceBaselineMs = 10_000;
+  grokPromptAcceptedAtMs = 10_001;
+
+  const delivered = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 50);
+
+  assert.equal(delivered, true);
+  assert.ok(grokPromptAcceptedCalls >= 1);
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send-literal').length,
+    0,
+    `an exact native match must not resend the instruction; order=${callOrder.join(',')}`,
+  );
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  grokPromptAcceptanceBaselineMs = Date.now();
+});
+
+test('sendRunnerInstructionSafely does not suppress an intentional identical Grok resend', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneTextByCapture = null;
+  paneText = '';
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = 1;
+  grokPromptAcceptanceBaselineMs = 10_000;
+  grokPromptAcceptedAtMs = 9_000;
+
+  const delivered = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 50);
+
+  assert.equal(delivered, true);
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `acceptance before this send call must not swallow an intentional resend; order=${callOrder.join(',')}`,
+  );
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  grokPromptAcceptanceBaselineMs = Date.now();
+});
+
+test('sendRunnerInstructionSafely uses the remote Grok clock baseline', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneTextByCapture = null;
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = 1;
+  grokPromptAcceptanceBaselineMs = 1_000;
+  grokPromptAcceptedAtMs = 1_001;
+
+  const delivered = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 50);
+
+  assert.equal(delivered, true);
+  assert.ok(callOrder.includes('grok:baseline'));
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send-literal').length,
+    0,
+    `remote acceptance after the remote baseline must prevent a duplicate send; order=${callOrder.join(',')}`,
+  );
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  grokPromptAcceptanceBaselineMs = Date.now();
+});
+
+test('sendRunnerInstructionSafely bounds native Grok probes while the composer stays busy', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneTextByCapture = null;
+  paneText = '';
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptanceBaselineMs = 10_000;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  grokActivityReads = 0;
+  grokActivitySequence = ['tool-running'];
+
+  const delivered = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 50);
+
+  assert.equal(delivered, false);
+  assert.equal(grokPromptAcceptedCalls, 1, 'busy polling must not repeatedly scan Grok history');
+  assert.equal(callOrder.includes('tmux:send-literal'), false);
+  grokPromptAcceptanceBaselineMs = Date.now();
+});
+
+test('sendRunnerInstructionSafely honors native Grok acceptance after a busy wait', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneTextByCapture = null;
+  paneText = '';
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = 2;
+  grokPromptAcceptanceBaselineMs = 10_000;
+  grokPromptAcceptedAtMs = 10_001;
+  grokActivityReads = 0;
+  grokActivitySequence = ['tool-running', 'idle'];
+
+  const delivered = await sendRunnerInstructionSafely(
+    vars,
+    target,
+    'grok',
+    message,
+    '[test]',
+    2_000,
+  );
+
+  assert.equal(delivered, true);
+  assert.equal(grokPromptAcceptedCalls, 2);
+  assert.equal(
+    callOrder.includes('tmux:send-literal'),
+    false,
+    `the final native recheck must stop a duplicate send; order=${callOrder.join(',')}`,
+  );
+  paneTextByCapture = null;
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  grokPromptAcceptanceBaselineMs = Date.now();
+});
+
+test('sendRunnerInstructionSafely keeps checking a buffered Cursor composer', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneTextByCapture = null;
+  paneText = `❯ ${message}`;
+
+  const delivered = await sendRunnerInstructionSafely(
+    vars,
+    target,
+    'cursor',
+    message,
+    '[test]',
+    50,
+    { forceBusyPoll: true },
+  );
+
+  assert.equal(delivered, true);
+  assert.equal(
+    callOrder.includes('tmux:send-literal'),
+    false,
+    `buffered Cursor text must be submitted, not duplicated; order=${callOrder.join(',')}`,
+  );
+  paneText = '❯\nctx:12%\n';
+});
+
+test('digest-required recovery still accepts native Grok prompt evidence', async () => {
+  handoffRequirePromptDigestValues = [];
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = 1;
+  grokPromptAcceptedAtMs = 5_001;
+
+  const accepted = await runnerHasDurablePromptHandoff(vars, target, 'grok', message, Date.now(), {
+    requirePromptDigest: true,
+    promptAcceptanceBaselineMs: 5_000,
+  });
+
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.source, 'native-signal');
+  assert.deepEqual(handoffRequirePromptDigestValues, [true]);
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+});
+
+test('digest-required recovery rejects hook activity without an exact digest', async () => {
+  handoffRequirePromptDigestValues = [];
+  promptAcceptedReading = {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  const handoff = await runnerHasDurablePromptHandoff(vars, target, 'claude', message, Date.now(), {
+    requirePromptDigest: true,
+  });
+
+  assert.equal(handoff.accepted, false);
+  assert.match(handoff.reason, /digest-required handoff rejected/);
+  assert.deepEqual(handoffRequirePromptDigestValues, [true]);
 });
 
 test('sendRunnerInstructionSafely skips pane busy scrape when hook reports composing', async () => {
@@ -225,7 +570,7 @@ test('sendRunnerInstructionSafely skips pane busy scrape when hook reports compo
   assert.ok(callOrder.includes('obs:promptAccepted'));
   assert.ok(callOrder.includes('obs:getActivity'));
   assert.equal(
-    callOrder.indexOf('sentinel:write'),
+    callOrder.indexOf('python:write'),
     -1,
     `hook-busy path must not fresh-send; order=${callOrder.join(',')}`,
   );
@@ -257,7 +602,7 @@ test('sendRunnerInstructionSafely prefers live pane over stale hook acceptance',
   assert.ok(callOrder.includes('pane:capture'));
   assert.ok(callOrder.includes('tmux:send'));
   assert.equal(
-    callOrder.indexOf('sentinel:write'),
+    callOrder.indexOf('python:write'),
     -1,
     `stale hook acceptance must submit-existing, not fresh send; order=${callOrder.join(',')}`,
   );

@@ -12,7 +12,7 @@ The public surface should be understood through capabilities, not by reading eve
 
 | Capability           | Example methods                                                                                    | Safety shape                                                  |
 | -------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Protocol discovery   | `protocol.capabilities`                                                                            | Read-only metadata for clients and docs.                      |
+| Gateway self-status  | `gateway.ping`, `gateway.status`, `gateway.doctor`                                                 | Read-only liveness, version, and diagnostic metadata.         |
 | Fleet state          | `fleet.status`, `node.health.all`                                                                  | Read-only observation of machines, slots, and health.         |
 | Dispatch and backlog | `backlog.create`, `backlog.enqueue`, `dispatch.preview`, `dispatch.queue.list`                     | Bounded-write/lifecycle actions with operator policy.         |
 | Worker observation   | `tmux.worker.list`, `tmux.worker.inventory.updated`, `terminal.worker.snapshot`, `stream.snapshot` | Read-only state for terminals and workers.                    |
@@ -48,7 +48,7 @@ There is intentionally no `run.adopt` protocol method. A run should represent a 
 
 1. Connect to the gateway WebSocket.
 2. Authenticate with `auth.connect` when auth is enabled.
-3. Call `protocol.capabilities` to discover available methods, categories, safety tiers, and examples.
+3. Resolve the method set ahead of time from this page or the generated reference below — the gateway has no runtime capability-discovery method.
 4. Use read-only methods to observe state.
 5. Require explicit operator confirmation before bounded-write, lifecycle, or high-impact actions.
 

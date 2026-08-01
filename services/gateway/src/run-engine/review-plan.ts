@@ -16,6 +16,8 @@ import {
 } from '../quality/review-policy.js';
 import { defaultAlternateReviewRunner, normalizeRunner } from '../runners/registry.js';
 
+import { isHumanGateReviewRequestAction } from './decision-replay.js';
+
 export function reviewPlanFromSelection(
   selectionData: Record<string, unknown> | undefined,
 ): ReviewLoopRequest[] {
@@ -171,6 +173,58 @@ export function humanGateReviewRequestFromDecision(
   return selectionData?.reviewRequest && typeof selectionData.reviewRequest === 'object'
     ? (selectionData.reviewRequest as Record<string, unknown>)
     : {};
+}
+
+/**
+ * Latest resolved human-gate decision whose action was a review request
+ * (not an approval). Used when building the executable review plan so a
+ * second request-extra-review with a different runner is not ignored in
+ * favor of a stale pending plan or an approval-only lookup.
+ */
+export function latestResolvedHumanGateReviewRequestDecision(
+  decisions: readonly RunDecision[],
+  gateAction?: string,
+): RunDecision | undefined {
+  return decisions
+    .filter(
+      (decision) =>
+        decision.type === 'engine_human_gate' &&
+        !!decision.resolvedAt &&
+        isHumanGateReviewRequestAction(decision.resolvedAction) &&
+        (!gateAction || decision.resolvedAction === gateAction),
+    )
+    .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0];
+}
+
+/**
+ * Choose the plan the publish-gate loop will execute after a human-gate
+ * review request.
+ *
+ * Live bug (MANUAL-000087 / run 71803bd2): operator requested codex on the
+ * second request-extra-review, but the loop preferred a stale pending plan
+ * (claude) and/or fell back via approval-only decision lookup, so Claude
+ * launched. The latest review-request decision's selectionData is
+ * authoritative when it carries explicit loops.
+ */
+export function resolveHumanGateReviewExecutionPlan(input: {
+  gateAction: string;
+  pendingPlan: readonly ReviewLoopRequest[];
+  decisions: readonly RunDecision[];
+}): ReviewLoopRequest[] {
+  const { gateAction, pendingPlan, decisions } = input;
+  if (!isHumanGateReviewRequestAction(gateAction)) {
+    return pendingPlan.length ? [...pendingPlan] : [];
+  }
+
+  const latestRequest =
+    latestResolvedHumanGateReviewRequestDecision(decisions, gateAction) ??
+    latestResolvedHumanGateReviewRequestDecision(decisions);
+  const fromDecision = reviewPlanFromSelection(latestRequest?.selectionData);
+  const decisionHasExplicitRunner = fromDecision.some((loop) => effectiveReviewRunner(loop));
+  if (decisionHasExplicitRunner) return fromDecision;
+
+  if (pendingPlan.length > 0) return [...pendingPlan];
+  return fromDecision;
 }
 
 const REVIEW_RUNNERS = new Set<ReviewRunnerId>(['claude', 'codex', 'cursor', 'grok', 'opencode']);
