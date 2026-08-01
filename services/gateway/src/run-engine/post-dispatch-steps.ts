@@ -521,15 +521,7 @@ export async function executeSelfReviewStep(
     // ever sees the requested feedback.
     if (actionId === 'send_feedback') {
       const retryResult = await executeSelfReviewForRun(runId, current.slotId, {
-        initialReviewResult: {
-          verdict: 'issues',
-          issues: result.issues ?? [],
-          validationDepth: result.validationDepth,
-          usage: result.usage,
-          reviewSnapshot: result.reviewSnapshot,
-          taskProgressArtifactPath: result.taskProgressArtifactPath,
-          timeline: result.timeline,
-        },
+        resumeFromResult: result,
       });
       return {
         inputs: { ...inputs, enabled: true },

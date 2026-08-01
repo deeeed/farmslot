@@ -46,7 +46,7 @@ export type RetainedSessionDeliveryResult =
   | { delivered: true }
   | {
       delivered: false;
-      disposition: 'fresh-dispatch' | 'hold';
+      disposition: 'safe-send' | 'hold';
       reason: string;
     };
 
@@ -62,7 +62,7 @@ async function reactivateRunnerSessionWithPrompt(
   if (runnerRetainedSessionHandoff(runner) !== 'resume-with-prompt') {
     return {
       delivered: false,
-      disposition: 'fresh-dispatch',
+      disposition: 'safe-send',
       reason: `Runner '${runner}' does not support retained resume-with-prompt handoff`,
     };
   }
@@ -70,7 +70,7 @@ async function reactivateRunnerSessionWithPrompt(
   if (!observability) {
     return {
       delivered: false,
-      disposition: 'hold',
+      disposition: 'safe-send',
       reason: `Runner '${runner}' has no structured session-delivery provider`,
     };
   }
@@ -84,7 +84,7 @@ async function reactivateRunnerSessionWithPrompt(
     if (panes.exitCode !== 0) {
       return {
         delivered: false,
-        disposition: 'hold',
+        disposition: 'safe-send',
         reason: `Cannot inspect retained runner window ${options.target}: ${panes.stderr || panes.stdout || `exit ${panes.exitCode}`}`,
       };
     }
@@ -101,7 +101,7 @@ async function reactivateRunnerSessionWithPrompt(
     if (!sessionPath) {
       return {
         delivered: false,
-        disposition: 'hold',
+        disposition: 'safe-send',
         reason: `Retained ${runner} session ${options.sessionId} has no resumable session path`,
       };
     }
@@ -115,7 +115,7 @@ async function reactivateRunnerSessionWithPrompt(
     if (state?.value !== 'idle' || state.confidence !== 'high') {
       return {
         delivered: false,
-        disposition: 'hold',
+        disposition: 'safe-send',
         reason: `Retained ${runner} session ${options.sessionId} is ${state?.value ?? 'unknown'}; refusing to replace a session without terminal hook proof`,
       };
     }
@@ -127,7 +127,7 @@ async function reactivateRunnerSessionWithPrompt(
     if (probe.exitCode !== 0) {
       return {
         delivered: false,
-        disposition: probe.exitCode === 1 ? 'fresh-dispatch' : 'hold',
+        disposition: 'safe-send',
         reason: `Retained ${runner} session path is unavailable: ${sessionPath}`,
       };
     }
@@ -135,6 +135,7 @@ async function reactivateRunnerSessionWithPrompt(
     const launchAckBaseline = options.launchAckSignalPath
       ? await readLaunchAckSignalSnapshot(options.vars, options.launchAckSignalPath)
       : null;
+    const launchAckUnavailable = Boolean(options.launchAckSignalPath && !launchAckBaseline);
     const sentinel = await writeRunnerPromptSentinel(options.vars, options.prompt);
     const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       options.vars,
@@ -173,12 +174,12 @@ async function reactivateRunnerSessionWithPrompt(
     return {
       delivered: false,
       disposition: 'hold',
-      reason: `Reloaded ${runner} session ${options.sessionId}, but no structured prompt or task-signal acknowledgement arrived`,
+      reason: `Reloaded ${runner} session ${options.sessionId}, but no structured prompt or task-signal acknowledgement arrived${launchAckUnavailable ? '; the task-signal baseline was unavailable' : ''}`,
     };
   } catch (error) {
     return {
       delivered: false,
-      disposition: idleProven && !paneMutationStarted ? 'fresh-dispatch' : 'hold',
+      disposition: idleProven && !paneMutationStarted ? 'safe-send' : 'hold',
       reason: `Retained ${runner} handoff failed: ${(error as Error).message}`,
     };
   }
@@ -198,7 +199,7 @@ export async function deliverPromptToRetainedRunnerSession(
     if (!sessionId) {
       return {
         delivered: false,
-        disposition: 'hold',
+        disposition: 'safe-send',
         reason: `Runner '${runner}' requires a persisted session id for retained handoff`,
       };
     }
@@ -232,7 +233,7 @@ export async function deliverPromptToRetainedRunnerSession(
   }
   return {
     delivered: false,
-    disposition: 'fresh-dispatch',
+    disposition: 'safe-send',
     reason: `Runner '${runner}' does not support retained-session handoff`,
   };
 }

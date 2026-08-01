@@ -328,7 +328,7 @@ export async function warmSessionHandoffDispatch(
   if (!delivery.delivered) {
     return {
       handedOff: false,
-      disposition: delivery.disposition,
+      disposition: delivery.disposition === 'safe-send' ? 'fresh-dispatch' : 'hold',
       reason: delivery.reason,
     };
   }

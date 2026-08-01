@@ -48,7 +48,6 @@ import {
   runnerDefaultModel,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
-  runnerRetainedSessionHandoff,
   sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
@@ -124,7 +123,7 @@ export interface SelfReviewOptions {
   /** Overrides project self_review.session_policy for this review loop. */
   reviewSessionPolicy?: ReviewSessionPolicy | null;
   /** Continue an operator-approved fix loop from findings already produced by this run. */
-  initialReviewResult?: ReviewAgentResult;
+  resumeFromResult?: SelfReviewResult;
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
@@ -251,7 +250,21 @@ export async function executeSelfReview(
         crossRunner: isCrossRunnerReview,
       };
 
-    if (options.initialReviewResult) {
+    if (options.resumeFromResult) {
+      const previousAttempt = options.resumeFromResult.attempts?.at(-1);
+      const initialReviewResult: ReviewAgentResult = {
+        verdict: 'issues',
+        issues: options.resumeFromResult.issues ?? [],
+        validationDepth: options.resumeFromResult.validationDepth,
+        usage: options.resumeFromResult.usage,
+        reviewSnapshot: options.resumeFromResult.reviewSnapshot,
+        fixDelta: options.resumeFromResult.fixDelta,
+        artifactPaths: previousAttempt?.artifactPaths,
+        taskProgressArtifactPath: options.resumeFromResult.taskProgressArtifactPath,
+        timeline: options.resumeFromResult.timeline,
+        startedAt: previousAttempt?.startedAt,
+        completedAt: previousAttempt?.completedAt,
+      };
       const retryResult = await runSelfReviewRetryLoop({
         vars,
         taskDir,
@@ -261,9 +274,9 @@ export async function executeSelfReview(
         workerRunner,
         reviewRunner,
         model,
-        maxRetries,
+        maxRetries: Math.max(1, maxRetries),
         reviewTimeoutMs,
-        reviewResult: options.initialReviewResult,
+        reviewResult: initialReviewResult,
         retryCount: 0,
         validationDepth,
         artifactScope,
@@ -1203,32 +1216,34 @@ async function sendFeedbackToWorker(
     });
     const runner = normalizeRunner(run?.metrics.runner);
     let lastRetainedHoldReason: string | null = null;
+    const loggedRetainedHoldReasons = new Set<string>();
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
-      if (
-        runnerRetainedSessionHandoff(runner) === 'resume-with-prompt' &&
-        primaryContext?.runnerSessionId &&
-        primaryContext.runnerSessionPath
-      ) {
-        const retained = await deliverPromptToRetainedRunnerSession({
-          vars,
-          target,
-          runnerId: runner,
-          sessionId: primaryContext.runnerSessionId,
-          sessionPath: primaryContext.runnerSessionPath,
-          model: run?.metrics.model,
-          effort: run?.effort,
-          prompt: cmd,
-          safetyTier: run?.safetyTier,
-          runtimeDir,
-          taskDir,
-          launchAckSignalPath: fixSignalPath,
-        });
-        if (retained.delivered) return true;
-        if (retained.disposition === 'hold') {
-          lastRetainedHoldReason = retained.reason;
+      const latestRun = getRun(runId);
+      const latestPrimaryContext = latestRun
+        ? selectAgentContext(latestRun, { role: 'primary' })
+        : null;
+      const retained = await deliverPromptToRetainedRunnerSession({
+        vars,
+        target,
+        runnerId: runner,
+        sessionId: latestPrimaryContext?.runnerSessionId,
+        sessionPath: latestPrimaryContext?.runnerSessionPath,
+        model: latestRun?.metrics.model,
+        effort: latestRun?.effort,
+        prompt: cmd,
+        safetyTier: latestRun?.safetyTier,
+        runtimeDir,
+        taskDir,
+        launchAckSignalPath: fixSignalPath,
+      });
+      if (retained.delivered) return true;
+      if (retained.disposition === 'hold') {
+        lastRetainedHoldReason = retained.reason;
+        if (!loggedRetainedHoldReasons.has(retained.reason)) {
+          loggedRetainedHoldReasons.add(retained.reason);
           console.warn(`[self-review] retained worker handoff held: ${retained.reason}`);
-          return false;
         }
+        return false;
       }
       return sendRunnerInstructionSafely(
         vars,
@@ -1451,6 +1466,8 @@ async function relaunchWorkerForFix(
     status: 'working',
     runner,
     model,
+    runnerSessionId: null,
+    runnerSessionPath: null,
     target: {
       session: resolved.session,
       window,

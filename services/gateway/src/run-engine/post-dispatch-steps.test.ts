@@ -294,14 +294,10 @@ test('interactive send-feedback continues from existing findings without another
   });
 
   assert.equal(calls.length, 2);
-  assert.deepEqual((calls[1]?.[2] as { initialReviewResult?: unknown })?.initialReviewResult, {
+  assert.deepEqual((calls[1]?.[2] as { resumeFromResult?: unknown })?.resumeFromResult, {
     verdict: 'issues',
     issues: [issue],
-    validationDepth: undefined,
-    usage: undefined,
-    reviewSnapshot: undefined,
-    taskProgressArtifactPath: undefined,
-    timeline: undefined,
+    retryCount: 0,
   });
   assert.equal(io.outputs?.verdict, 'pass');
   assert.equal(io.outputs?.interactiveRetry, true);

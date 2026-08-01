@@ -174,7 +174,7 @@ test('retained resume accepts a fresh structured task signal without hook acknow
   assert.equal(launchSignalReadCount, 2);
 });
 
-test('retained resume does not mutate an active session', async () => {
+test('retained resume defers an active session to the safe in-place delivery contract', async () => {
   commands.length = 0;
   paneCount = 1;
   sessionPathExists = true;
@@ -195,7 +195,7 @@ test('retained resume does not mutate an active session', async () => {
   });
   assert.equal(result.delivered, false);
   if (!result.delivered) {
-    assert.equal(result.disposition, 'hold');
+    assert.equal(result.disposition, 'safe-send');
     assert.match(result.reason, /is active; refusing to replace/);
   }
   assert.equal(
@@ -204,7 +204,7 @@ test('retained resume does not mutate an active session', async () => {
   );
 });
 
-test('retained resume falls back cold only after idle proof when the session file is gone', async () => {
+test('retained resume defers to safe-send when the session file is gone', async () => {
   commands.length = 0;
   paneCount = 1;
   sessionPathExists = false;
@@ -225,7 +225,7 @@ test('retained resume falls back cold only after idle proof when the session fil
   });
   assert.deepEqual(result, {
     delivered: false,
-    disposition: 'fresh-dispatch',
+    disposition: 'safe-send',
     reason: 'Retained claude session path is unavailable: /sessions/missing.jsonl',
   });
   assert.equal(
@@ -234,7 +234,7 @@ test('retained resume falls back cold only after idle proof when the session fil
   );
 });
 
-test('retained resume holds when exact session state is unavailable', async () => {
+test('retained resume defers to safe-send when exact session state is unavailable', async () => {
   commands.length = 0;
   paneCount = 1;
   sessionPathExists = true;
@@ -249,14 +249,14 @@ test('retained resume holds when exact session state is unavailable', async () =
     prompt: 'Read and execute TASK.md',
   });
   assert.equal(result.delivered, false);
-  if (!result.delivered) assert.equal(result.disposition, 'hold');
+  if (!result.delivered) assert.equal(result.disposition, 'safe-send');
   assert.equal(
     commands.some((command) => command.includes('respawn-window')),
     false,
   );
 });
 
-test('retained resume holds before inspection when the persisted session id is missing', async () => {
+test('retained resume defers to safe-send when the persisted session id is missing', async () => {
   commands.length = 0;
 
   const result = await deliverPromptToRetainedRunnerSession({
@@ -269,13 +269,13 @@ test('retained resume holds before inspection when the persisted session id is m
 
   assert.deepEqual(result, {
     delivered: false,
-    disposition: 'hold',
+    disposition: 'safe-send',
     reason: "Runner 'claude' requires a persisted session id for retained handoff",
   });
   assert.deepEqual(commands, []);
 });
 
-test('retained resume holds before session proof when the persisted session path is missing', async () => {
+test('retained resume defers to safe-send when the persisted session path is missing', async () => {
   commands.length = 0;
 
   const result = await deliverPromptToRetainedRunnerSession({
@@ -288,7 +288,7 @@ test('retained resume holds before session proof when the persisted session path
 
   assert.deepEqual(result, {
     delivered: false,
-    disposition: 'hold',
+    disposition: 'safe-send',
     reason: 'Retained claude session session-123 has no resumable session path',
   });
   assert.equal(
