@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.11.1 - 2026-08-01
+
 - fix: keep iOS Simulator lifecycle restarts idempotent when `simctl` reports that it found nothing to terminate.
 
 ## 0.11.0 - 2026-08-01
