@@ -39,7 +39,6 @@ import { labelWithRef } from '../shared/item-ref.js';
 import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import {
   applyWorkInventorySort,
-  inventoryRetainsListAffordance,
   nextSortState,
   parseWorkInventorySort,
   renderWorkInventoryBackButton,
@@ -1318,10 +1317,6 @@ export class WorkGraphPanel extends LitElement {
     const { selectedId } = resolveWorkGraphSelection(graphIds, this.selectedGraphId);
     const effectiveSelectedId = selectedId || this.selectedGraphId;
     const selectedGraph = graphs.find((graph) => graph.graph.id === effectiveSelectedId) ?? null;
-    const retainList = inventoryRetainsListAffordance({
-      selectedId: effectiveSelectedId,
-      rowCount: graphs.length,
-    });
     // Inventory is canonical when nothing is selected, the operator asked for
     // Back, or multi-graph browse has no pick yet. Single-graph auto-select
     // opens the canvas but keeps a visible back affordance.
@@ -1329,13 +1324,11 @@ export class WorkGraphPanel extends LitElement {
     const body =
       showCanvas && selectedGraph
         ? html`
-            ${retainList
-              ? renderWorkInventoryBackButton({
-                  label: '← Back to graph inventory',
-                  testId: 'work-inventory-back',
-                  onBack: () => this.backToInventory(),
-                })
-              : nothing}
+            ${renderWorkInventoryBackButton({
+              label: '← Back to graph inventory',
+              testId: 'work-inventory-back',
+              onBack: () => this.backToInventory(),
+            })}
             ${this.renderGraph(selectedGraph)}
           `
         : this.renderInventory(graphs);

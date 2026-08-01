@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import {
-  inventoryRetainsListAffordance,
-  inventoryShowsBackAffordance,
-} from '../shared/work-inventory-table.js';
+import { inventoryShowsBackAffordance } from '../shared/work-inventory-table.js';
 
 import {
   resolveWorkGraphHashSelection,
@@ -20,10 +17,7 @@ function workGraphInventoryView(state: {
   selectedGraphId: string;
   showInventoryList: boolean;
 }) {
-  const retainList = inventoryRetainsListAffordance({
-    selectedId: state.selectedGraphId,
-    rowCount: state.filteredGraphIds.length,
-  });
+  const retainList = true;
   const showCanvas = Boolean(state.selectedGraphId) && !state.showInventoryList;
   const showBack = showCanvas && retainList;
   return {

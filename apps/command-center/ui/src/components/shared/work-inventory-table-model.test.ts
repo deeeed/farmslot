@@ -4,7 +4,6 @@ import { test } from 'node:test';
 import {
   compareInventoryValues,
   inventoryGridTemplateColumns,
-  inventoryRetainsListAffordance,
   inventoryShowsBackAffordance,
   inventoryShowsDetail,
   inventoryShowsList,
@@ -100,10 +99,4 @@ test('layout helpers cover split, narrow detail replacement, and back affordance
     inventoryShowsDetail({ hasSelection: true, narrowViewport: true, forceList: true }),
     false,
   );
-});
-
-test('inventoryRetainsListAffordance keeps table/back for single-graph auto-select', () => {
-  assert.equal(inventoryRetainsListAffordance({ selectedId: 'g1', rowCount: 1 }), true);
-  assert.equal(inventoryRetainsListAffordance({ selectedId: 'g1', rowCount: 3 }), true);
-  assert.equal(inventoryRetainsListAffordance({ selectedId: '', rowCount: 0 }), true);
 });

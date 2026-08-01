@@ -3,8 +3,6 @@ import { test } from 'node:test';
 
 import type { WorkGraphProjection } from '@farmslot/protocol';
 
-import { inventoryRetainsListAffordance } from '../shared/work-inventory-table.js';
-
 import {
   resolveWorkGraphHashSelection,
   resolveWorkGraphSelection,
@@ -82,7 +80,6 @@ test('single-graph auto-selection retains a visible table/back affordance', () =
   const { selectedId, autoSelected } = resolveWorkGraphSelection([only.graph.id], '');
   assert.equal(selectedId, 'solo');
   assert.equal(autoSelected, true);
-  assert.equal(inventoryRetainsListAffordance({ selectedId, rowCount: 1 }), true);
 });
 
 test('resolveWorkGraphSelection clears stale multi-graph selection', () => {

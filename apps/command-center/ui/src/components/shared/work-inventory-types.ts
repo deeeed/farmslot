@@ -34,11 +34,6 @@ export interface WorkInventoryRowRenderOptions {
   onActivate: () => void;
 }
 
-export type WorkInventoryCellRenderer = () =>
-  | TemplateResult
-  | typeof import('lit').nothing
-  | string;
-
 export interface WorkInventoryUrlSortOptions<TSortKey extends string> {
   /** Hash query param for sort key. Default `sort`. Prefix per surface when routes collide. */
   sortParam?: string;

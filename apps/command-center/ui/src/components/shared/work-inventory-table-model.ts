@@ -108,10 +108,3 @@ export function inventoryShowsBackAffordance(layout: WorkInventoryLayoutState): 
  * Whether a single-graph (or single-row) auto-selection still needs a visible
  * table/back affordance so the inventory remains the canonical browsing state.
  */
-export function inventoryRetainsListAffordance(options: {
-  selectedId: string;
-  rowCount: number;
-}): boolean {
-  if (!options.selectedId) return true;
-  return options.rowCount > 0;
-}

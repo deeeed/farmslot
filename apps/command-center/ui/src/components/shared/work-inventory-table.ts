@@ -141,8 +141,10 @@ export function renderWorkInventoryTable(options: {
     >
       ${options.head}
       ${options.isEmpty
-        ? html`<div class="work-inventory-empty">
-            ${options.empty ?? html`No items match this view.`}
+        ? html`<div role="row" class="work-inventory-empty-row">
+            <div role="gridcell" class="work-inventory-empty" aria-colspan="99">
+              ${options.empty ?? html`No items match this view.`}
+            </div>
           </div>`
         : options.rows}
     </div>
