@@ -12,7 +12,12 @@ import type {
   RunListResult,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
-import { Methods, normalizeRunTags, summarizeRunEvidence } from '@farmslot/protocol';
+import {
+  Methods,
+  normalizeRunTags,
+  resolveRunSlotId,
+  summarizeRunEvidence,
+} from '@farmslot/protocol';
 
 import './run-pipeline-mini.js';
 import './run-tag-editor.js';
@@ -23,6 +28,12 @@ import { gateway } from '../../gateway-client.js';
 import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
+import {
+  renderWorkInventoryRow,
+  renderWorkInventoryTable,
+  renderWorkInventoryTableHead,
+  workInventoryTableStyles,
+} from '../shared/work-inventory-table.js';
 
 import { familyRunHash } from './family-observability-url-state.js';
 import {
@@ -31,12 +42,18 @@ import {
   renderRunListStatusFilter,
   renderRunListToolbar,
 } from './run-list-filter-renderers.js';
+import {
+  compactRunPipelineLabel,
+  RUN_INVENTORY_COLUMNS,
+  type RunInventorySortKey,
+} from './run-list-inventory.js';
 import { filterRunList, runGradeColor, TERMINAL_STATUSES } from './run-list-model.js';
 import {
   FLOW_OPTIONS,
   LANE_OPTIONS,
   RunListState,
   SORT_OPTIONS,
+  type SortOption,
   STATUS_PILLS,
 } from './run-list-state.js';
 import { runListStyles } from './run-list-styles.js';
@@ -53,7 +70,6 @@ import {
   eligibilityLabel,
   familyCompletionColor,
   familyCompletionLabel,
-  formatCreatedAt,
   groupRunsByFamily,
   pickFamilyComparePair,
   resolveRunEngine,
@@ -74,13 +90,60 @@ const TABLE_SORT_PAIRS = {
   project: 'project-desc',
   flow: 'flow-desc',
   status: 'status-desc',
+  ref: 'ref-desc',
+  slot: 'slot-desc',
+  runner: 'runner-desc',
   newest: 'oldest',
+  // Desc-first for the Updated column (matches visible updatedAt dates).
+  'updated-desc': 'updated',
 } as const;
-type TableSort = keyof typeof TABLE_SORT_PAIRS;
+
+/** Map inventory column keys onto SortOption values used by filterRunList + URL. */
+function inventoryKeyToSortOption(key: RunInventorySortKey): SortOption {
+  switch (key) {
+    case 'status':
+      return 'status';
+    case 'flow':
+      return 'flow';
+    case 'project':
+      return 'project';
+    case 'ref':
+      return 'ref';
+    case 'slot':
+      return 'slot';
+    case 'runner':
+      return 'runner';
+    case 'updated':
+      return 'updated-desc';
+    case 'pipeline':
+      return 'newest';
+  }
+}
+
+/** Inventory column for the active SortOption, or null when sort is not a column (newest/oldest/…). */
+function sortOptionToInventoryKey(sort: SortOption): RunInventorySortKey | null {
+  if (sort === 'status' || sort === 'status-desc') return 'status';
+  if (sort === 'flow' || sort === 'flow-desc') return 'flow';
+  if (sort === 'project' || sort === 'project-desc') return 'project';
+  if (sort === 'ref' || sort === 'ref-desc') return 'ref';
+  if (sort === 'slot' || sort === 'slot-desc') return 'slot';
+  if (sort === 'runner' || sort === 'runner-desc') return 'runner';
+  if (sort === 'updated' || sort === 'updated-desc') return 'updated';
+  // newest / oldest / duration / grade — no inventory column owns these.
+  return null;
+}
+
+function sortOptionDirection(sort: SortOption): 'asc' | 'desc' {
+  if (sort.endsWith('-desc') || sort === 'newest' || sort === 'duration' || sort === 'grade') {
+    return 'desc';
+  }
+  if (sort === 'oldest') return 'asc';
+  return 'asc';
+}
 
 @customElement('run-list')
 export class RunList extends RunListState {
-  static styles = [runListStyles, flowBadgeStyles];
+  static styles = [runListStyles, flowBadgeStyles, workInventoryTableStyles];
 
   connectedCallback() {
     super.connectedCallback();
@@ -485,12 +548,17 @@ export class RunList extends RunListState {
                         ? 'No completed runs'
                         : 'No runs'}
                   </div>`
-                : html`<div class="runs-table">
-                    ${this.renderTableHead(showCheckboxes)}
-                    ${showFamilyGroups
+                : renderWorkInventoryTable({
+                    columns: RUN_INVENTORY_COLUMNS,
+                    head: this.renderTableHead(showCheckboxes),
+                    rows: showFamilyGroups
                       ? familyGroups.map((group) => this.renderFamilyGroup(group, showCheckboxes))
-                      : filtered.map((r) => this.renderCard(r, showCheckboxes))}
-                  </div>`}
+                      : filtered.map((r) => this.renderCard(r, showCheckboxes)),
+                    isEmpty: false,
+                    testId: 'work-inventory-table',
+                    minWidth: '1100px',
+                    leadingTracks: showCheckboxes ? ['30px'] : [],
+                  })}
             `}
     `;
   }
@@ -517,42 +585,33 @@ export class RunList extends RunListState {
     await gateway.request(Methods.RUN_AUTO_RECOVERY_STOP, { runId });
   }
 
-  private setTableSort(sort: TableSort) {
-    this.sortBy = this.sortBy === sort ? TABLE_SORT_PAIRS[sort] : sort;
+  private setInventorySort(key: RunInventorySortKey) {
+    if (key === 'pipeline') return;
+    const mapped = inventoryKeyToSortOption(key);
+    const inverse = (TABLE_SORT_PAIRS as Record<string, SortOption>)[mapped];
+    if (inverse && (this.sortBy === mapped || this.sortBy === inverse)) {
+      this.sortBy = this.sortBy === mapped ? inverse : mapped;
+    } else {
+      this.sortBy = mapped;
+    }
     this._persistHashState();
   }
 
-  private renderTableSortHeader(label: string, sort: TableSort) {
-    const inverse = TABLE_SORT_PAIRS[sort];
-    const active = this.sortBy === sort || this.sortBy === inverse;
-    const direction =
-      active && sort === 'newest'
-        ? this.sortBy === 'oldest'
-          ? ' ▲'
-          : ' ▼'
-        : active
-          ? this.sortBy === inverse
-            ? ' ▼'
-            : ' ▲'
-          : '';
-    return html`<button
-      class=${active ? 'active' : ''}
-      type="button"
-      @click=${() => this.setTableSort(sort)}
-    >
-      ${label}${direction}
-    </button>`;
-  }
-
   private renderTableHead(showCheckbox: boolean) {
-    return html`<div class="run-table-head ${showCheckbox ? 'with-selector' : ''}" role="row">
-      ${showCheckbox ? html`<span aria-hidden="true"></span>` : nothing}
-      ${this.renderTableSortHeader('Flow', 'flow')}
-      ${this.renderTableSortHeader('Project', 'project')}
-      <span>Run / progress</span>
-      ${this.renderTableSortHeader('State', 'status')}
-      ${this.renderTableSortHeader('Slot / time', 'newest')}
-    </div>`;
+    // Non-column sorts (newest/oldest/duration/grade) must not light up Updated.
+    const columnKey = sortOptionToInventoryKey(this.sortBy);
+    return renderWorkInventoryTableHead({
+      columns: RUN_INVENTORY_COLUMNS,
+      sort: {
+        key: columnKey ?? ('' as RunInventorySortKey),
+        direction: sortOptionDirection(this.sortBy),
+      },
+      onSort: (key) => this.setInventorySort(key),
+      testIdPrefix: 'runs',
+      leadingCells: showCheckbox
+        ? html`<span role="columnheader" aria-hidden="true"></span>`
+        : nothing,
+    });
   }
 
   private renderCard(run: Run, showCheckbox: boolean) {
@@ -560,37 +619,26 @@ export class RunList extends RunListState {
     const sc = runStatusColor(run.status);
     const isSelected = this.selectedIds.has(run.id);
     const isTerminal = TERMINAL_STATUSES.has(run.status);
+    const engine = resolveRunEngine(run);
+    const slotId = resolveRunSlotId(run);
+    const pipelineLabel = compactRunPipelineLabel(run);
     const disposition = dispositionLabel(run.metrics.disposition);
-    const runPR =
-      run.prNumber != null
-        ? (this.prs.find((pr) => pr.pr === run.prNumber && pr.project === run.project) ?? null)
-        : null;
-    const siblingCount = this.familyFilter
-      ? Math.max(0, (this.familyRuns ?? []).filter((r) => r.familyId === run.familyId).length - 1)
-      : null;
+    const evidenceSummary = summarizeRunEvidence(run);
     const hasAutoRecoveryAttempt =
       run.recoveryAttempts?.some((a) => a.triggeredBy === 'auto-recovery') ?? false;
-    const hasCompletedAutoRecovery =
-      run.recoveryAttempts?.some(
-        (a) => a.triggeredBy === 'auto-recovery' && a.status === 'completed',
-      ) ?? false;
     const showStopAutoRecovery =
       run.recoveryProposal?.status === 'auto-in-progress' ||
       (run.status === 'failed' &&
         !run.autoRecoveryDisabled &&
         (hasAutoRecoveryAttempt || Boolean(run.recoveryProposal)));
-    const evidenceSummary = summarizeRunEvidence(run);
-    return html`
-      <div
-        class="run-card ${showCheckbox ? 'with-selector' : ''} ${isSelected
-          ? 'selected'
-          : ''} ${this.manageMode ? 'manage-mode' : ''}"
-        @click=${() => {
-          this.manageMode ? this.toggleSelectId(run.id) : (location.hash = routeForRun(run));
-        }}
-      >
-        ${showCheckbox
-          ? html`<div class="selector-cell">
+    const runnerLabel = engine.model
+      ? `${engine.runner ?? 'runner'}/${engine.model}`
+      : (engine.runner ?? '—');
+    const runningDetail = run.steps.find((s) => s.status === 'running')?.detail;
+    const cells = [
+      ...(showCheckbox
+        ? [
+            html`<div class="selector-cell">
               <button
                 class="selector-btn ${isSelected ? 'selected' : ''} ${!isTerminal
                   ? 'disabled'
@@ -600,198 +648,103 @@ export class RunList extends RunListState {
               >
                 ${isSelected ? '✓' : '+'}
               </button>
-            </div>`
-          : nothing}
-        <div class="run-flow-cell">
-          ${renderFlowBadge(run.flowType, {
-            color: fc,
-            label: runDisplayLabel(run),
-            title: runDisplayTitle(run),
-          })}
-        </div>
-        <span class="run-project" title=${`Project: ${run.project}`}>${run.project}</span>
-        <div class="info">
-          ${this.familyFilter === run.familyId
-            ? html`<div class="summary">family focus</div>`
-            : nothing}
-          <div class="info-top">
-            <span class="ticket">${run.ticketOrPr}</span>
-            ${run.links?.length
-              ? run.links.map(
-                  (l) =>
-                    html`<a
-                      class="ext-link"
-                      href=${l.url}
-                      target="_blank"
-                      rel="noopener"
-                      @click=${(e: Event) => e.stopPropagation()}
-                      >${l.label}</a
-                    >`,
-                )
-              : nothing}
-            <span class="badge status-badge" style="--status-color:${colors.textMuted}"
-              >${run.lane}</span
-            >
-            ${run.variant
-              ? html`<span class="badge status-badge" style="--status-color:${colors.accent}"
-                  >variant:${run.variant}</span
-                >`
-              : nothing}
-            ${this.renderRunTags(run)}
-            <span
-              class="badge status-badge"
-              style="--status-color:${colors.textMuted}"
-              @click=${(e: Event) => {
-                e.stopPropagation();
-                this.familyFilter = run.familyId;
-                void this.refreshFamilyFilter();
-                this._persistHashState();
-              }}
-            >
-              family:${shortId(run.familyId)}
-            </span>
-            <a
-              class="ext-link"
-              href=${familyRunHash(run.familyId, run.id)}
-              @click=${(e: Event) => e.stopPropagation()}
-              >retrospective</a
-            >
-            ${this.renderEvidenceSignals(run, evidenceSummary)}
-          </div>
-          ${runPR?.title
-            ? html`<div class="pr-title">PR #${runPR.pr}: ${runPR.title}</div>`
-            : nothing}
-          <div class="run-summary-line">
-            ${run.summary ? html`<div class="summary">${run.summary}</div>` : nothing}
-            <span class="run-id">${shortId(run.id)}</span>
-          </div>
-          ${run.lane === 'comparison'
-            ? html`<div class="summary">
-                comparison
-                run${(() => {
-                  const engine = resolveRunEngine(run);
-                  if (engine.runner && engine.model) {
-                    return html` · ${engine.runner}/${engine.model}`;
-                  }
-                  return run.variant ? html` · variant ${run.variant}` : nothing;
-                })()}
-              </div>`
-            : nothing}
-          ${siblingCount && siblingCount > 0
-            ? html`<div class="info-bottom">
-                <span>${siblingCount} sibling${siblingCount !== 1 ? 's' : ''}</span>
-              </div>`
-            : nothing}
-          <run-pipeline-mini
-            .run=${run}
-            .steps=${run.steps}
-            .flowType=${run.flowType}
-          ></run-pipeline-mini>
-        </div>
-        <div class="run-state">
-          <div class="state-badges">
-            <span class="badge status-badge" style="--status-color:${sc}">${run.status}</span>
-            ${disposition
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${dispositionColor(run.metrics.disposition)}"
-                  >${disposition}</span
-                >`
-              : nothing}
-            ${run.engineState?.intelligenceAuditDegraded
-              ? html`<span class="badge status-badge" style="--status-color:${colors.statusWarn}"
-                  >audit degraded</span
-                >`
-              : nothing}
-            ${hasCompletedAutoRecovery
-              ? html`<span class="badge status-badge" style="--status-color:${colors.statusOk}"
-                  >auto-recovered</span
-                >`
-              : hasAutoRecoveryAttempt
-                ? html`<span class="badge status-badge" style="--status-color:${colors.textMuted}"
-                    >recovery attempted</span
-                  >`
-                : nothing}
-            ${isPrLinkageMissing(run)
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${colors.statusWarn}; cursor:pointer"
-                  title="Run done but no PR linked on branch ${run.branch ??
-                  ''}. Click to re-run PR lookup and kick CI watch."
-                  @click=${(e: Event) => {
-                    e.stopPropagation();
-                    this._rescueLinkage(run.id);
-                  }}
-                  >PR missing</span
-                >`
-              : nothing}
-          </div>
-          ${run.steps.find((s) => s.status === 'running')?.detail
-            ? html`<span class="step-detail"
-                >${run.steps.find((s) => s.status === 'running')!.detail}</span
+            </div>`,
+          ]
+        : []),
+      html`<span
+        class="badge status-badge"
+        data-testid="runs-lifecycle"
+        style="--status-color:${sc}"
+        title=${run.status}
+        >${run.status}</span
+      >`,
+      html`<span data-testid="runs-flow"
+        >${renderFlowBadge(run.flowType, {
+          color: fc,
+          label: runDisplayLabel(run),
+          title: runDisplayTitle(run),
+        })}</span
+      >`,
+      html`<span class="run-project" data-testid="runs-project" title=${`Project: ${run.project}`}
+        >${run.project}</span
+      >`,
+      html`<span class="item-ref" data-testid="runs-ref" title=${run.ticketOrPr}
+        >${run.ticketOrPr}</span
+      >`,
+      html`<span class="slot-id" data-testid="runs-slot" title=${slotId ?? 'unassigned'}
+        >${slotId ?? '—'}</span
+      >`,
+      html`<span data-testid="runs-runner" title=${runnerLabel}>${runnerLabel}</span>`,
+      html`<span class="updated-cell" data-testid="runs-updated" title=${run.updatedAt}
+        >${run.updatedAt.slice(0, 10)}</span
+      >`,
+      html`<div class="run-pipeline-cell" data-testid="runs-pipeline" title=${pipelineLabel}>
+        <run-pipeline-mini
+          .run=${run}
+          .steps=${run.steps}
+          .flowType=${run.flowType}
+        ></run-pipeline-mini>
+        <span class="pipeline-label">${pipelineLabel}</span>
+        <div class="run-row-affordances" @click=${(e: Event) => e.stopPropagation()}>
+          ${this.renderRunTags(run)} ${this.renderEvidenceSignals(run, evidenceSummary)}
+          <a class="ext-link" href=${familyRunHash(run.familyId, run.id)}>retrospective</a>
+          ${disposition
+            ? html`<span
+                class="badge status-badge"
+                style="--status-color:${dispositionColor(run.metrics.disposition)}"
+                >${disposition}</span
               >`
+            : nothing}
+          ${run.humanGrade
+            ? html`<span
+                class="badge status-badge"
+                style="--status-color:${runGradeColor(run.humanGrade.recipe_semantic)}"
+                >${run.humanGrade.recipe_semantic}</span
+              >`
+            : nothing}
+          ${run.engineState?.intelligenceAuditDegraded
+            ? html`<span class="badge status-badge" style="--status-color:${colors.statusWarn}"
+                >audit degraded</span
+              >`
+            : nothing}
+          ${isPrLinkageMissing(run)
+            ? html`<button
+                class="inline-action"
+                type="button"
+                title="Re-run PR lookup and kick CI watch"
+                @click=${() => this._rescueLinkage(run.id)}
+              >
+                PR missing
+              </button>`
             : nothing}
           ${showStopAutoRecovery
             ? html`<button
                 class="inline-action"
-                @click=${(e: Event) => {
-                  e.stopPropagation();
-                  void this._stopAutoRecovery(run.id);
-                }}
+                type="button"
+                @click=${() => this._stopAutoRecovery(run.id)}
               >
                 Stop auto-recovering
               </button>`
             : nothing}
-        </div>
-        <div class="meta">
-          ${run.slotId ? html`<span class="slot-id">${run.slotId}</span>` : html`<span>—</span>`}
-          <span title=${run.createdAt}
-            >${elapsed(run.createdAt, run.completedAt)} · ${formatCreatedAt(run.createdAt)}</span
-          >
-          ${(() => {
-            const engine = resolveRunEngine(run);
-            return engine.model
-              ? html`<span
-                  >${engine.runner ?? ''}/${engine.model}${run.safetyTier
-                    ? ` · ${run.safetyTier}`
-                    : ''}</span
-                >`
-              : nothing;
-          })()}
-          ${run.prepareProfile
-            ? html`<span title="Prepare profile (ADR-037)">prep:${run.prepareProfile}</span>`
-            : nothing}
-          ${run.metrics.outcome || run.humanGrade
-            ? html`<span class="meta-badges">
-                ${run.metrics.outcome
-                  ? html`<span
-                      class="outcome-badge"
-                      style="background:${run.metrics.outcome === 'success'
-                        ? colors.statusOk
-                        : run.metrics.outcome === 'failure'
-                          ? colors.statusFail
-                          : colors.textMuted}22; color:${run.metrics.outcome === 'success'
-                        ? colors.statusOk
-                        : run.metrics.outcome === 'failure'
-                          ? colors.statusFail
-                          : colors.textMuted}"
-                      >${run.metrics.outcome}</span
-                    >`
-                  : nothing}
-                ${run.humanGrade
-                  ? html`<span
-                      class="grade-badge"
-                      style="background:${runGradeColor(
-                        run.humanGrade.recipe_semantic,
-                      )}22; color:${runGradeColor(run.humanGrade.recipe_semantic)}"
-                      >${run.humanGrade.recipe_semantic}</span
-                    >`
-                  : nothing}
-              </span>`
+          ${runningDetail ? html`<span class="step-detail">${runningDetail}</span>` : nothing}
+          ${run.summary
+            ? html`<span class="summary" title=${run.summary}>${run.summary}</span>`
             : nothing}
         </div>
-      </div>
-    `;
+      </div>`,
+    ];
+    return renderWorkInventoryRow({
+      row: {
+        id: run.id,
+        selected: isSelected,
+        className: `run-card ${this.manageMode ? 'manage-mode' : ''}`,
+        testId: `runs-row-${run.id}`,
+        onActivate: () => {
+          this.manageMode ? this.toggleSelectId(run.id) : (location.hash = routeForRun(run));
+        },
+      },
+      cells,
+    });
   }
 
   private async setRunTags(run: Run, tags: string[]) {
@@ -877,86 +830,88 @@ export class RunList extends RunListState {
     ];
     const familyPR = this.prs.find((pr) => prNumbers.includes(pr.pr)) ?? null;
     return html`
-      <section class="family-section">
-        <div class="family-header">
-          <span class="family-title">${group.familyRootTicketOrPr}</span>
-          <a
-            class="family-link"
-            href=${`#runs?family=${encodeURIComponent(group.familyId)}`}
-            @click=${(e: Event) => {
-              e.stopPropagation();
-              this.familyFilter = group.familyId;
-              void this.refreshFamilyFilter();
-              this._persistHashState();
-            }}
-          >
-            family:${shortId(group.familyId)}
-          </a>
-          <a
-            class="family-link"
-            href=${`#family/${group.familyId}`}
-            @click=${(e: Event) => e.stopPropagation()}
-          >
-            retrospective
-          </a>
-          <span>${group.runs.length} run${group.runs.length !== 1 ? 's' : ''}</span>
-          ${this.renderFamilyReadinessBadges(group)}
-          ${group.activeCount ? html`<span>${group.activeCount} active</span>` : nothing}
-          ${group.comparisonCount
-            ? html`<span>${group.comparisonCount} comparison</span>`
-            : nothing}
-          ${group.variants.length
-            ? html`<span>variants: ${group.variants.join(', ')}</span>`
-            : nothing}
-          ${familyPR?.mergeState
-            ? html`<span>merge: ${familyPR.mergeState.replace(/_/g, ' ')}</span>`
-            : nothing}
-          ${group.latestCreatedAt
-            ? html`<span>latest ${elapsed(group.latestCreatedAt)}</span>`
-            : nothing}
-          ${this.manageMode
-            ? html`
-                <button
-                  class="action-secondary"
-                  @click=${(e: Event) => {
-                    e.stopPropagation();
-                    this.selectFamilyRuns(group.familyId, false);
-                  }}
-                >
-                  select family
-                </button>
-                <button
-                  class="action-secondary"
-                  @click=${(e: Event) => {
-                    e.stopPropagation();
-                    this.selectFamilyRuns(group.familyId, true);
-                  }}
-                >
-                  select terminal
-                </button>
-              `
-            : nothing}
-          ${group.comparisonCount >= 2
-            ? html`
-                <a
-                  class="family-link"
-                  href=${`#family/${group.familyId}`}
-                  @click=${(e: Event) => e.stopPropagation()}
-                >
-                  compare ${group.comparisonCount} runs
-                </a>
-              `
-            : comparePair
+      <section class="family-section" role="rowgroup">
+        <div class="family-header" role="row">
+          <div role="gridcell" class="family-header-cell">
+            <span class="family-title">${group.familyRootTicketOrPr}</span>
+            <a
+              class="family-link"
+              href=${`#runs?family=${encodeURIComponent(group.familyId)}`}
+              @click=${(e: Event) => {
+                e.stopPropagation();
+                this.familyFilter = group.familyId;
+                void this.refreshFamilyFilter();
+                this._persistHashState();
+              }}
+            >
+              family:${shortId(group.familyId)}
+            </a>
+            <a
+              class="family-link"
+              href=${`#family/${group.familyId}`}
+              @click=${(e: Event) => e.stopPropagation()}
+            >
+              retrospective
+            </a>
+            <span>${group.runs.length} run${group.runs.length !== 1 ? 's' : ''}</span>
+            ${this.renderFamilyReadinessBadges(group)}
+            ${group.activeCount ? html`<span>${group.activeCount} active</span>` : nothing}
+            ${group.comparisonCount
+              ? html`<span>${group.comparisonCount} comparison</span>`
+              : nothing}
+            ${group.variants.length
+              ? html`<span>variants: ${group.variants.join(', ')}</span>`
+              : nothing}
+            ${familyPR?.mergeState
+              ? html`<span>merge: ${familyPR.mergeState.replace(/_/g, ' ')}</span>`
+              : nothing}
+            ${group.latestCreatedAt
+              ? html`<span>latest ${elapsed(group.latestCreatedAt)}</span>`
+              : nothing}
+            ${this.manageMode
+              ? html`
+                  <button
+                    class="action-secondary"
+                    @click=${(e: Event) => {
+                      e.stopPropagation();
+                      this.selectFamilyRuns(group.familyId, false);
+                    }}
+                  >
+                    select family
+                  </button>
+                  <button
+                    class="action-secondary"
+                    @click=${(e: Event) => {
+                      e.stopPropagation();
+                      this.selectFamilyRuns(group.familyId, true);
+                    }}
+                  >
+                    select terminal
+                  </button>
+                `
+              : nothing}
+            ${group.comparisonCount >= 2
               ? html`
                   <a
                     class="family-link"
-                    href=${`#runs/compare?a=${comparePair[0].id}&b=${comparePair[1].id}`}
+                    href=${`#family/${group.familyId}`}
                     @click=${(e: Event) => e.stopPropagation()}
                   >
-                    compare latest siblings
+                    compare ${group.comparisonCount} runs
                   </a>
                 `
-              : nothing}
+              : comparePair
+                ? html`
+                    <a
+                      class="family-link"
+                      href=${`#runs/compare?a=${comparePair[0].id}&b=${comparePair[1].id}`}
+                      @click=${(e: Event) => e.stopPropagation()}
+                    >
+                      compare latest siblings
+                    </a>
+                  `
+                : nothing}
+          </div>
         </div>
         ${this.renderFamilySummaryRow(group, familyPR)}
         ${group.runs.map((run) => this.renderCard(run, showCheckbox))}
@@ -971,37 +926,39 @@ export class RunList extends RunListState {
     const hasLinks = repLinks.length > 0 || rep.prNumber != null || familyPR != null;
     if (!hasSummary && !hasLinks) return nothing;
     return html`
-      <div class="family-summary-row">
-        ${hasSummary
-          ? html`<div class="family-summary-text">${group.familySummary}</div>`
-          : nothing}
-        ${hasLinks
-          ? html`
-              <div class="family-summary-links">
-                ${repLinks.map(
-                  (l) =>
-                    html`<a
-                      class="ext-link"
-                      href=${l.url}
-                      target="_blank"
-                      rel="noopener"
-                      @click=${(e: Event) => e.stopPropagation()}
-                      >${l.label}</a
-                    >`,
-                )}
-                ${rep.prNumber != null && !repLinks.some((l) => /^pr\b/i.test(l.label.trim()))
-                  ? html`<span>PR #${rep.prNumber}</span>`
-                  : nothing}
-                ${familyPR?.title
-                  ? html`<span title=${familyPR.title}
-                      >${familyPR.title.length > 80
-                        ? familyPR.title.slice(0, 80) + '…'
-                        : familyPR.title}</span
-                    >`
-                  : nothing}
-              </div>
-            `
-          : nothing}
+      <div class="family-summary-row" role="row">
+        <div role="gridcell" class="family-summary-cell">
+          ${hasSummary
+            ? html`<div class="family-summary-text">${group.familySummary}</div>`
+            : nothing}
+          ${hasLinks
+            ? html`
+                <div class="family-summary-links">
+                  ${repLinks.map(
+                    (l) =>
+                      html`<a
+                        class="ext-link"
+                        href=${l.url}
+                        target="_blank"
+                        rel="noopener"
+                        @click=${(e: Event) => e.stopPropagation()}
+                        >${l.label}</a
+                      >`,
+                  )}
+                  ${rep.prNumber != null && !repLinks.some((l) => /^pr\b/i.test(l.label.trim()))
+                    ? html`<span>PR #${rep.prNumber}</span>`
+                    : nothing}
+                  ${familyPR?.title
+                    ? html`<span title=${familyPR.title}
+                        >${familyPR.title.length > 80
+                          ? familyPR.title.slice(0, 80) + '…'
+                          : familyPR.title}</span
+                      >`
+                    : nothing}
+                </div>
+              `
+            : nothing}
+        </div>
       </div>
     `;
   }

@@ -288,41 +288,61 @@ export const runListStyles = css`
     padding: ${unsafeCSS(spacing.xl)} 0;
     text-align: center;
   }
-  .runs-table {
-    min-width: 944px;
+  .work-inventory-table {
+    min-width: 1100px;
   }
-  .run-table-head,
-  .run-card {
+  .work-inventory-head,
+  .work-inventory-row.run-card {
     display: grid;
     gap: 6px;
-    grid-template-columns: 50px minmax(112px, 136px) minmax(390px, 1fr) 196px 156px;
-  }
-  .run-table-head.with-selector,
-  .run-card.with-selector {
-    grid-template-columns: 30px 50px minmax(112px, 136px) minmax(390px, 1fr) 196px 156px;
-  }
-  .run-table-head {
+    grid-template-columns: var(
+      --work-inventory-columns,
+      100px 58px minmax(100px, 140px) 110px 120px 140px 86px minmax(140px, 1fr)
+    );
     align-items: center;
-    background: ${unsafeCSS(colors.bgCard)};
-    border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}33;
-    color: ${unsafeCSS(colors.textMuted)};
-    font-size: ${unsafeCSS(fonts.sizeXs)};
-    padding: 4px 8px 6px;
-    position: sticky;
-    top: 0;
-    z-index: 1;
   }
-  .run-table-head button {
+  .run-pipeline-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .pipeline-label {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .run-row-affordances {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    min-width: 0;
+  }
+  .run-row-affordances .summary,
+  .run-row-affordances .step-detail {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .run-row-affordances .inline-action {
     background: transparent;
-    border: 0;
-    color: inherit;
+    border: 1px solid ${unsafeCSS(colors.statusWarn)}66;
+    border-radius: 3px;
+    color: ${unsafeCSS(colors.statusWarn)};
     cursor: pointer;
     font: inherit;
-    padding: 0;
-    text-align: left;
+    font-size: 10px;
+    padding: 1px 6px;
   }
-  .run-table-head button.active {
-    color: ${unsafeCSS(colors.textPrimary)};
+  .run-row-affordances .ext-link {
+    color: ${unsafeCSS(colors.accent)};
+    font-size: 10px;
   }
   .run-card {
     align-items: start;

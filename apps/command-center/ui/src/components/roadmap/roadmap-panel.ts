@@ -63,6 +63,21 @@ import {
   syncedDraftProject,
   syncedDraftTargetProjects,
 } from '../shared/planning-projects.js';
+import {
+  applyWorkInventorySort,
+  inventoryShowsBackAffordance,
+  inventoryShowsDetail,
+  inventoryShowsList,
+  nextSortState,
+  parseWorkInventorySort,
+  renderWorkInventoryBackButton,
+  renderWorkInventoryLayout,
+  renderWorkInventoryRow,
+  renderWorkInventoryTable,
+  renderWorkInventoryTableHead,
+  type WorkInventoryColumnDef,
+  workInventoryTableStyles,
+} from '../shared/work-inventory-table.js';
 import { encodeWorkerRouteParam } from '../terminal/split-view-model.js';
 
 import {
@@ -100,6 +115,26 @@ const ROADMAP_SORT_KEYS: RoadmapSortKey[] = [
   'promotion',
   'updated',
 ];
+const ROADMAP_INVENTORY_COLUMNS: WorkInventoryColumnDef<RoadmapSortKey>[] = [
+  { key: 'stage', label: 'Stage', width: '84px', testId: 'roadmap-sort-stage' },
+  {
+    key: 'project',
+    label: 'Project',
+    width: 'minmax(110px, 160px)',
+    testId: 'roadmap-sort-project',
+  },
+  { key: 'id', label: 'ID', width: '118px', testId: 'roadmap-sort-id' },
+  { key: 'title', label: 'Title', width: 'minmax(260px, 1fr)', testId: 'roadmap-sort-title' },
+  { key: 'promotion', label: 'Backlog', width: '112px', testId: 'roadmap-sort-promotion' },
+  { key: 'updated', label: 'Updated', width: '86px', testId: 'roadmap-sort-updated' },
+];
+const ROADMAP_SORT_URL = {
+  sortParam: ROADMAP_SORT_PARAM,
+  directionParam: ROADMAP_SORT_DIRECTION_PARAM,
+  validKeys: ROADMAP_SORT_KEYS,
+  defaultKey: 'updated' as const,
+  defaultDirection: 'desc' as const,
+};
 type RoadmapEditorMode = 'view' | 'edit';
 type PromptViewerMode = 'raw' | 'markdown';
 type PromotionDraftModalMode = 'view' | 'edit';
@@ -149,6 +184,13 @@ export class RoadmapPanel extends LitElement {
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _selectedId = '';
+  @state() private _narrowViewport = false;
+  @state() private _forceInventoryList = false;
+  private _narrowMedia?: MediaQueryList;
+  private readonly _onNarrowChange = () => {
+    this._narrowViewport = this._narrowMedia?.matches ?? false;
+    if (!this._narrowViewport) this._forceInventoryList = false;
+  };
   /** The capture form used to sit permanently above the list, pushing the items
       most visits are here to read below the fold. Opened on demand instead. */
   @state() private _createPanelOpen = false;
@@ -234,6 +276,7 @@ export class RoadmapPanel extends LitElement {
   static styles = [
     planningBadgeStyles,
     planningChoiceStyles,
+    workInventoryTableStyles,
     css`
       :host {
         box-sizing: border-box;
@@ -277,18 +320,6 @@ export class RoadmapPanel extends LitElement {
         justify-content: space-between;
         gap: ${unsafeCSS(spacing.sm)};
         align-items: flex-start;
-      }
-      .layout {
-        display: grid;
-        grid-template-columns: minmax(640px, 1.5fr) minmax(360px, 1fr);
-        gap: ${unsafeCSS(spacing.md)};
-        align-items: start;
-        min-height: 0;
-      }
-      @media (max-width: 1350px) {
-        .layout {
-          grid-template-columns: 1fr;
-        }
       }
       h1,
       h2,
@@ -396,23 +427,15 @@ export class RoadmapPanel extends LitElement {
         gap: 4px;
         overflow-x: auto;
       }
-      .roadmap-table {
-        min-width: 820px;
-      }
+      /* Column tracks come from --work-inventory-columns on the shared shell. */
       .row,
-      .table-head {
+      .table-head,
+      .work-inventory-head,
+      .work-inventory-row {
         align-items: center;
         display: grid;
         gap: 8px;
-        grid-template-columns: 84px minmax(110px, 160px) 118px minmax(260px, 1fr) 112px 86px;
-      }
-      .table-head {
-        background: ${unsafeCSS(colors.bgCard)};
-        border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}33;
-        padding: 3px 8px 6px;
-        position: sticky;
-        top: 0;
-        z-index: 1;
+        grid-template-columns: var(--work-inventory-columns);
       }
       .table-head button {
         background: transparent;
@@ -709,6 +732,11 @@ export class RoadmapPanel extends LitElement {
     this._applyUrlStateFromHash();
     this._syncState(getState());
     this._unsubscribeState = subscribe((s) => this._syncState(s));
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      this._narrowMedia = window.matchMedia('(max-width: 860px)');
+      this._narrowViewport = this._narrowMedia.matches;
+      this._narrowMedia.addEventListener('change', this._onNarrowChange);
+    }
     window.addEventListener('keydown', this._onKeydown);
     window.addEventListener('hashchange', this._onHashChange);
     this._unsubscribeConnection = gateway.onConnectionChange((state) => {
@@ -721,6 +749,7 @@ export class RoadmapPanel extends LitElement {
     super.disconnectedCallback();
     this._unsubscribeConnection?.();
     this._unsubscribeState?.();
+    this._narrowMedia?.removeEventListener('change', this._onNarrowChange);
     window.removeEventListener('keydown', this._onKeydown);
     window.removeEventListener('hashchange', this._onHashChange);
     this._unsubscribeConnection = undefined;
@@ -748,11 +777,9 @@ export class RoadmapPanel extends LitElement {
       params.get(ROADMAP_PROMOTE_PARAM) === '1' || this._promotionDraftModalIndex >= 0;
     this._promotionDraftModalMode =
       params.get(ROADMAP_DRAFT_MODE_PARAM) === 'edit' ? 'edit' : 'view';
-    const sortKey = params.get(ROADMAP_SORT_PARAM);
-    this._sortKey = ROADMAP_SORT_KEYS.includes(sortKey as RoadmapSortKey)
-      ? (sortKey as RoadmapSortKey)
-      : 'updated';
-    this._sortDirection = params.get(ROADMAP_SORT_DIRECTION_PARAM) === 'asc' ? 'asc' : 'desc';
+    const sort = parseWorkInventorySort(params, ROADMAP_SORT_URL);
+    this._sortKey = sort.key;
+    this._sortDirection = sort.direction;
     if (!selectedParam && this._selectedId) queueMicrotask(() => this._writeUrlState());
   }
 
@@ -780,10 +807,11 @@ export class RoadmapPanel extends LitElement {
       params.delete(ROADMAP_DRAFT_PARAM);
       params.delete(ROADMAP_DRAFT_MODE_PARAM);
     }
-    if (this._sortKey === 'updated') params.delete(ROADMAP_SORT_PARAM);
-    else params.set(ROADMAP_SORT_PARAM, this._sortKey);
-    if (this._sortDirection === 'desc') params.delete(ROADMAP_SORT_DIRECTION_PARAM);
-    else params.set(ROADMAP_SORT_DIRECTION_PARAM, this._sortDirection);
+    applyWorkInventorySort(
+      params,
+      { key: this._sortKey, direction: this._sortDirection },
+      ROADMAP_SORT_URL,
+    );
     const next = buildHash(route, params);
     if (location.hash !== next) history.replaceState(null, '', next);
   }
@@ -1422,7 +1450,12 @@ export class RoadmapPanel extends LitElement {
   private _selectItem(item: RoadmapItem, mode: RoadmapEditorMode = 'view') {
     this._syncEditor(item);
     this._editorMode = mode;
+    this._forceInventoryList = false;
     this._writeUrlState();
+  }
+
+  private _backToInventoryList() {
+    this._forceInventoryList = true;
   }
 
   private _setEditorMode(mode: RoadmapEditorMode) {
@@ -2052,61 +2085,48 @@ export class RoadmapPanel extends LitElement {
   }
 
   private _renderRow(item: RoadmapItem) {
-    return html`<div
-      class="row ${this._selectedId === item.id ? 'selected' : ''}"
-      role="button"
-      tabindex="0"
-      @click=${() => this._selectItem(item)}
-      @keydown=${(event: KeyboardEvent) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          this._selectItem(item);
-        }
-      }}
-    >
-      ${renderPlanningBadge(item.stage, statusTone(item.stage))}
-      <span data-testid="roadmap-project">${renderPlanningBadge(item.project)}</span>
-      <span class="item-ref" title=${item.id}>${item.id}</span>
-      <div class="title" title=${item.title}>${item.title}</div>
-      ${item.promotion?.length
-        ? renderPlanningBadge(
-            `${item.promotion.length} backlog link${item.promotion.length === 1 ? '' : 's'}`,
-            'positive',
-          )
-        : html`<span class="muted">—</span>`}
-      <span class="updated-cell" title=${item.updatedAt}>${item.updatedAt.slice(0, 10)}</span>
-    </div>`;
+    return renderWorkInventoryRow({
+      row: {
+        id: item.id,
+        selected: this._selectedId === item.id,
+        className: 'row',
+        testId: `roadmap-row-${item.id}`,
+        onActivate: () => this._selectItem(item),
+      },
+      cells: [
+        renderPlanningBadge(item.stage, statusTone(item.stage)),
+        html`<span data-testid="roadmap-project">${renderPlanningBadge(item.project)}</span>`,
+        html`<span class="item-ref" title=${item.id}>${item.id}</span>`,
+        html`<div class="title" title=${item.title}>${item.title}</div>`,
+        item.promotion?.length
+          ? renderPlanningBadge(
+              `${item.promotion.length} backlog link${item.promotion.length === 1 ? '' : 's'}`,
+              'positive',
+            )
+          : html`<span class="muted">—</span>`,
+        html`<span class="updated-cell" title=${item.updatedAt}
+          >${item.updatedAt.slice(0, 10)}</span
+        >`,
+      ],
+    });
   }
 
   private _setSort(key: RoadmapSortKey) {
-    if (this._sortKey === key) {
-      this._sortDirection = this._sortDirection === 'asc' ? 'desc' : 'asc';
-    } else {
-      this._sortKey = key;
-      this._sortDirection = key === 'updated' || key === 'promotion' ? 'desc' : 'asc';
-    }
+    const next = nextSortState({ key: this._sortKey, direction: this._sortDirection }, key, (k) =>
+      k === 'updated' || k === 'promotion' ? 'desc' : 'asc',
+    );
+    this._sortKey = next.key;
+    this._sortDirection = next.direction;
     this._writeUrlState();
   }
 
-  private _renderSortHeader(label: string, key: RoadmapSortKey) {
-    const active = this._sortKey === key;
-    const arrow = active ? (this._sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
-    return html`<button
-      class=${active ? 'active' : ''}
-      type="button"
-      @click=${() => this._setSort(key)}
-    >
-      ${label}${arrow}
-    </button>`;
-  }
-
   private _renderTableHead() {
-    return html`<div class="table-head" role="row">
-      ${this._renderSortHeader('Stage', 'stage')} ${this._renderSortHeader('Project', 'project')}
-      ${this._renderSortHeader('ID', 'id')} ${this._renderSortHeader('Title', 'title')}
-      ${this._renderSortHeader('Backlog', 'promotion')}
-      ${this._renderSortHeader('Updated', 'updated')}
-    </div>`;
+    return renderWorkInventoryTableHead({
+      columns: ROADMAP_INVENTORY_COLUMNS,
+      sort: { key: this._sortKey, direction: this._sortDirection },
+      onSort: (key) => this._setSort(key),
+      testIdPrefix: 'roadmap',
+    });
   }
 
   private _renderPromotionDraftCards(item: RoadmapItem) {
@@ -2485,19 +2505,41 @@ export class RoadmapPanel extends LitElement {
         </button>
       </div>
       ${this._createPanelOpen ? this._renderCreateForm() : nothing} ${this._renderFilters()}
-      <div class="layout">
-        <div class="card">
+      ${(() => {
+        const layout = {
+          hasSelection: Boolean(this._selected),
+          narrowViewport: this._narrowViewport,
+          forceList: this._forceInventoryList,
+        };
+        const list = html`<div class="card">
           <h2>Items (${this._items.length})</h2>
           <div class="rows">
-            ${this._items.length === 0
-              ? html`<div class="empty">No roadmap items match this view.</div>`
-              : html`<div class="roadmap-table">
-                  ${this._renderTableHead()} ${this._items.map((item) => this._renderRow(item))}
-                </div>`}
+            ${renderWorkInventoryTable({
+              columns: ROADMAP_INVENTORY_COLUMNS,
+              head: this._renderTableHead(),
+              rows: this._items.map((item) => this._renderRow(item)),
+              isEmpty: this._items.length === 0,
+              empty: html`<div class="empty">No roadmap items match this view.</div>`,
+              testId: 'work-inventory-table',
+              minWidth: '820px',
+            })}
           </div>
-        </div>
-        <div class="shell">${this._renderEditor()}</div>
-      </div>
+        </div>`;
+        const detail = html`${inventoryShowsBackAffordance(layout)
+            ? renderWorkInventoryBackButton({
+                testId: 'work-inventory-back',
+                onBack: () => this._backToInventoryList(),
+              })
+            : nothing}
+          <div class="shell">${this._renderEditor()}</div>`;
+        return renderWorkInventoryLayout({
+          list,
+          detail,
+          showList: inventoryShowsList(layout),
+          showDetail: inventoryShowsDetail(layout),
+          testId: 'work-inventory-layout',
+        });
+      })()}
       ${this._renderRunnerPicker()} ${this._renderPromptViewer()}
       ${this._renderPromotionAttachmentViewer()}
       ${this._selected ? this._renderPromotionDraftModal(this._selected) : nothing}

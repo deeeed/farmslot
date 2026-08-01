@@ -211,6 +211,54 @@ test('filterRunList sorts inventory columns deterministically', () => {
   );
 });
 
+test('filterRunList sorts ref/slot/runner inventory columns (not newest)', () => {
+  const a = run('a', {
+    ticketOrPr: 'BUG-2',
+    slotId: 'mini-ff-2',
+    metrics: { nudgeCount: 0, runner: 'codex', model: 'gpt-5', durationMs: 0 },
+  });
+  const b = run('b', {
+    ticketOrPr: 'BUG-1',
+    slotId: 'mini-ff-1',
+    metrics: { nudgeCount: 0, runner: 'claude', model: 'opus', durationMs: 0 },
+  });
+  assert.deepEqual(
+    filter({ runs: [a, b], sortBy: 'ref' }).map((item) => item.id),
+    ['b', 'a'],
+  );
+  assert.deepEqual(
+    filter({ runs: [a, b], sortBy: 'slot' }).map((item) => item.id),
+    ['b', 'a'],
+  );
+  assert.deepEqual(
+    filter({ runs: [a, b], sortBy: 'runner' }).map((item) => item.id),
+    ['b', 'a'],
+  );
+  assert.deepEqual(
+    filter({ runs: [a, b], sortBy: 'ref-desc' }).map((item) => item.id),
+    ['a', 'b'],
+  );
+});
+
+test('filterRunList sorts Updated column by updatedAt not createdAt', () => {
+  const olderUpdate = run('older-update', {
+    createdAt: '2026-07-20T00:00:00.000Z',
+    updatedAt: '2026-07-21T00:00:00.000Z',
+  });
+  const newerUpdate = run('newer-update', {
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+  });
+  assert.deepEqual(
+    filter({ runs: [olderUpdate, newerUpdate], sortBy: 'updated-desc' }).map((item) => item.id),
+    ['newer-update', 'older-update'],
+  );
+  assert.deepEqual(
+    filter({ runs: [olderUpdate, newerUpdate], sortBy: 'updated' }).map((item) => item.id),
+    ['older-update', 'newer-update'],
+  );
+});
+
 test('filterRunList applies exact tag filters and includes tags in text search', () => {
   const demo = run('demo', { tags: ['demo', 'launch-review'] });
   const other = run('other', { tags: ['regression'] });
