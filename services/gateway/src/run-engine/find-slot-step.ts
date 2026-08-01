@@ -55,9 +55,6 @@ import {
 } from '../tasks/execution-template-catalog.js';
 import { precheckTaskDirCollision } from '../tasks/writer.js';
 
-import { detectProfileFit } from './profile-fit-gate.js';
-import { fetchTicketData } from './ticket-data.js';
-
 interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
@@ -246,23 +243,8 @@ export async function executeFindSlotStep(
     (run.flowType === 'review-pr' || run.flowType === 'pr-complete') && run.branch
       ? run.branch
       : undefined;
-  // Prefer metadata already persisted on the run (e.g. manual backlog payloads) —
-  // a fresh fetch can only see less than what intake already captured.
-  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = run.ticketData ?? null;
-  if (!ticketData) {
-    try {
-      ticketData = await fetchTicketData(run);
-    } catch {
-      // Ticket metadata is optional for slot allocation. Without it we fall back to the
-      // explicit run prepareProfile/app fields and skip profile-fit resource narrowing.
-    }
-  }
-  const profileFit = detectProfileFit(run, ticketData, {
-    prepareProfile: run.prepareProfile,
-    app: run.app,
-    slotPlatform: null,
-  });
-  const requiredPrepareProfile = run.prepareProfile || profileFit?.suggestedPrepareProfile || null;
+  // Explicit prepare only — profile-fit suggestions never rewrite FIND_SLOT eligibility.
+  const requiredPrepareProfile = run.prepareProfile || null;
 
   // CI-watch warm-session handoff: chained follow-up already pinned to the parent's
   // keep-warm slot. Bind immediately so DISPATCH can probe the live worker; do not

@@ -622,56 +622,141 @@ test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls b
   assert.equal(await selectQueueDispatchSlot(slots, item), 'ready-slot');
 });
 
-test('selectQueueDispatchSlot blocks implicit companion profile on plain CLI slots', async () => {
+function plainCliSlot(slotId: string, project = 'farmslot-farm'): SlotStatus {
+  return {
+    slot: slotId,
+    machine: 'demo',
+    platform: 'cli',
+    project,
+    health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+    branch: 'main',
+    agent: 'idle',
+    enabled: true,
+    dispatchable: true,
+    lifecycle: 'ready',
+    phase: null,
+    warm: false,
+    taskId: null,
+    taskFile: null,
+    currentRunId: null,
+    currentFlowType: null,
+    currentTicketOrPr: null,
+    currentMode: null,
+    currentFamilyId: null,
+    currentLane: null,
+    currentVariant: null,
+    dispatchedAt: null,
+    completedAt: null,
+    runner: 'claude',
+    model: 'sonnet',
+    deviceName: null,
+    taskPhase: null,
+    taskStepProgress: null,
+  } as SlotStatus;
+}
+
+test('selectQueueDispatchSlot never stamps profileFit onto unset prepareProfile', async () => {
   const item: QueueItem = {
-    id: 'queue-companion',
+    id: 'queue-no-stamp',
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'Command Center companion gateway task that exposes inventory',
+    priority: 1,
+    createdAt: '2026-04-15T00:00:00.000Z',
+    status: 'queued',
+    ticketData: {
+      source: 'manual',
+      title: 'Command Center inventory tables',
+      description: 'UI that exposes inventory and companion pairing on gateway reconnect.',
+      acceptanceCriteria: ['Tables render'],
+      affectedArea: 'command-center',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: ['command-center'],
+    },
+  };
+  const slots = [plainCliSlot('plain-cli')];
+
+  assert.equal(item.prepareProfile, undefined);
+  assert.equal(await selectQueueDispatchSlot(slots, item), 'plain-cli');
+  assert.equal(item.prepareProfile, undefined);
+});
+
+test('selectQueueDispatchSlot ignores exposes false-positive companion tokens when prepare unset', async () => {
+  // "exposes" contains substring "expo" — old profile-fit stamp forced sandbox-companion.
+  const item: QueueItem = {
+    id: 'queue-exposes',
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000074',
+    priority: 1,
+    createdAt: '2026-04-15T00:00:00.000Z',
+    status: 'queued',
+    ticketData: {
+      source: 'manual',
+      title: 'Command Center inventory tables',
+      description: 'The runs page exposes inventory tables in Command Center.',
+      acceptanceCriteria: ['Table exposes columns'],
+      affectedArea: 'command-center',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: ['command-center'],
+    },
+  };
+  const slots = [plainCliSlot('mini-ff-2')];
+
+  assert.equal(await selectQueueDispatchSlot(slots, item), 'mini-ff-2');
+  assert.equal(item.prepareProfile, undefined);
+});
+
+test('selectQueueDispatchSlot preserves explicit sandbox prepareProfile despite companion ticket tokens', async () => {
+  const item: QueueItem = {
+    id: 'queue-explicit-sandbox',
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'companion mobile simulator pairing gateway task',
+    prepareProfile: 'sandbox',
+    priority: 1,
+    createdAt: '2026-04-15T00:00:00.000Z',
+    status: 'queued',
+    ticketData: {
+      source: 'manual',
+      title: 'Companion pairing on mobile simulator',
+      description: 'apps/companion expo metro pairing with gateway',
+      acceptanceCriteria: ['Companion shows connected'],
+      affectedArea: 'mobile companion',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: ['companion'],
+    },
+  };
+  const slots = [plainCliSlot('plain-cli')];
+
+  assert.equal(await selectQueueDispatchSlot(slots, item), 'plain-cli');
+  assert.equal(item.prepareProfile, 'sandbox');
+});
+
+test('selectQueueDispatchSlot still gates explicit sandbox-companion to simulator resources', async () => {
+  const item: QueueItem = {
+    id: 'queue-explicit-companion',
     flowType: 'pr-complete',
     project: 'farmslot-farm',
     ticketOrPr: 'companion gateway task',
+    prepareProfile: 'sandbox-companion',
     priority: 1,
     createdAt: '2026-04-15T00:00:00.000Z',
     status: 'queued',
   };
-  const slots: SlotStatus[] = [
-    {
-      slot: 'plain-cli',
-      machine: 'demo',
-      platform: 'cli',
-      project: 'farmslot-farm',
-      health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
-      branch: 'main',
-      agent: 'idle',
-      enabled: true,
-      dispatchable: true,
-      lifecycle: 'ready',
-      phase: null,
-      warm: false,
-      taskId: null,
-      taskFile: null,
-      currentRunId: null,
-      currentFlowType: null,
-      currentTicketOrPr: null,
-      currentMode: null,
-      currentFamilyId: null,
-      currentLane: null,
-      currentVariant: null,
-      dispatchedAt: null,
-      completedAt: null,
-      runner: 'claude',
-      model: 'sonnet',
-      deviceName: null,
-      taskPhase: null,
-      taskStepProgress: null,
-    },
-  ];
+  const slots = [plainCliSlot('plain-cli')];
 
   await assert.rejects(
     () => selectQueueDispatchSlot(slots, item),
     /No free slots for project farmslot-farm have resources required by prepare profile sandbox-companion/,
   );
+  assert.equal(item.prepareProfile, 'sandbox-companion');
 });
 
-test('selectQueueDispatchSlot defers bare GitHub refs when ticket metadata is unavailable', async () => {
+test('selectQueueDispatchSlot does not defer bare GitHub refs when prepare is unset', async () => {
   const item: QueueItem = {
     id: 'queue-metadata-miss',
     flowType: 'pr-complete',
@@ -681,43 +766,11 @@ test('selectQueueDispatchSlot defers bare GitHub refs when ticket metadata is un
     createdAt: '2026-04-15T00:00:00.000Z',
     status: 'queued',
   };
-  const slots: SlotStatus[] = [
-    {
-      slot: 'plain-cli',
-      machine: 'demo',
-      platform: 'cli',
-      project: 'farmslot-farm',
-      health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
-      branch: 'main',
-      agent: 'idle',
-      enabled: true,
-      dispatchable: true,
-      lifecycle: 'ready',
-      phase: null,
-      warm: false,
-      taskId: null,
-      taskFile: null,
-      currentRunId: null,
-      currentFlowType: null,
-      currentTicketOrPr: null,
-      currentMode: null,
-      currentFamilyId: null,
-      currentLane: null,
-      currentVariant: null,
-      dispatchedAt: null,
-      completedAt: null,
-      runner: 'claude',
-      model: 'sonnet',
-      deviceName: null,
-      taskPhase: null,
-      taskStepProgress: null,
-    },
-  ];
+  const slots = [plainCliSlot('plain-cli')];
 
-  await assert.rejects(
-    () => selectQueueDispatchSlot(slots, item),
-    /Ticket metadata unavailable for example-org\/example-mobile#424242/,
-  );
+  // Profile-fit no longer drives queue selection, so missing ticket metadata is not a stall.
+  assert.equal(await selectQueueDispatchSlot(slots, item), 'plain-cli');
+  assert.equal(item.prepareProfile, undefined);
 });
 
 test('selectQueueDispatchSlot does not defer non-farmslot queues on unavailable metadata', async () => {

@@ -102,3 +102,24 @@ test('profile fit validation plan keeps companion proof on dispatch slot', () =>
   assert.equal(companionStep?.prepareProfile, 'sandbox-companion');
   assert.equal(companionStep?.slot, undefined);
 });
+
+test('profile fit may false-positive on expo substring inside exposes (advisory only)', () => {
+  // Token match is substring-based; "exposes" contains "expo". Callers must not
+  // stamp suggestedPrepareProfile onto queue items — selection is explicit-only.
+  const result = detectProfileFit(
+    run(),
+    {
+      source: 'manual',
+      title: 'Command Center inventory tables',
+      description: 'The runs page exposes inventory tables in Command Center.',
+      acceptanceCriteria: ['Table exposes columns'],
+      affectedArea: 'command-center',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: ['command-center'],
+    },
+    { slotPlatform: 'cli' },
+  );
+  // Advisory surface may still suggest companion; effective selection ignores this.
+  assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
+});
