@@ -128,7 +128,7 @@ export async function resourceCleanup(
     try {
       resources = await resolveSlotResources(slot.slot);
     } catch (err) {
-      if (!dryRun || !isMissingProjectConfigError(err)) throw err;
+      if (!dryRun || !isUnresolvableSlotError(err)) throw err;
       console.warn(
         `[resource] skipping cleanup preview for ${slot.slot}: ${(err as Error).message}`,
       );

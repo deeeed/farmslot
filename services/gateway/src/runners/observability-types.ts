@@ -55,6 +55,12 @@ export interface RunnerObservability {
   getContextPct(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
   activeTool(vars: SlotVars, target: string): Promise<ObservabilityReading<string> | null>;
   lastTurnCompletedAt(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
+  /**
+   * Capture the provider's own clock immediately before prompt delivery. Native
+   * session histories must compare against this baseline instead of the
+   * gateway clock because fleet nodes can be skewed.
+   */
+  capturePromptAcceptanceBaseline?(vars: SlotVars, target: string): Promise<number>;
   promptAccepted(
     vars: SlotVars,
     target: string,

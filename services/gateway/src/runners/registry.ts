@@ -129,8 +129,10 @@ export interface RunnerDefinition {
    */
   acceptsModel(model: string): boolean;
   /**
-   * How runner liveness is observed. Event-driven runners expose structured native
-   * signals; pane-only runners rely on tmux capture; none skips observability reads.
+   * How runner activity and composer liveness are observed. Event-driven runners
+   * use structured activity signals; pane-only runners use tmux capture; none
+   * skips activity reads. Exact prompt-acceptance evidence is an orthogonal
+   * provider capability, so a pane-backed runner such as Grok may still expose it.
    */
   observabilityScope: ObservabilityScope;
   /** Runner emits Farmslot hook records that may be used for prompt/session correlation. */
@@ -366,6 +368,26 @@ const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
 export function getRunnerObservability(runnerId?: string | null): RunnerObservability | null {
   if (!runnerId) return null;
   return KNOWN_RUNNER_OBSERVABILITY[normalizeRunner(runnerId)] ?? null;
+}
+
+export async function captureRunnerPromptAcceptanceBaseline(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runnerId: string,
+  fallbackMs = Date.now(),
+): Promise<number | null> {
+  const observability = getRunnerObservability(runnerId);
+  if (!observability?.capturePromptAcceptanceBaseline) return fallbackMs;
+  try {
+    return await observability.capturePromptAcceptanceBaseline(vars, target);
+  } catch (error) {
+    // Native acceptance must use the provider's timebase. Falling back to the
+    // gateway clock would reintroduce cross-node skew and false delivery proof.
+    console.warn(
+      `[runner-observability] prompt acceptance baseline failed for ${vars.slotId}: ${(error as Error).message}`,
+    );
+    return null;
+  }
 }
 
 export {
@@ -1295,10 +1317,11 @@ async function resolvePendingInstructionObsFirst(
   target: string,
   runner: string,
   message: string,
-  sinceMs: number,
+  sinceMs: number | null,
 ): Promise<HookPendingDecision> {
   const observability = getRunnerObservability(runner);
   if (!observability) return { kind: 'fallback' };
+  if (sinceMs == null) return { kind: 'fallback' };
   try {
     const reading = await observability.promptAccepted(
       vars,
@@ -1329,11 +1352,12 @@ async function runnerHasPendingInstruction(
   runner: string,
   message: string,
   pane: string,
-  sinceMs: number,
+  sinceMs: number | null,
 ): Promise<boolean> {
   const panePending = runnerPaneHasPendingInstruction(pane, message, runner);
   const observability = getRunnerObservability(runner);
   if (!observability) return panePending;
+  if (sinceMs == null) return panePending;
   try {
     const reading = await observability.promptAccepted(
       vars,
@@ -1360,7 +1384,7 @@ async function sendRunnerInstructionWhenPaneClear(
   runner: string,
   message: string,
   pane: string,
-  promptAcceptedSinceMs: number,
+  promptAcceptedSinceMs: number | null,
   logPrefix: string,
 ): Promise<boolean> {
   if (
@@ -1458,7 +1482,7 @@ async function waitForRunnerPromptSendReady(
   return pane;
 }
 
-async function runnerHasDurablePromptHandoff(
+export async function runnerHasDurablePromptHandoff(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
@@ -1468,6 +1492,7 @@ async function runnerHasDurablePromptHandoff(
     launchAckSignalPath?: string | null;
     launchAckBaseline?: LaunchAckSignalSnapshot | null;
     requirePromptDigest?: boolean;
+    promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<boolean> {
   const def = getRunnerDefinition(runner);
@@ -1487,12 +1512,15 @@ async function runnerHasDurablePromptHandoff(
   }
   const observability = getRunnerObservability(runner);
   if (!observability) return false;
+  const promptAcceptedSinceMs =
+    opts.promptAcceptanceBaselineMs === undefined ? sinceMs : opts.promptAcceptanceBaselineMs;
+  if (promptAcceptedSinceMs == null) return false;
   try {
     const reading = await observability.promptAccepted(
       vars,
       target,
       runnerPromptDigest(message),
-      sinceMs,
+      promptAcceptedSinceMs,
       undefined,
       message,
     );
@@ -1518,6 +1546,7 @@ async function runnerShowsPromptDeliveryAccepted(
     launchAckSignalPath?: string | null;
     launchAckBaseline?: LaunchAckSignalSnapshot | null;
     requirePromptDigest?: boolean;
+    promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<boolean> {
   if (await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, opts)) {
@@ -2005,7 +2034,13 @@ export async function sendRunnerInstructionSafely(
   const def = getRunnerDefinition(runner);
   const effectiveTimeoutMs = timeoutMs ?? resolveSafeSendTimeoutMs(runner);
   const loopStartMs = Date.now();
-  const promptAcceptedSinceMs = computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
+  // Hook digests are correlation-safe across a bounded retry window. Native
+  // exact-text history is not: an identical operator nudge may be intentional,
+  // so only a native acceptance from this send call can suppress it.
+  const hookPromptAcceptedSinceMs = computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
+  const promptAcceptedSinceMs = def.emitsHookEvents
+    ? hookPromptAcceptedSinceMs
+    : await captureRunnerPromptAcceptanceBaseline(vars, target, runner, loopStartMs);
   // ADR-032 Phase 3: hook-capable runners that don't need the busy-composer poll (Claude) resolve
   // the decision from hooks only. Runners that require the poll (Codex) take the pane-fallback path
   // below.
@@ -2018,7 +2053,7 @@ export async function sendRunnerInstructionSafely(
       logPrefix,
       effectiveTimeoutMs,
       loopStartMs,
-      promptAcceptedSinceMs,
+      hookPromptAcceptedSinceMs,
       opts.recovery,
     );
   }
@@ -2191,6 +2226,7 @@ export async function sendRunnerPostLaunchPrompt(
     signalPath?: string;
     launchAckSignalPath?: string;
     launchAckBaseline?: LaunchAckSignalSnapshot | null;
+    promptAcceptanceBaselineMs?: number | null;
     requirePromptDigest?: boolean;
     softAcceptOnHandoffAck?: boolean;
     handoffAckSinceMs?: number;
@@ -2208,6 +2244,10 @@ export async function sendRunnerPostLaunchPrompt(
   const maxAttempts = opts.maxAttempts ?? 3;
   const softAcceptOnHandoffAck = opts.softAcceptOnHandoffAck !== false;
   const handoffAckSinceMs = opts.handoffAckSinceMs ?? Date.now();
+  const promptAcceptanceBaselineMs =
+    opts.promptAcceptanceBaselineMs !== undefined
+      ? opts.promptAcceptanceBaselineMs
+      : await captureRunnerPromptAcceptanceBaseline(vars, target, runner, handoffAckSinceMs);
   const requirePromptDigest = opts.requirePromptDigest === true;
   const launchAckBaseline =
     opts.launchAckBaseline ??
@@ -2640,6 +2680,7 @@ export async function sendRunnerPostLaunchPrompt(
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
+        promptAcceptanceBaselineMs,
       })
     ) {
       console.log(
@@ -2668,6 +2709,7 @@ export async function sendRunnerPostLaunchPrompt(
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
+        promptAcceptanceBaselineMs,
       })
     ) {
       console.log(
@@ -2736,7 +2778,12 @@ export async function sendRunnerPostLaunchPrompt(
         postPane,
         lastPane,
         marker,
-        { launchAckSignalPath: opts.launchAckSignalPath, launchAckBaseline, requirePromptDigest },
+        {
+          launchAckSignalPath: opts.launchAckSignalPath,
+          launchAckBaseline,
+          requirePromptDigest,
+          promptAcceptanceBaselineMs,
+        },
       )
     ) {
       console.log(
@@ -2787,15 +2834,16 @@ export async function sendRunnerPostLaunchPrompt(
     }
   }
   if (softAcceptOnHandoffAck) {
-    const handoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
-      launchAckSignalPath: opts.launchAckSignalPath,
-      launchAckBaseline,
-      preferHooks: getRunnerDefinition(runner).emitsHookEvents,
-      requirePromptDigest,
-    });
-    if (handoff.accepted) {
+    if (
+      await runnerHasDurablePromptHandoff(vars, target, runner, message, handoffAckSinceMs, {
+        launchAckSignalPath: opts.launchAckSignalPath,
+        launchAckBaseline,
+        requirePromptDigest,
+        promptAcceptanceBaselineMs,
+      })
+    ) {
       console.warn(
-        `[${logPrefix}] prompt delivery pane verifier failed but handoff evidence accepted via ${handoff.source}: ${handoff.reason}`,
+        `[${logPrefix}] prompt delivery pane verifier failed but durable handoff evidence accepted`,
       );
       return;
     }

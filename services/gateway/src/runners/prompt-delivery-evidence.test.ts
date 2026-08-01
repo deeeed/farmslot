@@ -13,7 +13,10 @@ import {
 import {
   buildLaunchAckSignalReadCommand,
   launchAckSignalAdvanced,
+  probeRunnerHandoffAck,
+  readLaunchAckSignalSnapshot,
 } from './prompt-delivery-evidence.js';
+import { makeVars } from './test-fixtures.js';
 
 const NOW = 1_782_502_350_000;
 
@@ -106,25 +109,83 @@ test('launch acknowledgement accepts any valid worker signal that advances from 
     mtimeNs: `${NOW + 1000}000000`,
   };
 
-  assert.equal(launchAckSignalAdvanced(baseline, running, NOW), true);
-  assert.equal(launchAckSignalAdvanced(running, running, NOW), false);
-  assert.equal(launchAckSignalAdvanced(running, rewritten, NOW), true);
-  assert.equal(launchAckSignalAdvanced(running, complete, NOW), true);
+  assert.equal(launchAckSignalAdvanced(baseline, running), true);
+  assert.equal(launchAckSignalAdvanced(running, running), false);
+  assert.equal(launchAckSignalAdvanced(running, rewritten), true);
+  assert.equal(launchAckSignalAdvanced(running, complete), true);
 });
 
 test('launch acknowledgement rejects malformed or stale signals', () => {
   assert.equal(
-    launchAckSignalAdvanced(null, { raw: '{}', status: null, mtimeNs: `${NOW}000000` }, NOW),
+    launchAckSignalAdvanced(null, { raw: '{}', status: null, mtimeNs: `${NOW}000000` }),
     false,
   );
   assert.equal(
-    launchAckSignalAdvanced(
-      null,
-      { raw: '{"status":"running"}', status: 'running', mtimeNs: `${NOW}000000` },
-      NOW,
-    ),
+    launchAckSignalAdvanced(null, {
+      raw: '{"status":"running"}',
+      status: 'running',
+      mtimeNs: `${NOW}000000`,
+    }),
     false,
   );
+});
+
+test('launch acknowledgement snapshot reads a real task signal without runner hooks', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'farmslot-launch-ack-read-'));
+  const signalPath = join(dir, 'SIGNAL.json');
+  try {
+    const vars = makeVars({ repo: dir, remoteRepo: dir });
+    const missing = await readLaunchAckSignalSnapshot(vars, signalPath);
+    assert.deepEqual(missing, { raw: null, status: null, mtimeNs: '0' });
+
+    writeFileSync(signalPath, '{"status":"running"}\n');
+    const running = await readLaunchAckSignalSnapshot(vars, signalPath);
+    assert.equal(running?.status, 'running');
+    assert.equal(running?.raw, '{"status":"running"}');
+    assert.match(running?.mtimeNs ?? '', /^\d+$/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('launch acknowledgement snapshot degrades to null when the evidence probe cannot run', async () => {
+  const missingDir = join(
+    tmpdir(),
+    `farmslot-launch-ack-missing-${process.pid}-${process.hrtime.bigint()}`,
+  );
+  const snapshot = await readLaunchAckSignalSnapshot(
+    makeVars({ repo: missingDir, remoteRepo: missingDir }),
+    join(missingDir, 'SIGNAL.json'),
+  );
+  assert.equal(snapshot, null);
+});
+
+test('task signal proves generic delivery but cannot satisfy digest-required review delivery', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'farmslot-launch-ack-probe-'));
+  const signalPath = join(dir, 'SIGNAL.json');
+  try {
+    const vars = makeVars({ repo: dir, remoteRepo: dir });
+    const baseline = await readLaunchAckSignalSnapshot(vars, signalPath);
+    writeFileSync(signalPath, '{"status":"running"}\n');
+
+    const generic = await probeRunnerHandoffAck(vars, 'unused', 'task prompt', NOW, {
+      launchAckSignalPath: signalPath,
+      launchAckBaseline: baseline,
+      preferHooks: false,
+    });
+    assert.equal(generic.accepted, true);
+    assert.equal(generic.source, 'launch-signal');
+
+    const digestRequired = await probeRunnerHandoffAck(vars, 'unused', 'review prompt', NOW, {
+      launchAckSignalPath: signalPath,
+      launchAckBaseline: baseline,
+      preferHooks: false,
+      requirePromptDigest: true,
+    });
+    assert.equal(digestRequired.accepted, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('launch acknowledgement stat probe emits one numeric timestamp on this platform', () => {

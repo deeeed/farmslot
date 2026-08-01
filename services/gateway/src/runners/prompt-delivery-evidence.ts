@@ -1,5 +1,5 @@
 import type { loadSlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
+import { execOnSlot, type ExecResult } from '../core/exec.js';
 import { resolveTmuxPaneId, shellQuote } from '../core/tmux.js';
 import { normalizeWorkerSignal } from '../tasks/worker-signals.js';
 
@@ -30,36 +30,71 @@ export interface LaunchAckSignalSnapshot {
 }
 
 const MISSING_SIGNAL = '__FARMSLOT_SIGNAL_MISSING__';
+const UNREADABLE_SIGNAL = '__FARMSLOT_SIGNAL_UNREADABLE__';
 
 export function buildLaunchAckSignalReadCommand(signalPath: string): string {
   const quotedPath = shellQuote(signalPath);
-  return `if [ ! -f ${quotedPath} ]; then printf '${MISSING_SIGNAL}\\n'; else mtime_ns=$(python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)' ${quotedPath}) || exit 1; printf '%s\\n' "$mtime_ns"; cat ${quotedPath}; fi`;
+  return [
+    `if [ ! -f ${quotedPath} ]; then`,
+    `  printf '${MISSING_SIGNAL}\\n'`,
+    'else',
+    "  mtime=''",
+    '  if command -v python3 >/dev/null 2>&1; then',
+    `    mtime=$(python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)' ${quotedPath}) || mtime=''`,
+    '  fi',
+    `  if [ -z "$mtime" ] && stat -f '%m' ${quotedPath} >/dev/null 2>&1; then`,
+    `    mtime=$(stat -f '%m' ${quotedPath})000000000`,
+    `  elif [ -z "$mtime" ] && stat -c '%Y' ${quotedPath} >/dev/null 2>&1; then`,
+    `    mtime=$(stat -c '%Y' ${quotedPath})000000000`,
+    '  fi',
+    '  if [ -z "$mtime" ]; then',
+    `    printf '${UNREADABLE_SIGNAL}\\n'`,
+    '  else',
+    '    printf \'%s\\n\' "$mtime"',
+    `    cat ${quotedPath}`,
+    '  fi',
+    'fi',
+  ].join('\n');
 }
 
 export async function readLaunchAckSignalSnapshot(
   vars: SlotVars,
   signalPath: string,
-): Promise<LaunchAckSignalSnapshot> {
-  const result = await execOnSlot(
-    vars,
-    buildLaunchAckSignalReadCommand(signalPath),
-    vars.remoteRepo,
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `Failed to read launch acknowledgement signal ${signalPath}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+): Promise<LaunchAckSignalSnapshot | null> {
+  let result: ExecResult;
+  try {
+    result = await execOnSlot(vars, buildLaunchAckSignalReadCommand(signalPath), vars.remoteRepo);
+  } catch (error) {
+    // This probe is corroborating evidence. Transport failure must fall back to
+    // runner-native hooks/session logs and pane verification, not fail dispatch.
+    console.warn(
+      `[runner-observability] launch acknowledgement probe failed for ${vars.slotId}: ${(error as Error).message}`,
     );
+    return null;
+  }
+  if (result.exitCode !== 0) {
+    console.warn(
+      `[runner-observability] launch acknowledgement probe failed for ${vars.slotId}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+    );
+    return null;
   }
   if (result.stdout.startsWith(MISSING_SIGNAL)) {
     return { raw: null, status: null, mtimeNs: '0' };
   }
+  if (result.stdout.startsWith(UNREADABLE_SIGNAL)) return null;
   const newline = result.stdout.indexOf('\n');
   if (newline < 0) {
-    throw new Error(`Launch acknowledgement signal probe returned no stat line: ${signalPath}`);
+    console.warn(
+      `[runner-observability] launch acknowledgement probe returned no stat line for ${vars.slotId}`,
+    );
+    return null;
   }
   const mtimeNs = result.stdout.slice(0, newline).trim();
   if (!/^\d+$/.test(mtimeNs)) {
-    throw new Error(`Launch acknowledgement signal probe returned invalid mtime: ${signalPath}`);
+    console.warn(
+      `[runner-observability] launch acknowledgement probe returned invalid mtime for ${vars.slotId}`,
+    );
+    return null;
   }
   const raw = result.stdout.slice(newline + 1).trim();
   if (!raw) return { raw, status: null, mtimeNs };
@@ -84,7 +119,6 @@ export async function readLaunchAckSignalSnapshot(
 export function launchAckSignalAdvanced(
   baseline: LaunchAckSignalSnapshot | null | undefined,
   current: LaunchAckSignalSnapshot,
-  _sinceMs: number,
 ): boolean {
   if (!baseline || current.status === null) return false;
   return current.raw !== baseline.raw || current.mtimeNs !== baseline.mtimeNs;
@@ -103,9 +137,9 @@ export async function probeRunnerHandoffAck(
     requirePromptDigest?: boolean;
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
-  if (opts.launchAckSignalPath) {
+  if (opts.launchAckSignalPath && opts.launchAckBaseline && !opts.requirePromptDigest) {
     const launchAck = await readLaunchAckSignalSnapshot(vars, opts.launchAckSignalPath);
-    if (launchAckSignalAdvanced(opts.launchAckBaseline, launchAck, sinceMs)) {
+    if (launchAck && launchAckSignalAdvanced(opts.launchAckBaseline, launchAck)) {
       return {
         accepted: true,
         reason: `launch ack signal advanced to ${launchAck.status} at ${opts.launchAckSignalPath}`,

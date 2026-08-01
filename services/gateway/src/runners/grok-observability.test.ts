@@ -37,6 +37,18 @@ describe('Grok structured prompt observability', () => {
     );
   });
 
+  it('captures the provider clock for prompt acceptance cutoffs', async () => {
+    const observability = createGrokLogObservability(
+      async () => ({ status: 'matched', promptAcceptedAt: null }),
+      async () => 987_654,
+    );
+
+    assert.equal(
+      await observability.capturePromptAcceptanceBaseline?.(makeVars(), 'core-3:bugfix'),
+      987_654,
+    );
+  });
+
   it('falls back without a new signal from one pane-bound session', async () => {
     const noChange = createGrokLogObservability(async () => ({
       status: 'matched',

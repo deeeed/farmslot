@@ -30,12 +30,10 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
   runnerSupportsSessionReload,
 } from '../runners/launch-command.js';
+import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
-  probeRunnerHandoffAck,
-  readLaunchAckSignalSnapshot,
-} from '../runners/prompt-delivery-evidence.js';
-import {
-  runnerEmitsHookEvents,
+  captureRunnerPromptAcceptanceBaseline,
+  runnerHasDurablePromptHandoff,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
   runnerPaneShowsCurrentInteractiveProgress,
@@ -405,6 +403,12 @@ export async function runReviewAgent(
       if (runnerNeedsPostLaunchPrompt(runner)) {
         const launchAckSignalPath = taskDirRelPath(taskDir, reviewChecklistTarget.signal);
         const launchAckBaseline = await readLaunchAckSignalSnapshot(vars, launchAckSignalPath);
+        const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
+          vars,
+          reviewTarget,
+          runner,
+          handoffAckSinceMs,
+        );
         try {
           await sendRunnerPostLaunchPrompt(
             vars,
@@ -420,6 +424,7 @@ export async function runReviewAgent(
               signalPath: launchAckSignalPath,
               launchAckSignalPath,
               launchAckBaseline,
+              promptAcceptanceBaselineMs,
               requirePromptDigest: true,
               handoffAckSinceMs,
               softAcceptOnHandoffAck: true,
@@ -427,22 +432,21 @@ export async function runReviewAgent(
             },
           );
         } catch (err) {
-          const handoff = await probeRunnerHandoffAck(
+          const accepted = await runnerHasDurablePromptHandoff(
             vars,
             reviewTarget,
+            runner,
             prompt,
             handoffAckSinceMs,
             {
               launchAckSignalPath,
               launchAckBaseline,
-              preferHooks: runnerEmitsHookEvents(runner),
+              promptAcceptanceBaselineMs,
               requirePromptDigest: true,
             },
           );
-          if (!handoff.accepted) throw err;
-          console.warn(
-            `[self-review] prompt delivery verifier failed but continuing: ${handoff.reason}`,
-          );
+          if (!accepted) throw err;
+          console.warn('[self-review] prompt delivery verifier failed but durable handoff passed');
         }
       }
     };

@@ -184,7 +184,7 @@ Scriptable validation path:
   with zero output (observed: a 3-hour silent hang that looked like a long-running review)
 - wait for **Stop hook** or a pane marker — marker alone is not enough for hook-driven runs
 
-### Grok Pane (`event-driven` prompt acceptance, pane fallback) — priority runner
+### Grok Pane (native prompt acceptance, pane-backed activity) — priority runner
 
 Grok is interactive-first in production (`needsPostLaunchPrompt: true`). Treat it differently from Claude/Codex.
 
