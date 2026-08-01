@@ -678,7 +678,19 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const actionId = await createEngineDecision(runId, 'human_gate', desc, actions, readyPayload);
 
   const afterDecisionRun = getRun(runId)!;
-  const decision = latestResolvedHumanGateDecision(afterDecisionRun.decisions);
+  // Bind to the latest decision matching the action we just resolved — not an
+  // older review request (e.g. first loop claude when the operator just asked
+  // for codex). Sort by resolvedAt so a second request-extra-review wins.
+  const decision =
+    afterDecisionRun.decisions
+      .filter(
+        (candidate) =>
+          candidate.type === 'engine_human_gate' &&
+          candidate.resolvedAction === actionId &&
+          !!candidate.resolvedAt,
+      )
+      .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0] ??
+    latestResolvedHumanGateDecision(afterDecisionRun.decisions);
   const selectionData = decision?.selectionData;
   if (publicationApprovalGate) {
     const decisionPayload = decision?.payload as ReadyGatePayload | undefined;

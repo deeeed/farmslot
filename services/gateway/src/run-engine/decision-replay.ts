@@ -11,7 +11,7 @@ const HUMAN_GATE_APPROVAL_ACTIONS = new Set([
   // must see it via latestResolvedHumanGateDecision(_, true) to take its bypass.
   CLOSE_AS_SHIPPED_ACTION,
 ]);
-const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set([
+export const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set([
   'request-extra-review',
   'request-cross-runner-review',
 ]);
@@ -31,7 +31,7 @@ export function latestResolvedHumanGateDecision(
     .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0];
 }
 
-function isHumanGateReviewRequestAction(actionId: string | undefined): boolean {
+export function isHumanGateReviewRequestAction(actionId: string | undefined): boolean {
   return HUMAN_GATE_REVIEW_REQUEST_ACTIONS.has(actionId ?? '');
 }
 

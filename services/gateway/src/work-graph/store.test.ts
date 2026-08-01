@@ -1390,6 +1390,87 @@ test('a succeeded node is reclaimed once its run is deleted and the item reopene
   await new Promise((resolve) => setTimeout(resolve, 25));
 });
 
+test('waiting node after fail+delete reclaims and re-enqueues despite completed ledger', async () => {
+  // Live bug: TAT-3214 stayed status=waiting with empty waitingOn after the run
+  // was deleted. Upstream edges were satisfied and enqueue ledger was completed,
+  // so Dispatch reported "still waiting on upstream" and never re-queued.
+  const { backlog, queue, runs, workGraph } = await freshStores();
+  const created = await createReadyBacklogItem(backlog, 'Waiting stuck after delete');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Waiting reclaim graph',
+  });
+  const graphId = graph.graph.graph.id;
+  const nodeId = 'wn_waiting_reclaim';
+  await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
+  await workGraph.activateWorkGraph({ graphId });
+
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === nodeId);
+  assert.ok(queued);
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    workGraphId: graphId,
+    workNodeId: nodeId,
+  });
+  await backlog.markBacklogRunStarted(queued, run);
+  queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
+  runs.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+  backlog.markBacklogRunObserved({ ...run, status: 'failed' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  await runs.deleteRun(run.id);
+  await backlog.markBacklogRunReleased(run.id);
+  await backlog.markBacklogItemReady({ itemId: created.item.id });
+
+  // Force the stuck shape: waiting + empty waitingOn + no latestRunId, while the
+  // completed enqueue ledger from the first dispatch remains.
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const graphFile = path.join(process.env.FARMSLOT_WORK_GRAPH_DIR!, `${graphId}.json`);
+  const snapshot = JSON.parse(await readFile(graphFile, 'utf-8')) as {
+    nodes: Array<{
+      id: string;
+      status: string;
+      waitingOn?: unknown[];
+      latestRunId?: string;
+      currentFamilyId?: string;
+      currentRootRunId?: string;
+    }>;
+    ledger: Array<{ nodeId: string; actionKind: string; status: string }>;
+  };
+  const persisted = snapshot.nodes.find((node) => node.id === nodeId);
+  assert.ok(persisted);
+  persisted.status = 'waiting';
+  persisted.waitingOn = [];
+  delete persisted.latestRunId;
+  delete persisted.currentFamilyId;
+  delete persisted.currentRootRunId;
+  assert.ok(
+    snapshot.ledger.some(
+      (entry) =>
+        entry.nodeId === nodeId && entry.actionKind === 'enqueue' && entry.status === 'completed',
+    ),
+    'expected completed enqueue ledger from the first dispatch',
+  );
+  await writeFile(graphFile, JSON.stringify(snapshot, null, 2), 'utf-8');
+  await workGraph.loadWorkGraphs();
+
+  const retick = await workGraph.schedulerTick({ graphId, forceEnqueue: true });
+  const node = retick.graphs[0]?.nodes.find((candidate) => candidate.id === nodeId);
+  assert.equal(node?.status, 'queued');
+  assert.equal(node?.latestRunId, undefined);
+  assert.ok(
+    queue
+      .getQueueSnapshot()
+      .some((item) => item.workGraphId === graphId && item.workNodeId === nodeId),
+  );
+  await queue.persistQueueNow();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+});
+
 test('a merged upstream unblocks its dependent', async () => {
   // The evidence check used to cast Run to a shape carrying prState/mergedAt.
   // Run declared neither and nothing wrote them, so this edge stayed pending no
