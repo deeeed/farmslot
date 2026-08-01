@@ -184,14 +184,15 @@ Scriptable validation path:
   with zero output (observed: a 3-hour silent hang that looked like a long-running review)
 - wait for **Stop hook** or a pane marker — marker alone is not enough for hook-driven runs
 
-### Grok Pane (native prompt acceptance, pane-backed activity) — priority runner
+### Grok Pane (native session observability) — priority runner
 
 Grok is interactive-first in production (`needsPostLaunchPrompt: true`). Treat it differently from Claude/Codex.
 
 Signals:
 
 - pane current command is `grok`
-- exact accepted prompts are recorded in the active session's structured `prompt_history.jsonl`
+- `events.jsonl` records structured turn/tool activity; indexed user messages in
+  `chat_history.jsonl` correlate exact accepted prompts to their turn
 - project-directory prompt: `Run Grok Build in a project directory`, `(current)`, `Enter:submit`
 - compose ready after blocker clears
 
@@ -207,7 +208,9 @@ Two validated paths:
 Rules:
 
 - do not assume Claude `❯` semantics
-- native prompt acceptance is authoritative only when one active Grok session binds to the pane; ambiguous or unavailable session metadata falls back to the generic worker signal and pane checks
+- native observations are authoritative only when one active Grok session binds to the pane;
+  ambiguous or unavailable session metadata fails closed, with the generic worker signal as the
+  runner-agnostic delivery fallback
 - after interactive launch, **always** check `launch_blocker` before composing
 - `git init` in the launch repo so Grok sees a project directory
 - binary default: `~/.grok/bin/grok`
