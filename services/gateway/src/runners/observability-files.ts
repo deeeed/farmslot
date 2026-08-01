@@ -115,6 +115,11 @@ export function deriveRunnerActivity(
     } else if (event === 'UserPromptSubmit' || event === 'UserPromptExpansion') {
       lastComposing = { observedAt };
     } else if (event === 'Notification') {
+      const notificationMessage =
+        typeof record.notification_message === 'string' ? record.notification_message : '';
+      const notificationIndicatesIdle = /\b(?:idle prompt|waiting for your input)\b/i.test(
+        notificationMessage,
+      );
       const turnWasIdle =
         lastTurnStop != null &&
         (lastComposing == null || lastComposing.observedAt < lastTurnStop.observedAt) &&
@@ -122,7 +127,8 @@ export function deriveRunnerActivity(
           (lastPostToolUseAt != null && lastPostToolUseAt >= lastPreToolUse.observedAt));
       if (
         record.notification_type === 'idle_prompt' ||
-        (!record.notification_type && turnWasIdle)
+        notificationIndicatesIdle ||
+        (!record.notification_type && !notificationMessage && turnWasIdle)
       ) {
         lastIdleNotification = { observedAt };
       } else {
@@ -296,16 +302,23 @@ export async function runnerObservabilityDirForSlot(vars: SlotVars): Promise<str
 export async function readRunnerObservabilityFiles(
   vars: SlotVars,
   repoPath = vars.remoteRepo,
-): Promise<{ hooksRaw: string; statuslineRaw: string }> {
+): Promise<{ hooksRaw: string; hooksTailComplete: boolean; statuslineRaw: string }> {
   const obsDir = shellQuote(await runnerObservabilityDirForSlot({ ...vars, remoteRepo: repoPath }));
   const hooksPath = `${obsDir}/hooks.jsonl`;
   const statuslinePath = `${obsDir}/statusline.json`;
   const [hooksResult, statuslineResult] = await Promise.all([
-    execOnSlot(vars, `tail -c 65536 ${hooksPath} 2>/dev/null || true`),
+    execOnSlot(
+      vars,
+      `{ cat ${hooksPath}.1 2>/dev/null || true; cat ${hooksPath} 2>/dev/null || true; } | tail -c 65536`,
+    ),
     execOnSlot(vars, `cat ${statuslinePath} 2>/dev/null || true`),
   ]);
   return {
     hooksRaw: hooksResult.stdout,
+    // An exact-size tail may be truncated, so only a shorter read proves the combined retained
+    // history was read in full. This lets short/fresh logs answer long-window digest lookups while
+    // exact-size tails remain fail-closed.
+    hooksTailComplete: Buffer.byteLength(hooksResult.stdout, 'utf8') < 65_536,
     statuslineRaw: statuslineResult.stdout,
   };
 }
@@ -467,6 +480,7 @@ export function promptDigestAcceptedFromHooks(
   now = Date.now(),
   paneId?: string | null,
   paneRetired = false,
+  tailComplete = false,
 ): ObservabilityReading<boolean> | null {
   const scoped = filterHooksByPane(hooks, paneId);
   let oldestObservedAt: number | null = null;
@@ -499,7 +513,7 @@ export function promptDigestAcceptedFromHooks(
       observedAt: latestMatchAt,
     };
   }
-  if (oldestObservedAt == null || oldestObservedAt > sinceMs) return null;
+  if (!tailComplete && (oldestObservedAt == null || oldestObservedAt > sinceMs)) return null;
   if (latestObservedAt != null) {
     return {
       value: false,

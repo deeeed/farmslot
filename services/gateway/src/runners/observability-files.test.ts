@@ -80,6 +80,40 @@ test('deriveRunnerActivity treats an idle notification after Stop as terminal id
   });
 });
 
+test('deriveRunnerActivity recognizes the installed idle notification message', () => {
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'PreToolUse', observedAt: NOW - 70_000, tool_name: 'Read' },
+      { hook_event_name: 'PostToolUse', observedAt: NOW - 60_000, tool_name: 'Read' },
+      {
+        hook_event_name: 'Notification',
+        notification_message: 'Claude is waiting for your input',
+        observedAt: NOW - 1_000,
+      },
+    ],
+    null,
+    NOW,
+  );
+  assert.equal(reading?.value, 'idle');
+});
+
+test('deriveRunnerActivity does not treat an unrelated notification as idle', () => {
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 2_000 },
+      {
+        hook_event_name: 'Notification',
+        notification_type: 'permission_prompt',
+        notification_message: 'Claude needs permission to use Bash',
+        observedAt: NOW - 1_000,
+      },
+    ],
+    null,
+    NOW,
+  );
+  assert.equal(reading?.value, 'composing');
+});
+
 test('deriveRunnerActivity preserves stale terminal idle as low-confidence last-known state', () => {
   const reading = deriveRunnerActivity(
     [
@@ -255,6 +289,15 @@ test('promptDigestAcceptedFromHooks requires full window coverage before rejecti
     runnerPromptDigest: 'other-digest',
   };
   assert.equal(promptDigestAcceptedFromHooks([other], 'wanted-digest', since, NOW), null);
+  assert.deepEqual(
+    promptDigestAcceptedFromHooks([other], 'wanted-digest', since, NOW, undefined, false, true),
+    {
+      value: false,
+      source: 'hook',
+      confidence: 'medium',
+      observedAt: other.observedAt,
+    },
+  );
   const windowBoundary = {
     hook_event_name: 'Stop',
     observedAt: since,

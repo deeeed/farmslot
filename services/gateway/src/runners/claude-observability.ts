@@ -16,12 +16,12 @@ import {
 import type { RunnerObservability, SlotVars } from './observability-types.js';
 
 async function loadObservabilitySnapshot(vars: SlotVars, target: string) {
-  const { hooksRaw, statuslineRaw } = await readRunnerObservabilityFiles(vars);
+  const { hooksRaw, hooksTailComplete, statuslineRaw } = await readRunnerObservabilityFiles(vars);
   const paneId = await resolveTmuxPaneId(vars, target);
   const allHooks = parseHookJsonl(hooksRaw);
   const hooks = filterHooksByPane(allHooks, paneId);
   const statusline = filterStatuslineByPane(parseStatuslineJson(statuslineRaw), paneId);
-  return { allHooks, hooks, paneId, statusline };
+  return { allHooks, hooks, hooksTailComplete, paneId, statusline };
 }
 
 export const claudeHookObservability: RunnerObservability = {
@@ -59,7 +59,7 @@ export const claudeHookObservability: RunnerObservability = {
   },
 
   async promptDigestAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {
-    const { allHooks, paneId } = await loadObservabilitySnapshot(vars, target);
+    const { allHooks, hooksTailComplete, paneId } = await loadObservabilitySnapshot(vars, target);
     return promptDigestAcceptedFromHooks(
       allHooks,
       promptDigest,
@@ -67,6 +67,7 @@ export const claudeHookObservability: RunnerObservability = {
       Date.now(),
       paneId,
       paneRetired,
+      hooksTailComplete,
     );
   },
 };

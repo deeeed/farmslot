@@ -870,11 +870,7 @@ export function paneShowsBusyComposer(pane: string): boolean {
     /tab to queue message/i.test(pane) ||
     /Working \(/i.test(pane) ||
     /background terminal running/i.test(pane) ||
-    // Claude mid-turn spinner — added 2026-05-21 after the mm-3 regression where the new
-    // `· Composing…` marker (first appeared in the operator's most recent Claude version
-    // upgrade) was not in the busy set, causing nudge send-keys to land while the runner was
-    // still composing and Enter to be buffered. Matches spinner-prefixed forms across glyphs.
-    /[·*•✶]\s*Composing[…\.]/i.test(pane)
+    /[✻✢✽✶✷✸✹✺✼✣∗]\s*Composing[…\.]/iu.test(pane)
   );
 }
 
@@ -891,8 +887,13 @@ function lineShowsClaudeOrCodexProgress(line: string): boolean {
 }
 
 function lineShowsClaudeSpinnerFrame(line: string): boolean {
-  return /^\s*[✻✢✽✶✷✸✹✺✼✣∗]\s+[^\n(]+?[…\.]{1,3}(?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*$/iu.test(
-    line,
+  return (
+    /^\s*[✻✢✽✶✷✸✹✺✼✣∗]\s+[^\n(]+?[…\.]{1,3}(?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*$/iu.test(
+      line,
+    ) ||
+    /^\s*[·*]\s+[^\n(]+?[…\.]{1,3}\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\)\s*$/iu.test(
+      line,
+    )
   );
 }
 
@@ -1584,6 +1585,31 @@ async function recordObservabilityDegradedDecision(
   );
 }
 
+async function recordObservabilityRecoveredDecision(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  reading: ObservabilityReading<RunnerActivity>,
+  pane: string,
+  logPrefix: string,
+): Promise<void> {
+  const def = getRunnerDefinition(runner);
+  if (def.observabilityScope !== 'event-driven') return;
+  logRunnerObservabilityAgreement({
+    ...buildRunnerObservabilityAgreementEntry({
+      slotId: vars.slotId,
+      runner,
+      target,
+      logPrefix,
+      paneBusy: paneShowsBusyComposer(pane),
+      reading,
+      paneRetired: true,
+      timestamp: Date.now(),
+    }),
+    recoveryOutcome: 'sent-after-stale-idle',
+  });
+}
+
 /**
  * ADR-032 Phase 3A terminal degraded record. When the hook-only send holds through its whole
  * window, emit the ADR-031 deterministic-recovery "hold-send" action. It is always logged for the
@@ -1957,9 +1983,25 @@ async function sendRunnerInstructionHookOnly(
       continue;
     }
     // Composer proven empty (or nothing was pending) → type fresh.
-    return (
-      (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok'
+    const submitResult = await submitRunnerInstruction(
+      vars,
+      target,
+      runner,
+      message,
+      logPrefix,
+      'send',
     );
+    if (submitResult === 'ok' && staleTerminalIdle && activity) {
+      await recordObservabilityRecoveredDecision(
+        vars,
+        target,
+        runner,
+        activity,
+        preSendPane,
+        logPrefix,
+      );
+    }
+    return submitResult === 'ok';
   }
   if (sawHookDegraded) {
     // Hook lapse held the window: emit the ADR-031 deterministic recovery + audit as a hook lapse.

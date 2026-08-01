@@ -33,6 +33,8 @@ export interface RunnerObservabilityAgreementEntry {
    * healthy activity read and the `wouldConsultPane` count silently under-reports).
    */
   degradedSignal?: 'activity' | 'pending';
+  /** A degraded activity signal recovered through the guarded live-composer check. */
+  recoveryOutcome?: 'sent-after-stale-idle';
   timestamp: number;
 }
 
@@ -62,9 +64,9 @@ export function disagreementReason(params: {
  * null so `wouldConsultPane` reflects the Phase 2 pane consult the flag replaced (ADR-032 Phase
  * 3A soak metric).
  *
- * Flag-off (`paneRetired=false`) telemetry is byte-identical to Phase 2: ANY reading yields a
- * boolean `hookBusy` (even `unknown`/low-confidence), so existing agreement logs/aggregates keep
- * their prior shape. Raw activity/source/confidence/observedAt are recorded for every reading.
+ * Flag-off (`paneRetired=false`) telemetry also requires an authoritative reading. This prevents a
+ * deliberately low-confidence stale-idle recovery signal from being counted as hook agreement;
+ * raw activity/source/confidence/observedAt are still recorded for diagnostics.
  */
 export function buildRunnerObservabilityAgreementEntry(params: {
   slotId: string;
@@ -78,16 +80,9 @@ export function buildRunnerObservabilityAgreementEntry(params: {
 }): RunnerObservabilityAgreementEntry {
   const { reading } = params;
   const hookActivity = reading?.value ?? null;
-  let hookBusy: boolean | null;
-  if (params.paneRetired) {
-    const hookAuthoritative =
-      reading != null &&
-      isObservabilityReadingAuthoritative(reading) &&
-      reading.value !== 'unknown';
-    hookBusy = hookAuthoritative ? runnerActivityIsBusy(reading.value) : null;
-  } else {
-    hookBusy = reading != null ? runnerActivityIsBusy(reading.value) : null;
-  }
+  const hookAuthoritative =
+    reading != null && isObservabilityReadingAuthoritative(reading) && reading.value !== 'unknown';
+  const hookBusy = hookAuthoritative ? runnerActivityIsBusy(reading.value) : null;
   const reason = disagreementReason({ paneBusy: params.paneBusy, hookBusy, hookActivity });
   const wouldConsultPane = params.paneRetired && hookBusy == null;
   return {

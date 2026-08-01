@@ -1819,7 +1819,10 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
   });
 
   it('reports draft for a busy/queued composer', () => {
-    assert.equal(runnerPaneComposerDraftState('· Composing…\n❯\n', 'claude'), 'draft');
+    assert.equal(
+      runnerPaneComposerDraftState('· Composing… (12s · esc to interrupt)\n❯\n', 'claude'),
+      'draft',
+    );
   });
 
   it('confines Claude rotating-spinner detection to the live composer tail', () => {
@@ -1847,6 +1850,8 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
       '✻ Reading…',
       '✽ Compacting conversation…',
       '✻ Herding files… (12s · esc to interrupt)',
+      '· Herding… (12s · esc to interrupt)',
+      '* Herding… (12s · esc to interrupt)',
     ]) {
       assert.equal(runnerPaneComposerDraftState(`${spinner}\n❯\n`, 'claude'), 'draft', spinner);
     }
