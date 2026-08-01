@@ -456,8 +456,9 @@ export function promptAcceptedFromHooks(
  * Exact digest lookup for long-window idempotency checks.
  *
  * Unlike {@link promptAcceptedFromHooks}, this never substitutes generic turn-start evidence for
- * a digest match. Any scoped hook inside the window proves the stream is readable; without a
- * matching UserPromptSubmit record, the result is authoritative false.
+ * a digest match. A negative result is authoritative only when the retained hook tail starts at or
+ * before the requested window. Otherwise the matching prompt may have scrolled out of the bounded
+ * read, so the caller must degrade instead of resending it.
  */
 export function promptDigestAcceptedFromHooks(
   hooks: readonly HookRecord[],
@@ -468,6 +469,12 @@ export function promptDigestAcceptedFromHooks(
   paneRetired = false,
 ): ObservabilityReading<boolean> | null {
   const scoped = filterHooksByPane(hooks, paneId);
+  let oldestObservedAt: number | null = null;
+  for (const record of hooks) {
+    const observedAt = observedAtFromRecord(record);
+    if (observedAt == null) continue;
+    if (oldestObservedAt == null || observedAt < oldestObservedAt) oldestObservedAt = observedAt;
+  }
   let latestObservedAt: number | null = null;
   let latestMatchAt: number | null = null;
   for (const record of scoped) {
@@ -492,6 +499,7 @@ export function promptDigestAcceptedFromHooks(
       observedAt: latestMatchAt,
     };
   }
+  if (oldestObservedAt == null || oldestObservedAt > sinceMs) return null;
   if (latestObservedAt != null) {
     return {
       value: false,
@@ -500,6 +508,6 @@ export function promptDigestAcceptedFromHooks(
       observedAt: latestObservedAt,
     };
   }
-  if (paneRetired || now < sinceMs) return null;
+  if (paneRetired) return null;
   return { value: false, source: 'hook', confidence: 'medium', observedAt: now };
 }

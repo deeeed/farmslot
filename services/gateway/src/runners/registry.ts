@@ -891,7 +891,7 @@ function lineShowsClaudeOrCodexProgress(line: string): boolean {
 }
 
 function lineShowsClaudeSpinnerFrame(line: string): boolean {
-  return /^\s*[·✻✢✽✶✷✸✹✺✼✣*•∗]\s+[^\n(]+?[…\.]{1,3}(?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*$/iu.test(
+  return /^\s*[✻✢✽✶✷✸✹✺✼✣∗]\s+[^\n(]+?[…\.]{1,3}(?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*$/iu.test(
     line,
   );
 }
@@ -1815,7 +1815,6 @@ async function sendRunnerInstructionHookOnly(
   // signal cannot see). A composer hold with a healthy hook must NOT be recorded as a hook lapse.
   let sawHookDegraded = false;
   let sawComposerHold = false;
-  let recordedStaleIdle = false;
   let checkedStalePromptHistory = false;
   while (Date.now() < deadline) {
     // Idempotent re-nudge: a high-confidence digest match means this exact message already
@@ -1883,16 +1882,6 @@ async function sendRunnerInstructionHookOnly(
       }
       checkedStalePromptHistory = true;
       if (historicalPromptReading?.value) return true;
-    }
-    if (staleTerminalIdle && !recordedStaleIdle) {
-      await recordObservabilityDegradedDecision(
-        vars,
-        target,
-        runner,
-        { signal: 'activity', reading: activity },
-        logPrefix,
-      );
-      recordedStaleIdle = true;
     }
     if (idleDecision.degraded && !staleTerminalIdle) {
       sawHookDegraded = true;

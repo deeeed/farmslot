@@ -114,6 +114,7 @@ try {
     effort: payload.effort,
     tool_name: payload.tool_name,
     notification_type: payload.notification_type,
+    notification_message: payload.message,
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
     runner: process.env.FARMSLOT_RUNNER || 'claude',

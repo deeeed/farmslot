@@ -120,7 +120,7 @@ test('claude install preserves a non-symlink compatibility directory', () => {
   assert.equal(fs.readFileSync(path.join(compat, 'operator-file'), 'utf8'), 'keep\n');
 });
 
-test('installed hook writes distinct JSONL records and preserves notification type', () => {
+test('installed hook writes distinct JSONL records and preserves notification details', () => {
   const { obsDir, hookPath } = installToTempDir();
   const logPath = path.join(obsDir, 'hooks.jsonl');
   const hookSrc = fs.readFileSync(hookPath, 'utf8');
@@ -135,6 +135,7 @@ test('installed hook writes distinct JSONL records and preserves notification ty
   runHook(hookPath, obsDir, {
     hook_event_name: 'Notification',
     notification_type: 'idle_prompt',
+    message: 'Claude is waiting for your input',
     session_id: 'a',
   });
 
@@ -144,6 +145,7 @@ test('installed hook writes distinct JSONL records and preserves notification ty
   assert.equal(JSON.parse(lines[0]).hook_event_name, 'SessionStart');
   assert.equal(JSON.parse(lines[1]).hook_event_name, 'Stop');
   assert.equal(JSON.parse(lines[2]).notification_type, 'idle_prompt');
+  assert.equal(JSON.parse(lines[2]).notification_message, 'Claude is waiting for your input');
   assert.equal(raw.at(-1), '\n', 'each append should end with a real newline byte');
 });
 

@@ -1857,6 +1857,8 @@ describe('runnerPaneComposerDraftState (ADR-032 Phase 3A fail-closed composer re
       '⏺ Bash(yarn test)\n⎿ Running 188 tests...\n⏺ All green.\n❯\n',
       '⎿ Reading 240 lines…\n⏺ Done\n❯\n',
       '> Continue working on the PR... then run tests\n⏺ Done\n❯\n',
+      '• Added tests.\n❯\n',
+      '* done.\n❯\n',
     ]) {
       assert.equal(runnerPaneComposerDraftState(pane, 'claude'), 'empty', pane);
     }

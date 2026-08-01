@@ -247,19 +247,34 @@ test('promptDigestAcceptedFromHooks never substitutes generic turn-start evidenc
   });
 });
 
-test('promptDigestAcceptedFromHooks distinguishes another digest from an exact match', () => {
+test('promptDigestAcceptedFromHooks requires full window coverage before rejecting a digest', () => {
   const since = NOW - 30 * 60_000;
   const other = {
     hook_event_name: 'UserPromptSubmit',
     observedAt: NOW - 12 * 60_000,
     runnerPromptDigest: 'other-digest',
   };
-  assert.deepEqual(promptDigestAcceptedFromHooks([other], 'wanted-digest', since, NOW), {
-    value: false,
-    source: 'hook',
-    confidence: 'medium',
-    observedAt: other.observedAt,
-  });
+  assert.equal(promptDigestAcceptedFromHooks([other], 'wanted-digest', since, NOW), null);
+  const windowBoundary = {
+    hook_event_name: 'Stop',
+    observedAt: since,
+    tmuxPane: '%other-pane',
+  };
+  assert.deepEqual(
+    promptDigestAcceptedFromHooks(
+      [windowBoundary, { ...other, tmuxPane: '%target-pane' }],
+      'wanted-digest',
+      since,
+      NOW,
+      '%target-pane',
+    ),
+    {
+      value: false,
+      source: 'hook',
+      confidence: 'medium',
+      observedAt: other.observedAt,
+    },
+  );
   const matching = { ...other, runnerPromptDigest: 'wanted-digest', observedAt: NOW - 11 * 60_000 };
   assert.deepEqual(promptDigestAcceptedFromHooks([other, matching], 'wanted-digest', since, NOW), {
     value: true,

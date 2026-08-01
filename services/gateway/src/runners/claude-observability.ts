@@ -18,9 +18,10 @@ import type { RunnerObservability, SlotVars } from './observability-types.js';
 async function loadObservabilitySnapshot(vars: SlotVars, target: string) {
   const { hooksRaw, statuslineRaw } = await readRunnerObservabilityFiles(vars);
   const paneId = await resolveTmuxPaneId(vars, target);
-  const hooks = filterHooksByPane(parseHookJsonl(hooksRaw), paneId);
+  const allHooks = parseHookJsonl(hooksRaw);
+  const hooks = filterHooksByPane(allHooks, paneId);
   const statusline = filterStatuslineByPane(parseStatuslineJson(statuslineRaw), paneId);
-  return { hooks, statusline };
+  return { allHooks, hooks, paneId, statusline };
 }
 
 export const claudeHookObservability: RunnerObservability = {
@@ -58,13 +59,13 @@ export const claudeHookObservability: RunnerObservability = {
   },
 
   async promptDigestAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {
-    const { hooks } = await loadObservabilitySnapshot(vars, target);
+    const { allHooks, paneId } = await loadObservabilitySnapshot(vars, target);
     return promptDigestAcceptedFromHooks(
-      hooks,
+      allHooks,
       promptDigest,
       sinceMs,
       Date.now(),
-      undefined,
+      paneId,
       paneRetired,
     );
   },
