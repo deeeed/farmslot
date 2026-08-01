@@ -1752,11 +1752,12 @@ describe('buildRunnerSessionReloadCommand', () => {
     const cmd = buildRunnerSessionReloadCommand(vars, 'claude', 'sonnet', 'session-123', {
       safetyTier: 'dangerous',
       runtimeDir: '.agent',
+      initialPrompt: 'Read and execute TASK.md',
     });
     assert.match(cmd, /install-runner-observability\.mjs/);
     assert.match(
       cmd,
-      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --resume 'session-123'$/,
+      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --resume 'session-123' 'Read and execute TASK.md'$/,
     );
   });
 
@@ -1793,6 +1794,13 @@ describe('buildRunnerSessionReloadCommand', () => {
       () => buildRunnerSessionReloadCommand(vars, 'cursor', 'auto', 'session-123'),
       /does not support persisted session reload/,
     );
+  });
+
+  it('declares retained handoff and reload behavior in the runner capability registry', () => {
+    assert.equal(getRunnerDefinition('claude').retainedSessionHandoff, 'resume-with-prompt');
+    assert.equal(getRunnerDefinition('claude').sessionReload, 'with-prompt');
+    assert.equal(getRunnerDefinition('cursor').retainedSessionHandoff, 'in-place');
+    assert.equal(getRunnerDefinition('cursor').sessionReload, 'none');
   });
 });
 

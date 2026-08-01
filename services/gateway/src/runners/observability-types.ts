@@ -12,6 +12,7 @@ export interface ObservabilityReading<T> {
 }
 
 export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';
+export type RunnerSessionDeliveryState = 'idle' | 'active' | 'unknown';
 
 export type ObservabilityScope = 'event-driven' | 'pane-only' | 'none';
 
@@ -25,6 +26,7 @@ export interface HookRecord {
   hook_event_name?: string;
   event?: string;
   tool_name?: string;
+  notification_type?: string;
   tool_use_id?: string;
   session_id?: string;
   transcript_path?: string;
@@ -63,4 +65,15 @@ export interface RunnerObservability {
     // Phase-2 flag-off behavior byte-identical.
     paneRetired?: boolean,
   ): Promise<ObservabilityReading<boolean> | null>;
+  /**
+   * Durable delivery state for one persisted runner session. Unlike transient
+   * activity, a terminal Stop remains idle until a later event in that same
+   * session supersedes it.
+   */
+  getSessionDeliveryState(
+    vars: SlotVars,
+    target: string,
+    sessionId: string,
+    sessionPath: string,
+  ): Promise<ObservabilityReading<RunnerSessionDeliveryState> | null>;
 }

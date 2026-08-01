@@ -54,6 +54,9 @@ mock.module('../../core/config.js', {
 mock.module('../../core/index.js', {
   namedExports: {
     ...realCoreIndex,
+    // Keep this test on the successful replay-reclaim path; the synthetic slot
+    // is intentionally absent from the real fleet configuration.
+    claimSlotStatusIf: async () => ({ claimed: true, epoch: 1 }),
     updateSlotStatusIf: async () => true,
     loadSlotVars: async () => ({
       remoteRepo: workspace,

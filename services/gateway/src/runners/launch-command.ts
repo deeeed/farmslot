@@ -19,6 +19,7 @@ import {
   runnerDefaultSafetyTier,
   runnerFlagsForTier,
   runnerNeedsPostLaunchPrompt,
+  runnerSessionReloadCapability,
 } from './registry.js';
 import {
   buildRunnerObservabilityInstallCommand,
@@ -125,8 +126,7 @@ export function resolveGrokBinary(preferred?: string | null): string {
 
 /** Runners whose persisted sessions can be resumed via buildRunnerSessionReloadCommand. */
 export function runnerSupportsSessionReload(runnerId: string): boolean {
-  const runner = normalizeRunner(runnerId);
-  return runner === 'claude' || runner === 'codex' || runner === 'grok';
+  return runnerSessionReloadCapability(runnerId) !== 'none';
 }
 
 export function buildRunnerSessionReloadCommand(
@@ -142,12 +142,16 @@ export function buildRunnerSessionReloadCommand(
     runtimeDir?: string;
     codexAccountLabel?: string | null;
     codexAuthSource?: string | null;
+    initialPrompt?: string;
   } = {},
 ): string {
   const runner = normalizeRunner(runnerId);
   const repo = opts.repo ?? vars.remoteRepo;
   const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
   const quotedSessionId = shellQuote(sessionId);
+  const initialPrompt = opts.initialPrompt?.trim()
+    ? ` ${shellQuote(opts.initialPrompt.trim())}`
+    : '';
 
   if (runner === 'claude') {
     const installCommand = buildRunnerObservabilityInstallCommand(
@@ -162,7 +166,7 @@ export function buildRunnerSessionReloadCommand(
     const claudePath = vars.claudePath || 'claude';
     return withTaskRecipeTrustEnvironment(
       withRunnerObservabilityInstall(
-        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag} --resume ${quotedSessionId}`,
+        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
         installCommand,
       ),
       repo,
@@ -188,7 +192,7 @@ export function buildRunnerSessionReloadCommand(
       withRunnerObservabilityInstall(
         `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
           vars.codexPath,
-        )} resume --disable plugin_hooks${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}`,
+        )} resume --disable plugin_hooks${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
         installCommand,
       ),
       repo,
@@ -204,7 +208,7 @@ export function buildRunnerSessionReloadCommand(
     return withTaskRecipeTrustEnvironment(
       `cd ${shellQuote(repo)} && ${resolveGrokBinary(
         vars.grokPath,
-      )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}`,
+      )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
       repo,
       opts.taskDir,
     );

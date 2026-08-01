@@ -27,13 +27,10 @@ import {
   resolveProjectTaskDirName,
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
-import { resolveTmuxSession, shellQuote } from '../../core/tmux.js';
-import {
-  normalizeRunner,
-  resolveSafeSendTimeoutMs,
-  runnerSupportsTmuxNudges,
-  sendRunnerInstructionSafely,
-} from '../../runners/registry.js';
+import { resolveTmuxPaneId, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
+import { normalizeRunner, runnerRetainedSessionHandoff } from '../../runners/registry.js';
+import { resolvePersistedRunnerSessionBinding } from '../../runners/session-process.js';
+import { deliverPromptToRetainedRunnerSession } from '../../runners/session-reactivation.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { isWorkerAlive } from '../../self-review/worker-lifecycle.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
@@ -41,6 +38,7 @@ import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../task
 
 import { ensureWorkerRoleTarget, isRunnerAliveInAnyPane } from './execute.js';
 import { terminalizePriorRunOnSlot } from './nudge.js';
+import { resolveDispatchSafetyTier } from './safety-tier.js';
 import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -69,6 +67,8 @@ export type WarmSessionHandoffResult =
   | {
       handedOff: false;
       reason: string;
+      /** A live/ambiguous worker must be held rather than replaced. */
+      disposition: 'fresh-dispatch' | 'hold';
     };
 
 export interface WarmWorkerBinding {
@@ -108,8 +108,8 @@ export function resolveWarmWorkerBinding(
  * Hand a CI-watch chained follow-up into a still-alive worker session left warm
  * after gate-held FINALIZE. Unlike branch-affinity `nudgeDispatch`, this path
  * targets held/ci-watch slots (agent often idle) and probes process liveness
- * instead of busy mid-task eligibility. Callers fall back to fresh dispatch
- * when this returns `handedOff: false`.
+ * instead of busy mid-task eligibility. A false result explicitly distinguishes
+ * a safe cold fallback from an ambiguous live session that must be held.
  */
 export async function warmSessionHandoffDispatch(
   params: WarmSessionHandoffParams,
@@ -117,7 +117,11 @@ export async function warmSessionHandoffDispatch(
 ): Promise<WarmSessionHandoffResult> {
   const vars = await loadSlotVars(params.slotId);
   if (vars.slotMode === 'disabled') {
-    return { handedOff: false, reason: `slot ${params.slotId} is disabled` };
+    return {
+      handedOff: false,
+      disposition: 'fresh-dispatch',
+      reason: `slot ${params.slotId} is disabled`,
+    };
   }
 
   const step = (name: string, detail: string) => emit('dispatch.step', { name, detail });
@@ -125,17 +129,23 @@ export async function warmSessionHandoffDispatch(
   const { getRun } = await import('../../runs/store.js');
   const requestingRun = getRun(params.runId);
   if (!requestingRun) {
-    return { handedOff: false, reason: `run ${params.runId} not found` };
+    return {
+      handedOff: false,
+      disposition: 'fresh-dispatch',
+      reason: `run ${params.runId} not found`,
+    };
   }
   const parentRun = params.parentRunId ? (getRun(params.parentRunId) ?? null) : null;
 
   const slotRunnerRaw = (await readSlotField(params.slotId, 'runner')) as string | null;
   const slotModelRaw = (await readSlotField(params.slotId, 'model')) as string | null;
   const runner = normalizeRunner(slotRunnerRaw ?? params.runner ?? 'claude');
-  if (!runnerSupportsTmuxNudges(runner)) {
+  const handoffMode = runnerRetainedSessionHandoff(runner);
+  if (handoffMode === 'unsupported') {
     return {
       handedOff: false,
-      reason: `runner '${runner}' does not support tmux warm handoff`,
+      disposition: 'fresh-dispatch',
+      reason: `runner '${runner}' does not support retained-session handoff`,
     };
   }
   if (params.runner) {
@@ -143,6 +153,7 @@ export async function warmSessionHandoffDispatch(
     if (expected !== runner) {
       return {
         handedOff: false,
+        disposition: 'fresh-dispatch',
         reason: `runner mismatch (slot=${runner}, run=${expected}) — fresh dispatch required`,
       };
     }
@@ -156,6 +167,7 @@ export async function warmSessionHandoffDispatch(
   ) {
     return {
       handedOff: false,
+      disposition: 'fresh-dispatch',
       reason: `model mismatch (slot=${slotModelRaw}, run=${params.model}) — fresh dispatch required`,
     };
   }
@@ -167,7 +179,11 @@ export async function warmSessionHandoffDispatch(
     // process (chained run has no agent context yet). Retry without runId.
     const aliveUnscoped = await isWorkerAlive(vars, runner);
     if (!aliveUnscoped) {
-      return { handedOff: false, reason: 'worker session not alive' };
+      return {
+        handedOff: false,
+        disposition: 'fresh-dispatch',
+        reason: 'worker session not alive',
+      };
     }
   }
 
@@ -183,7 +199,11 @@ export async function warmSessionHandoffDispatch(
   let taskFilePath = params.taskFile;
   if (!path.isAbsolute(taskFilePath)) taskFilePath = path.join(farmslotRoot, taskFilePath);
   if (!existsSync(taskFilePath)) {
-    return { handedOff: false, reason: `task file not found: ${taskFilePath}` };
+    return {
+      handedOff: false,
+      disposition: 'hold',
+      reason: `task file not found: ${taskFilePath}`,
+    };
   }
 
   const taskDir = path.dirname(taskFilePath);
@@ -234,44 +254,85 @@ export async function warmSessionHandoffDispatch(
     | null;
   const binding = resolveWarmWorkerBinding(session, parentRun, priorFlowTypeRaw, flowType);
   const workerRole = binding.role;
-  const workerTarget =
+  const resolvedWorkerTarget =
     binding.target ?? (await ensureWorkerRoleTarget(vars, session, runner, workerRole));
+  const workerWindow =
+    (binding.target ? binding.context?.target?.window : null) ?? agentDispatchWindow(workerRole);
+  const workerTarget = workerWindow ? `${session}:${workerWindow}` : resolvedWorkerTarget;
   const primaryTarget: AgentContextTarget = {
     session,
-    window:
-      (binding.target ? binding.context?.target?.window : null) ?? agentDispatchWindow(workerRole),
-    pane: binding.target ? (binding.context?.target?.pane ?? null) : null,
+    window: workerWindow,
+    pane: null,
     target: workerTarget,
   };
 
   // Re-probe the resolved target: role window may differ from unscoped probe.
   const targetAlive = await isRunnerAliveInAnyPane(vars, workerTarget, runner);
   if (!targetAlive) {
-    return { handedOff: false, reason: `no live ${runner} runner under ${workerTarget}` };
+    return {
+      handedOff: false,
+      disposition: 'fresh-dispatch',
+      reason: `no live ${runner} runner under ${workerTarget}`,
+    };
   }
 
-  step('handoff', `Sending TASK.md prompt to warm worker at ${workerTarget}`);
+  step('handoff', `Delivering TASK.md to warm worker at ${workerTarget}`);
   const absoluteTaskMd = `${workerTaskAbs}/TASK.md`;
   const prompt = await resolveWorkerNudgePrompt(vars.projectName, {
     taskFile: absoluteTaskMd,
     taskDir: workerTaskAbs,
   });
-  const nudgeTimeoutMs = resolveSafeSendTimeoutMs(runner);
-  const sent = await sendRunnerInstructionSafely(
-    vars,
-    workerTarget,
-    runner,
-    prompt,
-    '[warm-handoff]',
-    nudgeTimeoutMs,
-    { forceBusyPoll: true, recovery: { runId: params.runId, emit } },
-  );
-  if (!sent) {
+  const retainedSession = resolvePersistedRunnerSessionBinding([
+    {
+      label: 'parent worker context',
+      runnerSessionId: binding.context?.runnerSessionId,
+      runnerSessionPath: binding.context?.runnerSessionPath,
+    },
+    {
+      label: 'parent run metrics',
+      runnerSessionId: parentRun?.metrics.runnerSessionId,
+      runnerSessionPath: parentRun?.metrics.runnerSessionPath,
+    },
+    {
+      label: 'requesting run metrics',
+      runnerSessionId: requestingRun.metrics.runnerSessionId,
+      runnerSessionPath: requestingRun.metrics.runnerSessionPath,
+    },
+  ]);
+  if (handoffMode === 'resume-with-prompt' && retainedSession.reason) {
     return {
       handedOff: false,
-      reason: `warm handoff to ${workerTarget} timed out after ${Math.round(nudgeTimeoutMs / 1000)}s`,
+      disposition: 'hold',
+      reason: retainedSession.reason,
     };
   }
+  const retainedSessionId = retainedSession.binding?.runnerSessionId ?? null;
+  const retainedSessionPath = retainedSession.binding?.runnerSessionPath ?? null;
+  const safetyTier = resolveDispatchSafetyTier({
+    runTier: requestingRun.safetyTier ?? parentRun?.safetyTier,
+    projectDefaultRaw: projectJson.default_safety_tier,
+  });
+  const delivery = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: workerTarget,
+    runnerId: runner,
+    sessionId: retainedSessionId,
+    sessionPath: retainedSessionPath,
+    model: slotModelRaw ?? params.model,
+    prompt,
+    effort: requestingRun.effort ?? parentRun?.effort,
+    safetyTier,
+    taskDir: workerTaskAbs,
+    recovery: { runId: params.runId, emit },
+  });
+  if (!delivery.delivered) {
+    return {
+      handedOff: false,
+      disposition: delivery.disposition,
+      reason: delivery.reason,
+    };
+  }
+  primaryTarget.pane = await resolveTmuxPaneId(vars, workerTarget);
 
   const priorOwnerContext = binding.context;
   const priorNudgeCount = priorOwnerContext?.nudgeCount ?? 0;
@@ -317,6 +378,8 @@ export async function warmSessionHandoffDispatch(
     runner,
     target: primaryTarget,
     nudgeCount: priorNudgeCount + 1,
+    runnerSessionId: retainedSessionId,
+    runnerSessionPath: retainedSessionPath,
   });
   step(
     'handoff',

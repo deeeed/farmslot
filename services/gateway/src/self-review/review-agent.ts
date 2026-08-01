@@ -38,7 +38,10 @@ import {
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
-import { isRunnerAliveUnderPane } from '../runners/session-process.js';
+import {
+  isRunnerAliveUnderPane,
+  resumableSessionProbeCommand,
+} from '../runners/session-process.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import {
@@ -111,16 +114,6 @@ export function selfReviewChecklistMarkPrompt(
     `Skipping ${markWithTarget} leaves the run at 0/N in the UI. ` +
     `Write ${taskDir}/${feedbackRelPath}, then ${markWithTarget} complete.`
   );
-}
-
-/**
- * Shell probe for "can this persisted session still be resumed": claude/codex
- * sessions are FILES (transcript/rollout) but grok sessions are DIRECTORIES,
- * so the probe must be `test -e` — `-f` would silently disable every grok
- * warm resume.
- */
-export function resumableSessionProbeCommand(runnerSessionPath: string): string {
-  return `test -e ${shellQuote(runnerSessionPath)}`;
 }
 
 export function reviewerChecklistBasename(contextId: string): string {
