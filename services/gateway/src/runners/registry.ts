@@ -68,6 +68,7 @@ import {
   type LaunchAckSignalSnapshot,
   probeRunnerHandoffAck,
   readLaunchAckSignalSnapshot,
+  type RunnerHandoffAckProbe,
 } from './prompt-delivery-evidence.js';
 import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
 
@@ -536,11 +537,6 @@ export function runnerTmuxNudgeUnsupportedDescription(
 export function runnerNeedsPostLaunchPrompt(runnerId?: string | null): boolean {
   if (!isKnownRunner(runnerId)) return false;
   return getRunnerDefinition(runnerId).needsPostLaunchPrompt;
-}
-
-export function runnerEmitsHookEvents(runnerId?: string | null): boolean {
-  if (!isKnownRunner(runnerId)) return false;
-  return getRunnerDefinition(runnerId).emitsHookEvents;
 }
 
 export function runnerResolvesPreTaskLaunchBlockers(runnerId?: string | null): boolean {
@@ -1310,6 +1306,7 @@ async function readRunnerActivityFromObservability(
 type HookPendingDecision =
   | { kind: 'delivered' }
   | { kind: 'hook'; pending: boolean }
+  | { kind: 'native-deferred' }
   | { kind: 'fallback' };
 
 async function resolvePendingInstructionObsFirst(
@@ -1494,7 +1491,7 @@ export async function runnerHasDurablePromptHandoff(
     requirePromptDigest?: boolean;
     promptAcceptanceBaselineMs?: number | null;
   } = {},
-): Promise<boolean> {
+): Promise<RunnerHandoffAckProbe> {
   const def = getRunnerDefinition(runner);
   const paneId = def.emitsHookEvents ? await resolveTmuxPaneId(vars, target) : null;
   const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
@@ -1505,16 +1502,15 @@ export async function runnerHasDurablePromptHandoff(
     preferHooks: def.emitsHookEvents,
   });
   if (handoff.accepted) {
-    console.log(
-      `[runner-observability] prompt handoff accepted via ${handoff.source}: ${handoff.reason}`,
-    );
-    return true;
+    return handoff;
   }
   const observability = getRunnerObservability(runner);
-  if (!observability) return false;
+  if (!observability) return { accepted: false, reason: 'no runner observability provider' };
   const promptAcceptedSinceMs =
     opts.promptAcceptanceBaselineMs === undefined ? sinceMs : opts.promptAcceptanceBaselineMs;
-  if (promptAcceptedSinceMs == null) return false;
+  if (promptAcceptedSinceMs == null) {
+    return { accepted: false, reason: 'prompt acceptance baseline unavailable' };
+  }
   try {
     const reading = await observability.promptAccepted(
       vars,
@@ -1524,12 +1520,25 @@ export async function runnerHasDurablePromptHandoff(
       undefined,
       message,
     );
-    return isObservabilityReadingAuthoritative(reading) && reading.value === true;
+    if (!isObservabilityReadingAuthoritative(reading) || reading.value !== true) {
+      return { accepted: false, reason: 'runner prompt acceptance not observed' };
+    }
+    if (opts.requirePromptDigest && reading.source !== 'signal') {
+      return {
+        accepted: false,
+        reason: `digest-required handoff rejected non-native ${reading.source} activity`,
+      };
+    }
+    return {
+      accepted: true,
+      reason: `exact prompt accepted by runner-native ${reading.source} provider`,
+      source: reading.source === 'signal' ? 'native-signal' : 'hook-activity',
+    };
   } catch (error) {
     console.warn(
       `[runner-observability] promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
     );
-    return false;
+    return { accepted: false, reason: 'runner prompt acceptance probe failed' };
   }
 }
 
@@ -1549,7 +1558,9 @@ async function runnerShowsPromptDeliveryAccepted(
     promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<boolean> {
-  if (await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, opts)) {
+  if (
+    (await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, opts)).accepted
+  ) {
     return true;
   }
   return runnerPaneShowsPromptAccepted(postPane, previousPane, message, marker, runner);
@@ -2113,14 +2124,19 @@ export async function sendRunnerInstructionSafely(
     }
   }
   const deadline = loopStartMs + effectiveTimeoutMs;
+  let nativePromptProbeCompleted = false;
   while (Date.now() < deadline) {
-    const pendingObs = await resolvePendingInstructionObsFirst(
-      vars,
-      target,
-      runner,
-      message,
-      promptAcceptedSinceMs,
-    );
+    const pendingObs =
+      !def.emitsHookEvents && nativePromptProbeCompleted
+        ? ({ kind: 'native-deferred' } as const)
+        : await resolvePendingInstructionObsFirst(
+            vars,
+            target,
+            runner,
+            message,
+            promptAcceptedSinceMs,
+          );
+    if (!def.emitsHookEvents) nativePromptProbeCompleted = true;
     if (pendingObs.kind === 'delivered') return true;
     let pane: string | null = null;
     const ensurePane = async (): Promise<string> => {
@@ -2146,16 +2162,17 @@ export async function sendRunnerInstructionSafely(
       }
     } else if (pendingObs.kind === 'fallback') {
       const captured = await ensurePane();
-      if (
-        await runnerHasPendingInstruction(
-          vars,
-          target,
-          runner,
-          message,
-          captured,
-          promptAcceptedSinceMs,
-        )
-      ) {
+      const hasPending = def.emitsHookEvents
+        ? await runnerHasPendingInstruction(
+            vars,
+            target,
+            runner,
+            message,
+            captured,
+            promptAcceptedSinceMs,
+          )
+        : runnerPaneHasPendingInstruction(captured, message, runner);
+      if (hasPending) {
         return (
           (await submitRunnerInstruction(
             vars,
@@ -2168,6 +2185,10 @@ export async function sendRunnerInstructionSafely(
         );
       }
     }
+
+    // Native history providers can scan bounded log files. Probe once while
+    // the composer remains busy; sendRunnerInstructionWhenPaneClear performs
+    // the required final native recheck immediately before any fresh send.
 
     const busyObs = await resolveBusyComposerObsFirst(vars, target, runner);
     if (busyObs.kind === 'hook') {
@@ -2250,10 +2271,11 @@ export async function sendRunnerPostLaunchPrompt(
       : await captureRunnerPromptAcceptanceBaseline(vars, target, runner, handoffAckSinceMs);
   const requirePromptDigest = opts.requirePromptDigest === true;
   const launchAckBaseline =
-    opts.launchAckBaseline ??
-    (opts.launchAckSignalPath
-      ? await readLaunchAckSignalSnapshot(vars, opts.launchAckSignalPath)
-      : null);
+    opts.launchAckBaseline !== undefined
+      ? opts.launchAckBaseline
+      : opts.launchAckSignalPath
+        ? await readLaunchAckSignalSnapshot(vars, opts.launchAckSignalPath)
+        : null;
 
   // Tiny windows (e.g. a 5-row pane after a detached-client reflow) truncate the
   // banner lines readiness matching depends on — re-enforce the minimum size
@@ -2675,16 +2697,22 @@ export async function sendRunnerPostLaunchPrompt(
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
       )
     ).stdout;
-    if (
-      await runnerHasDurablePromptHandoff(vars, target, runner, message, handoffAckSinceMs, {
+    const immediateHandoff = await runnerHasDurablePromptHandoff(
+      vars,
+      target,
+      runner,
+      message,
+      handoffAckSinceMs,
+      {
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
         promptAcceptanceBaselineMs,
-      })
-    ) {
+      },
+    );
+    if (immediateHandoff.accepted) {
       console.log(
-        `[${logPrefix}] prompt handoff already accepted before attempt ${attempt}/${maxAttempts}`,
+        `[${logPrefix}] prompt handoff accepted via ${immediateHandoff.source}: ${immediateHandoff.reason} before attempt ${attempt}/${maxAttempts}`,
       );
       return;
     }
@@ -2704,16 +2732,22 @@ export async function sendRunnerPostLaunchPrompt(
       deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
       pollIntervalMs,
     });
-    if (
-      await runnerHasDurablePromptHandoff(vars, target, runner, message, handoffAckSinceMs, {
+    const preSendHandoff = await runnerHasDurablePromptHandoff(
+      vars,
+      target,
+      runner,
+      message,
+      handoffAckSinceMs,
+      {
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
         promptAcceptanceBaselineMs,
-      })
-    ) {
+      },
+    );
+    if (preSendHandoff.accepted) {
       console.log(
-        `[${logPrefix}] prompt handoff already accepted before attempt ${attempt}/${maxAttempts}`,
+        `[${logPrefix}] prompt handoff accepted via ${preSendHandoff.source}: ${preSendHandoff.reason} before attempt ${attempt}/${maxAttempts}`,
       );
       return;
     }
@@ -2834,16 +2868,22 @@ export async function sendRunnerPostLaunchPrompt(
     }
   }
   if (softAcceptOnHandoffAck) {
-    if (
-      await runnerHasDurablePromptHandoff(vars, target, runner, message, handoffAckSinceMs, {
+    const finalHandoff = await runnerHasDurablePromptHandoff(
+      vars,
+      target,
+      runner,
+      message,
+      handoffAckSinceMs,
+      {
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
         promptAcceptanceBaselineMs,
-      })
-    ) {
+      },
+    );
+    if (finalHandoff.accepted) {
       console.warn(
-        `[${logPrefix}] prompt delivery pane verifier failed but durable handoff evidence accepted`,
+        `[${logPrefix}] prompt delivery pane verifier failed but handoff evidence accepted via ${finalHandoff.source}: ${finalHandoff.reason}`,
       );
       return;
     }

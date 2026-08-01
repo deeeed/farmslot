@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
+
+import { execLocal } from '../core/exec.js';
+import { shellQuote } from '../core/tmux.js';
 
 import {
   buildGrokPromptSignalProbeCommand,
@@ -97,5 +103,91 @@ describe('Grok structured prompt observability', () => {
     assert.match(command, /event\.get\('session_id'\) != candidate\['session_id'\]/);
     assert.match(command, /event_ms < max\(candidate\['opened_at_ms'\], since_ms\)/);
     assert.match(command, /event\.get\('prompt'\) == expected_prompt/);
+  });
+
+  it('executes the generated probe against pane-bound Grok fixtures', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-grok-probe-'));
+    const home = path.join(root, 'home');
+    const bin = path.join(root, 'bin');
+    const repo = path.join(root, 'repo');
+    const sessionId = 'session-1';
+    const prompt = 'Read TASK.md';
+    const openedAt = '2026-08-01T12:00:00+00:00';
+    const acceptedAt = '2026-08-01T12:00:01+00:00';
+    const historyDir = path.join(home, '.grok', 'sessions', encodeURIComponent(repo));
+    const activePath = path.join(home, '.grok', 'active_sessions.json');
+    const historyPath = path.join(historyDir, 'prompt_history.jsonl');
+
+    try {
+      await Promise.all([
+        mkdir(bin, { recursive: true }),
+        mkdir(repo, { recursive: true }),
+        mkdir(historyDir, { recursive: true }),
+      ]);
+      const tmuxPath = path.join(bin, 'tmux');
+      const psPath = path.join(bin, 'ps');
+      const pythonPath = path.join(bin, 'python3');
+      await Promise.all([
+        writeFile(tmuxPath, "#!/bin/sh\nprintf '111\\n'\n"),
+        writeFile(psPath, "#!/bin/sh\nprintf '111 1\\n222 111\\n'\n"),
+        writeFile(pythonPath, '#!/bin/sh\nexec /usr/bin/python3 "$@"\n'),
+        writeFile(
+          activePath,
+          JSON.stringify([{ cwd: repo, pid: 222, session_id: sessionId, opened_at: openedAt }]),
+        ),
+        writeFile(
+          historyPath,
+          `${JSON.stringify({ session_id: sessionId, timestamp: acceptedAt, prompt, is_bash: false })}\n{"partial":`,
+        ),
+      ]);
+      await Promise.all([chmod(tmuxPath, 0o755), chmod(psPath, 0o755), chmod(pythonPath, 0o755)]);
+
+      const vars = { ...makeVars(), remoteRepo: repo };
+      const runProbe = async () => {
+        const command = buildGrokPromptSignalProbeCommand(
+          vars,
+          'core-3:bugfix',
+          Date.parse(openedAt),
+          prompt,
+        );
+        return execLocal(
+          `export HOME=${shellQuote(home)}; export PATH=${shellQuote(bin)}:$PATH; ${command}`,
+          { cwd: repo },
+        );
+      };
+
+      const matched = await runProbe();
+      assert.equal(matched.exitCode, 0, matched.stderr);
+      assert.deepEqual(parseGrokPromptSignalProbe(matched.stdout.trim()), {
+        status: 'matched',
+        promptAcceptedAt: Date.parse(acceptedAt),
+      });
+
+      await writeFile(
+        historyPath,
+        `${JSON.stringify({
+          session_id: sessionId,
+          timestamp: '2026-08-01T12:00:02',
+          prompt,
+          is_bash: false,
+        })}\n`,
+      );
+      const naiveTimestamp = await runProbe();
+      assert.deepEqual(parseGrokPromptSignalProbe(naiveTimestamp.stdout.trim()), {
+        status: 'matched',
+        promptAcceptedAt: null,
+      });
+
+      await writeFile(
+        activePath,
+        JSON.stringify([{ pid: 222, session_id: sessionId, opened_at: openedAt }]),
+      );
+      const missingCwd = await runProbe();
+      assert.deepEqual(parseGrokPromptSignalProbe(missingCwd.stdout.trim()), {
+        status: 'unavailable',
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

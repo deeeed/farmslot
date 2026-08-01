@@ -116,25 +116,38 @@ def belongs_to_pane(pid):
 repo_key = os.path.realpath(repo)
 matching = [
     item for item in json.loads(active_path.read_text())
-    if os.path.realpath(str(item.get('cwd', ''))) == repo_key
+    if isinstance(item.get('cwd'), str)
+    and item['cwd']
+    and os.path.realpath(item['cwd']) == repo_key
     and isinstance(item.get('pid'), int)
     and belongs_to_pane(item['pid'])
 ]
 if not matching:
     print(json.dumps({'status': 'unavailable'}))
     raise SystemExit(0)
+def parse_aware_timestamp_ms(value):
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value[:-1] + '+00:00' if value.endswith('Z') else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return int(parsed.timestamp() * 1000)
+
 candidates = []
 for item in matching:
     session_id = item.get('session_id')
     timestamp = item.get('opened_at')
-    if not isinstance(session_id, str) or not session_id or not isinstance(timestamp, str):
+    opened_at_ms = parse_aware_timestamp_ms(timestamp)
+    if not isinstance(session_id, str) or not session_id or opened_at_ms is None:
         continue
     candidates.append({
         'session_id': session_id,
         'pid': item['pid'],
-        'opened_at_ms': int(
-            datetime.fromisoformat(timestamp.replace('Z', '+00:00')).timestamp() * 1000
-        ),
+        'opened_at_ms': opened_at_ms,
     })
 if len(candidates) != 1:
     print(json.dumps({'status': 'ambiguous' if candidates else 'unavailable'}))
@@ -164,9 +177,9 @@ for history_path in history_paths:
             if event.get('session_id') != candidate['session_id']:
                 continue
             timestamp = event.get('timestamp')
-            if not isinstance(timestamp, str):
+            event_ms = parse_aware_timestamp_ms(timestamp)
+            if event_ms is None:
                 continue
-            event_ms = int(datetime.fromisoformat(timestamp.replace('Z', '+00:00')).timestamp() * 1000)
             if event_ms < max(candidate['opened_at_ms'], since_ms):
                 continue
             if (

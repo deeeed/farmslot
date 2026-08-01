@@ -32,6 +32,8 @@ let paneCaptureCount = 0;
 let paneClearsAfterSubmit = true;
 let paneTextByCapture: string[] | null = null;
 let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
+let acceptDigestHandoff = false;
+let launchAckSnapshotReads = 0;
 let grokPromptAcceptedCalls = 0;
 let grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
 let grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
@@ -155,7 +157,10 @@ mock.module('../core/exec.js', {
 
 mock.module('./prompt-delivery-evidence.js', {
   namedExports: {
-    readLaunchAckSignalSnapshot: async () => ({ raw: null, status: null, mtimeNs: '0' }),
+    readLaunchAckSignalSnapshot: async () => {
+      launchAckSnapshotReads += 1;
+      return { raw: null, status: null, mtimeNs: '0' };
+    },
     probeRunnerHandoffAck: async (
       _slotVars: SlotVars,
       _target: string,
@@ -164,6 +169,13 @@ mock.module('./prompt-delivery-evidence.js', {
       opts: { requirePromptDigest?: boolean } = {},
     ) => {
       handoffRequirePromptDigestValues.push(opts.requirePromptDigest);
+      if (acceptDigestHandoff && opts.requirePromptDigest) {
+        return {
+          accepted: true,
+          reason: 'mocked exact prompt digest',
+          source: 'hook-digest',
+        };
+      }
       return { accepted: false, reason: 'mocked handoff miss' };
     },
   },
@@ -242,6 +254,7 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
 
   handoffRequirePromptDigestValues = [];
   paneCaptureCount = 0;
+  acceptDigestHandoff = true;
 
   await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'SELF-REVIEW.md', '[test]', {
     readyTimeoutMs: 100,
@@ -256,6 +269,29 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
     handoffRequirePromptDigestValues.some((value) => value === true),
     'self-review sends can require prompt digest explicitly',
   );
+  acceptDigestHandoff = false;
+});
+
+test('sendRunnerPostLaunchPrompt honors an explicit null launch-ack baseline', async () => {
+  launchAckSnapshotReads = 0;
+  promptAcceptedReading = {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+    launchAckSignalPath: '/tmp/SIGNAL.json',
+    launchAckBaseline: null,
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 0,
+    verifyWaitMs: 0,
+    maxAttempts: 1,
+  });
+
+  assert.equal(launchAckSnapshotReads, 0);
 });
 
 test('sendRunnerPostLaunchPrompt rechecks delayed Grok acceptance before retrying', async () => {
@@ -395,6 +431,25 @@ test('sendRunnerInstructionSafely uses the remote Grok clock baseline', async ()
   grokPromptAcceptanceBaselineMs = Date.now();
 });
 
+test('sendRunnerInstructionSafely bounds native Grok probes while the composer stays busy', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneTextByCapture = null;
+  paneText = 'Working (waiting for tool)';
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptanceBaselineMs = 10_000;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+
+  const delivered = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 50);
+
+  assert.equal(delivered, false);
+  assert.equal(grokPromptAcceptedCalls, 1, 'busy polling must not repeatedly scan Grok history');
+  assert.equal(callOrder.includes('tmux:send-literal'), false);
+  paneText = '❯\nctx:12%\n';
+  grokPromptAcceptanceBaselineMs = Date.now();
+});
+
 test('digest-required recovery still accepts native Grok prompt evidence', async () => {
   handoffRequirePromptDigestValues = [];
   grokPromptAcceptedCalls = 0;
@@ -406,10 +461,29 @@ test('digest-required recovery still accepts native Grok prompt evidence', async
     promptAcceptanceBaselineMs: 5_000,
   });
 
-  assert.equal(accepted, true);
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.source, 'native-signal');
   assert.deepEqual(handoffRequirePromptDigestValues, [true]);
   grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
   grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+});
+
+test('digest-required recovery rejects hook activity without an exact digest', async () => {
+  handoffRequirePromptDigestValues = [];
+  promptAcceptedReading = {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  const handoff = await runnerHasDurablePromptHandoff(vars, target, 'claude', message, Date.now(), {
+    requirePromptDigest: true,
+  });
+
+  assert.equal(handoff.accepted, false);
+  assert.match(handoff.reason, /digest-required handoff rejected/);
+  assert.deepEqual(handoffRequirePromptDigestValues, [true]);
 });
 
 test('sendRunnerInstructionSafely skips pane busy scrape when hook reports composing', async () => {

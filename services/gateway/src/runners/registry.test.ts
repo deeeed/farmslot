@@ -56,7 +56,6 @@ import {
   runnerBufferedInstructionSubmitKey,
   runnerContinueCommand,
   runnerDefaultModel,
-  runnerEmitsHookEvents,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
   runnerPaneComposerDraftState,
@@ -1499,15 +1498,11 @@ describe('buildLaunchCommand', () => {
 
   describe('ADR-032 phase 2 safe-send timeouts', () => {
     it('uses hook timeout only for runners that emit hook events', () => {
-      assert.equal(runnerEmitsHookEvents('claude'), true);
-      assert.equal(runnerEmitsHookEvents('codex'), true);
       assert.equal(resolveSafeSendTimeoutMs('claude'), RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS);
       assert.equal(resolveSafeSendTimeoutMs('codex'), RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS);
     });
 
     it('uses pane timeout for pane-backed runners', () => {
-      assert.equal(runnerEmitsHookEvents('cursor'), false);
-      assert.equal(runnerEmitsHookEvents('grok'), false);
       assert.equal(resolveSafeSendTimeoutMs('cursor'), RUNNER_PANE_SAFE_SEND_TIMEOUT_MS);
       assert.equal(resolveSafeSendTimeoutMs('grok'), RUNNER_PANE_SAFE_SEND_TIMEOUT_MS);
     });

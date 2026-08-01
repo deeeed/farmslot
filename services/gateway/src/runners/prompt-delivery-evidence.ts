@@ -20,7 +20,13 @@ type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 export interface RunnerHandoffAckProbe {
   accepted: boolean;
   reason: string;
-  source?: 'hook-digest' | 'hook-turn' | 'hook-activity' | 'launch-signal' | 'pane';
+  source?:
+    | 'hook-digest'
+    | 'hook-turn'
+    | 'hook-activity'
+    | 'launch-signal'
+    | 'native-signal'
+    | 'pane';
 }
 
 export interface LaunchAckSignalSnapshot {
@@ -34,6 +40,8 @@ const UNREADABLE_SIGNAL = '__FARMSLOT_SIGNAL_UNREADABLE__';
 
 export function buildLaunchAckSignalReadCommand(signalPath: string): string {
   const quotedPath = shellQuote(signalPath);
+  // Portable stat fallbacks are second-resolution. Identical rewrites inside
+  // one second therefore fail closed rather than inventing timestamp precision.
   return [
     `if [ ! -f ${quotedPath} ]; then`,
     `  printf '${MISSING_SIGNAL}\\n'`,

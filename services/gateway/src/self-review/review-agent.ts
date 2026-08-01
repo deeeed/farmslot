@@ -432,7 +432,7 @@ export async function runReviewAgent(
             },
           );
         } catch (err) {
-          const accepted = await runnerHasDurablePromptHandoff(
+          const handoff = await runnerHasDurablePromptHandoff(
             vars,
             reviewTarget,
             runner,
@@ -445,8 +445,10 @@ export async function runReviewAgent(
               requirePromptDigest: true,
             },
           );
-          if (!accepted) throw err;
-          console.warn('[self-review] prompt delivery verifier failed but durable handoff passed');
+          if (!handoff.accepted) throw err;
+          console.warn(
+            `[self-review] prompt delivery verifier failed but durable handoff passed via ${handoff.source}: ${handoff.reason}`,
+          );
         }
       }
     };
