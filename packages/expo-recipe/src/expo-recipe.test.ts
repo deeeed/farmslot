@@ -189,6 +189,64 @@ test('transport cleanup failures never mask the run result', async () => {
   await assert.doesNotReject(() => closeUiTransportQuietly({}));
 });
 
+test('defers Metro port validation until a bridge-backed action runs', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-metro-port-'));
+  const envNames = ['FARMSLOT_RECIPE_METRO_PORT', 'METRO_PORT'] as const;
+  const savedEnv = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
+  try {
+    for (const name of envNames) delete process.env[name];
+    await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
+    await installExpoRecipeScaffold({ projectRoot: root, withBridge: true });
+    await writeJson(path.join(root, DEFAULT_EXPO_RECIPE_PATH), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Runs without a Metro-backed action.',
+      workflow: {
+        entry: 'command',
+        nodes: {
+          command: { action: 'command', intent: 'Run headless proof.', cmd: 'true', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+
+    const headless = await runExpoRecipeDocument(DEFAULT_EXPO_RECIPE_PATH, {
+      projectRoot: root,
+      artifactsDir: path.join(root, 'artifacts', 'headless'),
+    });
+    assert.equal(headless.status, 'pass');
+
+    await writeJson(path.join(root, DEFAULT_EXPO_RECIPE_PATH), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Requires the Metro bridge.',
+      workflow: {
+        entry: 'status',
+        nodes: {
+          status: { action: 'app.status', intent: 'Read bridge status.', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+
+    const bridgeArtifacts = path.join(root, 'artifacts', 'bridge');
+    const bridge = await runExpoRecipeDocument(DEFAULT_EXPO_RECIPE_PATH, {
+      projectRoot: root,
+      artifactsDir: bridgeArtifacts,
+    });
+    assert.equal(bridge.status, 'fail');
+    assert.match(
+      await readFile(path.join(bridgeArtifacts, 'trace.json'), 'utf8'),
+      /Metro recipe bridge port is missing/u,
+    );
+  } finally {
+    for (const name of envNames) {
+      const value = savedEnv[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('redacts sensitive command output before writing trace artifacts', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-redaction-'));
   try {
