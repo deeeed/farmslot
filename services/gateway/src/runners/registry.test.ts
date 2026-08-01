@@ -1805,6 +1805,8 @@ describe('buildRunnerSessionReloadCommand', () => {
   it('declares retained handoff and reload behavior in the runner capability registry', () => {
     assert.equal(getRunnerDefinition('claude').retainedSessionHandoff, 'resume-with-prompt');
     assert.equal(getRunnerDefinition('claude').sessionReload, 'with-prompt');
+    assert.equal(getRunnerDefinition('codex').retainedSessionHandoff, 'in-place');
+    assert.equal(getRunnerDefinition('codex').sessionReload, 'with-prompt');
     assert.equal(getRunnerDefinition('cursor').retainedSessionHandoff, 'in-place');
     assert.equal(getRunnerDefinition('cursor').sessionReload, 'none');
   });

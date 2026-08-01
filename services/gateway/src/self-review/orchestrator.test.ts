@@ -713,6 +713,32 @@ test('runSelfReviewRetryLoop: seeded retryCount does not imply feedback was sent
   assert.equal(calls.sendFeedback, 0);
 });
 
+test('runSelfReviewRetryLoop: resumed attempts keep history and advance artifact numbering', async () => {
+  const { deps } = buildDeps({
+    reviewVerdicts: ['pass'],
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+  const priorAttempts = [
+    { loopNumber: 1, verdict: 'issues' as const, unresolvedCount: 1 },
+    { loopNumber: 2, verdict: 'issues' as const, unresolvedCount: 1 },
+  ];
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 2,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 1,
+    priorAttempts,
+    deps,
+  });
+
+  assert.deepEqual(
+    result.attempts?.map((attempt) => attempt.loopNumber),
+    [1, 2, 3],
+  );
+  assert.equal(result.attempts?.[2]?.fixDelta?.diffPath, 'artifacts/review-loop-3/fix-delta.diff');
+});
+
 test('runSelfReviewRetryLoop: recovery path can mark prior feedback as already sent', async () => {
   // Mirrors recoverSelfReviewFixPass: a fix pass already happened before we entered the loop.
   // If the seeded re-review verdict is `pass`, the loop should not iterate and retryCount stays at 1.
@@ -915,4 +941,28 @@ test('retryDeferredFixDelivery bails when the run reaches a terminal status', as
   });
   assert.equal(result.sent, false);
   assert.equal(sendCalls, 0);
+});
+
+test('retryDeferredFixDelivery stops immediately after retained delivery becomes terminal', async () => {
+  let terminal = false;
+  let rediscoverCalls = 0;
+  const result = await retryDeferredFixDelivery({
+    runId: 'run-rediscovery-5',
+    target: 'coredev-1:dev',
+    send: async () => {
+      terminal = true;
+      return false;
+    },
+    rediscover: async () => {
+      rediscoverCalls += 1;
+      return { target: null, window: null, seenWindows: [] };
+    },
+    persistTarget: async () => {},
+    getRun: (() => ({ status: 'working' })) as any,
+    shouldAbort: () => terminal,
+    retryIntervalMs: 1,
+    retryWindowMs: 5_000,
+  });
+  assert.equal(result.sent, false);
+  assert.equal(rediscoverCalls, 1);
 });

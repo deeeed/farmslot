@@ -98,4 +98,17 @@ test('warm handoff holds a live worker when retained delivery permits only in-pl
       reason: 'retained session state is unknown',
     },
   );
+  assert.deepEqual(
+    warmHandoffFailureFromRetainedDelivery({
+      delivered: false,
+      disposition: 'hold',
+      reason: 'retained session was replaced without acknowledgement',
+      retryable: false,
+    }),
+    {
+      handedOff: false,
+      disposition: 'hold',
+      reason: 'retained session was replaced without acknowledgement',
+    },
+  );
 });

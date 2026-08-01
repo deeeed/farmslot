@@ -251,6 +251,8 @@ export async function executeSelfReview(
       };
 
     if (options.resumeFromResult) {
+      const priorAttempts = options.resumeFromResult.attempts ?? [];
+      const priorRetryCount = options.resumeFromResult.retryCount;
       const previousAttempt = options.resumeFromResult.attempts?.at(-1);
       const initialReviewResult: ReviewAgentResult = {
         verdict: 'issues',
@@ -276,10 +278,11 @@ export async function executeSelfReview(
         model,
         // An explicit operator "send feedback" action authorizes one fix pass
         // even when automatic self-review retries are disabled for the project.
-        maxRetries: Math.max(1, maxRetries),
+        maxRetries: Math.max(priorRetryCount + 1, maxRetries),
         reviewTimeoutMs,
         reviewResult: initialReviewResult,
-        retryCount: 0,
+        retryCount: priorRetryCount,
+        priorAttempts,
         validationDepth,
         artifactScope,
         sessionPolicy,
@@ -502,6 +505,7 @@ export async function runSelfReviewRetryLoop({
   artifactScope = null,
   sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
   feedbackAlreadySent = false,
+  priorAttempts = [],
   deps = PRODUCTION_DEPS,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -520,11 +524,15 @@ export async function runSelfReviewRetryLoop({
   artifactScope?: string | null;
   sessionPolicy?: ReviewSessionPolicy;
   feedbackAlreadySent?: boolean;
+  priorAttempts?: IndependentReviewAttempt[];
   deps?: SelfReviewRetryDeps;
 }): Promise<SelfReviewResult> {
   let result = reviewResult;
   let feedbackSent = feedbackAlreadySent;
-  const attempts: IndependentReviewAttempt[] = [reviewAttemptFromResult(result, retryCount + 1)];
+  const attempts: IndependentReviewAttempt[] =
+    priorAttempts.length > 0
+      ? [...priorAttempts]
+      : [reviewAttemptFromResult(result, retryCount + 1)];
 
   while (result.verdict === 'issues' && result.issues.length > 0 && retryCount < maxRetries) {
     console.log(
@@ -1061,6 +1069,7 @@ export async function retryDeferredFixDelivery({
   rediscover,
   persistTarget,
   getRun: getRunDep,
+  shouldAbort = () => false,
   retryIntervalMs = SELF_REVIEW_DELIVERY_RETRY_INTERVAL_MS,
   retryWindowMs = SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS,
 }: {
@@ -1070,6 +1079,7 @@ export async function retryDeferredFixDelivery({
   rediscover: (storedTarget: string) => Promise<WorkerPaneRediscovery>;
   persistTarget: (target: string, window: string | null) => Promise<void>;
   getRun: typeof getRun;
+  shouldAbort?: () => boolean;
   retryIntervalMs?: number;
   retryWindowMs?: number;
 }): Promise<FixDeliveryRetryResult> {
@@ -1078,7 +1088,7 @@ export async function retryDeferredFixDelivery({
   let sent = false;
   let attempt = 1;
   let seenWindows: string[] = [];
-  while (!sent && Date.now() < deadline) {
+  while (!sent && !shouldAbort() && Date.now() < deadline) {
     const current = getRunDep(runId);
     if (!current || isTerminalRunStatus(current.status)) {
       console.warn(
@@ -1296,6 +1306,7 @@ async function sendFeedbackToWorker(
           }
         },
         getRun,
+        shouldAbort: () => terminalRetainedHoldReason != null,
       });
       sent = retry.sent;
       workerTarget = retry.target;

@@ -318,7 +318,7 @@ test('retained resume refuses window-wide replacement when the target has multip
 
   assert.equal(result.delivered, false);
   if (!result.delivered) {
-    assert.equal(result.disposition, 'hold');
+    assert.equal(result.disposition, 'safe-send');
     assert.match(result.reason, /has 2 panes/);
   }
   assert.equal(

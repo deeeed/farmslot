@@ -72,7 +72,6 @@ try {
   }));
   process.exit(1);
 }
-
 `;
 
   const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {

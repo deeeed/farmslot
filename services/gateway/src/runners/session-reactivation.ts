@@ -95,7 +95,7 @@ async function reactivateRunnerSessionWithPrompt(
     if (paneCount !== 1) {
       return {
         delivered: false,
-        disposition: 'hold',
+        disposition: 'safe-send',
         reason: `Retained runner window ${options.target} has ${paneCount} panes; refusing window-wide replacement`,
       };
     }
@@ -171,6 +171,8 @@ async function reactivateRunnerSessionWithPrompt(
           promptAcceptanceBaselineMs: sentinel.sentAt - 500,
         },
       );
+      // A post-respawn hook turn/activity or task signal is durable evidence
+      // from the resumed process itself; no pane-text reaction proof is needed.
       if (accepted.accepted) return { delivered: true, acknowledgement: 'structured' };
       await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_ACCEPTANCE_POLL_MS));
     }

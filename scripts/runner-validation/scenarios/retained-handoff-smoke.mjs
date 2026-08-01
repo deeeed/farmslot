@@ -24,7 +24,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const report = {
       runner,
       skipped: true,
-      skipReason: 'retained resume-with-prompt is currently declared by Claude only',
+      skipReason: 'runner does not declare retained resume-with-prompt',
       pass: true,
     };
     const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);

@@ -217,7 +217,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     continueCommand: 'Continue the current task from where you left off.',
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
-    retainedSessionHandoff: 'resume-with-prompt',
+    // Codex can reload a session when explicitly requested, but its production
+    // `--disable plugin_hooks` launch currently emits no structured idle proof.
+    // Keep automatic retained delivery in-place until that live contract exists.
+    retainedSessionHandoff: 'in-place',
     requiresBusyComposerPoll: true,
     // Codex tier mapping:
     //   sandboxed  — default; Codex CLI prompts for approvals on destructive ops.
