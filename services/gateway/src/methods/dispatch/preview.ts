@@ -694,39 +694,8 @@ export async function dispatchCandidates(
     projectSlots,
     logPrefix: 'dispatch.candidates',
   });
-  const previewRun = {
-    id: 'dispatch-candidates',
-    familyId: 'dispatch-candidates',
-    lane: params.lane ?? 'production',
-    flowType: params.flowType as FlowType,
-    status: 'created',
-    project: params.project,
-    ticketOrPr: params.ticketOrPr,
-    slotId: null,
-    branch: null,
-    taskFile: null,
-    steps: [],
-    decisions: [],
-    metrics: { nudgeCount: 0, model: null, runner: null },
-    createdAt: new Date(0).toISOString(),
-    updatedAt: new Date(0).toISOString(),
-    prepareProfile: params.prepareProfile,
-    app: params.app,
-  } as Run;
-  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
-  try {
-    ticketData = await fetchTicketData(previewRun);
-  } catch {
-    // Ticket metadata is optional for candidate listing. Explicit app/profile inputs still
-    // drive resource filtering; implicit profile suggestions are skipped when unavailable.
-  }
-  const profileFit = detectProfileFit(previewRun, ticketData, {
-    prepareProfile: params.prepareProfile,
-    app: params.app,
-    slotPlatform: null,
-  });
-  const requiredPrepareProfile =
-    params.prepareProfile || profileFit?.suggestedPrepareProfile || null;
+  // Explicit prepare only — profile-fit is advisory on dispatch.preview, not candidates.
+  const requiredPrepareProfile = params.prepareProfile || null;
 
   const familyContext = resolveDispatchFamilyContext({
     ...params,
@@ -861,13 +830,8 @@ export async function dispatchPreview(
     // Ticket metadata is optional for preview. Without it, explicit app/profile inputs
     // still drive resource filtering and profile-fit suggestions are simply omitted.
   }
-  const initialProfileFit = detectProfileFit(previewRun, ticketData, {
-    prepareProfile: params.prepareProfile,
-    app: params.app,
-    slotPlatform: null,
-  });
-  const requiredPrepareProfile =
-    params.prepareProfile || initialProfileFit?.suggestedPrepareProfile || null;
+  // Explicit prepare only for resource eligibility; profileFit is attached later as non-binding advisory.
+  const requiredPrepareProfile = params.prepareProfile || null;
   const result = resolveDispatchPreviewFromFleet(
     { ...enriched, ...resolveDispatchFamilyContext(enriched) },
     fleet.slots,

@@ -131,3 +131,13 @@ true)` after PREPARE already completed) takes responsibility for slot state,
 Out of scope for this ADR: automatic cheapest-profile selection by the gateway,
 per-flow-type default maps, and profile-aware slot scoring in `dispatch.ts` —
 each follows only after operator-driven selection proves the model.
+
+**Operator note (profile-fit advisory-only for selection):** On **queue
+dispatch, FIND_SLOT, and resource eligibility**, profile-fit is advisory-only:
+`detectProfileFit` never auto-stamps or applies `suggestedPrepareProfile`
+without an explicit operator/backlog `prepareProfile`. `dispatch.preview` may
+still attach a suggestion for UI hints only. Empty prepare resolves to
+`project.prepare.default` (or the platform fallback). This note does **not**
+cover the run-engine TASK step (`prepare_profile_mismatch` decision in
+`task-steps.ts`), which can still prompt when profile-fit disagrees with the
+effective profile — demoting that path is a separate follow-up.

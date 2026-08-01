@@ -379,6 +379,111 @@ test('companion prepare profiles require a slot-owned simulator resource', () =>
   );
 });
 
+test('dispatch.preview resource eligibility ignores advisory profile-fit suggestions', async () => {
+  // Contract for dispatch.preview: requiredPrepareProfile is explicit-only.
+  // profileFit may still be attached for UI hints without changing free-slot pick.
+  const { detectProfileFit } = await import('../run-engine/profile-fit-gate.js');
+  const plainCli = makeSlot({
+    slot: 'macwork-ff-3',
+    branch: 'main',
+    lifecycle: 'ready',
+    phase: null,
+    health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+  const simulatorSlot = makeSlot({
+    slot: 'macwork-ff-2',
+    branch: 'main',
+    lifecycle: 'ready',
+    phase: null,
+    resources: { 'ios-sim': { simulator: 'fs-2', headless: true } },
+    health: { ssh: 'LOCAL', device: 'fs-2:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+
+  const advisory = detectProfileFit(
+    {
+      id: 'preview-run',
+      familyId: 'preview-family',
+      lane: 'production',
+      flowType: 'fix-bug',
+      status: 'created',
+      project: 'farmslot-farm',
+      ticketOrPr: 'MANUAL-000074',
+      slotId: null,
+      branch: null,
+      taskFile: null,
+      steps: [],
+      decisions: [],
+      metrics: { nudgeCount: 0, model: null, runner: null },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    } as Run,
+    {
+      source: 'manual',
+      title: 'Command Center companion reconnect',
+      description: 'apps/companion pairing after gateway reconnect; Command Center #runs UI.',
+      acceptanceCriteria: [],
+      affectedArea: 'companion',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: ['companion'],
+    },
+    { slotPlatform: 'cli' },
+  );
+  assert.equal(advisory?.suggestedPrepareProfile, 'sandbox-companion');
+
+  // Without explicit prepareProfile, a plain CLI-only fleet remains eligible (suggestion ignored).
+  const defaultPick = resolveDispatchPreviewFromFleet(
+    {
+      project: 'farmslot-farm',
+      flowType: 'fix-bug',
+      ticketOrPr: 'MANUAL-000074',
+    },
+    [plainCli],
+    undefined,
+    { requiredPrepareProfile: null },
+  );
+  assert.equal(defaultPick.preview.slotId, 'macwork-ff-3');
+  assert.equal(defaultPick.preview.profileFit, undefined);
+
+  // Explicit sandbox still allows plain CLI even when advisory would prefer companion.
+  const explicitSandbox = resolveDispatchPreviewFromFleet(
+    {
+      project: 'farmslot-farm',
+      flowType: 'fix-bug',
+      ticketOrPr: 'MANUAL-000074',
+      prepareProfile: 'sandbox',
+    },
+    [plainCli],
+  );
+  assert.equal(explicitSandbox.preview.slotId, 'macwork-ff-3');
+
+  // Explicit companion still enforces simulator resources (teaching gate unchanged).
+  const explicitCompanion = resolveDispatchPreviewFromFleet(
+    {
+      project: 'farmslot-farm',
+      flowType: 'fix-bug',
+      ticketOrPr: 'MANUAL-000074',
+      prepareProfile: 'sandbox-companion',
+    },
+    [plainCli, simulatorSlot],
+  );
+  assert.equal(explicitCompanion.preview.slotId, 'macwork-ff-2');
+
+  assert.throws(
+    () =>
+      resolveDispatchPreviewFromFleet(
+        {
+          project: 'farmslot-farm',
+          flowType: 'fix-bug',
+          ticketOrPr: 'MANUAL-000074',
+          prepareProfile: 'sandbox-companion',
+        },
+        [plainCli],
+      ),
+    /resources required by prepare profile sandbox-companion/,
+  );
+});
+
 test('dispatch preview skips plain CLI slots when sandbox-companion requires an isolated simulator', () => {
   const plainCli = makeSlot({
     slot: 'macwork-ff-3',
