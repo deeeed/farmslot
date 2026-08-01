@@ -306,6 +306,52 @@ test('app.lifecycle restart tolerates iOS simulator app already stopped', async 
   );
 });
 
+test('app.lifecycle restart tolerates iOS simulator finding nothing to terminate', async () => {
+  const calls: Array<{ file: string; args: string[] }> = [];
+  const adapter = createAppLifecycleAdapter({
+    targetProvider: {
+      resolveTarget() {
+        return {
+          platform: 'ios-simulator',
+          deviceId: 'booted',
+          appId: 'com.example.app',
+          launchUrl: 'expo-example://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8063',
+        };
+      },
+    },
+    commandRunner: {
+      async execFile(file, args) {
+        calls.push({ file, args });
+        if (args.includes('terminate')) {
+          throw new Error(
+            'Simulator device failed to terminate com.example.app. found nothing to terminate',
+          );
+        }
+        return {};
+      },
+    },
+  });
+
+  const result = await adapter.execute({ command: 'restart' }, context());
+
+  assert.deepEqual(calls, [
+    { file: 'xcrun', args: ['simctl', 'terminate', 'booted', 'com.example.app'] },
+    {
+      file: 'xcrun',
+      args: [
+        'simctl',
+        'openurl',
+        'booted',
+        'expo-example://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8063',
+      ],
+    },
+  ]);
+  assert.equal(
+    (result.output as { calls: Array<{ ignoredFailure?: boolean }> }).calls[0].ignoredFailure,
+    true,
+  );
+});
+
 test('app.lifecycle backgrounds iOS simulator by foregrounding Settings', async () => {
   const calls: Array<{ file: string; args: string[] }> = [];
   const adapter = createAppLifecycleAdapter({
