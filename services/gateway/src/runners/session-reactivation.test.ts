@@ -6,6 +6,9 @@ import type { SlotVars } from '../core/config.js';
 import type { ObservabilityReading, RunnerSessionDeliveryState } from './observability-types.js';
 
 const commands: string[] = [];
+let paneCount = 1;
+let sessionPathExists = true;
+let promptAccepted = true;
 let sessionState: ObservabilityReading<RunnerSessionDeliveryState> | null = {
   value: 'idle',
   source: 'hook',
@@ -20,6 +23,17 @@ mock.module('../core/exec.js', {
     execLocal: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     execOnSlot: async (_vars: SlotVars, command: string) => {
       commands.push(command);
+      if (command.includes('list-panes')) {
+        const panes = Array.from({ length: paneCount }, (_, index) => `%${index + 1}`).join('\n');
+        return { exitCode: 0, stdout: panes ? `${panes}\n` : '', stderr: '' };
+      }
+      if (command.startsWith('test -e ')) {
+        return {
+          exitCode: sessionPathExists ? 0 : 1,
+          stdout: '',
+          stderr: '',
+        };
+      }
       return { exitCode: 0, stdout: '', stderr: '' };
     },
     isLocal: () => false,
@@ -49,7 +63,7 @@ mock.module('./claude-observability.js', {
       },
       async promptAccepted() {
         return {
-          value: true,
+          value: promptAccepted,
           source: 'hook',
           confidence: 'high',
           observedAt: Date.now(),
@@ -90,6 +104,9 @@ const vars = {
 
 test('retained resume delivers the prompt through runner argv without send-keys', async () => {
   commands.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
+  promptAccepted = true;
   sessionState = {
     value: 'idle',
     source: 'hook',
@@ -97,14 +114,16 @@ test('retained resume delivers the prompt through runner argv without send-keys'
     observedAt: Date.now() - 300_000,
   };
 
-  await deliverPromptToRetainedRunnerSession({
+  const result = await deliverPromptToRetainedRunnerSession({
     vars,
     target: 'test-1:dev',
     runnerId: 'claude',
     sessionId: 'session-123',
+    sessionPath: '/sessions/session-123.jsonl',
     prompt: 'Read and execute TASK.md',
     runtimeDir: '.farmslot/runtime/test-project',
   });
+  assert.deepEqual(result, { delivered: true });
 
   const command = commands.join('\n');
   const resumeIndex = command.indexOf('--resume');
@@ -116,6 +135,8 @@ test('retained resume delivers the prompt through runner argv without send-keys'
 
 test('retained resume does not mutate an active session', async () => {
   commands.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
   sessionState = {
     value: 'active',
     source: 'hook',
@@ -123,15 +144,122 @@ test('retained resume does not mutate an active session', async () => {
     observedAt: Date.now(),
   };
 
-  await assert.rejects(
-    deliverPromptToRetainedRunnerSession({
-      vars,
-      target: 'test-1:dev',
-      runnerId: 'claude',
-      sessionId: 'session-123',
-      prompt: 'Read and execute TASK.md',
-    }),
-    /is active; refusing to replace/,
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    sessionId: 'session-123',
+    sessionPath: '/sessions/session-123.jsonl',
+    prompt: 'Read and execute TASK.md',
+  });
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.disposition, 'hold');
+    assert.match(result.reason, /is active; refusing to replace/);
+  }
+  assert.equal(
+    commands.some((command) => command.includes('respawn-window')),
+    false,
   );
+});
+
+test('retained resume falls back cold only after idle proof when the session file is gone', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  sessionPathExists = false;
+  sessionState = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now() - 300_000,
+  };
+
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    sessionId: 'session-123',
+    sessionPath: '/sessions/missing.jsonl',
+    prompt: 'Read and execute TASK.md',
+  });
+  assert.deepEqual(result, {
+    delivered: false,
+    disposition: 'fresh-dispatch',
+    reason: 'Retained claude session path is unavailable: /sessions/missing.jsonl',
+  });
+  assert.equal(
+    commands.some((command) => command.includes('respawn-window')),
+    false,
+  );
+});
+
+test('retained resume holds when exact session state is unavailable', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
+  sessionState = null;
+
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    sessionId: 'session-123',
+    sessionPath: '/sessions/session-123.jsonl',
+    prompt: 'Read and execute TASK.md',
+  });
+  assert.equal(result.delivered, false);
+  if (!result.delivered) assert.equal(result.disposition, 'hold');
+  assert.equal(
+    commands.some((command) => command.includes('respawn-window')),
+    false,
+  );
+});
+
+test('retained resume holds before inspection when the persisted session id is missing', async () => {
+  commands.length = 0;
+
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    sessionPath: '/sessions/session-123.jsonl',
+    prompt: 'Read and execute TASK.md',
+  });
+
+  assert.deepEqual(result, {
+    delivered: false,
+    disposition: 'hold',
+    reason: "Runner 'claude' requires a persisted session id for retained handoff",
+  });
   assert.deepEqual(commands, []);
+});
+
+test('retained resume refuses window-wide replacement when the target has multiple panes', async () => {
+  commands.length = 0;
+  paneCount = 2;
+  sessionState = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  const result = await deliverPromptToRetainedRunnerSession({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    sessionId: 'session-123',
+    sessionPath: '/sessions/session-123.jsonl',
+    prompt: 'Read and execute TASK.md',
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.disposition, 'hold');
+    assert.match(result.reason, /has 2 panes/);
+  }
+  assert.equal(
+    commands.some((command) => command.includes('respawn-window')),
+    false,
+  );
 });

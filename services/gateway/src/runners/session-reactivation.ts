@@ -1,9 +1,13 @@
 import type { SafetyTier } from '@farmslot/protocol';
 
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
-import { respawnTmuxWindowWithCommand } from '../core/tmux.js';
+import { execOnSlot } from '../core/exec.js';
+import { respawnTmuxWindowWithCommand, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 
-import { buildRunnerSessionReloadCommand } from './launch-command.js';
+import {
+  buildRunnerSessionReloadCommand,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+} from './launch-command.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
 import {
   getRunnerObservability,
@@ -14,6 +18,7 @@ import {
   sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from './registry.js';
+import { resumableSessionProbeCommand } from './session-process.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 
@@ -22,6 +27,7 @@ export interface RunnerSessionReactivationOptions {
   target: string;
   runnerId: string;
   sessionId?: string | null;
+  sessionPath?: string | null;
   model?: string | null;
   prompt: string;
   effort?: string | null;
@@ -32,6 +38,14 @@ export interface RunnerSessionReactivationOptions {
   recovery?: RunnerSendRecoveryContext;
 }
 
+export type RetainedSessionDeliveryResult =
+  | { delivered: true }
+  | {
+      delivered: false;
+      disposition: 'fresh-dispatch' | 'hold';
+      reason: string;
+    };
+
 /**
  * Replace an idle retained TUI with a resumed instance that receives its next
  * task through the runner's argv contract. This avoids interpreting TUI glyphs
@@ -39,57 +53,123 @@ export interface RunnerSessionReactivationOptions {
  */
 async function reactivateRunnerSessionWithPrompt(
   options: RunnerSessionReactivationOptions & { sessionId: string },
-): Promise<void> {
+): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
   if (runnerRetainedSessionHandoff(runner) !== 'resume-with-prompt') {
-    throw new Error(`Runner '${runner}' does not support retained resume-with-prompt handoff`);
+    return {
+      delivered: false,
+      disposition: 'fresh-dispatch',
+      reason: `Runner '${runner}' does not support retained resume-with-prompt handoff`,
+    };
   }
   const observability = getRunnerObservability(runner);
   if (!observability) {
-    throw new Error(`Runner '${runner}' has no structured session-delivery provider`);
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Runner '${runner}' has no structured session-delivery provider`,
+    };
   }
-  const state = await observability.getSessionDeliveryState(
-    options.vars,
-    options.target,
-    options.sessionId,
-  );
-  if (state?.value !== 'idle' || state.confidence !== 'high') {
-    throw new Error(
-      `Retained ${runner} session ${options.sessionId} is ${state?.value ?? 'unknown'}; refusing to replace a session without terminal hook proof`,
+  let idleProven = false;
+  let paneMutationStarted = false;
+  try {
+    const panes = await execOnSlot(
+      options.vars,
+      tmuxShellSnippet(`list-panes -t ${shellQuote(options.target)} -F '#{pane_id}'`),
     );
-  }
+    if (panes.exitCode !== 0) {
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Cannot inspect retained runner window ${options.target}: ${panes.stderr || panes.stdout || `exit ${panes.exitCode}`}`,
+      };
+    }
+    const paneCount = panes.stdout.split('\n').filter((line) => line.trim()).length;
+    if (paneCount !== 1) {
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Retained runner window ${options.target} has ${paneCount} panes; refusing window-wide replacement`,
+      };
+    }
 
-  const sentinel = await writeRunnerPromptSentinel(options.vars, options.prompt);
-  const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
-    options.vars,
-    runner,
-    options.model,
-    options.sessionId,
-    {
-      effort: options.effort,
-      safetyTier: options.safetyTier,
-      runtimeDir: options.runtimeDir ?? (await resolveProjectRuntimeDir(options.vars.projectName)),
-      taskDir: options.taskDir,
-      initialPrompt: options.prompt,
-    },
-  )}`;
-  await respawnTmuxWindowWithCommand(options.vars, options.target, command);
-
-  const deadline = Date.now() + (options.timeoutMs ?? 120_000);
-  while (Date.now() < deadline) {
-    const accepted = await observability.promptAccepted(
+    const state = await observability.getSessionDeliveryState(
       options.vars,
       options.target,
-      sentinel.digest,
-      sentinel.sentAt - 500,
-      true,
+      options.sessionId,
     );
-    if (accepted?.value === true && accepted.confidence === 'high') return;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (state?.value !== 'idle' || state.confidence !== 'high') {
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Retained ${runner} session ${options.sessionId} is ${state?.value ?? 'unknown'}; refusing to replace a session without terminal hook proof`,
+      };
+    }
+    idleProven = true;
+
+    const sessionPath = options.sessionPath?.trim();
+    if (!sessionPath) {
+      return {
+        delivered: false,
+        disposition: 'fresh-dispatch',
+        reason: `Retained ${runner} session ${options.sessionId} has no resumable session path`,
+      };
+    }
+    const probe = await execOnSlot(options.vars, resumableSessionProbeCommand(sessionPath), {
+      timeout: 10_000,
+    });
+    if (probe.exitCode !== 0) {
+      return {
+        delivered: false,
+        disposition: probe.exitCode === 1 ? 'fresh-dispatch' : 'hold',
+        reason: `Retained ${runner} session path is unavailable: ${sessionPath}`,
+      };
+    }
+
+    const sentinel = await writeRunnerPromptSentinel(options.vars, options.prompt);
+    const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
+      options.vars,
+      runner,
+      options.model,
+      options.sessionId,
+      {
+        effort: options.effort,
+        safetyTier: options.safetyTier,
+        runtimeDir:
+          options.runtimeDir ?? (await resolveProjectRuntimeDir(options.vars.projectName)),
+        taskDir: options.taskDir,
+        initialPrompt: options.prompt,
+      },
+    )}`;
+    paneMutationStarted = true;
+    await respawnTmuxWindowWithCommand(options.vars, options.target, command);
+
+    const deadline = Date.now() + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
+    while (Date.now() < deadline) {
+      const accepted = await observability.promptAccepted(
+        options.vars,
+        options.target,
+        sentinel.digest,
+        sentinel.sentAt - 500,
+        true,
+      );
+      if (accepted?.value === true && accepted.confidence === 'high') {
+        return { delivered: true };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Reloaded ${runner} session ${options.sessionId}, but no matching UserPromptSubmit hook arrived`,
+    };
+  } catch (error) {
+    return {
+      delivered: false,
+      disposition: idleProven && !paneMutationStarted ? 'fresh-dispatch' : 'hold',
+      reason: `Retained ${runner} handoff failed: ${(error as Error).message}`,
+    };
   }
-  throw new Error(
-    `Reloaded ${runner} session ${options.sessionId}, but no matching UserPromptSubmit hook arrived`,
-  );
 }
 
 /**
@@ -98,34 +178,49 @@ async function reactivateRunnerSessionWithPrompt(
  */
 export async function deliverPromptToRetainedRunnerSession(
   options: RunnerSessionReactivationOptions,
-): Promise<void> {
+): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
   const handoff = runnerRetainedSessionHandoff(runner);
   if (handoff === 'resume-with-prompt') {
     const sessionId = options.sessionId?.trim();
     if (!sessionId) {
-      throw new Error(`Runner '${runner}' requires a persisted session id for retained handoff`);
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Runner '${runner}' requires a persisted session id for retained handoff`,
+      };
     }
-    await reactivateRunnerSessionWithPrompt({ ...options, sessionId });
-    return;
+    return reactivateRunnerSessionWithPrompt({ ...options, sessionId });
   }
   if (handoff === 'in-place') {
-    const timeoutMs = options.timeoutMs ?? resolveSafeSendTimeoutMs(runner);
-    const accepted = await sendRunnerInstructionSafely(
-      options.vars,
-      options.target,
-      runner,
-      options.prompt,
-      '[retained-handoff]',
-      timeoutMs,
-      { forceBusyPoll: true, recovery: options.recovery },
-    );
-    if (!accepted) {
-      throw new Error(
-        `Live ${runner} retained handoff was not accepted; refusing a destructive fresh-dispatch fallback`,
+    try {
+      const timeoutMs = options.timeoutMs ?? resolveSafeSendTimeoutMs(runner);
+      const accepted = await sendRunnerInstructionSafely(
+        options.vars,
+        options.target,
+        runner,
+        options.prompt,
+        '[retained-handoff]',
+        timeoutMs,
+        { forceBusyPoll: true, recovery: options.recovery },
       );
+      if (accepted) return { delivered: true };
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Live ${runner} retained handoff was not accepted; refusing a destructive fresh-dispatch fallback`,
+      };
+    } catch (error) {
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Live ${runner} retained handoff failed: ${(error as Error).message}`,
+      };
     }
-    return;
   }
-  throw new Error(`Runner '${runner}' does not support retained-session handoff`);
+  return {
+    delivered: false,
+    disposition: 'fresh-dispatch',
+    reason: `Runner '${runner}' does not support retained-session handoff`,
+  };
 }

@@ -323,6 +323,17 @@ export async function readRunnerObservabilityFiles(
   };
 }
 
+/** Read the bounded last-event snapshot for one persisted runner session. */
+export async function readRunnerSessionObservabilityState(
+  vars: SlotVars,
+  sessionId: string,
+): Promise<HookRecord | null> {
+  const obsDir = await runnerObservabilityDirForSlot(vars);
+  const statePath = path.posix.join(obsDir, 'sessions', `${encodeURIComponent(sessionId)}.json`);
+  const result = await execOnSlot(vars, `cat ${shellQuote(statePath)} 2>/dev/null || true`);
+  return parseHookJsonl(result.stdout)[0] ?? null;
+}
+
 export function filterHooksByPane(
   hooks: readonly HookRecord[],
   paneId?: string | null,

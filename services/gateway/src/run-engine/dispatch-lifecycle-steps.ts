@@ -401,13 +401,14 @@ export async function executePrepareStep(
 
 export interface DispatchStepContext {
   stepPartialIO: Map<string, StepIO>;
+  blockedRunError: (message: string, reason: string) => Error;
 }
 
 export async function executeDispatchStep(
   runId: string,
   context: DispatchStepContext,
 ): Promise<StepIO> {
-  const { stepPartialIO } = context;
+  const { blockedRunError, stepPartialIO } = context;
   const current = ensureRunSlotBinding(runId);
   if (!current.slotId) throw new Error('No slot assigned');
   if (!current.taskFile) throw new Error('No task file specified');
@@ -461,6 +462,12 @@ export async function executeDispatchStep(
           model: result.model,
         },
       };
+    }
+    if (result.disposition === 'hold') {
+      throw blockedRunError(
+        `Retained session handoff requires operator attention: ${result.reason}`,
+        'retained-session-handoff',
+      );
     }
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — warm session handoff skipped (${result.reason}); falling back to fresh dispatch`,

@@ -120,7 +120,7 @@ test('claude install preserves a non-symlink compatibility directory', () => {
   assert.equal(fs.readFileSync(path.join(compat, 'operator-file'), 'utf8'), 'keep\n');
 });
 
-test('installed hook writes distinct JSONL records and preserves notification details', () => {
+test('installed hook writes JSONL records and an atomic per-session state snapshot', () => {
   const { obsDir, hookPath } = installToTempDir();
   const logPath = path.join(obsDir, 'hooks.jsonl');
   const hookSrc = fs.readFileSync(hookPath, 'utf8');
@@ -144,9 +144,14 @@ test('installed hook writes distinct JSONL records and preserves notification de
   assert.equal(lines.length, 3, `expected 3 JSONL lines, got raw=${JSON.stringify(raw)}`);
   assert.equal(JSON.parse(lines[0]).hook_event_name, 'SessionStart');
   assert.equal(JSON.parse(lines[1]).hook_event_name, 'Stop');
-  assert.equal(JSON.parse(lines[2]).notification_message, 'Claude is waiting for your input');
   assert.equal(JSON.parse(lines[2]).notification_type, 'idle_prompt');
   assert.equal(raw.at(-1), '\n', 'each append should end with a real newline byte');
+  const sessionState = JSON.parse(
+    fs.readFileSync(path.join(obsDir, 'sessions', `${encodeURIComponent('a')}.json`), 'utf8'),
+  );
+  assert.equal(sessionState.hook_event_name, 'Notification');
+  assert.equal(sessionState.notification_type, 'idle_prompt');
+  assert.equal(sessionState.session_id, 'a');
 });
 
 test('codex install merges farmslot hook alongside existing codex hooks', () => {

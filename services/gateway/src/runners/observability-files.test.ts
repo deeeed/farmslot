@@ -66,7 +66,6 @@ test('deriveRunnerActivity recognizes the structured idle notification type', ()
       {
         hook_event_name: 'Notification',
         notification_type: 'idle_prompt',
-        notification_message: 'Claude is waiting for your input',
         observedAt: NOW - 1_000,
       },
     ],
@@ -83,7 +82,6 @@ test('deriveRunnerActivity does not treat an unrelated notification as idle', ()
       {
         hook_event_name: 'Notification',
         notification_type: 'permission_prompt',
-        notification_message: 'Claude needs permission to use Bash',
         observedAt: NOW - 1_000,
       },
     ],
@@ -175,13 +173,12 @@ test('deriveRunnerSessionDeliveryState invalidates an older Stop on any later pa
   assert.equal(reading?.value, 'active');
 });
 
-test('deriveRunnerSessionDeliveryState uses structured notifications, not message text', () => {
+test('deriveRunnerSessionDeliveryState uses structured notification types', () => {
   const idle = deriveRunnerSessionDeliveryState(
     [
       {
         hook_event_name: 'Notification',
         notification_type: 'idle_prompt',
-        notification_message: 'localized text is irrelevant',
         session_id: 'wanted',
         observedAt: NOW - 2_000,
       },
@@ -195,7 +192,6 @@ test('deriveRunnerSessionDeliveryState uses structured notifications, not messag
       {
         hook_event_name: 'Notification',
         notification_type: 'permission_prompt',
-        notification_message: 'Claude is waiting for your input',
         session_id: 'wanted',
         observedAt: NOW - 1_000,
       },

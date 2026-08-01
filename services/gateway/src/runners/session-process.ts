@@ -29,6 +29,11 @@ export interface RunnerSessionBinding {
   source: RunnerSessionBindingSource;
 }
 
+/** Files for Claude/Codex and directories for Grok are both resumable state. */
+export function resumableSessionProbeCommand(runnerSessionPath: string): string {
+  return `test -e ${shellQuote(runnerSessionPath)}`;
+}
+
 export async function listRunnerSessionFiles(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,

@@ -103,7 +103,9 @@ requires fresh hooks, but a whole-turn `Stop` is durable for its exact `session_
 event in that session supersedes it. A retained-session handoff never infers safety from Claude TUI
 text: the runner capability resumes the persisted session with the new prompt in argv, then requires
 a matching `UserPromptSubmit` digest before the handoff succeeds. Unknown or active session state
-holds for operator attention instead of replacing the live process.
+holds for operator attention instead of replacing the live process. The hook writer atomically
+materializes the last event for each session, so this decision never depends on a historical log
+tail or age window.
 
 ### Addendum: checklist timing stays task-owned (2026-06-25)
 
@@ -144,6 +146,7 @@ Hook files and statusline JSON are written by **Farmslot's hook scripts** (shipp
 ```
 {{runtime_dir}}/.observability/
   hooks.jsonl              # append-only, one JSON event per line, rotates at 5 MB
+  sessions/<encoded-id>.json # atomic last-event snapshot for exact-session delivery decisions
   statusline.json          # last-write-wins; ctxPct, model, mode, busy, mtime
   presence.json            # gateway-written: last-known runner PID, launched-at
 SIGNAL.json (existing)     # extended with phase: busy|idle|done

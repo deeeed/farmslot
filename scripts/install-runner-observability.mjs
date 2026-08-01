@@ -114,7 +114,6 @@ try {
     effort: payload.effort,
     tool_name: payload.tool_name,
     notification_type: payload.notification_type,
-    notification_message: payload.message,
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
     runner: process.env.FARMSLOT_RUNNER || 'claude',
@@ -122,6 +121,14 @@ try {
     ...(sentAt ? { sentAt } : {}),
   };
   fs.appendFileSync(logPath, \`\${JSON.stringify(record)}\n\`);
+  if (typeof record.session_id === 'string' && record.session_id) {
+    const sessionsDir = path.join(obsDir, 'sessions');
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    const statePath = path.join(sessionsDir, encodeURIComponent(record.session_id) + '.json');
+    const pendingPath = statePath + '.' + process.pid + '.tmp';
+    fs.writeFileSync(pendingPath, \`\${JSON.stringify(record)}\n\`);
+    fs.renameSync(pendingPath, statePath);
+  }
 } catch (error) {
   console.error('[farmslot-observability] ' + (error?.message || String(error)));
 }

@@ -66,6 +66,8 @@ export type WarmSessionHandoffResult =
   | {
       handedOff: false;
       reason: string;
+      /** A live/ambiguous worker must be held rather than replaced. */
+      disposition?: 'fresh-dispatch' | 'hold';
     };
 
 export interface WarmWorkerBinding {
@@ -105,8 +107,8 @@ export function resolveWarmWorkerBinding(
  * Hand a CI-watch chained follow-up into a still-alive worker session left warm
  * after gate-held FINALIZE. Unlike branch-affinity `nudgeDispatch`, this path
  * targets held/ci-watch slots (agent often idle) and probes process liveness
- * instead of busy mid-task eligibility. Callers fall back to fresh dispatch
- * when this returns `handedOff: false`.
+ * instead of busy mid-task eligibility. A false result explicitly distinguishes
+ * a safe cold fallback from an ambiguous live session that must be held.
  */
 export async function warmSessionHandoffDispatch(
   params: WarmSessionHandoffParams,
@@ -270,11 +272,12 @@ export async function warmSessionHandoffDispatch(
     runTier: requestingRun.safetyTier ?? parentRun?.safetyTier,
     projectDefaultRaw: projectJson.default_safety_tier,
   });
-  await deliverPromptToRetainedRunnerSession({
+  const delivery = await deliverPromptToRetainedRunnerSession({
     vars,
     target: workerTarget,
     runnerId: runner,
     sessionId: retainedSessionId,
+    sessionPath: retainedSessionPath,
     model: slotModelRaw ?? params.model,
     prompt,
     effort: requestingRun.effort ?? parentRun?.effort,
@@ -282,6 +285,13 @@ export async function warmSessionHandoffDispatch(
     taskDir: workerTaskAbs,
     recovery: { runId: params.runId, emit },
   });
+  if (!delivery.delivered) {
+    return {
+      handedOff: false,
+      disposition: delivery.disposition,
+      reason: delivery.reason,
+    };
+  }
 
   const priorOwnerContext = binding.context;
   const priorNudgeCount = priorOwnerContext?.nudgeCount ?? 0;

@@ -12,6 +12,7 @@ import {
   parseStatuslineJson,
   promptAcceptedFromHooks,
   readRunnerObservabilityFiles,
+  readRunnerSessionObservabilityState,
 } from './observability-files.js';
 import type { RunnerObservability, SlotVars } from './observability-types.js';
 
@@ -57,8 +58,8 @@ export const claudeHookObservability: RunnerObservability = {
     );
   },
 
-  async getSessionDeliveryState(vars, target, sessionId) {
-    const { hooks } = await loadObservabilitySnapshot(vars, target);
-    return deriveRunnerSessionDeliveryState(hooks, sessionId);
+  async getSessionDeliveryState(vars, _target, sessionId) {
+    const state = await readRunnerSessionObservabilityState(vars, sessionId);
+    return deriveRunnerSessionDeliveryState(state ? [state] : [], sessionId);
   },
 };
