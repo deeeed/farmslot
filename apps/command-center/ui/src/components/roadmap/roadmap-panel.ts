@@ -1456,7 +1456,6 @@ export class RoadmapPanel extends LitElement {
 
   private _backToInventoryList() {
     this._forceInventoryList = true;
-    this.requestUpdate();
   }
 
   private _setEditorMode(mode: RoadmapEditorMode) {

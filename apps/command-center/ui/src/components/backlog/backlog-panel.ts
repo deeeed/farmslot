@@ -1404,7 +1404,6 @@ export class BacklogPanel extends LitElement {
 
   private _backToInventoryList() {
     this._forceInventoryList = true;
-    this.requestUpdate();
   }
 
   private _setSelectedItemMode(mode: BacklogDetailMode) {

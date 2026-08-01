@@ -323,7 +323,6 @@ export class WorkGraphPanel extends LitElement {
 
   private backToInventory() {
     this.showInventoryList = true;
-    this.requestUpdate();
   }
 
   private activeGraphs(): WorkGraphProjection[] {

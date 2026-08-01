@@ -103,8 +103,3 @@ export function inventoryShowsDetail(layout: WorkInventoryLayoutState): boolean 
 export function inventoryShowsBackAffordance(layout: WorkInventoryLayoutState): boolean {
   return layout.hasSelection && layout.narrowViewport && !layout.forceList;
 }
-
-/**
- * Whether a single-graph (or single-row) auto-selection still needs a visible
- * table/back affordance so the inventory remains the canonical browsing state.
- */

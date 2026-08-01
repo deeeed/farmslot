@@ -108,6 +108,10 @@ export function renderWorkInventoryRow(options: {
     }}
     @keydown=${(event: KeyboardEvent) => {
       if (row.disabled) return;
+      // Only activate when the row itself is the event origin. Nested buttons/
+      // inputs (incl. composed shadow events) retarget `.target` to the host.
+      const origin = event.composedPath()[0];
+      if (origin !== event.currentTarget) return;
       if (isInventoryActivationKey(event.key)) {
         event.preventDefault();
         row.onActivate();

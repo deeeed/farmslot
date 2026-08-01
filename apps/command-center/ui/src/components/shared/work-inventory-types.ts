@@ -1,5 +1,3 @@
-import type { TemplateResult } from 'lit';
-
 /** Shared sort direction for work inventory tables. */
 export type WorkInventorySortDirection = 'asc' | 'desc';
 

@@ -17,13 +17,12 @@ function workGraphInventoryView(state: {
   selectedGraphId: string;
   showInventoryList: boolean;
 }) {
-  const retainList = true;
+  // Production renders Back whenever the canvas is open (no retainList gate).
   const showCanvas = Boolean(state.selectedGraphId) && !state.showInventoryList;
-  const showBack = showCanvas && retainList;
+  const showBack = showCanvas;
   return {
     showCanvas,
     showBack,
-    retainList,
     // Narrow-style replacement is not required for graphs; Back returns to table.
     backAffordanceModel: inventoryShowsBackAffordance({
       hasSelection: Boolean(state.selectedGraphId),
