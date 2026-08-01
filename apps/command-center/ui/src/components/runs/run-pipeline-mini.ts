@@ -10,12 +10,21 @@ import {
   reviewSegmentLabel,
 } from '../../utils/review-gate-display.js';
 
-import { effectiveStepStatus, formatDuration, stepStatusColor } from './run-utils.js';
+import {
+  computePackageRefreshStatus,
+  pipelineStepTone,
+  pipelineToneColor,
+  publicationReviewVerdictStatus,
+} from './run-pipeline-status.js';
+import { effectiveStepStatus, formatDuration } from './run-utils.js';
 
 interface MiniSegment {
   name: string;
   status: RunStep['status'];
   title: string;
+  /** Optional outputs for tone (e.g. review verdict → orange for issues). */
+  outputs?: Record<string, unknown>;
+  detail?: string;
 }
 
 @customElement('run-pipeline-mini')
@@ -70,6 +79,9 @@ export class RunPipelineMini extends LitElement {
     .seg.failed {
       opacity: 1;
     }
+    .seg.warn {
+      opacity: 1;
+    }
     .active-label {
       color: ${unsafeCSS('#9ca3af')};
       font-size: 10px;
@@ -103,15 +115,25 @@ export class RunPipelineMini extends LitElement {
       : 0;
     return html`
       <div class="bars">
-        ${segments.map(
-          (segment) => html`
+        ${segments.map((segment) => {
+          const tone = pipelineStepTone(
+            {
+              name: segment.name,
+              status: segment.status,
+              detail: segment.detail,
+              outputs: segment.outputs,
+            },
+            { runError: this.run?.error },
+          );
+          const toneClass = tone === 'warn' ? 'warn' : segment.status;
+          return html`
             <span
-              class="seg ${segment.status}"
-              style="background:${unsafeCSS(stepStatusColor(segment.status))}"
+              class="seg ${toneClass}"
+              style="background:${unsafeCSS(pipelineToneColor(tone))}"
               title=${segment.title}
             ></span>
-          `,
-        )}
+          `;
+        })}
       </div>
       ${isCancelled
         ? html`<span class="active-label" style="color:${unsafeCSS(colors.statusWarn)}"
@@ -139,6 +161,8 @@ export class RunPipelineMini extends LitElement {
         name: displayStep.name,
         status: displayStep.status,
         title: this.segmentTitle(displayStep),
+        outputs: displayStep.outputs as Record<string, unknown> | undefined,
+        detail: displayStep.detail,
       });
       if (step.name === 'self-review') {
         segments.push(...preGateReviews);
@@ -147,10 +171,31 @@ export class RunPipelineMini extends LitElement {
         const extraReviews = this.reviewSegments('human-gate', 'requested review');
         segments.push(...extraReviews);
         if (extraReviews.length > 0) {
+          // Shared with canvas: stay pending while re-review/fix is in flight,
+          // even if earlier loops ended in issues/failed.
+          const lastReview =
+            [...extraReviews].reverse().find((s) => s.outputs?.verdict) ??
+            extraReviews[extraReviews.length - 1];
+          const lastVerdict =
+            typeof lastReview?.outputs?.verdict === 'string'
+              ? lastReview.outputs.verdict
+              : undefined;
+          const refreshStatus = computePackageRefreshStatus(
+            extraReviews.map((s) => s.status),
+            this.run,
+          );
           segments.push({
             name: 'package refresh',
-            status: 'pending',
-            title: 'package refresh: rebuild package after requested review',
+            status: refreshStatus,
+            title:
+              refreshStatus === 'pending'
+                ? 'package refresh: waiting for review/fix before rebuild'
+                : 'package refresh: rebuild package after requested review',
+            outputs: lastVerdict ? { lastReviewVerdict: lastVerdict } : undefined,
+            detail:
+              refreshStatus === 'pending'
+                ? 'waiting for review/fix before package rebuild'
+                : undefined,
           });
         }
       }
@@ -199,12 +244,8 @@ export class RunPipelineMini extends LitElement {
           ? review.runner.trim()
           : 'reviewer';
       const verdict = typeof review.verdict === 'string' ? review.verdict : '';
-      const status: RunStep['status'] =
-        verdict === 'failed' || verdict === 'issues'
-          ? 'failed'
-          : verdict === 'pending'
-            ? 'running'
-            : 'done';
+      // Shared with canvas: issues → failed+warn (orange), terminal failed → red.
+      const status = publicationReviewVerdictStatus(verdict);
       const order = Math.max(1, source === 'dispatch' ? loopNumber - minimum : segments.length + 1);
       const reviewSource =
         review.source === 'human-gate'
@@ -223,6 +264,7 @@ export class RunPipelineMini extends LitElement {
         name: segmentName,
         status,
         title: `${segmentName}: ${runner}${verdict ? ` / ${verdict}` : ''}`,
+        outputs: verdict ? { verdict } : undefined,
       });
     }
     const active = this.activeReviewSegment(source, label);

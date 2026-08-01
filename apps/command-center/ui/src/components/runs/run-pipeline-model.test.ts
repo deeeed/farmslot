@@ -8,6 +8,7 @@ import {
   effectiveTaskProgressForRun,
   publicationReviewStepForName,
 } from './run-pipeline-model.js';
+import { pipelineStepTone } from './run-pipeline-status.js';
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {
@@ -147,4 +148,160 @@ test('computeLayout places post-gate review nodes after the worker lane to avoid
   assert.ok(postGateReview.x > selfReview.x + selfReview.w);
   assert.ok(packageRefresh.x > postGateReview.x + postGateReview.w);
   assert.ok(finalize.x > packageRefresh.x + packageRefresh.w);
+});
+
+test('computeLayout maps open review issues to failed status (warn tone), not done/green', () => {
+  const run = makeRun({
+    status: 'blocked',
+    steps: [
+      { name: 'self-review', status: 'done' },
+      { name: 'complete', status: 'done' },
+      { name: 'human-gate', status: 'running' },
+      { name: 'finalize', status: 'pending' },
+    ],
+    engineState: {
+      publishGate: {
+        reviewDepth: {
+          requestedBy: 'human-gate',
+          minimumIndependentReviews: 1,
+          requireCrossRunner: false,
+          extraLoopsRequested: 1,
+        },
+        independentReviews: [
+          {
+            id: 'independent-review-2',
+            source: 'human-gate',
+            runner: 'claude',
+            crossRunner: true,
+            loopNumber: 2,
+            verdict: 'issues',
+            unresolvedCount: 3,
+            validationDepth: 'full-live',
+            completedAt: '2026-05-14T00:00:30.000Z',
+          },
+        ],
+      },
+    },
+  });
+
+  const layout = computeLayout(run);
+  const review = layout.nodes.find((node) => node.id === 'post-gate-publication-review-1');
+  const packageRefresh = layout.nodes.find((node) => node.id === 'package-refresh');
+  assert.ok(review);
+  assert.equal(review.step.status, 'failed');
+  assert.equal(review.step.outputs?.verdict, 'issues');
+  assert.ok(packageRefresh);
+  assert.equal(packageRefresh.step.status, 'failed');
+  assert.equal(packageRefresh.step.outputs?.lastReviewVerdict, 'issues');
+  assert.equal(pipelineStepTone(review.step), 'warn');
+  assert.equal(pipelineStepTone(packageRefresh.step), 'warn');
+});
+
+test('computeLayout keeps package-refresh pending when a review agent is working', () => {
+  const run = makeRun({
+    status: 'human-gating',
+    steps: [
+      { name: 'self-review', status: 'done' },
+      { name: 'complete', status: 'done' },
+      {
+        name: 'human-gate',
+        status: 'running',
+        detail: 'Worker fix complete; running claude re-review (2)...',
+      },
+      { name: 'finalize', status: 'pending' },
+    ],
+    agentContexts: [
+      {
+        id: 'rev1-claude',
+        role: 'self-review',
+        status: 'working',
+        runner: 'claude',
+      } as never,
+    ],
+    engineState: {
+      publishGate: {
+        reviewDepth: {
+          requestedBy: 'human-gate',
+          minimumIndependentReviews: 1,
+          requireCrossRunner: false,
+          extraLoopsRequested: 1,
+        },
+        independentReviews: [
+          {
+            id: 'independent-review-6',
+            source: 'human-gate',
+            runner: 'codex',
+            crossRunner: true,
+            loopNumber: 6,
+            verdict: 'failed',
+            unresolvedCount: 0,
+            validationDepth: 'static-code',
+            completedAt: '2026-08-01T06:29:15.182Z',
+          },
+        ],
+      },
+    },
+  });
+
+  const layout = computeLayout(run);
+  const packageRefresh = layout.nodes.find((node) => node.id === 'package-refresh');
+  assert.ok(packageRefresh);
+  assert.equal(packageRefresh.step.status, 'pending');
+  assert.match(packageRefresh.step.detail ?? '', /waiting for review/i);
+});
+
+test('computeLayout does not keep package-refresh pending on sticky re-review detail alone', () => {
+  const run = makeRun({
+    status: 'human-gating',
+    steps: [
+      { name: 'self-review', status: 'done' },
+      { name: 'complete', status: 'done' },
+      {
+        name: 'human-gate',
+        status: 'running',
+        detail: 'Worker fix complete; running claude re-review (2)...',
+      },
+      { name: 'finalize', status: 'pending' },
+    ],
+    agentContexts: [
+      {
+        id: 'rev1-claude',
+        role: 'self-review',
+        status: 'complete',
+        runner: 'claude',
+      } as never,
+    ],
+    engineState: {
+      publishGate: {
+        reviewDepth: {
+          requestedBy: 'human-gate',
+          minimumIndependentReviews: 1,
+          requireCrossRunner: false,
+          extraLoopsRequested: 1,
+        },
+        independentReviews: [
+          {
+            id: 'independent-review-6',
+            source: 'human-gate',
+            runner: 'codex',
+            crossRunner: true,
+            loopNumber: 6,
+            verdict: 'failed',
+            unresolvedCount: 0,
+            validationDepth: 'static-code',
+            completedAt: '2026-08-01T06:29:15.182Z',
+          },
+        ],
+      },
+    },
+  });
+
+  const layout = computeLayout(run);
+  const packageRefresh = layout.nodes.find((node) => node.id === 'package-refresh');
+  const runningReview = layout.nodes.find(
+    (node) => node.id.startsWith('post-gate-publication-review-') && node.step.status === 'running',
+  );
+  assert.ok(packageRefresh);
+  assert.equal(packageRefresh.step.status, 'failed');
+  assert.equal(runningReview, undefined);
 });

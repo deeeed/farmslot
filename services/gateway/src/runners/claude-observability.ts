@@ -4,13 +4,17 @@ import {
   activeToolFromHooks,
   contextPctFromStatusline,
   deriveRunnerActivity,
+  deriveRunnerSessionDeliveryState,
   filterHooksByPane,
   filterStatuslineByPane,
+  hookRecordMatchesRunnerSession,
   lastTurnCompletedFromHooks,
   parseHookJsonl,
   parseStatuslineJson,
   promptAcceptedFromHooks,
   readRunnerObservabilityFiles,
+  readRunnerPaneObservabilityState,
+  readRunnerSessionObservabilityState,
 } from './observability-files.js';
 import type { RunnerObservability, SlotVars } from './observability-types.js';
 
@@ -54,5 +58,22 @@ export const claudeHookObservability: RunnerObservability = {
       undefined,
       paneRetired,
     );
+  },
+
+  async getSessionDeliveryState(vars, target, sessionId, sessionPath) {
+    const paneId = await resolveTmuxPaneId(vars, target);
+    if (!paneId) return null;
+    const expected = { sessionId, sessionPath, paneId };
+    const [sessionState, paneState] = await Promise.all([
+      readRunnerSessionObservabilityState(vars, sessionId),
+      readRunnerPaneObservabilityState(vars, paneId),
+    ]);
+    if (
+      !hookRecordMatchesRunnerSession(sessionState, expected) ||
+      !hookRecordMatchesRunnerSession(paneState, expected)
+    ) {
+      return null;
+    }
+    return deriveRunnerSessionDeliveryState(sessionState, sessionId);
   },
 };

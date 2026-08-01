@@ -81,6 +81,14 @@ function rotateIfLarge(filePath) {
   }
 }
 
+function writeSnapshot(directory, key, record) {
+  fs.mkdirSync(directory, { recursive: true });
+  const statePath = path.join(directory, encodeURIComponent(key) + '.json');
+  const pendingPath = statePath + '.' + process.pid + '.tmp';
+  fs.writeFileSync(pendingPath, \`\${JSON.stringify(record)}\n\`);
+  fs.renameSync(pendingPath, statePath);
+}
+
 try {
   const raw = readStdin();
   const payload = raw.trim() ? JSON.parse(raw) : {};
@@ -113,6 +121,7 @@ try {
     permission_mode: payload.permission_mode,
     effort: payload.effort,
     tool_name: payload.tool_name,
+    notification_type: payload.notification_type,
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
     runner: process.env.FARMSLOT_RUNNER || 'claude',
@@ -120,6 +129,12 @@ try {
     ...(sentAt ? { sentAt } : {}),
   };
   fs.appendFileSync(logPath, \`\${JSON.stringify(record)}\n\`);
+  if (typeof record.session_id === 'string' && record.session_id) {
+    writeSnapshot(path.join(obsDir, 'sessions'), record.session_id, record);
+  }
+  if (typeof record.tmuxPane === 'string' && record.tmuxPane) {
+    writeSnapshot(path.join(obsDir, 'panes'), record.tmuxPane, record);
+  }
 } catch (error) {
   console.error('[farmslot-observability] ' + (error?.message || String(error)));
 }

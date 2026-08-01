@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { resumableSessionProbeCommand } from '../runners/session-process.js';
+
 import {
   parseTerminalSelfReviewSignal,
-  resumableSessionProbeCommand,
   shouldKeepWaitingForOverdueReview,
 } from './review-agent.js';
 

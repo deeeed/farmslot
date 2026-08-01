@@ -44,6 +44,10 @@ See `apps/command-center/CLAUDE.md` for the full protocol. If CDP is unreachable
 
 **Before patching, decide: bandage or real fix?** State the diagnosis in one sentence, then pick the long-term fix by default. A bandage is only acceptable when Arthur explicitly asks for one or the real fix is out of scope for the current task — and when you ship a bandage, call it out as a bandage and note the follow-up needed. Signs you are bandaging: adding a null-check where the null is the bug, wrapping flaky code in try/catch, special-casing one caller, duplicating logic instead of fixing the shared helper, adding a flag to skip the broken path. **Do not ship regressions while "fixing" bugs.** If a fix changes behavior for other callers, trace them and verify before declaring done.
 
+### Runner Capability First — HARD RULE
+
+**Runner-related behavior belongs in the runner capability/protocol layer.** For launch, resume, retained handoff, prompt delivery, busy/idle state, model selection, permissions, or recovery, first extend `RunnerDefinition`, `RunnerObservability`, or the shared runner command/delivery adapter. Workflow and client code may provide policy and session context, but must not select behavior with runner-name branches, parse runner TUI glyphs/messages, or duplicate runner mechanics. Runner-specific CLI syntax is allowed only inside the shared runner adapter. Prefer structured hooks and native runner session APIs; if a capability is absent, fail closed or declare it unsupported. A pane/text fallback is allowed only for a runner explicitly declared `pane-only`, with tests at the capability boundary.
+
 ### No UI Value Injection — HARD RULE
 
 **Never inject values directly into UI state (DOM, React/Redux/MobX store, signals, hooks) to "validate" a bug fix or feature.** Drive the real user flow via a recipe / Playwright / CDP-controlled interaction (`press`, `set_input`, `type_keypad`, real keystrokes) so the screenshot reflects the actual code path users hit. Direct injection bypasses validators, reducers, side-effects, and the very code under test — it manufactures false confidence and ships green screenshots over broken prod. If the only way to reach a state is injection, the fix is NOT validated; say so explicitly and do not claim success. Applies to TPSL inputs, order forms, balances, position state, modal field values — anything the user would normally type or compute. Setup-time fixture seeding at app launch (vault, preferences) is fine; mid-recipe state writes to fake an outcome are not.
@@ -53,6 +57,20 @@ See `apps/command-center/CLAUDE.md` for the full protocol. If CDP is unreachable
 **Every PR must get at least one `/review` round (independent code-reviewer agent) before being suggested for merge.** This applies to PRs opened by Claude — no self-approval, no "ready to merge" straight from a green CI. Fix every finding the review surfaces, including nits, unless explicitly waived. If review uncovers new issues, push a follow-up commit to the same branch and confirm typecheck + CDP still pass.
 
 **Cross-model review is mandatory on top of the worker's own review pass.** After the implementing model reviews its diff, run at least one round of `/cross-review-orchestrator` (or equivalent) with a **different** model family — prefer Codex for speed, Claude when depth is needed. The cross-reviewer must inspect the same HEAD SHA; fix every blocking finding and nits before merge. Worker self-review alone is not sufficient.
+
+### PR Ship Checklist — HARD RULE
+
+**Opening a PR is fine. Claiming a PR is ready / done / mergeable is not until this checklist is complete.** Local unit tests or pre-push alone are never enough.
+
+Before saying a farmslot PR is ready (or suggesting merge):
+
+1. **Changelog** — if the diff touches a publishable workspace package (`apps/command-center/ui`, `services/gateway`, `packages/*`, etc.), add an **Unreleased** bullet to that package's `CHANGELOG.md` in the same PR. Hygiene CI runs `check-workspace-changelogs.mjs --pr-diff` and **fails** when the changelog is missing.
+2. **CI green** — wait for `gh pr checks` on the PR (hygiene + quality gates for the touched area). Do not claim ready while checks are pending, failed, or skipped-only for the relevant packages.
+3. **Independent review** — run at least one independent code-reviewer agent against the **same HEAD SHA** that is on the PR.
+4. **Cross-model review** — run at least one review with a **different** model family against that same SHA (see rule above).
+5. **Fix all findings** — blocking and nits, unless Arthur explicitly waives them. Re-run typecheck (and CDP for UI) after follow-up commits.
+
+If Arthur only says "open a PR", open it, then **continue** through this checklist before reporting completion. A PR URL alone is not done.
 
 ### Never Commit Directly to `main` — HARD RULE
 

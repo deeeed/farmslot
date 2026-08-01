@@ -1037,7 +1037,10 @@ async function executeStep(runId: string, step: string): Promise<StepIO> {
         stepPartialIO,
       });
     case S.DISPATCH:
-      return executeDispatchStep(runId, { stepPartialIO });
+      return executeDispatchStep(runId, {
+        stepPartialIO,
+        blockedRunError: (message, reason) => new BlockedRunError(message, reason),
+      });
     case S.MONITOR:
       return executeMonitorStep(runId, {
         activeMonitors,

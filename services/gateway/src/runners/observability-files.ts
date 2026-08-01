@@ -8,6 +8,7 @@ import type {
   HookRecord,
   ObservabilityReading,
   RunnerActivity,
+  RunnerSessionDeliveryState,
   StatuslineRecord,
 } from './observability-types.js';
 
@@ -97,6 +98,7 @@ export function deriveRunnerActivity(
   let lastPreToolUse: { record: HookRecord; observedAt: number } | null = null;
   let lastPostToolUseAt: number | null = null;
   let lastTurnStop: { observedAt: number } | null = null;
+  let lastIdleNotification: { observedAt: number } | null = null;
   let lastComposing: { observedAt: number } | null = null;
 
   for (const record of hooks) {
@@ -108,19 +110,29 @@ export function deriveRunnerActivity(
       lastPostToolUseAt = null;
     } else if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
       lastPostToolUseAt = observedAt;
-    } else if (event === 'Stop' || event === 'SubagentStop') {
+    } else if (event === 'Stop') {
       lastTurnStop = { observedAt };
     } else if (event === 'UserPromptSubmit' || event === 'UserPromptExpansion') {
       lastComposing = { observedAt };
     } else if (event === 'Notification') {
-      lastComposing = { observedAt };
+      if (record.notification_type === 'idle_prompt') {
+        lastIdleNotification = { observedAt };
+      } else {
+        lastComposing = { observedAt };
+      }
     }
   }
+
+  const lastIdle =
+    lastIdleNotification &&
+    (!lastTurnStop || lastIdleNotification.observedAt > lastTurnStop.observedAt)
+      ? lastIdleNotification
+      : lastTurnStop;
 
   const freshest = [
     lastPreToolUse?.observedAt,
     lastPostToolUseAt,
-    lastTurnStop?.observedAt,
+    lastIdle?.observedAt,
     lastComposing?.observedAt,
   ]
     .filter((value): value is number => value != null)
@@ -129,7 +141,9 @@ export function deriveRunnerActivity(
 
   if (
     lastPreToolUse &&
-    (lastPostToolUseAt == null || lastPreToolUse.observedAt > lastPostToolUseAt)
+    (lastPostToolUseAt == null || lastPreToolUse.observedAt > lastPostToolUseAt) &&
+    (lastIdle == null || lastPreToolUse.observedAt > lastIdle.observedAt) &&
+    (lastComposing == null || lastPreToolUse.observedAt > lastComposing.observedAt)
   ) {
     return {
       value: 'tool-running',
@@ -138,10 +152,7 @@ export function deriveRunnerActivity(
       observedAt: lastPreToolUse.observedAt,
     };
   }
-  if (
-    lastComposing &&
-    (lastTurnStop == null || lastComposing.observedAt > lastTurnStop.observedAt)
-  ) {
+  if (lastComposing && (lastIdle == null || lastComposing.observedAt > lastIdle.observedAt)) {
     return {
       value: 'composing',
       source: 'hook',
@@ -149,15 +160,45 @@ export function deriveRunnerActivity(
       observedAt: lastComposing.observedAt,
     };
   }
-  if (lastTurnStop) {
+  if (lastIdle) {
     return {
       value: 'idle',
       source: 'hook',
       confidence: 'high',
-      observedAt: lastTurnStop.observedAt,
+      observedAt: lastIdle.observedAt,
     };
   }
   return null;
+}
+
+/**
+ * Resolve whether a persisted runner session can be safely reactivated.
+ *
+ * Activity freshness and session delivery state are different contracts: a
+ * busy heartbeat can expire, but a whole-turn Stop remains the latest state of
+ * that session until a later hook supersedes it. Scoping by session id prevents
+ * a reused tmux pane from inheriting an older process's terminal state.
+ */
+export function deriveRunnerSessionDeliveryState(
+  record: HookRecord | null,
+  sessionId: string,
+): ObservabilityReading<RunnerSessionDeliveryState> | null {
+  if (!record || record.session_id !== sessionId) return null;
+  const event = hookEventName(record);
+  const observedAt = observedAtFromRecord(record);
+  if (!event || observedAt == null) return null;
+  const value: RunnerSessionDeliveryState =
+    event === 'Stop' || (event === 'Notification' && record.notification_type === 'idle_prompt')
+      ? 'idle'
+      : event === 'SubagentStop'
+        ? 'unknown'
+        : 'active';
+  return {
+    value,
+    source: 'hook',
+    confidence: 'high',
+    observedAt,
+  };
 }
 
 export function runnerActivityIsBusy(activity: RunnerActivity): boolean {
@@ -205,7 +246,7 @@ export function lastTurnCompletedFromHooks(
     const event = hookEventName(record);
     const observedAt = observedAtFromRecord(record);
     if (!event || observedAt == null) continue;
-    if (event !== 'Stop' && event !== 'SubagentStop') continue;
+    if (event !== 'Stop') continue;
     if (!isFreshObservedAt(observedAt, now)) return null;
     return {
       value: observedAt,
@@ -265,6 +306,39 @@ export async function readRunnerObservabilityFiles(
     hooksRaw: hooksResult.stdout,
     statuslineRaw: statuslineResult.stdout,
   };
+}
+
+/** Read the bounded last-event snapshot for one persisted runner session. */
+export async function readRunnerSessionObservabilityState(
+  vars: SlotVars,
+  sessionId: string,
+): Promise<HookRecord | null> {
+  const obsDir = await runnerObservabilityDirForSlot(vars);
+  const statePath = path.posix.join(obsDir, 'sessions', `${encodeURIComponent(sessionId)}.json`);
+  const result = await execOnSlot(vars, `cat ${shellQuote(statePath)} 2>/dev/null || true`);
+  return parseHookJsonl(result.stdout)[0] ?? null;
+}
+
+/** Read the bounded last-event snapshot for the runner currently occupying one tmux pane. */
+export async function readRunnerPaneObservabilityState(
+  vars: SlotVars,
+  paneId: string,
+): Promise<HookRecord | null> {
+  const obsDir = await runnerObservabilityDirForSlot(vars);
+  const statePath = path.posix.join(obsDir, 'panes', `${encodeURIComponent(paneId)}.json`);
+  const result = await execOnSlot(vars, `cat ${shellQuote(statePath)} 2>/dev/null || true`);
+  return parseHookJsonl(result.stdout)[0] ?? null;
+}
+
+export function hookRecordMatchesRunnerSession(
+  record: HookRecord | null,
+  expected: { sessionId: string; sessionPath: string; paneId: string },
+): record is HookRecord {
+  return (
+    record?.session_id === expected.sessionId &&
+    record.transcript_path === expected.sessionPath &&
+    record.tmuxPane === expected.paneId
+  );
 }
 
 export function filterHooksByPane(

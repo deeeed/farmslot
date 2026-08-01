@@ -39,6 +39,7 @@ function runHook(hookPath, obsDir, payload, runner = 'claude') {
       FARMSLOT_OBS_DIR: obsDir,
       FARMSLOT_SLOT_ID: 'install-test',
       FARMSLOT_RUNNER: runner,
+      TMUX_PANE: '%1',
     },
   });
 }
@@ -120,7 +121,7 @@ test('claude install preserves a non-symlink compatibility directory', () => {
   assert.equal(fs.readFileSync(path.join(compat, 'operator-file'), 'utf8'), 'keep\n');
 });
 
-test('installed hook appends real newlines so hooks.jsonl splits into records', () => {
+test('installed hook writes JSONL records and atomic per-session and per-pane snapshots', () => {
   const { obsDir, hookPath } = installToTempDir();
   const logPath = path.join(obsDir, 'hooks.jsonl');
   const hookSrc = fs.readFileSync(hookPath, 'utf8');
@@ -132,13 +133,32 @@ test('installed hook appends real newlines so hooks.jsonl splits into records', 
 
   runHook(hookPath, obsDir, { hook_event_name: 'SessionStart', session_id: 'a' });
   runHook(hookPath, obsDir, { hook_event_name: 'Stop', session_id: 'a' });
+  runHook(hookPath, obsDir, {
+    hook_event_name: 'Notification',
+    notification_type: 'idle_prompt',
+    message: 'Claude is waiting for your input',
+    session_id: 'a',
+  });
 
   const raw = fs.readFileSync(logPath, 'utf8');
   const lines = raw.split('\n').filter((line) => line.trim());
-  assert.equal(lines.length, 2, `expected 2 JSONL lines, got raw=${JSON.stringify(raw)}`);
+  assert.equal(lines.length, 3, `expected 3 JSONL lines, got raw=${JSON.stringify(raw)}`);
   assert.equal(JSON.parse(lines[0]).hook_event_name, 'SessionStart');
   assert.equal(JSON.parse(lines[1]).hook_event_name, 'Stop');
+  assert.equal(JSON.parse(lines[2]).notification_type, 'idle_prompt');
   assert.equal(raw.at(-1), '\n', 'each append should end with a real newline byte');
+  const sessionState = JSON.parse(
+    fs.readFileSync(path.join(obsDir, 'sessions', `${encodeURIComponent('a')}.json`), 'utf8'),
+  );
+  assert.equal(sessionState.hook_event_name, 'Notification');
+  assert.equal(sessionState.notification_type, 'idle_prompt');
+  assert.equal(sessionState.session_id, 'a');
+  const paneState = JSON.parse(
+    fs.readFileSync(path.join(obsDir, 'panes', `${encodeURIComponent('%1')}.json`), 'utf8'),
+  );
+  assert.equal(paneState.hook_event_name, 'Notification');
+  assert.equal(paneState.session_id, 'a');
+  assert.equal(paneState.tmuxPane, '%1');
 });
 
 test('codex install merges farmslot hook alongside existing codex hooks', () => {

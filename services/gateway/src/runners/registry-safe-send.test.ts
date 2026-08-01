@@ -26,7 +26,6 @@ let promptAcceptedReading: ObservabilityReading<boolean> | null = {
   confidence: 'high',
   observedAt: Date.now(),
 };
-
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
 let paneCaptureCount = 0;
@@ -52,6 +51,9 @@ mock.module('./claude-observability.js', {
       async promptAccepted() {
         callOrder.push('obs:promptAccepted');
         return promptAcceptedReading;
+      },
+      async getSessionDeliveryState() {
+        return null;
       },
     },
   },

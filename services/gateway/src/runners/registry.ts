@@ -78,6 +78,9 @@ import { buildRunnerObservabilityInstallCommand } from './runner-observability.j
 export const WORKER_ENV_PREFIX =
   'export DISABLE_OMC=1 DISABLE_OMX=1; ASDF_SHIMS="${ASDF_DATA_DIR:-$HOME/.asdf}/shims"; if [ -d "$ASDF_SHIMS" ]; then export PATH="$ASDF_SHIMS:$PATH"; fi';
 
+export type RetainedSessionHandoff = 'resume-with-prompt' | 'in-place' | 'unsupported';
+export type SessionReloadCapability = 'with-prompt' | 'none';
+
 export interface RunnerDefinition {
   id: string;
   defaultLaunchMode: 'interactive' | 'exec';
@@ -90,6 +93,10 @@ export interface RunnerDefinition {
   continueCommand: string | null;
   /** Runner writes session files on disk (e.g. resumable session state). */
   persistsSessionFiles: boolean;
+  /** Whether persisted sessions can be reloaded with an initial prompt in argv. */
+  sessionReload: SessionReloadCapability;
+  /** How a completed worker session receives a chained task without TUI parsing. */
+  retainedSessionHandoff: RetainedSessionHandoff;
   /** Runner's TUI can show a busy "composer" pane that swallows send-keys — poll before sending. */
   requiresBusyComposerPoll: boolean;
   /**
@@ -169,6 +176,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: true,
     continueCommand: '/continue',
     persistsSessionFiles: true,
+    sessionReload: 'with-prompt',
+    retainedSessionHandoff: 'resume-with-prompt',
     requiresBusyComposerPoll: false,
     // Claude has no "more dangerous" mode beyond --dangerously-skip-permissions,
     // so full-auto and dangerous collapse onto the same flag. Sandboxed drops it.
@@ -199,6 +208,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // launcher, or the text gets inserted into chat instead of executed by zsh.
     continueCommand: 'Continue the current task from where you left off.',
     persistsSessionFiles: true,
+    sessionReload: 'with-prompt',
+    retainedSessionHandoff: 'resume-with-prompt',
     requiresBusyComposerPoll: true,
     // Codex tier mapping:
     //   sandboxed  — default; Codex CLI prompts for approvals on destructive ops.
@@ -233,6 +244,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: false,
+    sessionReload: 'none',
+    retainedSessionHandoff: 'in-place',
     requiresBusyComposerPoll: false,
     flagsByTier: {
       sandboxed: ['--sandbox', 'enabled'],
@@ -258,6 +271,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: true,
+    sessionReload: 'with-prompt',
+    retainedSessionHandoff: 'in-place',
     requiresBusyComposerPoll: false,
     flagsByTier: {
       sandboxed: [],
@@ -279,6 +294,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
+    sessionReload: 'none',
+    retainedSessionHandoff: 'unsupported',
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -296,6 +313,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
+    sessionReload: 'none',
+    retainedSessionHandoff: 'unsupported',
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -313,6 +332,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
+    sessionReload: 'none',
+    retainedSessionHandoff: 'unsupported',
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -497,6 +518,16 @@ export function runnerPersistsSessionFiles(runnerId?: string | null): boolean {
   // runnerSessionPath to the run. Known built-ins carry their registry flag.
   if (!isKnownRunner(runnerId)) return false;
   return getRunnerDefinition(runnerId).persistsSessionFiles;
+}
+
+export function runnerRetainedSessionHandoff(runnerId?: string | null): RetainedSessionHandoff {
+  if (!isKnownRunner(runnerId)) return 'unsupported';
+  return getRunnerDefinition(runnerId).retainedSessionHandoff;
+}
+
+export function runnerSessionReloadCapability(runnerId?: string | null): SessionReloadCapability {
+  if (!isKnownRunner(runnerId)) return 'none';
+  return getRunnerDefinition(runnerId).sessionReload;
 }
 
 export function runnerProcessPattern(runnerId?: string | null): RegExp {

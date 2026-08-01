@@ -5,8 +5,11 @@ import {
   activeToolFromHooks,
   contextPctFromStatusline,
   deriveRunnerActivity,
+  deriveRunnerSessionDeliveryState,
   filterHooksByPane,
   filterStatuslineByPane,
+  hookRecordMatchesRunnerSession,
+  lastTurnCompletedFromHooks,
   parseHookJsonl,
   promptAcceptedFromHooks,
   promptTurnStartedFromHooks,
@@ -54,6 +57,160 @@ test('deriveRunnerActivity detects composing and tool-running from hooks', () =>
     NOW,
   );
   assert.equal(toolRunning?.value, 'tool-running');
+});
+
+test('deriveRunnerActivity recognizes the structured idle notification type', () => {
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'PreToolUse', observedAt: NOW - 70_000, tool_name: 'Read' },
+      { hook_event_name: 'PostToolUse', observedAt: NOW - 60_000, tool_name: 'Read' },
+      {
+        hook_event_name: 'Notification',
+        notification_type: 'idle_prompt',
+        observedAt: NOW - 1_000,
+      },
+    ],
+    null,
+    NOW,
+  );
+  assert.equal(reading?.value, 'idle');
+});
+
+test('deriveRunnerActivity does not treat an unrelated notification as idle', () => {
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 2_000 },
+      {
+        hook_event_name: 'Notification',
+        notification_type: 'permission_prompt',
+        observedAt: NOW - 1_000,
+      },
+    ],
+    null,
+    NOW,
+  );
+  assert.equal(reading?.value, 'composing');
+});
+
+test('deriveRunnerActivity does not treat SubagentStop as whole-turn idle', () => {
+  const reading = deriveRunnerActivity(
+    [{ hook_event_name: 'SubagentStop', observedAt: NOW - 180_000 }],
+    null,
+    NOW,
+  );
+  assert.equal(reading, null);
+});
+
+test('deriveRunnerActivity lets a later Stop close an unmatched tool hook', () => {
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'PreToolUse', observedAt: NOW - 70_000, tool_name: 'Bash' },
+      { hook_event_name: 'Stop', observedAt: NOW - 60_000 },
+    ],
+    null,
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 60_000,
+  });
+});
+
+test('lastTurnCompletedFromHooks ignores subagent completion', () => {
+  const reading = lastTurnCompletedFromHooks(
+    [
+      { hook_event_name: 'Stop', observedAt: NOW - 90_000 },
+      { hook_event_name: 'SubagentStop', observedAt: NOW - 1_000 },
+    ],
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: NOW - 90_000,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 90_000,
+  });
+});
+
+test('deriveRunnerSessionDeliveryState reads a terminal session snapshot as idle', () => {
+  const reading = deriveRunnerSessionDeliveryState(
+    { hook_event_name: 'Stop', session_id: 'wanted', observedAt: NOW - 240_000 },
+    'wanted',
+  );
+  assert.deepEqual(reading, {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 240_000,
+  });
+});
+
+test('deriveRunnerSessionDeliveryState reads an active session snapshot as active', () => {
+  const reading = deriveRunnerSessionDeliveryState(
+    { hook_event_name: 'UserPromptSubmit', session_id: 'wanted', observedAt: NOW - 240_000 },
+    'wanted',
+  );
+  assert.equal(reading?.value, 'active');
+});
+
+test('deriveRunnerSessionDeliveryState treats SubagentStop as unknown parent state', () => {
+  const reading = deriveRunnerSessionDeliveryState(
+    { hook_event_name: 'SubagentStop', session_id: 'wanted', observedAt: NOW - 1_000 },
+    'wanted',
+  );
+  assert.equal(reading?.value, 'unknown');
+});
+
+test('deriveRunnerSessionDeliveryState uses structured notification types', () => {
+  const idle = deriveRunnerSessionDeliveryState(
+    {
+      hook_event_name: 'Notification',
+      notification_type: 'idle_prompt',
+      session_id: 'wanted',
+      observedAt: NOW - 2_000,
+    },
+    'wanted',
+  );
+  assert.equal(idle?.value, 'idle');
+
+  const active = deriveRunnerSessionDeliveryState(
+    {
+      hook_event_name: 'Notification',
+      notification_type: 'permission_prompt',
+      session_id: 'wanted',
+      observedAt: NOW - 1_000,
+    },
+    'wanted',
+  );
+  assert.equal(active?.value, 'active');
+});
+
+test('hookRecordMatchesRunnerSession binds a snapshot to exact session, path, and pane', () => {
+  const record = {
+    hook_event_name: 'Stop',
+    session_id: 'wanted',
+    transcript_path: '/sessions/wanted.jsonl',
+    tmuxPane: '%2',
+    observedAt: NOW,
+  };
+  assert.equal(
+    hookRecordMatchesRunnerSession(record, {
+      sessionId: 'wanted',
+      sessionPath: '/sessions/wanted.jsonl',
+      paneId: '%2',
+    }),
+    true,
+  );
+  assert.equal(
+    hookRecordMatchesRunnerSession(record, {
+      sessionId: 'wanted',
+      sessionPath: '/sessions/wanted.jsonl',
+      paneId: '%3',
+    }),
+    false,
+  );
 });
 
 test('activeToolFromHooks returns unmatched PreToolUse tool name', () => {
