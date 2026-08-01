@@ -1,6 +1,7 @@
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { resolveTmuxPaneId, shellQuote } from '../core/tmux.js';
+import { normalizeWorkerSignal } from '../tasks/worker-signals.js';
 
 import {
   deriveRunnerActivity,
@@ -22,28 +23,71 @@ export interface RunnerHandoffAckProbe {
   source?: 'hook-digest' | 'hook-turn' | 'hook-activity' | 'launch-signal' | 'pane';
 }
 
-export async function readLaunchAckSignalSince(
+export interface LaunchAckSignalSnapshot {
+  raw: string | null;
+  status: string | null;
+  mtimeNs: string;
+}
+
+const MISSING_SIGNAL = '__FARMSLOT_SIGNAL_MISSING__';
+
+export function buildLaunchAckSignalReadCommand(signalPath: string): string {
+  const quotedPath = shellQuote(signalPath);
+  return `if [ ! -f ${quotedPath} ]; then printf '${MISSING_SIGNAL}\\n'; else mtime_ns=$(python3 -c 'import os, sys; print(os.stat(sys.argv[1]).st_mtime_ns)' ${quotedPath}) || exit 1; printf '%s\\n' "$mtime_ns"; cat ${quotedPath}; fi`;
+}
+
+export async function readLaunchAckSignalSnapshot(
   vars: SlotVars,
   signalPath: string,
-  sinceMs: number,
-): Promise<boolean> {
+): Promise<LaunchAckSignalSnapshot> {
   const result = await execOnSlot(
     vars,
-    `cat ${shellQuote(signalPath)} 2>/dev/null`,
+    buildLaunchAckSignalReadCommand(signalPath),
     vars.remoteRepo,
   );
-  if (result.exitCode !== 0 || !result.stdout.trim()) return false;
-  const raw = result.stdout.trim();
-  if (!raw.includes('"status"')) return false;
-  if (!/"status"\s*:\s*"(?:running|working)"/.test(raw)) return false;
-  const stat = await execOnSlot(
-    vars,
-    `stat -f %m ${shellQuote(signalPath)} 2>/dev/null || stat -c %Y ${shellQuote(signalPath)} 2>/dev/null || echo 0`,
-    vars.remoteRepo,
-  );
-  const mtimeSec = Number.parseInt(stat.stdout.trim(), 10);
-  const mtimeMs = Number.isFinite(mtimeSec) ? mtimeSec * 1000 : 0;
-  return mtimeMs >= sinceMs - 1000;
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to read launch acknowledgement signal ${signalPath}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+    );
+  }
+  if (result.stdout.startsWith(MISSING_SIGNAL)) {
+    return { raw: null, status: null, mtimeNs: '0' };
+  }
+  const newline = result.stdout.indexOf('\n');
+  if (newline < 0) {
+    throw new Error(`Launch acknowledgement signal probe returned no stat line: ${signalPath}`);
+  }
+  const mtimeNs = result.stdout.slice(0, newline).trim();
+  if (!/^\d+$/.test(mtimeNs)) {
+    throw new Error(`Launch acknowledgement signal probe returned invalid mtime: ${signalPath}`);
+  }
+  const raw = result.stdout.slice(newline + 1).trim();
+  if (!raw) return { raw, status: null, mtimeNs };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      // SIGNAL.json can be observed between truncate and rename/write completion.
+      return { raw, status: null, mtimeNs };
+    }
+    throw error;
+  }
+  const normalized = normalizeWorkerSignal(parsed);
+  return {
+    raw,
+    status: normalized.ok ? normalized.signal.status : null,
+    mtimeNs,
+  };
+}
+
+export function launchAckSignalAdvanced(
+  baseline: LaunchAckSignalSnapshot | null | undefined,
+  current: LaunchAckSignalSnapshot,
+  _sinceMs: number,
+): boolean {
+  if (!baseline || current.status === null) return false;
+  return current.raw !== baseline.raw || current.mtimeNs !== baseline.mtimeNs;
 }
 
 export async function probeRunnerHandoffAck(
@@ -54,16 +98,17 @@ export async function probeRunnerHandoffAck(
   opts: {
     paneId?: string | null;
     launchAckSignalPath?: string | null;
+    launchAckBaseline?: LaunchAckSignalSnapshot | null;
     preferHooks?: boolean;
     requirePromptDigest?: boolean;
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
-  if (opts.launchAckSignalPath && !opts.requirePromptDigest) {
-    const launchAck = await readLaunchAckSignalSince(vars, opts.launchAckSignalPath, sinceMs);
-    if (launchAck) {
+  if (opts.launchAckSignalPath) {
+    const launchAck = await readLaunchAckSignalSnapshot(vars, opts.launchAckSignalPath);
+    if (launchAckSignalAdvanced(opts.launchAckBaseline, launchAck, sinceMs)) {
       return {
         accepted: true,
-        reason: `launch ack signal updated at ${opts.launchAckSignalPath}`,
+        reason: `launch ack signal advanced to ${launchAck.status} at ${opts.launchAckSignalPath}`,
         source: 'launch-signal',
       };
     }

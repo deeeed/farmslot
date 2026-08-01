@@ -280,7 +280,7 @@ Per-runner behavioral differences (how to launch in tmux, whether compose buffer
 
 - **Claude tmux:** interactive `❯` compose often buffers without submitting; one-shot `-p` in a **shell pane** is the reliable hook-smoke path.
 - **Codex tmux:** bare tmux lacks shell `codex` function — use full `node …/codex.js`; require git repo; set `CODEX_HOME={{runtime_dir}}/codex-home`; prefer `codex exec --disable plugin_hooks`.
-- **Grok tmux (pane-only, priority):** production uses interactive TUI + post-launch prompt + project-directory blocker. Harness validates **`grok -p`** (`pane-smoke`) and **interactive compose** (`interaction-smoke`) separately. See [runner-validation-harness.md](../operations/runner-validation-harness.md).
+- **Grok tmux (pane-backed activity, native prompt acceptance):** production uses the interactive TUI + post-launch prompt + project-directory blocker. Exact prompt acceptance comes from the uniquely pane-bound Grok session history; ambiguous/unavailable session metadata falls back to the generic worker signal and pane checks. Harness validates **`grok -p`** (`pane-smoke`) and **interactive compose** (`interaction-smoke`) separately. See [runner-validation-harness.md](../operations/runner-validation-harness.md).
 - **Cursor tmux (pane-only):** argv/`--print` launch; hook scenarios skip; `pane-smoke` uses `cursor-agent --print --trust`.
 
 Scenarios that are runner-inapplicable (Codex busy-composer, Codex mode-switch; hook scenarios on pane-only runners) **skip with `pass: true` and an explicit `skipReason`** rather than fake success. Live mid-turn busy capture remains a fixture-tier test until a stable recipe exists.

@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -6,6 +10,10 @@ import {
   promptAcceptedFromHooks,
   promptTurnStartedFromHooks,
 } from './observability-files.js';
+import {
+  buildLaunchAckSignalReadCommand,
+  launchAckSignalAdvanced,
+} from './prompt-delivery-evidence.js';
 
 const NOW = 1_782_502_350_000;
 
@@ -82,4 +90,55 @@ test('promptAcceptedFromHooks accepts turn start without digest match', () => {
     '%129',
   );
   assert.equal(reading?.value, true);
+});
+
+test('launch acknowledgement accepts any valid worker signal that advances from its baseline', () => {
+  const baseline = { raw: null, status: null, mtimeNs: '0' };
+  const running = {
+    raw: '{"status":"running"}',
+    status: 'running',
+    mtimeNs: `${NOW}000000`,
+  };
+  const rewritten = { ...running, mtimeNs: `${NOW}000001` };
+  const complete = {
+    raw: '{"status":"complete"}',
+    status: 'complete',
+    mtimeNs: `${NOW + 1000}000000`,
+  };
+
+  assert.equal(launchAckSignalAdvanced(baseline, running, NOW), true);
+  assert.equal(launchAckSignalAdvanced(running, running, NOW), false);
+  assert.equal(launchAckSignalAdvanced(running, rewritten, NOW), true);
+  assert.equal(launchAckSignalAdvanced(running, complete, NOW), true);
+});
+
+test('launch acknowledgement rejects malformed or stale signals', () => {
+  assert.equal(
+    launchAckSignalAdvanced(null, { raw: '{}', status: null, mtimeNs: `${NOW}000000` }, NOW),
+    false,
+  );
+  assert.equal(
+    launchAckSignalAdvanced(
+      null,
+      { raw: '{"status":"running"}', status: 'running', mtimeNs: `${NOW}000000` },
+      NOW,
+    ),
+    false,
+  );
+});
+
+test('launch acknowledgement stat probe emits one numeric timestamp on this platform', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'farmslot-launch-ack-'));
+  const signalPath = join(dir, 'SIGNAL.json');
+  try {
+    writeFileSync(signalPath, '{"status":"running"}\n');
+    const output = execFileSync('/bin/sh', ['-c', buildLaunchAckSignalReadCommand(signalPath)], {
+      encoding: 'utf8',
+    });
+    const [mtime, raw] = output.split('\n');
+    assert.match(mtime, /^\d+$/);
+    assert.equal(raw, '{"status":"running"}');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

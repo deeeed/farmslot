@@ -30,8 +30,12 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
   runnerSupportsSessionReload,
 } from '../runners/launch-command.js';
-import { probeRunnerHandoffAck } from '../runners/prompt-delivery-evidence.js';
 import {
+  probeRunnerHandoffAck,
+  readLaunchAckSignalSnapshot,
+} from '../runners/prompt-delivery-evidence.js';
+import {
+  runnerEmitsHookEvents,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
   runnerPaneShowsCurrentInteractiveProgress,
@@ -399,6 +403,8 @@ export async function runReviewAgent(
       // Use the same runner-neutral post-launch protocol as dispatch: wait for a
       // stable runner prompt, send, then verify that the pane echoes our marker.
       if (runnerNeedsPostLaunchPrompt(runner)) {
+        const launchAckSignalPath = taskDirRelPath(taskDir, reviewChecklistTarget.signal);
+        const launchAckBaseline = await readLaunchAckSignalSnapshot(vars, launchAckSignalPath);
         try {
           await sendRunnerPostLaunchPrompt(
             vars,
@@ -411,8 +417,9 @@ export async function runReviewAgent(
               readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
               maxAttempts: 5,
               blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
-              signalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
-              launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+              signalPath: launchAckSignalPath,
+              launchAckSignalPath,
+              launchAckBaseline,
               requirePromptDigest: true,
               handoffAckSinceMs,
               softAcceptOnHandoffAck: true,
@@ -426,8 +433,9 @@ export async function runReviewAgent(
             prompt,
             handoffAckSinceMs,
             {
-              launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
-              preferHooks: true,
+              launchAckSignalPath,
+              launchAckBaseline,
+              preferHooks: runnerEmitsHookEvents(runner),
               requirePromptDigest: true,
             },
           );

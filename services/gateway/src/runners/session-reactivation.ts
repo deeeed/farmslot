@@ -155,6 +155,7 @@ async function reactivateRunnerSessionWithPrompt(
         sentinel.digest,
         sentinel.sentAt - 500,
         true,
+        options.prompt,
       );
       if (accepted?.value === true && accepted.confidence === 'high') {
         return { delivered: true };

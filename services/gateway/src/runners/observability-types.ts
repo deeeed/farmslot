@@ -64,6 +64,8 @@ export interface RunnerObservability {
     // (non-authoritative → degrade/hold) instead of main's medium-`false`. Default false keeps
     // Phase-2 flag-off behavior byte-identical.
     paneRetired?: boolean,
+    /** Exact prompt text for native providers whose session protocol exposes it. */
+    promptText?: string,
   ): Promise<ObservabilityReading<boolean> | null>;
   /**
    * Durable delivery state for one persisted runner session. Unlike transient

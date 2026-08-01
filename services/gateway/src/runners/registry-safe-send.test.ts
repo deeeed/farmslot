@@ -30,7 +30,10 @@ const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
 let paneCaptureCount = 0;
 let paneClearsAfterSubmit = true;
+let paneTextByCapture: string[] | null = null;
 let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
+let grokPromptAcceptedCalls = 0;
+let grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
 
 mock.module('./claude-observability.js', {
   namedExports: {
@@ -59,6 +62,37 @@ mock.module('./claude-observability.js', {
   },
 });
 
+mock.module('./grok-observability.js', {
+  namedExports: {
+    grokLogObservability: {
+      async getActivity() {
+        return null;
+      },
+      async getContextPct() {
+        return null;
+      },
+      async activeTool() {
+        return null;
+      },
+      async lastTurnCompletedAt() {
+        return null;
+      },
+      async promptAccepted() {
+        grokPromptAcceptedCalls += 1;
+        return {
+          value: grokPromptAcceptedCalls >= grokPromptAcceptedAfterCall,
+          source: 'signal',
+          confidence: 'high',
+          observedAt: Date.now(),
+        };
+      },
+      async getSessionDeliveryState() {
+        return null;
+      },
+    },
+  },
+});
+
 mock.module('../core/exec.js', {
   namedExports: {
     isLocal: () => true,
@@ -70,6 +104,10 @@ mock.module('../core/exec.js', {
       if (cmd.includes('capture-pane')) {
         callOrder.push('pane:capture');
         paneCaptureCount += 1;
+        const scriptedPane = paneTextByCapture?.[paneCaptureCount - 1];
+        if (scriptedPane !== undefined) {
+          return { exitCode: 0, stdout: scriptedPane, stderr: '' };
+        }
         // Captures 1-2 show the scenario pane (decision + submit pre-check);
         // later captures model the composer clearing after a submit key —
         // unless a test pins paneClearsAfterSubmit=false to model a stuck buffer.
@@ -103,6 +141,7 @@ mock.module('../core/exec.js', {
 
 mock.module('./prompt-delivery-evidence.js', {
   namedExports: {
+    readLaunchAckSignalSnapshot: async () => ({ raw: null, status: null, mtimeMs: 0 }),
     probeRunnerHandoffAck: async (
       _slotVars: SlotVars,
       _target: string,
@@ -199,6 +238,90 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
     handoffRequirePromptDigestValues.some((value) => value === true),
     'self-review sends can require prompt digest explicitly',
   );
+});
+
+test('sendRunnerPostLaunchPrompt rechecks delayed Grok acceptance before retrying', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  paneText = `
+  ╭────────────────────────────────────────────╮
+  │ ❯                                          │
+  ╰───────────────────────────── Grok Build ───╯
+  `;
+  grokPromptAcceptedCalls = 0;
+  paneTextByCapture = null;
+  // First pre-send probe and first post-send verification miss. The retry probe sees
+  // the delayed native prompt-history record and must not type the task a second time.
+  grokPromptAcceptedAfterCall = 4;
+
+  await sendRunnerPostLaunchPrompt(vars, target, 'grok', message, 'TASK.md', '[test]', {
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 0,
+    verifyWaitMs: 0,
+    maxAttempts: 2,
+  });
+
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send-literal').length,
+    1,
+    `delayed native acceptance must prevent duplicate typing; order=${callOrder.join(',')}`,
+  );
+  assert.equal(grokPromptAcceptedCalls, 4, 'the second attempt must observe native acceptance');
+  paneClearsAfterSubmit = true;
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+});
+
+test('sendRunnerPostLaunchPrompt does not treat unrelated pre-send activity as delivery', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  const idlePane = `
+  ╭────────────────────────────────────────────╮
+  │ ❯                                          │
+  ╰───────────────────────────── Grok Build ───╯
+  `;
+  paneText = idlePane;
+  paneTextByCapture = [idlePane, '#1 Initializing MCP tools…', idlePane, idlePane];
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = 3;
+
+  await sendRunnerPostLaunchPrompt(vars, target, 'grok', message, 'TASK.md', '[test]', {
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 0,
+    verifyWaitMs: 0,
+    maxAttempts: 1,
+  });
+
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send-literal').length,
+    1,
+    `unrelated pane activity must not suppress the first send; order=${callOrder.join(',')}`,
+  );
+  paneTextByCapture = null;
+  paneClearsAfterSubmit = true;
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+});
+
+test('sendRunnerInstructionSafely stops after exact native Grok acceptance', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneTextByCapture = null;
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = 1;
+
+  const delivered = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]', 50);
+
+  assert.equal(delivered, true);
+  assert.equal(grokPromptAcceptedCalls, 1);
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send-literal').length,
+    0,
+    `an exact native match must not resend the instruction; order=${callOrder.join(',')}`,
+  );
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
 });
 
 test('sendRunnerInstructionSafely skips pane busy scrape when hook reports composing', async () => {

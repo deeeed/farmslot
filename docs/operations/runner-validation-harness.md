@@ -39,12 +39,12 @@ Wired into `scripts/e2e-tmux-runner-validate.sh` and `scripts/run-runner-observa
 
 ## Runner groups
 
-| `--runner`          | Runners                     | Observability                                   |
-| ------------------- | --------------------------- | ----------------------------------------------- |
-| `hooks`, `both`     | claude, codex               | `event-driven` — Farmslot hooks + `hooks.jsonl` |
-| `pane-only`         | cursor, grok                | `pane-only` — tmux capture, no hook installer   |
-| `all`               | claude, codex, cursor, grok | mixed                                           |
-| `grok`, `cursor`, … | single runner               | per adapter                                     |
+| `--runner`          | Runners                     | Observability                                                                                           |
+| ------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `hooks`, `both`     | claude, codex               | `event-driven` — Farmslot hooks + `hooks.jsonl`                                                         |
+| `pane-only`         | cursor, grok                | tmux activity capture; Grok additionally exposes native exact-prompt acceptance, with no hook installer |
+| `all`               | claude, codex, cursor, grok | mixed                                                                                                   |
+| `grok`, `cursor`, … | single runner               | per adapter                                                                                             |
 
 Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabilityScope`, `needsPostLaunchPrompt`).
 
@@ -130,7 +130,7 @@ Encoded in `scripts/runner-validation/runners/<id>.mjs` — **not** shared assum
 - Requires `git init`; isolated `CODEX_HOME={{runtime_dir}}/codex-home` with canonical `trusted_hash` (realpath-safe paths on macOS).
 - Smoke: `codex exec --disable plugin_hooks --sandbox workspace-write '<prompt>'`.
 
-### Grok (`pane-only`) — priority runner
+### Grok (pane-backed activity + native prompt acceptance) — priority runner
 
 Grok is interactive-first in production (`needsPostLaunchPrompt: true`). The harness exposes **two** validated paths:
 
