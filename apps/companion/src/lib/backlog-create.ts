@@ -59,6 +59,3 @@ export function buildBacklogCreateParams(input: BuildBacklogCreateInput): Backlo
     status: 'candidate',
   };
 }
-
-/** Primary pressable min size used by Companion default-path UX (44pt). */
-export const COMPANION_PRIMARY_TOUCH_MIN = 44;

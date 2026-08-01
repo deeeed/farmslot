@@ -4,7 +4,6 @@ import { describe, it } from 'node:test';
 import {
   BACKLOG_CREATE_DEFAULT_FLOW,
   BACKLOG_CREATE_DEFAULT_SOURCE_KIND,
-  COMPANION_PRIMARY_TOUCH_MIN,
   buildBacklogCreateParams,
   normalizeBacklogTitle,
   resolveBacklogProject,
@@ -84,9 +83,8 @@ describe('buildBacklogCreateParams', () => {
   });
 });
 
-describe('touch target tokens', () => {
-  it('keeps primary touch targets at least 44pt', () => {
+describe('normalizeBacklogTitle', () => {
+  it('collapses whitespace', () => {
     assert.equal(normalizeBacklogTitle('  a  b  '), 'a b');
-    assert.ok(COMPANION_PRIMARY_TOUCH_MIN >= 44);
   });
 });

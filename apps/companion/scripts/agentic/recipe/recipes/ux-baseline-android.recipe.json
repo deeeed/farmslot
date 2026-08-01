@@ -30,7 +30,7 @@
           },
           {
             "path": ".agent/ux-baseline-screenshots/index.html",
-            "type": "other",
+            "type": "report",
             "label": "Offline UX catalog HTML report"
           },
           {

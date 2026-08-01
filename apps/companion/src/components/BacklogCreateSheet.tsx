@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -44,6 +44,9 @@ export function BacklogCreateSheet({ open, onClose }: BacklogCreateSheetProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const wasOpenRef = useRef(false);
+  const projectRef = useRef<string | null>(null);
+  projectRef.current = project;
 
   const resolvedDefault = useMemo(
     () =>
@@ -54,14 +57,22 @@ export function BacklogCreateSheet({ open, onClose }: BacklogCreateSheetProps) {
     [availableProjects, projectChoices, selectedProjects],
   );
 
+  // Reset title/notes only on open transition — not when resolvedDefault changes mid-edit.
   useEffect(() => {
-    if (!open) return;
+    const justOpened = open && !wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!justOpened) return;
     setError('');
     setMessage('');
     setTitle('');
     setNotes('');
-    setProject(resolvedDefault);
-  }, [open, resolvedDefault]);
+    setProject(
+      resolveBacklogProject({
+        selectedProjects,
+        availableProjects,
+      }),
+    );
+  }, [open, selectedProjects, availableProjects]);
 
   useEffect(() => {
     if (!open || !client || status !== 'connected') return;
@@ -74,7 +85,8 @@ export function BacklogCreateSheet({ open, onClose }: BacklogCreateSheetProps) {
           .map((p) => p.name)
           .filter((name): name is string => Boolean(name));
         setProjectChoices(names);
-        if (!project) {
+        // Seed project only when still unset — do not clobber operator chip selection.
+        if (!projectRef.current) {
           setProject(
             resolveBacklogProject({
               selectedProjects,
@@ -86,7 +98,7 @@ export function BacklogCreateSheet({ open, onClose }: BacklogCreateSheetProps) {
         if (cancelled) return;
         // Keep filter-derived projects when config.projects is unavailable.
         setProjectChoices(availableProjects);
-        if (!project) {
+        if (!projectRef.current) {
           setProject(
             resolveBacklogProject({
               selectedProjects,
@@ -104,7 +116,7 @@ export function BacklogCreateSheet({ open, onClose }: BacklogCreateSheetProps) {
     return () => {
       cancelled = true;
     };
-  }, [availableProjects, client, open, project, selectedProjects, status]);
+  }, [availableProjects, client, open, selectedProjects, status]);
 
   const choices = projectChoices.length > 0 ? projectChoices : availableProjects;
 

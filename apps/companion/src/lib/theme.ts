@@ -2,6 +2,8 @@ import { StyleSheet } from 'react-native';
 
 import { colors as sharedColors, lifecycleColor as baseLifecycleColor } from '@farmslot/theme';
 
+import { touchTargets as touchTargetTokens } from './touch-targets';
+
 export const colors = {
   ...sharedColors,
   // Companion-only lifecycle phase tokens
@@ -39,13 +41,8 @@ export const fonts = {
   sizeXl: 20,
 } as const;
 
-/** Default-path touch targets (iOS HIG / Material ~44pt primary). */
-export const touchTargets = {
-  primaryMin: 44,
-  primaryMinHeight: 44,
-  primaryMinWidth: 44,
-  secondaryMinHeight: 36,
-} as const;
+/** Re-export RN-free tokens so UI and unit tests share one source of truth. */
+export const touchTargets = touchTargetTokens;
 
 export function lifecycleColor(state: string): string {
   const phaseMap: Record<string, string> = {
