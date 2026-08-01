@@ -119,9 +119,7 @@ export function deriveRunnerActivity(
     } else if (event === 'Notification') {
       const notificationMessage =
         typeof record.notification_message === 'string' ? record.notification_message : '';
-      const notificationIndicatesIdle = /\b(?:idle prompt|waiting for your input)\b/i.test(
-        notificationMessage,
-      );
+      const notificationIndicatesIdle = /\bwaiting for your input\b/i.test(notificationMessage);
       const turnWasIdle =
         lastTurnStop != null &&
         (lastComposing == null || lastComposing.observedAt < lastTurnStop.observedAt) &&
@@ -301,7 +299,7 @@ export async function readRunnerObservabilityFiles(
   vars: SlotVars,
   repoPath = vars.remoteRepo,
   hooksTailBytes = OBSERVABILITY_HOOK_TAIL_BYTES,
-): Promise<{ hooksRaw: string; hooksTailComplete: boolean; statuslineRaw: string }> {
+): Promise<{ hooksRaw: string; statuslineRaw: string }> {
   const obsDir = shellQuote(await runnerObservabilityDirForSlot({ ...vars, remoteRepo: repoPath }));
   const hooksPath = `${obsDir}/hooks.jsonl`;
   const statuslinePath = `${obsDir}/statusline.json`;
@@ -309,15 +307,12 @@ export async function readRunnerObservabilityFiles(
     execOnSlot(
       vars,
       `{ tail -c ${hooksTailBytes} ${hooksPath}.1 2>/dev/null || true; tail -c ${hooksTailBytes} ${hooksPath} 2>/dev/null || true; } | tail -c ${hooksTailBytes}`,
+      { maxBuffer: hooksTailBytes + 1024 },
     ),
     execOnSlot(vars, `cat ${statuslinePath} 2>/dev/null || true`),
   ]);
   return {
     hooksRaw: hooksResult.stdout,
-    // An exact-size tail may be truncated, so only a shorter read proves the combined retained
-    // history was read in full. This lets short/fresh logs answer long-window digest lookups while
-    // exact-size tails remain fail-closed.
-    hooksTailComplete: Buffer.byteLength(hooksResult.stdout, 'utf8') < hooksTailBytes,
     statuslineRaw: statuslineResult.stdout,
   };
 }
@@ -479,7 +474,6 @@ export function promptDigestAcceptedFromHooks(
   now = Date.now(),
   paneId?: string | null,
   paneRetired = false,
-  tailComplete = false,
 ): ObservabilityReading<boolean> | null {
   const scoped = filterHooksByPane(hooks, paneId);
   let oldestObservedAt: number | null = null;
@@ -512,7 +506,7 @@ export function promptDigestAcceptedFromHooks(
       observedAt: latestMatchAt,
     };
   }
-  if (!tailComplete && (oldestObservedAt == null || oldestObservedAt > sinceMs)) return null;
+  if (oldestObservedAt == null || oldestObservedAt > sinceMs) return null;
   if (latestObservedAt != null) {
     return {
       value: false,

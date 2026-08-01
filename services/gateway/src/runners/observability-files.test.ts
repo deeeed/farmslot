@@ -288,15 +288,6 @@ test('promptDigestAcceptedFromHooks requires full window coverage before rejecti
     runnerPromptDigest: 'other-digest',
   };
   assert.equal(promptDigestAcceptedFromHooks([other], 'wanted-digest', since, NOW), null);
-  assert.deepEqual(
-    promptDigestAcceptedFromHooks([other], 'wanted-digest', since, NOW, undefined, false, true),
-    {
-      value: false,
-      source: 'hook',
-      confidence: 'medium',
-      observedAt: other.observedAt,
-    },
-  );
   const windowBoundary = {
     hook_event_name: 'Stop',
     observedAt: since,

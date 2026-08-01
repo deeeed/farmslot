@@ -552,6 +552,44 @@ test('claude (hook-only) stale terminal idle checks the full recovery window for
   }
 });
 
+test('claude (hook-only) checks missing stale-prompt coverage once, then holds', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'low',
+    observedAt: Date.now() - 240_000,
+    evidence: 'stale-terminal-idle',
+  };
+  promptDigestAcceptedReading = null;
+  paneText = '❯\nctx:12%\n';
+
+  try {
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      target,
+      'claude',
+      message,
+      '[test]',
+      3100,
+      {
+        forceBusyPoll: true,
+      },
+    );
+    assert.equal(sent, false);
+    assert.equal(callOrder.filter((entry) => entry === 'obs:promptDigestAccepted').length, 1);
+    assert.equal(callOrder.indexOf('tmux:send-literal'), -1);
+  } finally {
+    promptDigestAcceptedReading = {
+      value: false,
+      source: 'hook',
+      confidence: 'medium',
+      observedAt: Date.now(),
+    };
+  }
+});
+
 test('claude (hook-only) stale terminal idle still holds for a foreign composer draft', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;

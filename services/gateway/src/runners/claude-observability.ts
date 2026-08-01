@@ -17,7 +17,7 @@ import {
 import type { RunnerObservability, SlotVars } from './observability-types.js';
 
 async function loadObservabilitySnapshot(vars: SlotVars, target: string, hooksTailBytes?: number) {
-  const { hooksRaw, hooksTailComplete, statuslineRaw } = await readRunnerObservabilityFiles(
+  const { hooksRaw, statuslineRaw } = await readRunnerObservabilityFiles(
     vars,
     vars.remoteRepo,
     hooksTailBytes,
@@ -26,7 +26,7 @@ async function loadObservabilitySnapshot(vars: SlotVars, target: string, hooksTa
   const allHooks = parseHookJsonl(hooksRaw);
   const hooks = filterHooksByPane(allHooks, paneId);
   const statusline = filterStatuslineByPane(parseStatuslineJson(statuslineRaw), paneId);
-  return { allHooks, hooks, hooksTailComplete, paneId, statusline };
+  return { allHooks, hooks, paneId, statusline };
 }
 
 export const claudeHookObservability: RunnerObservability = {
@@ -66,7 +66,7 @@ export const claudeHookObservability: RunnerObservability = {
   async promptDigestAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {
     // This long-window idempotency lookup runs once per stale-idle recovery attempt. Read both
     // retained generations so busy workers are not limited by the 64 KiB hot polling tail.
-    const { allHooks, hooksTailComplete, paneId } = await loadObservabilitySnapshot(
+    const { allHooks, paneId } = await loadObservabilitySnapshot(
       vars,
       target,
       OBSERVABILITY_DIGEST_TAIL_BYTES,
@@ -78,7 +78,6 @@ export const claudeHookObservability: RunnerObservability = {
       Date.now(),
       paneId,
       paneRetired,
-      hooksTailComplete,
     );
   },
 };

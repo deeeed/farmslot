@@ -866,12 +866,13 @@ async function writeRunnerLaunchBlockerSnapshot(
 }
 
 export function paneShowsBusyComposer(pane: string): boolean {
+  const liveTail = paneTailText(pane, 20);
   return (
-    /tab to queue message/i.test(pane) ||
-    /Working \(/i.test(pane) ||
-    /background terminal running/i.test(pane) ||
-    /(?:^|\n)\s*(?:·|[✻✢✽✶✷✸✹✺✼✣∗])\s*Composing[…\.](?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*(?:\n|$)/iu.test(
-      pane,
+    /tab to queue message/i.test(liveTail) ||
+    /Working \(/i.test(liveTail) ||
+    /background terminal running/i.test(liveTail) ||
+    /(?:^|\n)\s*(?:[·*•]|[✻✢✽✶✷✸✹✺✼✣∗])\s*Composing[…\.](?:\s+\([^)]*(?:\d+\s*[smh]|esc to interrupt)[^)]*\))?\s*(?:\n|$)/iu.test(
+      liveTail,
     )
   );
 }
@@ -1842,6 +1843,7 @@ async function sendRunnerInstructionHookOnly(
   let sawHookDegraded = false;
   let sawComposerHold = false;
   let checkedStalePromptHistory = false;
+  let stalePromptHistoryMissing = false;
   while (Date.now() < deadline) {
     // Idempotent re-nudge: a high-confidence digest match means this exact message already
     // landed — don't duplicate the send.
@@ -1877,6 +1879,11 @@ async function sendRunnerInstructionHookOnly(
       // Re-check at the decision point so a reading at the boundary cannot age past the recovery
       // window while the preceding digest lookup is in flight.
       Date.now() - activity.observedAt <= OBSERVABILITY_TERMINAL_IDLE_MAX_AGE_MS;
+    if (staleTerminalIdle && stalePromptHistoryMissing) {
+      sawHookDegraded = true;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      continue;
+    }
     if (staleTerminalIdle && !checkedStalePromptHistory) {
       let historicalPromptReading: ObservabilityReading<boolean> | null = null;
       try {
@@ -1896,6 +1903,7 @@ async function sendRunnerInstructionHookOnly(
         isObservabilityReadingAuthoritative(historicalPromptReading);
       if (!historicalReadingAuthoritative) {
         sawHookDegraded = true;
+        stalePromptHistoryMissing = true;
         await recordObservabilityDegradedDecision(
           vars,
           target,

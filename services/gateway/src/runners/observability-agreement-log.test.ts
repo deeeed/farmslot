@@ -126,6 +126,6 @@ test('aggregateAgreementEntries counts wouldConsultPane across mixed entries', (
   assert.equal(agg.total, 3);
   assert.equal(agg.wouldConsultPane, 2);
   assert.equal(agg.recoveredAfterStaleIdle, 1);
-  assert.equal(agg.hookUnavailable, 2);
+  assert.equal(agg.hookUnavailable, 1);
   assert.equal(agg.agreed, 1);
 });

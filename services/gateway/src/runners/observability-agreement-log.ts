@@ -109,7 +109,7 @@ export function aggregateAgreementEntries(
     if (entry.wouldConsultPane === true) wouldConsultPane += 1;
     if (entry.recoveryOutcome === 'sent-after-stale-idle') recoveredAfterStaleIdle += 1;
     if (entry.hookBusy == null) {
-      hookUnavailable += 1;
+      if (entry.recoveryOutcome == null) hookUnavailable += 1;
       continue;
     }
     if (entry.agreed === true) agreed += 1;

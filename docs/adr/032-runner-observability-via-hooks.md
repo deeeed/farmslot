@@ -106,6 +106,10 @@ activity polling remains capped at 64 KiB. Missing window coverage or an unverif
 the send for operator attention; generic tool or turn activity never substitutes for the digest
 match.
 
+Agreement logs written before this recovery shipped treated any flag-off activity reading as
+comparable. New rows require an authoritative reading, so soak reports spanning the change may
+contain a lower comparable-row count; raw source, confidence, and timestamp remain available.
+
 ### Addendum: checklist timing stays task-owned (2026-06-25)
 
 `SIGNAL.json` may carry compact, optional checklist timing metadata because a
