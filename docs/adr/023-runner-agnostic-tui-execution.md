@@ -33,7 +33,15 @@ Farmslot prefers TUI-mode launch for every runner: visible in tmux, attachable, 
 
 **Implemented.**
 
-Runner handling is modeled by capabilities instead of hardcoded special cases. The `RunnerDefinition` interface exposes: `defaultLaunchMode`, `supportsInteractivePrompt`, `supportsTmuxNudges`, `continueCommand`, `persistsSessionFiles`, `requiresBusyComposerPoll`, `flagsByTier`, and other capability flags. The single entry point `buildLaunchCommand()` in `runners.ts` consumes these flags and produces the appropriate launch invocation for any runner, eliminating ad hoc runner-specific branches.
+Runner handling is modeled by capabilities instead of hardcoded special cases. The `RunnerDefinition` interface exposes: `defaultLaunchMode`, `supportsInteractivePrompt`, `supportsTmuxNudges`, `continueCommand`, `persistsSessionFiles`, `sessionReload`, `retainedSessionHandoff`, `requiresBusyComposerPoll`, `flagsByTier`, and other capability flags. The single entry point `buildLaunchCommand()` in `runners.ts` consumes these flags and produces the appropriate launch invocation for any runner, eliminating ad hoc runner-specific branches.
+
+Capability ownership is an invariant, not a preference:
+
+- workflow and client code provide policy, task, and session context; they do not branch on runner IDs
+- runner-specific command syntax and delivery mechanics live only in the shared runner adapter
+- structured hooks and native persisted-session APIs take precedence over terminal text
+- TUI parsing is limited to runners explicitly declared `pane-only`; an absent structured capability fails closed or is reported unsupported
+- a runner bug is fixed at this boundary and tested there so every workflow/client receives the same behavior
 
 ### 3. Safety is a separate dimension from runner choice
 
