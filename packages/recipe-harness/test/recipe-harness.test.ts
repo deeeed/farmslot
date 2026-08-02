@@ -3466,14 +3466,15 @@ test('CDP navigation waits for the loaded document before returning', async () =
         loadHandler = undefined;
       };
     },
-    async call(method: string, params: Record<string, unknown>) {
+    async call(method: string, _params: Record<string, unknown>) {
       calls.push(method);
+      if (method === 'Page.getNavigationHistory') {
+        return {
+          currentIndex: 0,
+          entries: [{ url: 'https://example.test/current' }],
+        };
+      }
       if (method === 'Runtime.evaluate') {
-        const expression = String(params.expression);
-        if (expression.startsWith('new URL(')) {
-          return { result: { value: 'https://example.test/next' } };
-        }
-        if (expression.startsWith('new Promise(')) return { result: { value: true } };
         return {
           result: {
             value: { ready, url: 'https://example.test/next' },
@@ -3493,8 +3494,152 @@ test('CDP navigation waits for the loaded document before returning', async () =
 
   await page.navigate('https://example.test/next', 1_000);
 
-  assert.deepEqual(calls, ['Runtime.evaluate', 'Page.navigate', 'Runtime.evaluate']);
+  assert.deepEqual(calls, ['Page.getNavigationHistory', 'Page.navigate', 'Runtime.evaluate']);
   assert.equal(loadHandler, undefined);
+});
+
+test('CDP navigation never resolves URLs in a scuttled page realm', async () => {
+  let loadHandler: (() => void) | undefined;
+  const page = new CdpWebPage({
+    on(method: string, handler: () => void) {
+      assert.equal(method, 'Page.loadEventFired');
+      loadHandler = handler;
+      return () => {
+        loadHandler = undefined;
+      };
+    },
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.getNavigationHistory') {
+        return {
+          currentIndex: 0,
+          entries: [{ url: 'chrome-extension://example/home.html#/' }],
+        };
+      }
+      if (method === 'Page.navigate') {
+        assert.deepEqual(params, { url: 'https://example.test/perps' });
+        setTimeout(() => loadHandler?.(), 0);
+        return { loaderId: 'new-document' };
+      }
+      const expression = String(params.expression);
+      assert.doesNotMatch(expression, /new URL/u);
+      return {
+        result: {
+          value: { ready: true, url: 'https://example.test/perps' },
+        },
+      };
+    },
+  } as never);
+
+  await page.navigate('https://example.test/perps', 1_000);
+});
+
+test('CDP navigation resolves relative URLs against the browser-reported Extension URL', async () => {
+  let loadHandler: (() => void) | undefined;
+  const page = new CdpWebPage({
+    on(_method: string, handler: () => void) {
+      loadHandler = handler;
+      return () => {
+        loadHandler = undefined;
+      };
+    },
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.getNavigationHistory') {
+        return {
+          currentIndex: 0,
+          entries: [{ url: 'chrome-extension://example/home.html#/old' }],
+        };
+      }
+      if (method === 'Page.navigate') {
+        assert.deepEqual(params, { url: 'chrome-extension://example/home.html#/perps' });
+        return {};
+      }
+      loadHandler?.();
+      return {
+        result: {
+          value: { ready: true, url: 'chrome-extension://example/home.html#/perps' },
+        },
+      };
+    },
+  } as never);
+
+  await page.navigate('#/perps', 1_000);
+});
+
+test('CDP navigation accepts an intercepted external URL only after the page changes', async () => {
+  let currentUrl = 'chrome-extension://example/home.html#/';
+  const page = new CdpWebPage({
+    on() {
+      return () => {};
+    },
+    async call(method: string) {
+      if (method === 'Page.getNavigationHistory') {
+        return { currentIndex: 0, entries: [{ url: currentUrl }] };
+      }
+      if (method === 'Page.navigate') {
+        currentUrl = 'chrome-extension://example/home.html#link?u=%2Fperps';
+        return { errorText: 'net::ERR_ABORTED', loaderId: 'intercepted-document' };
+      }
+      return { result: { value: { ready: true, url: currentUrl } } };
+    },
+  } as never);
+
+  await page.navigate('https://link.example/perps', 1_000);
+});
+
+test('CDP navigation waits for a delayed intercepted URL change', async () => {
+  const originalUrl = 'chrome-extension://example/home.html#/';
+  let historyReads = 0;
+  const page = new CdpWebPage({
+    on() {
+      return () => {};
+    },
+    async call(method: string) {
+      if (method === 'Page.getNavigationHistory') {
+        historyReads += 1;
+        return {
+          currentIndex: 0,
+          entries: [
+            {
+              url:
+                historyReads < 3
+                  ? originalUrl
+                  : 'chrome-extension://example/home.html#link?u=%2Fperps',
+            },
+          ],
+        };
+      }
+      if (method === 'Page.navigate') return { errorText: 'net::ERR_ABORTED' };
+      return {
+        result: {
+          value: { ready: true, url: 'chrome-extension://example/home.html#link?u=%2Fperps' },
+        },
+      };
+    },
+  } as never);
+
+  await page.navigate('https://link.example/perps', 1_000);
+  assert.equal(historyReads, 3);
+});
+
+test('CDP navigation rejects an aborted URL when the page does not change', async () => {
+  const currentUrl = 'chrome-extension://example/home.html#/';
+  const page = new CdpWebPage({
+    on() {
+      return () => {};
+    },
+    async call(method: string) {
+      if (method === 'Page.getNavigationHistory') {
+        return { currentIndex: 0, entries: [{ url: currentUrl }] };
+      }
+      if (method === 'Page.navigate') return { errorText: 'net::ERR_ABORTED' };
+      return { result: { value: { ready: true, url: currentUrl } } };
+    },
+  } as never);
+
+  await assert.rejects(
+    page.navigate('https://link.example/perps', 1_000),
+    /CDP navigation failed: net::ERR_ABORTED/u,
+  );
 });
 
 test('CDP same-document navigation waits for the requested location', async () => {
@@ -3503,13 +3648,14 @@ test('CDP same-document navigation waits for the requested location', async () =
     on() {
       return () => {};
     },
-    async call(method: string, params: Record<string, unknown>) {
-      if (method === 'Page.navigate') return {};
-      const expression = String(params.expression);
-      if (expression.startsWith('new URL(')) {
-        return { result: { value: 'https://example.test/#ready' } };
+    async call(method: string, _params: Record<string, unknown>) {
+      if (method === 'Page.getNavigationHistory') {
+        return {
+          currentIndex: 0,
+          entries: [{ url: 'https://example.test/#old' }],
+        };
       }
-      if (expression.startsWith('new Promise(')) return { result: { value: true } };
+      if (method === 'Page.navigate') return {};
       pollCount += 1;
       return {
         result: {
@@ -3543,13 +3689,16 @@ test('CDP navigation defers DOM settlement to the shared settle wrapper', async 
         isolatedWorldCalls.push(params);
         return { executionContextId: 7 };
       }
+      if (method === 'Page.getNavigationHistory') {
+        return {
+          currentIndex: 0,
+          entries: [{ url: 'https://example.test/#old' }],
+        };
+      }
       if (method === 'Page.navigate') return {};
       evaluationCalls.push(params);
       const expression = String(params.expression);
       expressions.push(expression);
-      if (expression.startsWith('new URL(')) {
-        return { result: { value: 'https://example.test/#ready' } };
-      }
       if (expression.startsWith('new Promise(')) return { result: { value: true } };
       return {
         result: { value: { ready: true, url: 'https://example.test/#ready' } },

@@ -543,9 +543,8 @@ export class CdpWebPage {
 
   async navigate(url: string, timeoutMs = 10_000): Promise<unknown> {
     const deadline = Date.now() + timeoutMs;
-    const expectedUrl = await this.evaluate<string>(
-      `new URL(${JSON.stringify(url)}, location.href).href`,
-    );
+    const currentUrl = await this.currentNavigationUrl();
+    const expectedUrl = new URL(url, currentUrl).href;
     let notifyLoaded: (() => void) | undefined;
     const loaded = new Promise<void>((resolve) => {
       notifyLoaded = resolve;
@@ -554,10 +553,17 @@ export class CdpWebPage {
     try {
       const result = await this.session.call<{ errorText?: string; loaderId?: string }>(
         'Page.navigate',
-        { url },
+        { url: expectedUrl },
       );
-      if (result.errorText) throw new Error(`CDP navigation failed: ${result.errorText}`);
-      if (result.loaderId) {
+      const wasIntercepted = result.errorText === 'net::ERR_ABORTED';
+      if (result.errorText && !wasIntercepted) {
+        throw new Error(`CDP navigation failed: ${result.errorText}`);
+      }
+      // Extension external-link interception aborts the requested load before routing the tab.
+      if (wasIntercepted) {
+        await this.waitForNavigationUrlChange(currentUrl, deadline);
+      }
+      if (result.loaderId && !wasIntercepted) {
         await withTimeout(
           loaded,
           Math.max(1, deadline - Date.now()),
@@ -565,13 +571,34 @@ export class CdpWebPage {
         );
       }
       await this.waitForDocumentReady({
-        expectedUrl: result.loaderId ? undefined : expectedUrl,
+        expectedUrl: result.loaderId || wasIntercepted ? undefined : expectedUrl,
         timeoutMs: Math.max(1, deadline - Date.now()),
       });
       return result;
     } finally {
       unsubscribe();
     }
+  }
+
+  private async currentNavigationUrl(): Promise<string> {
+    const history = await this.session.call<{
+      currentIndex: number;
+      entries: Array<{ url: string }>;
+    }>('Page.getNavigationHistory');
+    const currentUrl = history.entries[history.currentIndex]?.url;
+    if (!currentUrl) throw new Error('CDP could not resolve the current page URL.');
+    return currentUrl;
+  }
+
+  private async waitForNavigationUrlChange(originalUrl: string, deadline: number): Promise<void> {
+    while (Date.now() <= deadline) {
+      if ((await this.currentNavigationUrl()) !== originalUrl) return;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      await sleep(Math.min(50, remainingMs));
+    }
+    if ((await this.currentNavigationUrl()) !== originalUrl) return;
+    throw new Error('CDP navigation failed: net::ERR_ABORTED');
   }
 
   async waitForDocumentReady(options: { expectedUrl?: string; timeoutMs?: number }): Promise<void> {

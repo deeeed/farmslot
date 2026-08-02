@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- Resolve CDP navigation URLs outside the page realm so LavaMoat-scuttled Extension pages can use shared navigation actions.
+
 ## 0.12.0 - 2026-08-02
 
 - **BREAKING:** Replace `ui.gesture` with streamed swipe, pan, drag, and long-press transports; use `hold_ms`; reject unsupported active-adapter parameters after template resolution; and retain coordinate phases through explicit transport-result envelopes.
