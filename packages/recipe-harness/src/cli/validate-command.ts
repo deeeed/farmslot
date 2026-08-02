@@ -1,7 +1,9 @@
 import { type Command } from 'commander';
 
 import { resolveRecipeLibrarySources } from '../core/library.js';
+import { RecipeResolutionError } from '../core/resolution-error.js';
 
+import { reportRecipeCliError } from './error-output.js';
 import { validateRecipeCliInput } from './support.js';
 
 interface ValidateCommandOptions {
@@ -30,29 +32,36 @@ export function registerValidateCommand(program: Command): void {
     )
     .option('--json', 'Print validation result as JSON')
     .action(async (recipePath: string, options: ValidateCommandOptions) => {
-      const librarySources = await resolveRecipeLibrarySources({
-        cliEntries: options.library,
-        recipePath,
-      });
-      const result = await validateRecipeCliInput({
-        recipePath,
-        actionManifestPath: options.actionManifest,
-        adapter: options.adapter,
-        artifactManifestPath: options.artifactManifest,
-        artifactDir: options.artifactDir,
-        ...(librarySources.length > 0 ? { librarySources } : {}),
-      });
-      if (options.json) {
-        console.log(JSON.stringify(result, null, 2));
-      } else {
-        console.log(
-          `Recipe validation: ${result.status} (${result.summary.errors} errors, ${result.summary.warnings} warnings)`,
-        );
-        for (const finding of result.findings) {
-          console.log(`- ${finding.severity} ${finding.code} ${finding.path}: ${finding.message}`);
+      try {
+        const librarySources = await resolveRecipeLibrarySources({
+          cliEntries: options.library,
+          recipePath,
+        });
+        const result = await validateRecipeCliInput({
+          recipePath,
+          actionManifestPath: options.actionManifest,
+          adapter: options.adapter,
+          artifactManifestPath: options.artifactManifest,
+          artifactDir: options.artifactDir,
+          ...(librarySources.length > 0 ? { librarySources } : {}),
+        });
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(
+            `Recipe validation: ${result.status} (${result.summary.errors} errors, ${result.summary.warnings} warnings)`,
+          );
+          for (const finding of result.findings) {
+            console.log(
+              `- ${finding.severity} ${finding.code} ${finding.path}: ${finding.message}`,
+            );
+          }
         }
+        if (result.status === 'invalid') process.exit(1);
+      } catch (error) {
+        if (!(error instanceof RecipeResolutionError)) throw error;
+        reportRecipeCliError(error, options.json === true);
       }
-      if (result.status === 'invalid') process.exit(1);
     });
 }
 

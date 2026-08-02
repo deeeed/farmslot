@@ -13,12 +13,11 @@ import {
   type ResolvedLibraryRecipe,
   resolveRecipeLibrarySources,
 } from '../core/library.js';
-import { RecipeResolutionError } from '../core/resolution-error.js';
 import { createRecipeRunner } from '../core/runner.js';
-import { RecipeTrustError } from '../core/trust-error.js';
 import { resolveRecipeTrustInput } from '../core/trust-input.js';
 import type { RecipeVideoRecordingOptions } from '../core/types.js';
 
+import { isRecipeCliError, reportRecipeCliError } from './error-output.js';
 import {
   parsePositiveInteger,
   parseRecipeParamAssignments,
@@ -171,24 +170,8 @@ export function registerRunCommand(program: Command): void {
           }
           if (result.status !== 'pass') process.exitCode = 1;
         } catch (error) {
-          if (!(error instanceof RecipeTrustError) && !(error instanceof RecipeResolutionError)) {
-            throw error;
-          }
-          if (options.json) {
-            console.log(
-              JSON.stringify(
-                error instanceof RecipeTrustError
-                  ? error.failure
-                  : { code: error.code, message: error.message, userAction: error.userAction },
-                null,
-                2,
-              ),
-            );
-          } else {
-            console.error(`Error [${error.code}]: ${error.message}`);
-            console.error(`Next: ${error.userAction}`);
-          }
-          process.exitCode = 1;
+          if (!isRecipeCliError(error)) throw error;
+          reportRecipeCliError(error, options.json === true);
         }
       },
     );

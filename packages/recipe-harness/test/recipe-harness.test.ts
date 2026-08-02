@@ -399,6 +399,20 @@ async function captureConsoleLog(callback: () => Promise<void>): Promise<string>
   return lines.join('\n');
 }
 
+async function captureConsoleError(callback: () => Promise<void>): Promise<string> {
+  const originalError = console.error;
+  const lines: string[] = [];
+  console.error = (...values: unknown[]) => {
+    lines.push(values.map((value) => String(value)).join(' '));
+  };
+  try {
+    await callback();
+  } finally {
+    console.error = originalError;
+  }
+  return lines.join('\n');
+}
+
 function createSmokeRecipe(): unknown {
   return {
     $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
@@ -2662,6 +2676,84 @@ test('validates composed artifact packages from their retained dependency graph'
     });
     assert.equal(result.status, 'valid');
   } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('validate resolves canonical adapter-specific recipe dependencies', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    const manifestPath = path.join(tempRoot, 'action-manifest.json');
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes/mobile/demo/nested.recipe.json'),
+      recipeDocument(
+        { done: { action: 'end', status: 'pass' } },
+        { description: 'Provides a mobile-only nested dependency.' },
+      ),
+    );
+    await writeJsonFile(
+      recipePath,
+      recipeDocument({
+        nested: {
+          action: 'call',
+          ref: 'demo.nested',
+          intent: 'Validate the mobile dependency.',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
+    );
+    await writeJsonFile(manifestPath, coreActionManifest);
+
+    const output = await captureConsoleLog(() =>
+      runRecipeHarnessCli([
+        'validate',
+        recipePath,
+        '--action-manifest',
+        manifestPath,
+        '--adapter',
+        'mobile',
+        '--library',
+        `team=${libraryRoot}`,
+        '--json',
+      ]),
+    );
+    assert.match(output, /"status": "valid"/u);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('validate reports adapter declaration conflicts with recovery guidance', async () => {
+  const tempRoot = await createTempRoot();
+  const originalExitCode = process.exitCode;
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    await writeJsonFile(recipePath, recipeDocument({ done: { action: 'end', status: 'pass' } }));
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes/mobile/demo/check.mobile.recipe.json'),
+      recipeDocument({ done: { action: 'end', status: 'pass' } }),
+    );
+    process.exitCode = undefined;
+
+    const output = await captureConsoleError(() =>
+      runRecipeHarnessCli([
+        'validate',
+        recipePath,
+        '--adapter',
+        'mobile',
+        '--library',
+        `team=${libraryRoot}`,
+      ]),
+    );
+    assert.match(output, /Error \[RECIPE_LIBRARY_ADAPTER_DECLARATION_CONFLICT\]/u);
+    assert.match(output, /Next: declare the adapter once using recipes\/<adapter>\//u);
+    assert.equal(process.exitCode, 1);
+  } finally {
+    process.exitCode = originalExitCode;
     await rm(tempRoot, { recursive: true, force: true });
   }
 });

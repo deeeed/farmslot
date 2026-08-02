@@ -98,7 +98,8 @@ the id `checkout.smoke`. Legacy `smoke.mobile.recipe.json` and
 must not declare its adapter through both forms, and canonical and legacy files
 for the same adapter/id are rejected as duplicates. The top-level `core`,
 `extension`, and `mobile` directory names below `recipes/` are reserved for
-adapter selection.
+adapter selection. Existing generic domains with one of those names must move
+to a different top-level domain before adopting this release.
 
 Sources are ordered and the first source wins. Configure repeatable `--library name=path`, `RECIPE_LIBRARY_PATH`, or the personal library under the Farmslot home. Shadows are reported. Duplicate ids within one source and escaping symlinks are rejected.
 

@@ -168,10 +168,11 @@ export async function loadRecipeLibraries(
       }
       const previous = selected.get(identity.ref);
       if (previous && previous.adapter === identity.adapter) {
+        const currentFile = path.join(LIBRARY_RECIPES_DIR, relativeFile).split(path.sep).join('/');
         throw new RecipeResolutionError(
           'RECIPE_LIBRARY_DUPLICATE_RECIPE',
-          `Recipe ${identity.ref} is declared more than once in library ${name}.`,
-          `keep one ${identity.ref} recipe per adapter in library ${name}`,
+          `Recipe ${identity.ref} is declared more than once in library ${name}: ${previous.file} and ${currentFile}.`,
+          `keep one ${identity.ref} recipe per adapter in library ${name}; remove or rename one of the listed files`,
         );
       }
       if (previous && previous.adapter && !identity.adapter) continue;
@@ -248,12 +249,19 @@ function recipeIdentity(
     );
   }
   const declaredAdapter = directoryAdapter ?? filenameAdapter;
-  if (declaredAdapter && declaredAdapter !== adapter) return undefined;
   const idPath = directoryAdapter
     ? base.slice(directoryAdapter.length + 1)
     : filenameAdapter
       ? base.slice(0, -(filenameAdapter.length + 1))
       : base;
+  if (declaredAdapter && !idPath.trim()) {
+    throw new RecipeResolutionError(
+      'RECIPE_LIBRARY_RECIPE_INVALID',
+      `Library recipe ${path.join(LIBRARY_RECIPES_DIR, relativeFile)} declares adapter ${declaredAdapter} but has no recipe id.`,
+      `move it to recipes/${declaredAdapter}/<name>.recipe.json or rename it to <name>.${declaredAdapter}.recipe.json`,
+    );
+  }
+  if (declaredAdapter && declaredAdapter !== adapter) return undefined;
   const ref = idPath.replaceAll('/', '.').trim();
   return ref ? { ref, ...(declaredAdapter ? { adapter: declaredAdapter } : {}) } : undefined;
 }

@@ -163,7 +163,9 @@ migration, but a file cannot use both forms and duplicate adapter/id declaration
 are rejected. Ordered library sources use first-match precedence; shadows are
 reported, duplicates within one source are errors, and symlinks may not escape
 the library root. The top-level `core`, `extension`, and `mobile` directory names
-below `recipes/` are reserved for adapter selection.
+below `recipes/` are reserved for adapter selection. Existing generic domains
+with one of those names must move to a different top-level domain before
+adopting this layout.
 
 ## Trust and evidence
 

@@ -201,7 +201,7 @@ export async function validateRecipeCliInput({
 
   const libraryResolution =
     librarySources && librarySources.length > 0
-      ? await loadRecipeLibraries(librarySources)
+      ? await loadRecipeLibraries(librarySources, { adapter })
       : undefined;
   const externalRecipeIds = new Set(libraryResolution?.recipes.keys() ?? []);
   if (isRecord(recipeResolution) && Array.isArray(recipeResolution.dependencies)) {

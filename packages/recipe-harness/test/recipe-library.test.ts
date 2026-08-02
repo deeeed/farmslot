@@ -185,8 +185,62 @@ test('rejects canonical and legacy declarations for the same adapter recipe', as
 
     await assert.rejects(
       loadRecipeLibraries([{ root: tempRoot }], { adapter: 'mobile' }),
-      /Recipe perps[.]smoke is declared more than once/u,
+      (error: unknown) => {
+        assert.ok(error instanceof RecipeResolutionError);
+        assert.equal(error.code, 'RECIPE_LIBRARY_DUPLICATE_RECIPE');
+        assert.match(error.message, /recipes\/mobile\/perps\/smoke[.]recipe[.]json/u);
+        assert.match(error.message, /recipes\/perps\/smoke[.]mobile[.]recipe[.]json/u);
+        return true;
+      },
     );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects an adapter filename without a recipe id', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-adapter-without-id-'));
+  try {
+    await createLibrary(tempRoot, {
+      'mobile.recipe.json': terminalRecipe('Missing id'),
+    });
+
+    await assert.rejects(
+      loadRecipeLibraries([{ root: tempRoot }], { adapter: 'extension' }),
+      (error: unknown) => {
+        assert.ok(error instanceof RecipeResolutionError);
+        assert.equal(error.code, 'RECIPE_LIBRARY_RECIPE_INVALID');
+        assert.match(error.message, /declares adapter mobile but has no recipe id/u);
+        assert.match(error.userAction, /recipes\/mobile\/<name>[.]recipe[.]json/u);
+        return true;
+      },
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('reports canonical and legacy variants across sources as shadows', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-adapter-shadow-'));
+  try {
+    const canonical = path.join(tempRoot, 'canonical');
+    const legacy = path.join(tempRoot, 'legacy');
+    await createLibrary(canonical, {
+      'mobile/perps/smoke.recipe.json': terminalRecipe('Canonical'),
+    });
+    await createLibrary(legacy, {
+      'perps/smoke.mobile.recipe.json': terminalRecipe('Legacy'),
+    });
+
+    const resolution = await loadRecipeLibraries(
+      [
+        { name: 'canonical', root: canonical },
+        { name: 'legacy', root: legacy },
+      ],
+      { adapter: 'mobile' },
+    );
+    assert.equal(resolution.recipes.get('perps.smoke')?.document.title, 'Canonical');
+    assert.deepEqual(resolution.recipes.get('perps.smoke')?.shadows, ['legacy']);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
