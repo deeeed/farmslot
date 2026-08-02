@@ -455,7 +455,7 @@ export function runnerSupportsModel(
   return getRunnerDefinition(runnerId).acceptsModel(model);
 }
 
-function isKnownRunner(runnerId?: string | null): boolean {
+export function isKnownRunner(runnerId?: string | null): boolean {
   if (!runnerId) return false;
   return Object.prototype.hasOwnProperty.call(KNOWN_RUNNERS, normalizeRunner(runnerId));
 }

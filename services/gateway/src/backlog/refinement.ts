@@ -12,6 +12,7 @@ import {
   type BacklogRefineResult,
   DEFAULT_BACKLOG_REFINEMENT_MODEL,
   DEFAULT_BACKLOG_REFINEMENT_RUNNER,
+  type SafetyTier,
 } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../fleet/state.js';
@@ -22,9 +23,11 @@ import {
   resolveTmuxSessionWorker,
   tmuxSessionExists,
 } from '../refinement/session.js';
-import { runnerDefaultModel, runnerSupportsModel } from '../runners/registry.js';
+import { isKnownRunner, runnerDefaultModel, runnerSupportsModel } from '../runners/registry.js';
 
 import { getBacklogItemSnapshot, getBacklogSpec } from './store.js';
+
+const SAFETY_TIERS = new Set<SafetyTier>(['sandboxed', 'full-auto', 'dangerous']);
 
 const REFINEMENT_PROMPT_ROOT =
   process.env.FARMSLOT_BACKLOG_REFINEMENT_PROMPT_DIR ??
@@ -255,21 +258,26 @@ export async function startBacklogRefinement(
     item.runner?.trim() ||
     process.env.FARMSLOT_BACKLOG_REFINER_RUNNER?.trim() ||
     DEFAULT_BACKLOG_REFINEMENT_RUNNER;
-  // Do not inherit item.model across a runner override — Codex rejects Anthropic model names.
-  const runnerChanged =
-    Boolean(paramRunner) && Boolean(item.runner?.trim()) && paramRunner !== item.runner?.trim();
+  // Do not inherit item.model across an explicit runner override (including when
+  // item.runner is unset). Codex rejects Anthropic model names with HTTP 400.
+  const runnerChanged = Boolean(paramRunner) && paramRunner !== item.runner?.trim();
   const model =
     paramModel ||
     (!runnerChanged ? item.model?.trim() : undefined) ||
     process.env.FARMSLOT_BACKLOG_REFINER_MODEL?.trim() ||
     runnerDefaultModel(runner) ||
     DEFAULT_BACKLOG_REFINEMENT_MODEL;
-  if (model && !runnerSupportsModel(runner, model)) {
+  // Unknown/custom runners skip acceptsModel (unknown falls back to Claude's
+  // regex and wrongly rejects codex defaults / custom model names).
+  if (model && isKnownRunner(runner) && !runnerSupportsModel(runner, model)) {
     throw new Error(`Model '${model}' is not supported by runner '${runner}'`);
   }
   const runnerCommand =
     params.runnerCommand?.trim() || process.env.FARMSLOT_BACKLOG_REFINER_COMMAND?.trim();
   const safetyTier = params.safetyTier;
+  if (safetyTier && !SAFETY_TIERS.has(safetyTier)) {
+    throw new Error(`Invalid safety tier: ${safetyTier}`);
+  }
   const session = backlogRefinementSessionName(item);
   const existingSession = params.launch === true && (await tmuxSessionExists(session));
 

@@ -281,25 +281,41 @@ test('completing or reopening refinement does not mutate lifecycle or linkage', 
 
 test('backlog refinement does not inherit item.model across a runner override', async () => {
   const { backlog, refinement } = await fresh();
-  const created = await backlog.createBacklogItem({
+  const bothSet = await backlog.createBacklogItem({
     project: 'farmslot-farm',
-    title: 'Cross-runner model',
+    title: 'Cross-runner model both set',
     sourceKind: 'manual',
     flowType: 'dev',
     runner: 'claude',
     model: 'sonnet',
   });
-  const refined = await refinement.startBacklogRefinement({
-    itemId: created.item.id,
+  const refinedBoth = await refinement.startBacklogRefinement({
+    itemId: bothSet.item.id,
     launch: false,
     runner: 'codex',
   });
-  assert.equal(refined.runner, 'codex');
-  assert.notEqual(refined.model, 'sonnet');
-  assert.match(refined.model ?? '', /gpt|sol|codex/i);
+  assert.equal(refinedBoth.runner, 'codex');
+  assert.notEqual(refinedBoth.model, 'sonnet');
+  assert.match(refinedBoth.model ?? '', /gpt|sol|codex/i);
+
+  // item.model without item.runner is a normal shape — still must not inherit across override.
+  const modelOnly = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Cross-runner model only',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    model: 'sonnet',
+  });
+  const refinedModelOnly = await refinement.startBacklogRefinement({
+    itemId: modelOnly.item.id,
+    launch: false,
+    runner: 'codex',
+  });
+  assert.equal(refinedModelOnly.runner, 'codex');
+  assert.notEqual(refinedModelOnly.model, 'sonnet');
 });
 
-test('backlog refinement rejects unsupported runner/model pairs', async () => {
+test('backlog refinement rejects unsupported known-runner/model pairs but allows custom runners', async () => {
   const { backlog, refinement } = await fresh();
   const created = await backlog.createBacklogItem({
     project: 'farmslot-farm',
@@ -316,6 +332,34 @@ test('backlog refinement rejects unsupported runner/model pairs', async () => {
         model: 'sonnet',
       }),
     /not supported by runner/,
+  );
+
+  const custom = await refinement.startBacklogRefinement({
+    itemId: created.item.id,
+    launch: false,
+    runner: 'my-fork',
+  });
+  assert.equal(custom.runner, 'my-fork');
+  // Unknown runners skip acceptsModel; default model still resolves for the prompt.
+  assert.ok(custom.model);
+});
+
+test('backlog refinement rejects unknown safety tiers', async () => {
+  const { backlog, refinement } = await fresh();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Bad safety tier',
+    sourceKind: 'manual',
+    flowType: 'dev',
+  });
+  await assert.rejects(
+    () =>
+      refinement.startBacklogRefinement({
+        itemId: created.item.id,
+        launch: false,
+        safetyTier: 'yolo-mode' as never,
+      }),
+    /Invalid safety tier/,
   );
 });
 
