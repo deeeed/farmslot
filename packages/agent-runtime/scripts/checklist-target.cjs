@@ -39,9 +39,10 @@ function enumerateChecklistCheckboxes(markdown) {
       continue;
     }
     if (inCodeBlock) continue;
-    if (trimmed.startsWith('<details')) inDetails += 1;
-    if (trimmed.startsWith('</details')) {
-      inDetails = Math.max(0, inDetails - 1);
+    const detailsOpens = (trimmed.match(/<details\b/g) || []).length;
+    const detailsCloses = (trimmed.match(/<\/details/g) || []).length;
+    if (detailsOpens > 0 || detailsCloses > 0) {
+      inDetails = Math.max(0, inDetails + detailsOpens - detailsCloses);
       continue;
     }
     if (inDetails > 0) continue;

@@ -57,6 +57,8 @@ const ENUMERATION_FIXTURE = [
   '- [ ] not a step (details)',
   '</details>',
   '',
+  '<details><summary>one-liner</summary>closed on the same line</details>',
+  '',
   '### Phase 2: Validate',
   '',
   '- [ ] Fourth step',
