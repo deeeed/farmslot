@@ -65,7 +65,10 @@ export function mergeInitialContextIntoTicketData(
   initialContext: string | undefined,
 ): RunTicketData {
   const context = initialContext?.trim();
-  if (!context || ticketData.source === 'manual') return ticketData;
+  const manualTicketAlreadyCarriesContext =
+    ticketData.source === 'manual' &&
+    (ticketData.description.trim().length > 0 || ticketData.acceptanceCriteria.length > 0);
+  if (!context || manualTicketAlreadyCarriesContext) return ticketData;
 
   const description = ticketData.description.includes(context)
     ? ticketData.description

@@ -66,3 +66,28 @@ test('manual ticket data already carrying the spec is not duplicated', () => {
     manualTicket,
   );
 });
+
+test('tracker fetch fallback still gains the attached spec', () => {
+  const fallbackTicket = {
+    ...trackerTicket,
+    source: 'manual' as const,
+    description: '',
+    acceptanceCriteria: [],
+  };
+  const merged = mergeInitialContextIntoTicketData(
+    fallbackTicket,
+    [
+      'Backlog markdown spec (.backlog/specs/tat-78001.md):',
+      '## Acceptance Criteria',
+      '- Spec AC',
+      '',
+      'Backlog notes:',
+      'Legacy queued note',
+      '',
+      'Backlog source: jira TAT-78001',
+    ].join('\n'),
+  );
+
+  assert.match(merged.description, /Backlog markdown spec/);
+  assert.deepEqual(merged.acceptanceCriteria, ['Spec AC']);
+});
