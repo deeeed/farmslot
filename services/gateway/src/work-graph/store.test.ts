@@ -1030,7 +1030,6 @@ test('operator cancellation holds graph work until an explicit retry', async () 
     workNodeId: nodeId,
   });
   runs.updateRun(prior.id, { status: 'failed', completedAt: new Date().toISOString() });
-  await new Promise((resolve) => setTimeout(resolve, 5));
   const run = runs.createRun({
     flowType: 'dev',
     project: 'farmslot-farm',
@@ -1094,7 +1093,6 @@ test('collision redirect keeps the successor authoritative for the graph node', 
   });
   await backlog.markBacklogRunStarted(queued, parent);
   queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
-  await new Promise((resolve) => setTimeout(resolve, 5));
   const successor = runs.createRun(
     buildCollisionSuccessorParams(parent, parent.familyId, 'collision-test'),
   );

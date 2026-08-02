@@ -690,7 +690,13 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
   // Redirected cancellations are handoffs, so the successor remains authoritative.
   const nodeRuns = runs
     .filter((run) => run.workGraphId === node.graphId && run.workNodeId === node.id)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    .sort(
+      (a, b) =>
+        b.createdAt.localeCompare(a.createdAt) ||
+        Number(isTerminalRunStatus(a.status)) - Number(isTerminalRunStatus(b.status)) ||
+        b.updatedAt.localeCompare(a.updatedAt) ||
+        b.id.localeCompare(a.id),
+    );
   const latestAttempt = nodeRuns[0];
   const latestAttemptWasReopened =
     latestAttempt?.status === 'cancelled' &&
@@ -1018,8 +1024,8 @@ async function executeNodeUnlock(
   let existingQueue = getQueueSnapshot().find(
     (item) => item.workGraphId === snapshot.graph.id && item.workNodeId === node.id,
   );
-  // Once an operator explicitly reopens terminal work, historical attempts must
-  // not block a new enqueue. Active runs still own the node.
+  // This runs only after reconciliation made the node ready. At that point
+  // terminal attempts are historical; active runs still own the node.
   const existingRun = getAllRuns().find(
     (run) =>
       run.workGraphId === snapshot.graph.id &&
