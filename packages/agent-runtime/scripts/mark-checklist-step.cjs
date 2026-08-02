@@ -7,6 +7,7 @@ const {
   resolveWorkerTerminalContract,
 } = require('./worker-terminal-contract.cjs');
 const {
+  enumerateChecklistCheckboxes,
   parseTaskDirMarkArgs,
   terminalContractInputForChecklist,
 } = require('./checklist-target.cjs');
@@ -424,36 +425,24 @@ function stripLabel(raw) {
     .trim();
 }
 
+// Step enumeration is shared with the gateway parsers (generateTaskSchema in
+// tasks/writer.ts and parseCheckboxStates in methods/task.ts) via the
+// checklist-target enumerator: same skip sections, <details> handling, and
+// checkbox shape. Any divergence makes `mark N` check a different box than
+// the one progress reporting counts as step N (checkbox-formatted Acceptance
+// Criteria used to shift every step by the AC count).
 function parseChecklist(markdown) {
   const lines = markdown.split(/\n/);
-  const items = [];
-  let inFence = false;
-  let seen = 0;
-  for (let i = 0; i < lines.length; i += 1) {
-    if (/^\s*```/.test(lines[i])) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    const match = lines[i].match(/^(\s*[-*]\s+\[)( |x|X)(\]\s+)(.*)$/);
-    if (!match) continue;
-    seen += 1;
-    items.push({
-      lineIndex: i,
-      stepNumber: seen,
-      checked: match[2].toLowerCase() === 'x',
-      prefix: match[1],
-      suffix: match[3],
-      rawLabel: match[4],
-      label: stripLabel(match[4]),
-    });
-  }
+  const items = enumerateChecklistCheckboxes(markdown).map((item) => ({
+    ...item,
+    label: stripLabel(item.rawLabel),
+  }));
   return { lines, items };
 }
 
 function markStepInLines(lines, item) {
   if (item.checked) return false;
-  lines[item.lineIndex] = `${item.prefix}x${item.suffix}${item.rawLabel}`;
+  lines[item.lineIndex] = lines[item.lineIndex].replace(/^(\s*- \[)( |x|X)(\])/, '$1x$3');
   return true;
 }
 

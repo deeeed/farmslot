@@ -283,6 +283,11 @@ test('markdown-backed backlog specs enqueue spec text, ACs, and normalized tags'
     /Build the markdown-backed backlog handoff/,
   );
   assert.deepEqual(enqueued.queueItem.ticketData?.acceptanceCriteria, ['AC one', 'AC two']);
+  // ACs render separately via {{ACCEPTANCE_CRITERIA}} — the description must
+  // not duplicate the spec's AC section (its checkboxes skew step numbering).
+  assert.doesNotMatch(enqueued.queueItem.ticketData?.description ?? '', /## Acceptance Criteria/);
+  assert.match(enqueued.queueItem.ticketData?.description ?? '', /## Context/);
+  assert.match(enqueued.queueItem.ticketData?.description ?? '', /## Dispatch Notes/);
   assert.deepEqual(enqueued.queueItem.ticketData?.labels, ['backlog', 'command-center', 'roadmap']);
   const run = runStore.createRun({
     flowType: enqueued.queueItem.flowType,

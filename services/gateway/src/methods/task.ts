@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import {
   DEFAULT_TASK_DIR,
+  enumerateChecklistCheckboxes,
   type TaskPhaseProgress,
   type TaskProgressParams,
   type TaskProgressResult,
@@ -199,40 +200,9 @@ export function joinSchemaWithMarkdown(
   };
 }
 
-// Must mirror task-writer.ts SKIP_SECTIONS so checkbox states align with the
-// schema indices generated from the same markdown.
-const SKIP_SECTIONS =
-  /^\**\s*(acceptance criteria|description|task|affected area|screenshots|comments|root cause|rules|recipe acs|pre-merge)/i;
-
+// Shared enumeration from @farmslot/protocol — the same logic
+// generateTaskSchema and the agent-runtime `mark` helper use, so checkbox
+// states always align with schema indices and marked boxes.
 function parseCheckboxStates(markdown: string): boolean[] {
-  const states: boolean[] = [];
-  let inCodeBlock = false;
-  let inSkippedSection = false;
-  let inDetails = 0;
-  for (const line of markdown.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('```')) {
-      inCodeBlock = !inCodeBlock;
-      continue;
-    }
-    if (inCodeBlock) continue;
-    if (trimmed.startsWith('<details')) inDetails++;
-    if (trimmed.startsWith('</details')) {
-      inDetails = Math.max(0, inDetails - 1);
-      continue;
-    }
-    if (inDetails > 0) continue;
-    if (/^#{2,}\s+[^#]/.test(trimmed)) {
-      const name = trimmed.replace(/^#{2,}\s+/, '').trim();
-      inSkippedSection = SKIP_SECTIONS.test(name);
-      continue;
-    }
-    if (inSkippedSection) continue;
-    if (trimmed.startsWith('- [x]') || trimmed.startsWith('- [X]')) {
-      states.push(true);
-    } else if (trimmed.startsWith('- [ ]')) {
-      states.push(false);
-    }
-  }
-  return states;
+  return enumerateChecklistCheckboxes(markdown).map((item) => item.checked);
 }

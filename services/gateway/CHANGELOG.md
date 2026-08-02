@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(tasks): checklist step enumeration moved to the shared protocol helper, and manual backlog specs no longer duplicate their Acceptance Criteria into the task description (checkbox markers are stripped from extracted ACs).
 - fix(run-engine): keep operator-cancelled graph runs stopped until an explicit retry, preserve cancelled state when an in-flight step fails late, and retain graph linkage across collision redirects.
 - fix(run-completion): avoid reposting dev/fix-bug PR descriptions as worker comments, identify other comments by run so finalize replays are idempotent, and publish evidence through disposable blobless sparse checkouts instead of a shared full-history artifact-repo clone.
 - fix(backlog): markdown-backed specs are allowed on jira/github items — tracker identity and live ticket data stay authoritative while spec context and acceptance criteria are merged into the worker task inputs.

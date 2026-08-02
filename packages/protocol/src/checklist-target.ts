@@ -11,6 +11,89 @@ export const SELF_REVIEW_CHECKLIST = 'SELF-REVIEW.md';
 export const SELF_REVIEW_FIX_CHECKLIST = 'SELF-REVIEW-FIX.md';
 export const CI_FIX_CHECKLIST = 'CI-FIX.md';
 
+/**
+ * Sections whose checkboxes are informational (ACs, descriptions, upstream
+ * PR-template fields) — not task steps. Every checklist consumer that
+ * enumerates step checkboxes (gateway schema/progress parsers, the agent
+ * `mark` helper) MUST apply the same skip list, or `mark N` targets a
+ * different box than the one progress reporting counts as step N.
+ * `pre-merge` covers upstream "Pre-merge author/reviewer checklist" sections
+ * that arrive via {{PR_BODY}} interpolation.
+ */
+export const CHECKLIST_SKIP_SECTIONS =
+  /^\**\s*(acceptance criteria|description|task|affected area|screenshots|comments|root cause|rules|recipe acs|pre-merge)/i;
+
+export interface ChecklistCheckboxItem {
+  /** 0-based line index in the source markdown. */
+  lineIndex: number;
+  /** 1-based step number — the number `mark N` targets. */
+  stepNumber: number;
+  checked: boolean;
+  /** Heading text of the containing section, or null before any heading. */
+  phase: string | null;
+  /** Increments on every new (non-skipped) heading; -1 before any heading. */
+  phaseIndex: number;
+  /** Raw text after the checkbox marker, untrimmed of markdown. */
+  rawLabel: string;
+}
+
+/**
+ * Single source of truth for which markdown checkboxes are checklist steps.
+ * Skips fenced code blocks, `<details>` bodies, and CHECKLIST_SKIP_SECTIONS.
+ * The gateway schema/progress parsers and the agent-runtime `mark` helper all
+ * enumerate through this logic — the CJS mirror in
+ * packages/agent-runtime/scripts/checklist-target.cjs must stay behaviorally
+ * identical (see test/checklist-target-sync.test.mjs).
+ */
+export function enumerateChecklistCheckboxes(markdown: string): ChecklistCheckboxItem[] {
+  const items: ChecklistCheckboxItem[] = [];
+  const lines = markdown.split('\n');
+  let inCodeBlock = false;
+  let inDetails = 0;
+  let inSkippedSection = false;
+  let phase: string | null = null;
+  let phaseIndex = -1;
+  let stepNumber = 0;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const trimmed = lines[lineIndex].trim();
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) continue;
+    if (trimmed.startsWith('<details')) inDetails += 1;
+    if (trimmed.startsWith('</details')) {
+      inDetails = Math.max(0, inDetails - 1);
+      continue;
+    }
+    if (inDetails > 0) continue;
+    if (/^#{2,}\s+[^#]/.test(trimmed)) {
+      const name = trimmed.replace(/^#{2,}\s+/, '').trim();
+      if (CHECKLIST_SKIP_SECTIONS.test(name)) {
+        inSkippedSection = true;
+        continue;
+      }
+      inSkippedSection = false;
+      phase = name;
+      phaseIndex += 1;
+      continue;
+    }
+    if (inSkippedSection) continue;
+    const match = trimmed.match(/^- \[( |x|X)\]\s*(.*)$/);
+    if (!match) continue;
+    stepNumber += 1;
+    items.push({
+      lineIndex,
+      stepNumber,
+      checked: match[1].toLowerCase() === 'x',
+      phase,
+      phaseIndex,
+      rawLabel: match[2],
+    });
+  }
+  return items;
+}
+
 export interface ChecklistTarget {
   checklist: string;
   signal: string;

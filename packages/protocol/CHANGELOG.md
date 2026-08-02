@@ -3,6 +3,7 @@
 ## Unreleased
 
 - feat(backlog): typed `backlog.refine` / `backlog.refinementSession.get` RPC contracts and default refinement runner/model constants.
+- feat(checklist): shared `enumerateChecklistCheckboxes` + `CHECKLIST_SKIP_SECTIONS` — the single definition of which markdown checkboxes are checklist steps.
 
 ## 0.16.0 - 2026-08-02
 
