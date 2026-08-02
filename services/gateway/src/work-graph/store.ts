@@ -688,13 +688,19 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
   // Cancellation is an operator stop, not an automatic retry. Keep an
   // operator-cancelled run authoritative until the item is explicitly reopened.
   // Redirected cancellations are handoffs, so the successor remains authoritative.
-  const linkedRuns = runs.filter(
-    (run) =>
-      run.workGraphId === node.graphId &&
-      run.workNodeId === node.id &&
-      !(run.status === 'cancelled' && (run.redirectedToRunId || backlog?.status === 'ready')),
-  );
-  const latestRun = linkedRuns.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const nodeRuns = runs
+    .filter((run) => run.workGraphId === node.graphId && run.workNodeId === node.id)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const latestAttempt = nodeRuns[0];
+  const latestAttemptWasReopened =
+    latestAttempt?.status === 'cancelled' &&
+    (latestAttempt.redirectedToRunId || backlog?.status === 'ready');
+  // Reopening the latest cancelled attempt must not expose an older failed run
+  // as authoritative. The next attempt starts from a clean node projection.
+  const linkedRuns = latestAttemptWasReopened
+    ? []
+    : nodeRuns.filter((run) => !(run.status === 'cancelled' && run.redirectedToRunId));
+  const latestRun = linkedRuns[0];
   const queued = getQueueSnapshot().find(
     (item) => item.workGraphId === node.graphId && item.workNodeId === node.id,
   );
@@ -1012,13 +1018,13 @@ async function executeNodeUnlock(
   let existingQueue = getQueueSnapshot().find(
     (item) => item.workGraphId === snapshot.graph.id && item.workNodeId === node.id,
   );
-  // Once an operator explicitly reopens cancelled work, the cancelled attempt
-  // is historical rather than work in flight and must not block a new enqueue.
+  // Once an operator explicitly reopens terminal work, historical attempts must
+  // not block a new enqueue. Active runs still own the node.
   const existingRun = getAllRuns().find(
     (run) =>
       run.workGraphId === snapshot.graph.id &&
       run.workNodeId === node.id &&
-      run.status !== 'cancelled',
+      !isTerminalRunStatus(run.status),
   );
   if (
     existingQueue?.status === 'queued' &&

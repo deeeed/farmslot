@@ -7,6 +7,8 @@ import { test } from 'node:test';
 
 import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 
+import { buildCollisionSuccessorParams } from '../run-engine/engine-decisions.js';
+
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-work-graph-test-'));
 process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
@@ -1019,6 +1021,16 @@ test('operator cancellation holds graph work until an explicit retry', async () 
     .getQueueSnapshot()
     .find((item) => item.workGraphId === graphId && item.workNodeId === nodeId);
   assert.ok(queued);
+  const prior = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    workGraphId: graphId,
+    workNodeId: nodeId,
+  });
+  runs.updateRun(prior.id, { status: 'failed', completedAt: new Date().toISOString() });
+  await new Promise((resolve) => setTimeout(resolve, 5));
   const run = runs.createRun({
     flowType: 'dev',
     project: 'farmslot-farm',
@@ -1083,18 +1095,11 @@ test('collision redirect keeps the successor authoritative for the graph node', 
   await backlog.markBacklogRunStarted(queued, parent);
   queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
   await new Promise((resolve) => setTimeout(resolve, 5));
-  const successor = runs.createRun({
-    flowType: 'dev',
-    project: 'farmslot-farm',
-    ticketOrPr: created.item.sourceRef,
-    familyId: parent.familyId,
-    parentRunId: parent.id,
-    lane: 'comparison',
-    variant: 'collision-test',
-    backlogItemId: created.item.id,
-    workGraphId: graphId,
-    workNodeId: nodeId,
-  });
+  const successor = runs.createRun(
+    buildCollisionSuccessorParams(parent, parent.familyId, 'collision-test'),
+  );
+  assert.equal(successor.workGraphId, graphId);
+  assert.equal(successor.workNodeId, nodeId);
   runs.updateRun(parent.id, {
     status: 'cancelled',
     completedAt: new Date().toISOString(),
