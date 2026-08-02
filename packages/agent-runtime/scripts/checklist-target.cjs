@@ -41,9 +41,13 @@ function enumerateChecklistCheckboxes(markdown) {
     if (inCodeBlock) continue;
     // Only lines STARTING with a details tag are structural — prose that
     // mentions `<details>` (e.g. PR-description instructions) must stay inert.
+    // On a structural line, net opens minus closes handles both the plain
+    // one-liner (`<details>…</details>` opens nothing) and nested same-line
+    // opens that leave a block dangling.
     if (trimmed.startsWith('<details')) {
-      // A same-line close (`<details>…</details>`) opens nothing.
-      if (!/<\/details/.test(trimmed)) inDetails += 1;
+      const opens = (trimmed.match(/<details\b/g) || []).length;
+      const closes = (trimmed.match(/<\/details/g) || []).length;
+      inDetails = Math.max(0, inDetails + opens - closes);
       continue;
     }
     if (trimmed.startsWith('</details')) {
