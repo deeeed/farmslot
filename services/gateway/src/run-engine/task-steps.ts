@@ -496,6 +496,18 @@ export async function executeWriteTaskStep(
     }
   }
 
+  const fetchedRun = getRun(runId)!;
+  if (fetchedRun.ticketData) {
+    const ticketDataWithContext = mergeInitialContextIntoTicketData(
+      fetchedRun.ticketData,
+      fetchedRun.engineState?.interactiveDev?.initialContext,
+    );
+    if (ticketDataWithContext !== fetchedRun.ticketData) {
+      updateRun(runId, { ticketData: ticketDataWithContext });
+      await refreshRunLinks(runId);
+    }
+  }
+
   // Phase 1 pre-filter: recipe strategy selection for review-pr flows
   // Skip when tier is manually selected — human already made an informed choice
   let recipeStrategyResult = null as Awaited<ReturnType<typeof resolveRecipeStrategy>> | null;

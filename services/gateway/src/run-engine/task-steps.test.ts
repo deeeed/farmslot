@@ -26,6 +26,14 @@ test('tracker ticket data keeps live fields and gains structured backlog spec co
       '## Acceptance Criteria',
       '',
       '- Spec AC',
+      '',
+      '## Backlog Notes',
+      '',
+      'Operator note',
+      '',
+      '## Backlog Source',
+      '',
+      'jira TAT-78001',
     ].join('\n'),
   );
 

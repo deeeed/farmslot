@@ -1631,8 +1631,8 @@ async function buildInitialContext(item: BacklogItem): Promise<string> {
   const specMarkdown = await readBacklogSpecMarkdown(item);
   return [
     specMarkdown?.trim() ? `Backlog markdown spec (${item.specPath}):\n${specMarkdown.trim()}` : '',
-    item.notes?.trim() ? `Backlog notes:\n${item.notes.trim()}` : '',
-    `Backlog source: ${item.sourceKind} ${item.sourceRef}`,
+    item.notes?.trim() ? `## Backlog notes\n\n${item.notes.trim()}` : '',
+    `## Backlog source: ${item.sourceKind} ${item.sourceRef}`,
   ]
     .filter(Boolean)
     .join('\n\n');

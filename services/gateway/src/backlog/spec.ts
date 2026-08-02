@@ -4,7 +4,7 @@ export function extractBacklogAcceptanceCriteria(markdown: string): string[] {
   if (headingIndex < 0) return [];
   const body: string[] = [];
   for (const line of lines.slice(headingIndex + 1)) {
-    if (/^#{1,2}\s+\S/.test(line)) break;
+    if (/^#{1,6}\s+\S/.test(line)) break;
     body.push(line);
   }
   return body
