@@ -304,11 +304,39 @@ test('retained fallback accepts a fresh task signal after the original send veri
     prompt: 'Read and execute SELF-REVIEW-FIX.md',
     launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
+    priorPromptSendAttempted: true,
   });
 
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
   assert.equal(
     commands.some((command) => command.includes('capture-pane')),
+    false,
+  );
+});
+
+test('retained fallback does not accept a task signal before the first prompt send', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  promptAccepted = true;
+  sessionState = {
+    value: 'active',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'safe-send' });
+  assert.equal(
+    commands.some((command) => command.includes('SELF-REVIEW-FIX-SIGNAL.json')),
     false,
   );
 });

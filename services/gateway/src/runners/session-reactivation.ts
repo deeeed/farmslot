@@ -41,6 +41,7 @@ export interface RunnerSessionReactivationOptions {
   taskDir?: string;
   launchAckSignalPath?: string | null;
   launchAckBaseline?: LaunchAckSignalSnapshot | null;
+  priorPromptSendAttempted?: boolean;
   timeoutMs?: number;
   recovery?: RunnerSendRecoveryContext;
   sendLogPrefix?: string;
@@ -138,6 +139,8 @@ async function reactivateRunnerSessionWithPrompt(
       };
     }
 
+    const runtimeDir =
+      options.runtimeDir ?? (await resolveProjectRuntimeDir(options.vars.projectName));
     const promptSentinel = await writeRunnerPromptSentinel(options.vars, options.prompt);
     const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       options.vars,
@@ -147,8 +150,7 @@ async function reactivateRunnerSessionWithPrompt(
       {
         effort: options.effort,
         safetyTier: options.safetyTier,
-        runtimeDir:
-          options.runtimeDir ?? (await resolveProjectRuntimeDir(options.vars.projectName)),
+        runtimeDir,
         taskDir: options.taskDir,
         initialPrompt: options.prompt,
       },
@@ -189,7 +191,7 @@ async function reactivateRunnerSessionWithPrompt(
                       options.vars,
                       runner,
                       options.vars.remoteRepo,
-                      options.runtimeDir,
+                      runtimeDir,
                     ),
                   );
                   if (refreshed.exitCode !== 0) {
@@ -257,7 +259,11 @@ export async function deliverPromptInPlace(
 ): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
   try {
-    if (options.launchAckSignalPath && options.launchAckBaseline) {
+    if (
+      options.priorPromptSendAttempted &&
+      options.launchAckSignalPath &&
+      options.launchAckBaseline
+    ) {
       const acknowledgement = await probeRunnerHandoffAck(
         options.vars,
         options.target,

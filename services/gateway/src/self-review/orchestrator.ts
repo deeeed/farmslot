@@ -1243,6 +1243,7 @@ async function sendFeedbackToWorker(
     let lastRetainedHoldReason: string | null = null;
     let terminalRetainedHoldReason: string | null = null;
     let structuredDeliveryAccepted = false;
+    let promptSendAttempted = false;
     const loggedRetainedHoldReasons = new Set<string>();
     const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
       if (terminalRetainedHoldReason) return false;
@@ -1264,11 +1265,13 @@ async function sendFeedbackToWorker(
         taskDir,
         launchAckSignalPath: fixSignalPath,
         launchAckBaseline: fixLaunchAckBaseline,
+        priorPromptSendAttempted: promptSendAttempted,
         recovery: { runId },
         sendLogPrefix: 'self-review',
         forceBusyPoll,
       };
       const retained = await deliverPromptWithRetainedFallback(deliveryOptions);
+      promptSendAttempted = true;
       if (retained.delivered) {
         structuredDeliveryAccepted = retained.acknowledgement === 'structured';
         return true;

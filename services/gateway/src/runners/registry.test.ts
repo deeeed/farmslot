@@ -166,9 +166,12 @@ describe('codex runner', () => {
     // Use the isolated codex-home only if provisioned; otherwise fall back to global.
     assert.match(
       launch,
-      /if \[ -e '\/workspace\/repo\/\.agent\/codex-home\/auth\.json' \]; then export CODEX_HOME='\/workspace\/repo\/\.agent\/codex-home'; else .*fi/,
+      /if \[ -e '\/workspace\/repo\/\.agent\/codex-home\/auth\.json' \]; then export CODEX_HOME='\/workspace\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi/,
     );
-    assert.match(launch, /codex --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5/);
+    assert.match(
+      launch,
+      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5/,
+    );
     assertCodexWorkerDoesNotInjectMcpOverrides(launch);
     assert.match(launch, /model_reasoning_effort="xhigh"/);
     assert.doesNotMatch(launch, /codex exec /);
@@ -184,11 +187,11 @@ describe('codex runner', () => {
     });
     assert.match(
       launch,
-      /then export CODEX_HOME='\/workspace\/repo\/\.agent\/codex-home'; else .*fi/,
+      /then export CODEX_HOME='\/workspace\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi/,
     );
     assert.match(
       launch,
-      /codex --dangerously-bypass-approvals-and-sandbox .*model_reasoning_effort="xhigh".*--model gpt-5\.5$/,
+      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox .*model_reasoning_effort="xhigh".*--model gpt-5\.5$/,
     );
     assert.doesNotMatch(launch, /Read TASK\.md/);
   });
@@ -1435,7 +1438,10 @@ describe('buildLaunchCommand', () => {
       const vars = makeVars({ dispatchCmd: '' });
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, { safetyTier: 'dangerous' });
       assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-      assert.match(cmd, /codex --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/);
+      assert.match(
+        cmd,
+        /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/,
+      );
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
       assert.match(cmd, /model_reasoning_effort="xhigh"/);
@@ -1450,7 +1456,7 @@ describe('buildLaunchCommand', () => {
       // Isolated home only when provisioned; else fall back to global ~/.codex.
       assert.match(
         cmd,
-        /if \[ -e '\/tmp\/repo\/\.agent\/codex-home\/auth\.json' \]; then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'; else .*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex .*--model gpt-5/,
+        /if \[ -e '\/tmp\/repo\/\.agent\/codex-home\/auth\.json' \]; then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} .*--model gpt-5/,
       );
       // Must never seed (copy/symlink) into or write config back to the global ~/.codex.
       assert.doesNotMatch(cmd, /ln -sf "\$HOME\/\.codex/);
@@ -1470,7 +1476,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT);
       assert.match(
         cmd,
-        /then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'; else .*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex/,
+        /then export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home';.*else unset CODEX_HOME;.*fi && cd \/tmp\/repo && \/usr\/local\/bin\/codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\}/,
       );
       assert.match(cmd, /model_reasoning_effort="xhigh"/);
     });
@@ -1481,7 +1487,10 @@ describe('buildLaunchCommand', () => {
       });
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, { safetyTier: 'dangerous' });
       assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-      assert.match(cmd, /codex --dangerously-bypass-approvals-and-sandbox/);
+      assert.match(
+        cmd,
+        /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox/,
+      );
     });
 
     it('exposes hook-file observability provider after Phase 1.5', () => {
@@ -1772,7 +1781,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /export CODEX_HOME='\/tmp\/repo\/runtime\/codex-home'/);
     assert.match(
       cmd,
-      /\/opt\/bin\/codex resume --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --model gpt-5 'codex-session'$/,
+      /\/opt\/bin\/codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} resume --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --model gpt-5 'codex-session'$/,
     );
   });
 
