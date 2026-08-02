@@ -49,6 +49,7 @@ import {
   stampPublishGateReviewStatusForPackage,
   supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
+import { loadProjectVarsOrNull } from './project-vars.js';
 import {
   publicationReviewPolicyForRun,
   requiresPublicationApproval,
@@ -745,6 +746,19 @@ export async function executeHumanGateStep(
         : [];
       const reviewsForInitial =
         beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [];
+      const persistedReviewDepth = beforeInitialPlan.engineState?.publishGate?.reviewDepth;
+      const replayProjectVars =
+        unconsumedReviewDecision && persistedReviewDepth?.requestedBy !== 'dispatch'
+          ? await loadProjectVarsOrNull(
+              beforeInitialPlan.project,
+              'publication review replay',
+              beforeInitialPlan.id,
+            )
+          : null;
+      const replayBaseReviewDepth =
+        persistedReviewDepth?.requestedBy === 'dispatch'
+          ? persistedReviewDepth
+          : publicationReviewPolicyForRun(beforeInitialPlan, replayProjectVars?.projectJson);
       // A restart can land after a reviewer verdict was persisted but before
       // the durable pending plan was cleared. Execute only the still-missing
       // portion; otherwise every restart launches another already-satisfied
@@ -771,9 +785,7 @@ export async function executeHumanGateStep(
             );
       const recoveredReviewDepth = unconsumedReviewDecision
         ? humanGateReviewDepth(
-            beforeInitialPlan.engineState?.publishGate?.reviewDepth?.requestedBy === 'dispatch'
-              ? beforeInitialPlan.engineState.publishGate.reviewDepth
-              : publicationReviewPolicyForRun(beforeInitialPlan),
+            replayBaseReviewDepth,
             humanGateReviewRequestFromDecision(unconsumedReviewDecision),
             {
               actionId: unconsumedReviewDecision.resolvedAction,
