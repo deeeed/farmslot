@@ -22,7 +22,7 @@ import {
   resolveTmuxSessionWorker,
   tmuxSessionExists,
 } from '../refinement/session.js';
-import { runnerDefaultModel } from '../runners/registry.js';
+import { runnerDefaultModel, runnerSupportsModel } from '../runners/registry.js';
 
 import { getBacklogItemSnapshot, getBacklogSpec } from './store.js';
 
@@ -248,17 +248,25 @@ export async function startBacklogRefinement(
     throw new Error('Cannot refine an archived backlog item');
   }
 
+  const paramRunner = params.runner?.trim();
+  const paramModel = params.model?.trim();
   const runner =
-    params.runner?.trim() ||
+    paramRunner ||
     item.runner?.trim() ||
     process.env.FARMSLOT_BACKLOG_REFINER_RUNNER?.trim() ||
     DEFAULT_BACKLOG_REFINEMENT_RUNNER;
+  // Do not inherit item.model across a runner override — Codex rejects Anthropic model names.
+  const runnerChanged =
+    Boolean(paramRunner) && Boolean(item.runner?.trim()) && paramRunner !== item.runner?.trim();
   const model =
-    params.model?.trim() ||
-    item.model?.trim() ||
+    paramModel ||
+    (!runnerChanged ? item.model?.trim() : undefined) ||
     process.env.FARMSLOT_BACKLOG_REFINER_MODEL?.trim() ||
     runnerDefaultModel(runner) ||
     DEFAULT_BACKLOG_REFINEMENT_MODEL;
+  if (model && !runnerSupportsModel(runner, model)) {
+    throw new Error(`Model '${model}' is not supported by runner '${runner}'`);
+  }
   const runnerCommand =
     params.runnerCommand?.trim() || process.env.FARMSLOT_BACKLOG_REFINER_COMMAND?.trim();
   const safetyTier = params.safetyTier;

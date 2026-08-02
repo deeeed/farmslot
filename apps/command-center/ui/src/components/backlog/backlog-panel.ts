@@ -117,10 +117,13 @@ import {
   canDequeueBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
+  CUSTOM_REFINEMENT_CHOICE,
   DEFAULT_BACKLOG_STATUS_FILTER,
+  DEFAULT_REFINEMENT_CHOICE,
   displayedBacklogFlow,
   displayedBacklogStatus,
   parseBacklogStatusFilter,
+  refinementChoiceValue,
   serializeBacklogStatusFilter,
   shouldForceReloadBacklogSpecAfterRefine,
   showsBacklogCleanupActionsForUi,
@@ -130,8 +133,6 @@ import {
 
 const FLOWS: FlowType[] = ['fix-bug', 'dev', 'review-pr', 'pr-complete', 'update-branch'];
 const SOURCES: BacklogSourceKind[] = [...BACKLOG_SOURCE_KINDS];
-const DEFAULT_REFINEMENT_CHOICE = '__default__';
-const CUSTOM_REFINEMENT_CHOICE = '__custom__';
 const SAFETY_TIERS: SafetyTier[] = ['sandboxed', 'full-auto', 'dangerous'];
 const BACKLOG_PROJECT_PARAM = 'backlogProject';
 const BACKLOG_STATUS_PARAM = 'backlogStatus';
@@ -307,6 +308,9 @@ export class BacklogPanel extends LitElement {
   @state() private _refineModel = '';
   @state() private _refineCommand = '';
   @state() private _refineSafetyTier = '';
+  @state() private _refineRunnerCustom = false;
+  @state() private _refineModelCustom = false;
+  @state() private _refineSafetyCustom = false;
   @state() private _runnerPickerOpen = false;
   @state() private _refinementSessionLoading = '';
   @state() private _existingRefinementSession: BacklogRefinementSessionGetResult | null = null;
@@ -2736,17 +2740,15 @@ export class BacklogPanel extends LitElement {
     return DEFAULT_MODEL[runner] ?? DEFAULT_BACKLOG_REFINEMENT_MODEL;
   }
 
-  private _refinementChoiceValue(value: string, options: string[]): string {
-    if (!value) return DEFAULT_REFINEMENT_CHOICE;
-    return options.includes(value) ? value : CUSTOM_REFINEMENT_CHOICE;
-  }
-
   private _setRunnerPickerOpen(open: boolean) {
     this._runnerPickerOpen = open;
     if (open && this._selectedItem) void this._loadRefinementSessionStatus(this._selectedItem);
     if (!open) {
       this._refinementSessionLoading = '';
       this._existingRefinementSession = null;
+      this._refineRunnerCustom = false;
+      this._refineModelCustom = false;
+      this._refineSafetyCustom = false;
     }
     this._writeUrlState();
   }
@@ -2821,9 +2823,10 @@ export class BacklogPanel extends LitElement {
     testId: string;
     value: string;
     options: string[];
-    onChange: (value: string) => void;
+    customMode: boolean;
+    onChange: (value: string, customMode: boolean) => void;
   }) {
-    const choiceValue = this._refinementChoiceValue(args.value, args.options);
+    const choiceValue = refinementChoiceValue(args.value, args.options, args.customMode);
     return html`<div class="field">
       ${args.label}
       ${renderChoiceButtons({
@@ -2834,8 +2837,9 @@ export class BacklogPanel extends LitElement {
           [CUSTOM_REFINEMENT_CHOICE]: 'Custom',
         },
         onSelect: (choice) => {
-          if (choice === DEFAULT_REFINEMENT_CHOICE) args.onChange('');
-          else if (choice !== CUSTOM_REFINEMENT_CHOICE) args.onChange(choice);
+          if (choice === DEFAULT_REFINEMENT_CHOICE) args.onChange('', false);
+          else if (choice === CUSTOM_REFINEMENT_CHOICE) args.onChange(args.value, true);
+          else args.onChange(choice, false);
         },
         testId: `${args.testId}-choices`,
       })}
@@ -2844,7 +2848,8 @@ export class BacklogPanel extends LitElement {
             data-testid=${args.testId}
             placeholder=${args.label.toLowerCase()}
             .value=${args.value}
-            @input=${(event: Event) => args.onChange((event.target as HTMLInputElement).value)}
+            @input=${(event: Event) =>
+              args.onChange((event.target as HTMLInputElement).value, true)}
           />`
         : nothing}
     </div>`;
@@ -2915,11 +2920,16 @@ export class BacklogPanel extends LitElement {
               testId: 'backlog-refine-runner',
               value: this._refineRunner,
               options: this._refinementRunnerOptions,
-              onChange: (runner) => {
+              customMode: this._refineRunnerCustom,
+              onChange: (runner, customMode) => {
+                this._refineRunnerCustom = customMode;
                 this._refineRunner = runner;
-                this._refineModel = modelForRunnerChange(runner, this._refineModel, {
-                  defaultRunner: DEFAULT_BACKLOG_REFINEMENT_RUNNER,
-                });
+                if (!customMode) {
+                  this._refineModelCustom = false;
+                  this._refineModel = modelForRunnerChange(runner, this._refineModel, {
+                    defaultRunner: DEFAULT_BACKLOG_REFINEMENT_RUNNER,
+                  });
+                }
               },
             })}
           </div>
@@ -2930,7 +2940,9 @@ export class BacklogPanel extends LitElement {
               testId: 'backlog-refine-model',
               value: this._refineModel,
               options: this._refinementModelOptions,
-              onChange: (model) => {
+              customMode: this._refineModelCustom,
+              onChange: (model, customMode) => {
+                this._refineModelCustom = customMode;
                 this._refineModel = model;
               },
             })}
@@ -2942,7 +2954,9 @@ export class BacklogPanel extends LitElement {
               testId: 'backlog-refine-safety',
               value: this._refineSafetyTier,
               options: SAFETY_TIERS,
-              onChange: (tier) => {
+              customMode: this._refineSafetyCustom,
+              onChange: (tier, customMode) => {
+                this._refineSafetyCustom = customMode;
                 this._refineSafetyTier = tier;
               },
             })}

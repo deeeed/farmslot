@@ -14,10 +14,13 @@ import {
   canDequeueBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
+  CUSTOM_REFINEMENT_CHOICE,
   DEFAULT_BACKLOG_STATUS_FILTER,
+  DEFAULT_REFINEMENT_CHOICE,
   displayedBacklogFlow,
   displayedBacklogStatus,
   parseBacklogStatusFilter,
+  refinementChoiceValue,
   serializeBacklogStatusFilter,
   shouldForceReloadBacklogSpecAfterRefine,
   showsBacklogCleanupActionsForUi,
@@ -422,4 +425,13 @@ test('backlog refine completion refresh replaces inventory row and forces spec r
   assert.equal(next[1]?.id, 'item-2');
   assert.equal(shouldForceReloadBacklogSpecAfterRefine(refined), true);
   assert.equal(shouldForceReloadBacklogSpecAfterRefine(previous as BacklogItem), false);
+});
+
+test('refinement choice value highlights Custom when customMode is set', () => {
+  const options = ['codex', 'claude'];
+  assert.equal(refinementChoiceValue('', options, false), DEFAULT_REFINEMENT_CHOICE);
+  assert.equal(refinementChoiceValue('codex', options, false), 'codex');
+  assert.equal(refinementChoiceValue('', options, true), CUSTOM_REFINEMENT_CHOICE);
+  assert.equal(refinementChoiceValue('my-fork', options, true), CUSTOM_REFINEMENT_CHOICE);
+  assert.equal(refinementChoiceValue('my-fork', options, false), CUSTOM_REFINEMENT_CHOICE);
 });

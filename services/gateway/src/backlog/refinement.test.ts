@@ -279,6 +279,46 @@ test('completing or reopening refinement does not mutate lifecycle or linkage', 
   await killTmuxSessionIfPresent(session);
 });
 
+test('backlog refinement does not inherit item.model across a runner override', async () => {
+  const { backlog, refinement } = await fresh();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Cross-runner model',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    runner: 'claude',
+    model: 'sonnet',
+  });
+  const refined = await refinement.startBacklogRefinement({
+    itemId: created.item.id,
+    launch: false,
+    runner: 'codex',
+  });
+  assert.equal(refined.runner, 'codex');
+  assert.notEqual(refined.model, 'sonnet');
+  assert.match(refined.model ?? '', /gpt|sol|codex/i);
+});
+
+test('backlog refinement rejects unsupported runner/model pairs', async () => {
+  const { backlog, refinement } = await fresh();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Bad model pair',
+    sourceKind: 'manual',
+    flowType: 'dev',
+  });
+  await assert.rejects(
+    () =>
+      refinement.startBacklogRefinement({
+        itemId: created.item.id,
+        launch: false,
+        runner: 'codex',
+        model: 'sonnet',
+      }),
+    /not supported by runner/,
+  );
+});
+
 test('backlog refinement fails closed when an attached spec path cannot be read', async () => {
   const { backlog, refinement } = await fresh();
   const created = await backlog.createBacklogItem({

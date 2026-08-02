@@ -249,3 +249,19 @@ export function shouldForceReloadBacklogSpecAfterRefine(
 ): boolean {
   return Boolean(item.specPath?.trim());
 }
+
+const DEFAULT_REFINEMENT_CHOICE = '__default__';
+const CUSTOM_REFINEMENT_CHOICE = '__custom__';
+
+/** Chip selection state for runner/model/safety refine pickers (custom mode is explicit). */
+export function refinementChoiceValue(
+  value: string,
+  options: readonly string[],
+  customMode: boolean,
+): string {
+  if (customMode) return CUSTOM_REFINEMENT_CHOICE;
+  if (!value) return DEFAULT_REFINEMENT_CHOICE;
+  return options.includes(value) ? value : CUSTOM_REFINEMENT_CHOICE;
+}
+
+export { CUSTOM_REFINEMENT_CHOICE, DEFAULT_REFINEMENT_CHOICE };
