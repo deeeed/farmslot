@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- fix(mark): step enumeration now skips informational sections (Acceptance Criteria, pre-merge, `<details>`) exactly like the gateway parsers — checkbox-formatted ACs no longer shift `mark N` onto the wrong box.
+- fix(mark): step enumeration now skips informational sections (Acceptance Criteria, pre-merge, `<details>`) exactly like the gateway parsers — checkbox-formatted ACs no longer shift `mark N` onto the wrong box. Also tightens checkbox matching to `- [ ]` (no `* [ ]`), matching gateway behavior.
 
 ## 0.5.1 - 2026-08-02
 

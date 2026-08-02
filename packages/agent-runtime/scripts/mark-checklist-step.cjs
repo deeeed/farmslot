@@ -442,8 +442,9 @@ function parseChecklist(markdown) {
 
 function markStepInLines(lines, item) {
   if (item.checked) return false;
-  lines[item.lineIndex] = lines[item.lineIndex].replace(/^(\s*- \[)( |x|X)(\])/, '$1x$3');
-  return true;
+  const before = lines[item.lineIndex];
+  lines[item.lineIndex] = before.replace(/^(\s*- \[)( |x|X)(\])/, '$1x$3');
+  return lines[item.lineIndex] !== before;
 }
 
 function resolveTarget(taskPath, stepNumber, markLast) {
