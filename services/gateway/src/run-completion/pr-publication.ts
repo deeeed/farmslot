@@ -19,7 +19,10 @@ export function prCommentIdentityMarker(runId: string): string {
 }
 
 export function prCommentBelongsToRun(body: string, runId: string): boolean {
-  return body.includes(prCommentIdentityMarker(runId)) || body.includes(runId.slice(0, 8));
+  if (body.includes(prCommentIdentityMarker(runId))) return true;
+  const looksLikeLegacyAutomatedComment =
+    body.includes('## Automated') || body.includes('<summary>Worker report</summary>');
+  return looksLikeLegacyAutomatedComment && body.includes(runId.slice(0, 8));
 }
 
 export function paginatedPrCommentOutputContainsRun(output: string, runId: string): boolean {

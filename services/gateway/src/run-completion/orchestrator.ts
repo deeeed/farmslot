@@ -738,20 +738,10 @@ export async function runCompletionPipeline(
   // `done` until the whole pipeline returns, so status is `completing` during
   // this call. The fact that we reached step 3 is itself the evidence we need.
   const reportIsSubstantive = typeof report === 'string' && report.trim().length > 0;
-  if (
-    !isReviewPR &&
-    shouldPostWorkerReportComment(run.flowType, reportArtifact?.fileName) &&
-    ciRepo &&
-    prNumber &&
-    reportIsSubstantive
-  ) {
+  const shouldPostReport = shouldPostWorkerReportComment(run.flowType, reportArtifact?.fileName);
+  if (!isReviewPR && shouldPostReport && ciRepo && prNumber && reportIsSubstantive) {
     flags.prCommentPosted = await postPRComment(run, report, ciRepo, prNumber);
-  } else if (
-    !isReviewPR &&
-    shouldPostWorkerReportComment(run.flowType, reportArtifact?.fileName) &&
-    ciRepo &&
-    prNumber
-  ) {
+  } else if (!isReviewPR && shouldPostReport && ciRepo && prNumber) {
     console.log(
       `[run-completion] skipping pr-comment for ${runId.slice(0, 8)}: status=${run.status} report=${reportIsSubstantive ? 'present' : 'missing'}`,
     );

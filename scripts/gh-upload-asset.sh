@@ -80,7 +80,7 @@ REPO_URL="git@${SSH_HOST}:${ARTIFACTS_REPO}.git"
 # Fetch only the current commit/tree and materialize this publication path.
 echo "Opening sparse checkout for ${ARTIFACTS_REPO}..." >&2
 REMOTE_REFS=$(git ls-remote "$REPO_URL")
-if echo "$REMOTE_REFS" | grep -q 'refs/heads/main$'; then
+if echo "$REMOTE_REFS" | grep -qE '[[:space:]]refs/heads/main$'; then
   HAS_MAIN=true
   git clone --quiet --filter=blob:none --no-checkout --depth 1 --single-branch --branch main \
     "$REPO_URL" "$CACHE_DIR" >&2
@@ -96,8 +96,6 @@ git -C "$CACHE_DIR" sparse-checkout init --cone
 git -C "$CACHE_DIR" sparse-checkout set "${FLOW_DIR}/${ID}"
 if $HAS_MAIN; then
   git -C "$CACHE_DIR" checkout --quiet main
-elif git -C "$CACHE_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
-  git -C "$CACHE_DIR" checkout --quiet -B main
 else
   git -C "$CACHE_DIR" checkout --quiet --orphan main
 fi
@@ -143,7 +141,8 @@ else
       exit 1
     fi
     echo "Push raced with another artifact publication; rebasing (attempt ${push_attempt}/3)..." >&2
-    git pull --rebase --quiet origin main >&2
+    git fetch --quiet origin main >&2
+    git rebase --quiet FETCH_HEAD >&2
     push_attempt=$((push_attempt + 1))
   done
   echo "Pushed to ${ARTIFACTS_REPO}" >&2

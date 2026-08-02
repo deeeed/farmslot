@@ -13,8 +13,12 @@ test('PR comment identity is stable per run and supports legacy comments', () =>
 
   assert.equal(prCommentIdentityMarker(runId), `<!-- farmslot-run:${runId} -->`);
   assert.equal(prCommentBelongsToRun(`<!-- farmslot-run:${runId} -->\nreport`, runId), true);
-  assert.equal(prCommentBelongsToRun('| Run | `b26f39be` |', runId), true);
-  assert.equal(prCommentBelongsToRun(`Run ID: ${runId.slice(0, 8)}`, runId), true);
+  assert.equal(prCommentBelongsToRun('## Automated run\n| Run | `b26f39be` |', runId), true);
+  assert.equal(
+    prCommentBelongsToRun(`## Automated run\nRun ID: ${runId.slice(0, 8)}`, runId),
+    true,
+  );
+  assert.equal(prCommentBelongsToRun(`unrelated commit ${runId.slice(0, 8)}`, runId), false);
   assert.equal(prCommentBelongsToRun('<!-- farmslot-run:another-run -->', runId), false);
   assert.equal(
     paginatedPrCommentOutputContainsRun(
