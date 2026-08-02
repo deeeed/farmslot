@@ -10,12 +10,15 @@ import {
   isLightweightInteractiveDevRun,
   parseGitHubRef,
   PipelineSteps,
+  PR_BOUND_FLOW_TYPES,
   RECIPE_STRATEGY_LABELS,
   type ReviewGatePayload,
   type Run,
+  type RunTicketData,
   type TemplateProvenance,
 } from '@farmslot/protocol';
 
+import { extractBacklogAcceptanceCriteria } from '../backlog/spec.js';
 import { farmslotRoot, getOrchestratorTaskRoot, getProjectField } from '../core/config.js';
 import { updateSlotStatus } from '../core/state.js';
 import { fetchPRDiffFiles } from '../external/github.js';
@@ -57,6 +60,33 @@ const FLOW_TO_TASK_TEMPLATE: Partial<Record<Run['flowType'], string>> = {
   dev: 'dev.md',
   'pr-complete': 'pr-complete.md',
 };
+
+export function mergeInitialContextIntoTicketData(
+  ticketData: RunTicketData,
+  initialContext: string | undefined,
+): RunTicketData {
+  const context = initialContext?.trim();
+  const manualTicketAlreadyCarriesContext =
+    ticketData.source === 'manual' &&
+    (ticketData.description.trim().length > 0 || ticketData.acceptanceCriteria.length > 0);
+  if (!context || manualTicketAlreadyCarriesContext) return ticketData;
+
+  const description = ticketData.description.includes(context)
+    ? ticketData.description
+    : [ticketData.description.trim(), `Additional Farmslot context:\n${context}`]
+        .filter(Boolean)
+        .join('\n\n');
+  const acceptanceCriteria = [
+    ...new Set([...ticketData.acceptanceCriteria, ...extractBacklogAcceptanceCriteria(context)]),
+  ];
+  if (
+    description === ticketData.description &&
+    acceptanceCriteria.length === ticketData.acceptanceCriteria.length
+  ) {
+    return ticketData;
+  }
+  return { ...ticketData, description, acceptanceCriteria };
+}
 
 async function readTemplateProvenanceForTask(
   taskFilePath: string,
@@ -163,8 +193,14 @@ export async function executeGradeStep(
   const inputs: Record<string, unknown> = { ticketOrPr: run.ticketOrPr };
   // Fetch ticket data from Jira/GitHub unless the run was created with
   // explicit context, such as eval replay candidates.
-  const ticketData = run.ticketData ?? (await fetchTicketData(run));
-  if (ticketData && !run.ticketData) {
+  const resolvedTicketData = run.ticketData ?? (await fetchTicketData(run));
+  const ticketData = resolvedTicketData
+    ? mergeInitialContextIntoTicketData(
+        resolvedTicketData,
+        run.engineState?.interactiveDev?.initialContext,
+      )
+    : null;
+  if (ticketData && ticketData !== run.ticketData) {
     updateRun(runId, { ticketData });
     await refreshRunLinks(runId);
   }
@@ -441,10 +477,7 @@ export async function executeWriteTaskStep(
   };
 
   // For PR flows: fetch PR metadata + set branch
-  if (
-    (current.flowType === 'review-pr' || current.flowType === 'pr-complete') &&
-    !current.ticketData
-  ) {
+  if (PR_BOUND_FLOW_TYPES.has(current.flowType) && !current.ticketData) {
     emitWithBroadcast('substep', {
       name: 'fetch-pr-data',
       detail: `Fetching PR ${current.ticketOrPr}`,
@@ -460,6 +493,18 @@ export async function executeWriteTaskStep(
     const ticketData = await fetchTicketData(current);
     if (ticketData) {
       updateRun(runId, { ticketData });
+      await refreshRunLinks(runId);
+    }
+  }
+
+  const fetchedRun = getRun(runId)!;
+  if (fetchedRun.ticketData) {
+    const ticketDataWithContext = mergeInitialContextIntoTicketData(
+      fetchedRun.ticketData,
+      fetchedRun.engineState?.interactiveDev?.initialContext,
+    );
+    if (ticketDataWithContext !== fetchedRun.ticketData) {
+      updateRun(runId, { ticketData: ticketDataWithContext });
       await refreshRunLinks(runId);
     }
   }

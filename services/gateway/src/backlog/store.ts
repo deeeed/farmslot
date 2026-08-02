@@ -72,6 +72,9 @@ import {
   removeQueueItemInternal,
   tryDispatchNext,
 } from './dispatch-queue.js';
+import { extractBacklogAcceptanceCriteria } from './spec.js';
+
+export { extractBacklogAcceptanceCriteria } from './spec.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -415,27 +418,13 @@ async function readBacklogSpecMarkdown(item: BacklogItem): Promise<string | null
   return readFile(resolveSpecPath(item.specPath), 'utf-8');
 }
 
-export function extractBacklogAcceptanceCriteria(markdown: string): string[] {
-  const lines = markdown.split(/\r?\n/);
-  const headingIndex = lines.findIndex((line) => /^##\s+Acceptance Criteria\s*$/i.test(line));
-  if (headingIndex < 0) return [];
-  const body: string[] = [];
-  for (const line of lines.slice(headingIndex + 1)) {
-    if (/^#{1,2}\s+\S/.test(line)) break;
-    body.push(line);
-  }
-  return body
-    .join('\n')
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*[-*]\s+/, '').trim())
-    .filter(Boolean);
-}
-
 async function assertBacklogSpecReady(item: BacklogItem): Promise<void> {
   if (!item.specPath) return;
-  if (item.sourceKind !== 'manual') {
-    throw new Error('Markdown-backed backlog specs must use manual sourceKind');
-  }
+  // Markdown specs are allowed on any sourceKind (manual, jira, github).
+  // Tracker identity (Jira key / GH issue) stays on sourceRef; the markdown
+  // file is additive AC/context and is injected into initialContext for all
+  // kinds. Structured ticketData remains manual-only so jira/github still
+  // fetch live ticket payloads at run time.
   const markdown = await readBacklogSpecMarkdown(item);
   const acceptanceCriteria = extractBacklogAcceptanceCriteria(markdown ?? '');
   if (acceptanceCriteria.length === 0) {
@@ -1642,8 +1631,8 @@ async function buildInitialContext(item: BacklogItem): Promise<string> {
   const specMarkdown = await readBacklogSpecMarkdown(item);
   return [
     specMarkdown?.trim() ? `Backlog markdown spec (${item.specPath}):\n${specMarkdown.trim()}` : '',
-    item.notes?.trim() ? `Backlog notes:\n${item.notes.trim()}` : '',
-    `Backlog source: ${item.sourceKind} ${item.sourceRef}`,
+    item.notes?.trim() ? `## Backlog notes\n\n${item.notes.trim()}` : '',
+    `## Backlog source: ${item.sourceKind} ${item.sourceRef}`,
   ]
     .filter(Boolean)
     .join('\n\n');
