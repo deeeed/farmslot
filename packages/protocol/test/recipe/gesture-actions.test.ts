@@ -82,7 +82,7 @@ test('gesture manifests accept each typed action shape', async () => {
         action: 'ui.long_press',
         intent: 'Open the requested control state.',
         target: 'gesture-hold',
-        holdMs: 700,
+        hold_ms: 700,
         next: 'done',
       },
     }),

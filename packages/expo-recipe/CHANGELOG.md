@@ -4,7 +4,7 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
-- feat: drive swipe, pan, drag, and long-press recipe actions through the assigned native device, select Android devices by ADB serial, reject unsupported native paths before execution, and retain resolved coordinate phases.
+- feat: drive swipe, pan, drag, and `hold_ms` long-press recipe actions through the assigned native device, select Android devices by ADB serial, retry failed tool/device discovery, reject unsupported native paths before execution, and retain resolved coordinate phases.
 
 ## 0.5.0 - 2026-08-01
 

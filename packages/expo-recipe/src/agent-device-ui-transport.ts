@@ -117,17 +117,24 @@ export function createAgentDeviceUiTransport(
       options.platform === 'ios' ? 'idb' : 'adb',
       options.platform === 'ios' ? options.idbPath : options.adbPath,
       gestureCommandRunner,
-    );
+    ).catch((error: unknown) => {
+      gestureToolPromise = undefined;
+      throw error;
+    });
     return gestureToolPromise;
   }
 
   function gestureDevice(): Promise<string> {
-    gestureDevicePromise ??=
+    gestureDevicePromise ??= (
       options.platform === 'ios'
         ? gestureTool().then((tool) =>
             resolveIosGestureDevice(options.device, tool, gestureCommandRunner),
           )
-        : Promise.resolve(options.device);
+        : Promise.resolve(options.device)
+    ).catch((error: unknown) => {
+      gestureDevicePromise = undefined;
+      throw error;
+    });
     return gestureDevicePromise;
   }
 
@@ -343,6 +350,7 @@ async function executeNativeGesture(
           positiveNumber(node.timeout_ms) ?? 10_000,
         );
   return {
+    kind: 'ui-transport-result',
     output: {
       action,
       resolvedStart: start,
@@ -685,6 +693,7 @@ async function captureScreenshot(
   };
   context.registerArtifact(artifact);
   return {
+    kind: 'ui-transport-result',
     output: { captured: true, path: normalizedPath, width: result.width, height: result.height },
     control: { artifacts: [artifact] },
   };

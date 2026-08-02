@@ -18,7 +18,7 @@ export function gestureTarget(
 }
 
 export function gestureDurationMs(node: Record<string, unknown>, action: GestureAction): number {
-  const field = action === 'ui.long_press' ? 'holdMs' : 'duration_ms';
+  const field = action === 'ui.long_press' ? 'hold_ms' : 'duration_ms';
   const value = node[field];
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
     throw new Error(`${action}.${field} must be a positive integer.`);

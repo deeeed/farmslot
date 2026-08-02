@@ -345,11 +345,11 @@
             "required": ["x", "y"],
             "additionalProperties": false
           },
-          "holdMs": { "type": "integer", "minimum": 1 },
+          "hold_ms": { "type": "integer", "minimum": 1 },
           "timeout_ms": { "type": "integer", "minimum": 1 },
           "settle": { "type": "boolean" }
         },
-        "required": ["target", "holdMs"],
+        "required": ["target", "hold_ms"],
         "additionalProperties": false
       },
       "examples": [
@@ -357,7 +357,7 @@
           "action": "ui.long_press",
           "intent": "Hold the requested visible control.",
           "target": "example-control",
-          "holdMs": 700,
+          "hold_ms": 700,
           "next": "done"
         }
       ]

@@ -362,6 +362,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       if (canExecute) {
         const execution = await executeRecipe({
           ref: rootRef,
+          adapter: request.adapter,
           recipe,
           params,
           recipes,

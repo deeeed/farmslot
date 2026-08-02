@@ -24,7 +24,11 @@ import {
 } from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
-import { createStandardUiAdapters, type UiActionTransport } from '../src/adapters/ui.js';
+import {
+  createStandardUiAdapters,
+  normalizeUiTransportResult,
+  type UiActionTransport,
+} from '../src/adapters/ui.js';
 import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { parseRecipeParamAssignments, validateRecipeCliInput } from '../src/cli/support.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
@@ -2006,6 +2010,112 @@ test('rejects action values whose resolved output violates the manifest schema',
   }
 });
 
+test('rejects resolved action values that violate the active adapter schema', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    let consumed = false;
+    const actionManifest: RecipeActionManifestDocument = withTestSchemas({
+      ...testManifest(['end']),
+      actions: {
+        ...testManifest(['end']).actions,
+        'demo.produce': testAction('demo.produce', {
+          schema: { type: 'object', additionalProperties: false },
+        }),
+        'demo.consume': testAction('demo.consume', {
+          adapters: ['android'],
+          schema: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'array',
+                items: { type: 'object', additionalProperties: true },
+              },
+            },
+            required: ['path'],
+            additionalProperties: false,
+          },
+          adapter_schemas: {
+            android: {
+              type: 'object',
+              properties: {
+                path: {
+                  type: 'array',
+                  items: { type: 'object', additionalProperties: true },
+                  maxItems: 1,
+                },
+              },
+              additionalProperties: true,
+            },
+          },
+          examples: [
+            {
+              action: 'demo.consume',
+              intent: 'Consume the native test path.',
+              path: [{ x: 20, y: 0 }],
+              next: 'done',
+            },
+          ],
+        }),
+      },
+    });
+    const runner = createRecipeRunner({
+      actionManifest,
+      adapters: [
+        defineActionAdapter({
+          action: 'demo.produce',
+          async execute() {
+            return {
+              output: {
+                path: [
+                  { x: 20, y: 0 },
+                  { x: 40, y: 10 },
+                ],
+              },
+            };
+          },
+        }),
+        defineActionAdapter({
+          action: 'demo.consume',
+          async execute() {
+            consumed = true;
+            return {};
+          },
+        }),
+      ],
+    });
+    const result = await runner.run({
+      recipeDocument: recipeDocument({
+        produce: {
+          action: 'demo.produce',
+          intent: 'Produce a path for the next step.',
+          next: 'consume',
+        },
+        consume: {
+          action: 'demo.consume',
+          intent: 'Use the produced path.',
+          path: '{{outputs.produce.path}}',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
+      adapter: 'android',
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+    });
+    assert.equal(result.status, 'fail');
+    assert.equal(consumed, false);
+    const trace = (await readJsonFile(result.tracePath)) as Array<{ error?: string }>;
+    assert.match(trace.at(-1)?.error ?? '', /action_params_not_supported_by_adapter/u);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('preserves raw action outputs that happen to contain phases', () => {
+  const result = { phases: ['queued', 'confirmed'], transactionId: 'tx-1' };
+  assert.deepEqual(normalizeUiTransportResult(result), { output: result });
+});
+
 test('rejects invalid nested call parameters during preflight', async () => {
   const tempRoot = await createTempRoot();
   try {
@@ -3086,6 +3196,7 @@ test('gesture phase records survive adapter normalization into the retained trac
   const transport: UiActionTransport = {
     async execute() {
       return {
+        kind: 'ui-transport-result',
         output: {
           resolvedStart: { x: 20, y: 30 },
           resolvedEnd: { x: 60, y: 30 },

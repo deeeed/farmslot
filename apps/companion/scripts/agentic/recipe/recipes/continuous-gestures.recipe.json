@@ -133,7 +133,7 @@
         "action": "ui.long_press",
         "intent": "Open the held state on the requested visible control.",
         "target": "{{params.hold_target}}",
-        "holdMs": 700,
+        "hold_ms": 700,
         "next": "confirm-held",
         "proves": ["continuous-gesture-stream"]
       },

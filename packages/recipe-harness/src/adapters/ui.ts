@@ -34,6 +34,7 @@ export interface UiTransportControl {
 }
 
 export interface UiTransportResult {
+  kind: 'ui-transport-result';
   output?: unknown;
   control?: UiTransportControl;
   phases?: RecipeActionPhase[];
@@ -110,8 +111,5 @@ export function normalizeUiTransportResult(result: unknown): ActionResult {
 
 function isUiTransportResult(value: unknown): value is UiTransportResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return (
-    Object.prototype.hasOwnProperty.call(value, 'control') ||
-    Object.prototype.hasOwnProperty.call(value, 'phases')
-  );
+  return (value as { kind?: unknown }).kind === 'ui-transport-result';
 }

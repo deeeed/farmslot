@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
-- **BREAKING:** Replace `ui.gesture` with streamed swipe, pan, drag, and long-press transports; reject unsupported active adapters from manifest declarations; resolve targets to coordinates and retain start/move/end phases in recipe traces.
+- **BREAKING:** Replace `ui.gesture` with streamed swipe, pan, drag, and long-press transports; use `hold_ms`; reject unsupported active-adapter parameters after template resolution; and retain coordinate phases through explicit transport-result envelopes.
 
 ## 0.11.1 - 2026-08-01
 

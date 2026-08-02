@@ -42,6 +42,7 @@ export interface RecipeDocumentValidationOptions {
 export function validateResolvedRecipeActionNode(
   node: unknown,
   manifest: unknown,
+  options?: Pick<RecipeDocumentValidationOptions, 'adapter'>,
 ): RecipeValidationResult {
   const ctx = createContext();
   if (!isRecord(node) || !isNonEmptyString(node.action)) {
@@ -67,6 +68,18 @@ export function validateResolvedRecipeActionNode(
     return finishResult(ctx);
   }
   ctx.findings.push(...validateRecipeParams(getRecipeActionParams(node), contract.schema).findings);
+  const adapter = options?.adapter;
+  const adapterSchema = adapter ? contract.adapterSchemas?.[adapter] : undefined;
+  if (adapterSchema) {
+    const paramsResult = validateRecipeParams(getRecipeActionParams(node), adapterSchema);
+    ctx.findings.push(
+      ...paramsResult.findings.map((finding) => ({
+        ...rebaseFinding(finding, 'node'),
+        code: 'recipe.action_params_not_supported_by_adapter',
+        message: `Adapter ${adapter} does not support recipe action ${node.action} with these parameters: ${finding.message} Next: adjust the parameters for ${adapter} or choose another supporting adapter.`,
+      })),
+    );
+  }
   validateOfficialActionRelationships(ctx, node.action, node, 'node');
   return finishResult(ctx);
 }

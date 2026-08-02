@@ -1068,6 +1068,7 @@ async function executeCdpGesture(
   }
   phases.push(gesturePhase('end', end, startedAtMs));
   return {
+    kind: 'ui-transport-result',
     output: { action, pointer, resolvedStart: start, resolvedEnd: end },
     phases,
   };
@@ -1265,6 +1266,7 @@ async function captureCdpScreenshot(
         };
   context.registerArtifact(artifact);
   return {
+    kind: 'ui-transport-result',
     output: { captured: true, path: normalizedPath, artifact },
     control: { artifacts: [artifact] },
   };

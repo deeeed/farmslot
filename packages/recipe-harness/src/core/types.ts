@@ -28,7 +28,7 @@ export interface RecipeRunRequest {
   approval?: RecipeExecutionApproval;
   /** Root recipe parameters. Defaults from paramsSchema are applied first. */
   params?: Record<string, unknown>;
-  /** Active adapter used to select adapter-specific recipe files. */
+  /** Active adapter used for recipe selection and manifest capability validation. */
   adapter?: string;
   /** Ordered recipe library sources; the first source declaring a recipe ref wins. */
   librarySources?: RecipeLibrarySource[];

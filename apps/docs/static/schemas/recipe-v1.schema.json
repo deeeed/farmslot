@@ -136,6 +136,11 @@
           "type": "integer",
           "minimum": 0,
           "description": "Minimum number of entries required for array parameters."
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of entries allowed for array parameters."
         }
       },
       "additionalProperties": false

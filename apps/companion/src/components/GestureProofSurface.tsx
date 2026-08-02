@@ -18,10 +18,12 @@ export function GestureProofSurface() {
   const [sliderValue, setSliderValue] = useState(20);
   const [sliderMoved, setSliderMoved] = useState(false);
   const [held, setHeld] = useState(false);
+  const listRef = useRef<ScrollView>(null);
   const sliderStart = useRef(sliderValue);
   const sliderValueRef = useRef(sliderValue);
   const markPanMoved = useCallback(() => setPanMoved(true), []);
   const resetProof = useCallback(() => {
+    listRef.current?.scrollTo({ x: 0, animated: false });
     setListMoved(false);
     setPanMoved(false);
     setSliderValue(20);
@@ -75,13 +77,14 @@ export function GestureProofSurface() {
       </Pressable>
 
       <ScrollView
+        ref={listRef}
         horizontal
         testID="gesture-proof-list"
         style={styles.list}
         contentContainerStyle={styles.listContent}
-        onScroll={(event) => {
-          if (gestureHandlersEnabled && event.nativeEvent.contentOffset.x >= 20) setListMoved(true);
-        }}
+        onScroll={(event) =>
+          setListMoved(gestureHandlersEnabled && event.nativeEvent.contentOffset.x >= 20)
+        }
         scrollEventThrottle={16}
       >
         {Array.from({ length: 10 }, (_, index) => (

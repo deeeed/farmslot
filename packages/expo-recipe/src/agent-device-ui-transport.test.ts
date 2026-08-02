@@ -325,7 +325,7 @@ test('streams all continuous gestures from resolved native target coordinates', 
       },
       {
         action: 'ui.long_press',
-        node: { target: 'gesture-target', holdMs: 700, settle: false },
+        node: { target: 'gesture-target', hold_ms: 700, settle: false },
         end: { x: 60, y: 40 },
       },
     ] as const;
@@ -483,6 +483,68 @@ test('native transports fail closed on multi-point paths', async () => {
     );
   }
   assert.deepEqual(iosCommands, [['list-targets', '--json']]);
+});
+
+test('native gesture discovery retries after tool and device resolution failures', async () => {
+  const client = {
+    apps: { open: async () => ({ session: 'gesture-session', identifiers: {} }) },
+    interactions: {
+      press: async () => ({ ok: true }),
+      fill: async () => ({ ok: true }),
+      scroll: async () => ({ ok: true }),
+    },
+    command: { wait: async () => ({ stable: true }) },
+    capture: {
+      snapshot: async () => ({ nodes: [], truncated: false }),
+      screenshot: async () => ({}),
+    },
+    sessions: { close: async () => ({ session: 'gesture-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  let whichAttempts = 0;
+  let deviceAttempts = 0;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'ios',
+    device: 'gesture-ios',
+    app: 'net.siteed.farmslot.development',
+    session: 'gesture-session',
+    client,
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        if (args[0] === 'idb') {
+          whichAttempts += 1;
+          return whichAttempts === 1 ? {} : { stdout: '/tools/idb\n' };
+        }
+        if (args[0] === 'list-targets') {
+          deviceAttempts += 1;
+          return deviceAttempts === 1
+            ? {}
+            : {
+                stdout:
+                  '{"name":"gesture-ios","udid":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","state":"Booted"}\n',
+              };
+        }
+        return {};
+      },
+    },
+  });
+  const node = {
+    target: { x: 20, y: 40 },
+    hold_ms: 1,
+    settle: false,
+  };
+
+  await assert.rejects(
+    () => transport.execute('ui.long_press', node, {} as ActionExecutionContext),
+    /requires idb/u,
+  );
+  await assert.rejects(
+    () => transport.execute('ui.long_press', node, {} as ActionExecutionContext),
+    /could not resolve simulator gesture-ios/u,
+  );
+  await transport.execute('ui.long_press', node, {} as ActionExecutionContext);
+
+  assert.equal(whichAttempts, 2);
+  assert.equal(deviceAttempts, 2);
 });
 
 test('observe false remains a harness concern and does not alter provider selectors', async () => {
