@@ -7,6 +7,8 @@ import { test } from 'node:test';
 
 import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 
+import { buildCollisionSuccessorParams } from '../run-engine/engine-decisions.js';
+
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-work-graph-test-'));
 process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
@@ -75,6 +77,7 @@ async function freshStores() {
   const queue = await import('../backlog/dispatch-queue.js');
   const runs = await import('../runs/store.js');
   const fleetState = await import('../fleet/state.js');
+  const backlogMethods = await import('../methods/backlog.js');
   const workGraph = await import('./store.js');
   fleetState.setCachedFleetForTests(testFleet());
   await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
@@ -91,7 +94,7 @@ async function freshStores() {
   await backlog.loadBacklog();
   await workGraph.loadWorkGraphs();
   await runs.loadAllRuns();
-  return { backlog, queue, runs, workGraph };
+  return { backlog, backlogMethods, queue, runs, workGraph };
 }
 
 async function createReadyBacklogItem(
@@ -951,7 +954,7 @@ test('scheduler retries enqueue when completed ledger is stale after backlog res
   );
 });
 
-test('scheduler resets an orphaned running node once its run is gone', async () => {
+test('scheduler resets an orphaned running node once its run is deleted', async () => {
   const { backlog, queue, runs, workGraph } = await freshStores();
   const created = await createReadyBacklogItem(backlog, 'Orphaned running node');
   const graph = await workGraph.createWorkGraph({
@@ -983,8 +986,9 @@ test('scheduler resets an orphaned running node once its run is gone', async () 
   const started = await workGraph.schedulerTick({ graphId });
   assert.equal(started.graphs[0]?.nodes.find((n) => n.id === nodeId)?.status, 'running');
 
-  // The run is cancelled and the backlog item is released (mirrors runCancel).
-  runs.updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  // Deleting the run releases the backlog item and makes the node orphaned.
+  runs.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+  await runs.deleteRun(run.id);
   await backlog.markBacklogRunReleased(run.id);
 
   // The orphaned running node must not stay stuck — it is actually re-enqueued
@@ -999,6 +1003,114 @@ test('scheduler resets an orphaned running node once its run is gone', async () 
       .getQueueSnapshot()
       .some((item) => item.workGraphId === graphId && item.workNodeId === nodeId),
   );
+});
+
+test('operator cancellation holds graph work until an explicit retry', async () => {
+  const { backlog, backlogMethods, queue, runs, workGraph } = await freshStores();
+  const created = await createReadyBacklogItem(backlog, 'Cancelled graph node');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Cancelled graph',
+  });
+  const graphId = graph.graph.graph.id;
+  const nodeId = 'wn_cancelled';
+  await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
+  await workGraph.activateWorkGraph({ graphId });
+
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === nodeId);
+  assert.ok(queued);
+  const prior = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    workGraphId: graphId,
+    workNodeId: nodeId,
+  });
+  runs.updateRun(prior.id, { status: 'failed', completedAt: new Date().toISOString() });
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    workGraphId: graphId,
+    workNodeId: nodeId,
+  });
+  await backlog.markBacklogRunStarted(queued, run);
+  queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
+  const cancelled = runs.updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+  });
+  backlog.markBacklogRunObserved(cancelled);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const held = await workGraph.schedulerTick({ graphId });
+  const heldNode = held.graphs[0]?.nodes.find((node) => node.id === nodeId);
+  assert.equal(heldNode?.status, 'needs-attention');
+  assert.equal(heldNode?.latestRunId, run.id);
+  assert.equal(held.graphs[0]?.graph.status, 'waiting');
+  assert.equal(
+    queue.getQueueSnapshot().some((item) => item.workNodeId === nodeId),
+    false,
+  );
+  assert.equal(
+    backlog.listBacklogItems().items.find((item) => item.id === created.item.id)?.status,
+    'needs-attention',
+  );
+
+  await backlogMethods.backlogMarkReady({ itemId: created.item.id });
+  const retried = workGraph.getWorkGraph({ graphId });
+  assert.equal(retried.graph.nodes.find((node) => node.id === nodeId)?.status, 'queued');
+  assert.ok(queue.getQueueSnapshot().some((item) => item.workNodeId === nodeId));
+});
+
+test('collision redirect keeps the successor authoritative for the graph node', async () => {
+  const { backlog, queue, runs, workGraph } = await freshStores();
+  const created = await createReadyBacklogItem(backlog, 'Redirected graph node');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Redirected graph',
+  });
+  const graphId = graph.graph.graph.id;
+  const nodeId = 'wn_redirected';
+  await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
+  await workGraph.activateWorkGraph({ graphId });
+
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === nodeId);
+  assert.ok(queued);
+  const parent = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    workGraphId: graphId,
+    workNodeId: nodeId,
+  });
+  await backlog.markBacklogRunStarted(queued, parent);
+  queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
+  const successor = runs.createRun(
+    buildCollisionSuccessorParams(parent, parent.familyId, 'collision-test'),
+  );
+  assert.equal(successor.workGraphId, graphId);
+  assert.equal(successor.workNodeId, nodeId);
+  runs.updateRun(parent.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    redirectedToRunId: successor.id,
+  });
+  const runningSuccessor = runs.updateRun(successor.id, { status: 'monitoring' });
+  backlog.markBacklogRunObserved(runningSuccessor);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const projected = await workGraph.schedulerTick({ graphId });
+  const node = projected.graphs[0]?.nodes.find((candidate) => candidate.id === nodeId);
+  assert.equal(node?.status, 'running');
+  assert.equal(node?.latestRunId, successor.id);
 });
 
 test('manual gate resolution rejects ambiguous gate ids and can disambiguate by graph and edge', async () => {

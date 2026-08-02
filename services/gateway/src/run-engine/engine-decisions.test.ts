@@ -5,6 +5,7 @@ import type { Run } from '@farmslot/protocol';
 
 import {
   autoResolveEngineDecision,
+  buildCollisionSuccessorParams,
   collisionAutoResolveAction,
   collisionDecisionActions,
 } from './engine-decisions.js';
@@ -28,6 +29,10 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     steps: overrides.steps ?? [],
     decisions: overrides.decisions ?? [],
     engineState: overrides.engineState,
+    backlogItemId: overrides.backlogItemId,
+    workGraphId: overrides.workGraphId,
+    workNodeId: overrides.workNodeId,
+    allowedSlots: overrides.allowedSlots,
     metrics: overrides.metrics ?? {
       nudgeCount: 0,
       runner: 'claude',
@@ -40,6 +45,24 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     updatedAt: overrides.updatedAt ?? '2026-05-04T10:00:00.000Z',
   } as Run;
 }
+
+test('collision successor retains backlog and work-graph ownership', () => {
+  const params = buildCollisionSuccessorParams(
+    makeRun({
+      backlogItemId: 'backlog-1',
+      workGraphId: 'graph-1',
+      workNodeId: 'node-1',
+      allowedSlots: ['slot-1'],
+    }),
+    'family-2',
+    'collision-120000',
+  );
+
+  assert.equal(params.backlogItemId, 'backlog-1');
+  assert.equal(params.workGraphId, 'graph-1');
+  assert.equal(params.workNodeId, 'node-1');
+  assert.deepEqual(params.allowedSlots, ['slot-1']);
+});
 
 test('collisionAutoResolveAction auto-resolves comparison skipPrepare retries', () => {
   assert.equal(
