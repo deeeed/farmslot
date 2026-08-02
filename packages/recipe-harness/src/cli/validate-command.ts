@@ -56,7 +56,7 @@ export function registerValidateCommand(program: Command): void {
             );
           }
         }
-        if (result.status === 'invalid') process.exit(1);
+        if (result.status === 'invalid') process.exitCode = 1;
       } catch (error) {
         if (!isRecipeCliError(error)) throw error;
         reportRecipeCliError(error, options.json === true);

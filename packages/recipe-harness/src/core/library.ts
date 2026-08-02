@@ -167,8 +167,8 @@ export async function loadRecipeLibraries(
         );
       }
       const previous = selected.get(identity.ref);
+      const currentFile = path.join(LIBRARY_RECIPES_DIR, relativeFile).split(path.sep).join('/');
       if (previous && previous.adapter === identity.adapter) {
-        const currentFile = path.join(LIBRARY_RECIPES_DIR, relativeFile).split(path.sep).join('/');
         throw new RecipeResolutionError(
           'RECIPE_LIBRARY_DUPLICATE_RECIPE',
           `Recipe ${identity.ref} is declared more than once in library ${name}: ${previous.file} and ${currentFile}.`,
@@ -181,7 +181,7 @@ export async function loadRecipeLibraries(
         ref: identity.ref,
         document,
         source: name,
-        file: path.join(LIBRARY_RECIPES_DIR, relativeFile).split(path.sep).join('/'),
+        file: currentFile,
         path: fileReal,
         ...(identity.adapter ? { adapter: identity.adapter } : {}),
         provenance: { ...sourceProvenance, path: fileReal, digest },
