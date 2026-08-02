@@ -7,228 +7,120 @@
     "na": "Not a CLI target (web-UI-internal or transport-level); note explains why."
   },
   "methods": {
-    "analytics.backfill": {
-      "surface": "typed-command",
-      "command": "farmslot analytics"
+    "gateway.ping": {
+      "surface": "rpc-only",
+      "note": "Interim: lightweight authenticated liveness probe; use `farmslot rpc gateway.ping`."
     },
-    "analytics.query": {
+    "gateway.status": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "gateway.doctor": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "fleet.status": {
       "surface": "typed-command",
-      "command": "farmslot analytics"
+      "command": "farmslot fleet",
+      "tui": true
+    },
+    "fleet.refresh": {
+      "surface": "typed-command",
+      "command": "farmslot fleet"
     },
     "auth.connect": {
       "surface": "typed-command",
       "command": "farmslot login",
       "note": "Also the implicit transport handshake on every authenticated client connection."
     },
-    "backlog.archive": {
+    "pairing.create": {
       "surface": "typed-command",
-      "command": "farmslot backlog archive"
+      "command": "farmslot pair"
     },
-    "backlog.autoDispatchTick": {
+    "pairing.candidates": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "pairing.exchange": {
       "surface": "typed-command",
-      "command": "farmslot backlog",
+      "command": "farmslot login --code"
+    },
+    "slot.check": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
+    "slot.prepare": {
+      "surface": "typed-command",
+      "command": "farmslot slot",
       "tui": true
     },
-    "backlog.closeShipped": {
+    "slot.release": {
       "surface": "typed-command",
-      "command": "farmslot backlog",
-      "tui": true
+      "command": "farmslot slot"
     },
-    "backlog.create": {
+    "slot.recycle": {
       "surface": "typed-command",
-      "command": "farmslot backlog"
+      "command": "farmslot slot"
     },
-    "backlog.delete": {
+    "slot.refresh": {
       "surface": "typed-command",
-      "command": "farmslot backlog delete"
+      "command": "farmslot slot"
     },
-    "backlog.dequeue": {
-      "surface": "typed-command",
-      "command": "farmslot backlog dequeue"
-    },
-    "backlog.enqueue": {
-      "surface": "typed-command",
-      "command": "farmslot backlog",
-      "tui": true
-    },
-    "backlog.list": {
-      "surface": "typed-command",
-      "command": "farmslot backlog",
-      "tui": true
-    },
-    "backlog.markReady": {
-      "surface": "typed-command",
-      "command": "farmslot backlog",
-      "tui": true
-    },
-    "backlog.reconcileRun": {
-      "surface": "typed-command",
-      "command": "farmslot backlog reconcile-run"
-    },
-    "backlog.refine": {
-      "surface": "typed-command",
-      "command": "farmslot backlog refine"
-    },
-    "backlog.refinementSession.get": {
-      "surface": "typed-command",
-      "command": "farmslot backlog refinement-session"
-    },
-    "backlog.spec.get": {
-      "surface": "typed-command",
-      "command": "farmslot backlog"
-    },
-    "backlog.upcoming": {
-      "surface": "typed-command",
-      "command": "farmslot backlog upcoming"
-    },
-    "backlog.update": {
-      "surface": "typed-command",
-      "command": "farmslot backlog"
-    },
-    "chat.abort": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.clear": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.confirmAction": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.context": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.history": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.listActions": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.new": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.observerEvidence": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.saveMemory": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.screenEvidence": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.send": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.sessionContext": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.sessionCreate": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.sessionDelete": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.sessionPin": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.sessions": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "chat.sessionsBulkDelete": {
-      "surface": "na",
-      "note": "Command Center chat surface (web UI)."
-    },
-    "config.pool": {
+    "slot.cleanup": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "config.pool.raw": {
+    "slot.prepareStatus": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "config.pool.update": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "config.pools": {
+    "slot.fixtureRefresh": {
       "surface": "typed-command",
-      "command": "farmslot config"
+      "command": "farmslot slot"
     },
-    "config.project": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "config.project.autoRecovery.update": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "config.project.backlog.update": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "config.projects": {
+    "slot.monitor": {
       "surface": "typed-command",
-      "command": "farmslot config"
+      "command": "farmslot slot"
     },
-    "config.slot.update": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "config.templateOptions": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "config.templatePreview": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "config.templates": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "copilot.formatInstruction": {
-      "surface": "na",
-      "note": "Command Center copilot surface (web UI)."
-    },
-    "decision.list": {
+    "slot.show": {
       "surface": "typed-command",
-      "command": "farmslot decision list",
-      "tui": true
+      "command": "farmslot slot"
     },
-    "decision.resolve": {
+    "slot.softRefresh": {
       "surface": "typed-command",
-      "command": "farmslot decision resolve"
+      "command": "farmslot slot"
     },
-    "diagnostics.run": {
+    "slot.reopen": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
+    "slot.autoRefresh": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
+    "fleet.refreshSlots": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "dispatch.candidates": {
+    "fleet.refreshSlots.cancel": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "dispatch.matchProject": {
+    "fleet.prSummary": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
     "dispatch.preview": {
       "surface": "typed-command",
       "command": "farmslot dispatch"
+    },
+    "dispatch.matchProject": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "dispatch.candidates": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
     "dispatch.queue.add": {
       "surface": "rpc-only",
@@ -246,88 +138,396 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "dispatch.queue.reorder": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
     "dispatch.queue.update": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "eval.experiment.create": {
+    "dispatch.queue.reorder": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "eval.suite.cap.get": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "eval.suite.cap.update": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "eval.trial.result.get": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "eval.trial.start": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "family.observability.get": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "family.report.generate": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "finetune.exportDPO": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "finetune.exportSFT": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "finetune.index": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "fleet.prSummary": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "fleet.refresh": {
+    "backlog.create": {
       "surface": "typed-command",
-      "command": "farmslot fleet"
+      "command": "farmslot backlog"
     },
-    "fleet.refreshSlots": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "fleet.refreshSlots.cancel": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "fleet.status": {
+    "backlog.list": {
       "surface": "typed-command",
-      "command": "farmslot fleet",
+      "command": "farmslot backlog",
       "tui": true
     },
-    "fs.delete": {
-      "surface": "na",
-      "note": "Slot Workspace IDE file view (web UI)."
+    "backlog.update": {
+      "surface": "typed-command",
+      "command": "farmslot backlog"
     },
-    "fs.hash": {
+    "backlog.delete": {
+      "surface": "typed-command",
+      "command": "farmslot backlog delete"
+    },
+    "backlog.markReady": {
+      "surface": "typed-command",
+      "command": "farmslot backlog",
+      "tui": true
+    },
+    "backlog.archive": {
+      "surface": "typed-command",
+      "command": "farmslot backlog archive"
+    },
+    "backlog.enqueue": {
+      "surface": "typed-command",
+      "command": "farmslot backlog",
+      "tui": true
+    },
+    "backlog.dequeue": {
+      "surface": "typed-command",
+      "command": "farmslot backlog dequeue"
+    },
+    "backlog.autoDispatchTick": {
+      "surface": "typed-command",
+      "command": "farmslot backlog",
+      "tui": true
+    },
+    "backlog.upcoming": {
+      "surface": "typed-command",
+      "command": "farmslot backlog upcoming"
+    },
+    "backlog.spec.get": {
+      "surface": "typed-command",
+      "command": "farmslot backlog"
+    },
+    "backlog.reconcileRun": {
+      "surface": "typed-command",
+      "command": "farmslot backlog reconcile-run"
+    },
+    "backlog.closeShipped": {
+      "surface": "typed-command",
+      "command": "farmslot backlog",
+      "tui": true
+    },
+    "backlog.refine": {
+      "surface": "typed-command",
+      "command": "farmslot backlog refine"
+    },
+    "backlog.refinementSession.get": {
+      "surface": "typed-command",
+      "command": "farmslot backlog refinement-session"
+    },
+    "workGraph.create": {
+      "surface": "typed-command",
+      "command": "farmslot graph create"
+    },
+    "workGraph.get": {
+      "surface": "typed-command",
+      "command": "farmslot graph show"
+    },
+    "workGraph.list": {
+      "surface": "typed-command",
+      "command": "farmslot graph list"
+    },
+    "workGraph.addNode": {
+      "surface": "typed-command",
+      "command": "farmslot graph add-node"
+    },
+    "workGraph.addEdge": {
+      "surface": "typed-command",
+      "command": "farmslot graph add-edge"
+    },
+    "workGraph.removeNode": {
+      "surface": "typed-command",
+      "command": "farmslot graph remove-node"
+    },
+    "workGraph.removeEdge": {
+      "surface": "typed-command",
+      "command": "farmslot graph remove-edge"
+    },
+    "workGraph.updateNode": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "workGraph.activate": {
+      "surface": "typed-command",
+      "command": "farmslot graph activate"
+    },
+    "workGraph.pause": {
+      "surface": "typed-command",
+      "command": "farmslot graph pause"
+    },
+    "workGraph.gateResolve": {
+      "surface": "typed-command",
+      "command": "farmslot graph gate-resolve"
+    },
+    "workGraph.schedulerTick": {
+      "surface": "typed-command",
+      "command": "farmslot graph tick"
+    },
+    "roadmap.list": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap list",
+      "tui": true
+    },
+    "roadmap.get": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap get",
+      "tui": true
+    },
+    "roadmap.save": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap save",
+      "tui": true
+    },
+    "roadmap.delete": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap delete"
+    },
+    "roadmap.refine": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap refine"
+    },
+    "roadmap.refinementSession.get": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap refinement-session"
+    },
+    "roadmap.prompt.get": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap prompt-get"
+    },
+    "roadmap.promotionDraft.list": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap promotion-draft list"
+    },
+    "roadmap.promotionDraft.get": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap promotion-draft get"
+    },
+    "roadmap.promotionDraft.save": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap promotion-draft save"
+    },
+    "roadmap.promote": {
+      "surface": "typed-command",
+      "command": "farmslot roadmap promote"
+    },
+    "terminal.subscribe": {
       "surface": "na",
-      "note": "Slot Workspace IDE file view (web UI)."
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.unsubscribe": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.send": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.snapshot": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.input": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.resize": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.reinit": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.worker.subscribe": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.worker.unsubscribe": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.worker.input": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.worker.resize": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "terminal.worker.snapshot": {
+      "surface": "na",
+      "note": "Web terminal PTY surface (Command Center)."
+    },
+    "worker.session.history.get": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "worker.session.history.subscribe": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "worker.session.history.unsubscribe": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "pr.status": {
+      "surface": "typed-command",
+      "command": "farmslot pr"
+    },
+    "pr.list": {
+      "surface": "typed-command",
+      "command": "farmslot pr"
+    },
+    "pr.monitor": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "pr.reviewComments": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "pr.addComment": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "pr.resolveThread": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "pr.forSlot": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "pr.editComment": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "pr.deleteComment": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "pr.submitReview": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "decision.list": {
+      "surface": "typed-command",
+      "command": "farmslot decision list",
+      "tui": true
+    },
+    "decision.resolve": {
+      "surface": "typed-command",
+      "command": "farmslot decision resolve"
+    },
+    "nodes.list": {
+      "surface": "typed-command",
+      "command": "farmslot gateway"
+    },
+    "nodes.deploy": {
+      "surface": "typed-command",
+      "command": "farmslot node"
+    },
+    "task.progress": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.split": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.selectPane": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.killPane": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.zoomPane": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.newWindow": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.selectWindow": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.list": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.worker.list": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.worker.restore": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.renameWindow": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.sendKeys": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "tmux.synchronizePanes": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "slot.openEditor": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
+    "config.pools": {
+      "surface": "typed-command",
+      "command": "farmslot config"
+    },
+    "config.pool": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "config.projects": {
+      "surface": "typed-command",
+      "command": "farmslot config"
+    },
+    "config.project": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "config.pool.raw": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "config.templates": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "config.templatePreview": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "config.templateOptions": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "config.slot.update": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "config.pool.update": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "config.project.autoRecovery.update": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "config.project.backlog.update": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
     "fs.list": {
-      "surface": "na",
-      "note": "Slot Workspace IDE file view (web UI)."
-    },
-    "fs.mkdir": {
       "surface": "na",
       "note": "Slot Workspace IDE file view (web UI)."
     },
@@ -335,11 +535,7 @@
       "surface": "na",
       "note": "Slot Workspace IDE file view (web UI)."
     },
-    "fs.rename": {
-      "surface": "na",
-      "note": "Slot Workspace IDE file view (web UI)."
-    },
-    "fs.reveal": {
+    "fs.hash": {
       "surface": "na",
       "note": "Slot Workspace IDE file view (web UI)."
     },
@@ -347,31 +543,27 @@
       "surface": "na",
       "note": "Slot Workspace IDE file view (web UI)."
     },
-    "gateway.doctor": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    "fs.rename": {
+      "surface": "na",
+      "note": "Slot Workspace IDE file view (web UI)."
     },
-    "gateway.ping": {
-      "surface": "rpc-only",
-      "note": "Interim: lightweight authenticated liveness probe; use `farmslot rpc gateway.ping`."
+    "fs.delete": {
+      "surface": "na",
+      "note": "Slot Workspace IDE file view (web UI)."
     },
-    "gateway.status": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    "fs.reveal": {
+      "surface": "na",
+      "note": "Slot Workspace IDE file view (web UI)."
     },
-    "git.branchDiff": {
+    "fs.mkdir": {
+      "surface": "na",
+      "note": "Slot Workspace IDE file view (web UI)."
+    },
+    "git.status": {
       "surface": "na",
       "note": "Slot Workspace git view (web UI)."
     },
     "git.diff": {
-      "surface": "na",
-      "note": "Slot Workspace git view (web UI)."
-    },
-    "git.discard": {
-      "surface": "na",
-      "note": "Slot Workspace git view (web UI)."
-    },
-    "git.files": {
       "surface": "na",
       "note": "Slot Workspace git view (web UI)."
     },
@@ -383,11 +575,11 @@
       "surface": "na",
       "note": "Slot Workspace git view (web UI)."
     },
-    "git.stage": {
+    "git.branchDiff": {
       "surface": "na",
       "note": "Slot Workspace git view (web UI)."
     },
-    "git.status": {
+    "git.stage": {
       "surface": "na",
       "note": "Slot Workspace git view (web UI)."
     },
@@ -395,11 +587,253 @@
       "surface": "na",
       "note": "Slot Workspace git view (web UI)."
     },
-    "improvement.apply": {
+    "git.discard": {
+      "surface": "na",
+      "note": "Slot Workspace git view (web UI)."
+    },
+    "search.query": {
+      "surface": "na",
+      "note": "Slot Workspace code search (web UI)."
+    },
+    "git.files": {
+      "surface": "na",
+      "note": "Slot Workspace git view (web UI)."
+    },
+    "diagnostics.run": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "improvement.chat": {
+    "workspace.metro.subscribe": {
+      "surface": "na",
+      "note": "Slot Workspace IDE view (web UI)."
+    },
+    "workspace.metro.unsubscribe": {
+      "surface": "na",
+      "note": "Slot Workspace IDE view (web UI)."
+    },
+    "stream.subscribe": {
+      "surface": "na",
+      "note": "Binary stream relay for the web UI."
+    },
+    "stream.unsubscribe": {
+      "surface": "na",
+      "note": "Binary stream relay for the web UI."
+    },
+    "stream.snapshot": {
+      "surface": "na",
+      "note": "Binary stream relay for the web UI."
+    },
+    "screen.subscribe": {
+      "surface": "na",
+      "note": "Binary screen-capture relay for the web UI."
+    },
+    "screen.unsubscribe": {
+      "surface": "na",
+      "note": "Binary screen-capture relay for the web UI."
+    },
+    "resource.list": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "resource.control": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "resource.health": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "resource.cleanup": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "resource.watch.setEnabled": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "slot.action.list": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
+    "slot.action.run": {
+      "surface": "typed-command",
+      "command": "farmslot slot"
+    },
+    "run.bundle.export": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.bundle.import": {
+      "surface": "typed-command",
+      "command": "farmslot runs"
+    },
+    "run.bundle.list": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.create": {
+      "surface": "typed-command",
+      "command": "farmslot run"
+    },
+    "run.get": {
+      "surface": "typed-command",
+      "command": "farmslot run"
+    },
+    "run.contextBundle": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.recoveryProposal": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.list": {
+      "surface": "typed-command",
+      "command": "farmslot run",
+      "tui": true
+    },
+    "run.slotHistory": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.cancel": {
+      "surface": "typed-command",
+      "command": "farmslot run"
+    },
+    "run.forceComplete": {
+      "surface": "typed-command",
+      "command": "farmslot run force-complete"
+    },
+    "run.pause": {
+      "surface": "typed-command",
+      "command": "farmslot run pause"
+    },
+    "run.resume": {
+      "surface": "typed-command",
+      "command": "farmslot run resume"
+    },
+    "run.replayStep": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.activateOnSlot": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.autoRecovery.stop": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.ciWatch.poke": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.refreshReviewGate": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.refreshPublishPackage": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.refreshMirror": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.rehydratePrNumber": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.interactiveDev.resolve": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.forSlot": {
+      "surface": "typed-command",
+      "command": "farmslot run for-slot"
+    },
+    "run.resolveDecision": {
+      "surface": "typed-command",
+      "command": "farmslot run",
+      "tui": true
+    },
+    "run.probeWorkerSignal": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.grade": {
+      "surface": "typed-command",
+      "command": "farmslot run grade"
+    },
+    "run.getGrade": {
+      "surface": "typed-command",
+      "command": "farmslot run get-grade"
+    },
+    "run.proposeImprovement": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.delete": {
+      "surface": "typed-command",
+      "command": "farmslot runs"
+    },
+    "run.archive": {
+      "surface": "typed-command",
+      "command": "farmslot run"
+    },
+    "run.bulkDelete": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.cleanup": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.tags.set": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.tags.list": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "run.backfillSummaries": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "analytics.query": {
+      "surface": "typed-command",
+      "command": "farmslot analytics"
+    },
+    "analytics.backfill": {
+      "surface": "typed-command",
+      "command": "farmslot analytics"
+    },
+    "eval.experiment.create": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "eval.trial.start": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "eval.trial.result.get": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "eval.suite.cap.get": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "eval.suite.cap.update": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "family.observability.get": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "family.report.generate": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
@@ -407,11 +841,15 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "llm.auth.add": {
+    "finetune.index": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "llm.auth.import": {
+    "finetune.exportSFT": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "finetune.exportDPO": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
@@ -419,11 +857,7 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "llm.auth.login": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "llm.auth.refresh": {
+    "llm.auth.add": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
@@ -432,6 +866,26 @@
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
     "llm.auth.test": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "llm.auth.import": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "llm.auth.refresh": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "llm.auth.login": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "improvement.chat": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "improvement.apply": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
@@ -447,6 +901,82 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
+    "operator.snapshot": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
+    },
+    "chat.send": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.history": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.clear": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.new": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.sessions": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.sessionCreate": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.sessionDelete": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.sessionsBulkDelete": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.sessionPin": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.screenEvidence": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.observerEvidence": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.saveMemory": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.confirmAction": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.listActions": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.abort": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.context": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "chat.sessionContext": {
+      "surface": "na",
+      "note": "Command Center chat surface (web UI)."
+    },
+    "copilot.formatInstruction": {
+      "surface": "na",
+      "note": "Command Center copilot surface (web UI)."
+    },
     "node.health": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
@@ -455,73 +985,13 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "nodes.deploy": {
-      "surface": "typed-command",
-      "command": "farmslot node"
-    },
-    "nodes.list": {
-      "surface": "typed-command",
-      "command": "farmslot gateway"
-    },
-    "operator.snapshot": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "pairing.candidates": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "pairing.create": {
-      "surface": "typed-command",
-      "command": "farmslot pair"
-    },
-    "pairing.exchange": {
-      "surface": "typed-command",
-      "command": "farmslot login --code"
-    },
-    "pr.addComment": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "pr.deleteComment": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "pr.editComment": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "pr.forSlot": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "pr.list": {
-      "surface": "typed-command",
-      "command": "farmslot pr"
-    },
-    "pr.monitor": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "pr.resolveThread": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "pr.reviewComments": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "pr.status": {
-      "surface": "typed-command",
-      "command": "farmslot pr"
-    },
-    "pr.submitReview": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "providerAccounts.snapshot": {
+    "screen.thumbnail": {
       "surface": "na",
-      "note": "Command Center fleet Setup / provider seats surface (web UI). Labels and identity only \u2014 never tokens or credential paths."
+      "note": "Binary screen-capture relay for the web UI."
+    },
+    "recipe.rerun": {
+      "surface": "rpc-only",
+      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
     "recipe.cancel": {
       "surface": "rpc-only",
@@ -539,171 +1009,7 @@
       "surface": "typed-command",
       "command": "farmslot recipe"
     },
-    "recipe.rerun": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "resource.cleanup": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "resource.control": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "resource.health": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "resource.list": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "resource.watch.setEnabled": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "roadmap.delete": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap delete"
-    },
-    "roadmap.get": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap get",
-      "tui": true
-    },
-    "roadmap.list": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap list",
-      "tui": true
-    },
-    "roadmap.promote": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap promote"
-    },
-    "roadmap.promotionDraft.get": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap promotion-draft get"
-    },
-    "roadmap.promotionDraft.list": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap promotion-draft list"
-    },
-    "roadmap.promotionDraft.save": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap promotion-draft save"
-    },
-    "roadmap.prompt.get": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap prompt-get"
-    },
-    "roadmap.refine": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap refine"
-    },
-    "roadmap.refinementSession.get": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap refinement-session"
-    },
-    "roadmap.save": {
-      "surface": "typed-command",
-      "command": "farmslot roadmap save",
-      "tui": true
-    },
-    "run.activateOnSlot": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.archive": {
-      "surface": "typed-command",
-      "command": "farmslot run"
-    },
-    "run.autoRecovery.stop": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.backfillSummaries": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.bulkDelete": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.bundle.export": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.bundle.import": {
-      "surface": "typed-command",
-      "command": "farmslot runs"
-    },
-    "run.bundle.list": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.cancel": {
-      "surface": "typed-command",
-      "command": "farmslot run"
-    },
-    "run.ciWatch.poke": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.cleanup": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.contextBundle": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.create": {
-      "surface": "typed-command",
-      "command": "farmslot run"
-    },
-    "run.delete": {
-      "surface": "typed-command",
-      "command": "farmslot runs"
-    },
-    "run.forSlot": {
-      "surface": "typed-command",
-      "command": "farmslot run for-slot"
-    },
-    "run.forceComplete": {
-      "surface": "typed-command",
-      "command": "farmslot run force-complete"
-    },
-    "run.get": {
-      "surface": "typed-command",
-      "command": "farmslot run"
-    },
-    "run.getGrade": {
-      "surface": "typed-command",
-      "command": "farmslot run get-grade"
-    },
-    "run.grade": {
-      "surface": "typed-command",
-      "command": "farmslot run grade"
-    },
-    "run.interactiveDev.resolve": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.list": {
-      "surface": "typed-command",
-      "command": "farmslot run",
-      "tui": true
-    },
-    "run.pause": {
-      "surface": "typed-command",
-      "command": "farmslot run pause"
-    },
-    "run.probeWorkerSignal": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.proposeImprovement": {
+    "run.recipeRunsForSlot": {
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
@@ -711,315 +1017,9 @@
       "surface": "rpc-only",
       "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
     },
-    "run.recipeRunsForSlot": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.recoveryProposal": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.refreshMirror": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.refreshPublishPackage": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.refreshReviewGate": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.rehydratePrNumber": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.replayStep": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.resolveDecision": {
-      "surface": "typed-command",
-      "command": "farmslot run",
-      "tui": true
-    },
-    "run.resume": {
-      "surface": "typed-command",
-      "command": "farmslot run resume"
-    },
-    "run.slotHistory": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.tags.list": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "run.tags.set": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "screen.subscribe": {
+    "providerAccounts.snapshot": {
       "surface": "na",
-      "note": "Binary screen-capture relay for the web UI."
-    },
-    "screen.thumbnail": {
-      "surface": "na",
-      "note": "Binary screen-capture relay for the web UI."
-    },
-    "screen.unsubscribe": {
-      "surface": "na",
-      "note": "Binary screen-capture relay for the web UI."
-    },
-    "search.query": {
-      "surface": "na",
-      "note": "Slot Workspace code search (web UI)."
-    },
-    "slot.action.list": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.action.run": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.autoRefresh": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.check": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.cleanup": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "slot.fixtureRefresh": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.monitor": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.openEditor": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.prepare": {
-      "surface": "typed-command",
-      "command": "farmslot slot",
-      "tui": true
-    },
-    "slot.prepareStatus": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "slot.recycle": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.refresh": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.release": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.reopen": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.show": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "slot.softRefresh": {
-      "surface": "typed-command",
-      "command": "farmslot slot"
-    },
-    "stream.snapshot": {
-      "surface": "na",
-      "note": "Binary stream relay for the web UI."
-    },
-    "stream.subscribe": {
-      "surface": "na",
-      "note": "Binary stream relay for the web UI."
-    },
-    "stream.unsubscribe": {
-      "surface": "na",
-      "note": "Binary stream relay for the web UI."
-    },
-    "task.progress": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "terminal.input": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.reinit": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.resize": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.send": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.snapshot": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.subscribe": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.unsubscribe": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.worker.input": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.worker.resize": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.worker.snapshot": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.worker.subscribe": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "terminal.worker.unsubscribe": {
-      "surface": "na",
-      "note": "Web terminal PTY surface (Command Center)."
-    },
-    "tmux.killPane": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.list": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.newWindow": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.renameWindow": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.selectPane": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.selectWindow": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.sendKeys": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.split": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.synchronizePanes": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.worker.list": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.worker.restore": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "tmux.zoomPane": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "workGraph.activate": {
-      "surface": "typed-command",
-      "command": "farmslot graph activate"
-    },
-    "workGraph.addEdge": {
-      "surface": "typed-command",
-      "command": "farmslot graph add-edge"
-    },
-    "workGraph.addNode": {
-      "surface": "typed-command",
-      "command": "farmslot graph add-node"
-    },
-    "workGraph.create": {
-      "surface": "typed-command",
-      "command": "farmslot graph create"
-    },
-    "workGraph.gateResolve": {
-      "surface": "typed-command",
-      "command": "farmslot graph gate-resolve"
-    },
-    "workGraph.get": {
-      "surface": "typed-command",
-      "command": "farmslot graph show"
-    },
-    "workGraph.list": {
-      "surface": "typed-command",
-      "command": "farmslot graph list"
-    },
-    "workGraph.pause": {
-      "surface": "typed-command",
-      "command": "farmslot graph pause"
-    },
-    "workGraph.removeEdge": {
-      "surface": "typed-command",
-      "command": "farmslot graph remove-edge"
-    },
-    "workGraph.removeNode": {
-      "surface": "typed-command",
-      "command": "farmslot graph remove-node"
-    },
-    "workGraph.schedulerTick": {
-      "surface": "typed-command",
-      "command": "farmslot graph tick"
-    },
-    "workGraph.updateNode": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "worker.session.history.get": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "worker.session.history.subscribe": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "worker.session.history.unsubscribe": {
-      "surface": "rpc-only",
-      "note": "Interim: no dedicated typed subcommand yet; use `farmslot rpc <method> [json]` until promoted."
-    },
-    "workspace.metro.subscribe": {
-      "surface": "na",
-      "note": "Slot Workspace IDE view (web UI)."
-    },
-    "workspace.metro.unsubscribe": {
-      "surface": "na",
-      "note": "Slot Workspace IDE view (web UI)."
+      "note": "Command Center fleet Setup / provider seats surface (web UI). Labels and identity only \u2014 never tokens or credential paths."
     }
   }
 }
