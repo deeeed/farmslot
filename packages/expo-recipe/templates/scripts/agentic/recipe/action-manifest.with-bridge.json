@@ -190,7 +190,7 @@
       ]
     },
     "ui.pan": {
-      "description": "Stream a continuous pointer path from a test-id target or explicit screen coordinates using path points relative to the resolved start.",
+      "description": "Stream a continuous pointer path from a test-id target or explicit screen coordinates. Android accepts multiple relative path points; iOS accepts one path point or delta.",
       "adapters": ["android", "ios"],
       "schema": {
         "type": "object",
@@ -239,7 +239,7 @@
       ]
     },
     "ui.drag": {
-      "description": "Drag a grabbable test-id target or explicit screen coordinate through path points relative to the resolved start.",
+      "description": "Drag a grabbable test-id target or explicit screen coordinate. Android accepts multiple relative path points; iOS accepts one path point or delta.",
       "adapters": ["android", "ios"],
       "schema": {
         "type": "object",

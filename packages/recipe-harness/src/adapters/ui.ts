@@ -37,6 +37,7 @@ export interface UiTransportResult {
   output?: unknown;
   control?: UiTransportControl;
   phases?: RecipeActionPhase[];
+  settlementWarning?: string;
 }
 
 export interface UiActionTransport {
@@ -89,10 +90,18 @@ export function createStandardUiAdapters(
 
 export function normalizeUiTransportResult(result: unknown): ActionResult {
   if (isUiTransportResult(result)) {
+    const output =
+      result.settlementWarning === undefined
+        ? result.output
+        : typeof result.output === 'object' &&
+            result.output !== null &&
+            !Array.isArray(result.output)
+          ? { ...result.output, settlementWarning: result.settlementWarning }
+          : { result: result.output, settlementWarning: result.settlementWarning };
     return {
       case: result.control?.case,
       artifacts: result.control?.artifacts,
-      output: result.output,
+      output,
       phases: result.phases,
     };
   }

@@ -259,7 +259,7 @@ test('streams all continuous gestures from resolved native target coordinates', 
             nodes: [
               {
                 identifier: 'gesture-target',
-                rect: { x: 10, y: 20, width: 100, height: 40 },
+                rect: { x: 10.2, y: 20.2, width: 99.4, height: 39.4 },
               },
             ],
             truncated: false,
@@ -307,20 +307,17 @@ test('streams all continuous gestures from resolved native target coordinates', 
         action: 'ui.pan',
         node: {
           target: 'gesture-target',
-          path: [
-            { x: 20, y: 0 },
-            { x: 40, y: 10 },
-          ],
+          path: [{ x: 19.6, y: 0.4 }],
           duration_ms: 400,
           settle: false,
         },
-        end: { x: 100, y: 50 },
+        end: { x: 80, y: 40 },
       },
       {
         action: 'ui.drag',
         node: {
           target: 'gesture-target',
-          delta: { x: 50, y: 0 },
+          path: [{ x: 50.2, y: -0.2 }],
           duration_ms: 500,
           settle: false,
         },
@@ -374,8 +371,7 @@ function expectedNativeGestureCommands(
     return [
       { file: '/tools/idb', args: ['list-targets', '--json'] },
       swipe([60, 40], [60, 10], '0.3'),
-      swipe([60, 40], [80, 40], '0.2'),
-      swipe([80, 40], [100, 50], '0.2'),
+      swipe([60, 40], [80, 40], '0.4'),
       swipe([60, 40], [110, 40], '0.5'),
       {
         file: '/tools/idb',
@@ -400,12 +396,111 @@ function expectedNativeGestureCommands(
     adb('swipe', '60', '40', '60', '10', '300'),
     adb('motionevent', 'DOWN', '60', '40'),
     adb('motionevent', 'MOVE', '80', '40'),
-    adb('motionevent', 'MOVE', '100', '50'),
-    adb('motionevent', 'UP', '100', '50'),
-    adb('swipe', '60', '40', '110', '40', '500'),
+    adb('motionevent', 'UP', '80', '40'),
+    adb('motionevent', 'DOWN', '60', '40'),
+    adb('motionevent', 'MOVE', '110', '40'),
+    adb('motionevent', 'UP', '110', '40'),
     adb('swipe', '60', '40', '60', '40', '700'),
   ];
 }
+
+test('streams Android multi-point paths without lifting and fails closed on iOS', async () => {
+  const client = {
+    apps: { open: async () => ({ session: 'gesture-session', identifiers: {} }) },
+    interactions: {
+      press: async () => ({ ok: true }),
+      fill: async () => ({ ok: true }),
+      scroll: async () => ({ ok: true }),
+    },
+    command: { wait: async () => ({ stable: true }) },
+    capture: {
+      snapshot: async () => ({ nodes: [], truncated: false }),
+      screenshot: async () => ({}),
+    },
+    sessions: { close: async () => ({ session: 'gesture-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const node = {
+    target: { x: 10.4, y: 20.4 },
+    path: [
+      { x: 20.6, y: 0.3 },
+      { x: 40.2, y: 10.7 },
+    ],
+    duration_ms: 2,
+    settle: false,
+  };
+  const androidCommands: string[][] = [];
+  const android = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'emulator-5554',
+    app: 'net.siteed.farmslot.development',
+    session: 'gesture-session',
+    client,
+    adbPath: '/tools/adb',
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        androidCommands.push(args);
+        return {};
+      },
+    },
+  });
+
+  for (const action of ['ui.pan', 'ui.drag'] as const) {
+    await android.execute(action, node, {} as ActionExecutionContext);
+  }
+  const motion = (phase: string, x: string, y: string) => [
+    '-s',
+    'emulator-5554',
+    'shell',
+    'input',
+    'motionevent',
+    phase,
+    x,
+    y,
+  ];
+  assert.deepEqual(androidCommands, [
+    motion('DOWN', '10', '20'),
+    motion('MOVE', '31', '20'),
+    motion('MOVE', '50', '31'),
+    motion('UP', '50', '31'),
+    motion('DOWN', '10', '20'),
+    motion('MOVE', '31', '20'),
+    motion('MOVE', '50', '31'),
+    motion('UP', '50', '31'),
+  ]);
+
+  const iosCommands: string[][] = [];
+  const ios = createAgentDeviceUiTransport({
+    platform: 'ios',
+    device: 'gesture-ios',
+    app: 'net.siteed.farmslot.development',
+    session: 'gesture-session',
+    client,
+    idbPath: '/tools/idb',
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        iosCommands.push(args);
+        if (args[0] === 'list-targets') {
+          return {
+            stdout:
+              '{"name":"gesture-ios","udid":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","state":"Booted"}\n',
+          };
+        }
+        return {};
+      },
+    },
+  });
+
+  for (const action of ['ui.pan', 'ui.drag'] as const) {
+    await assert.rejects(
+      () => ios.execute(action, node, {} as ActionExecutionContext),
+      new RegExp(
+        `iOS ${action.replace('.', '\\.')} cannot stream a multi-point path\\. Next: use one path point or delta, or run with --adapter android\\.`,
+        'u',
+      ),
+    );
+  }
+  assert.deepEqual(iosCommands, [['list-targets', '--json']]);
+});
 
 test('observe false remains a harness concern and does not alter provider selectors', async () => {
   const client = {

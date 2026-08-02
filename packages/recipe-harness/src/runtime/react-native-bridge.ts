@@ -9,10 +9,6 @@ export type ReactNativeBridgeCommandName =
   | 'keyPress'
   | 'setInput'
   | 'scroll'
-  | 'swipe'
-  | 'pan'
-  | 'drag'
-  | 'longPress'
   | 'waitFor'
   | 'screenshot'
   | 'status'
@@ -35,16 +31,12 @@ export interface CreateReactNativeBridgeUiTransportOptions {
   bridge: ReactNativeBridge;
 }
 
-const RN_COMMANDS: Record<StandardUiAction, ReactNativeBridgeCommandName> = {
+const RN_COMMANDS: Partial<Record<StandardUiAction, ReactNativeBridgeCommandName>> = {
   'ui.navigate': 'navigate',
   'ui.press': 'press',
   'ui.key_press': 'keyPress',
   'ui.set_input': 'setInput',
   'ui.scroll': 'scroll',
-  'ui.swipe': 'swipe',
-  'ui.pan': 'pan',
-  'ui.drag': 'drag',
-  'ui.long_press': 'longPress',
   'ui.wait_for': 'waitFor',
   'ui.screenshot': 'screenshot',
   'app.status': 'status',
@@ -59,10 +51,13 @@ export function createReactNativeBridgeUiTransport(
   return {
     async execute(action, node, context) {
       const { action: _action, ...payload } = node;
-      return options.bridge.send(
-        { command: RN_COMMANDS[action], nodeId: context.nodeId, payload },
-        context,
-      );
+      const command = RN_COMMANDS[action];
+      if (!command) {
+        throw new Error(
+          `${action} is not supported by the React Native bridge. Next: use the native Agent Device adapter for ${action}.`,
+        );
+      }
+      return options.bridge.send({ command, nodeId: context.nodeId, payload }, context);
     },
     async observe(refs: readonly UiObserverRef[], node, context): Promise<RecipeObservationResult> {
       const result = await options.bridge.send(

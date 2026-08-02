@@ -209,6 +209,35 @@ test('gesture adapter declarations drive plan-time support errors', async () => 
   );
 });
 
+test('adapter validation keeps undeclared actions distinct from unsupported actions', async () => {
+  const manifest = await companionManifest();
+  const result = validateRecipeWithManifest(
+    gestureRecipe({
+      custom: {
+        action: 'custom.gesture',
+        intent: 'Exercise an action absent from the runner manifest.',
+        next: 'done',
+      },
+    }),
+    manifest,
+    { adapter: 'ios', skipRecipeCallResolution: true },
+  );
+
+  assert.ok(
+    result.findings.some(
+      (finding) =>
+        finding.code === 'recipe.action_not_declared_by_manifest' &&
+        finding.message ===
+          'Recipe action custom.gesture is not declared by the runner action manifest.',
+    ),
+    JSON.stringify(result.findings),
+  );
+  assert.equal(
+    result.findings.some((finding) => finding.code === 'recipe.action_not_supported_by_adapter'),
+    false,
+  );
+});
+
 test('gesture adapter declarations reject empty support lists', async () => {
   const manifest = await companionManifest();
   manifest.actions['ui.pan']!.adapters = [];

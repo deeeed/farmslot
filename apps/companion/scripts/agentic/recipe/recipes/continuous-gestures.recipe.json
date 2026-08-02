@@ -81,10 +81,7 @@
         "action": "ui.pan",
         "intent": "Move continuously across the requested proof surface.",
         "target": "{{params.pan_target}}",
-        "path": [
-          { "x": 30, "y": 0 },
-          { "x": 60, "y": 20 }
-        ],
+        "path": [{ "x": 60, "y": 20 }],
         "duration_ms": 400,
         "next": "confirm-pan-moved",
         "proves": ["continuous-gesture-stream"]
@@ -101,7 +98,7 @@
         "action": "ui.drag",
         "intent": "Move the requested slider to a higher visible value.",
         "target": "{{params.slider_target}}",
-        "delta": { "x": 120, "y": 0 },
+        "path": [{ "x": 120, "y": 0 }],
         "duration_ms": 500,
         "next": "confirm-slider-moved",
         "proves": ["continuous-gesture-stream"]

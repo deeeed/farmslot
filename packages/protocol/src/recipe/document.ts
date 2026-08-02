@@ -92,24 +92,26 @@ export function validateRecipeWithManifest(
     if (action === 'end' || action === 'call') continue;
     const contract = contracts.get(action);
     const supportingAdapters = contract?.adapters ? [...contract.adapters].sort() : undefined;
-    if (
-      !declaredActions.has(action) ||
-      (options?.adapter && supportingAdapters && !supportingAdapters.includes(options.adapter))
-    ) {
-      const adapterMessage = options?.adapter
-        ? `Adapter ${options.adapter} does not support recipe action ${action}.`
-        : `Recipe action ${action} is not declared by the runner action manifest.`;
+    if (!declaredActions.has(action)) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.action_not_declared_by_manifest',
+        `${path}.action`,
+        `Recipe action ${action} is not declared by the runner action manifest.`,
+      );
+      continue;
+    }
+    if (options?.adapter && supportingAdapters && !supportingAdapters.includes(options.adapter)) {
       const supportMessage = supportingAdapters?.length
         ? ` Supporting adapters: ${supportingAdapters.join(', ')}. Next: farmslot recipe run --adapter ${supportingAdapters[0]} <recipe>`
         : '';
       addFinding(
         ctx,
         'error',
-        options?.adapter
-          ? 'recipe.action_not_supported_by_adapter'
-          : 'recipe.action_not_declared_by_manifest',
+        'recipe.action_not_supported_by_adapter',
         `${path}.action`,
-        `${adapterMessage}${supportMessage}`,
+        `Adapter ${options.adapter} does not support recipe action ${action}.${supportMessage}`,
       );
       continue;
     }

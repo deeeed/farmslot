@@ -292,7 +292,16 @@ async function executeNativeGesture(
     gestureTarget(node, action),
   );
   const durationMs = gestureDurationMs(node, action);
-  const points = gesturePoints(action, node, start);
+  const points = gesturePoints(action, node, start).map(roundPoint);
+  if (
+    selection.platform === 'ios' &&
+    (action === 'ui.pan' || action === 'ui.drag') &&
+    points.length > 2
+  ) {
+    throw new Error(
+      `iOS ${action} cannot stream a multi-point path. Next: use one path point or delta, or run with --adapter android.`,
+    );
+  }
   const segmentDurationMs = gestureSegmentDuration(durationMs, points);
   const phases: RecipeActionPhase[] = [];
   const gestureSelection = { ...selection, device: gestureDevice };
@@ -304,7 +313,7 @@ async function executeNativeGesture(
     await runNativeLongPress(commandRunner, gestureTool, gestureSelection, start, durationMs);
     segments = 1;
     phases.push(gesturePhase('move', start, startedAtMs));
-  } else if (selection.platform === 'android' && action === 'ui.pan') {
+  } else if (selection.platform === 'android' && (action === 'ui.pan' || action === 'ui.drag')) {
     await runAndroidMotionEvent(commandRunner, gestureTool, gestureDevice, 'DOWN', start);
     for (const point of points.slice(1)) {
       await sleep(segmentDurationMs);
@@ -350,7 +359,7 @@ async function executeNativeGesture(
       backend:
         selection.platform === 'ios'
           ? 'idb-ui'
-          : action === 'ui.pan'
+          : action === 'ui.pan' || action === 'ui.drag'
             ? 'adb-input-motionevent'
             : 'adb-input-swipe',
       segments,
@@ -499,6 +508,7 @@ async function resolveIosGestureDevice(
         const target = JSON.parse(line) as { name?: unknown; udid?: unknown; state?: unknown };
         return target.name === device && typeof target.udid === 'string' ? [target] : [];
       } catch {
+        // idb may mix diagnostic lines into its newline-delimited JSON output.
         return [];
       }
     });

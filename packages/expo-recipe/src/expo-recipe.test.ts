@@ -15,6 +15,7 @@ import {
   runExpoRecipeDocument,
   validateExpoRecipeDocument,
 } from './index.js';
+import { closeUiTransportQuietly } from './runner.js';
 
 test('production Expo validation rejects gestures unsupported by the active adapter', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-adapter-'));
@@ -81,7 +82,6 @@ test('production Expo validation rejects gestures unsupported by the active adap
     await rm(root, { recursive: true, force: true });
   }
 });
-import { closeUiTransportQuietly } from './runner.js';
 
 test('native Agent Device transport reports its Node runtime requirement', () => {
   assert.doesNotThrow(() => assertAgentDeviceNodeVersion('22.12.0'));

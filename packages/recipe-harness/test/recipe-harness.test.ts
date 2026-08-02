@@ -1496,6 +1496,7 @@ test('executes preparation, proof, and teardown through one explicit graph', asy
       artifactsDir: path.join(tempRoot, 'artifacts'),
       projectRoot: tempRoot,
     });
+
     assert.equal(result.status, 'pass');
     assert.equal(
       await readFile(path.join(tempRoot, 'order.txt'), 'utf-8'),
@@ -2774,7 +2775,6 @@ test('runs official UI adapters through a runner-provided transport', async () =
       artifactsDir: path.join(tempRoot, 'artifacts'),
       projectRoot: tempRoot,
     });
-
     assert.equal(result.status, 'pass');
     assert.deepEqual(calls, [
       'press-buy:app.hud',
@@ -2853,6 +2853,10 @@ test('maps React Native bridge transport commands without project-specific ui re
       artifactsDir: path.join(tempRoot, 'artifacts'),
       projectRoot: tempRoot,
     });
+    await assert.rejects(
+      () => transport.execute('ui.pan', {}, {} as never),
+      /ui\.pan is not supported by the React Native bridge\. Next: use the native Agent Device adapter for ui\.pan\./u,
+    );
 
     assert.equal(result.status, 'pass');
     assert.deepEqual(
@@ -3091,6 +3095,7 @@ test('gesture phase records survive adapter normalization into the retained trac
           { phase: 'move', x: 60, y: 30, elapsedMs: 280 },
           { phase: 'end', x: 60, y: 30, elapsedMs: 300 },
         ],
+        settlementWarning: 'CDP document did not settle within 100ms',
       };
     },
   };
@@ -3121,12 +3126,18 @@ test('gesture phase records survive adapter normalization into the retained trac
     const trace = JSON.parse(await readFile(result.tracePath, 'utf8')) as Array<{
       nodeId: string;
       phases?: unknown;
+      output?: unknown;
     }>;
     assert.deepEqual(trace.find(({ nodeId }) => nodeId === 'drag')?.phases, [
       { phase: 'start', x: 20, y: 30, elapsedMs: 0 },
       { phase: 'move', x: 60, y: 30, elapsedMs: 280 },
       { phase: 'end', x: 60, y: 30, elapsedMs: 300 },
     ]);
+    assert.deepEqual(trace.find(({ nodeId }) => nodeId === 'drag')?.output, {
+      resolvedStart: { x: 20, y: 30 },
+      resolvedEnd: { x: 60, y: 30 },
+      settlementWarning: 'CDP document did not settle within 100ms',
+    });
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
