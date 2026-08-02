@@ -535,7 +535,7 @@ test('digest-required recovery rejects hook activity without an exact digest', a
   promptAcceptedReading = {
     value: true,
     source: 'hook',
-    confidence: 'medium',
+    confidence: 'high',
     observedAt: Date.now(),
   };
 
@@ -544,7 +544,8 @@ test('digest-required recovery rejects hook activity without an exact digest', a
   });
 
   assert.equal(handoff.accepted, false);
-  assert.match(handoff.reason, /digest-required handoff rejected/);
+  assert.match(handoff.reason, /prompt digest did not match/);
+  assert.equal(callOrder.includes('obs:promptAccepted'), false);
   assert.deepEqual(handoffRequirePromptDigestValues, [true]);
 });
 

@@ -369,6 +369,16 @@ test('human-gate restart replay restores the operator-requested review policy', 
     runner: 'claude',
   });
   updateRun(run.id, {
+    engineState: {
+      publishGate: {
+        reviewDepth: {
+          minimumIndependentReviews: 2,
+          requireCrossRunner: false,
+          extraLoopsRequested: 0,
+          requestedBy: 'dispatch',
+        },
+      },
+    },
     decisions: [
       {
         id: 'decision-review-replay',
@@ -413,7 +423,7 @@ test('human-gate restart replay restores the operator-requested review policy', 
   );
 
   assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewDepth, {
-    minimumIndependentReviews: 1,
+    minimumIndependentReviews: 2,
     requireCrossRunner: true,
     extraLoopsRequested: 0,
     requestedBy: 'human-gate',

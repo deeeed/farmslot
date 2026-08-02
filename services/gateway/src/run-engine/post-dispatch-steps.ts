@@ -771,7 +771,8 @@ export async function executeHumanGateStep(
             );
       const recoveredReviewDepth = unconsumedReviewDecision
         ? humanGateReviewDepth(
-            publicationReviewPolicyForRun(beforeInitialPlan),
+            beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
+              publicationReviewPolicyForRun(beforeInitialPlan),
             humanGateReviewRequestFromDecision(unconsumedReviewDecision),
             {
               actionId: unconsumedReviewDecision.resolvedAction,
