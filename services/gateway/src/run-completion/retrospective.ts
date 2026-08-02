@@ -22,7 +22,12 @@ import { getAllRuns, getRun, updateRun } from '../runs/store.js';
 
 // ─── Worker report ───
 
-export async function readWorkerReport(run: Run): Promise<string | null> {
+export interface WorkerReportArtifact {
+  fileName: string;
+  text: string;
+}
+
+export async function readWorkerReportArtifact(run: Run): Promise<WorkerReportArtifact | null> {
   if (!run.taskFile) return null;
   // Per-flow artifact preference — pr-complete writes comments-report.md, review-pr
   // writes review.md, others use report.md. See FLOW_WORKER_REPORT_ARTIFACTS for the
@@ -34,7 +39,7 @@ export async function readWorkerReport(run: Run): Promise<string | null> {
     const localPath = path.join(taskDir, 'artifacts', fileName);
     if (existsSync(localPath)) {
       const text = await readFile(localPath, 'utf-8');
-      if (text.trim()) return text;
+      if (text.trim()) return { fileName, text };
     }
   }
 
@@ -58,7 +63,7 @@ export async function readWorkerReport(run: Run): Promise<string | null> {
           );
           if (await slotFileExists(vars, workerReport)) {
             const text = await slotReadFile(vars, workerReport);
-            if (text.trim()) return text;
+            if (text.trim()) return { fileName, text };
           }
         }
       }
@@ -68,6 +73,10 @@ export async function readWorkerReport(run: Run): Promise<string | null> {
   }
 
   return null;
+}
+
+export async function readWorkerReport(run: Run): Promise<string | null> {
+  return (await readWorkerReportArtifact(run))?.text ?? null;
 }
 
 export async function readTaskArtifactText(run: Run, fileName: string): Promise<string | null> {

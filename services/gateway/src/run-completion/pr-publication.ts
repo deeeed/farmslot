@@ -19,24 +19,34 @@ export function prCommentIdentityMarker(runId: string): string {
 }
 
 export function prCommentBelongsToRun(body: string, runId: string): boolean {
-  return (
-    body.includes(prCommentIdentityMarker(runId)) ||
-    body.includes(`| Run | \`${runId.slice(0, 8)}\` |`)
-  );
+  return body.includes(prCommentIdentityMarker(runId)) || body.includes(runId.slice(0, 8));
 }
 
 export function paginatedPrCommentOutputContainsRun(output: string, runId: string): boolean {
-  return output
-    .split('\n')
-    .filter(Boolean)
-    .some((line) => prCommentBelongsToRun(JSON.parse(line) as string, runId));
+  for (const line of output.split('\n')) {
+    if (!line) continue;
+    try {
+      const body: unknown = JSON.parse(line);
+      if (typeof body === 'string' && prCommentBelongsToRun(body, runId)) return true;
+    } catch {
+      // A malformed pagination row is not positive evidence that this run
+      // already posted a comment.
+    }
+  }
+  return false;
 }
 
-export function shouldPostWorkerReportComment(flowType: FlowType): boolean {
+export function shouldPostWorkerReportComment(
+  flowType: FlowType,
+  reportArtifactName: string | undefined,
+): boolean {
   // dev/fix-bug use pr-description.md as their sole outcome artifact. It is
   // published as the PR body, so reposting it as a comment duplicates the
   // content and can expose local evidence paths before body post-processing.
-  return flowType !== 'dev' && flowType !== 'fix-bug';
+  return !(
+    (flowType === 'dev' || flowType === 'fix-bug') &&
+    reportArtifactName === 'pr-description.md'
+  );
 }
 
 function formatDuration(ms: number | undefined): string {

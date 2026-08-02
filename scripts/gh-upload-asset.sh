@@ -79,13 +79,18 @@ REPO_URL="git@${SSH_HOST}:${ARTIFACTS_REPO}.git"
 
 # Fetch only the current commit/tree and materialize this publication path.
 echo "Opening sparse checkout for ${ARTIFACTS_REPO}..." >&2
-HAS_MAIN=true
-if ! git clone --quiet --filter=blob:none --no-checkout --depth 1 --single-branch --branch main \
-  "$REPO_URL" "$CACHE_DIR" >&2; then
+REMOTE_REFS=$(git ls-remote "$REPO_URL")
+if echo "$REMOTE_REFS" | grep -q 'refs/heads/main$'; then
+  HAS_MAIN=true
+  git clone --quiet --filter=blob:none --no-checkout --depth 1 --single-branch --branch main \
+    "$REPO_URL" "$CACHE_DIR" >&2
+elif [ -z "$REMOTE_REFS" ]; then
   HAS_MAIN=false
-  rm -rf -- "$CACHE_DIR"
   git clone --quiet --filter=blob:none --no-checkout --depth 1 --single-branch \
     "$REPO_URL" "$CACHE_DIR" >&2
+else
+  echo "ERROR: artifacts repo ${ARTIFACTS_REPO} has refs but no main branch" >&2
+  exit 1
 fi
 git -C "$CACHE_DIR" sparse-checkout init --cone
 git -C "$CACHE_DIR" sparse-checkout set "${FLOW_DIR}/${ID}"
@@ -129,14 +134,18 @@ if git diff --cached --quiet; then
   echo "No changes (files already up to date)" >&2
 else
   git commit --quiet -m "Add ${FLOW_DIR}/${ID} artifacts"
-  # Two independent sparse checkouts may publish concurrently. Rebase once on
-  # a non-fast-forward race; distinct publication paths merge without sharing
-  # or locking a local cache.
-  if ! git push --quiet origin HEAD:main >&2; then
-    echo "Push raced with another artifact publication; rebasing once..." >&2
+  # Independent sparse checkouts may publish concurrently. Retry a bounded
+  # number of times; distinct publication paths rebase without sharing locks.
+  push_attempt=1
+  until git push --quiet origin HEAD:main >&2; do
+    if [ "$push_attempt" -ge 3 ]; then
+      echo "ERROR: artifact push lost three consecutive publication races" >&2
+      exit 1
+    fi
+    echo "Push raced with another artifact publication; rebasing (attempt ${push_attempt}/3)..." >&2
     git pull --rebase --quiet origin main >&2
-    git push --quiet origin HEAD:main >&2
-  fi
+    push_attempt=$((push_attempt + 1))
+  done
   echo "Pushed to ${ARTIFACTS_REPO}" >&2
 fi
 

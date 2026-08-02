@@ -102,6 +102,7 @@ import {
   initRunCompletionRetrospective,
   readTaskArtifactText,
   readWorkerReport,
+  readWorkerReportArtifact,
 } from './retrospective.js';
 export {
   assertSelectedEvidencePublished,
@@ -681,7 +682,8 @@ export async function runCompletionPipeline(
   await extractAndPersistSessionCost(runId);
 
   // 1. Read worker's report from artifacts (now available locally)
-  const report = await readWorkerReport(run);
+  const reportArtifact = await readWorkerReportArtifact(run);
+  const report = reportArtifact?.text ?? null;
 
   // Detect branch from git if not already set on the run. Compare against the
   // project's default_branch (not hardcoded `main`) so projects with custom
@@ -738,13 +740,18 @@ export async function runCompletionPipeline(
   const reportIsSubstantive = typeof report === 'string' && report.trim().length > 0;
   if (
     !isReviewPR &&
-    shouldPostWorkerReportComment(run.flowType) &&
+    shouldPostWorkerReportComment(run.flowType, reportArtifact?.fileName) &&
     ciRepo &&
     prNumber &&
     reportIsSubstantive
   ) {
     flags.prCommentPosted = await postPRComment(run, report, ciRepo, prNumber);
-  } else if (!isReviewPR && shouldPostWorkerReportComment(run.flowType) && ciRepo && prNumber) {
+  } else if (
+    !isReviewPR &&
+    shouldPostWorkerReportComment(run.flowType, reportArtifact?.fileName) &&
+    ciRepo &&
+    prNumber
+  ) {
     console.log(
       `[run-completion] skipping pr-comment for ${runId.slice(0, 8)}: status=${run.status} report=${reportIsSubstantive ? 'present' : 'missing'}`,
     );
@@ -969,9 +976,13 @@ export async function publishCompletionPackage(
     await persistRunPrNumber(runId, prNumber);
 
     const latestRun = getRun(runId) ?? run;
-    const report = await readWorkerReport(latestRun);
+    const reportArtifact = await readWorkerReportArtifact(latestRun);
+    const report = reportArtifact?.text ?? null;
     const reportIsSubstantive = typeof report === 'string' && report.trim().length > 0;
-    if (reportIsSubstantive && shouldPostWorkerReportComment(latestRun.flowType)) {
+    if (
+      reportIsSubstantive &&
+      shouldPostWorkerReportComment(latestRun.flowType, reportArtifact?.fileName)
+    ) {
       emit('substep', {
         name: 'post-worker-report',
         detail: `Posting worker report to PR #${prNumber}`,
