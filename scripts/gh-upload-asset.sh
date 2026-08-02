@@ -8,7 +8,9 @@
 # Output (stdout): raw.githubusercontent.com URL of the uploaded file (--file) or
 #   github.com tree URL of the uploaded directory (--dir).
 #
-# The artifacts repo is cloned/cached at ~/.cache/farmslot/<owner>/<repo>.
+# The artifacts repo is opened through a disposable blobless sparse checkout.
+# Unrelated artifact blobs are never downloaded and concurrent uploads never
+# share a mutable Git worktree.
 # Files are placed under <flow_plural>/<id>/ in the repo.
 # Uses SSH for git operations. Override host with FARMSLOT_GITHUB_SSH_HOST; otherwise
 # maps known owners (deeeed → github.com-deeeed, abretonc7s → github.com-abretonc7s).
@@ -54,8 +56,15 @@ case "$FLOW" in
   *)       FLOW_DIR="${FLOW}s" ;;
 esac
 
-# Local clone cache
-CACHE_DIR="${HOME}/.cache/farmslot/${ARTIFACTS_REPO}"
+# Disposable partial checkout. A normal clone scales with every artifact ever
+# published; a shared cache also corrupts when two finalize steps overlap.
+UPLOAD_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/farmslot-artifacts.XXXXXX")
+CACHE_DIR="${UPLOAD_ROOT}/repo"
+cleanup() {
+  [ ! -d "$UPLOAD_ROOT" ] || rm -rf -- "$UPLOAD_ROOT"
+}
+trap cleanup EXIT INT TERM
+
 ARTIFACTS_OWNER="${ARTIFACTS_REPO%%/*}"
 if [ -n "${FARMSLOT_GITHUB_SSH_HOST:-}" ]; then
   SSH_HOST="${FARMSLOT_GITHUB_SSH_HOST}"
@@ -68,19 +77,27 @@ else
 fi
 REPO_URL="git@${SSH_HOST}:${ARTIFACTS_REPO}.git"
 
-# Clone or pull
-if [ -d "${CACHE_DIR}/.git" ]; then
-  echo "Pulling ${ARTIFACTS_REPO}..." >&2
-  if ! git -C "$CACHE_DIR" pull --ff-only --quiet origin main 2>&1 >&2; then
-    echo "Pull failed, re-cloning..." >&2
-    trash "$CACHE_DIR" 2>/dev/null || rm -r "$CACHE_DIR"
-    mkdir -p "$(dirname "$CACHE_DIR")"
-    git clone --quiet "$REPO_URL" "$CACHE_DIR" 2>&1 >&2
-  fi
+# Fetch only the current commit/tree and materialize this publication path.
+echo "Opening sparse checkout for ${ARTIFACTS_REPO}..." >&2
+REMOTE_REFS=$(git ls-remote "$REPO_URL")
+if echo "$REMOTE_REFS" | grep -qE '[[:space:]]refs/heads/main$'; then
+  HAS_MAIN=true
+  git clone --quiet --filter=blob:none --no-checkout --depth 1 --single-branch --branch main \
+    "$REPO_URL" "$CACHE_DIR" >&2
+elif [ -z "$REMOTE_REFS" ]; then
+  HAS_MAIN=false
+  git clone --quiet --filter=blob:none --no-checkout --depth 1 --single-branch \
+    "$REPO_URL" "$CACHE_DIR" >&2
 else
-  echo "Cloning ${ARTIFACTS_REPO}..." >&2
-  mkdir -p "$(dirname "$CACHE_DIR")"
-  git clone --quiet "$REPO_URL" "$CACHE_DIR" 2>&1 >&2
+  echo "ERROR: artifacts repo ${ARTIFACTS_REPO} has refs but no main branch" >&2
+  exit 1
+fi
+git -C "$CACHE_DIR" sparse-checkout init --cone
+git -C "$CACHE_DIR" sparse-checkout set "${FLOW_DIR}/${ID}"
+if $HAS_MAIN; then
+  git -C "$CACHE_DIR" checkout --quiet main
+else
+  git -C "$CACHE_DIR" checkout --quiet --orphan main
 fi
 
 # Target directory in the repo
@@ -115,7 +132,19 @@ if git diff --cached --quiet; then
   echo "No changes (files already up to date)" >&2
 else
   git commit --quiet -m "Add ${FLOW_DIR}/${ID} artifacts"
-  git push --quiet origin HEAD 2>&1 >&2
+  # Independent sparse checkouts may publish concurrently. Retry a bounded
+  # number of times; distinct publication paths rebase without sharing locks.
+  push_attempt=1
+  until git push --quiet origin HEAD:main >&2; do
+    if [ "$push_attempt" -ge 3 ]; then
+      echo "ERROR: artifact push lost three consecutive publication races" >&2
+      exit 1
+    fi
+    echo "Push raced with another artifact publication; rebasing (attempt ${push_attempt}/3)..." >&2
+    git fetch --quiet origin main >&2
+    git rebase --quiet FETCH_HEAD >&2
+    push_attempt=$((push_attempt + 1))
+  done
   echo "Pushed to ${ARTIFACTS_REPO}" >&2
 fi
 

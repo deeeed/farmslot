@@ -47,7 +47,12 @@ import {
   materializeIndependentReviewArtifacts,
 } from './independent-reviews.js';
 import { buildPackageEvidenceManifest } from './package-evidence-manifest.js';
-import { markPRReady, postPRComment, updatePRTitle } from './pr-publication.js';
+import {
+  markPRReady,
+  postPRComment,
+  shouldPostWorkerReportComment,
+  updatePRTitle,
+} from './pr-publication.js';
 import {
   assertSelectedEvidencePublished,
   expandEvidenceSelectionForManifest,
@@ -97,6 +102,7 @@ import {
   initRunCompletionRetrospective,
   readTaskArtifactText,
   readWorkerReport,
+  readWorkerReportArtifact,
 } from './retrospective.js';
 export {
   assertSelectedEvidencePublished,
@@ -676,7 +682,8 @@ export async function runCompletionPipeline(
   await extractAndPersistSessionCost(runId);
 
   // 1. Read worker's report from artifacts (now available locally)
-  const report = await readWorkerReport(run);
+  const reportArtifact = await readWorkerReportArtifact(run);
+  const report = reportArtifact?.text ?? null;
 
   // Detect branch from git if not already set on the run. Compare against the
   // project's default_branch (not hardcoded `main`) so projects with custom
@@ -731,9 +738,10 @@ export async function runCompletionPipeline(
   // `done` until the whole pipeline returns, so status is `completing` during
   // this call. The fact that we reached step 3 is itself the evidence we need.
   const reportIsSubstantive = typeof report === 'string' && report.trim().length > 0;
-  if (!isReviewPR && ciRepo && prNumber && reportIsSubstantive) {
+  const shouldPostReport = shouldPostWorkerReportComment(run.flowType, reportArtifact?.fileName);
+  if (!isReviewPR && shouldPostReport && ciRepo && prNumber && reportIsSubstantive) {
     flags.prCommentPosted = await postPRComment(run, report, ciRepo, prNumber);
-  } else if (!isReviewPR && ciRepo && prNumber) {
+  } else if (!isReviewPR && shouldPostReport && ciRepo && prNumber) {
     console.log(
       `[run-completion] skipping pr-comment for ${runId.slice(0, 8)}: status=${run.status} report=${reportIsSubstantive ? 'present' : 'missing'}`,
     );
@@ -958,9 +966,13 @@ export async function publishCompletionPackage(
     await persistRunPrNumber(runId, prNumber);
 
     const latestRun = getRun(runId) ?? run;
-    const report = await readWorkerReport(latestRun);
+    const reportArtifact = await readWorkerReportArtifact(latestRun);
+    const report = reportArtifact?.text ?? null;
     const reportIsSubstantive = typeof report === 'string' && report.trim().length > 0;
-    if (reportIsSubstantive) {
+    if (
+      reportIsSubstantive &&
+      shouldPostWorkerReportComment(latestRun.flowType, reportArtifact?.fileName)
+    ) {
       emit('substep', {
         name: 'post-worker-report',
         detail: `Posting worker report to PR #${prNumber}`,
