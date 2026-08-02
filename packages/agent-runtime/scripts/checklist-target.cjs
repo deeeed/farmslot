@@ -39,10 +39,15 @@ function enumerateChecklistCheckboxes(markdown) {
       continue;
     }
     if (inCodeBlock) continue;
-    const detailsOpens = (trimmed.match(/<details\b/g) || []).length;
-    const detailsCloses = (trimmed.match(/<\/details/g) || []).length;
-    if (detailsOpens > 0 || detailsCloses > 0) {
-      inDetails = Math.max(0, inDetails + detailsOpens - detailsCloses);
+    // Only lines STARTING with a details tag are structural — prose that
+    // mentions `<details>` (e.g. PR-description instructions) must stay inert.
+    if (trimmed.startsWith('<details')) {
+      // A same-line close (`<details>…</details>`) opens nothing.
+      if (!/<\/details/.test(trimmed)) inDetails += 1;
+      continue;
+    }
+    if (trimmed.startsWith('</details')) {
+      inDetails = Math.max(0, inDetails - 1);
       continue;
     }
     if (inDetails > 0) continue;

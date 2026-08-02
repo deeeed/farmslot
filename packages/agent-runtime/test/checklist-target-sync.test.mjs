@@ -59,6 +59,8 @@ const ENUMERATION_FIXTURE = [
   '',
   '<details><summary>one-liner</summary>closed on the same line</details>',
   '',
+  '- [ ] Step mentioning `<details><summary>` markup in prose stays a step',
+  '',
   '### Phase 2: Validate',
   '',
   '- [ ] Fourth step',
@@ -74,15 +76,22 @@ test('checklist-target.cjs enumerateChecklistCheckboxes matches protocol behavio
   assert.deepEqual(fromCjs, fromProtocol, 'enumeration drifted from protocol');
   assert.deepEqual(
     fromProtocol.map((item) => item.stepNumber),
-    [1, 2, 3, 4, 5],
+    [1, 2, 3, 4, 5, 6],
   );
   assert.deepEqual(
     fromProtocol.map((item) => item.phase),
-    [null, 'Phase 1: Setup', 'Phase 1: Setup', 'Phase 1: Setup', 'Phase 2: Validate'],
+    [
+      null,
+      'Phase 1: Setup',
+      'Phase 1: Setup',
+      'Phase 1: Setup',
+      'Phase 1: Setup',
+      'Phase 2: Validate',
+    ],
   );
   assert.deepEqual(
     fromProtocol.map((item) => item.checked),
-    [false, true, false, false, false],
+    [false, true, false, false, false, false],
   );
 });
 

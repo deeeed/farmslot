@@ -983,6 +983,14 @@ export async function writeTaskFile(
       finalContent,
     );
   }
+  // Warn (not fail) so a template bug in one farm pack cannot brick dispatch;
+  // the log line names the template so the pack can be fixed.
+  const numberingMismatches = checklistNumberingMismatches(finalContent);
+  if (numberingMismatches.length > 0) {
+    console.warn(
+      `[task-writer] checklist label numbering diverges from step positions in ${templatePath ?? templateName} (${numberingMismatches.join('; ')}) — 'mark N' targets positions; renumber the template labels`,
+    );
+  }
   await writeFile(taskFilePath, finalContent, 'utf-8');
   await writeChecklistMarker(taskAbsDir, farmslotDirForSlot);
   await writeWorkerChecklistTargetLocal(taskAbsDir);
@@ -1105,6 +1113,23 @@ async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: stri
  * - Headings with no checkboxes below them are pruned
  * - Checkboxes before any heading go into a "Checklist" phase
  */
+/**
+ * Step labels carrying explicit numbering (`**N. …**`) must match the
+ * enumerated step position — `mark N` targets positions, and a worker follows
+ * the visible label. Sub-step labels (12a) or unnumbered boxes between
+ * numbered ones silently shift every later step onto the wrong box.
+ */
+export function checklistNumberingMismatches(content: string): string[] {
+  const mismatches: string[] = [];
+  for (const item of enumerateChecklistCheckboxes(content)) {
+    const labeled = item.rawLabel.match(/^\*{0,2}(\d+)[.)]/);
+    if (labeled && Number(labeled[1]) !== item.stepNumber) {
+      mismatches.push(`position ${item.stepNumber} is labeled "${labeled[1]}"`);
+    }
+  }
+  return mismatches;
+}
+
 export function generateTaskSchema(templateContent: string, flowType: string): TaskSchema {
   // Shared enumeration (skip sections, <details>, code fences) lives in
   // @farmslot/protocol — the same logic the progress parser and the agent
