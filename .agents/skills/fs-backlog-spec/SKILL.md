@@ -5,7 +5,7 @@ description: Author or review a Farmslot backlog spec (.backlog/specs/**) — ru
 
 # FS Backlog Spec
 
-A spec under `.backlog/specs/` becomes a worker's contract: every acceptance criterion must be verifiable by the worker/reviewer inside one run. The gateway parses the `## Acceptance Criteria` section verbatim (`extractBacklogAcceptanceCriteria` in `services/gateway/src/backlog/store.ts`), so write one criterion per line — a wrapped line becomes a second criterion when filed.
+A spec under `.backlog/specs/` becomes a worker's contract: every acceptance criterion must be verifiable by the worker/reviewer inside one run. The gateway parses the `## Acceptance Criteria` section verbatim (`extractBacklogAcceptanceCriteria` in `services/gateway/src/backlog/spec.ts`), so write one criterion per line — a wrapped line becomes a second criterion when filed.
 
 ## Step 1 — Deterministic lint (required)
 
@@ -45,5 +45,5 @@ Confirm the round-trip: `backlog get <ref> --spec` (RPC `backlog.spec.get`) retu
 ## Related
 
 - Lint + fixtures + tests: `.agents/skills/fs-backlog-spec/`
-- Gateway parser: `extractBacklogAcceptanceCriteria` — `services/gateway/src/backlog/store.ts`
+- Gateway parser: `extractBacklogAcceptanceCriteria` — `services/gateway/src/backlog/spec.ts`
 - Reference pattern: `.agents/skills/fs-worker-template-quality/SKILL.md`

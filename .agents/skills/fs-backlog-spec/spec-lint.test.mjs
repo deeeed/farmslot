@@ -23,7 +23,7 @@ function runCli(args) {
 }
 
 // Copied VERBATIM from extractBacklogAcceptanceCriteria in
-// services/gateway/src/backlog/store.ts — keep in sync. The lint's parser must
+// services/gateway/src/backlog/spec.ts — keep in sync. The lint's parser must
 // produce identical criteria or the filed item's AC count diverges from what
 // was linted.
 function gatewayExtract(markdown) {
@@ -32,7 +32,7 @@ function gatewayExtract(markdown) {
   if (headingIndex < 0) return [];
   const body = [];
   for (const line of lines.slice(headingIndex + 1)) {
-    if (/^#{1,2}\s+\S/.test(line)) break;
+    if (/^#{1,2}\s+\S/.test(line) || /^Backlog (?:notes|source):/i.test(line)) break;
     body.push(line);
   }
   return body
@@ -75,6 +75,19 @@ test('AC parsing agrees with the gateway parser on both fixtures', () => {
     const ours = parseAcceptanceCriteria(text).criteria.map((c) => c.text);
     assert.deepEqual(ours, gatewayExtract(text));
   }
+});
+
+test('AC parsing ignores legacy backlog context trailers', () => {
+  const text = [
+    '## Acceptance Criteria',
+    '',
+    '- `yarn test` passes.',
+    'Backlog notes:',
+    'Operator-only context must not become acceptance criteria.',
+  ].join('\n');
+  const ours = parseAcceptanceCriteria(text).criteria.map((criterion) => criterion.text);
+  assert.deepEqual(ours, gatewayExtract(text));
+  assert.deepEqual(ours, ['`yarn test` passes.']);
 });
 
 test('--print-ac output count equals the gateway parse count', () => {

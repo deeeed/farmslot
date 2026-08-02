@@ -10,9 +10,10 @@ import { fileURLToPath } from 'node:url';
 /**
  * Parse the `## Acceptance Criteria` section with the SAME rules as the
  * gateway's extractBacklogAcceptanceCriteria (services/gateway/src/backlog/
- * store.ts): stop at the next `#`/`##` heading, strip a leading `-`/`*`
- * marker, keep every remaining nonblank line as its own criterion. Parity
- * matters because the filed item's parsed AC must equal what was linted.
+ * spec.ts): stop at the next `#`/`##` heading or legacy backlog context
+ * boundary, strip a leading `-`/`*` marker, and keep every remaining nonblank
+ * line as its own criterion. Parity matters because the filed item's parsed AC
+ * must equal what was linted.
  * Returns entries with their 1-based source line for diagnostics.
  */
 export function parseAcceptanceCriteria(markdown) {
@@ -21,7 +22,7 @@ export function parseAcceptanceCriteria(markdown) {
   if (headingIndex < 0) return { headingLine: null, criteria: [] };
   const criteria = [];
   for (let i = headingIndex + 1; i < lines.length; i += 1) {
-    if (/^#{1,2}\s+\S/.test(lines[i])) break;
+    if (/^#{1,2}\s+\S/.test(lines[i]) || /^Backlog (?:notes|source):/i.test(lines[i])) break;
     const text = lines[i].replace(/^\s*[-*]\s+/, '').trim();
     if (text) criteria.push({ line: i + 1, text });
   }
