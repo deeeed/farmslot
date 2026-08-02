@@ -35,6 +35,10 @@ import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview } from '../self-review/orchestrator.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
+import {
+  isHumanGateReviewRequestAction,
+  markResolvedHumanGateReviewRequestConsumed,
+} from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import {
@@ -54,6 +58,7 @@ import { verifyWorkerPushedBranch } from './push-verification.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import {
   automaticPublicationReviewPlan,
+  effectiveReviewRunner,
   remainingExplicitReviewPlan,
   resolveHumanGateReviewExecutionPlan,
 } from './review-plan.js';
@@ -716,30 +721,57 @@ export async function executeHumanGateStep(
       const beforeInitialPlan = getRun(runId)!;
       const explicitInitialPlan =
         beforeInitialPlan.engineState?.publishGate?.pendingReviewPlan ?? [];
+      // Operator may have already resolved request-extra-review (e.g. codex) while
+      // the engine had no live createEngineDecision waiter. Resume must honor that
+      // unconsumed selection — not invent automaticPublicationReviewPlan (which
+      // picks defaultAlternate for the worker and re-launched claude for a grok
+      // worker on run 71803bd2 after a codex request).
+      const unconsumedReviewDecision = (beforeInitialPlan.decisions ?? [])
+        .filter(
+          (decision) =>
+            decision.type === 'engine_human_gate' &&
+            !!decision.resolvedAt &&
+            isHumanGateReviewRequestAction(decision.resolvedAction) &&
+            typeof decision.context?.reviewRequestConsumedAt !== 'string',
+        )
+        .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0];
+      const fromUnconsumed = unconsumedReviewDecision
+        ? resolveHumanGateReviewExecutionPlan({
+            gateAction: unconsumedReviewDecision.resolvedAction ?? 'request-extra-review',
+            pendingPlan: explicitInitialPlan,
+            decisions: beforeInitialPlan.decisions ?? [],
+          })
+        : [];
+      const reviewsForInitial =
+        beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [];
       // A restart can land after a reviewer verdict was persisted but before
       // the durable pending plan was cleared. Execute only the still-missing
       // portion; otherwise every restart launches another already-satisfied
       // reviewer (and a two-loop plan can replay loop one twice).
-      const initialPlan = explicitInitialPlan.length
-        ? remainingExplicitReviewPlan(
-            explicitInitialPlan,
-            beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [],
-            {
+      const initialPlan = fromUnconsumed.some((loop) => effectiveReviewRunner(loop))
+        ? remainingExplicitReviewPlan(fromUnconsumed, reviewsForInitial, {
+            requestedAt: unconsumedReviewDecision?.resolvedAt,
+            source: 'human-gate',
+          })
+        : explicitInitialPlan.length
+          ? remainingExplicitReviewPlan(explicitInitialPlan, reviewsForInitial, {
               requestedAt: beforeInitialPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt,
               source:
                 beforeInitialPlan.engineState?.publishGate?.reviewDepth?.requestedBy ===
                 'human-gate'
                   ? 'human-gate'
                   : 'dispatch',
-            },
-          )
-        : automaticPublicationReviewPlan(
-            beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
-              publicationReviewPolicyForRun(beforeInitialPlan),
-            beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [],
-            beforeInitialPlan.metrics.runner,
-          );
-      if (explicitInitialPlan.length > 0 && initialPlan.length === 0) {
+            })
+          : automaticPublicationReviewPlan(
+              beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
+                publicationReviewPolicyForRun(beforeInitialPlan),
+              reviewsForInitial,
+              beforeInitialPlan.metrics.runner,
+            );
+      if (
+        (explicitInitialPlan.length > 0 || fromUnconsumed.length > 0) &&
+        initialPlan.length === 0
+      ) {
         updateRun(runId, {
           engineState: {
             ...beforeInitialPlan.engineState,
@@ -750,9 +782,16 @@ export async function executeHumanGateStep(
             },
           },
         });
+        if (unconsumedReviewDecision) {
+          markResolvedHumanGateReviewRequestConsumed(unconsumedReviewDecision);
+          updateRun(runId, { decisions: beforeInitialPlan.decisions });
+        }
       }
       if (initialPlan.length) {
-        if (explicitInitialPlan.length === 0) {
+        if (
+          explicitInitialPlan.length === 0 ||
+          fromUnconsumed.some((loop) => effectiveReviewRunner(loop))
+        ) {
           updateRun(runId, {
             engineState: {
               ...beforeInitialPlan.engineState,
@@ -764,11 +803,16 @@ export async function executeHumanGateStep(
             },
           });
         }
+        if (unconsumedReviewDecision) {
+          markResolvedHumanGateReviewRequestConsumed(unconsumedReviewDecision);
+          updateRun(runId, { decisions: getRun(runId)!.decisions });
+        }
         const dispatchReviewSlotId = current.slotId;
         if (!dispatchReviewSlotId)
           throw new Error('No slot assigned — cannot run dispatch publish-gate reviews');
         const dispatchPlan = initialPlan.slice(0, MAX_PUBLISH_GATE_REVIEW_LOOPS);
         const reviewSource =
+          unconsumedReviewDecision ||
           getRun(runId)?.engineState?.publishGate?.reviewDepth?.requestedBy === 'human-gate'
             ? 'human-gate'
             : 'dispatch';

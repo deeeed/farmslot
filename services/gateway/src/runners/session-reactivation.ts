@@ -9,6 +9,7 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from './launch-command.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
+import { type LaunchAckSignalSnapshot, probeRunnerHandoffAck } from './prompt-delivery-evidence.js';
 import {
   confirmTrustPromptWithFreshEvidence,
   getRunnerObservability,
@@ -39,6 +40,7 @@ export interface RunnerSessionReactivationOptions {
   runtimeDir?: string;
   taskDir?: string;
   launchAckSignalPath?: string | null;
+  launchAckBaseline?: LaunchAckSignalSnapshot | null;
   timeoutMs?: number;
   recovery?: RunnerSendRecoveryContext;
   sendLogPrefix?: string;
@@ -256,6 +258,22 @@ export async function deliverPromptInPlace(
 ): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
   try {
+    if (options.launchAckSignalPath && options.launchAckBaseline) {
+      const acknowledgement = await probeRunnerHandoffAck(
+        options.vars,
+        options.target,
+        options.prompt,
+        Date.now(),
+        {
+          launchAckSignalPath: options.launchAckSignalPath,
+          launchAckBaseline: options.launchAckBaseline,
+          preferHooks: false,
+        },
+      );
+      if (acknowledgement.accepted) {
+        return { delivered: true, acknowledgement: 'structured' };
+      }
+    }
     const timeoutMs = options.timeoutMs ?? resolveSafeSendTimeoutMs(runner);
     const accepted = await sendRunnerInstructionSafely(
       options.vars,

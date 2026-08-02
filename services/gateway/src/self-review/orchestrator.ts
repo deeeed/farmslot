@@ -43,6 +43,7 @@ import {
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
@@ -1189,6 +1190,7 @@ async function sendFeedbackToWorker(
   const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
   await removeSlotFiles(vars, [fixSignalPath]);
   const fixSignalBaseline = await readOptionalSlotFile(vars, fixSignalPath);
+  const fixLaunchAckBaseline = await readLaunchAckSignalSnapshot(vars, fixSignalPath);
 
   // Write the fix task to a file on the slot
   await writeTextFileOnSlot(
@@ -1261,6 +1263,7 @@ async function sendFeedbackToWorker(
         runtimeDir,
         taskDir,
         launchAckSignalPath: fixSignalPath,
+        launchAckBaseline: fixLaunchAckBaseline,
         recovery: { runId },
         sendLogPrefix: 'self-review',
         forceBusyPoll,

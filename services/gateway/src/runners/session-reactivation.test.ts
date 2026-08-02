@@ -279,6 +279,34 @@ test('retained fallback delivers in place when a live session cannot be respawne
   );
 });
 
+test('retained fallback accepts a fresh task signal after the original send verifier misses', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
+  promptAccepted = false;
+  sessionState = {
+    value: 'active',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'grok',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.equal(
+    commands.some((command) => command.includes('capture-pane')),
+    false,
+  );
+});
+
 test('retained resume defers to safe-send when the session file is gone', async () => {
   commands.length = 0;
   paneCount = 1;

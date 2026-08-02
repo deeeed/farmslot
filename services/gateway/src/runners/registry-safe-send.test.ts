@@ -753,6 +753,37 @@ test('a transcript echo with an empty live composer gets the message typed fresh
   );
 });
 
+test('historical Grok progress does not suppress an identical new fix-pass prompt', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  paneTextByCapture = null;
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  grokActivityReads = 0;
+  grokActivitySequence = ['idle'];
+  paneText = [
+    `#1 ${message}`,
+    'Read SELF-REVIEW-FIX.md',
+    'Implemented the previous review findings.',
+    '',
+    '╭────────────────╮',
+    '│ ❯              │',
+    '╰────────────────╯',
+  ].join('\n');
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]');
+
+  assert.equal(sent, true);
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `an old identical turn must not satisfy this delivery generation; order=${callOrder.join(',')}`,
+  );
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+});
+
 test('a persistently buffered composer fails loudly instead of concatenating a retype', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;

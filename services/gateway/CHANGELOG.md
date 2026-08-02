@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(self-review): resume retained workers through structured runner handoff, keep managed Codex hooks enabled, continue interactive feedback from existing findings, and write remote review artifacts through node RPC.
+- fix(self-review): resume retained workers through structured runner handoff, keep managed Codex hooks enabled, continue interactive feedback from existing findings, write remote review artifacts through node RPC, never treat an identical prompt from an older Grok transcript as acceptance of a new fix-pass generation, and accept a fresh task signal after a delayed prompt acknowledgement.
 - fix(work-graph): reclaim `waiting` nodes when the backlog item is ready and the run/queue are gone, and retry stale completed-enqueue ledger entries for `waiting` as well as `ready`, so fail+delete no longer leaves Dispatch stuck reporting upstream wait with an empty `waitingOn`.
 - fix(ready-gate): restore finalize-step decision helper wiring and type-check review-plan decision fixtures after the dual-fix merge.
 - fix(ready-gate): honor the latest request-extra-review loop runner (e.g. codex after claude) instead of a stale pending plan or approval-only decision lookup that could re-launch the previous reviewer.
