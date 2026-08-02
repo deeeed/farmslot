@@ -270,20 +270,6 @@
         }
       ]
     },
-    "ui.gesture": {
-      "description": "ui.gesture action.",
-      "schema": {
-        "type": "object",
-        "additionalProperties": false
-      },
-      "examples": [
-        {
-          "action": "ui.gesture",
-          "intent": "Complete the requested touch interaction.",
-          "next": "done"
-        }
-      ]
-    },
     "app.trace": {
       "description": "app.trace action.",
       "schema": {

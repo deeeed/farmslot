@@ -1,12 +1,24 @@
+import { execFile } from 'node:child_process';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import type { UiObserverRef } from '@farmslot/protocol';
-import type {
-  ActionExecutionContext,
-  RecipeObservationResult,
-  UiActionTransport,
-  UiTransportResult,
+import {
+  type ActionExecutionContext,
+  type GestureAction,
+  gestureDurationMs,
+  gesturePhase,
+  gesturePoints,
+  gestureSegmentDuration,
+  gestureTarget,
+  type RecipeActionPhase,
+  type RecipeObservationResult,
+  type UiActionTransport,
+  type UiPoint,
+  type UiTransportResult,
 } from '@farmslot/recipe-harness';
+
+const execFileAsync = promisify(execFile);
 
 // Structural view of the used agent-device client surface. Keeping this local
 // (instead of `typeof import('agent-device')`) keeps the optional peer out of
@@ -19,6 +31,7 @@ export interface AgentDeviceSnapshotNode {
   hittable?: boolean;
   visibleToUser?: boolean;
   interactionBlocked?: 'covered';
+  rect?: { x: number; y: number; width: number; height: number };
 }
 
 export interface AgentDeviceSnapshot {
@@ -49,6 +62,10 @@ export const NATIVE_UI_ACTIONS = [
   'ui.press',
   'ui.set_input',
   'ui.scroll',
+  'ui.swipe',
+  'ui.pan',
+  'ui.drag',
+  'ui.long_press',
   'ui.wait_for',
   'ui.screenshot',
 ] as const;
@@ -60,22 +77,66 @@ export interface AgentDeviceUiTransportOptions {
   session: string;
   stateDir?: string;
   client?: AgentDeviceClient;
+  gestureCommandRunner?: NativeGestureCommandRunner;
+  idbPath?: string;
+  adbPath?: string;
+}
+
+export interface NativeGestureCommandRunner {
+  execFile(
+    file: string,
+    args: string[],
+    options?: { timeoutMs?: number },
+  ): Promise<{ stdout?: string; stderr?: string }>;
 }
 
 export interface AgentDeviceUiTransport extends UiActionTransport {
   close(): Promise<void>;
 }
 
+type AgentDeviceSelection = {
+  platform: 'ios' | 'android';
+  target: 'mobile';
+  device?: string;
+  serial?: string;
+  udid?: string;
+};
+
 export function createAgentDeviceUiTransport(
   options: AgentDeviceUiTransportOptions,
 ): AgentDeviceUiTransport {
   let clientPromise = options.client ? Promise.resolve(options.client) : undefined;
-  const selection = {
-    platform: options.platform,
-    target: 'mobile' as const,
-    device: options.device,
-  };
+  const selection = agentDeviceSelection(options.platform, options.device);
   let opened = false;
+  const gestureCommandRunner = options.gestureCommandRunner ?? defaultGestureCommandRunner();
+  let gestureToolPromise: Promise<string> | undefined;
+  let gestureDevicePromise: Promise<string> | undefined;
+
+  function gestureTool(): Promise<string> {
+    gestureToolPromise ??= resolveGestureTool(
+      options.platform === 'ios' ? 'idb' : 'adb',
+      options.platform === 'ios' ? options.idbPath : options.adbPath,
+      gestureCommandRunner,
+    ).catch((error: unknown) => {
+      gestureToolPromise = undefined;
+      throw error;
+    });
+    return gestureToolPromise;
+  }
+
+  function gestureDevice(): Promise<string> {
+    gestureDevicePromise ??= (
+      options.platform === 'ios'
+        ? gestureTool().then((tool) =>
+            resolveIosGestureDevice(options.device, tool, gestureCommandRunner),
+          )
+        : Promise.resolve(options.device)
+    ).catch((error: unknown) => {
+      gestureDevicePromise = undefined;
+      throw error;
+    });
+    return gestureDevicePromise;
+  }
 
   async function resolveClient(): Promise<AgentDeviceClient> {
     if (!clientPromise) {
@@ -170,6 +231,20 @@ export function createAgentDeviceUiTransport(
             )),
           };
         }
+        case 'ui.swipe':
+        case 'ui.pan':
+        case 'ui.drag':
+        case 'ui.long_press':
+          return executeNativeGesture(
+            client,
+            options.session,
+            selection,
+            action,
+            node,
+            gestureCommandRunner,
+            await gestureTool(),
+            await gestureDevice(),
+          );
         case 'ui.wait_for': {
           const startedAt = Date.now();
           const result = await waitForNode(client, options.session, selection, node);
@@ -211,6 +286,253 @@ export function createAgentDeviceUiTransport(
   };
 }
 
+async function executeNativeGesture(
+  client: AgentDeviceClient,
+  session: string,
+  selection: AgentDeviceSelection,
+  action: GestureAction,
+  node: Record<string, unknown>,
+  commandRunner: NativeGestureCommandRunner,
+  gestureTool: string,
+  gestureDevice: string,
+): Promise<UiTransportResult> {
+  const start = await resolveNativeGesturePoint(
+    client,
+    session,
+    selection,
+    gestureTarget(node, action),
+  );
+  const durationMs = gestureDurationMs(node, action);
+  const points = gesturePoints(action, node, start).map(roundPoint);
+  if ((action === 'ui.pan' || action === 'ui.drag') && points.length > 2) {
+    throw new Error(
+      `${selection.platform} ${action} cannot stream a multi-point path. Next: use one path point or delta.`,
+    );
+  }
+  const segmentDurationMs = gestureSegmentDuration(durationMs, points);
+  const phases: RecipeActionPhase[] = [];
+  const gestureSelection = { platform: selection.platform, device: gestureDevice };
+  let segments = 0;
+  const startedAtMs = Date.now();
+  phases.push(gesturePhase('start', start, startedAtMs));
+
+  if (action === 'ui.long_press') {
+    await runNativeLongPress(commandRunner, gestureTool, gestureSelection, start, durationMs);
+    segments = 1;
+    phases.push(gesturePhase('move', start, startedAtMs));
+  } else {
+    for (let index = 1; index < points.length; index += 1) {
+      const from = points[index - 1]!;
+      const to = points[index]!;
+      await runNativeSwipe(
+        commandRunner,
+        gestureTool,
+        gestureSelection,
+        from,
+        to,
+        segmentDurationMs,
+      );
+      segments += 1;
+      phases.push(gesturePhase('move', to, startedAtMs));
+    }
+  }
+
+  const end = points.at(-1)!;
+  phases.push(gesturePhase('end', end, startedAtMs));
+  const stability =
+    node.settle === false
+      ? undefined
+      : await awaitNativeStability(
+          client,
+          session,
+          selection,
+          action,
+          positiveNumber(node.timeout_ms) ?? 10_000,
+        );
+  return {
+    kind: 'ui-transport-result',
+    output: {
+      action,
+      resolvedStart: start,
+      resolvedEnd: end,
+      backend: selection.platform === 'ios' ? 'idb-ui' : 'adb-input-swipe',
+      segments,
+      ...stability,
+    },
+    phases,
+  };
+}
+
+async function resolveNativeGesturePoint(
+  client: AgentDeviceClient,
+  session: string,
+  selection: AgentDeviceSelection,
+  target: string | UiPoint,
+): Promise<UiPoint> {
+  if (typeof target !== 'string') return roundPoint(target);
+  const snapshot = await client.capture.snapshot({
+    ...selection,
+    session,
+    interactiveOnly: false,
+    forceFull: true,
+  });
+  const match = snapshot.nodes.find((node) => node.identifier === target);
+  if (!match?.rect) throw new Error(`Gesture target not found or has no coordinates: ${target}`);
+  return roundPoint({
+    x: match.rect.x + match.rect.width / 2,
+    y: match.rect.y + match.rect.height / 2,
+  });
+}
+
+async function runNativeSwipe(
+  runner: NativeGestureCommandRunner,
+  tool: string,
+  selection: { platform: 'ios' | 'android'; device: string },
+  from: UiPoint,
+  to: UiPoint,
+  durationMs: number,
+): Promise<void> {
+  if (selection.platform === 'ios') {
+    await runner.execFile(
+      tool,
+      [
+        'ui',
+        'swipe',
+        String(from.x),
+        String(from.y),
+        String(to.x),
+        String(to.y),
+        '--duration',
+        String(durationMs / 1000),
+        '--udid',
+        selection.device,
+      ],
+      { timeoutMs: durationMs + 10_000 },
+    );
+    return;
+  }
+  await runner.execFile(
+    tool,
+    [
+      '-s',
+      selection.device,
+      'shell',
+      'input',
+      'swipe',
+      String(from.x),
+      String(from.y),
+      String(to.x),
+      String(to.y),
+      String(durationMs),
+    ],
+    { timeoutMs: durationMs + 10_000 },
+  );
+}
+
+async function runNativeLongPress(
+  runner: NativeGestureCommandRunner,
+  tool: string,
+  selection: { platform: 'ios' | 'android'; device: string },
+  point: UiPoint,
+  durationMs: number,
+): Promise<void> {
+  if (selection.platform === 'ios') {
+    await runner.execFile(
+      tool,
+      [
+        'ui',
+        'tap',
+        String(point.x),
+        String(point.y),
+        '--duration',
+        String(durationMs / 1000),
+        '--udid',
+        selection.device,
+      ],
+      { timeoutMs: durationMs + 10_000 },
+    );
+    return;
+  }
+  await runNativeSwipe(runner, tool, selection, point, point, durationMs);
+}
+
+async function resolveGestureTool(
+  command: 'idb' | 'adb',
+  configuredPath: string | undefined,
+  runner: NativeGestureCommandRunner,
+): Promise<string> {
+  const candidate = configuredPath?.trim() || command;
+  if (path.isAbsolute(candidate)) return candidate;
+  const result = await runner.execFile('/usr/bin/which', [candidate], { timeoutMs: 5_000 });
+  const resolved = result.stdout?.trim();
+  if (!resolved || !path.isAbsolute(resolved)) {
+    throw new Error(
+      `Native gesture execution requires ${command}. Next: install ${command} and ensure it is on PATH.`,
+    );
+  }
+  return resolved;
+}
+
+async function resolveIosGestureDevice(
+  device: string,
+  idbPath: string,
+  runner: NativeGestureCommandRunner,
+): Promise<string> {
+  if (isIosUdid(device)) return device;
+  const result = await runner.execFile(idbPath, ['list-targets', '--json'], { timeoutMs: 10_000 });
+  const matches = (result.stdout ?? '')
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        const target = JSON.parse(line) as { name?: unknown; udid?: unknown; state?: unknown };
+        return target.name === device && typeof target.udid === 'string' ? [target] : [];
+      } catch {
+        // idb may mix diagnostic lines into its newline-delimited JSON output.
+        return [];
+      }
+    });
+  const match = matches.find(({ state }) => state === 'Booted') ?? matches[0];
+  if (!match || typeof match.udid !== 'string') {
+    throw new Error(
+      `Native iOS gestures could not resolve simulator ${device}. Next: run idb list-targets and use a listed simulator name or UDID.`,
+    );
+  }
+  return match.udid;
+}
+
+function agentDeviceSelection(platform: 'ios' | 'android', device: string): AgentDeviceSelection {
+  if (platform === 'android') return { platform, target: 'mobile', serial: device };
+  if (isIosUdid(device)) return { platform, target: 'mobile', udid: device };
+  return { platform, target: 'mobile', device };
+}
+
+function isIosUdid(value: string): boolean {
+  return /^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$/iu.test(value);
+}
+
+function defaultGestureCommandRunner(): NativeGestureCommandRunner {
+  return {
+    async execFile(file, args, options) {
+      try {
+        return await execFileAsync(file, args, {
+          encoding: 'utf8',
+          timeout: options?.timeoutMs,
+        });
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        const output = error as Error & { stdout?: string; stderr?: string };
+        const detail = [output.message, output.stderr, output.stdout].filter(Boolean).join('\n');
+        throw new Error(`${file} ${args.join(' ')} failed: ${detail}`);
+      }
+    },
+  };
+}
+
+function roundPoint(point: UiPoint): UiPoint {
+  return { x: Math.round(point.x), y: Math.round(point.y) };
+}
+
 export function assertAgentDeviceNodeVersion(version: string): void {
   const [major = 0, minor = 0] = version.split('.').map(Number);
   if (major > 22 || (major === 22 && minor >= 12)) return;
@@ -222,7 +544,7 @@ export function assertAgentDeviceNodeVersion(version: string): void {
 async function awaitNativeStability(
   client: AgentDeviceClient,
   session: string,
-  selection: { platform: 'ios' | 'android'; target: 'mobile'; device: string },
+  selection: AgentDeviceSelection,
   action: string,
   timeoutMs: number,
 ): Promise<Record<string, unknown>> {
@@ -319,7 +641,7 @@ function sanitizeFillResult(result: unknown): Record<string, unknown> {
 async function waitForNode(
   client: AgentDeviceClient,
   session: string,
-  selection: { platform: 'ios' | 'android'; target: 'mobile'; device: string },
+  selection: AgentDeviceSelection,
   node: Record<string, unknown>,
 ): Promise<unknown> {
   const timeoutMs = positiveNumber(node.timeout_ms) ?? 10_000;
@@ -371,6 +693,7 @@ async function captureScreenshot(
   };
   context.registerArtifact(artifact);
   return {
+    kind: 'ui-transport-result',
     output: { captured: true, path: normalizedPath, width: result.width, height: result.height },
     control: { artifacts: [artifact] },
   };

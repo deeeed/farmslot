@@ -21,6 +21,9 @@ const PARAM_SCHEMA_FIELDS = new Set([
   'required',
   'properties',
   'items',
+  'minimum',
+  'minItems',
+  'maxItems',
 ]);
 
 export function validateRecipeParamsSchema(
@@ -276,6 +279,48 @@ function validatePropertySchema(
       validateNestedStructuredValue(ctx, schema.default, schema, `${path}.default`);
     }
   }
+  if (
+    hasOwn(schema, 'minimum') &&
+    (typeof schema.minimum !== 'number' ||
+      !Number.isFinite(schema.minimum) ||
+      (!schemaIncludesType(schema.type, 'number') && !schemaIncludesType(schema.type, 'integer')))
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.invalid_param_minimum',
+      `${path}.minimum`,
+      `${path}.minimum must be a finite number for a numeric parameter.`,
+    );
+  }
+  if (
+    hasOwn(schema, 'minItems') &&
+    (!Number.isInteger(schema.minItems) ||
+      (schema.minItems as number) < 0 ||
+      !schemaIncludesType(schema.type, 'array'))
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.invalid_param_min_items',
+      `${path}.minItems`,
+      `${path}.minItems must be a non-negative integer for an array parameter.`,
+    );
+  }
+  if (
+    hasOwn(schema, 'maxItems') &&
+    (!Number.isInteger(schema.maxItems) ||
+      (schema.maxItems as number) < 0 ||
+      !schemaIncludesType(schema.type, 'array'))
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.invalid_param_max_items',
+      `${path}.maxItems`,
+      `${path}.maxItems must be a non-negative integer for an array parameter.`,
+    );
+  }
   validateObjectSchemaKeywords(ctx, schema, path);
   if (hasOwn(schema, 'items')) {
     validatePropertySchema(ctx, schema.items, `${path}.items`);
@@ -421,6 +466,41 @@ function validateParamValue(
       'recipe.invalid_param_value_enum',
       path,
       `${path} must be one of ${JSON.stringify(schema.enum)}.`,
+    );
+  }
+  if (typeof value === 'number' && typeof schema.minimum === 'number' && value < schema.minimum) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.param_value_below_minimum',
+      path,
+      `${path} must be greater than or equal to ${schema.minimum}.`,
+    );
+  }
+  if (
+    Array.isArray(value) &&
+    typeof schema.minItems === 'number' &&
+    value.length < schema.minItems
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.param_array_too_short',
+      path,
+      `${path} must contain at least ${schema.minItems} item${schema.minItems === 1 ? '' : 's'}.`,
+    );
+  }
+  if (
+    Array.isArray(value) &&
+    typeof schema.maxItems === 'number' &&
+    value.length > schema.maxItems
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.param_array_too_long',
+      path,
+      `${path} must contain at most ${schema.maxItems} item${schema.maxItems === 1 ? '' : 's'}.`,
     );
   }
   if (schemaIncludesType(schema.type, 'object') && isRecord(value))

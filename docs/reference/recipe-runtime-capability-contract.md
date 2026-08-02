@@ -31,9 +31,9 @@ Use for backend services, CLI projects, static checks, and artifact-only proof.
 Base package: `createStandardUiAdapters({ transport })`
 
 Actions: `ui.navigate`, `ui.press`, `ui.key_press`, `ui.set_input`,
-`ui.scroll`, `ui.gesture`, `ui.wait_for`, `ui.screenshot`, plus app-level
-helpers such as `app.status`, `app.lifecycle`, `app.hud`, and `app.trace` when
-the platform can expose them.
+`ui.scroll`, `ui.swipe`, `ui.pan`, `ui.drag`, `ui.long_press`, `ui.wait_for`,
+`ui.screenshot`, plus app-level helpers such as `app.status`, `app.lifecycle`,
+`app.hud`, and `app.trace` when the platform can expose them.
 
 Farmslot owns the action semantics and, for common platform families, the
 transport implementation. A runner should first compose a base Farmslot transport

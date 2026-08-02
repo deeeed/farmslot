@@ -23,6 +23,10 @@ const CODEX_BIN = path.join(
   '.npm-global/lib/node_modules/@openai/codex/bin/codex.js',
 );
 
+export function binaryPath() {
+  return CODEX_BIN;
+}
+
 export function prepareRepo(repo) {
   execFileSync('git', ['init'], { cwd: repo, stdio: 'pipe' });
   execFileSync('git', ['config', 'user.email', 'runner-validate@farmslot.local'], {
@@ -50,8 +54,6 @@ export function buildLaunchCommand(repo, runtimeDir, prompt = DEFAULT_PROMPT, mo
     'node',
     shSingleQuote(CODEX_BIN),
     'exec',
-    '--disable',
-    'plugin_hooks',
     '--sandbox',
     'workspace-write',
     ...modelFlag,

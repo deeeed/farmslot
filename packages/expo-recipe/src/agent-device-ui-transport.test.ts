@@ -242,6 +242,311 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
   assert.equal(calls.find((call) => call.method === 'close')?.options.shutdown, false);
 });
 
+test('streams all continuous gestures from resolved native target coordinates', async () => {
+  for (const platform of ['ios', 'android'] as const) {
+    const commands: Array<{ file: string; args: string[] }> = [];
+    const client = {
+      apps: { open: async () => ({ session: 'gesture-session', identifiers: {} }) },
+      interactions: {
+        press: async () => ({ ok: true }),
+        fill: async () => ({ ok: true }),
+        scroll: async () => ({ ok: true }),
+      },
+      command: { wait: async () => ({ stable: true }) },
+      capture: {
+        async snapshot() {
+          return {
+            nodes: [
+              {
+                identifier: 'gesture-target',
+                rect: { x: 10.2, y: 20.2, width: 99.4, height: 39.4 },
+              },
+            ],
+            truncated: false,
+          };
+        },
+        screenshot: async () => ({}),
+      },
+      sessions: { close: async () => ({ session: 'gesture-session', identifiers: {} }) },
+    } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+    const transport = createAgentDeviceUiTransport({
+      platform,
+      device: platform === 'ios' ? 'gesture-ios' : 'emulator-5554',
+      app: 'net.siteed.farmslot.development',
+      session: 'gesture-session',
+      client,
+      idbPath: '/tools/idb',
+      adbPath: '/tools/adb',
+      gestureCommandRunner: {
+        async execFile(file, args) {
+          commands.push({ file, args });
+          if (args[0] === 'list-targets') {
+            return {
+              stdout:
+                '{"name":"gesture-ios","udid":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","state":"Booted"}\n',
+            };
+          }
+          return {};
+        },
+      },
+    });
+
+    const cases = [
+      {
+        action: 'ui.swipe',
+        node: {
+          target: 'gesture-target',
+          direction: 'up',
+          distance: 30,
+          duration_ms: 300,
+          settle: false,
+        },
+        end: { x: 60, y: 10 },
+      },
+      {
+        action: 'ui.pan',
+        node: {
+          target: 'gesture-target',
+          path: [{ x: 19.6, y: 0.4 }],
+          duration_ms: 400,
+          settle: false,
+        },
+        end: { x: 80, y: 40 },
+      },
+      {
+        action: 'ui.drag',
+        node: {
+          target: 'gesture-target',
+          path: [{ x: 50.2, y: -0.2 }],
+          duration_ms: 500,
+          settle: false,
+        },
+        end: { x: 110, y: 40 },
+      },
+      {
+        action: 'ui.long_press',
+        node: { target: 'gesture-target', hold_ms: 700, settle: false },
+        end: { x: 60, y: 40 },
+      },
+    ] as const;
+
+    for (const fixture of cases) {
+      const result = (await transport.execute(
+        fixture.action,
+        fixture.node,
+        {} as ActionExecutionContext,
+      )) as {
+        output: { resolvedStart: { x: number; y: number }; resolvedEnd: { x: number; y: number } };
+        phases: Array<{ phase: string; x: number; y: number }>;
+      };
+      assert.deepEqual(result.output.resolvedStart, { x: 60, y: 40 });
+      assert.deepEqual(result.output.resolvedEnd, fixture.end);
+      assert.equal(result.phases[0]?.phase, 'start');
+      assert.equal(result.phases.at(-1)?.phase, 'end');
+    }
+
+    assert.deepEqual(commands, expectedNativeGestureCommands(platform));
+  }
+});
+
+function expectedNativeGestureCommands(
+  platform: 'ios' | 'android',
+): Array<{ file: string; args: string[] }> {
+  if (platform === 'ios') {
+    const swipe = (from: [number, number], to: [number, number], seconds: string) => ({
+      file: '/tools/idb',
+      args: [
+        'ui',
+        'swipe',
+        String(from[0]),
+        String(from[1]),
+        String(to[0]),
+        String(to[1]),
+        '--duration',
+        seconds,
+        '--udid',
+        'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE',
+      ],
+    });
+    return [
+      { file: '/tools/idb', args: ['list-targets', '--json'] },
+      swipe([60, 40], [60, 10], '0.3'),
+      swipe([60, 40], [80, 40], '0.4'),
+      swipe([60, 40], [110, 40], '0.5'),
+      {
+        file: '/tools/idb',
+        args: [
+          'ui',
+          'tap',
+          '60',
+          '40',
+          '--duration',
+          '0.7',
+          '--udid',
+          'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE',
+        ],
+      },
+    ];
+  }
+  const adb = (...args: string[]) => ({
+    file: '/tools/adb',
+    args: ['-s', 'emulator-5554', 'shell', 'input', ...args],
+  });
+  return [
+    adb('swipe', '60', '40', '60', '10', '300'),
+    adb('swipe', '60', '40', '80', '40', '400'),
+    adb('swipe', '60', '40', '110', '40', '500'),
+    adb('swipe', '60', '40', '60', '40', '700'),
+  ];
+}
+
+test('native transports fail closed on multi-point paths', async () => {
+  const client = {
+    apps: { open: async () => ({ session: 'gesture-session', identifiers: {} }) },
+    interactions: {
+      press: async () => ({ ok: true }),
+      fill: async () => ({ ok: true }),
+      scroll: async () => ({ ok: true }),
+    },
+    command: { wait: async () => ({ stable: true }) },
+    capture: {
+      snapshot: async () => ({ nodes: [], truncated: false }),
+      screenshot: async () => ({}),
+    },
+    sessions: { close: async () => ({ session: 'gesture-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const node = {
+    target: { x: 10.4, y: 20.4 },
+    path: [
+      { x: 20.6, y: 0.3 },
+      { x: 40.2, y: 10.7 },
+    ],
+    duration_ms: 2,
+    settle: false,
+  };
+  const androidCommands: string[][] = [];
+  const android = createAgentDeviceUiTransport({
+    platform: 'android',
+    device: 'emulator-5554',
+    app: 'net.siteed.farmslot.development',
+    session: 'gesture-session',
+    client,
+    adbPath: '/tools/adb',
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        androidCommands.push(args);
+        return {};
+      },
+    },
+  });
+
+  for (const action of ['ui.pan', 'ui.drag'] as const) {
+    await assert.rejects(
+      () => android.execute(action, node, {} as ActionExecutionContext),
+      new RegExp(
+        `android ${action.replace('.', '\\.')} cannot stream a multi-point path\\. Next: use one path point or delta\\.`,
+        'u',
+      ),
+    );
+  }
+  assert.deepEqual(androidCommands, []);
+
+  const iosCommands: string[][] = [];
+  const ios = createAgentDeviceUiTransport({
+    platform: 'ios',
+    device: 'gesture-ios',
+    app: 'net.siteed.farmslot.development',
+    session: 'gesture-session',
+    client,
+    idbPath: '/tools/idb',
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        iosCommands.push(args);
+        if (args[0] === 'list-targets') {
+          return {
+            stdout:
+              '{"name":"gesture-ios","udid":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","state":"Booted"}\n',
+          };
+        }
+        return {};
+      },
+    },
+  });
+
+  for (const action of ['ui.pan', 'ui.drag'] as const) {
+    await assert.rejects(
+      () => ios.execute(action, node, {} as ActionExecutionContext),
+      new RegExp(
+        `ios ${action.replace('.', '\\.')} cannot stream a multi-point path\\. Next: use one path point or delta\\.`,
+        'u',
+      ),
+    );
+  }
+  assert.deepEqual(iosCommands, [['list-targets', '--json']]);
+});
+
+test('native gesture discovery retries after tool and device resolution failures', async () => {
+  const client = {
+    apps: { open: async () => ({ session: 'gesture-session', identifiers: {} }) },
+    interactions: {
+      press: async () => ({ ok: true }),
+      fill: async () => ({ ok: true }),
+      scroll: async () => ({ ok: true }),
+    },
+    command: { wait: async () => ({ stable: true }) },
+    capture: {
+      snapshot: async () => ({ nodes: [], truncated: false }),
+      screenshot: async () => ({}),
+    },
+    sessions: { close: async () => ({ session: 'gesture-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  let whichAttempts = 0;
+  let deviceAttempts = 0;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'ios',
+    device: 'gesture-ios',
+    app: 'net.siteed.farmslot.development',
+    session: 'gesture-session',
+    client,
+    gestureCommandRunner: {
+      async execFile(_file, args) {
+        if (args[0] === 'idb') {
+          whichAttempts += 1;
+          return whichAttempts === 1 ? {} : { stdout: '/tools/idb\n' };
+        }
+        if (args[0] === 'list-targets') {
+          deviceAttempts += 1;
+          return deviceAttempts === 1
+            ? {}
+            : {
+                stdout:
+                  '{"name":"gesture-ios","udid":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","state":"Booted"}\n',
+              };
+        }
+        return {};
+      },
+    },
+  });
+  const node = {
+    target: { x: 20, y: 40 },
+    hold_ms: 1,
+    settle: false,
+  };
+
+  await assert.rejects(
+    () => transport.execute('ui.long_press', node, {} as ActionExecutionContext),
+    /requires idb/u,
+  );
+  await assert.rejects(
+    () => transport.execute('ui.long_press', node, {} as ActionExecutionContext),
+    /could not resolve simulator gesture-ios/u,
+  );
+  await transport.execute('ui.long_press', node, {} as ActionExecutionContext);
+
+  assert.equal(whichAttempts, 2);
+  assert.equal(deviceAttempts, 2);
+});
+
 test('observe false remains a harness concern and does not alter provider selectors', async () => {
   const client = {
     apps: { open: async () => ({ session: 's', identifiers: {} }) },
@@ -266,6 +571,8 @@ test('observe false remains a harness concern and does not alter provider select
     {} as ActionExecutionContext,
   );
   assert.equal((result as { selector: string }).selector, 'label="Settings"');
+  assert.equal((result as { serial?: string }).serial, 'emulator-5554');
+  assert.equal((result as { device?: string }).device, undefined);
 });
 
 test('settle false skips native stability enforcement', async () => {

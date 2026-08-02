@@ -35,7 +35,10 @@
               "ui.key_press",
               "ui.set_input",
               "ui.scroll",
-              "ui.gesture",
+              "ui.swipe",
+              "ui.pan",
+              "ui.drag",
+              "ui.long_press",
               "ui.wait_for",
               "ui.screenshot",
               "app.status",
@@ -74,7 +77,10 @@
         "ui.key_press": { "$ref": "#/$defs/actionWithSchema" },
         "ui.set_input": { "$ref": "#/$defs/actionWithSchema" },
         "ui.scroll": { "$ref": "#/$defs/actionWithSchema" },
-        "ui.gesture": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.swipe": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.pan": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.drag": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.long_press": { "$ref": "#/$defs/actionWithSchema" },
         "ui.wait_for": { "$ref": "#/$defs/actionWithSchema" },
         "ui.screenshot": { "$ref": "#/$defs/actionWithSchema" },
         "app.status": { "$ref": "#/$defs/actionWithSchema" },
@@ -138,6 +144,24 @@
           "$ref": "#/$defs/paramsSchema",
           "description": "Strict JSON Schema for action-specific node parameters. The runtime additionally validates cross-field relationships such as required names and enum/default value types."
         },
+        "adapters": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Adapter names that implement this action. Omit when the action is adapter-independent."
+        },
+        "adapter_schemas": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/adapterParamsSchema"
+          },
+          "description": "Adapter-specific parameter refinements applied in addition to the shared action schema. Keys must name declared adapters."
+        },
         "result_cases": {
           "type": "array",
           "minItems": 1,
@@ -194,6 +218,28 @@
       },
       "additionalProperties": false,
       "description": "Closed action-parameter schema supported by Recipe Protocol v1."
+    },
+    "adapterParamsSchema": {
+      "type": "object",
+      "required": ["type", "additionalProperties"],
+      "properties": {
+        "type": {
+          "const": "object",
+          "description": "Adapter parameter refinements are always represented by one object."
+        },
+        "additionalProperties": {
+          "const": true,
+          "description": "Parameters outside the refinement continue to use the shared action schema."
+        },
+        "required": {
+          "$ref": "#/$defs/requiredProperties"
+        },
+        "properties": {
+          "$ref": "#/$defs/parameterProperties"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Partial parameter schema that narrows one declared adapter without replacing the shared action schema."
     },
     "parameterProperties": {
       "type": "object",
@@ -259,6 +305,20 @@
         },
         "items": {
           "$ref": "#/$defs/parameterSchema"
+        },
+        "minimum": {
+          "type": "number",
+          "description": "Inclusive lower bound for numeric parameters."
+        },
+        "minItems": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum number of entries required for array parameters."
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of entries accepted for array parameters."
         }
       },
       "additionalProperties": false,

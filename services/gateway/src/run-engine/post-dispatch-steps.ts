@@ -35,6 +35,10 @@ import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview } from '../self-review/orchestrator.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
+import {
+  isHumanGateReviewRequestAction,
+  markResolvedHumanGateReviewRequestConsumed,
+} from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import {
@@ -45,6 +49,7 @@ import {
   stampPublishGateReviewStatusForPackage,
   supersedeStaleHumanGateDecisions,
 } from './gate-policy.js';
+import { loadProjectVarsOrNull } from './project-vars.js';
 import {
   publicationReviewPolicyForRun,
   requiresPublicationApproval,
@@ -54,6 +59,8 @@ import { verifyWorkerPushedBranch } from './push-verification.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import {
   automaticPublicationReviewPlan,
+  humanGateReviewDepth,
+  humanGateReviewRequestFromDecision,
   remainingExplicitReviewPlan,
   resolveHumanGateReviewExecutionPlan,
 } from './review-plan.js';
@@ -516,10 +523,13 @@ export async function executeSelfReviewStep(
       { id: 'send_feedback', label: 'Send feedback to worker', style: 'primary' },
       { id: 'skip', label: 'Skip — proceed to human gate', style: 'secondary' },
     ]);
-    // When human chooses "send_feedback", re-run self-review which will
-    // send feedback and wait for fix (existing retry logic)
+    // Continue from the findings the operator just accepted. Starting the
+    // top-level review again would spend another review pass before the worker
+    // ever sees the requested feedback.
     if (actionId === 'send_feedback') {
-      const retryResult = await executeSelfReviewForRun(runId, current.slotId);
+      const retryResult = await executeSelfReviewForRun(runId, current.slotId, {
+        resumeFromResult: result,
+      });
       return {
         inputs: { ...inputs, enabled: true },
         outputs: {
@@ -713,59 +723,120 @@ export async function executeHumanGateStep(
       const beforeInitialPlan = getRun(runId)!;
       const explicitInitialPlan =
         beforeInitialPlan.engineState?.publishGate?.pendingReviewPlan ?? [];
+      // Operator may have already resolved request-extra-review (e.g. codex) while
+      // the engine had no live createEngineDecision waiter. Resume must honor that
+      // unconsumed selection — not invent automaticPublicationReviewPlan (which
+      // picks defaultAlternate for the worker and re-launched claude for a grok
+      // worker on run 71803bd2 after a codex request).
+      const unconsumedReviewDecision = (beforeInitialPlan.decisions ?? [])
+        .filter(
+          (decision) =>
+            decision.type === 'engine_human_gate' &&
+            !!decision.resolvedAt &&
+            isHumanGateReviewRequestAction(decision.resolvedAction) &&
+            typeof decision.context?.reviewRequestConsumedAt !== 'string',
+        )
+        .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))[0];
+      const fromUnconsumed = unconsumedReviewDecision
+        ? resolveHumanGateReviewExecutionPlan({
+            gateAction: unconsumedReviewDecision.resolvedAction ?? 'request-extra-review',
+            pendingPlan: explicitInitialPlan,
+            decisions: beforeInitialPlan.decisions ?? [],
+          })
+        : [];
+      const reviewsForInitial =
+        beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [];
+      const persistedReviewDepth = beforeInitialPlan.engineState?.publishGate?.reviewDepth;
+      const replayProjectVars =
+        unconsumedReviewDecision && persistedReviewDepth?.requestedBy !== 'dispatch'
+          ? await loadProjectVarsOrNull(
+              beforeInitialPlan.project,
+              'publication review replay',
+              beforeInitialPlan.id,
+            )
+          : null;
+      const replayBaseReviewDepth =
+        persistedReviewDepth?.requestedBy === 'dispatch'
+          ? persistedReviewDepth
+          : publicationReviewPolicyForRun(beforeInitialPlan, replayProjectVars?.projectJson);
       // A restart can land after a reviewer verdict was persisted but before
       // the durable pending plan was cleared. Execute only the still-missing
       // portion; otherwise every restart launches another already-satisfied
       // reviewer (and a two-loop plan can replay loop one twice).
-      const initialPlan = explicitInitialPlan.length
-        ? remainingExplicitReviewPlan(
-            explicitInitialPlan,
-            beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [],
-            {
+      const initialPlan = unconsumedReviewDecision
+        ? remainingExplicitReviewPlan(fromUnconsumed, reviewsForInitial, {
+            requestedAt: unconsumedReviewDecision?.resolvedAt,
+            source: 'human-gate',
+          })
+        : explicitInitialPlan.length
+          ? remainingExplicitReviewPlan(explicitInitialPlan, reviewsForInitial, {
               requestedAt: beforeInitialPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt,
               source:
                 beforeInitialPlan.engineState?.publishGate?.reviewDepth?.requestedBy ===
                 'human-gate'
                   ? 'human-gate'
                   : 'dispatch',
+            })
+          : automaticPublicationReviewPlan(
+              beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
+                publicationReviewPolicyForRun(beforeInitialPlan),
+              reviewsForInitial,
+              beforeInitialPlan.metrics.runner,
+            );
+      const recoveredReviewDepth = unconsumedReviewDecision
+        ? humanGateReviewDepth(
+            replayBaseReviewDepth,
+            humanGateReviewRequestFromDecision(unconsumedReviewDecision),
+            {
+              actionId: unconsumedReviewDecision.resolvedAction,
+              fallbackLoopCount: Math.max(1, fromUnconsumed.length),
             },
           )
-        : automaticPublicationReviewPlan(
-            beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
-              publicationReviewPolicyForRun(beforeInitialPlan),
-            beforeInitialPlan.engineState?.publishGate?.independentReviews ?? [],
-            beforeInitialPlan.metrics.runner,
-          );
-      if (explicitInitialPlan.length > 0 && initialPlan.length === 0) {
+        : undefined;
+      if (
+        (explicitInitialPlan.length > 0 || fromUnconsumed.length > 0) &&
+        initialPlan.length === 0
+      ) {
         updateRun(runId, {
           engineState: {
             ...beforeInitialPlan.engineState,
             publishGate: {
               ...beforeInitialPlan.engineState?.publishGate,
+              ...(recoveredReviewDepth ? { reviewDepth: recoveredReviewDepth } : {}),
               pendingReviewPlan: [],
               pendingReviewPlanRequestedAt: undefined,
             },
           },
         });
+        if (unconsumedReviewDecision) {
+          markResolvedHumanGateReviewRequestConsumed(unconsumedReviewDecision);
+          updateRun(runId, { decisions: beforeInitialPlan.decisions });
+        }
       }
       if (initialPlan.length) {
-        if (explicitInitialPlan.length === 0) {
+        if (explicitInitialPlan.length === 0 || unconsumedReviewDecision) {
           updateRun(runId, {
             engineState: {
               ...beforeInitialPlan.engineState,
               publishGate: {
                 ...beforeInitialPlan.engineState?.publishGate,
+                ...(recoveredReviewDepth ? { reviewDepth: recoveredReviewDepth } : {}),
                 pendingReviewPlan: initialPlan,
                 pendingReviewPlanRequestedAt: new Date().toISOString(),
               },
             },
           });
         }
+        if (unconsumedReviewDecision) {
+          markResolvedHumanGateReviewRequestConsumed(unconsumedReviewDecision);
+          updateRun(runId, { decisions: getRun(runId)!.decisions });
+        }
         const dispatchReviewSlotId = current.slotId;
         if (!dispatchReviewSlotId)
           throw new Error('No slot assigned — cannot run dispatch publish-gate reviews');
         const dispatchPlan = initialPlan.slice(0, MAX_PUBLISH_GATE_REVIEW_LOOPS);
         const reviewSource =
+          unconsumedReviewDecision ||
           getRun(runId)?.engineState?.publishGate?.reviewDepth?.requestedBy === 'human-gate'
             ? 'human-gate'
             : 'dispatch';

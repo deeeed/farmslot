@@ -4,6 +4,7 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { GestureProofSurface } from '../../components/GestureProofSurface';
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
 
 type AdvancedRoute = {
@@ -57,6 +58,8 @@ export default function AdvancedScreen() {
           broader fleet context, global filters, or diagnostics.
         </Text>
       </View>
+
+      <GestureProofSurface />
 
       <View style={styles.routeList}>
         {ADVANCED_ROUTES.map((route) => (

@@ -98,7 +98,10 @@ const APP_MUTATION_ACTIONS = new Set<OfficialActionName>([
   'ui.key_press',
   'ui.set_input',
   'ui.scroll',
-  'ui.gesture',
+  'ui.swipe',
+  'ui.pan',
+  'ui.drag',
+  'ui.long_press',
   'app.lifecycle',
   'app.hud',
   'cdp.storage',
@@ -109,7 +112,10 @@ const APP_MUTATION_ACTIONS = new Set<OfficialActionName>([
 const EXTERNAL_MUTATION_ACTIONS = new Set<OfficialActionName>([
   'ui.press',
   'ui.key_press',
-  'ui.gesture',
+  'ui.swipe',
+  'ui.pan',
+  'ui.drag',
+  'ui.long_press',
   'cdp.network',
 ]);
 

@@ -30,7 +30,10 @@ import {
 import { resolveTmuxPaneId, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
 import { normalizeRunner, runnerRetainedSessionHandoff } from '../../runners/registry.js';
 import { resolvePersistedRunnerSessionBinding } from '../../runners/session-process.js';
-import { deliverPromptToRetainedRunnerSession } from '../../runners/session-reactivation.js';
+import {
+  deliverPromptWithRetainedFallback,
+  type RetainedSessionDeliveryResult,
+} from '../../runners/session-reactivation.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { isWorkerAlive } from '../../self-review/worker-lifecycle.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
@@ -70,6 +73,18 @@ export type WarmSessionHandoffResult =
       /** A live/ambiguous worker must be held rather than replaced. */
       disposition: 'fresh-dispatch' | 'hold';
     };
+
+export function warmHandoffFailureFromRetainedDelivery(
+  delivery: Exclude<RetainedSessionDeliveryResult, { delivered: true }>,
+): WarmSessionHandoffResult {
+  // This path already proved a live worker exists. Even when in-place safe-send
+  // is allowed for another workflow, cold replacement is never safe here.
+  return {
+    handedOff: false,
+    disposition: 'hold',
+    reason: delivery.reason,
+  };
+}
 
 export interface WarmWorkerBinding {
   role: AgentRole;
@@ -312,7 +327,7 @@ export async function warmSessionHandoffDispatch(
     runTier: requestingRun.safetyTier ?? parentRun?.safetyTier,
     projectDefaultRaw: projectJson.default_safety_tier,
   });
-  const delivery = await deliverPromptToRetainedRunnerSession({
+  const deliveryOptions = {
     vars,
     target: workerTarget,
     runnerId: runner,
@@ -324,13 +339,10 @@ export async function warmSessionHandoffDispatch(
     safetyTier,
     taskDir: workerTaskAbs,
     recovery: { runId: params.runId, emit },
-  });
+  };
+  const delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
   if (!delivery.delivered) {
-    return {
-      handedOff: false,
-      disposition: delivery.disposition,
-      reason: delivery.reason,
-    };
+    return warmHandoffFailureFromRetainedDelivery(delivery);
   }
   primaryTarget.pane = await resolveTmuxPaneId(vars, workerTarget);
 

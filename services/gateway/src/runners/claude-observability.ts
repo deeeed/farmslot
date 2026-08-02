@@ -1,5 +1,6 @@
 import { resolveTmuxPaneId } from '../core/tmux.js';
 
+import { readSlotClockMs } from './observability-clock.js';
 import {
   activeToolFromHooks,
   contextPctFromStatusline,
@@ -12,6 +13,7 @@ import {
   parseHookJsonl,
   parseStatuslineJson,
   promptAcceptedFromHooks,
+  promptDigestMatchedFromHooks,
   readRunnerObservabilityFiles,
   readRunnerPaneObservabilityState,
   readRunnerSessionObservabilityState,
@@ -27,6 +29,7 @@ async function loadObservabilitySnapshot(vars: SlotVars, target: string) {
 }
 
 export const claudeHookObservability: RunnerObservability = {
+  promptAcceptanceMode: 'hook-digest',
   async getActivity(vars, target) {
     const { hooks, statusline } = await loadObservabilitySnapshot(vars, target);
     return deriveRunnerActivity(hooks, statusline);
@@ -47,9 +50,13 @@ export const claudeHookObservability: RunnerObservability = {
     return lastTurnCompletedFromHooks(hooks);
   },
 
+  async capturePromptAcceptanceBaseline(vars) {
+    return readSlotClockMs(vars);
+  },
+
   async promptAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {
     const { hooks } = await loadObservabilitySnapshot(vars, target);
-    return promptAcceptedFromHooks(
+    const reading = promptAcceptedFromHooks(
       hooks,
       promptDigest,
       sinceMs,
@@ -58,6 +65,12 @@ export const claudeHookObservability: RunnerObservability = {
       undefined,
       paneRetired,
     );
+    return reading
+      ? {
+          ...reading,
+          exactPromptMatch: promptDigestMatchedFromHooks(hooks, promptDigest, sinceMs),
+        }
+      : null;
   },
 
   async getSessionDeliveryState(vars, target, sessionId, sessionPath) {

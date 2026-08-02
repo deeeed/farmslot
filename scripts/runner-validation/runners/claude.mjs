@@ -22,6 +22,10 @@ export const REGISTERED_EVENTS = [
 
 const CLAUDE_BIN = path.join(os.homedir(), '.npm-global/bin/claude');
 
+export function binaryPath() {
+  return CLAUDE_BIN;
+}
+
 export function prepareRepo() {
   // Claude hooks read project-scoped .claude/settings.local.json — no git required.
 }

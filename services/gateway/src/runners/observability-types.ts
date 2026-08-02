@@ -9,6 +9,8 @@ export interface ObservabilityReading<T> {
   confidence: ObservabilityConfidence;
   /** ms since epoch of the underlying event/file mtime. */
   observedAt: number;
+  /** True only when prompt-acceptance evidence matched the requested prompt itself. */
+  exactPromptMatch?: boolean;
 }
 
 export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';
@@ -51,6 +53,8 @@ export interface StatuslineRecord {
 }
 
 export interface RunnerObservability {
+  /** How this provider proves that the exact prompt was accepted. */
+  promptAcceptanceMode?: 'hook-digest' | 'native-text';
   getActivity(vars: SlotVars, target: string): Promise<ObservabilityReading<RunnerActivity> | null>;
   getContextPct(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
   activeTool(vars: SlotVars, target: string): Promise<ObservabilityReading<string> | null>;

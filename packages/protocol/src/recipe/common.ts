@@ -29,7 +29,10 @@ export const OFFICIAL_RECIPE_ACTIONS = [
   'ui.key_press',
   'ui.set_input',
   'ui.scroll',
-  'ui.gesture',
+  'ui.swipe',
+  'ui.pan',
+  'ui.drag',
+  'ui.long_press',
   'ui.wait_for',
   'ui.screenshot',
   'app.status',
@@ -55,6 +58,10 @@ export type RecipeFailureCause = (typeof RECIPE_FAILURE_CAUSES)[number];
 export interface RecipeActionCatalogEntry {
   description: string;
   schema?: Record<string, unknown>;
+  /** Adapter names that implement this action. Omit when the action is adapter-independent. */
+  adapters?: string[];
+  /** Adapter-specific parameter refinements applied in addition to schema. */
+  adapter_schemas?: Record<string, Record<string, unknown>>;
   /** Finite control cases this action may return. The recipe owns their destinations. */
   result_cases?: string[];
   examples: Record<string, unknown>[];

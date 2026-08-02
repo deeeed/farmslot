@@ -1,0 +1,162 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion continuous gesture proof",
+  "description": "Proves one target-parameterized continuous gesture workflow across every companion adapter that declares support.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "list_target": {
+        "type": "string",
+        "default": "gesture-proof-list"
+      },
+      "pan_target": {
+        "type": "string",
+        "default": "gesture-proof-pan"
+      },
+      "slider_target": {
+        "type": "string",
+        "default": "gesture-proof-slider"
+      },
+      "hold_target": {
+        "type": "string",
+        "default": "gesture-proof-hold"
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "continuous-gesture-stream",
+      "claim": "Swipe, pan, drag, and long-press actions stream through declared UI actions and visibly change the application."
+    },
+    {
+      "id": "continuous-gesture-evidence",
+      "claim": "The run retains before and after screenshots plus resolved gesture phase coordinates."
+    }
+  ],
+  "workflow": {
+    "entry": "open-advanced",
+    "nodes": {
+      "open-advanced": {
+        "action": "ui.press",
+        "intent": "Open the advanced workspace containing the continuous input proof surface.",
+        "test_id": "companion-tab-advanced",
+        "next": "wait-proof-surface"
+      },
+      "wait-proof-surface": {
+        "action": "ui.wait_for",
+        "intent": "Confirm the continuous input proof surface is visible.",
+        "test_id": "gesture-proof-surface",
+        "expected": "visible",
+        "timeout_ms": 10000,
+        "next": "reset-proof"
+      },
+      "reset-proof": {
+        "action": "ui.press",
+        "intent": "Reset the proof controls to their known initial state.",
+        "test_id": "gesture-proof-reset",
+        "next": "confirm-ready"
+      },
+      "confirm-ready": {
+        "action": "ui.wait_for",
+        "intent": "Confirm every gesture result is clear before interaction.",
+        "text_contains": [
+          "Gesture list ready",
+          "Gesture pan ready",
+          "Gesture slider ready",
+          "Hold to prove"
+        ],
+        "timeout_ms": 5000,
+        "next": "capture-before"
+      },
+      "capture-before": {
+        "action": "ui.screenshot",
+        "intent": "Record the untouched gesture controls before interaction.",
+        "path": "screenshots/continuous-gestures-before.png",
+        "label": "Continuous gestures before",
+        "next": "swipe-list",
+        "proves": ["continuous-gesture-evidence"]
+      },
+      "swipe-list": {
+        "action": "ui.swipe",
+        "intent": "Reveal later entries in the requested scrollable list.",
+        "target": "{{params.list_target}}",
+        "direction": "left",
+        "distance": 180,
+        "duration_ms": 400,
+        "next": "confirm-list-moved",
+        "proves": ["continuous-gesture-stream"]
+      },
+      "confirm-list-moved": {
+        "action": "ui.wait_for",
+        "intent": "Confirm the list visibly moved after the streamed swipe.",
+        "text": "Gesture list moved",
+        "timeout_ms": 5000,
+        "next": "pan-surface",
+        "proves": ["continuous-gesture-stream"]
+      },
+      "pan-surface": {
+        "action": "ui.pan",
+        "intent": "Move continuously across the requested proof surface.",
+        "target": "{{params.pan_target}}",
+        "path": [{ "x": 60, "y": 20 }],
+        "duration_ms": 400,
+        "next": "confirm-pan-moved",
+        "proves": ["continuous-gesture-stream"]
+      },
+      "confirm-pan-moved": {
+        "action": "ui.wait_for",
+        "intent": "Confirm the streamed pan reached the application handler.",
+        "text": "Gesture pan moved",
+        "timeout_ms": 5000,
+        "next": "drag-slider",
+        "proves": ["continuous-gesture-stream"]
+      },
+      "drag-slider": {
+        "action": "ui.drag",
+        "intent": "Move the requested slider to a higher visible value.",
+        "target": "{{params.slider_target}}",
+        "path": [{ "x": 120, "y": 0 }],
+        "duration_ms": 500,
+        "next": "confirm-slider-moved",
+        "proves": ["continuous-gesture-stream"]
+      },
+      "confirm-slider-moved": {
+        "action": "ui.wait_for",
+        "intent": "Confirm the streamed drag changed the visible slider value.",
+        "text": "Gesture slider moved",
+        "timeout_ms": 5000,
+        "next": "hold-control",
+        "proves": ["continuous-gesture-stream"]
+      },
+      "hold-control": {
+        "action": "ui.long_press",
+        "intent": "Open the held state on the requested visible control.",
+        "target": "{{params.hold_target}}",
+        "hold_ms": 700,
+        "next": "confirm-held",
+        "proves": ["continuous-gesture-stream"]
+      },
+      "confirm-held": {
+        "action": "ui.wait_for",
+        "intent": "Confirm the long press reached the visible control handler.",
+        "text": "Gesture long press received",
+        "timeout_ms": 5000,
+        "next": "capture-after",
+        "proves": ["continuous-gesture-stream"]
+      },
+      "capture-after": {
+        "action": "ui.screenshot",
+        "intent": "Record the visibly changed gesture controls after interaction.",
+        "path": "screenshots/continuous-gestures-after.png",
+        "label": "Continuous gestures after",
+        "next": "done",
+        "proves": ["continuous-gesture-evidence"]
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

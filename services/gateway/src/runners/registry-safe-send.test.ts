@@ -25,6 +25,7 @@ let promptAcceptedReading: ObservabilityReading<boolean> | null = {
   source: 'hook',
   confidence: 'high',
   observedAt: Date.now(),
+  exactPromptMatch: true,
 };
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
@@ -44,6 +45,7 @@ let grokActivitySequence: RunnerActivity[] = ['idle'];
 mock.module('./claude-observability.js', {
   namedExports: {
     claudeHookObservability: {
+      promptAcceptanceMode: 'hook-digest',
       async getActivity() {
         callOrder.push('obs:getActivity');
         return activityReading;
@@ -71,6 +73,7 @@ mock.module('./claude-observability.js', {
 mock.module('./grok-observability.js', {
   namedExports: {
     grokLogObservability: {
+      promptAcceptanceMode: 'native-text',
       async getActivity() {
         const index = Math.min(grokActivityReads, grokActivitySequence.length - 1);
         grokActivityReads += 1;
@@ -109,6 +112,7 @@ mock.module('./grok-observability.js', {
           source: 'signal',
           confidence: accepted ? 'high' : 'medium',
           observedAt: accepted ? grokPromptAcceptedAtMs : Date.now(),
+          exactPromptMatch: accepted,
         };
       },
       async getSessionDeliveryState() {
@@ -211,6 +215,7 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
     source: 'hook',
     confidence: 'high',
     observedAt: Date.now(),
+    exactPromptMatch: false,
   };
   paneText = '›\nContext 88%\n';
 
@@ -543,6 +548,7 @@ test('digest-required recovery rejects hook activity without an exact digest', a
 
   assert.equal(handoff.accepted, false);
   assert.match(handoff.reason, /digest-required handoff rejected/);
+  assert.equal(callOrder.includes('obs:promptAccepted'), true);
   assert.deepEqual(handoffRequirePromptDigestValues, [true]);
 });
 
@@ -751,6 +757,37 @@ test('a transcript echo with an empty live composer gets the message typed fresh
     callOrder.includes('tmux:send-literal'),
     `transcript echo must not satisfy delivery — type the message; order=${callOrder.join(',')}`,
   );
+});
+
+test('historical Grok progress does not suppress an identical new fix-pass prompt', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  paneTextByCapture = null;
+  grokPromptAcceptedCalls = 0;
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
+  grokActivityReads = 0;
+  grokActivitySequence = ['idle'];
+  paneText = [
+    `#1 ${message}`,
+    'Read SELF-REVIEW-FIX.md',
+    'Implemented the previous review findings.',
+    '',
+    '╭────────────────╮',
+    '│ ❯              │',
+    '╰────────────────╯',
+  ].join('\n');
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'grok', message, '[test]');
+
+  assert.equal(sent, true);
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `an old identical turn must not satisfy this delivery generation; order=${callOrder.join(',')}`,
+  );
+  grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
+  grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
 });
 
 test('a persistently buffered composer fails loudly instead of concatenating a retype', async () => {
