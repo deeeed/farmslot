@@ -883,6 +883,9 @@ async function resolveSurfaceRect(
   const requestedSurface = surfaceTestId
     ? snapshot.nodes.find((candidate) => candidate.identifier === surfaceTestId)
     : undefined;
+  if (surfaceTestId && !requestedSurface?.rect) {
+    throw new Error(`ui.capture_surface could not resolve surface_test_id=${surfaceTestId}.`);
+  }
   const scrollSurface = snapshot.nodes
     .filter(
       (candidate) =>

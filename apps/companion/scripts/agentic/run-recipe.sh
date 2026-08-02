@@ -11,6 +11,12 @@ case "${PLATFORM:-}" in
   ios | android | metro)
     companion_apply_farmslot_slot_context "${PLATFORM}"
     ;;
+  *)
+    if [[ -n "${FARMSLOT_SLOT_ID:-}" && "${1:-}" == "run" ]]; then
+      echo "ERROR: slot-scoped recipe runs require PLATFORM=ios, android, or metro." >&2
+      exit 1
+    fi
+    ;;
 esac
 export FARMSLOT_RECIPE_APP_ID="${FARMSLOT_RECIPE_APP_ID:-${BUNDLE_ID}}"
 

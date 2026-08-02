@@ -21,6 +21,7 @@ test('captures a full native surface without stopping at a premature virtualized
   let hideEndMarker = false;
   let omitScale = false;
   let failTopSwipe = false;
+  let hideSurfaceMarker = false;
   const client = {
     apps: { open: async () => ({ session: 'surface-session', identifiers: {} }) },
     interactions: {
@@ -46,7 +47,7 @@ test('captures a full native surface without stopping at a premature virtualized
         return {
           nodes: [
             {
-              identifier: 'catalog-surface',
+              identifier: hideSurfaceMarker ? undefined : 'catalog-surface',
               type: 'ScrollView',
               rect: omitScale
                 ? { x: 0, y: 2, width: 10, height: 16 }
@@ -185,6 +186,24 @@ test('captures a full native surface without stopping at a premature virtualized
     assert.equal(androidResult.output.width, 10);
     assert.equal(androidResult.output.viewports, 3);
     assert.equal(artifacts.length, 2);
+
+    hideSurfaceMarker = true;
+    await assert.rejects(
+      () =>
+        androidTransport.execute(
+          'ui.capture_surface',
+          {
+            path: 'screenshots/missing-surface.png',
+            surface_test_id: 'catalog-surface',
+            until_test_id: 'catalog-end',
+            max_scrolls: 2,
+          },
+          context,
+        ),
+      /could not resolve surface_test_id=catalog-surface/u,
+    );
+    assert.equal(artifacts.length, 2);
+    hideSurfaceMarker = false;
 
     await assert.rejects(
       () =>

@@ -17,6 +17,9 @@ SIMULATOR_VALUE="${IOS_SIMULATOR:-${SIMULATOR:-}}"
 ADB_SERIAL_VALUE="${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}"
 RECORD_VIDEO=0
 DRY_RUN=0
+METRO_PORT_EXPLICIT=0
+SIMULATOR_EXPLICIT=0
+ADB_SERIAL_EXPLICIT=0
 
 value_from_equals() {
   local option="$1"
@@ -57,17 +60,17 @@ while [[ "$#" -gt 0 ]]; do
     --platform=*)
       PLATFORM_VALUE="$(value_from_equals "$1")"; shift ;;
     --metro-port)
-      METRO_PORT_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+      METRO_PORT_VALUE="$(require_value "$1" "${2:-}")"; METRO_PORT_EXPLICIT=1; shift 2 ;;
     --metro-port=*)
-      METRO_PORT_VALUE="$(value_from_equals "$1")"; shift ;;
+      METRO_PORT_VALUE="$(value_from_equals "$1")"; METRO_PORT_EXPLICIT=1; shift ;;
     --simulator)
-      SIMULATOR_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+      SIMULATOR_VALUE="$(require_value "$1" "${2:-}")"; SIMULATOR_EXPLICIT=1; shift 2 ;;
     --simulator=*)
-      SIMULATOR_VALUE="$(value_from_equals "$1")"; shift ;;
+      SIMULATOR_VALUE="$(value_from_equals "$1")"; SIMULATOR_EXPLICIT=1; shift ;;
     --adb-serial)
-      ADB_SERIAL_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+      ADB_SERIAL_VALUE="$(require_value "$1" "${2:-}")"; ADB_SERIAL_EXPLICIT=1; shift 2 ;;
     --adb-serial=*)
-      ADB_SERIAL_VALUE="$(value_from_equals "$1")"; shift ;;
+      ADB_SERIAL_VALUE="$(value_from_equals "$1")"; ADB_SERIAL_EXPLICIT=1; shift ;;
     --dry-run)
       DRY_RUN=1; shift ;;
     --record-video=*)
@@ -90,15 +93,15 @@ if [[ -n "${FARMSLOT_SLOT_ID:-}" && -n "${PLATFORM_VALUE}" ]]; then
   requested_simulator="${SIMULATOR_VALUE}"
   requested_adb_serial="${ADB_SERIAL_VALUE}"
   companion_apply_farmslot_slot_context "${PLATFORM_VALUE}"
-  if [[ -n "${requested_metro_port}" && "${requested_metro_port}" != "${METRO_PORT}" ]]; then
+  if [[ "${METRO_PORT_EXPLICIT}" -eq 1 && "${requested_metro_port}" != "${METRO_PORT}" ]]; then
     echo "ERROR: --metro-port ${requested_metro_port} conflicts with slot ${FARMSLOT_SLOT_ID} port ${METRO_PORT}." >&2
     exit 1
   fi
-  if [[ "${PLATFORM_VALUE}" == "ios" && -n "${requested_simulator}" && "${requested_simulator}" != "${IOS_SIMULATOR:-${SIMULATOR:-}}" ]]; then
+  if [[ "${PLATFORM_VALUE}" == "ios" && "${SIMULATOR_EXPLICIT}" -eq 1 && "${requested_simulator}" != "${IOS_SIMULATOR:-${SIMULATOR:-}}" ]]; then
     echo "ERROR: --simulator ${requested_simulator} conflicts with slot ${FARMSLOT_SLOT_ID} simulator ${IOS_SIMULATOR:-${SIMULATOR:-}}." >&2
     exit 1
   fi
-  if [[ "${PLATFORM_VALUE}" == "android" && -n "${requested_adb_serial}" && "${requested_adb_serial}" != "${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}" ]]; then
+  if [[ "${PLATFORM_VALUE}" == "android" && "${ADB_SERIAL_EXPLICIT}" -eq 1 && "${requested_adb_serial}" != "${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}" ]]; then
     echo "ERROR: --adb-serial ${requested_adb_serial} conflicts with slot ${FARMSLOT_SLOT_ID} device ${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}." >&2
     exit 1
   fi

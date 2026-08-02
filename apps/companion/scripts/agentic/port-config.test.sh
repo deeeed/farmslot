@@ -125,6 +125,34 @@ if FARMSLOT_BIN="${TMP_DIR}/slot-vars-bin" \
   exit 1
 fi
 
+inherited_slot_output="$(
+  PATH="${TMP_DIR}:${PATH}" \
+    FARMSLOT_BIN="${TMP_DIR}/slot-vars-bin" \
+    FARMSLOT_SLOT_ID=macwork-ff-test \
+    GATEWAY_PORT=45301 METRO_PORT=45300 \
+    COMPANION_AGENTIC_PORT_ENV=/dev/null \
+    COMPANION_AGENTIC_LOCAL_CONF=/dev/null \
+    bash "${SCRIPT_DIR}/validate-recipe.sh" \
+      --platform ios \
+      --artifacts-dir "${TMP_DIR}/slot-inherited" \
+      --dry-run
+)"
+[[ "${inherited_slot_output}" == "45302|fs-slot-test|" ]] || {
+  echo "ERROR: recipe validation treated inherited checkout context as explicit slot flags." >&2
+  exit 1
+}
+
+if FARMSLOT_BIN="${TMP_DIR}/slot-vars-bin" \
+  FARMSLOT_SLOT_ID=macwork-ff-test \
+  GATEWAY_PORT=45301 METRO_PORT=45300 \
+  COMPANION_AGENTIC_PORT_ENV=/dev/null \
+  COMPANION_AGENTIC_LOCAL_CONF=/dev/null \
+  COMPANION_EXPO_RECIPE_BIN="${TMP_DIR}/native-recipe-bin" \
+  bash "${SCRIPT_DIR}/run-recipe.sh" run >/dev/null 2>&1; then
+  echo "ERROR: slot-scoped recipe run accepted a missing PLATFORM." >&2
+  exit 1
+fi
+
 # Metro protocol .js→.ts rewrite path detection (cwd / worktree safe)
 node "${APP_DIR}/metro-protocol-source.test.cjs"
 
