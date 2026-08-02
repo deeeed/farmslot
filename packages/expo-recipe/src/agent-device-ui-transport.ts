@@ -731,7 +731,7 @@ async function captureSurface(
   const temporaryDir = context.resolveArtifactPath(
     `.capture-surface/${context.nodeId.replaceAll(/[^a-zA-Z0-9._-]/gu, '-')}`,
   );
-  const pages: Array<{ path: string; revealedPixels?: number }> = [];
+  const pages: Array<{ path: string; surface: PixelRect; revealedRows?: number }> = [];
   let reachedEnd = false;
   let surfaceRect: SurfaceRect | undefined;
   let surfaceResolved = false;
@@ -742,15 +742,23 @@ async function captureSurface(
   try {
     surfaceRect = await resolveSurfaceRect(client, session, selection, surfaceTestId);
     surfaceResolved = true;
-    await resetSurfaceToTop(client, session, selection);
+    await resetSurfaceToTop(client, session, selection, surfaceRect, maxScrolls);
 
     const firstPath = path.join(temporaryDir, 'page-00.png');
-    await client.capture.screenshot({ session, path: firstPath, stabilize: true });
-    pages.push({ path: firstPath });
+    const firstScreenshot = await client.capture.screenshot({
+      session,
+      path: firstPath,
+      stabilize: true,
+    });
+    const firstImage = PNG.sync.read(await readFile(firstPath));
+    pages.push({
+      path: firstPath,
+      surface: physicalRectForSurface(surfaceRect, firstScreenshot, firstImage),
+    });
     reachedEnd = await surfaceEndIsVisible(client, session, selection, surfaceTestId, untilTestId);
 
     for (let index = 1; index <= maxScrolls && !reachedEnd; index += 1) {
-      const revealedPoints = await moveSurface(
+      const requestedPoints = await moveSurface(
         client,
         session,
         selection,
@@ -765,7 +773,18 @@ async function captureSurface(
       });
       const previous = PNG.sync.read(await readFile(pages.at(-1)!.path));
       const current = PNG.sync.read(await readFile(pagePath));
-      if (screenshotsEquivalent(previous, current)) {
+      const currentSurface = physicalRectForSurface(surfaceRect, screenshot, current);
+      const requestedRows = Math.round(
+        requestedPoints * (currentSurface.height / surfaceRect.height),
+      );
+      const revealedRows = measureRevealedRows(
+        previous,
+        current,
+        pages.at(-1)!.surface,
+        currentSurface,
+        requestedRows,
+      );
+      if (revealedRows === 0) {
         reachedEnd =
           untilTestId === undefined ||
           (await surfaceEndIsVisible(client, session, selection, surfaceTestId, untilTestId));
@@ -778,10 +797,8 @@ async function captureSurface(
       }
       pages.push({
         path: pagePath,
-        revealedPixels: Math.min(
-          physicalPixelsForLogicalDistance(revealedPoints, screenshot, current.height),
-          current.height,
-        ),
+        surface: currentSurface,
+        revealedRows,
       });
       reachedEnd = await surfaceEndIsVisible(
         client,
@@ -826,7 +843,7 @@ async function captureSurface(
   } finally {
     try {
       if (restorePosition && surfaceResolved) {
-        await resetSurfaceToTop(client, session, selection);
+        await resetSurfaceToTop(client, session, selection, surfaceRect!, maxScrolls);
       }
     } catch (restoreError) {
       failure ??= { error: restoreError };
@@ -840,23 +857,49 @@ async function captureSurface(
 }
 
 type SurfaceRect = { x: number; y: number; width: number; height: number };
+type PixelRect = { x: number; y: number; width: number; height: number };
 
 async function resolveSurfaceRect(
   client: AgentDeviceClient,
   session: string,
   selection: AgentDeviceSelection,
   surfaceTestId: string | undefined,
-): Promise<SurfaceRect | undefined> {
-  if (!surfaceTestId) return undefined;
+): Promise<SurfaceRect> {
   const snapshot = await client.capture.snapshot({
     ...selection,
     session,
     interactiveOnly: false,
     forceFull: true,
   });
-  const surface = snapshot.nodes.find((candidate) => candidate.identifier === surfaceTestId);
+  const requestedSurface = surfaceTestId
+    ? snapshot.nodes.find((candidate) => candidate.identifier === surfaceTestId)
+    : undefined;
+  const scrollSurface = snapshot.nodes
+    .filter(
+      (candidate) =>
+        candidate.type === 'ScrollView' &&
+        candidate.rect !== undefined &&
+        (!requestedSurface?.rect || rectsIntersect(candidate.rect, requestedSurface.rect)),
+    )
+    .sort(
+      (left, right) =>
+        right.rect!.width * right.rect!.height - left.rect!.width * left.rect!.height,
+    )[0];
+  const surface =
+    scrollSurface ??
+    requestedSurface ??
+    snapshot.nodes
+      .filter((candidate) => /Application|Window/u.test(candidate.type ?? '') && candidate.rect)
+      .sort(
+        (left, right) =>
+          right.rect!.width * right.rect!.height - left.rect!.width * left.rect!.height,
+      )[0];
   if (!surface?.rect || surface.rect.width <= 0 || surface.rect.height <= 0) {
-    throw new Error(`ui.capture_surface could not resolve surface_test_id=${surfaceTestId}.`);
+    throw new Error(
+      surfaceTestId
+        ? `ui.capture_surface could not resolve surface_test_id=${surfaceTestId}.`
+        : 'ui.capture_surface could not resolve the native viewport.',
+    );
   }
   return surface.rect;
 }
@@ -865,46 +908,64 @@ async function resetSurfaceToTop(
   client: AgentDeviceClient,
   session: string,
   selection: AgentDeviceSelection,
+  surfaceRect: SurfaceRect,
+  maxScrolls: number,
 ): Promise<void> {
-  await client.interactions.scroll({
-    ...selection,
-    session,
-    direction: 'top',
-    responseLevel: 'digest',
-  });
-  await awaitNativeStability(client, session, selection, 'ui.capture_surface', 10_000);
+  for (let index = 0; index <= maxScrolls; index += 1) {
+    const snapshot = await client.capture.snapshot({
+      ...selection,
+      session,
+      interactiveOnly: false,
+      forceFull: true,
+    });
+    const hasHiddenContentAbove = snapshot.nodes.some(
+      (candidate) =>
+        candidate.hiddenContentAbove === true &&
+        candidate.rect !== undefined &&
+        rectsIntersect(candidate.rect, surfaceRect),
+    );
+    if (!hasHiddenContentAbove) return;
+    if (index === maxScrolls) {
+      throw new Error(
+        `ui.capture_surface could not reset to the top within ${maxScrolls} scrolls.`,
+      );
+    }
+    await moveSurface(client, session, selection, surfaceRect, 'toward-top');
+    await awaitNativeStability(client, session, selection, 'ui.capture_surface', 10_000);
+  }
 }
 
 async function moveSurface(
   client: AgentDeviceClient,
   session: string,
   selection: AgentDeviceSelection,
-  surfaceRect: SurfaceRect | undefined,
+  surfaceRect: SurfaceRect,
   direction: 'toward-top' | 'toward-bottom',
 ): Promise<number> {
-  if (!surfaceRect) {
-    const result = await client.interactions.scroll({
+  const upperY = surfaceRect.y + surfaceRect.height * 0.2;
+  const lowerY = surfaceRect.y + surfaceRect.height * 0.8;
+  const pixels = Math.max(1, Math.round(lowerY - upperY));
+  const x = surfaceRect.x + surfaceRect.width * 0.1;
+  if (direction === 'toward-bottom') {
+    await client.interactions.scroll({
       ...selection,
       session,
-      direction: direction === 'toward-top' ? 'up' : 'down',
+      direction: 'down',
+      pixels,
+      durationMs: 250,
       responseLevel: 'digest',
     });
-    return scrollPixels(result, 1_000);
+    return pixels;
   }
-
-  // Stay clear of iOS edge gestures and the Companion's right-side floating controls.
-  const x = Math.round(surfaceRect.x + surfaceRect.width * 0.25);
-  const top = Math.round(surfaceRect.y + surfaceRect.height * 0.1);
-  const bottom = Math.round(surfaceRect.y + surfaceRect.height * 0.9);
   await client.interactions.swipe({
     ...selection,
     session,
-    from: { x, y: direction === 'toward-top' ? top : bottom },
-    to: { x, y: direction === 'toward-top' ? bottom : top },
-    durationMs: 400,
+    from: { x, y: upperY },
+    to: { x, y: lowerY },
+    durationMs: 250,
     responseLevel: 'digest',
   });
-  return Math.abs(bottom - top);
+  return pixels;
 }
 
 async function surfaceEndIsVisible(
@@ -944,19 +1005,37 @@ async function surfaceEndIsVisible(
   });
 }
 
-function physicalPixelsForLogicalDistance(
-  logicalDistance: number,
+function physicalRectForSurface(
+  surface: SurfaceRect,
   screenshot: {
+    logicalWidth?: number;
     logicalHeight?: number;
     pixelDensity?: number;
   },
-  physicalHeight: number,
-): number {
+  image: PNG,
+): PixelRect {
+  const logicalWidth = positiveNumber(screenshot.logicalWidth);
   const logicalHeight = positiveNumber(screenshot.logicalHeight);
-  const scale = logicalHeight
-    ? physicalHeight / logicalHeight
-    : (positiveNumber(screenshot.pixelDensity) ?? 1);
-  return Math.max(1, Math.round(logicalDistance * scale));
+  const density = positiveNumber(screenshot.pixelDensity);
+  const scaleX = logicalWidth
+    ? image.width / logicalWidth
+    : (density ?? (logicalHeight ? image.height / logicalHeight : undefined));
+  const scaleY = logicalHeight
+    ? image.height / logicalHeight
+    : (density ?? (logicalWidth ? image.width / logicalWidth : undefined));
+  if (!scaleX || !scaleY) {
+    throw new Error(
+      'ui.capture_surface requires screenshot logical dimensions or pixel density to map the native surface.',
+    );
+  }
+  const x = Math.max(0, Math.round(surface.x * scaleX));
+  const y = Math.max(0, Math.round(surface.y * scaleY));
+  const right = Math.min(image.width, Math.round((surface.x + surface.width) * scaleX));
+  const bottom = Math.min(image.height, Math.round((surface.y + surface.height) * scaleY));
+  if (right <= x || bottom <= y) {
+    throw new Error('ui.capture_surface resolved outside the captured screenshot.');
+  }
+  return { x, y, width: right - x, height: bottom - y };
 }
 
 function rectsIntersect(left: SurfaceRect, right: SurfaceRect): boolean {
@@ -968,62 +1047,231 @@ function rectsIntersect(left: SurfaceRect, right: SurfaceRect): boolean {
   );
 }
 
-function scrollPixels(result: unknown, viewportHeight: number): number {
-  if (result && typeof result === 'object' && !Array.isArray(result)) {
-    const pixels = positiveNumber((result as Record<string, unknown>).pixels);
-    if (pixels) return Math.min(Math.round(pixels), viewportHeight);
-  }
-  return Math.round(viewportHeight * 0.6);
-}
-
 async function stitchSurfacePages(
-  pages: Array<{ path: string; revealedPixels?: number }>,
+  pages: Array<{ path: string; surface: PixelRect; revealedRows?: number }>,
 ): Promise<PNG> {
   const decoded = await Promise.all(
     pages.map(async (page) => PNG.sync.read(await readFile(page.path))),
   );
-  const [first, ...continuations] = decoded;
+  const [first] = decoded;
   if (!first) throw new Error('ui.capture_surface did not capture a viewport.');
-  if (decoded.some((image) => image.width !== first.width)) {
-    throw new Error('ui.capture_surface viewports changed width during capture.');
+  if (
+    decoded.some((image) => image.width !== first.width || image.height !== first.height) ||
+    pages.some(
+      (page) =>
+        page.surface.width !== pages[0].surface.width ||
+        page.surface.height !== pages[0].surface.height,
+    )
+  ) {
+    throw new Error('ui.capture_surface viewport or surface dimensions changed during capture.');
   }
-  const revealed = pages
-    .slice(1)
-    .map((page, index) =>
-      Math.min(page.revealedPixels ?? continuations[index].height, continuations[index].height),
-    );
+  const revealed = pages.slice(1).map((page) => page.revealedRows!);
+  const firstSurface = pages[0].surface;
+  const lastSurface = pages.at(-1)!.surface;
+  const isFullWidth = pages.every(
+    (page, index) => page.surface.x === 0 && page.surface.width === decoded[index].width,
+  );
+  const leadingRows = isFullWidth ? firstSurface.y : 0;
+  const trailingRows = isFullWidth ? first.height - (lastSurface.y + lastSurface.height) : 0;
   const output = new PNG({
-    width: first.width,
-    height: first.height + revealed.reduce((sum, pixels) => sum + pixels, 0),
+    width: isFullWidth ? first.width : firstSurface.width,
+    height:
+      leadingRows +
+      revealed.reduce((sum, pixels) => sum + pixels, 0) +
+      lastSurface.height +
+      trailingRows,
   });
-  first.data.copy(output.data, 0);
-  let outputY = first.height;
-  for (let index = 0; index < continuations.length; index += 1) {
-    const image = continuations[index];
-    const rows = revealed[index];
-    const sourceStart = (image.height - rows) * image.width * 4;
-    const sourceEnd = image.height * image.width * 4;
-    image.data.copy(output.data, outputY * output.width * 4, sourceStart, sourceEnd);
+  if (leadingRows > 0) copyImageRows(first, output, 0, 0, leadingRows, 0);
+  let outputY = leadingRows;
+  let sourceStart = 0;
+  for (let index = 0; index < decoded.length; index += 1) {
+    const image = decoded[index];
+    const surface = pages[index].surface;
+    const sourceEnd =
+      index < revealed.length
+        ? chooseSurfaceSeam(
+            image,
+            decoded[index + 1],
+            surface,
+            pages[index + 1].surface,
+            revealed[index],
+          )
+        : surface.height;
+    const rows = sourceEnd - sourceStart;
+    copyImageRows(
+      image,
+      output,
+      isFullWidth ? 0 : surface.x,
+      surface.y + sourceStart,
+      rows,
+      outputY,
+    );
     outputY += rows;
+    if (index < revealed.length) sourceStart = sourceEnd - revealed[index];
+  }
+  const finalImage = decoded.at(-1)!;
+  if (trailingRows > 0) {
+    copyImageRows(finalImage, output, 0, lastSurface.y + lastSurface.height, trailingRows, outputY);
   }
   return output;
 }
 
-function screenshotsEquivalent(previous: PNG, current: PNG): boolean {
-  if (previous.width !== current.width || previous.height !== current.height) return false;
-  const top = Math.floor(previous.height * 0.18);
-  let difference = 0;
-  let samples = 0;
-  for (let y = top; y < previous.height; y += 4) {
-    for (let x = 8; x < previous.width - 8; x += 4) {
-      const offset = (y * previous.width + x) * 4;
-      difference += Math.abs(previous.data[offset] - current.data[offset]);
-      difference += Math.abs(previous.data[offset + 1] - current.data[offset + 1]);
-      difference += Math.abs(previous.data[offset + 2] - current.data[offset + 2]);
-      samples += 3;
+function chooseSurfaceSeam(
+  current: PNG,
+  next: PNG,
+  currentSurface: PixelRect,
+  nextSurface: PixelRect,
+  revealedRows: number,
+): number {
+  const minimum = Math.min(currentSurface.height - 2, revealedRows + 2);
+  const maximum = currentSurface.height - 2;
+  let bestRow = revealedRows;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let currentRow = minimum; currentRow <= maximum; currentRow += 1) {
+    const nextRow = currentRow - revealedRows;
+    const score = sampledSeamDifference(
+      current,
+      next,
+      currentSurface,
+      nextSurface,
+      currentRow,
+      nextRow,
+    );
+    if (score < bestScore) {
+      bestScore = score;
+      bestRow = currentRow;
     }
   }
-  return samples > 0 && difference / samples < 1;
+  return bestRow;
+}
+
+function sampledSeamDifference(
+  current: PNG,
+  next: PNG,
+  currentSurface: PixelRect,
+  nextSurface: PixelRect,
+  currentRow: number,
+  nextRow: number,
+): number {
+  const sampleLeft = Math.max(1, Math.floor(currentSurface.width * 0.05));
+  const sampleRight = Math.max(sampleLeft + 1, Math.floor(currentSurface.width * 0.8));
+  let difference = 0;
+  let samples = 0;
+  for (let x = sampleLeft; x < sampleRight; x += 3) {
+    for (const channel of [0, 1, 2]) {
+      const currentOffset =
+        ((currentSurface.y + currentRow) * current.width + currentSurface.x + x) * 4 + channel;
+      const nextOffset = ((nextSurface.y + nextRow) * next.width + nextSurface.x + x) * 4 + channel;
+      const currentAbove = currentOffset - current.width * 4;
+      const currentBelow = currentOffset + current.width * 4;
+      const nextAbove = nextOffset - next.width * 4;
+      const nextBelow = nextOffset + next.width * 4;
+      difference += Math.abs(current.data[currentOffset] - next.data[nextOffset]) * 2;
+      difference += Math.abs(current.data[currentAbove] - current.data[currentBelow]);
+      difference += Math.abs(next.data[nextAbove] - next.data[nextBelow]);
+      samples += 4;
+    }
+  }
+  return samples > 0 ? difference / samples : Number.POSITIVE_INFINITY;
+}
+
+function copyImageRows(
+  source: PNG,
+  destination: PNG,
+  sourceX: number,
+  sourceY: number,
+  rows: number,
+  destinationY: number,
+): void {
+  for (let row = 0; row < rows; row += 1) {
+    const sourceStart = ((sourceY + row) * source.width + sourceX) * 4;
+    const sourceEnd = sourceStart + destination.width * 4;
+    source.data.copy(
+      destination.data,
+      (destinationY + row) * destination.width * 4,
+      sourceStart,
+      sourceEnd,
+    );
+  }
+}
+
+function measureRevealedRows(
+  previous: PNG,
+  current: PNG,
+  previousSurface: PixelRect,
+  currentSurface: PixelRect,
+  requestedRows: number,
+): number {
+  const height = previousSurface.height;
+  const minimumOverlap = Math.max(4, Math.floor(height * 0.12));
+  const stationaryDifference = sampledSurfaceDifference(
+    previous,
+    current,
+    previousSurface,
+    currentSurface,
+    0,
+    false,
+  );
+  if (stationaryDifference < 10) return 0;
+  let bestDelta = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+  let bestDifference = Number.POSITIVE_INFINITY;
+  for (let delta = 1; delta <= height - minimumOverlap; delta += 1) {
+    const meanDifference = sampledSurfaceDifference(
+      previous,
+      current,
+      previousSurface,
+      currentSurface,
+      delta,
+    );
+    const distancePenalty =
+      requestedRows > 0 ? (Math.abs(delta - requestedRows) / requestedRows) * 8 : 0;
+    const score = meanDifference + distancePenalty;
+    if (score < bestScore) {
+      bestScore = score;
+      bestDifference = meanDifference;
+      bestDelta = delta;
+    }
+  }
+  if (bestDelta === 0 || bestDifference > 24) {
+    throw new Error(
+      `ui.capture_surface could not prove screenshot overlap (best mean difference ${bestDifference.toFixed(1)}).`,
+    );
+  }
+  return bestDelta;
+}
+
+function sampledSurfaceDifference(
+  previous: PNG,
+  current: PNG,
+  previousSurface: PixelRect,
+  currentSurface: PixelRect,
+  delta: number,
+  trimOutliers = true,
+): number {
+  const overlap = previousSurface.height - delta;
+  const differences: number[] = [];
+  const sampleLeft = Math.max(1, Math.floor(previousSurface.width * 0.05));
+  const sampleRight = Math.max(sampleLeft + 1, Math.floor(previousSurface.width * 0.8));
+  for (let y = Math.floor(overlap * 0.08); y < overlap; y += 4) {
+    for (let x = sampleLeft; x < sampleRight; x += 4) {
+      const previousOffset =
+        ((previousSurface.y + y + delta) * previous.width + previousSurface.x + x) * 4;
+      const currentOffset = ((currentSurface.y + y) * current.width + currentSurface.x + x) * 4;
+      differences.push(
+        (Math.abs(previous.data[previousOffset] - current.data[currentOffset]) +
+          Math.abs(previous.data[previousOffset + 1] - current.data[currentOffset + 1]) +
+          Math.abs(previous.data[previousOffset + 2] - current.data[currentOffset + 2])) /
+          3,
+      );
+    }
+  }
+  if (differences.length === 0) return Number.POSITIVE_INFINITY;
+  differences.sort((left, right) => left - right);
+  const retained = trimOutliers
+    ? differences.slice(0, Math.max(1, Math.ceil(differences.length * 0.8)))
+    : differences;
+  return retained.reduce((sum, value) => sum + value, 0) / retained.length;
 }
 
 function boundedPositiveInteger(value: unknown, fallback: number, maximum: number): number {

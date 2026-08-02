@@ -3397,6 +3397,43 @@ test('CDP page scroll uses the document root when window globals are unavailable
   assert.deepEqual(scrolls, [[4, 120]]);
 });
 
+test('CDP full-surface screenshots use reported page dimensions and fail without them', async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown> = {}) {
+      calls.push({ method, params });
+      if (method === 'Page.getLayoutMetrics') {
+        return { cssContentSize: { width: 1280, height: 3200 } };
+      }
+      if (method === 'Page.captureScreenshot') return { data: 'cG5n' };
+      return {};
+    },
+  } as never);
+
+  assert.equal(await page.screenshot(undefined, undefined, { fullPage: true }), 'cG5n');
+  assert.deepEqual(calls, [
+    { method: 'Page.getLayoutMetrics', params: {} },
+    {
+      method: 'Page.captureScreenshot',
+      params: {
+        format: 'png',
+        captureBeyondViewport: true,
+        clip: { x: 0, y: 0, width: 1280, height: 3200, scale: 1 },
+      },
+    },
+  ]);
+
+  const missingMetricsPage = new CdpWebPage({
+    async call() {
+      return {};
+    },
+  } as never);
+  await assert.rejects(
+    () => missingMetricsPage.screenshot(undefined, undefined, { fullPage: true }),
+    /did not report the full page dimensions/u,
+  );
+});
+
 test('maps typed numeric recipe parameters to CDP input text', async () => {
   const values: string[] = [];
   const transport = createCdpWebUiTransport({

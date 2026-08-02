@@ -16,26 +16,26 @@ import {
 test('captures a full native surface without stopping at a premature virtualized end marker', async () => {
   const artifactsDir = await mkdtemp(path.join(tmpdir(), 'farmslot-capture-surface-'));
   let position = 0;
-  let bottomSwipes = 0;
+  let bottomScrolls = 0;
   let freezeCapture = false;
   let hideEndMarker = false;
+  let omitScale = false;
   const client = {
     apps: { open: async () => ({ session: 'surface-session', identifiers: {} }) },
     interactions: {
       async scroll(options: Record<string, unknown>) {
         if (options.direction === 'top') position = 0;
+        if (options.direction === 'down') {
+          position = Math.min(20, position + 10);
+          bottomScrolls += 1;
+        }
         return { scrolled: true };
       },
       async swipe(options: Record<string, unknown>) {
         const from = options.from as { y: number };
         const to = options.to as { y: number };
-        if (from.y > to.y) {
-          position = Math.min(2, position + 1);
-          bottomSwipes += 1;
-        } else {
-          position = Math.max(0, position - 1);
-        }
-        return { swiped: true };
+        if (from.y < to.y) position = Math.max(0, position - 10);
+        return { scrolled: true };
       },
     },
     command: { wait: async () => ({ stable: true }) },
@@ -46,17 +46,17 @@ test('captures a full native surface without stopping at a premature virtualized
             {
               identifier: 'catalog-surface',
               type: 'ScrollView',
-              rect: { x: 0, y: 0, width: 10, height: 10 },
+              rect: { x: 0, y: 1, width: 5, height: 8 },
               hiddenContentAbove: position > 0,
-              hiddenContentBelow: position < 2,
+              hiddenContentBelow: position < 20,
             },
-            { type: 'Window', rect: { x: 0, y: 0, width: 10, height: 10 } },
+            { type: 'Window', rect: { x: 0, y: 0, width: 5, height: 10 } },
             ...(position > 0 && !hideEndMarker
               ? [
                   {
                     identifier: 'catalog-end',
                     type: 'View',
-                    rect: { x: 0, y: 8, width: 10, height: 2 },
+                    rect: { x: 0, y: 8, width: 5, height: 1 },
                     visibleToUser: true,
                   },
                 ]
@@ -67,9 +67,24 @@ test('captures a full native surface without stopping at a premature virtualized
       },
       async screenshot(options: Record<string, unknown>) {
         const image = new PNG({ width: 10, height: 20 });
-        image.data.fill(40 + (freezeCapture ? 0 : position * 60));
+        for (let y = 0; y < image.height; y += 1) {
+          const documentValue =
+            y < 2 ? 7 : y >= 18 ? 9 : ((freezeCapture ? 0 : position) + y - 2) * 7;
+          for (let x = 0; x < image.width; x += 1) {
+            const value = y >= 14 && y < 17 && x >= 8 ? 99 : documentValue;
+            const offset = (y * image.width + x) * 4;
+            image.data[offset] = value;
+            image.data[offset + 1] = value;
+            image.data[offset + 2] = value;
+            image.data[offset + 3] = 255;
+          }
+        }
         await writeFile(String(options.path), PNG.sync.write(image));
-        return { width: 10, height: 20, logicalHeight: 10, pixelDensity: 2 };
+        return {
+          width: 10,
+          height: 20,
+          ...(omitScale ? {} : { logicalWidth: 5, logicalHeight: 10, pixelDensity: 2 }),
+        };
       },
     },
     sessions: { close: async () => ({ session: 'surface-session', identifiers: {} }) },
@@ -104,11 +119,19 @@ test('captures a full native surface without stopping at a premature virtualized
 
     assert.equal(result.output.extent, 'full');
     assert.equal(result.output.viewports, 3);
-    assert.equal(result.output.height, 52);
-    assert.equal(image.height, 52);
-    assert.equal(bottomSwipes, 2);
+    assert.equal(result.output.height, 40);
+    assert.equal(image.height, 40);
+    assert.equal(bottomScrolls, 2);
     assert.equal(position, 0);
     assert.equal(artifacts.length, 1);
+    assert.deepEqual([...image.data.subarray(0, 4)], [7, 7, 7, 255]);
+    assert.deepEqual([...image.data.subarray(image.data.length - 4)], [9, 9, 9, 255]);
+    assert.equal(
+      [...Array(image.height).keys()].filter(
+        (row) => image.data[(row * image.width + image.width - 1) * 4] === 99,
+      ).length,
+      3,
+    );
 
     freezeCapture = true;
     hideEndMarker = true;
@@ -125,6 +148,25 @@ test('captures a full native surface without stopping at a premature virtualized
           context,
         ),
       /(?:stopped moving before reaching|did not reach the end)/u,
+    );
+    assert.equal(artifacts.length, 1);
+
+    freezeCapture = false;
+    hideEndMarker = false;
+    omitScale = true;
+    await assert.rejects(
+      () =>
+        transport.execute(
+          'ui.capture_surface',
+          {
+            path: 'screenshots/missing-scale.png',
+            surface_test_id: 'catalog-surface',
+            until_test_id: 'catalog-end',
+            max_scrolls: 2,
+          },
+          context,
+        ),
+      /requires screenshot logical dimensions or pixel density/u,
     );
     assert.equal(artifacts.length, 1);
   } finally {

@@ -26,6 +26,16 @@ source "${SCRIPT_DIR}/slot-context.sh"
 companion_apply_farmslot_slot_context "${PLATFORM_VALUE}"
 export FARMSLOT_RECIPE_APP_ID="${BUNDLE_ID}"
 
+case "${PLATFORM_VALUE}" in
+  ios)
+    xcrun simctl launch --terminate-running-process "${IOS_SIMULATOR}" "${BUNDLE_ID}" >/dev/null
+    ;;
+  android)
+    adb -s "${ADB_SERIAL}" shell am force-stop "${BUNDLE_ID}"
+    adb -s "${ADB_SERIAL}" shell monkey -p "${BUNDLE_ID}" -c android.intent.category.LAUNCHER 1 >/dev/null
+    ;;
+esac
+
 artifacts_dir=".agent/ux-ready-gate-${FARMSLOT_SLOT_ID}-${PLATFORM_VALUE}"
 cd "${APP_DIR}"
 exec yarn farmslot-expo-recipe run \

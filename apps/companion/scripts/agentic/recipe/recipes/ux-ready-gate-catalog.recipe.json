@@ -18,8 +18,15 @@
     }
   ],
   "workflow": {
-    "entry": "open-review",
+    "entry": "wait-review-tab",
     "nodes": {
+      "wait-review-tab": {
+        "action": "ui.wait_for",
+        "test_id": "companion-tab-review",
+        "expected": "visible",
+        "intent": "Ensure the live review workspace is available before selecting its run package.",
+        "next": "open-review"
+      },
       "open-review": {
         "action": "ui.press",
         "test_id": "companion-tab-review",
@@ -35,7 +42,7 @@
       },
       "open-run": {
         "action": "ui.press",
-        "test_id": "companion-run-{{params.run_id}}",
+        "selector": "label=\"Open run {{params.run_id}}\"",
         "intent": "Open the selected run without an external deep link.",
         "next": "wait-run"
       },
@@ -53,15 +60,15 @@
         "surface_test_id": "companion-screen-run-detail",
         "until_test_id": "companion-screen-run-detail-end",
         "max_scrolls": 12,
-        "restore_position": false,
+        "restore_position": true,
         "intent": "Preserve the complete run package from its summary through its final scrollable section.",
         "proves": ["ready-gate-catalog"],
         "next": "open-ready-gate"
       },
       "open-ready-gate": {
         "action": "ui.press",
-        "test_id": "companion-open-primary-run-gate",
-        "intent": "Open the primary ready gate from the decision card reached at the end of the full-surface capture.",
+        "test_id": "companion-open-run-gate",
+        "intent": "Open the selected run's ready workspace after preserving its full package.",
         "next": "wait-ready-gate"
       },
       "wait-ready-gate": {
@@ -76,7 +83,7 @@
         "path": "{{params.platform}}/11_ready_gate_full.png",
         "label": "Ready Gate — full surface",
         "surface_test_id": "companion-screen-decision-workspace",
-        "until_test_id": "companion-screen-decision-workspace-actions",
+        "until_test_id": "companion-screen-decision-workspace-end",
         "max_scrolls": 30,
         "restore_position": false,
         "intent": "Preserve the complete Ready Gate from its summary through its operator actions.",

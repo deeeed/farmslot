@@ -1244,7 +1244,6 @@ export function decisionPresentationForRun(run: Run, decision: RunDecision): Dec
   });
 }
 export function DecisionSummaryCard({
-  testID,
   presentation,
   resolvedAction,
   resolvedAt,
@@ -1253,7 +1252,6 @@ export function DecisionSummaryCard({
   onOpenDiff,
   onOpenCompare,
 }: {
-  testID?: string;
   presentation: DecisionPresentation;
   resolvedAction?: string;
   resolvedAt?: string;
@@ -1278,14 +1276,14 @@ export function DecisionSummaryCard({
   const primaryVisualPair = visualPairSummary.pairs[0] ?? null;
   return (
     <Pressable style={[styles.decisionCard, { borderLeftColor: tone }]} onPress={onPress}>
-      <Pressable testID={testID} style={styles.row} onPress={onPress}>
+      <View style={styles.row}>
         <View style={[styles.decisionTypeBadge, { backgroundColor: tone + '22' }]}>
           <Text style={[styles.decisionTypeText, { color: tone }]}>
             {resolved ? 'Resolved' : presentation.kindLabel}
           </Text>
         </View>
         <Text style={styles.decisionOpenText}>{reviewLabel}</Text>
-      </Pressable>
+      </View>
       <Text style={styles.decisionTitle}>{presentation.title}</Text>
       <Text style={styles.decisionSummaryText} numberOfLines={3}>
         {summary}

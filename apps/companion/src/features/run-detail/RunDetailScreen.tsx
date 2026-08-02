@@ -1014,11 +1014,6 @@ export default function RunDetailScreen() {
             {(run.decisions ?? []).map((d) => (
               <DecisionSummaryCard
                 key={d.id}
-                testID={
-                  d.id === workspaceGates[0]?.decision.id
-                    ? 'companion-open-primary-run-gate'
-                    : undefined
-                }
                 presentation={decisionPresentationForRun(run, d)}
                 resolvedAction={d.resolvedAction}
                 resolvedAt={d.resolvedAt}

@@ -201,6 +201,7 @@ export const decisionWorkspaceStyles = StyleSheet.create({
     paddingRight: spacing.md,
   },
   errorText: { color: colors.statusFail, marginBottom: spacing.lg },
+  captureEndMarker: { height: 1 },
   section: { marginBottom: spacing.xl },
   recipeEvidenceHeader: {
     alignItems: 'center',

@@ -138,6 +138,8 @@ function RunCard({
       </View>
       <Pressable
         testID={`companion-run-${run.id}`}
+        accessibilityRole="button"
+        accessibilityLabel={`Open run ${run.id}`}
         style={[styles.runCard, isFamilyRoot && styles.rootRunCard]}
         onPress={() =>
           router.push({

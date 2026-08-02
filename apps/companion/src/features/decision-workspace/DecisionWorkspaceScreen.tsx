@@ -1333,11 +1333,7 @@ export default function DecisionDetailScreen() {
           );
         })()}
 
-        <View
-          testID="companion-screen-decision-workspace-actions"
-          style={styles.section}
-          onLayout={rememberSection('actions')}
-        >
+        <View style={styles.section} onLayout={rememberSection('actions')}>
           <Text style={styles.sectionTitle}>Evidence-reviewed actions</Text>
           <View style={styles.safetyCard}>
             <Text style={styles.safetyTitle}>Resolve only from full context</Text>
@@ -1372,6 +1368,11 @@ export default function DecisionDetailScreen() {
               </Pressable>
             ))
           )}
+          <View
+            testID="companion-screen-decision-workspace-end"
+            collapsable={false}
+            style={styles.captureEndMarker}
+          />
         </View>
 
         <MediaViewer
