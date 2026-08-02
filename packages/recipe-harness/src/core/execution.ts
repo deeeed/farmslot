@@ -47,6 +47,7 @@ type HudPublisher = (
 
 export interface ExecuteRecipeOptions {
   ref: string;
+  adapter?: string;
   recipe: Record<string, unknown>;
   params: Record<string, unknown>;
   prefix?: string;
@@ -199,7 +200,9 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
 
       const context = options.createContext(namespacedNodeId, options.recipe, outputs, getOutput);
       try {
-        const resolvedValidation = validateResolvedRecipeActionNode(node, options.actionManifest);
+        const resolvedValidation = validateResolvedRecipeActionNode(node, options.actionManifest, {
+          adapter: options.adapter,
+        });
         if (resolvedValidation.status === 'invalid') {
           const resolutionError = new RecipeResolutionError(
             'RECIPE_PARAMS_INVALID',
@@ -280,6 +283,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           next,
           case: result.case,
           output: result.output,
+          ...(result.phases?.length ? { phases: result.phases } : {}),
           ...(observations ? { observations } : {}),
           ...(observationWarnings.length ? { observationWarnings } : {}),
         });

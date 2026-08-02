@@ -28,7 +28,7 @@ export interface RecipeRunRequest {
   approval?: RecipeExecutionApproval;
   /** Root recipe parameters. Defaults from paramsSchema are applied first. */
   params?: Record<string, unknown>;
-  /** Active adapter used to select adapter-specific recipe files. */
+  /** Active adapter used for recipe selection and manifest capability validation. */
   adapter?: string;
   /** Ordered recipe library sources; the first source declaring a recipe ref wins. */
   librarySources?: RecipeLibrarySource[];
@@ -192,8 +192,16 @@ export interface ActionResult {
   case?: string;
   output?: unknown;
   artifacts?: RecipeArtifactManifestEntry[];
+  phases?: RecipeActionPhase[];
   observations?: RecipeObservations;
   observationWarnings?: RecipeObservationWarning[];
+}
+
+export interface RecipeActionPhase {
+  phase: 'start' | 'move' | 'end';
+  x: number;
+  y: number;
+  elapsedMs: number;
 }
 
 export interface ActionExecutionContext {
@@ -269,6 +277,7 @@ export interface TraceEntry {
   status?: RecipeRunStatus;
   case?: string;
   output?: unknown;
+  phases?: RecipeActionPhase[];
   observations?: RecipeObservations;
   observationWarnings?: RecipeObservationWarning[];
   artifacts?: RecipeArtifactManifestEntry[];

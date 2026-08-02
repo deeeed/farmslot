@@ -19,6 +19,7 @@ The runner connects [Recipe Protocol v1](./recipe-protocol-v1.md) to a project's
 
 Projects own namespaced actions and recipe libraries. Farmslot owns the graph, trust, trace, and artifact contracts.
 Action manifests use `https://farmslot.io/schemas/action-manifest-v1.schema.json` for editor validation.
+Actions may declare `adapters` when support differs by adapter; validation rejects other active adapters before execution and names the supported alternatives. `adapter_schemas` may further narrow parameters for one declared adapter, and planning applies that refinement before execution.
 
 ## Discovery
 

@@ -109,8 +109,9 @@ Examples:
 
 Default policy:
 
-- `ui.navigate`, `ui.press`, `ui.key_press`, `ui.set_input`, `ui.scroll`, and
-  `ui.gesture`: default to `observe: true`.
+- `ui.navigate`, `ui.press`, `ui.key_press`, `ui.set_input`, `ui.scroll`,
+  `ui.swipe`, `ui.pan`, `ui.drag`, and `ui.long_press`: default to
+  `observe: true`.
 - `ui.wait_for`: default to `observe: true` after a successful wait, because it
   often establishes the next authoring surface.
 - `ui.screenshot`: default to `observe: false`; it is already an explicit

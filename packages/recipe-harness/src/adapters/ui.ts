@@ -4,6 +4,7 @@ import type {
   ActionAdapter,
   ActionExecutionContext,
   ActionResult,
+  RecipeActionPhase,
   RecipeObservationResult,
 } from '../core/types.js';
 
@@ -13,7 +14,10 @@ export const STANDARD_UI_ACTIONS = [
   'ui.key_press',
   'ui.set_input',
   'ui.scroll',
-  'ui.gesture',
+  'ui.swipe',
+  'ui.pan',
+  'ui.drag',
+  'ui.long_press',
   'ui.wait_for',
   'ui.screenshot',
   'app.status',
@@ -30,8 +34,11 @@ export interface UiTransportControl {
 }
 
 export interface UiTransportResult {
+  kind: 'ui-transport-result';
   output?: unknown;
   control?: UiTransportControl;
+  phases?: RecipeActionPhase[];
+  settlementWarning?: string;
 }
 
 export interface UiActionTransport {
@@ -84,10 +91,19 @@ export function createStandardUiAdapters(
 
 export function normalizeUiTransportResult(result: unknown): ActionResult {
   if (isUiTransportResult(result)) {
+    const output =
+      result.settlementWarning === undefined
+        ? result.output
+        : typeof result.output === 'object' &&
+            result.output !== null &&
+            !Array.isArray(result.output)
+          ? { ...result.output, settlementWarning: result.settlementWarning }
+          : { result: result.output, settlementWarning: result.settlementWarning };
     return {
       case: result.control?.case,
       artifacts: result.control?.artifacts,
-      output: result.output,
+      output,
+      phases: result.phases,
     };
   }
   return { output: result ?? { ok: true } };
@@ -95,5 +111,5 @@ export function normalizeUiTransportResult(result: unknown): ActionResult {
 
 function isUiTransportResult(value: unknown): value is UiTransportResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return Object.prototype.hasOwnProperty.call(value, 'control');
+  return (value as { kind?: unknown }).kind === 'ui-transport-result';
 }

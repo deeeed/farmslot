@@ -157,3 +157,62 @@ test('Command Center runs an adjacent task recipe library without manual configu
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('Command Center rejects gestures not declared for the web adapter before CDP access', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-command-center-adapter-'));
+  try {
+    const manifest = JSON.parse(
+      await readFile(
+        path.join(repoRoot, 'apps/companion/scripts/agentic/recipe/action-manifest.json'),
+        'utf8',
+      ),
+    );
+    const manifestPath = path.join(root, 'action-manifest.json');
+    const recipePath = path.join(root, 'recipe.json');
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify(commandCenterActionManifest(manifest, new Set(['end', 'ui.pan'])))}\n`,
+    );
+    await writeFile(
+      recipePath,
+      `${JSON.stringify({
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+        description: 'Reject a gesture unavailable through the active web adapter.',
+        workflow: {
+          entry: 'gesture',
+          nodes: {
+            gesture: {
+              action: 'ui.pan',
+              intent: 'Move the requested surface.',
+              target: 'gesture-surface',
+              delta: { x: 20, y: 0 },
+              duration_ms: 300,
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      })}\n`,
+    );
+
+    await assert.rejects(
+      () =>
+        execFileAsync(process.execPath, [
+          path.join(repoRoot, 'apps/command-center/scripts/agentic/run-recipe.mjs'),
+          recipePath,
+          '--project-root',
+          root,
+          '--artifacts-dir',
+          path.join(root, 'artifacts'),
+          '--action-manifest',
+          manifestPath,
+          '--cdp-port',
+          '1',
+          '--json',
+        ]),
+      /Adapter web does not support recipe action ui\.pan\. Supporting adapters: android, ios\./u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

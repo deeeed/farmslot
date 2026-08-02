@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- feat(recipe): execute declared swipe, pan, drag, and long-press actions through the Command Center CDP transport.
 - feat(inventory): shared work-inventory table shell + probe for Backlog/Roadmap/Work Graph/Runs migration (MANUAL-000074).
 - fix(workflows): show active independent-review/fix work instead of a premature publish gate, reuse shared decision actions, turn Backlog into a sortable live-run-aware table with status counts, display flow types with the Runs palette, identify projects in Backlog/Roadmap/Run rows, and report the effective Grok model.
 - feat: fleet Setup recipe evidence for per-node runner seats (bind label + CodexBar/native identity), including a dismiss-What's-new helper so CDP recipes can open the Setup modal reliably.

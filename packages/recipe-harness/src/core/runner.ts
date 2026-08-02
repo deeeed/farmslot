@@ -237,7 +237,10 @@ class DefaultRecipeRunner implements RecipeRunner {
         : undefined;
     const recipes = libraryResolution?.recipes ?? new Map<string, ResolvedLibraryRecipe>();
     const externalRecipeIds = new Set(recipes.keys());
-    assertRecipeMatchesManifest(recipe, this.#actionManifest, { externalRecipeIds });
+    assertRecipeMatchesManifest(recipe, this.#actionManifest, {
+      externalRecipeIds,
+      adapter: request.adapter,
+    });
     const graph = extractWorkflowGraph(recipe);
     const rootRef = rootRecipeRef(sourceRecipePath, recipes, recipeSource.digest!);
     const dependencyResolution = resolveRecipeDependencies({
@@ -247,7 +250,10 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipes,
     });
     for (const resolved of dependencyResolution.recipes.values()) {
-      assertRecipeMatchesManifest(resolved.document, this.#actionManifest, { externalRecipeIds });
+      assertRecipeMatchesManifest(resolved.document, this.#actionManifest, {
+        externalRecipeIds,
+        adapter: request.adapter,
+      });
     }
     const params = resolveRecipeParams(rootRef, recipe, request.params ?? {});
     validateRecipeDependencyParams({
@@ -356,6 +362,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       if (canExecute) {
         const execution = await executeRecipe({
           ref: rootRef,
+          adapter: request.adapter,
           recipe,
           params,
           recipes,

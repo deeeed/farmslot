@@ -36,11 +36,13 @@ const RECIPE_FIELDS = new Set([
 export interface RecipeDocumentValidationOptions {
   externalRecipeIds?: ReadonlySet<string>;
   skipRecipeCallResolution?: boolean;
+  adapter?: string;
 }
 
 export function validateResolvedRecipeActionNode(
   node: unknown,
   manifest: unknown,
+  options?: Pick<RecipeDocumentValidationOptions, 'adapter'>,
 ): RecipeValidationResult {
   const ctx = createContext();
   if (!isRecord(node) || !isNonEmptyString(node.action)) {
@@ -66,11 +68,26 @@ export function validateResolvedRecipeActionNode(
     return finishResult(ctx);
   }
   ctx.findings.push(...validateRecipeParams(getRecipeActionParams(node), contract.schema).findings);
+  const adapter = options?.adapter;
+  const adapterSchema = adapter ? contract.adapterSchemas?.[adapter] : undefined;
+  if (adapterSchema) {
+    const paramsResult = validateRecipeParams(getRecipeActionParams(node), adapterSchema);
+    ctx.findings.push(
+      ...paramsResult.findings.map((finding) => ({
+        ...rebaseFinding(finding, 'node'),
+        code: 'recipe.action_params_not_supported_by_adapter',
+        message: `Adapter ${adapter} does not support recipe action ${node.action} with these parameters: ${finding.message} Next: adjust the parameters for ${adapter} or choose another supporting adapter.`,
+      })),
+    );
+  }
+  validateOfficialActionRelationships(ctx, node.action, node, 'node');
   return finishResult(ctx);
 }
 
 interface ManifestActionContract {
   schema?: Record<string, unknown>;
+  adapters?: string[];
+  adapterSchemas?: Record<string, Record<string, unknown>>;
   resultCases?: string[];
 }
 
@@ -87,6 +104,8 @@ export function validateRecipeWithManifest(
   const contracts = manifestActionContracts(manifest);
   for (const { action, node, path } of getRecipeWorkflowActionEntries(recipe)) {
     if (action === 'end' || action === 'call') continue;
+    const contract = contracts.get(action);
+    const supportingAdapters = contract?.adapters ? [...contract.adapters].sort() : undefined;
     if (!declaredActions.has(action)) {
       addFinding(
         ctx,
@@ -97,8 +116,20 @@ export function validateRecipeWithManifest(
       );
       continue;
     }
+    if (options?.adapter && supportingAdapters && !supportingAdapters.includes(options.adapter)) {
+      const supportMessage = supportingAdapters?.length
+        ? ` Supporting adapters: ${supportingAdapters.join(', ')}. Next: farmslot recipe run --adapter ${supportingAdapters[0]} <recipe>`
+        : '';
+      addFinding(
+        ctx,
+        'error',
+        'recipe.action_not_supported_by_adapter',
+        `${path}.action`,
+        `Adapter ${options.adapter} does not support recipe action ${action}.${supportMessage}`,
+      );
+      continue;
+    }
 
-    const contract = contracts.get(action);
     if (!contract?.schema) {
       addFinding(
         ctx,
@@ -114,12 +145,49 @@ export function validateRecipeWithManifest(
       ctx.findings.push(...paramsResult.findings.map((finding) => rebaseFinding(finding, path)));
     }
 
+    const adapterSchema = options?.adapter
+      ? contract?.adapterSchemas?.[options.adapter]
+      : undefined;
+    if (adapterSchema) {
+      const paramsResult = validateRecipeParams(getRecipeActionParams(node), adapterSchema, {
+        allowTemplates: true,
+      });
+      ctx.findings.push(
+        ...paramsResult.findings.map((finding) => ({
+          ...rebaseFinding(finding, path),
+          code: 'recipe.action_params_not_supported_by_adapter',
+          message: `Adapter ${options?.adapter} does not support recipe action ${action} with these parameters: ${finding.message} Next: adjust the parameters for ${options?.adapter} or choose another supporting adapter.`,
+        })),
+      );
+    }
+
+    validateOfficialActionRelationships(ctx, action, node, path);
+
     ctx.findings.push(
       ...validateRecipeActionCases(node, action, contract?.resultCases, path).findings,
     );
   }
 
   return finishResult(ctx);
+}
+
+function validateOfficialActionRelationships(
+  ctx: ReturnType<typeof createContext>,
+  action: string,
+  node: Record<string, unknown>,
+  path: string,
+): void {
+  if (action !== 'ui.pan' && action !== 'ui.drag') return;
+  const hasPath = hasOwn(node, 'path');
+  const hasDelta = hasOwn(node, 'delta');
+  if (hasPath !== hasDelta) return;
+  addFinding(
+    ctx,
+    'error',
+    'recipe.invalid_gesture_motion',
+    path,
+    `${action} requires exactly one of path or delta.`,
+  );
 }
 
 export function validateRecipeDocument(
@@ -299,6 +367,16 @@ function manifestActionContracts(manifest: unknown): Map<string, ManifestActionC
 function actionContract(entry: Record<string, unknown>): ManifestActionContract {
   return {
     ...(isRecord(entry.schema) ? { schema: entry.schema } : {}),
+    ...(Array.isArray(entry.adapters) ? { adapters: entry.adapters.filter(isNonEmptyString) } : {}),
+    ...(isRecord(entry.adapter_schemas)
+      ? {
+          adapterSchemas: Object.fromEntries(
+            Object.entries(entry.adapter_schemas).filter(
+              (entry): entry is [string, Record<string, unknown>] => isRecord(entry[1]),
+            ),
+          ),
+        }
+      : {}),
     ...(Array.isArray(entry.result_cases)
       ? { resultCases: entry.result_cases.filter(isNonEmptyString) }
       : {}),

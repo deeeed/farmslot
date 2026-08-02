@@ -6,6 +6,7 @@ import { validateRecipeCliInput } from './support.js';
 
 interface ValidateCommandOptions {
   actionManifest?: string;
+  adapter?: string;
   artifactManifest?: string;
   artifactDir?: string;
   library: string[];
@@ -18,6 +19,7 @@ export function registerValidateCommand(program: Command): void {
     .description('Validate a recipe and optional v1 artifact package')
     .argument('<recipe>', 'Path to recipe.json')
     .option('--action-manifest <manifest>', 'Runner action manifest JSON')
+    .option('--adapter <name>', 'Active adapter for manifest capability validation')
     .option('--artifact-manifest <manifest>', 'Artifact manifest JSON')
     .option('--artifact-dir <dir>', 'Artifact package directory')
     .option(
@@ -35,6 +37,7 @@ export function registerValidateCommand(program: Command): void {
       const result = await validateRecipeCliInput({
         recipePath,
         actionManifestPath: options.actionManifest,
+        adapter: options.adapter,
         artifactManifestPath: options.artifactManifest,
         artifactDir: options.artifactDir,
         ...(librarySources.length > 0 ? { librarySources } : {}),

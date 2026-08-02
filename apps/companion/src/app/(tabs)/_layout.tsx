@@ -108,6 +108,7 @@ export default function TabLayout() {
           name="advanced"
           options={{
             title: 'Advanced',
+            tabBarButtonTestID: 'companion-tab-advanced',
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="ellipsis-horizontal-circle-outline" size={size} color={color} />
             ),
