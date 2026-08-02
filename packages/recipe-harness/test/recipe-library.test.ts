@@ -11,6 +11,7 @@ import {
   personalRecipeLibraryRoot,
   resolveRecipeLibrarySources,
 } from '../src/core/library.js';
+import { RecipeResolutionError } from '../src/core/resolution-error.js';
 
 const terminalRecipe = (title: string) => ({
   $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
@@ -131,6 +132,143 @@ test('indexes recipe files with source precedence, adapter variants, and shadow 
     assert.equal(extension.recipes.size, 1);
     assert.equal(extension.recipes.get('perps.smoke')?.document.title, 'Team generic');
     assert.equal(extension.recipes.get('perps.smoke')?.adapter, undefined);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('indexes canonical adapter directories without changing recipe ids', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-adapter-directories-'));
+  try {
+    const library = path.join(tempRoot, 'team');
+    await createLibrary(library, {
+      'alpha/smoke.recipe.json': terminalRecipe('Generic alpha'),
+      'perps/smoke.recipe.json': terminalRecipe('Generic'),
+      'wallet/ready.recipe.json': terminalRecipe('Generic wallet'),
+      'core/perps/smoke.recipe.json': terminalRecipe('Core'),
+      'extension/perps/smoke.recipe.json': terminalRecipe('Extension'),
+      'mobile/alpha/smoke.recipe.json': terminalRecipe('Mobile alpha'),
+      'mobile/perps/smoke.recipe.json': terminalRecipe('Mobile'),
+    });
+
+    const extension = await loadRecipeLibraries([{ root: library }], { adapter: 'extension' });
+    assert.equal(extension.recipes.get('perps.smoke')?.document.title, 'Extension');
+    assert.equal(extension.recipes.get('perps.smoke')?.adapter, 'extension');
+    assert.equal(
+      extension.recipes.get('perps.smoke')?.file,
+      'recipes/extension/perps/smoke.recipe.json',
+    );
+
+    const mobile = await loadRecipeLibraries([{ root: library }], { adapter: 'mobile' });
+    assert.equal(mobile.recipes.get('alpha.smoke')?.document.title, 'Mobile alpha');
+    assert.equal(mobile.recipes.get('alpha.smoke')?.adapter, 'mobile');
+    assert.equal(mobile.recipes.get('perps.smoke')?.document.title, 'Mobile');
+    assert.equal(mobile.recipes.get('perps.smoke')?.adapter, 'mobile');
+
+    const core = await loadRecipeLibraries([{ root: library }], { adapter: 'core' });
+    assert.equal(core.recipes.get('perps.smoke')?.document.title, 'Core');
+    assert.equal(core.recipes.get('perps.smoke')?.adapter, 'core');
+    assert.equal(core.recipes.get('wallet.ready')?.document.title, 'Generic wallet');
+    assert.equal(core.recipes.get('wallet.ready')?.adapter, undefined);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects canonical and legacy declarations for the same adapter recipe', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-adapter-duplicate-'));
+  try {
+    await createLibrary(tempRoot, {
+      'mobile/perps/smoke.recipe.json': terminalRecipe('Canonical'),
+      'perps/smoke.mobile.recipe.json': terminalRecipe('Legacy'),
+    });
+
+    await assert.rejects(
+      loadRecipeLibraries([{ root: tempRoot }], { adapter: 'mobile' }),
+      (error: unknown) => {
+        assert.ok(error instanceof RecipeResolutionError);
+        assert.equal(error.code, 'RECIPE_LIBRARY_DUPLICATE_RECIPE');
+        assert.match(error.message, /recipes\/mobile\/perps\/smoke[.]recipe[.]json/u);
+        assert.match(error.message, /recipes\/perps\/smoke[.]mobile[.]recipe[.]json/u);
+        return true;
+      },
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects an adapter filename without a recipe id', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-adapter-without-id-'));
+  try {
+    await createLibrary(tempRoot, {
+      'mobile.recipe.json': terminalRecipe('Missing id'),
+    });
+
+    await assert.rejects(
+      loadRecipeLibraries([{ root: tempRoot }], { adapter: 'extension' }),
+      (error: unknown) => {
+        assert.ok(error instanceof RecipeResolutionError);
+        assert.equal(error.code, 'RECIPE_LIBRARY_RECIPE_INVALID');
+        assert.match(error.message, /declares adapter mobile but has no recipe id/u);
+        assert.match(error.userAction, /recipes\/mobile\/<name>[.]recipe[.]json/u);
+        return true;
+      },
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('reports canonical and legacy variants across sources as shadows', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-adapter-shadow-'));
+  try {
+    const canonical = path.join(tempRoot, 'canonical');
+    const legacy = path.join(tempRoot, 'legacy');
+    await createLibrary(canonical, {
+      'mobile/perps/smoke.recipe.json': terminalRecipe('Canonical'),
+    });
+    await createLibrary(legacy, {
+      'perps/smoke.mobile.recipe.json': terminalRecipe('Legacy'),
+    });
+
+    const resolution = await loadRecipeLibraries(
+      [
+        { name: 'canonical', root: canonical },
+        { name: 'legacy', root: legacy },
+      ],
+      { adapter: 'mobile' },
+    );
+    assert.equal(resolution.recipes.get('perps.smoke')?.document.title, 'Canonical');
+    assert.deepEqual(resolution.recipes.get('perps.smoke')?.shadows, ['legacy']);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects adapter declarations in both the directory and filename', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'recipe-library-adapter-conflict-'));
+  try {
+    const redundant = path.join(tempRoot, 'redundant');
+    const conflicting = path.join(tempRoot, 'conflicting');
+    await createLibrary(redundant, {
+      'mobile/perps/smoke.mobile.recipe.json': terminalRecipe('Ambiguous'),
+    });
+    await createLibrary(conflicting, {
+      'mobile/perps/smoke.extension.recipe.json': terminalRecipe('Conflicting'),
+    });
+
+    for (const library of [redundant, conflicting]) {
+      await assert.rejects(
+        loadRecipeLibraries([{ root: library }], { adapter: 'mobile' }),
+        (error: unknown) => {
+          assert.ok(error instanceof RecipeResolutionError);
+          assert.equal(error.code, 'RECIPE_LIBRARY_ADAPTER_DECLARATION_CONFLICT');
+          assert.match(error.userAction, /recipes\/<adapter>\//u);
+          return true;
+        },
+      );
+    }
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

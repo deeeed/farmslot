@@ -385,18 +385,29 @@ test('CLI parameter parsing preserves prototype-sensitive keys for loud schema v
   assert.equal(Object.getPrototypeOf(params), Object.prototype);
 });
 
-async function captureConsoleLog(callback: () => Promise<void>): Promise<string> {
-  const originalLog = console.log;
+async function captureConsole(
+  method: 'log' | 'error',
+  callback: () => Promise<void>,
+): Promise<string> {
+  const original = console[method];
   const lines: string[] = [];
-  console.log = (...values: unknown[]) => {
+  console[method] = (...values: unknown[]) => {
     lines.push(values.map((value) => String(value)).join(' '));
   };
   try {
     await callback();
   } finally {
-    console.log = originalLog;
+    console[method] = original;
   }
   return lines.join('\n');
+}
+
+async function captureConsoleLog(callback: () => Promise<void>): Promise<string> {
+  return captureConsole('log', callback);
+}
+
+async function captureConsoleError(callback: () => Promise<void>): Promise<string> {
+  return captureConsole('error', callback);
 }
 
 function createSmokeRecipe(): unknown {
@@ -2663,6 +2674,114 @@ test('validates composed artifact packages from their retained dependency graph'
     assert.equal(result.status, 'valid');
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('validate resolves canonical adapter-specific recipe dependencies', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    const manifestPath = path.join(tempRoot, 'action-manifest.json');
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes/mobile/demo/nested.recipe.json'),
+      recipeDocument(
+        { done: { action: 'end', status: 'pass' } },
+        { description: 'Provides a mobile-only nested dependency.' },
+      ),
+    );
+    await writeJsonFile(
+      recipePath,
+      recipeDocument({
+        nested: {
+          action: 'call',
+          ref: 'demo.nested',
+          intent: 'Validate the mobile dependency.',
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
+    );
+    await writeJsonFile(manifestPath, coreActionManifest);
+
+    const output = await captureConsoleLog(() =>
+      runRecipeHarnessCli([
+        'validate',
+        recipePath,
+        '--action-manifest',
+        manifestPath,
+        '--adapter',
+        'mobile',
+        '--library',
+        `team=${libraryRoot}`,
+        '--json',
+      ]),
+    );
+    assert.match(output, /"status": "valid"/u);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('validate reports adapter declaration conflicts with recovery guidance', async () => {
+  const tempRoot = await createTempRoot();
+  const originalExitCode = process.exitCode;
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    await writeJsonFile(recipePath, recipeDocument({ done: { action: 'end', status: 'pass' } }));
+    await writeJsonFile(
+      path.join(libraryRoot, 'recipes/mobile/demo/check.mobile.recipe.json'),
+      recipeDocument({ done: { action: 'end', status: 'pass' } }),
+    );
+    process.exitCode = undefined;
+
+    const output = await captureConsoleError(() =>
+      runRecipeHarnessCli([
+        'validate',
+        recipePath,
+        '--adapter',
+        'mobile',
+        '--library',
+        `team=${libraryRoot}`,
+      ]),
+    );
+    assert.match(output, /Error \[RECIPE_LIBRARY_ADAPTER_DECLARATION_CONFLICT\]/u);
+    assert.match(output, /Next: declare the adapter once using recipes\/<adapter>\//u);
+    assert.equal(process.exitCode, 1);
+  } finally {
+    process.exitCode = originalExitCode;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('validate reports escaping library symlinks with trust refusal guidance', async () => {
+  const tempRoot = await createTempRoot();
+  const outsideRoot = await createTempRoot();
+  const originalExitCode = process.exitCode;
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    const outsideRecipePath = path.join(outsideRoot, 'outside.recipe.json');
+    await writeJsonFile(recipePath, recipeDocument({ done: { action: 'end', status: 'pass' } }));
+    await writeJsonFile(
+      outsideRecipePath,
+      recipeDocument({ done: { action: 'end', status: 'pass' } }),
+    );
+    await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
+    await symlink(outsideRecipePath, path.join(libraryRoot, 'recipes/linked.recipe.json'));
+    process.exitCode = undefined;
+
+    const output = await captureConsoleError(() =>
+      runRecipeHarnessCli(['validate', recipePath, '--library', `team=${libraryRoot}`]),
+    );
+    assert.match(output, /Error \[RECIPE_SOURCE_INVALID\]/u);
+    assert.match(output, /Next: move the recipe inside the library root/u);
+    assert.equal(process.exitCode, 1);
+  } finally {
+    process.exitCode = originalExitCode;
+    await rm(tempRoot, { recursive: true, force: true });
+    await rm(outsideRoot, { recursive: true, force: true });
   }
 });
 

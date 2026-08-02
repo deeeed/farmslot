@@ -4,6 +4,11 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- **BREAKING:** Add canonical `recipes/<adapter>/<domain>/*.recipe.json`
+  discovery and reserve top-level adapter directory names. Stable ids and
+  temporary legacy suffixes remain supported; resolution errors are actionable
+  and deterministic across `run` and `validate`.
+
 ## 0.12.1 - 2026-08-02
 
 - Resolve CDP navigation URLs outside the page realm so LavaMoat-scuttled Extension pages can use shared navigation actions.
