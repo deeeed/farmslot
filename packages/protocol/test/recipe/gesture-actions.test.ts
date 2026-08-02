@@ -258,6 +258,109 @@ test('gesture adapter declarations reject empty support lists', async () => {
   assert.ok(result.findings.some((finding) => finding.code === 'action_manifest.invalid_adapters'));
 });
 
+test('adapter schemas reject unsupported native gesture parameters before execution', async () => {
+  const manifest = await companionManifest();
+  const multiPointPan = gestureRecipe({
+    gesture: {
+      action: 'ui.pan',
+      intent: 'Move across each requested point.',
+      target: 'gesture-surface',
+      path: [
+        { x: 20, y: 0 },
+        { x: 40, y: 10 },
+      ],
+      duration_ms: 300,
+      next: 'done',
+    },
+  });
+
+  for (const adapter of ['android', 'ios']) {
+    const unsupported = validateRecipeWithManifest(multiPointPan, manifest, {
+      adapter,
+      skipRecipeCallResolution: true,
+    });
+    assert.deepEqual(
+      unsupported.findings.filter(
+        (finding) => finding.code === 'recipe.action_params_not_supported_by_adapter',
+      ),
+      [
+        {
+          severity: 'error',
+          code: 'recipe.action_params_not_supported_by_adapter',
+          path: 'workflow.nodes.gesture.path',
+          message: `Adapter ${adapter} does not support recipe action ui.pan with these parameters: params.path must contain at most 1 item. Next: adjust the parameters for ${adapter} or choose another supporting adapter.`,
+        },
+      ],
+    );
+  }
+
+  const onePointPan = structuredClone(multiPointPan) as {
+    workflow: { nodes: { gesture: { path: unknown[] } } };
+  };
+  onePointPan.workflow.nodes.gesture.path = [{ x: 20, y: 0 }];
+  for (const adapter of ['android', 'ios']) {
+    assert.equal(
+      validateRecipeWithManifest(onePointPan, manifest, {
+        adapter,
+        skipRecipeCallResolution: true,
+      }).status,
+      'valid',
+    );
+  }
+});
+
+test('adapter schemas must refine declared adapters', async () => {
+  const manifest = await companionManifest();
+  manifest.actions['ui.pan']!.adapter_schemas = {
+    web: {
+      type: 'object',
+      properties: {},
+      additionalProperties: true,
+    },
+  };
+  const result = validateRecipeWithManifest(
+    gestureRecipe({
+      gesture: {
+        action: 'ui.pan',
+        intent: 'Move across the requested surface.',
+        target: 'gesture-surface',
+        delta: { x: 20, y: 0 },
+        duration_ms: 300,
+        next: 'done',
+      },
+    }),
+    manifest,
+    { adapter: 'ios', skipRecipeCallResolution: true },
+  );
+  assert.ok(
+    result.findings.some((finding) => finding.code === 'action_manifest.unknown_adapter_schema'),
+    JSON.stringify(result.findings),
+  );
+
+  manifest.actions['ui.pan']!.adapters = ['web'];
+  manifest.actions['ui.pan']!.adapter_schemas.web!.additionalProperties = false;
+  const closedResult = validateRecipeWithManifest(
+    gestureRecipe({
+      gesture: {
+        action: 'ui.pan',
+        intent: 'Move across the requested surface.',
+        target: 'gesture-surface',
+        delta: { x: 20, y: 0 },
+        duration_ms: 300,
+        next: 'done',
+      },
+    }),
+    manifest,
+    { adapter: 'web', skipRecipeCallResolution: true },
+  );
+  assert.ok(
+    closedResult.findings.some(
+      (finding) => finding.code === 'action_manifest.closed_adapter_schema',
+    ),
+    JSON.stringify(closedResult.findings),
+  );
+});
+
 test('one target-only companion recipe validates unchanged against every declaring manifest', async () => {
   const recipePath =
     'apps/companion/scripts/agentic/recipe/recipes/continuous-gestures.recipe.json';

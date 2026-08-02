@@ -185,7 +185,7 @@
       ]
     },
     "ui.pan": {
-      "description": "Stream a continuous pointer path from a test-id target or explicit screen coordinates. Android accepts multiple relative path points; iOS accepts one path point or delta.",
+      "description": "Stream a continuous pointer path from a test-id target or explicit screen coordinates. Native adapters accept one path point or delta.",
       "adapters": ["android", "ios"],
       "schema": {
         "type": "object",
@@ -219,22 +219,43 @@
         "required": ["target", "duration_ms"],
         "additionalProperties": false
       },
+      "adapter_schemas": {
+        "android": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "array",
+              "maxItems": 1,
+              "items": { "type": "object", "additionalProperties": true }
+            }
+          },
+          "additionalProperties": true
+        },
+        "ios": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "array",
+              "maxItems": 1,
+              "items": { "type": "object", "additionalProperties": true }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
       "examples": [
         {
           "action": "ui.pan",
           "intent": "Pan through the requested pointer path.",
           "target": "example-surface",
-          "path": [
-            { "x": 40, "y": 0 },
-            { "x": 80, "y": 20 }
-          ],
+          "path": [{ "x": 80, "y": 20 }],
           "duration_ms": 400,
           "next": "done"
         }
       ]
     },
     "ui.drag": {
-      "description": "Drag a grabbable test-id target or explicit screen coordinate. Android accepts multiple relative path points; iOS accepts one path point or delta.",
+      "description": "Drag a grabbable test-id target or explicit screen coordinate. Native adapters accept one path point or delta.",
       "adapters": ["android", "ios"],
       "schema": {
         "type": "object",
@@ -267,6 +288,30 @@
         },
         "required": ["target", "duration_ms"],
         "additionalProperties": false
+      },
+      "adapter_schemas": {
+        "android": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "array",
+              "maxItems": 1,
+              "items": { "type": "object", "additionalProperties": true }
+            }
+          },
+          "additionalProperties": true
+        },
+        "ios": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "array",
+              "maxItems": 1,
+              "items": { "type": "object", "additionalProperties": true }
+            }
+          },
+          "additionalProperties": true
+        }
       },
       "examples": [
         {

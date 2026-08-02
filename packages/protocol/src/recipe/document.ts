@@ -74,6 +74,7 @@ export function validateResolvedRecipeActionNode(
 interface ManifestActionContract {
   schema?: Record<string, unknown>;
   adapters?: string[];
+  adapterSchemas?: Record<string, Record<string, unknown>>;
   resultCases?: string[];
 }
 
@@ -129,6 +130,22 @@ export function validateRecipeWithManifest(
         allowTemplates: true,
       });
       ctx.findings.push(...paramsResult.findings.map((finding) => rebaseFinding(finding, path)));
+    }
+
+    const adapterSchema = options?.adapter
+      ? contract?.adapterSchemas?.[options.adapter]
+      : undefined;
+    if (adapterSchema) {
+      const paramsResult = validateRecipeParams(getRecipeActionParams(node), adapterSchema, {
+        allowTemplates: true,
+      });
+      ctx.findings.push(
+        ...paramsResult.findings.map((finding) => ({
+          ...rebaseFinding(finding, path),
+          code: 'recipe.action_params_not_supported_by_adapter',
+          message: `Adapter ${options?.adapter} does not support recipe action ${action} with these parameters: ${finding.message} Next: adjust the parameters for ${options?.adapter} or choose another supporting adapter.`,
+        })),
+      );
     }
 
     validateOfficialActionRelationships(ctx, action, node, path);
@@ -338,6 +355,15 @@ function actionContract(entry: Record<string, unknown>): ManifestActionContract 
   return {
     ...(isRecord(entry.schema) ? { schema: entry.schema } : {}),
     ...(Array.isArray(entry.adapters) ? { adapters: entry.adapters.filter(isNonEmptyString) } : {}),
+    ...(isRecord(entry.adapter_schemas)
+      ? {
+          adapterSchemas: Object.fromEntries(
+            Object.entries(entry.adapter_schemas).filter(
+              (entry): entry is [string, Record<string, unknown>] => isRecord(entry[1]),
+            ),
+          ),
+        }
+      : {}),
     ...(Array.isArray(entry.result_cases)
       ? { resultCases: entry.result_cases.filter(isNonEmptyString) }
       : {}),

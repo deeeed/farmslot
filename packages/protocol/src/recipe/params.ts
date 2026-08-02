@@ -23,6 +23,7 @@ const PARAM_SCHEMA_FIELDS = new Set([
   'items',
   'minimum',
   'minItems',
+  'maxItems',
 ]);
 
 export function validateRecipeParamsSchema(
@@ -306,6 +307,20 @@ function validatePropertySchema(
       `${path}.minItems must be a non-negative integer for an array parameter.`,
     );
   }
+  if (
+    hasOwn(schema, 'maxItems') &&
+    (!Number.isInteger(schema.maxItems) ||
+      (schema.maxItems as number) < 0 ||
+      !schemaIncludesType(schema.type, 'array'))
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.invalid_param_max_items',
+      `${path}.maxItems`,
+      `${path}.maxItems must be a non-negative integer for an array parameter.`,
+    );
+  }
   validateObjectSchemaKeywords(ctx, schema, path);
   if (hasOwn(schema, 'items')) {
     validatePropertySchema(ctx, schema.items, `${path}.items`);
@@ -473,6 +488,19 @@ function validateParamValue(
       'recipe.param_array_too_short',
       path,
       `${path} must contain at least ${schema.minItems} item${schema.minItems === 1 ? '' : 's'}.`,
+    );
+  }
+  if (
+    Array.isArray(value) &&
+    typeof schema.maxItems === 'number' &&
+    value.length > schema.maxItems
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.param_array_too_long',
+      path,
+      `${path} must contain at most ${schema.maxItems} item${schema.maxItems === 1 ? '' : 's'}.`,
     );
   }
   if (schemaIncludesType(schema.type, 'object') && isRecord(value))

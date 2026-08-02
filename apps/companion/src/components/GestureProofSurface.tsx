@@ -21,6 +21,15 @@ export function GestureProofSurface() {
   const sliderStart = useRef(sliderValue);
   const sliderValueRef = useRef(sliderValue);
   const markPanMoved = useCallback(() => setPanMoved(true), []);
+  const resetProof = useCallback(() => {
+    setListMoved(false);
+    setPanMoved(false);
+    setSliderValue(20);
+    setSliderMoved(false);
+    setHeld(false);
+    sliderStart.current = 20;
+    sliderValueRef.current = 20;
+  }, []);
   const updateSlider = useCallback((translationX: number) => {
     const nextValue = clamp(sliderStart.current + translationX / 2);
     sliderValueRef.current = nextValue;
@@ -61,6 +70,9 @@ export function GestureProofSurface() {
     <View style={styles.card} testID="gesture-proof-surface">
       <Text style={styles.eyebrow}>Recipe gesture proof</Text>
       <Text style={styles.title}>Continuous input surface</Text>
+      <Pressable testID="gesture-proof-reset" style={styles.resetButton} onPress={resetProof}>
+        <Text style={styles.itemText}>Reset gesture proof</Text>
+      </Pressable>
 
       <ScrollView
         horizontal
@@ -182,6 +194,13 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: 1,
     height: 72,
+    justifyContent: 'center',
+  },
+  resetButton: {
+    alignItems: 'center',
+    backgroundColor: colors.bgSurface,
+    borderRadius: radii.md,
+    minHeight: 44,
     justifyContent: 'center',
   },
   slider: {

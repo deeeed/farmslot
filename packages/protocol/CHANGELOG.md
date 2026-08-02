@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **BREAKING:** Replace the unused `ui.gesture` vocabulary with typed `ui.swipe`, `ui.pan`, `ui.drag`, and `ui.long_press` actions, including strict duration, path, direction, and manifest-owned adapter support validation.
+- **BREAKING:** Replace the unused `ui.gesture` vocabulary with typed `ui.swipe`, `ui.pan`, `ui.drag`, and `ui.long_press` actions, including strict duration, path, direction, and manifest-owned adapter-specific parameter validation.
 
 ## 0.15.0 - 2026-08-01
 

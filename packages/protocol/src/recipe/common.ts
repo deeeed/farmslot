@@ -60,6 +60,8 @@ export interface RecipeActionCatalogEntry {
   schema?: Record<string, unknown>;
   /** Adapter names that implement this action. Omit when the action is adapter-independent. */
   adapters?: string[];
+  /** Adapter-specific parameter refinements applied in addition to schema. */
+  adapter_schemas?: Record<string, Record<string, unknown>>;
   /** Finite control cases this action may return. The recipe owns their destinations. */
   result_cases?: string[];
   examples: Record<string, unknown>[];

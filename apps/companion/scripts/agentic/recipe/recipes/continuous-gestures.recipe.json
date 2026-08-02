@@ -49,6 +49,24 @@
         "test_id": "gesture-proof-surface",
         "expected": "visible",
         "timeout_ms": 10000,
+        "next": "reset-proof"
+      },
+      "reset-proof": {
+        "action": "ui.press",
+        "intent": "Reset the proof controls to their known initial state.",
+        "test_id": "gesture-proof-reset",
+        "next": "confirm-ready"
+      },
+      "confirm-ready": {
+        "action": "ui.wait_for",
+        "intent": "Confirm every gesture result is clear before interaction.",
+        "text_contains": [
+          "Gesture list ready",
+          "Gesture pan ready",
+          "Gesture slider ready",
+          "Hold to prove"
+        ],
+        "timeout_ms": 5000,
         "next": "capture-before"
       },
       "capture-before": {

@@ -394,17 +394,13 @@ function expectedNativeGestureCommands(
   });
   return [
     adb('swipe', '60', '40', '60', '10', '300'),
-    adb('motionevent', 'DOWN', '60', '40'),
-    adb('motionevent', 'MOVE', '80', '40'),
-    adb('motionevent', 'UP', '80', '40'),
-    adb('motionevent', 'DOWN', '60', '40'),
-    adb('motionevent', 'MOVE', '110', '40'),
-    adb('motionevent', 'UP', '110', '40'),
+    adb('swipe', '60', '40', '80', '40', '400'),
+    adb('swipe', '60', '40', '110', '40', '500'),
     adb('swipe', '60', '40', '60', '40', '700'),
   ];
 }
 
-test('streams Android multi-point paths without lifting and fails closed on iOS', async () => {
+test('native transports fail closed on multi-point paths', async () => {
   const client = {
     apps: { open: async () => ({ session: 'gesture-session', identifiers: {} }) },
     interactions: {
@@ -445,28 +441,15 @@ test('streams Android multi-point paths without lifting and fails closed on iOS'
   });
 
   for (const action of ['ui.pan', 'ui.drag'] as const) {
-    await android.execute(action, node, {} as ActionExecutionContext);
+    await assert.rejects(
+      () => android.execute(action, node, {} as ActionExecutionContext),
+      new RegExp(
+        `android ${action.replace('.', '\\.')} cannot stream a multi-point path\\. Next: use one path point or delta\\.`,
+        'u',
+      ),
+    );
   }
-  const motion = (phase: string, x: string, y: string) => [
-    '-s',
-    'emulator-5554',
-    'shell',
-    'input',
-    'motionevent',
-    phase,
-    x,
-    y,
-  ];
-  assert.deepEqual(androidCommands, [
-    motion('DOWN', '10', '20'),
-    motion('MOVE', '31', '20'),
-    motion('MOVE', '50', '31'),
-    motion('UP', '50', '31'),
-    motion('DOWN', '10', '20'),
-    motion('MOVE', '31', '20'),
-    motion('MOVE', '50', '31'),
-    motion('UP', '50', '31'),
-  ]);
+  assert.deepEqual(androidCommands, []);
 
   const iosCommands: string[][] = [];
   const ios = createAgentDeviceUiTransport({
@@ -494,7 +477,7 @@ test('streams Android multi-point paths without lifting and fails closed on iOS'
     await assert.rejects(
       () => ios.execute(action, node, {} as ActionExecutionContext),
       new RegExp(
-        `iOS ${action.replace('.', '\\.')} cannot stream a multi-point path\\. Next: use one path point or delta, or run with --adapter android\\.`,
+        `ios ${action.replace('.', '\\.')} cannot stream a multi-point path\\. Next: use one path point or delta\\.`,
         'u',
       ),
     );
@@ -526,6 +509,8 @@ test('observe false remains a harness concern and does not alter provider select
     {} as ActionExecutionContext,
   );
   assert.equal((result as { selector: string }).selector, 'label="Settings"');
+  assert.equal((result as { serial?: string }).serial, 'emulator-5554');
+  assert.equal((result as { device?: string }).device, undefined);
 });
 
 test('settle false skips native stability enforcement', async () => {

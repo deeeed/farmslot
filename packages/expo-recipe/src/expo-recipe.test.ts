@@ -26,9 +26,13 @@ test('production Expo validation rejects gestures unsupported by the active adap
     await installExpoRecipeScaffold({ projectRoot: root });
     const manifestPath = path.join(root, DEFAULT_EXPO_RECIPE_MANIFEST_PATH);
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
-      actions: Record<string, { adapters?: string[] }>;
+      actions: Record<
+        string,
+        { adapters?: string[]; adapter_schemas?: Record<string, Record<string, unknown>> }
+      >;
     };
     manifest.actions['ui.pan']!.adapters = ['ios'];
+    delete manifest.actions['ui.pan']!.adapter_schemas?.android;
     await writeJson(manifestPath, manifest);
     await writeJson(path.join(root, DEFAULT_EXPO_RECIPE_PATH), {
       $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',

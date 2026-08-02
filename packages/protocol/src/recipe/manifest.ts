@@ -25,6 +25,7 @@ const ACTION_ENTRY_FIELDS = new Set([
   'description',
   'schema',
   'adapters',
+  'adapter_schemas',
   'result_cases',
   'examples',
   'execution_capabilities',
@@ -120,6 +121,49 @@ function validateActionCatalogEntry(
         `${path}.adapters`,
         `${path}.adapters must be a non-empty array of unique adapter names.`,
       );
+    }
+  }
+
+  if (Object.hasOwn(entry, 'adapter_schemas')) {
+    if (!isRecord(entry.adapter_schemas) || Object.keys(entry.adapter_schemas).length === 0) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.invalid_adapter_schemas',
+        `${path}.adapter_schemas`,
+        `${path}.adapter_schemas must be a non-empty object keyed by a declared adapter.`,
+      );
+    } else {
+      for (const [adapter, adapterSchema] of Object.entries(entry.adapter_schemas)) {
+        const adapterSchemaPath = `${path}.adapter_schemas.${adapter}`;
+        if (!Array.isArray(entry.adapters) || !entry.adapters.includes(adapter)) {
+          addFinding(
+            ctx,
+            'error',
+            'action_manifest.unknown_adapter_schema',
+            adapterSchemaPath,
+            `${adapterSchemaPath} must refine an adapter declared by ${path}.adapters.`,
+          );
+        }
+        if (isRecord(adapterSchema) && adapterSchema.additionalProperties === false) {
+          addFinding(
+            ctx,
+            'error',
+            'action_manifest.closed_adapter_schema',
+            `${adapterSchemaPath}.additionalProperties`,
+            `${adapterSchemaPath}.additionalProperties must be true so the shared action schema remains authoritative.`,
+          );
+        }
+        const schemaResult = validateRecipeParamsSchema(adapterSchema, {
+          requireClosedRoot: false,
+        });
+        ctx.findings.push(
+          ...schemaResult.findings.map((finding) => ({
+            ...finding,
+            path: `${adapterSchemaPath}${finding.path === 'paramsSchema' ? '' : finding.path.replace(/^paramsSchema/u, '')}`,
+          })),
+        );
+      }
     }
   }
 
@@ -229,6 +273,22 @@ function validateActionCatalogEntry(
           path: `${examplePath}${finding.path === 'params' ? '' : finding.path.replace(/^params/u, '')}`,
         })),
       );
+    }
+    if (isRecord(entry.adapter_schemas)) {
+      for (const [adapter, adapterSchema] of Object.entries(entry.adapter_schemas)) {
+        if (!isRecord(adapterSchema)) continue;
+        const paramsResult = validateRecipeParams(getRecipeActionParams(example), adapterSchema, {
+          allowTemplates: true,
+        });
+        ctx.findings.push(
+          ...paramsResult.findings.map((finding) => ({
+            ...finding,
+            code: 'action_manifest.example_not_supported_by_adapter',
+            path: `${examplePath}${finding.path === 'params' ? '' : finding.path.replace(/^params/u, '')}`,
+            message: `${examplePath} must be executable by adapter ${adapter}: ${finding.message}`,
+          })),
+        );
+      }
     }
   });
 }
