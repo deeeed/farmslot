@@ -19,13 +19,14 @@ An action manifest is the runner's public capability contract. An action declara
 
 - stable name and concise description;
 - strict JSON-Schema-shaped parameters;
+- optional adapter names when support differs by adapter;
 - capabilities required before execution;
 - finite `result_cases` when the action can branch;
 - one or more valid examples for exact-detail discovery.
 
 Namespaced project actions such as `metamask.wallet.ensure_unlocked` remain project-owned. Official actions stay small and platform-neutral.
 
-The manifest is authoritative. Unknown actions, fields, and result cases fail validation.
+The manifest is authoritative. Unknown actions, fields, and result cases fail validation. When an action declares `adapters`, validation rejects other active adapters before execution and names the supported alternatives.
 The published Action Manifest schema at `https://farmslot.io/schemas/action-manifest-v1.schema.json` provides editor structure and completion; runtime validation also enforces cross-field relationships such as required-property membership and enum/default value types.
 
 ## Discovery

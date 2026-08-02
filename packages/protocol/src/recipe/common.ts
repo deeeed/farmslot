@@ -58,6 +58,8 @@ export type RecipeFailureCause = (typeof RECIPE_FAILURE_CAUSES)[number];
 export interface RecipeActionCatalogEntry {
   description: string;
   schema?: Record<string, unknown>;
+  /** Adapter names that implement this action. Omit when the action is adapter-independent. */
+  adapters?: string[];
   /** Finite control cases this action may return. The recipe owns their destinations. */
   result_cases?: string[];
   examples: Record<string, unknown>[];

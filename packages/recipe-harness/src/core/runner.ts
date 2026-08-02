@@ -126,7 +126,6 @@ export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRu
     options.recording,
     options.defaultSource,
     options.blockedCapabilities,
-    options.adapterManifests,
   );
 }
 
@@ -178,7 +177,6 @@ class DefaultRecipeRunner implements RecipeRunner {
   readonly #recording: RecipeRecordingOptions | undefined;
   readonly #defaultSource: CreateRecipeRunnerOptions['defaultSource'];
   readonly #blockedCapabilities: CreateRecipeRunnerOptions['blockedCapabilities'];
-  readonly #adapterManifests: CreateRecipeRunnerOptions['adapterManifests'];
 
   constructor(
     actionManifest: RecipeActionManifestDocument,
@@ -189,7 +187,6 @@ class DefaultRecipeRunner implements RecipeRunner {
     recording: RecipeRecordingOptions | undefined,
     defaultSource: CreateRecipeRunnerOptions['defaultSource'],
     blockedCapabilities: CreateRecipeRunnerOptions['blockedCapabilities'],
-    adapterManifests: CreateRecipeRunnerOptions['adapterManifests'],
   ) {
     this.#actionManifest = actionManifest;
     this.#adapters = adapters;
@@ -200,7 +197,6 @@ class DefaultRecipeRunner implements RecipeRunner {
     this.#recording = recording;
     this.#defaultSource = defaultSource;
     this.#blockedCapabilities = blockedCapabilities;
-    this.#adapterManifests = adapterManifests;
   }
 
   async preflight(request: RecipeRunRequest): Promise<RecipeExecutionPlan> {
@@ -244,7 +240,6 @@ class DefaultRecipeRunner implements RecipeRunner {
     assertRecipeMatchesManifest(recipe, this.#actionManifest, {
       externalRecipeIds,
       adapter: request.adapter,
-      adapterManifests: this.#adapterManifests,
     });
     const graph = extractWorkflowGraph(recipe);
     const rootRef = rootRecipeRef(sourceRecipePath, recipes, recipeSource.digest!);
@@ -258,7 +253,6 @@ class DefaultRecipeRunner implements RecipeRunner {
       assertRecipeMatchesManifest(resolved.document, this.#actionManifest, {
         externalRecipeIds,
         adapter: request.adapter,
-        adapterManifests: this.#adapterManifests,
       });
     }
     const params = resolveRecipeParams(rootRef, recipe, request.params ?? {});

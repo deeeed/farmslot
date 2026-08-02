@@ -13,7 +13,64 @@ import {
   runExpoRecipeCli,
   runExpoRecipeDoctor,
   runExpoRecipeDocument,
+  validateExpoRecipeDocument,
 } from './index.js';
+
+test('production Expo validation rejects gestures unsupported by the active adapter', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-adapter-'));
+  const previousPlatform = process.env.PLATFORM;
+  try {
+    process.env.PLATFORM = 'android';
+    await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
+    await installExpoRecipeScaffold({ projectRoot: root });
+    const manifestPath = path.join(root, DEFAULT_EXPO_RECIPE_MANIFEST_PATH);
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      actions: Record<string, { adapters?: string[] }>;
+    };
+    manifest.actions['ui.pan']!.adapters = ['ios'];
+    await writeJson(manifestPath, manifest);
+    await writeJson(path.join(root, DEFAULT_EXPO_RECIPE_PATH), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Reject an unsupported continuous gesture before execution.',
+      workflow: {
+        entry: 'gesture',
+        nodes: {
+          gesture: {
+            action: 'ui.pan',
+            intent: 'Move the requested surface.',
+            target: 'gesture-surface',
+            delta: { x: 20, y: 0 },
+            duration_ms: 300,
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+
+    const validation = await validateExpoRecipeDocument(DEFAULT_EXPO_RECIPE_PATH, {
+      projectRoot: root,
+    });
+    assert.equal(validation.status, 'invalid');
+    assert.match(
+      validation.findings[0]?.message ?? '',
+      /Adapter android does not support recipe action ui\.pan\. Supporting adapters: ios\./u,
+    );
+    await assert.rejects(
+      () =>
+        runExpoRecipeDocument(DEFAULT_EXPO_RECIPE_PATH, {
+          projectRoot: root,
+          artifactsDir: path.join(root, 'artifacts'),
+          dryRun: true,
+        }),
+      /recipe\.action_not_supported_by_adapter.*Supporting adapters: ios\./u,
+    );
+  } finally {
+    if (previousPlatform === undefined) delete process.env.PLATFORM;
+    else process.env.PLATFORM = previousPlatform;
+    await rm(root, { recursive: true, force: true });
+  }
+});
 import { closeUiTransportQuietly } from './runner.js';
 
 test('native Agent Device transport reports its Node runtime requirement', () => {

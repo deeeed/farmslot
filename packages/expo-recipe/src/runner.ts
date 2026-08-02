@@ -63,9 +63,11 @@ export async function validateExpoRecipeDocument(
   const projectRoot = path.resolve(options.projectRoot ?? process.cwd());
   const recipeAbsolutePath = resolveRecipeCliPath(recipePath, projectRoot);
   const librarySources = await resolveRecipeLibrarySources({ recipePath: recipeAbsolutePath });
+  const platform = normalizeNativePlatform(process.env.PLATFORM);
   return validateRecipeCliInput({
     recipePath: recipeAbsolutePath,
     actionManifestPath: options.manifestPath ?? DEFAULT_EXPO_RECIPE_MANIFEST_PATH,
+    ...(platform ? { adapter: platform } : {}),
     baseDir: projectRoot,
     artifactDir: options.artifactsDir,
     ...(librarySources.length ? { librarySources } : {}),
@@ -89,6 +91,7 @@ export async function runExpoRecipeDocument(
   );
 
   const manifest = (await readJsonFile(manifestPath)) as RecipeActionManifestDocument;
+  const platform = normalizeNativePlatform(process.env.PLATFORM);
   const actions = getRecipeActionManifestActionNames(manifest);
   const trust = resolveRecipeTrustInput();
   const invocationTrust = trust.source?.trust ?? 'trusted';
@@ -136,6 +139,7 @@ export async function runExpoRecipeDocument(
       projectRoot,
       ...(librarySources.length ? { librarySources } : {}),
       ...(options.params ? { params: options.params } : {}),
+      ...(platform ? { adapter: platform } : {}),
       env: {
         FARMSLOT_RECIPE_ARTIFACTS_DIR: artifactsDir,
       },

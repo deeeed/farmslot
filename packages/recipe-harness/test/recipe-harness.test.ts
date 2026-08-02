@@ -3007,23 +3007,18 @@ test('CDP gestures resolve targets before streaming mouse and touch phases', asy
   }
 });
 
-test('undeclared gestures fail preflight with the supporting adapter names', async () => {
-  const panManifest = {
-    $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
-    actions: {
-      'ui.pan': {
-        description: 'Pan through a continuous path.',
-        schema: { type: 'object', additionalProperties: false },
-        examples: [],
-      },
-    },
-  } as RecipeActionManifestDocument;
+test('adapter-specific gestures fail preflight with the supporting adapter names', async () => {
+  const manifest = testManifest(['end', 'ui.pan']);
+  manifest.actions['ui.pan']!.adapters = ['android', 'ios'];
   const runner = createRecipeRunner({
-    actionManifest: testManifest(['end']),
-    adapters: [],
-    adapterManifests: [
-      { adapter: 'android', manifest: panManifest },
-      { adapter: 'ios', manifest: panManifest },
+    actionManifest: manifest,
+    adapters: [
+      defineActionAdapter({
+        action: 'ui.pan',
+        async execute() {
+          return { output: { ok: true } };
+        },
+      }),
     ],
   });
 

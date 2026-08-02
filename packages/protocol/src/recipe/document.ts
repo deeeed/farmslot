@@ -37,7 +37,6 @@ export interface RecipeDocumentValidationOptions {
   externalRecipeIds?: ReadonlySet<string>;
   skipRecipeCallResolution?: boolean;
   adapter?: string;
-  adapterManifests?: ReadonlyArray<{ adapter: string; manifest: unknown }>;
 }
 
 export function validateResolvedRecipeActionNode(
@@ -74,6 +73,7 @@ export function validateResolvedRecipeActionNode(
 
 interface ManifestActionContract {
   schema?: Record<string, unknown>;
+  adapters?: string[];
   resultCases?: string[];
 }
 
@@ -90,13 +90,12 @@ export function validateRecipeWithManifest(
   const contracts = manifestActionContracts(manifest);
   for (const { action, node, path } of getRecipeWorkflowActionEntries(recipe)) {
     if (action === 'end' || action === 'call') continue;
-    if (!declaredActions.has(action)) {
-      const supportingAdapters = options?.adapterManifests
-        ?.filter(({ manifest: candidate }) =>
-          getRecipeActionManifestActionNames(candidate).includes(action),
-        )
-        .map(({ adapter }) => adapter)
-        .sort();
+    const contract = contracts.get(action);
+    const supportingAdapters = contract?.adapters ? [...contract.adapters].sort() : undefined;
+    if (
+      !declaredActions.has(action) ||
+      (options?.adapter && supportingAdapters && !supportingAdapters.includes(options.adapter))
+    ) {
       const adapterMessage = options?.adapter
         ? `Adapter ${options.adapter} does not support recipe action ${action}.`
         : `Recipe action ${action} is not declared by the runner action manifest.`;
@@ -115,7 +114,6 @@ export function validateRecipeWithManifest(
       continue;
     }
 
-    const contract = contracts.get(action);
     if (!contract?.schema) {
       addFinding(
         ctx,
@@ -337,6 +335,7 @@ function manifestActionContracts(manifest: unknown): Map<string, ManifestActionC
 function actionContract(entry: Record<string, unknown>): ManifestActionContract {
   return {
     ...(isRecord(entry.schema) ? { schema: entry.schema } : {}),
+    ...(Array.isArray(entry.adapters) ? { adapters: entry.adapters.filter(isNonEmptyString) } : {}),
     ...(Array.isArray(entry.result_cases)
       ? { resultCases: entry.result_cases.filter(isNonEmptyString) }
       : {}),

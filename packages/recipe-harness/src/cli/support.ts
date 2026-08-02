@@ -28,6 +28,7 @@ import type { RecipeLibrarySource, RecordingTarget } from '../core/types.js';
 interface RecipeValidationInputOptions {
   recipePath: string;
   actionManifestPath?: string;
+  adapter?: string;
   artifactManifestPath?: string;
   artifactDir?: string;
   baseDir?: string;
@@ -162,6 +163,7 @@ function parseRecipeCliJsonText(filePath: string, text: string): unknown {
 export async function validateRecipeCliInput({
   recipePath,
   actionManifestPath,
+  adapter,
   artifactManifestPath,
   artifactDir,
   baseDir = recipeCliBaseDir(),
@@ -209,7 +211,8 @@ export async function validateRecipeCliInput({
       }
     }
   }
-  const validationOptions = externalRecipeIds.size > 0 ? { externalRecipeIds } : undefined;
+  const validationOptions =
+    externalRecipeIds.size > 0 || adapter ? { externalRecipeIds, adapter } : undefined;
   if (actionManifestPath) {
     const actionManifest = await readRecipeCliJsonFile(actionManifestPath, baseDir);
     results.push(validateRecipeWithManifest(recipe, actionManifest, validationOptions));

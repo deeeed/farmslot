@@ -96,11 +96,6 @@ export interface RecipeRunnerProvenance {
 export interface CreateRecipeRunnerOptions {
   actionManifest: RecipeActionManifestDocument;
   adapters: ActionAdapter[];
-  /** Read-only manifest catalog used to teach callers which adapters satisfy an unsupported action. */
-  adapterManifests?: ReadonlyArray<{
-    adapter: string;
-    manifest: RecipeActionManifestDocument;
-  }>;
   /** Caller-owned default provenance. Omit to fail closed with unknown trust. */
   defaultSource?: RecipeSourceProvenance;
   logger?: RecipeLogger;

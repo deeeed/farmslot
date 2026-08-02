@@ -24,6 +24,7 @@ const ACTION_MANIFEST_FIELDS = new Set(['$schema', 'actions', 'observers']);
 const ACTION_ENTRY_FIELDS = new Set([
   'description',
   'schema',
+  'adapters',
   'result_cases',
   'examples',
   'execution_capabilities',
@@ -103,6 +104,23 @@ function validateActionCatalogEntry(
         path: `${path}.schema${finding.path === 'paramsSchema' ? '' : finding.path.replace(/^paramsSchema/u, '')}`,
       })),
     );
+  }
+
+  if (Object.hasOwn(entry, 'adapters')) {
+    if (
+      !Array.isArray(entry.adapters) ||
+      entry.adapters.length === 0 ||
+      entry.adapters.some((adapter) => !isNonEmptyString(adapter)) ||
+      new Set(entry.adapters).size !== entry.adapters.length
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.invalid_adapters',
+        `${path}.adapters`,
+        `${path}.adapters must be a non-empty array of unique adapter names.`,
+      );
+    }
   }
 
   if (Object.hasOwn(entry, 'result_cases')) {

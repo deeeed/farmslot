@@ -169,6 +169,66 @@ test('pan and drag require exactly one motion source', async () => {
   }
 });
 
+test('gesture adapter declarations drive plan-time support errors', async () => {
+  const manifest = await companionManifest();
+  const document = gestureRecipe({
+    gesture: {
+      action: 'ui.pan',
+      intent: 'Move across the requested surface.',
+      target: 'gesture-surface',
+      delta: { x: 20, y: 0 },
+      duration_ms: 300,
+      next: 'done',
+    },
+  });
+
+  assert.equal(
+    validateRecipeWithManifest(document, manifest, {
+      adapter: 'android',
+      skipRecipeCallResolution: true,
+    }).status,
+    'valid',
+  );
+  const unsupported = validateRecipeWithManifest(document, manifest, {
+    adapter: 'web',
+    skipRecipeCallResolution: true,
+  });
+  assert.deepEqual(
+    unsupported.findings.filter(
+      (finding) => finding.code === 'recipe.action_not_supported_by_adapter',
+    ),
+    [
+      {
+        severity: 'error',
+        code: 'recipe.action_not_supported_by_adapter',
+        path: 'workflow.nodes.gesture.action',
+        message:
+          'Adapter web does not support recipe action ui.pan. Supporting adapters: android, ios. Next: farmslot recipe run --adapter android <recipe>',
+      },
+    ],
+  );
+});
+
+test('gesture adapter declarations reject empty support lists', async () => {
+  const manifest = await companionManifest();
+  manifest.actions['ui.pan']!.adapters = [];
+  const result = validateRecipeWithManifest(
+    gestureRecipe({
+      gesture: {
+        action: 'ui.pan',
+        intent: 'Move across the requested surface.',
+        target: 'gesture-surface',
+        delta: { x: 20, y: 0 },
+        duration_ms: 300,
+        next: 'done',
+      },
+    }),
+    manifest,
+    { adapter: 'android', skipRecipeCallResolution: true },
+  );
+  assert.ok(result.findings.some((finding) => finding.code === 'action_manifest.invalid_adapters'));
+});
+
 test('one target-only companion recipe validates unchanged against every declaring manifest', async () => {
   const recipePath =
     'apps/companion/scripts/agentic/recipe/recipes/continuous-gestures.recipe.json';
