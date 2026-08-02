@@ -127,6 +127,15 @@
         "items": {
           "$ref": "#/$defs/paramSchema",
           "description": "Schema applied to each item of an array parameter."
+        },
+        "minimum": {
+          "type": "number",
+          "description": "Inclusive lower bound for numeric parameters."
+        },
+        "minItems": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum number of entries required for array parameters."
         }
       },
       "additionalProperties": false

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **BREAKING:** Replace the unused `ui.gesture` vocabulary with typed `ui.swipe`, `ui.pan`, `ui.drag`, and `ui.long_press` actions, including strict duration, path, direction, and declared-adapter validation.
+
 ## 0.15.0 - 2026-08-01
 
 - **BREAKING:** Recipe artifact-package validation requires structured run totals and all four failure-cause counts in `summary.json`; publish `@farmslot/protocol` first, then `@farmslot/recipe-harness`, before updating CLI, agent-runtime, and Gateway consumers as one coordinated release.

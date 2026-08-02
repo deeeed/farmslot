@@ -2920,6 +2920,223 @@ test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () =
   ]);
 });
 
+test('CDP gestures resolve targets before streaming mouse and touch phases', async () => {
+  const makeContext = () =>
+    ({
+      nodeId: 'gesture',
+      recipe: {},
+      projectRoot: '/tmp/project',
+      artifactsDir: '/tmp/artifacts',
+      env: {},
+      outputs: new Map(),
+      getOutput: () => undefined,
+      resolveProjectPath: (relativePath: string) => relativePath,
+      resolveArtifactPath: (relativePath: string) => relativePath,
+      registerArtifact() {},
+      logger: console,
+    }) as never;
+
+  for (const pointer of ['mouse', 'touch'] as const) {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const transport = createCdpWebUiTransport({
+      async withPage(_input, callback) {
+        const page = {
+          session: {
+            async call(method: string, params: Record<string, unknown>) {
+              calls.push({ method, params });
+              return {};
+            },
+          },
+          async resolveGesturePoint(target: unknown) {
+            assert.equal(target, 'gesture-slider');
+            return { x: 40, y: 80 };
+          },
+          async evaluate() {
+            return pointer === 'touch' ? 1 : 0;
+          },
+          async waitForDomSettled() {},
+        };
+        return callback(page as never);
+      },
+    });
+
+    const result = (await transport.execute(
+      'ui.drag',
+      {
+        target: 'gesture-slider',
+        path: [
+          { x: 20, y: 0 },
+          { x: 60, y: 10 },
+        ],
+        duration_ms: 2,
+      },
+      makeContext(),
+    )) as {
+      output: Record<string, unknown>;
+      phases: Array<{ phase: string; x: number; y: number }>;
+    };
+
+    assert.deepEqual(result.output.resolvedStart, { x: 40, y: 80 });
+    assert.deepEqual(result.output.resolvedEnd, { x: 100, y: 90 });
+    assert.deepEqual(
+      result.phases.map(({ phase, x, y }) => ({ phase, x, y })),
+      [
+        { phase: 'start', x: 40, y: 80 },
+        { phase: 'move', x: 60, y: 80 },
+        { phase: 'move', x: 100, y: 90 },
+        { phase: 'end', x: 100, y: 90 },
+      ],
+    );
+    assert.deepEqual(
+      calls.map(({ method, params }) => [method, params.type]),
+      pointer === 'touch'
+        ? [
+            ['Input.dispatchTouchEvent', 'touchStart'],
+            ['Input.dispatchTouchEvent', 'touchMove'],
+            ['Input.dispatchTouchEvent', 'touchMove'],
+            ['Input.dispatchTouchEvent', 'touchEnd'],
+          ]
+        : [
+            ['Input.dispatchMouseEvent', 'mouseMoved'],
+            ['Input.dispatchMouseEvent', 'mousePressed'],
+            ['Input.dispatchMouseEvent', 'mouseMoved'],
+            ['Input.dispatchMouseEvent', 'mouseMoved'],
+            ['Input.dispatchMouseEvent', 'mouseReleased'],
+          ],
+    );
+  }
+});
+
+test('undeclared gestures fail preflight with the supporting adapter names', async () => {
+  const panManifest = {
+    $schema: RECIPE_ACTION_MANIFEST_SCHEMA_URL,
+    actions: {
+      'ui.pan': {
+        description: 'Pan through a continuous path.',
+        schema: { type: 'object', additionalProperties: false },
+        examples: [],
+      },
+    },
+  } as RecipeActionManifestDocument;
+  const runner = createRecipeRunner({
+    actionManifest: testManifest(['end']),
+    adapters: [],
+    adapterManifests: [
+      { adapter: 'android', manifest: panManifest },
+      { adapter: 'ios', manifest: panManifest },
+    ],
+  });
+
+  await assert.rejects(
+    () =>
+      runner.preflight({
+        recipeDocument: recipeDocument({
+          gesture: {
+            action: 'ui.pan',
+            intent: 'Move the requested surface to a new state.',
+            target: 'gesture-surface',
+            delta: { x: 30, y: 0 },
+            duration_ms: 300,
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        }),
+        adapter: 'web',
+        projectRoot: '/tmp/project',
+        artifactsDir: '/tmp/artifacts',
+      }),
+    new RegExp(
+      'recipe\\.action_not_supported_by_adapter workflow\\.nodes\\.gesture\\.action: ' +
+        'Adapter web does not support recipe action ui\\.pan\\. Supporting adapters: android, ios\\. ' +
+        'Next: farmslot recipe run --adapter android <recipe>',
+      'u',
+    ),
+  );
+});
+
+test('gesture phase records survive adapter normalization into the retained trace', async () => {
+  const tempRoot = await createTempRoot();
+  const manifest = testManifest(['end']);
+  manifest.actions['ui.drag'] = testAction('ui.drag', {
+    schema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string' },
+        delta: {
+          type: 'object',
+          properties: { x: { type: 'number' }, y: { type: 'number' } },
+          required: ['x', 'y'],
+          additionalProperties: false,
+        },
+        duration_ms: { type: 'integer', minimum: 1 },
+      },
+      required: ['target', 'delta', 'duration_ms'],
+      additionalProperties: false,
+    },
+    examples: [
+      {
+        action: 'ui.drag',
+        intent: 'Move the requested control to a new value.',
+        target: 'slider',
+        delta: { x: 40, y: 0 },
+        duration_ms: 300,
+        next: 'done',
+      },
+    ],
+  });
+  const transport: UiActionTransport = {
+    async execute() {
+      return {
+        output: {
+          resolvedStart: { x: 20, y: 30 },
+          resolvedEnd: { x: 60, y: 30 },
+        },
+        phases: [
+          { phase: 'start', x: 20, y: 30, elapsedMs: 0 },
+          { phase: 'move', x: 60, y: 30, elapsedMs: 280 },
+          { phase: 'end', x: 60, y: 30, elapsedMs: 300 },
+        ],
+      };
+    },
+  };
+
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: manifest,
+      adapters: [
+        ...createStandardUiAdapters({ transport, actions: ['ui.drag'] }),
+        ...createStandardCoreAdapters({ actions: ['end'] }),
+      ],
+    });
+    const result = await runner.run({
+      recipeDocument: recipeDocument({
+        drag: {
+          action: 'ui.drag',
+          intent: 'Move the requested control to a new value.',
+          target: 'slider',
+          delta: { x: 40, y: 0 },
+          duration_ms: 300,
+          next: 'done',
+        },
+        done: { action: 'end', status: 'pass' },
+      }),
+      projectRoot: tempRoot,
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+    });
+    const trace = JSON.parse(await readFile(result.tracePath, 'utf8')) as Array<{
+      nodeId: string;
+      phases?: unknown;
+    }>;
+    assert.deepEqual(trace.find(({ nodeId }) => nodeId === 'drag')?.phases, [
+      { phase: 'start', x: 20, y: 30, elapsedMs: 0 },
+      { phase: 'move', x: 60, y: 30, elapsedMs: 280 },
+      { phase: 'end', x: 60, y: 30, elapsedMs: 300 },
+    ]);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('CDP page scroll uses the document root when window globals are unavailable', async () => {
   const scrolls: Array<[number, number]> = [];
   const page = new CdpWebPage({

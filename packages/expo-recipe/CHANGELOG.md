@@ -4,6 +4,8 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+- feat: drive swipe, pan, drag, and long-press recipe actions through the assigned native device and retain resolved coordinate phases.
+
 ## 0.5.0 - 2026-08-01
 
 - **BREAKING:** Remove the `WATCHER_PORT` fallback and implicit port `7677`; Metro-backed actions now require `FARMSLOT_RECIPE_METRO_PORT` or `METRO_PORT` set to an integer from 1 through 65535. Port resolution remains lazy, so headless and native-only runs do not require either variable.

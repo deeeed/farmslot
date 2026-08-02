@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- feat(companion): add a dev-only continuous-gesture proof surface and one target-parameterized recipe with before/after evidence.
 - fix(workflows): reuse shared decision actions and surface active independent-review/fix work in run details instead of a premature publication gate.
 - feat(companion): add foreground-aware gateway liveness, mixed-version fallback, bounded profile validation, explicit slot-derived Metro configuration, and recoverable connection-profile UX.
 - fix(companion): a slow Metro cold boot no longer latches its port into permanent prepare failure. The readiness marker is only written on success, so a boot that outran the wait left Metro running and unmarked, and every later attempt refused it as "unknown or different slot configuration" with the recovery kill unreachable. Our own unconfirmed session is now replaced, a timed-out boot is stopped instead of orphaned, and the wait is 120s and overridable via `METRO_READY_TIMEOUT_SECS`. A Metro this script did not start is still left alone.

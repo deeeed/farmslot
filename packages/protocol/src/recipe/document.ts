@@ -36,6 +36,8 @@ const RECIPE_FIELDS = new Set([
 export interface RecipeDocumentValidationOptions {
   externalRecipeIds?: ReadonlySet<string>;
   skipRecipeCallResolution?: boolean;
+  adapter?: string;
+  adapterManifests?: ReadonlyArray<{ adapter: string; manifest: unknown }>;
 }
 
 export function validateResolvedRecipeActionNode(
@@ -66,6 +68,7 @@ export function validateResolvedRecipeActionNode(
     return finishResult(ctx);
   }
   ctx.findings.push(...validateRecipeParams(getRecipeActionParams(node), contract.schema).findings);
+  validateOfficialActionRelationships(ctx, node.action, node, 'node');
   return finishResult(ctx);
 }
 
@@ -88,12 +91,26 @@ export function validateRecipeWithManifest(
   for (const { action, node, path } of getRecipeWorkflowActionEntries(recipe)) {
     if (action === 'end' || action === 'call') continue;
     if (!declaredActions.has(action)) {
+      const supportingAdapters = options?.adapterManifests
+        ?.filter(({ manifest: candidate }) =>
+          getRecipeActionManifestActionNames(candidate).includes(action),
+        )
+        .map(({ adapter }) => adapter)
+        .sort();
+      const adapterMessage = options?.adapter
+        ? `Adapter ${options.adapter} does not support recipe action ${action}.`
+        : `Recipe action ${action} is not declared by the runner action manifest.`;
+      const supportMessage = supportingAdapters?.length
+        ? ` Supporting adapters: ${supportingAdapters.join(', ')}. Next: farmslot recipe run --adapter ${supportingAdapters[0]} <recipe>`
+        : '';
       addFinding(
         ctx,
         'error',
-        'recipe.action_not_declared_by_manifest',
+        options?.adapter
+          ? 'recipe.action_not_supported_by_adapter'
+          : 'recipe.action_not_declared_by_manifest',
         `${path}.action`,
-        `Recipe action ${action} is not declared by the runner action manifest.`,
+        `${adapterMessage}${supportMessage}`,
       );
       continue;
     }
@@ -114,12 +131,33 @@ export function validateRecipeWithManifest(
       ctx.findings.push(...paramsResult.findings.map((finding) => rebaseFinding(finding, path)));
     }
 
+    validateOfficialActionRelationships(ctx, action, node, path);
+
     ctx.findings.push(
       ...validateRecipeActionCases(node, action, contract?.resultCases, path).findings,
     );
   }
 
   return finishResult(ctx);
+}
+
+function validateOfficialActionRelationships(
+  ctx: ReturnType<typeof createContext>,
+  action: string,
+  node: Record<string, unknown>,
+  path: string,
+): void {
+  if (action !== 'ui.pan' && action !== 'ui.drag') return;
+  const hasPath = hasOwn(node, 'path');
+  const hasDelta = hasOwn(node, 'delta');
+  if (hasPath !== hasDelta) return;
+  addFinding(
+    ctx,
+    'error',
+    'recipe.invalid_gesture_motion',
+    path,
+    `${action} requires exactly one of path or delta.`,
+  );
 }
 
 export function validateRecipeDocument(

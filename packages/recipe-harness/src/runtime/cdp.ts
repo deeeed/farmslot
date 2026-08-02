@@ -4,6 +4,15 @@ import WebSocket from 'ws';
 
 import type { UiObserverRef } from '@farmslot/protocol';
 
+import {
+  type GestureAction,
+  gestureDurationMs,
+  gesturePhase,
+  gesturePoints,
+  gestureSegmentDuration,
+  gestureTarget,
+  type UiPoint,
+} from '../adapters/gesture.js';
 import type { StandardUiAction, UiActionTransport, UiTransportResult } from '../adapters/ui.js';
 import { asNumber, asOptionalString, asString, isRecord } from '../core/json.js';
 import { writeFileWithinRoot } from '../core/path.js';
@@ -730,6 +739,14 @@ export class CdpWebPage {
     });
   }
 
+  async resolveGesturePoint(target: string | UiPoint): Promise<UiPoint> {
+    if (typeof target !== 'string') return target;
+    const selector = dataTestId(target);
+    return this.evaluate<UiPoint>(
+      `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(selector)}); if (!el) throw new Error('Gesture target not found: ${escapeForJsMessage(target)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); return clickablePointDeep(el); })()`,
+    );
+  }
+
   async scroll(options: {
     selector?: string;
     deltaX?: number;
@@ -943,6 +960,11 @@ export function createCdpWebUiTransport(
               }),
               node,
             );
+          case 'ui.swipe':
+          case 'ui.pan':
+          case 'ui.drag':
+          case 'ui.long_press':
+            return executeSettledCdpAction(page, executeCdpGesture(page, action, node), node);
           case 'ui.wait_for':
             return executeSettledCdpAction(
               page,
@@ -969,8 +991,6 @@ export function createCdpWebUiTransport(
             return page.evaluate(
               '(() => ({ entries: performance.getEntries().slice(-20).map((entry) => ({ name: entry.name, type: entry.entryType, startTime: entry.startTime, duration: entry.duration })) }))()',
             );
-          case 'ui.gesture':
-            throw new Error('ui.gesture is not implemented by the CDP web transport yet.');
         }
       });
     },
@@ -978,6 +998,78 @@ export function createCdpWebUiTransport(
       const input = { action: 'app.status' as StandardUiAction, node, context };
       return withCdpWebPage(options, input, async (page) => page.observe(refs));
     },
+  };
+}
+
+async function executeCdpGesture(
+  page: CdpWebPage,
+  action: GestureAction,
+  node: Record<string, unknown>,
+): Promise<UiTransportResult> {
+  const start = await page.resolveGesturePoint(gestureTarget(node, action));
+  const durationMs = gestureDurationMs(node, action);
+  const points = gesturePoints(action, node, start);
+  const segmentDurationMs = gestureSegmentDuration(durationMs, points);
+  const pointer =
+    (await page.evaluate<number>('navigator.maxTouchPoints || 0')) > 0 ? 'touch' : 'mouse';
+  const phases = [];
+  const startedAtMs = Date.now();
+
+  if (pointer === 'touch') {
+    await page.session.call('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ ...start, radiusX: 1, radiusY: 1 }],
+    });
+  } else {
+    await page.session.call('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      ...start,
+      button: 'none',
+    });
+    await page.session.call('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      ...start,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    });
+  }
+  phases.push(gesturePhase('start', start, startedAtMs));
+
+  for (const point of points.slice(1)) {
+    await sleep(segmentDurationMs);
+    if (pointer === 'touch') {
+      await page.session.call('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ ...point, radiusX: 1, radiusY: 1 }],
+      });
+    } else {
+      await page.session.call('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        ...point,
+        button: 'left',
+        buttons: 1,
+      });
+    }
+    phases.push(gesturePhase('move', point, startedAtMs));
+  }
+
+  const end = points.at(-1)!;
+  if (pointer === 'touch') {
+    await page.session.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } else {
+    await page.session.call('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      ...end,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    });
+  }
+  phases.push(gesturePhase('end', end, startedAtMs));
+  return {
+    output: { action, pointer, resolvedStart: start, resolvedEnd: end },
+    phases,
   };
 }
 

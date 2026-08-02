@@ -9,7 +9,10 @@ export type ReactNativeBridgeCommandName =
   | 'keyPress'
   | 'setInput'
   | 'scroll'
-  | 'gesture'
+  | 'swipe'
+  | 'pan'
+  | 'drag'
+  | 'longPress'
   | 'waitFor'
   | 'screenshot'
   | 'status'
@@ -38,7 +41,10 @@ const RN_COMMANDS: Record<StandardUiAction, ReactNativeBridgeCommandName> = {
   'ui.key_press': 'keyPress',
   'ui.set_input': 'setInput',
   'ui.scroll': 'scroll',
-  'ui.gesture': 'gesture',
+  'ui.swipe': 'swipe',
+  'ui.pan': 'pan',
+  'ui.drag': 'drag',
+  'ui.long_press': 'longPress',
   'ui.wait_for': 'waitFor',
   'ui.screenshot': 'screenshot',
   'app.status': 'status',

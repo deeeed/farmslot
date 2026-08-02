@@ -35,7 +35,10 @@
               "ui.key_press",
               "ui.set_input",
               "ui.scroll",
-              "ui.gesture",
+              "ui.swipe",
+              "ui.pan",
+              "ui.drag",
+              "ui.long_press",
               "ui.wait_for",
               "ui.screenshot",
               "app.status",
@@ -74,7 +77,10 @@
         "ui.key_press": { "$ref": "#/$defs/actionWithSchema" },
         "ui.set_input": { "$ref": "#/$defs/actionWithSchema" },
         "ui.scroll": { "$ref": "#/$defs/actionWithSchema" },
-        "ui.gesture": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.swipe": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.pan": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.drag": { "$ref": "#/$defs/actionWithSchema" },
+        "ui.long_press": { "$ref": "#/$defs/actionWithSchema" },
         "ui.wait_for": { "$ref": "#/$defs/actionWithSchema" },
         "ui.screenshot": { "$ref": "#/$defs/actionWithSchema" },
         "app.status": { "$ref": "#/$defs/actionWithSchema" },
@@ -259,6 +265,15 @@
         },
         "items": {
           "$ref": "#/$defs/parameterSchema"
+        },
+        "minimum": {
+          "type": "number",
+          "description": "Inclusive lower bound for numeric parameters."
+        },
+        "minItems": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum number of entries required for array parameters."
         }
       },
       "additionalProperties": false,

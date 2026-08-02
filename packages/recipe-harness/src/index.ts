@@ -8,6 +8,15 @@ export type {
 } from './adapters/app-lifecycle.js';
 export { createAppLifecycleAdapter, createAppLifecycleAdapters } from './adapters/app-lifecycle.js';
 export { createStandardCoreAdapters } from './adapters/core.js';
+export {
+  type GestureAction,
+  gestureDurationMs,
+  gesturePhase,
+  gesturePoints,
+  gestureSegmentDuration,
+  gestureTarget,
+  type UiPoint,
+} from './adapters/gesture.js';
 export type {
   StandardUiAction,
   UiActionTransport,

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- **BREAKING:** Replace `ui.gesture` with streamed swipe, pan, drag, and long-press transports; resolve targets to coordinates and retain start/move/end phases in recipe traces.
+
 ## 0.11.1 - 2026-08-01
 
 - fix: keep iOS Simulator lifecycle restarts idempotent when `simctl` reports that it found nothing to terminate.

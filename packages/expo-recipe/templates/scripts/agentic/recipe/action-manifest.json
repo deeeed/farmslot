@@ -151,6 +151,159 @@
         }
       ]
     },
+    "ui.swipe": {
+      "description": "Swipe from a test-id target or explicit screen coordinates in one cardinal direction.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": ["string", "object"],
+            "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+            "required": ["x", "y"],
+            "additionalProperties": false
+          },
+          "direction": { "type": "string", "enum": ["up", "down", "left", "right"] },
+          "distance": { "type": "number", "minimum": 1 },
+          "duration_ms": { "type": "integer", "minimum": 1 },
+          "timeout_ms": { "type": "integer", "minimum": 1 },
+          "settle": { "type": "boolean" }
+        },
+        "required": ["target", "direction", "distance", "duration_ms"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "ui.swipe",
+          "intent": "Swipe the requested visible surface.",
+          "target": "example-scrollable",
+          "direction": "up",
+          "distance": 240,
+          "duration_ms": 300,
+          "next": "done"
+        }
+      ]
+    },
+    "ui.pan": {
+      "description": "Stream a continuous pointer path from a test-id target or explicit screen coordinates using path points relative to the resolved start.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": ["string", "object"],
+            "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+            "required": ["x", "y"],
+            "additionalProperties": false
+          },
+          "path": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+              "required": ["x", "y"],
+              "additionalProperties": false
+            }
+          },
+          "delta": {
+            "type": "object",
+            "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+            "required": ["x", "y"],
+            "additionalProperties": false
+          },
+          "duration_ms": { "type": "integer", "minimum": 1 },
+          "timeout_ms": { "type": "integer", "minimum": 1 },
+          "settle": { "type": "boolean" }
+        },
+        "required": ["target", "duration_ms"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "ui.pan",
+          "intent": "Pan through the requested pointer path.",
+          "target": "example-surface",
+          "path": [
+            { "x": 40, "y": 0 },
+            { "x": 80, "y": 20 }
+          ],
+          "duration_ms": 400,
+          "next": "done"
+        }
+      ]
+    },
+    "ui.drag": {
+      "description": "Drag a grabbable test-id target or explicit screen coordinate through path points relative to the resolved start.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": ["string", "object"],
+            "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+            "required": ["x", "y"],
+            "additionalProperties": false
+          },
+          "path": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+              "required": ["x", "y"],
+              "additionalProperties": false
+            }
+          },
+          "delta": {
+            "type": "object",
+            "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+            "required": ["x", "y"],
+            "additionalProperties": false
+          },
+          "duration_ms": { "type": "integer", "minimum": 1 },
+          "timeout_ms": { "type": "integer", "minimum": 1 },
+          "settle": { "type": "boolean" }
+        },
+        "required": ["target", "duration_ms"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "ui.drag",
+          "intent": "Drag the requested control to a new value.",
+          "target": "example-slider",
+          "delta": { "x": 120, "y": 0 },
+          "duration_ms": 500,
+          "next": "done"
+        }
+      ]
+    },
+    "ui.long_press": {
+      "description": "Hold a test-id target or explicit screen coordinate for a bounded duration.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": ["string", "object"],
+            "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+            "required": ["x", "y"],
+            "additionalProperties": false
+          },
+          "holdMs": { "type": "integer", "minimum": 1 },
+          "timeout_ms": { "type": "integer", "minimum": 1 },
+          "settle": { "type": "boolean" }
+        },
+        "required": ["target", "holdMs"],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "ui.long_press",
+          "intent": "Hold the requested visible control.",
+          "target": "example-control",
+          "holdMs": 700,
+          "next": "done"
+        }
+      ]
+    },
     "ui.wait_for": {
       "description": "Wait for native accessibility content and UI stability.",
       "schema": {
@@ -262,11 +415,29 @@
   "observers": [
     {
       "ref": "ui.screen",
-      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"]
+      "default_for": [
+        "ui.press",
+        "ui.set_input",
+        "ui.scroll",
+        "ui.swipe",
+        "ui.pan",
+        "ui.drag",
+        "ui.long_press",
+        "ui.wait_for"
+      ]
     },
     {
       "ref": "ui.visible",
-      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"]
+      "default_for": [
+        "ui.press",
+        "ui.set_input",
+        "ui.scroll",
+        "ui.swipe",
+        "ui.pan",
+        "ui.drag",
+        "ui.long_press",
+        "ui.wait_for"
+      ]
     }
   ]
 }

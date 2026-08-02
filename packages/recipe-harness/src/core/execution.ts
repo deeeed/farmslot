@@ -280,6 +280,7 @@ export async function executeRecipe(options: ExecuteRecipeOptions): Promise<Exec
           next,
           case: result.case,
           output: result.output,
+          ...(result.phases?.length ? { phases: result.phases } : {}),
           ...(observations ? { observations } : {}),
           ...(observationWarnings.length ? { observationWarnings } : {}),
         });

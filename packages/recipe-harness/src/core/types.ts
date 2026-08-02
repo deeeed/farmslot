@@ -96,6 +96,11 @@ export interface RecipeRunnerProvenance {
 export interface CreateRecipeRunnerOptions {
   actionManifest: RecipeActionManifestDocument;
   adapters: ActionAdapter[];
+  /** Read-only manifest catalog used to teach callers which adapters satisfy an unsupported action. */
+  adapterManifests?: ReadonlyArray<{
+    adapter: string;
+    manifest: RecipeActionManifestDocument;
+  }>;
   /** Caller-owned default provenance. Omit to fail closed with unknown trust. */
   defaultSource?: RecipeSourceProvenance;
   logger?: RecipeLogger;
@@ -192,8 +197,16 @@ export interface ActionResult {
   case?: string;
   output?: unknown;
   artifacts?: RecipeArtifactManifestEntry[];
+  phases?: RecipeActionPhase[];
   observations?: RecipeObservations;
   observationWarnings?: RecipeObservationWarning[];
+}
+
+export interface RecipeActionPhase {
+  phase: 'start' | 'move' | 'end';
+  x: number;
+  y: number;
+  elapsedMs: number;
 }
 
 export interface ActionExecutionContext {
@@ -269,6 +282,7 @@ export interface TraceEntry {
   status?: RecipeRunStatus;
   case?: string;
   output?: unknown;
+  phases?: RecipeActionPhase[];
   observations?: RecipeObservations;
   observationWarnings?: RecipeObservationWarning[];
   artifacts?: RecipeArtifactManifestEntry[];
