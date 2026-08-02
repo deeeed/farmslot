@@ -1104,16 +1104,6 @@ async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: stri
 }
 
 /**
- * Parse a rendered TASK.md template into a TaskSchema.
- * See docs/reference/template-variables.md (§ TASK format) for the full format spec.
- *
- * - Checkboxes (`- [ ]` / `- [x]`) are steps — the only required element
- * - Any heading (`##`, `###`, `####`) groups subsequent checkboxes into a phase
- * - `<details>` blocks are skipped (reference sections)
- * - Headings with no checkboxes below them are pruned
- * - Checkboxes before any heading go into a "Checklist" phase
- */
-/**
  * Step labels carrying explicit numbering (`**N. …**`) must match the
  * enumerated step position — `mark N` targets positions, and a worker follows
  * the visible label. Sub-step labels (12a) or unnumbered boxes between
@@ -1130,6 +1120,16 @@ export function checklistNumberingMismatches(content: string): string[] {
   return mismatches;
 }
 
+/**
+ * Parse a rendered TASK.md template into a TaskSchema.
+ * See docs/reference/template-variables.md (§ TASK format) for the full format spec.
+ *
+ * - Checkboxes (`- [ ]` / `- [x]`) are steps — the only required element
+ * - Any heading (`##`, `###`, `####`) groups subsequent checkboxes into a phase
+ * - `<details>` blocks are skipped (reference sections)
+ * - Headings with no checkboxes below them are pruned
+ * - Checkboxes before any heading go into a "Checklist" phase
+ */
 export function generateTaskSchema(templateContent: string, flowType: string): TaskSchema {
   // Shared enumeration (skip sections, <details>, code fences) lives in
   // @farmslot/protocol — the same logic the progress parser and the agent
