@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.5.1 - 2026-08-02
+
+- Align the published protocol dependency with 0.16.0 so downstream installs use one Recipe Protocol version.
+
 ## 0.5.0 - 2026-08-01
 
 - **BREAKING:** Require structured run summaries when validating recipe artifact packages.
