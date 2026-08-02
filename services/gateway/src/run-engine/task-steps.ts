@@ -10,6 +10,7 @@ import {
   isLightweightInteractiveDevRun,
   parseGitHubRef,
   PipelineSteps,
+  PR_BOUND_FLOW_TYPES,
   RECIPE_STRATEGY_LABELS,
   type ReviewGatePayload,
   type Run,
@@ -476,10 +477,7 @@ export async function executeWriteTaskStep(
   };
 
   // For PR flows: fetch PR metadata + set branch
-  if (
-    (current.flowType === 'review-pr' || current.flowType === 'pr-complete') &&
-    !current.ticketData
-  ) {
+  if (PR_BOUND_FLOW_TYPES.has(current.flowType) && !current.ticketData) {
     emitWithBroadcast('substep', {
       name: 'fetch-pr-data',
       detail: `Fetching PR ${current.ticketOrPr}`,
