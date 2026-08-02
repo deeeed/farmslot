@@ -4,7 +4,7 @@
 
 ## 0.16.0 - 2026-08-02
 
-- **BREAKING:** Replace the unused `ui.gesture` vocabulary with typed `ui.swipe`, `ui.pan`, `ui.drag`, and `ui.long_press` actions, including snake-case `hold_ms`, strict duration/path/direction validation, and manifest-owned adapter-specific parameter limits before and after template resolution.
+- **BREAKING:** Replace the unused `ui.gesture` vocabulary with typed `ui.swipe`, `ui.pan`, `ui.drag`, and `ui.long_press` actions, including snake-case `hold_ms`, strict duration/path/direction validation, and manifest-owned adapter-specific parameter limits before and after template resolution. Publish `@farmslot/protocol`, then `@farmslot/recipe-harness`, then `@farmslot/expo-recipe`.
 
 ## 0.15.0 - 2026-08-01
 
