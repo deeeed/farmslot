@@ -4,6 +4,9 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
   BacklogItem,
+  RoadmapDeliveryProjection,
+  RoadmapDeliverySummary,
+  RoadmapGetResult,
   RoadmapItem,
   RoadmapItemStage,
   RoadmapListResult,
@@ -15,7 +18,6 @@ import type {
   RoadmapRefinementSessionGetResult,
   RoadmapRefineResult,
   RoadmapSaveResult,
-  Run,
   SafetyTier,
   SlotStatus,
   WorkGraphProjection,
@@ -31,7 +33,6 @@ import {
 } from '@farmslot/protocol';
 
 import './roadmap-graph-composer.js';
-import '../shared/linked-run-summary.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
@@ -44,7 +45,6 @@ import {
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
-import { linkedRunForBacklogItem } from '../shared/linked-run-model.js';
 import {
   planningBadgeStyles,
   renderPlanningBadge,
@@ -82,6 +82,9 @@ import { encodeWorkerRouteParam } from '../terminal/split-view-model.js';
 
 import {
   defaultSpecBody,
+  deliveryBadgeLabel,
+  deliveryBadgeTone,
+  deliverySummaryFor,
   filterRoadmapItemsByGlobalProjects,
   parsePromotionDraftAttachment,
   parsePromotionDraftsFromRoadmapBody,
@@ -89,6 +92,7 @@ import {
   type PromotionDraftAttachment,
   promotionDraftAttachment,
   promotionDraftsFromRoadmapItem,
+  roadmapDeliveryBacklinks,
   type RoadmapSortDirection,
   type RoadmapSortKey,
   sortRoadmapItems,
@@ -176,11 +180,13 @@ function isRoadmapRoute(route: string): boolean {
 export class RoadmapPanel extends LitElement {
   @property({ attribute: false }) items: RoadmapItem[] | null = null;
   @property({ attribute: false }) slots: SlotStatus[] | null = null;
-  @property({ attribute: false }) demoRuns: Run[] | null = null;
+  /** Harness/injection hook: full gateway projections keyed by roadmap item id. */
+  @property({ attribute: false }) delivery: RoadmapDeliveryProjection[] | null = null;
+  @state() private _deliverySummaries: RoadmapDeliverySummary[] = [];
+  @state() private _deliveryDetail: RoadmapDeliveryProjection | null = null;
   @state() private _allItems: RoadmapItem[] = [];
   @state() private _slots: SlotStatus[] = [];
   @state() private _backlogItems: BacklogItem[] = [];
-  @state() private _runs: Run[] = [];
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _selectedId = '';
@@ -540,6 +546,44 @@ export class RoadmapPanel extends LitElement {
         gap: ${unsafeCSS(spacing.sm)};
         padding: ${unsafeCSS(spacing.sm)};
       }
+      .backlog-cell {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        align-items: center;
+      }
+      .delivery-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: ${unsafeCSS(spacing.xs)};
+      }
+      .delivery-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid ${unsafeCSS(colors.accent)}55;
+        border-radius: ${unsafeCSS(radii.sm)};
+        padding: 2px 8px;
+        color: ${unsafeCSS(colors.accent)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        text-decoration: none;
+      }
+      .delivery-link:hover {
+        background: ${unsafeCSS(colors.accent)}14;
+      }
+      .delivery-link-kind {
+        color: ${unsafeCSS(colors.textMuted)};
+        text-transform: uppercase;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+      }
+      .delivery-findings {
+        margin: 0;
+        padding-left: ${unsafeCSS(spacing.md)};
+        color: ${unsafeCSS(colors.statusWarn)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        display: grid;
+        gap: 4px;
+      }
       .attachment-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -757,7 +801,7 @@ export class RoadmapPanel extends LitElement {
   }
 
   protected updated(changed: Map<string, unknown>) {
-    if (changed.has('items') || changed.has('slots') || changed.has('demoRuns')) {
+    if (changed.has('items') || changed.has('slots') || changed.has('delivery')) {
       this._syncState(getState());
     }
   }
@@ -820,7 +864,6 @@ export class RoadmapPanel extends LitElement {
     const previousProjects = this._globalFilters.projects.join('\0');
     this._slots = this.slots ?? state.fleet?.slots ?? [];
     this._backlogItems = state.backlogItems;
-    this._runs = this.demoRuns ?? state.runs;
     this._workGraphs = state.workGraphs;
     this._globalFilters = state.globalFilters;
     if (this.items) {
@@ -1013,6 +1056,7 @@ export class RoadmapPanel extends LitElement {
   private _syncEditor(item: RoadmapItem | null) {
     if (!item) {
       this._selectedId = '';
+      this._deliveryDetail = null;
       this._editorMode = 'view';
       this._editTitle = '';
       this._editProject = '';
@@ -1036,6 +1080,7 @@ export class RoadmapPanel extends LitElement {
       return;
     }
     this._selectedId = item.id;
+    this._syncDeliveryDetail(item.id);
     this._editTitle = item.title;
     this._editProject = item.project;
     this._editTargetProjects = item.targetProjects ?? [];
@@ -1146,6 +1191,11 @@ export class RoadmapPanel extends LitElement {
         includeArchived: this._includeArchived,
       });
       this._allItems = result.items;
+      this._deliverySummaries = result.delivery ?? [];
+      // Promoting or shipping changes lineage without changing the selection, so
+      // an explicit refresh must re-fetch the detail projection rather than reuse
+      // the cached one for the same item id.
+      this._deliveryDetail = null;
       const visibleItems = this._items;
       const selected = visibleItems.find((item) => item.id === selectId) ?? visibleItems[0] ?? null;
       this._syncEditor(selected);
@@ -1445,6 +1495,56 @@ export class RoadmapPanel extends LitElement {
     } finally {
       this._busy = '';
     }
+  }
+
+  /**
+   * Detail lineage always comes from the gateway projection: `roadmap.get` when
+   * connected, the injected `delivery` property in the dev harness. The loaded
+   * run page is never consulted — a historical run outside it must stay visible.
+   */
+  private _syncDeliveryDetail(itemId: string) {
+    const injected = (this.delivery ?? []).find((entry) => entry.roadmapItemId === itemId);
+    if (injected) {
+      this._deliveryDetail = injected;
+      return;
+    }
+    if (this.delivery) {
+      this._deliveryDetail = null;
+      return;
+    }
+    if (this._deliveryDetail?.roadmapItemId === itemId) return;
+    this._deliveryDetail = null;
+    void this._loadDeliveryDetail(itemId);
+  }
+
+  private async _loadDeliveryDetail(itemId: string) {
+    try {
+      const result = await gateway.request<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId });
+      if (this._selectedId !== itemId) return;
+      this._deliveryDetail = result.delivery ?? null;
+    } catch (err) {
+      // Lineage is supplementary to the editor; surface the failure instead of
+      // rendering a silently empty delivery panel.
+      this._error = `Delivery lineage unavailable: ${(err as Error).message}`;
+    }
+  }
+
+  private _deliverySummaryFor(itemId: string): RoadmapDeliverySummary | null {
+    return deliverySummaryFor(itemId, this._deliverySummaries, this.delivery ?? []);
+  }
+
+  /** `testId` separates the per-row list badge from the selected item's detail badge. */
+  private _renderDeliveryBadge(itemId: string, testId: string) {
+    const summary = this._deliverySummaryFor(itemId);
+    if (!summary) return nothing;
+    const tone = deliveryBadgeTone(summary.status);
+    return html`<span
+      class="badge ${tone === 'default' ? '' : tone}"
+      data-testid=${testId}
+      data-delivery-status=${summary.status}
+      title="Delivery evidence is derived by the gateway from backlog links, runs, and PRs. It is separate from the planning stage."
+      >${deliveryBadgeLabel(summary)}</span
+    >`;
   }
 
   private _selectItem(item: RoadmapItem, mode: RoadmapEditorMode = 'view') {
@@ -2098,12 +2198,12 @@ export class RoadmapPanel extends LitElement {
         html`<span data-testid="roadmap-project">${renderPlanningBadge(item.project)}</span>`,
         html`<span class="item-ref" title=${item.id}>${item.id}</span>`,
         html`<div class="title" title=${item.title}>${item.title}</div>`,
-        item.promotion?.length
-          ? renderPlanningBadge(
-              `${item.promotion.length} backlog link${item.promotion.length === 1 ? '' : 's'}`,
-              'positive',
-            )
-          : html`<span class="muted">—</span>`,
+        html`<div class="backlog-cell">
+          ${item.promotion?.length
+            ? renderPlanningBadge(`${item.promotion.length} promoted`, 'positive')
+            : nothing}
+          ${this._renderDeliveryBadge(item.id, 'roadmap-delivery-row-badge')}
+        </div>`,
         html`<span class="updated-cell" title=${item.updatedAt}
           >${item.updatedAt.slice(0, 10)}</span
         >`,
@@ -2247,39 +2347,48 @@ export class RoadmapPanel extends LitElement {
       : nothing;
   }
 
-  private _runsForRoadmapItem(item: RoadmapItem): Run[] {
-    const seen = new Set<string>();
-    const runs: Run[] = [];
-    for (const entry of item.promotion ?? []) {
-      const backlogItem = this._backlogItems.find(
-        (candidate) => candidate.id === entry.backlogItemId,
-      );
-      if (!backlogItem) continue;
-      const run = linkedRunForBacklogItem(this._runs, backlogItem);
-      if (!run || seen.has(run.id)) continue;
-      seen.add(run.id);
-      runs.push(run);
-    }
-    return runs;
-  }
-
-  private _renderLinkedRuns(item: RoadmapItem) {
-    const runs = this._runsForRoadmapItem(item);
-    if (!runs.length) return nothing;
+  private _renderDeliveryLineage(item: RoadmapItem) {
+    const projection =
+      this._deliveryDetail?.roadmapItemId === item.id ? this._deliveryDetail : null;
+    if (!projection) return nothing;
+    const links = roadmapDeliveryBacklinks(projection);
     return html`<div class="path-panel">
       <div class="editor-head">
         <div>
-          <h3>Linked runs</h3>
-          <p class="muted">Promoted backlog items with active or recent execution.</p>
+          <h3>Delivery lineage</h3>
+          <p class="muted">
+            Backlog items, run families, and PRs the gateway derived for this roadmap item. Delivery
+            is separate from the planning stage.
+          </p>
         </div>
       </div>
-      <div class="attachment-grid">
-        ${runs.map(
-          (run) =>
-            html`<linked-run-summary .run=${run} label="Backlog run" compact>
-            </linked-run-summary>`,
-        )}
-      </div>
+      ${links.length
+        ? html`<div class="delivery-links">
+            ${links.map(
+              (link) =>
+                html`<a
+                  class="delivery-link"
+                  data-testid=${link.testId}
+                  href=${link.href}
+                  title=${link.detail}
+                  ?hidden=${!link.href}
+                  target=${link.external ? '_blank' : '_self'}
+                  rel=${link.external ? 'noopener noreferrer' : ''}
+                  ><span class="delivery-link-kind">${link.kind}</span>${link.label}</a
+                >`,
+            )}
+          </div>`
+        : html`<p class="muted">No backlog, run, or PR evidence linked to this item yet.</p>`}
+      ${projection.findings.length
+        ? html`<ul class="delivery-findings">
+            ${projection.findings.map(
+              (finding) =>
+                html`<li data-testid="roadmap-delivery-finding" data-finding-code=${finding.code}>
+                  <code>${finding.code}</code> — ${finding.detail} ${finding.remediation}
+                </li>`,
+            )}
+          </ul>`
+        : nothing}
     </div>`;
   }
 
@@ -2323,6 +2432,7 @@ export class RoadmapPanel extends LitElement {
             item.stage,
             item.stage === 'refined' || item.stage === 'promoted' ? 'positive' : 'default',
           )}
+          ${this._renderDeliveryBadge(item.id, 'roadmap-delivery-badge')}
           ${renderPlanningBadge(item.project)}
           ${(item.targetProjects ?? []).map((project) => renderPlanningBadge(project, 'positive'))}
           ${renderTagChips(item.tags)}
@@ -2339,7 +2449,7 @@ export class RoadmapPanel extends LitElement {
               )
             : nothing}
         </div>
-        ${this._renderLinkedRuns(item)} ${this._renderRefinementPromptPath(item)}
+        ${this._renderDeliveryLineage(item)} ${this._renderRefinementPromptPath(item)}
         ${this._renderDraftAttachmentSummary(item)}
         <pre class="body-view">${item.body || 'No roadmap body.'}</pre>
       </div>

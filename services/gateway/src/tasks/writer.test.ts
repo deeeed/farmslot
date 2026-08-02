@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { PlanningContextProjection, Run } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
@@ -16,6 +16,7 @@ import { farmslotRoot } from '../projects/repo-root.js';
 process.env.FARMSLOT_DEMO_POOL = '1';
 
 import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
+import { buildPlanningContextSection } from './planning-context.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import {
   applyArtifactOnlyTaskPolicy,
@@ -870,4 +871,111 @@ test('checklistNumberingMismatches flags labels that diverge from step positions
     '- [ ] **3. Matches its position**',
   ].join('\n');
   assert.deepEqual(checklistNumberingMismatches(aligned), []);
+test('graph-linked backlog run renders a bounded Related planning context section', () => {
+  const projection: PlanningContextProjection = {
+    backlogItemId: 'bk_target',
+    roadmapItemId: 'ri_ctx',
+    roadmapTitle: 'Roadmap delivery lineage',
+    roadmapSpecPath: '.roadmap/inbox/items/delivery-lineage.md',
+    roadmapStage: 'promoted',
+    workGraphId: 'wg_delivery',
+    workNodeId: 'node_target',
+    delivery: {
+      roadmapItemId: 'ri_ctx',
+      status: 'partial',
+      backlogItemCount: 2,
+      deliveredBacklogItemCount: 1,
+      runFamilyCount: 1,
+      prCount: 1,
+      findingCount: 0,
+    },
+    relations: [
+      {
+        label: 'depends-on',
+        direction: 'upstream',
+        targetKind: 'backlog',
+        targetId: 'bk_upstream',
+        targetRef: 'MANUAL-000010',
+        targetTitle: 'Protocol contract',
+        targetStatus: 'done',
+        specPath: '.backlog/specs/manual-000010.md',
+        source: 'work-graph-edge',
+        schedulerAuthority: true,
+        reason: 'WorkGraph edge edge_dep (merged, blocks start, status satisfied).',
+      },
+      {
+        label: 'blocks',
+        direction: 'downstream',
+        targetKind: 'backlog',
+        targetId: 'bk_downstream',
+        targetRef: 'MANUAL-000013',
+        targetStatus: 'ready',
+        specPath: '.backlog/specs/manual-000013.md',
+        source: 'work-graph-edge',
+        schedulerAuthority: true,
+        reason: 'WorkGraph edge edge_next (family-done, blocks start, status pending).',
+      },
+      {
+        label: 'promoted-sibling',
+        direction: 'sibling',
+        targetKind: 'backlog',
+        targetId: 'bk_sibling',
+        targetRef: 'MANUAL-000012',
+        targetStatus: 'running',
+        specPath: '.backlog/specs/manual-000012.md',
+        source: 'roadmap-promotion',
+        schedulerAuthority: false,
+        reason: 'Shares roadmap parent ri_ctx.',
+      },
+    ],
+    generatedAt: '2026-08-02T10:00:00.000Z',
+    snapshotHash: 'abc123def4567890',
+  };
+
+  const section = buildPlanningContextSection('tasks/dev/manual-000072', projection);
+
+  assert.match(section, /^## Related planning context$/m);
+  assert.match(section, /Snapshot hash: abc123def4567890/);
+  assert.match(section, /tasks\/dev\/manual-000072\/inputs\/planning-context\.json/);
+  assert.match(section, /Roadmap parent: ri_ctx — Roadmap delivery lineage \(stage promoted/);
+  assert.match(section, /WorkGraph: wg_delivery node node_target/);
+  assert.match(section, /Roadmap delivery: partial \(1\/2 backlog items delivered/);
+
+  const upstream = section.split('### Upstream')[1].split('###')[0];
+  assert.match(upstream, /`depends-on` MANUAL-000010/);
+  assert.match(upstream, /spec \.backlog\/specs\/manual-000010\.md/);
+  assert.match(upstream, /· scheduler authority ·/);
+
+  const downstream = section.split('### Downstream')[1].split('###')[0];
+  assert.match(downstream, /`blocks` MANUAL-000013/);
+
+  const siblings = section.split('### Siblings')[1];
+  assert.match(siblings, /`promoted-sibling` MANUAL-000012/);
+  assert.match(siblings, /context only \(no scheduler authority\)/);
+
+  // Bounded: refs and spec paths only, never the related spec bodies.
+  assert.equal(section.includes('## Acceptance Criteria'), false);
+  assert.ok(section.length < 4000, 'related context must stay a bounded summary');
+});
+
+test('standalone backlog run renders an explicit empty planning-context state', () => {
+  const projection: PlanningContextProjection = {
+    backlogItemId: 'bk_standalone',
+    relations: [],
+    generatedAt: '2026-08-02T10:00:00.000Z',
+    snapshotHash: 'deadbeefdeadbeef',
+  };
+
+  const section = buildPlanningContextSection('tasks/dev/manual-000073', projection);
+
+  assert.match(section, /^## Related planning context$/m);
+  assert.match(section, /Roadmap parent: none/);
+  assert.match(section, /WorkGraph: not graph-linked/);
+  assert.match(section, /None: this backlog item has no roadmap or WorkGraph relations\./);
+  assert.equal(section.includes('### Upstream'), false);
+});
+
+test('run without a backlog item states why planning context is empty', () => {
+  const section = buildPlanningContextSection('tasks/dev/manual-000074', null);
+  assert.match(section, /No related planning context: this run is not linked to a backlog item\./);
 });

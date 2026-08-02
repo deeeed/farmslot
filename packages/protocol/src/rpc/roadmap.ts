@@ -1,7 +1,14 @@
 import type { SafetyTier } from '../contracts/agents.js';
 import type { BacklogItem } from '../contracts/backlog.js';
 import type { OkResult } from '../contracts/common.js';
-import type { RoadmapItem, RoadmapItemSaveInput, RoadmapItemStage } from '../contracts/roadmap.js';
+import type {
+  PlanningContextProjection,
+  RoadmapDeliveryProjection,
+  RoadmapDeliverySummary,
+  RoadmapItem,
+  RoadmapItemSaveInput,
+  RoadmapItemStage,
+} from '../contracts/roadmap.js';
 
 import { Methods } from './registry.js';
 import type { TmuxWorkerRef } from './tmux.js';
@@ -33,6 +40,12 @@ export interface RoadmapListParams {
 
 export interface RoadmapListResult {
   items: RoadmapItem[];
+  /**
+   * Gateway-derived delivery aggregate, one entry per returned item, in the same
+   * order. Additive: older clients ignore it, newer clients never re-derive it
+   * from their own paginated run/backlog caches.
+   */
+  delivery?: RoadmapDeliverySummary[];
 }
 
 export interface RoadmapGetParams {
@@ -41,6 +54,10 @@ export interface RoadmapGetParams {
 
 export interface RoadmapGetResult {
   item: RoadmapItem;
+  /** Full implementation lineage: backlog links, run families, PRs, and findings. */
+  delivery?: RoadmapDeliveryProjection;
+  /** Bounded related-work context sourced from promotion plus WorkGraph relations. */
+  planningContext?: PlanningContextProjection;
 }
 
 export interface RoadmapSaveParams {

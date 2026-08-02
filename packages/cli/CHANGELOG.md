@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat(roadmap): `roadmap get` prints implementation lineage (backlog refs, run families, PRs, findings, related planning context) and passes the shared projection through unchanged in machine mode.
 - feat(backlog): `farmslot backlog refine` and `backlog refinement-session` commands for prompt-only, launch, and existing-session inspection.
 
 - feat(recipe): validate structured run summaries and failure attribution alongside recipe artifacts.

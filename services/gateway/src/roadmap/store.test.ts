@@ -45,6 +45,11 @@ async function store() {
 
 async function createProjectFixture(t: TestContext, project: string): Promise<void> {
   const projectDir = path.join(farmslotRoot, 'projects', project);
+  // The cleanup below rm -rf's this directory. Refusing to adopt an existing
+  // project keeps a fixture from deleting a real one (e.g. farmslot-farm).
+  if (existsSync(projectDir)) {
+    throw new Error(`Refusing to use existing project directory as a fixture: ${projectDir}`);
+  }
   await mkdir(projectDir, { recursive: true });
   t.after(() => rm(projectDir, { recursive: true, force: true }));
   await writeFile(
@@ -928,4 +933,50 @@ test('roadmap promotion validates every spec before writing backlog side effects
   const stillRefined = await (await store()).getRoadmapItem({ itemId: roadmap.item.id });
   assert.equal(stillRefined.item.stage, 'refined');
   assert.equal(stillRefined.item.promotion, undefined);
+});
+
+test('roadmap.list and roadmap.get carry the gateway delivery projection', async (t) => {
+  const { getRoadmapItem, listRoadmapItems, saveRoadmapItem } = await store();
+  const backlog = await import('../backlog/store.js');
+  await createProjectFixture(t, 'roadmap-delivery-fixture-farm');
+
+  const saved = await saveRoadmapItem({
+    item: {
+      project: 'roadmap-delivery-fixture-farm',
+      title: 'Delivery projection wiring',
+      stage: 'rough',
+      body: 'Manually backlinked roadmap item.',
+    },
+  });
+
+  // Canonical link only — no promotion entry, exactly the ri_790ea3508ba4 shape.
+  const created = await backlog.createBacklogItem({
+    project: 'roadmap-delivery-fixture-farm',
+    title: 'Implements the roadmap item',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    roadmapItemId: saved.item.id,
+  });
+  // Out-of-band close-out is the exact shape the reported drift had: shipped
+  // provenance on the backlog row, no promotion entry on the roadmap item.
+  await backlog.closeShippedBacklogItem({
+    itemId: created.item.id,
+    prRef: 'deeeed/farmslot#421',
+  });
+
+  const listed = await listRoadmapItems();
+  const summary = listed.delivery?.find((entry) => entry.roadmapItemId === saved.item.id);
+  assert.equal(summary?.status, 'delivered');
+  assert.equal(summary?.backlogItemCount, 1);
+  assert.equal(summary?.deliveredBacklogItemCount, 1);
+
+  const fetched = await getRoadmapItem({ itemId: saved.item.id });
+  assert.equal(fetched.delivery?.status, 'delivered');
+  assert.equal(fetched.delivery?.backlogItems[0].backlogItemId, created.item.id);
+  assert.ok(
+    fetched.delivery?.findings.some((entry) => entry.code === 'planning-stage-behind-delivery'),
+  );
+  // Planning context is derived from the same stores, not a client cache.
+  assert.equal(fetched.planningContext?.roadmapItemId, saved.item.id);
+  assert.equal(fetched.planningContext?.delivery?.status, 'delivered');
 });

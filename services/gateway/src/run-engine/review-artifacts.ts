@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
+import { DEFAULT_TASK_DIR, type PlanningContextProjection } from '@farmslot/protocol';
 
 import {
   isGatewayOwnedArtifactMirrorEntry,
@@ -12,6 +12,7 @@ import {
 import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotCopyDir, slotCopyFile, slotFileExists, slotListDir } from '../core/slot-io.js';
 import { getRun } from '../runs/store.js';
+import { buildPlanningContextSection, PLANNING_CONTEXT_INPUT } from '../tasks/planning-context.js';
 
 import { loadProjectVarsOrNull } from './project-vars.js';
 
@@ -73,9 +74,7 @@ export async function copyWorkerArtifacts(runId: string): Promise<void> {
   if (!taskRelDir) return;
 
   const pv = await loadProjectVarsOrNull(run.project, 'worker artifact copy', run.id);
-  const taskDirName = pv
-    ? resolveProjectTaskDirName(pv.projectJson)
-    : DEFAULT_TASK_DIR;
+  const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
   const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
   const localArtifactsDir = path.join(taskDir, 'artifacts');
 
@@ -91,6 +90,46 @@ export async function copyWorkerArtifacts(runId: string): Promise<void> {
     await slotCopyFile(vars, workerTask, path.join(taskDir, 'TASK.md.worker'));
   }
   console.log(`[run-engine] copied worker artifacts for ${runId.slice(0, 8)}`);
+}
+
+/**
+ * Reads the planning-context snapshot the task writer froze for the worker.
+ * Never recomputed here: a reviewer must see the prerequisites the worker was
+ * briefed on, so a changed upstream shows up as a hash mismatch instead of
+ * silently rewriting itself from current stores.
+ */
+export async function readFrozenPlanningContext(
+  taskFile: string | null,
+): Promise<PlanningContextProjection | null> {
+  if (!taskFile) return null;
+  const snapshotPath = path.join(path.dirname(taskFile), PLANNING_CONTEXT_INPUT);
+  if (!existsSync(snapshotPath)) return null;
+  const parsed: unknown = JSON.parse(await readFile(snapshotPath, 'utf-8'));
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    typeof (parsed as PlanningContextProjection).snapshotHash !== 'string' ||
+    !Array.isArray((parsed as PlanningContextProjection).relations)
+  ) {
+    throw new Error(`Malformed frozen planning context at ${snapshotPath}`);
+  }
+  return parsed as PlanningContextProjection;
+}
+
+/**
+ * Renders the reviewer's copy of the worker's related-context brief from the
+ * frozen artifact, so both briefs quote the same snapshot hash.
+ */
+export async function buildIndependentReviewPlanningBrief(
+  taskFile: string | null,
+  slotTaskDir: string,
+): Promise<string> {
+  const projection = await readFrozenPlanningContext(taskFile);
+  return buildPlanningContextSection(
+    slotTaskDir,
+    projection,
+    'the worker task carried no frozen planning-context snapshot',
+  );
 }
 
 export async function readReviewArtifacts(runId: string): Promise<ReviewArtifacts> {
