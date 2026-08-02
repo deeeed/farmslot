@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type {
-  BacklogItem,
-  RoadmapItem,
-  Run,
-  WorkEdge,
-  WorkGraphSnapshot,
-  WorkNode,
+import {
+  type BacklogItem,
+  PLANNING_CONTEXT_MAX_RELATIONS,
+  type RoadmapItem,
+  type Run,
+  type WorkEdge,
+  type WorkGraphSnapshot,
+  type WorkNode,
 } from '@farmslot/protocol';
 
 import {
@@ -537,4 +538,63 @@ test('a repo-less PR number only folds when exactly one qualified ref matches', 
     2,
     'both qualified refs survive',
   );
+});
+
+test('a bare PR number from one backlog item never absorbs another itemevidence', () => {
+  // Codex round-3 blocker: aggregate dedup folded backlog A's `#421` into backlog
+  // B's `acme/repo#421`, attributing A's delivery to B's repository and
+  // undercounting multi-PR delivery.
+  const item = roadmapItem({ id: 'ri_cross', stage: 'promoted' });
+  const first = backlogItem('bk_first', { roadmapItemId: 'ri_cross', status: 'done' });
+  const second = backlogItem('bk_second', { roadmapItemId: 'ri_cross', status: 'done' });
+  const runs = [
+    // No links and a non-GitHub ticket ref, so the number stays repo-less.
+    run('run_bare', { backlogItemId: 'bk_first', prNumber: 421, ticketOrPr: 'MANUAL-000001' }),
+    run('run_qualified', {
+      backlogItemId: 'bk_second',
+      links: [{ label: 'PR', url: 'https://github.com/acme/repo/pull/421' }],
+    }),
+  ];
+
+  const projection = project({ item, backlogItems: [first, second], runs });
+
+  assert.deepEqual(projection.prs.map((pr) => pr.ref).sort(), ['#421', 'acme/repo#421']);
+  // Each backlog item keeps only its own evidence.
+  const byId = new Map(projection.backlogItems.map((entry) => [entry.backlogItemId, entry]));
+  assert.deepEqual(
+    byId.get('bk_first')!.prs.map((pr) => pr.ref),
+    ['#421'],
+  );
+  assert.deepEqual(
+    byId.get('bk_second')!.prs.map((pr) => pr.ref),
+    ['acme/repo#421'],
+  );
+});
+
+test('planning context is actually bounded and reports what it dropped', () => {
+  // Codex round-3 blocker: the section was described as bounded but collected every
+  // sibling and incident edge, and the <4000 char test used three relations, so it
+  // could never have caught an unbounded brief.
+  const target = backlogItem('bk_target', { roadmapItemId: 'ri_big' });
+  const siblings = Array.from({ length: 60 }, (_, index) =>
+    backlogItem(`bk_sibling_${index}`, {
+      roadmapItemId: 'ri_big',
+      sourceRef: `MANUAL-${String(index).padStart(6, '0')}`,
+      specPath: `.backlog/specs/manual-${index}.md`,
+    }),
+  );
+
+  const context = buildPlanningContextProjection({
+    backlogItem: target,
+    roadmapItem: roadmapItem({ id: 'ri_big' }),
+    backlogItems: [target, ...siblings],
+    generatedAt: NOW,
+  });
+
+  assert.equal(context.relations.length, PLANNING_CONTEXT_MAX_RELATIONS);
+  assert.ok(context.truncated, 'truncation must be reported, not silent');
+  assert.equal(context.truncated.total, 61); // 60 siblings + the roadmap parent
+  assert.equal(context.truncated.omitted, 61 - PLANNING_CONTEXT_MAX_RELATIONS);
+  // The roadmap parent is upstream, so it survives truncation ahead of siblings.
+  assert.equal(context.relations[0].label, 'parent-roadmap');
 });

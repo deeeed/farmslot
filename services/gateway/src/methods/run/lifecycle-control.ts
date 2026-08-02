@@ -35,7 +35,7 @@ type Emit = (event: string, payload: unknown) => void;
  * which caller invoked it.
  */
 export async function runCancel(params: RunCancelParams): Promise<RunCancelResult> {
-  const { run } = await routeRunTransition(
+  const { run, effects } = await routeRunTransition(
     {
       kind: 'cancel',
       runId: params.runId,
@@ -45,7 +45,24 @@ export async function runCancel(params: RunCancelParams): Promise<RunCancelResul
     cancelTransitionDeps(defaultCancelCollaborators()),
   );
 
-  return { run };
+  // A cancel can reach its terminal state while an advisory effect failed. Returning
+  // only `run` reported unqualified success for a partially-applied cancel; the
+  // outcomes travel with the result so callers and operators can see the gap.
+  const failed = effects.filter((effect) => effect.status === 'failed');
+  if (failed.length > 0) {
+    // The backlog projection is repaired from this durable marker on next load,
+    // so a failed settle self-heals instead of waiting for someone to notice.
+    if (failed.some((effect) => effect.name === 'backlog-settle')) {
+      updateRun(run.id, { backlogReconcilePending: true });
+    }
+    console.warn(
+      `[run] cancel ${run.id.slice(0, 8)} applied with ${failed.length} failed effect(s): ${failed
+        .map((effect) => `${effect.name} (${effect.detail ?? 'no detail'})`)
+        .join('; ')}`,
+    );
+  }
+
+  return { run: getRun(run.id) ?? run, effects };
 }
 
 export async function runForceComplete(

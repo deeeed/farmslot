@@ -13,15 +13,16 @@ import {
   githubPullUrl,
   parseGitHubPullUrl,
   parseGitHubRef,
+  PLANNING_CONTEXT_MAX_RELATIONS,
   type PlanningContextProjection,
   type PlanningRelation,
   type PlanningRelationLabel,
   type RoadmapDeliveryBacklogRef,
   type RoadmapDeliveryFinding,
   type RoadmapDeliveryLinkSource,
+  type RoadmapDeliveryProjection,
   type RoadmapDeliveryPrRef,
   type RoadmapDeliveryPrSource,
-  type RoadmapDeliveryProjection,
   type RoadmapDeliveryRunRef,
   type RoadmapDeliveryStatus,
   type RoadmapDeliverySummary,
@@ -113,7 +114,17 @@ interface RawPrRef {
  * `prNumber` yields a repo-less `#421`; it is folded into the qualified
  * `owner/repo#421` from `Run.links` rather than shown twice.
  */
-function dedupePrRefs(raw: readonly RawPrRef[]): RoadmapDeliveryPrRef[] {
+/**
+ * `foldBareNumbers` is only safe within a single backlog item's own evidence,
+ * where a repo-less `Run.prNumber` and a qualified `Run.links` entry plausibly
+ * describe the same pull request. Across backlog items they do not: backlog A's
+ * bare `#421` and backlog B's `acme/repo#421` are different evidence, and folding
+ * them attributes A's delivery to B's repository and undercounts multi-PR work.
+ */
+function dedupePrRefs(
+  raw: readonly RawPrRef[],
+  { foldBareNumbers }: { foldBareNumbers: boolean },
+): RoadmapDeliveryPrRef[] {
   const byKey = new Map<string, RoadmapDeliveryPrRef>();
   const order: RoadmapDeliveryPrRef[] = [];
 
@@ -140,9 +151,10 @@ function dedupePrRefs(raw: readonly RawPrRef[]): RoadmapDeliveryPrRef[] {
   for (const entry of qualified) merge(parseGitHubRef(entry.ref)!.ref, entry);
   for (const entry of unqualified) {
     const number = Number(entry.ref.replace(/^#/, ''));
-    const matches = Number.isFinite(number)
-      ? order.filter((candidate) => parseGitHubRef(candidate.ref)?.number === number)
-      : [];
+    const matches =
+      foldBareNumbers && Number.isFinite(number)
+        ? order.filter((candidate) => parseGitHubRef(candidate.ref)?.number === number)
+        : [];
     // Fold only when the target is unambiguous. Two repos can each have a PR
     // #421; attaching the bare number to whichever was seen first would assert a
     // repo we do not actually know.
@@ -192,7 +204,8 @@ function prRefsForBacklogItem(
         : { ref: shippedRef, source: 'backlog-shipped' },
     );
   }
-  return dedupePrRefs(raw);
+  // Within one backlog item, a bare prNumber and a qualified link are the same PR.
+  return dedupePrRefs(raw, { foldBareNumbers: true });
 }
 
 /**
@@ -202,7 +215,7 @@ function prRefsForBacklogItem(
  * had never started — the exact drift this projection exists to surface.
  */
 function isDelivered(backlogItem: BacklogItem): boolean {
-  if (Boolean(backlogItem.shipped)) return true;
+  if (backlogItem.shipped) return true;
   if (backlogItem.status === 'done') return true;
   return backlogItem.status === 'archived' && backlogItem.lastObservedRunStatus === 'done';
 }
@@ -319,12 +332,23 @@ export function buildRoadmapDeliveryProjection(
     status,
     backlogItems: backlogRefs,
     runFamilies: dedupeRunFamilies(backlogRefs),
+    // Across backlog items, identical refs merge but bare numbers never absorb a
+    // qualified ref from a different item — that would forge provenance.
     prs: dedupePrRefs(
-      backlogRefs.flatMap((entry) =>
-        entry.prs.flatMap((pr) =>
-          pr.sources.map((source) => ({ ref: pr.ref, ...(pr.url ? { url: pr.url } : {}), source })),
-        ),
+      backlogRefs.flatMap(
+        (entry) =>
+          entry.prs.flatMap(
+            (pr) =>
+              pr.sources.map((source) => ({
+                ref: pr.ref,
+                ...(pr.url ? { url: pr.url } : {}),
+                source,
+              })),
+            { foldBareNumbers: false },
+          ),
+        { foldBareNumbers: false },
       ),
+      { foldBareNumbers: false },
     ),
     findings,
     generatedAt,
@@ -528,6 +552,22 @@ export function buildPlanningContextProjection(
     }
   }
 
+  // Bound the brief. Upstream first (prerequisites gate the work), then downstream
+  // (what this unblocks), then siblings — so truncation drops the least
+  // actionable relations rather than an arbitrary tail.
+  const priority: Record<PlanningRelation['direction'], number> = {
+    upstream: 0,
+    downstream: 1,
+    sibling: 2,
+  };
+  const ordered = [...relations].sort(
+    (a, b) =>
+      priority[a.direction] - priority[b.direction] ||
+      Number(b.schedulerAuthority) - Number(a.schedulerAuthority),
+  );
+  const kept = ordered.slice(0, PLANNING_CONTEXT_MAX_RELATIONS);
+  const omitted = ordered.length - kept.length;
+
   const projection: Omit<PlanningContextProjection, 'snapshotHash'> = {
     ...(backlogItem ? { backlogItemId: backlogItem.id } : {}),
     ...(roadmapItem
@@ -540,7 +580,8 @@ export function buildPlanningContextProjection(
       : {}),
     ...(node ? { workGraphId: node.graphId, workNodeId: node.id } : {}),
     ...(delivery ? { delivery } : {}),
-    relations,
+    relations: kept,
+    ...(omitted > 0 ? { truncated: { omitted, total: ordered.length } } : {}),
     generatedAt,
   };
   return { ...projection, snapshotHash: planningContextSnapshotHash(projection) };

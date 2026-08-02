@@ -478,7 +478,7 @@ export async function executeTool(
       }
       case 'cancel_run': {
         const { runCancel } = await import('../methods/run/lifecycle-control.js');
-        const emit = await broadcast();
+        // No emitter: the transition broadcasts globally itself (ADR-052).
         const id = String(args.run_id ?? '');
         const run = getRun(id) ?? listRuns({ limit: 200 }).runs.find((r) => r.id.startsWith(id));
         if (!run) throw new Error(`Run not found: ${id}`);

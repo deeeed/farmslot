@@ -19,6 +19,7 @@ import {
   type RunTransitionEffect,
   type RunTransitionPlan,
   type RunTransitionRequest,
+  type RunTransitionSyncEffect,
 } from './transition-router.js';
 
 export interface CancelCollaborators {
@@ -31,7 +32,7 @@ export interface CancelCollaborators {
 }
 
 function cancelEffects(collaborators: CancelCollaborators): {
-  before: RunTransitionEffect[];
+  before: RunTransitionSyncEffect[];
   after: RunTransitionEffect[];
 } {
   return {
@@ -39,9 +40,10 @@ function cancelEffects(collaborators: CancelCollaborators): {
       {
         name: 'engine-cancel',
         severity: 'required',
-        // Stop the engine before the terminal status is published so no in-flight
-        // step writes after it.
-        apply: async ({ run }) => {
+        // Synchronous: aborting the engine must land in the same tick as the
+        // mutation, or the engine can publish between the guard and the terminal
+        // status. Both collaborators are sync today; the type enforces it.
+        apply: ({ run }) => {
           collaborators.cancelEngine(run.id);
         },
       },
@@ -49,7 +51,7 @@ function cancelEffects(collaborators: CancelCollaborators): {
         name: 'warm-sessions',
         severity: 'required',
         // A cancelled run's warm reviewer sessions must never be resumable.
-        apply: async ({ run }) => {
+        apply: ({ run }) => {
           collaborators.invalidateWarmSessions(run.id);
         },
       },

@@ -70,6 +70,23 @@ export interface RunTransitionEffect {
   apply(context: RunTransitionEffectContext): Promise<RunTransitionEffectOutcomeInput>;
 }
 
+/**
+ * Pre-mutation effects are **synchronous by contract**.
+ *
+ * The per-run lock serializes transitions against each other, but the run engine
+ * writes through `updateRun` without taking it. Awaiting anything between the
+ * terminal guard and the mutation therefore yields the event loop and lets an
+ * engine step finish, publish, and trigger reconciliation before the cancel
+ * becomes authoritative — a window the pre-router implementation did not have,
+ * because its abort/invalidate/mutate sequence was straight-line synchronous.
+ * Keeping this phase sync preserves that atomicity.
+ */
+export interface RunTransitionSyncEffect {
+  name: string;
+  severity: RunTransitionEffectSeverity;
+  apply(context: Omit<RunTransitionEffectContext, 'outcomes'>): RunTransitionEffectOutcomeInput;
+}
+
 /** True when a named effect ran and failed; used by dependent effects to bail. */
 export function effectFailed(
   outcomes: readonly RunTransitionEffectOutcome[],
@@ -79,8 +96,8 @@ export function effectFailed(
 }
 
 export interface RunTransitionPlan {
-  /** Effects that must run before the run reaches a terminal state. */
-  before: RunTransitionEffect[];
+  /** Synchronous effects applied between the guard and the mutation. */
+  before: RunTransitionSyncEffect[];
   /** The single run-store mutation for this transition. */
   mutate(run: Run): Partial<Run>;
   /** Effects that fan the settled state out to the other aggregates. */
@@ -97,6 +114,37 @@ export interface RunTransitionDeps {
    * slow teardown further down the effect list.
    */
   onMutated?(run: Run): void;
+}
+
+function runSyncEffects(
+  effects: readonly RunTransitionSyncEffect[],
+  context: Omit<RunTransitionEffectContext, 'outcomes'>,
+  outcomes: RunTransitionEffectOutcome[],
+): void {
+  for (const effect of effects) {
+    try {
+      const returned = effect.apply(context) ?? 'ok';
+      const outcome =
+        typeof returned === 'string'
+          ? { name: effect.name, status: returned }
+          : { name: effect.name, status: returned.status, detail: returned.detail };
+      if (effect.severity === 'required' && outcome.status === 'failed') {
+        throw new Error(
+          `Run transition effect '${effect.name}' failed: ${outcome.detail ?? 'reported failed'}`,
+        );
+      }
+      outcomes.push(outcome);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      if (effect.severity === 'required') {
+        throw new Error(`Run transition effect '${effect.name}' failed: ${detail}`);
+      }
+      outcomes.push({ name: effect.name, status: 'failed', detail });
+      console.warn(
+        `[run-lifecycle] advisory pre-effect '${effect.name}' failed for ${context.run.id.slice(0, 8)}: ${detail}`,
+      );
+    }
+  }
 }
 
 async function runEffects(
@@ -185,8 +233,8 @@ export async function routeRunTransition(
     const plan = deps.planFor(request, existing);
     const effects: RunTransitionEffectOutcome[] = [];
 
-    await runEffects(plan.before, { run: existing, request }, effects);
-
+    // No await between the guard and the mutation — see RunTransitionSyncEffect.
+    runSyncEffects(plan.before, { run: existing, request }, effects);
     const run = deps.updateRun(request.runId, plan.mutate(existing));
     // A UI publish must not abort store settlement, but it must not vanish either:
     // record it as a visible outcome instead of throwing or swallowing.

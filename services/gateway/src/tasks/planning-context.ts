@@ -8,8 +8,12 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { PlanningContextProjection, PlanningRelation, Run } from '@farmslot/protocol';
-import { summarizeRoadmapDelivery } from '@farmslot/protocol';
+import {
+  type PlanningContextProjection,
+  type PlanningRelation,
+  type Run,
+  summarizeRoadmapDelivery,
+} from '@farmslot/protocol';
 
 import { getBacklogItemSnapshot, listBacklogItems } from '../backlog/store.js';
 import {
@@ -93,6 +97,14 @@ export function buildPlanningContextSection(
       ]
     : ['### Related work', '- None: this backlog item has no roadmap or WorkGraph relations.'];
 
+  const truncation = projection.truncated
+    ? [
+        '',
+        `_${projection.truncated.omitted} of ${projection.truncated.total} relations omitted to keep this brief bounded._`,
+        `_Read the full set from the snapshot artifact above._`,
+      ]
+    : [];
+
   return [
     '',
     '---',
@@ -102,6 +114,7 @@ export function buildPlanningContextSection(
     ...header,
     '',
     ...body,
+    ...truncation,
     '',
     'Read related work by the listed spec paths. Only relations marked `scheduler authority`',
     'gate execution; everything else is context. Do not copy related spec bodies into this task.',

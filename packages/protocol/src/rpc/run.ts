@@ -240,8 +240,22 @@ export interface RunCancelParams {
   reason?: string;
 }
 
+/**
+ * Per-effect result of a cancel's cross-aggregate fan-out (ADR-052). A cancel can
+ * reach its terminal state while an advisory effect — settling the backlog,
+ * ticking the work graph, releasing the slot — fails. Callers that only read
+ * `run` would report unqualified success for a partially-applied cancel.
+ */
+export interface RunCancelEffect {
+  name: string;
+  status: 'ok' | 'skipped' | 'failed';
+  detail?: string;
+}
+
 export interface RunCancelResult {
   run: Run;
+  /** Additive: omitted by older gateways. Non-`ok` entries mean partial application. */
+  effects?: RunCancelEffect[];
 }
 
 export interface RunForceCompleteParams {

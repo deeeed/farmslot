@@ -9,9 +9,9 @@ import {
   defaultCancelCollaborators,
 } from './cancel-transition.js';
 import {
+  routeRunTransition,
   type RunTransitionDeps,
   type RunTransitionRequest,
-  routeRunTransition,
 } from './transition-router.js';
 
 const NOW = '2026-08-02T10:00:00.000Z';
@@ -337,4 +337,54 @@ test('a publish failure is recorded but never aborts store settlement', async ()
   // The stores still settled — a dead client must not strand backlog/graph state.
   assert.ok(h.calls.includes('settleBacklog'));
   assert.ok(h.calls.includes('tickWorkGraph'));
+});
+
+test('nothing yields between the terminal guard and the mutation', async () => {
+  // Codex round-3 blocker: awaiting the pre-effects yielded the event loop, and
+  // the run engine writes through updateRun without taking the transition lock.
+  // An engine step could therefore finish and publish after the guard but before
+  // the cancel became authoritative — a window the pre-router implementation,
+  // whose abort/invalidate/mutate sequence was straight-line synchronous, did not
+  // have.
+  const h = harness(run());
+  let mutatedDuringSameTick = false;
+
+  const deps = {
+    ...h.deps,
+    updateRun: (id: string, partial: Partial<Run>) => {
+      mutatedDuringSameTick = true;
+      return h.deps.updateRun(id, partial);
+    },
+  };
+
+  const pending = routeRunTransition(cancelRequest, deps);
+  // The lock's first `.then` costs one microtask; drain a couple and the guard,
+  // pre-effects, and mutation must all have completed without an intervening
+  // macrotask an engine write could slip into.
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(mutatedDuringSameTick, true, 'pre-effects must not yield before the mutation');
+
+  await pending;
+});
+
+test('cancel surfaces a failed advisory effect to its caller', async () => {
+  // Codex round-3 blocker: runCancel discarded `effects`, so a failed backlog
+  // settle returned an unqualified successful cancel.
+  const h = harness(run({ workGraphId: 'wg_1' }), {
+    settleBacklog: async () => {
+      throw new Error('disk full');
+    },
+  });
+
+  const result = await routeRunTransition(cancelRequest, h.deps);
+
+  assert.equal(result.run.status, 'cancelled');
+  const failed = result.effects.filter((effect) => effect.status === 'failed');
+  assert.deepEqual(
+    failed.map((effect) => effect.name),
+    ['backlog-settle'],
+  );
+  assert.match(failed[0].detail!, /disk full/);
 });
