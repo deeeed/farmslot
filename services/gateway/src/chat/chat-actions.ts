@@ -685,13 +685,10 @@ async function executeStoredAction(
   }
 
   if (action.type === 'run.cancel') {
-    await runCancel(
-      {
-        runId: String(action.params.runId),
-        ...(stringParam(action.params, 'reason') ? { reason: String(action.params.reason) } : {}),
-      },
-      emit,
-    );
+    await runCancel({
+      runId: String(action.params.runId),
+      ...(stringParam(action.params, 'reason') ? { reason: String(action.params.reason) } : {}),
+    });
     return { runId: String(action.params.runId) };
   }
 

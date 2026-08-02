@@ -477,3 +477,64 @@ test('standalone backlog item without roadmap or graph has no relations', () => 
   assert.equal(context.roadmapItemId, undefined);
   assert.equal(context.workGraphId, undefined);
 });
+
+test('archived-but-shipped work stays delivered instead of regressing to unstarted', () => {
+  // Codex round-2 blocker: archiving rewrites `done` to `archived`, so status alone
+  // forgot the work shipped and every archived ref was excluded from the decision.
+  // A tidied-up roadmap item then read `unstarted` — the exact drift this
+  // projection exists to surface.
+  const item = roadmapItem({ id: 'ri_archived', stage: 'promoted' });
+  const archivedDone = backlogItem('bk_archived_done', {
+    roadmapItemId: 'ri_archived',
+    status: 'archived',
+    lastObservedRunStatus: 'done',
+  });
+
+  assert.equal(project({ item, backlogItems: [archivedDone] }).status, 'delivered');
+
+  // Shipped provenance survives archiving on its own.
+  const archivedShipped = backlogItem('bk_archived_shipped', {
+    roadmapItemId: 'ri_archived',
+    status: 'archived',
+    shipped: { prRef: 'deeeed/farmslot#900', closedAt: NOW },
+  });
+  assert.equal(project({ item, backlogItems: [archivedShipped] }).status, 'delivered');
+
+  // Archived without ever delivering is genuinely unstarted.
+  const archivedNever = backlogItem('bk_archived_never', {
+    roadmapItemId: 'ri_archived',
+    status: 'archived',
+  });
+  assert.equal(project({ item, backlogItems: [archivedNever] }).status, 'unstarted');
+
+  // A live item alongside an archived-delivered one is still only partial.
+  const live = backlogItem('bk_live', { roadmapItemId: 'ri_archived', status: 'ready' });
+  assert.equal(project({ item, backlogItems: [archivedDone, live] }).status, 'partial');
+});
+
+test('a repo-less PR number only folds when exactly one qualified ref matches', () => {
+  // Two repos can legitimately both have a PR #421; folding a bare `#421` into
+  // whichever appeared first would attribute it to an arbitrary repo.
+  const item = roadmapItem({ id: 'ri_collide', stage: 'promoted' });
+  const linked = backlogItem('bk_collide', { roadmapItemId: 'ri_collide', status: 'done' });
+  const runs = [
+    run('run_a', {
+      backlogItemId: 'bk_collide',
+      links: [
+        { label: 'PR', url: 'https://github.com/deeeed/farmslot/pull/421' },
+        { label: 'PR', url: 'https://github.com/deeeed/other/pull/421' },
+      ],
+      prNumber: 421,
+      ticketOrPr: 'MANUAL-1',
+    }),
+  ];
+
+  const refs = project({ item, backlogItems: [linked], runs: runs }).prs;
+  const bare = refs.find((pr) => pr.ref === '#421');
+  assert.ok(bare, 'an ambiguous bare number must stay separate, not attach to one repo');
+  assert.equal(
+    refs.filter((pr) => pr.ref.endsWith('#421') && pr.ref !== '#421').length,
+    2,
+    'both qualified refs survive',
+  );
+});

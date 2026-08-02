@@ -165,16 +165,10 @@ export async function routeRunMethod(
       return handled(runList(p as RunListParams));
     case Methods.RUN_SLOT_HISTORY:
       return handled(runSlotHistory(p as SlotRunHistoryParams));
-    case Methods.RUN_CANCEL: {
-      // Cancel is terminal and changes state every connected client renders
-      // (run cards, family view, slot cards). The per-request `emit` reaches only
-      // the requesting socket, so other windows would keep showing the run as
-      // live until an unrelated event arrived. Mirrors RUN_RESOLVE_DECISION.
-      const broadcastEmit = (event: string, payload: unknown) => {
-        broadcast({ type: 'event', event, payload });
-      };
-      return handled(runCancel(p as RunCancelParams, broadcastEmit));
-    }
+    case Methods.RUN_CANCEL:
+      // No emitter: the transition broadcasts globally itself (ADR-052), so every
+      // cancel entry point reaches every client identically.
+      return handled(runCancel(p as RunCancelParams));
     case Methods.RUN_FORCE_COMPLETE:
       return handled(runForceComplete(p as RunForceCompleteParams, emit));
     case Methods.RUN_PAUSE:

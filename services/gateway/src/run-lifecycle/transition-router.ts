@@ -107,11 +107,18 @@ async function runEffects(
   for (const effect of effects) {
     try {
       const returned = (await effect.apply({ ...context, outcomes })) ?? 'ok';
-      outcomes.push(
+      const outcome =
         typeof returned === 'string'
           ? { name: effect.name, status: returned }
-          : { name: effect.name, status: returned.status, detail: returned.detail },
-      );
+          : { name: effect.name, status: returned.status, detail: returned.detail };
+      // A required effect that *returns* failed must abort exactly like one that
+      // throws; otherwise severity is enforced only for the throwing path.
+      if (effect.severity === 'required' && outcome.status === 'failed') {
+        throw new Error(
+          `Run transition effect '${effect.name}' failed: ${outcome.detail ?? 'reported failed'}`,
+        );
+      }
+      outcomes.push(outcome);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       if (effect.severity === 'required') {
@@ -128,30 +135,75 @@ async function runEffects(
 }
 
 /**
+ * Per-run serialization. The terminal guard is only meaningful if nothing can
+ * interleave between it and the mutation, and `before` effects await — which
+ * yields the event loop. Without this, two concurrent cancels both pass the
+ * guard and both run the full effect chain: duplicate mutation, duplicate
+ * broadcast, duplicate settle/tick, and a stale second slot release that can
+ * free a slot another run has already claimed.
+ */
+const transitionTails = new Map<string, Promise<unknown>>();
+
+async function withRunTransitionLock<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = transitionTails.get(runId) ?? Promise.resolve();
+  const current = previous.then(operation, operation);
+  // Store a settlement-normalized handle so a rejected transition cannot wedge
+  // the queue for this run, and so the identity check below is exact.
+  const tail: Promise<unknown> = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  transitionTails.set(runId, tail);
+  try {
+    return await current;
+  } finally {
+    // Only the last transition for this run clears the entry; otherwise the map
+    // would grow one entry per run for the process lifetime.
+    if (transitionTails.get(runId) === tail) transitionTails.delete(runId);
+  }
+}
+
+/**
  * Applies one lifecycle transition: guard, before-effects, single mutation,
  * `onMutated` publish, then after-effects awaited in declared order.
+ *
+ * Serialized per run — see {@link withRunTransitionLock}.
  */
 export async function routeRunTransition(
   request: RunTransitionRequest,
   deps: RunTransitionDeps,
 ): Promise<RunTransitionResult> {
-  const existing = deps.getRun(request.runId);
-  if (!existing) throw new Error(`Run not found: ${request.runId}`);
-  if (isTerminalRunStatus(existing.status)) {
-    throw new Error(`Run ${request.runId} already in terminal state: ${existing.status}`);
-  }
+  return withRunTransitionLock(request.runId, async () => {
+    // Guard inside the lock: a transition that queued behind another one must
+    // observe the state that one left behind, not the state it was queued with.
+    const existing = deps.getRun(request.runId);
+    if (!existing) throw new Error(`Run not found: ${request.runId}`);
+    if (isTerminalRunStatus(existing.status)) {
+      throw new Error(`Run ${request.runId} already in terminal state: ${existing.status}`);
+    }
 
-  const plan = deps.planFor(request, existing);
-  const effects: RunTransitionEffectOutcome[] = [];
+    const plan = deps.planFor(request, existing);
+    const effects: RunTransitionEffectOutcome[] = [];
 
-  await runEffects(plan.before, { run: existing, request }, effects);
+    await runEffects(plan.before, { run: existing, request }, effects);
 
-  const run = deps.updateRun(request.runId, plan.mutate(existing));
-  deps.onMutated?.(run);
+    const run = deps.updateRun(request.runId, plan.mutate(existing));
+    // A UI publish must not abort store settlement, but it must not vanish either:
+    // record it as a visible outcome instead of throwing or swallowing.
+    if (deps.onMutated) {
+      try {
+        deps.onMutated(run);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        effects.push({ name: 'publish', status: 'failed', detail });
+        console.warn(`[run-lifecycle] publish failed for ${run.id.slice(0, 8)}: ${detail}`);
+      }
+    }
 
-  // Awaited and ordered: a later effect (the scheduler tick) must never observe an
-  // earlier one (the backlog settle) half-applied.
-  await runEffects(plan.after, { run, request }, effects);
+    // Awaited and ordered: a later effect (the scheduler tick) must never observe an
+    // earlier one (the backlog settle) half-applied.
+    await runEffects(plan.after, { run, request }, effects);
 
-  return { run, effects };
+    return { run, effects };
+  });
 }

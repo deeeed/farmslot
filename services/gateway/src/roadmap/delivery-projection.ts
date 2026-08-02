@@ -140,9 +140,13 @@ function dedupePrRefs(raw: readonly RawPrRef[]): RoadmapDeliveryPrRef[] {
   for (const entry of qualified) merge(parseGitHubRef(entry.ref)!.ref, entry);
   for (const entry of unqualified) {
     const number = Number(entry.ref.replace(/^#/, ''));
-    const qualifiedMatch = Number.isFinite(number)
-      ? order.find((candidate) => parseGitHubRef(candidate.ref)?.number === number)
-      : undefined;
+    const matches = Number.isFinite(number)
+      ? order.filter((candidate) => parseGitHubRef(candidate.ref)?.number === number)
+      : [];
+    // Fold only when the target is unambiguous. Two repos can each have a PR
+    // #421; attaching the bare number to whichever was seen first would assert a
+    // repo we do not actually know.
+    const qualifiedMatch = matches.length === 1 ? matches[0] : undefined;
     merge(qualifiedMatch ? parseGitHubRef(qualifiedMatch.ref)!.ref : entry.ref, entry);
   }
 
@@ -161,9 +165,13 @@ function prRefsForBacklogItem(
     });
     raw.push(...linkRefs);
     if (run.prNumber != null) {
-      const repo = linkRefs.length
-        ? parseGitHubRef(linkRefs[0].ref)?.repo
-        : parseGitHubRef(run.ticketOrPr)?.repo;
+      // Only attribute the bare `prNumber` to a repo the run unambiguously points
+      // at. A run linking two repos gives no basis for choosing one, so the number
+      // stays unqualified rather than asserting a repo we do not know.
+      const linkRepos = new Set(
+        linkRefs.map((entry) => parseGitHubRef(entry.ref)?.repo).filter(Boolean),
+      );
+      const repo = linkRepos.size === 1 ? [...linkRepos][0] : parseGitHubRef(run.ticketOrPr)?.repo;
       raw.push(
         repo
           ? {
@@ -187,8 +195,16 @@ function prRefsForBacklogItem(
   return dedupePrRefs(raw);
 }
 
+/**
+ * Archiving rewrites `done` to `archived`, so status alone forgets that the work
+ * shipped. `lastObservedRunStatus` is the surviving evidence; without it a
+ * roadmap item whose backlog was completed and then tidied away reads as if it
+ * had never started — the exact drift this projection exists to surface.
+ */
 function isDelivered(backlogItem: BacklogItem): boolean {
-  return backlogItem.status === 'done' || Boolean(backlogItem.shipped);
+  if (Boolean(backlogItem.shipped)) return true;
+  if (backlogItem.status === 'done') return true;
+  return backlogItem.status === 'archived' && backlogItem.lastObservedRunStatus === 'done';
 }
 
 export interface RoadmapDeliveryProjectionInput {
@@ -196,8 +212,9 @@ export interface RoadmapDeliveryProjectionInput {
   /** Complete backlog store contents, including archived items. */
   backlogItems: readonly BacklogItem[];
   runsByBacklogItemId: ReadonlyMap<string, Run[]>;
-  /** Optional prebuilt index; derived from `backlogItems` when omitted. */
+  /** Optional prebuilt indexes; derived from `backlogItems` when omitted. */
   backlogByRoadmapItemId?: ReadonlyMap<string, BacklogItem[]>;
+  backlogById?: ReadonlyMap<string, BacklogItem>;
   generatedAt: string;
 }
 
@@ -207,7 +224,9 @@ export function buildRoadmapDeliveryProjection(
   const { item, backlogItems, runsByBacklogItemId, generatedAt } = input;
   const backlogByRoadmapItemId =
     input.backlogByRoadmapItemId ?? buildBacklogIndexByRoadmapItem(backlogItems);
-  const byId = new Map(backlogItems.map((backlogItem) => [backlogItem.id, backlogItem]));
+  // Reuse the caller's id index when supplied: rebuilding it per roadmap row is
+  // the remaining O(roadmap x backlog) path on `roadmap.list`.
+  const byId = input.backlogById ?? new Map(backlogItems.map((entry) => [entry.id, entry]));
   const findings: RoadmapDeliveryFinding[] = [];
 
   const promotionIds: string[] = [];
@@ -348,12 +367,16 @@ function deriveDeliveryStatus(
   );
   if (untrustworthy) return 'inconsistent';
 
-  const considered = refs.filter((entry) => entry.resolved && !entry.archived);
-  if (considered.length === 0) return 'unstarted';
+  const resolved = refs.filter((entry) => entry.resolved);
+  const considered = resolved.filter((entry) => !entry.archived);
+  // Archived work that shipped is still shipped. It is excluded from the "is
+  // everything finished" question, but it still counts as delivery having happened.
+  const archivedDelivered = resolved.some((entry) => entry.archived && entry.delivered);
+  if (considered.length === 0) return archivedDelivered ? 'delivered' : 'unstarted';
 
   const deliveredCount = considered.filter((entry) => entry.delivered).length;
   if (deliveredCount === considered.length) return 'delivered';
-  if (deliveredCount > 0) return 'partial';
+  if (deliveredCount > 0 || archivedDelivered) return 'partial';
 
   const active = considered.some((entry) => {
     if (entry.runFamilies.length > 0) return true;

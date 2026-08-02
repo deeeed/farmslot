@@ -770,10 +770,10 @@ export async function runInteractiveDevResolve(
     updateRun(run.id, { engineState: appendInteractiveDevAction(run.id, params, run) });
     return {
       ok: true,
-      ...(await runCancel(
-        { runId: run.id, reason: params.reason ?? 'Interactive dev aborted by operator' },
-        emit,
-      )),
+      ...(await runCancel({
+        runId: run.id,
+        reason: params.reason ?? 'Interactive dev aborted by operator',
+      })),
     };
   }
 

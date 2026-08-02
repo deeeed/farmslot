@@ -133,12 +133,27 @@ export function cancelTransitionDeps(collaborators: CancelCollaborators): RunTra
 }
 
 /**
+ * Publishes to every connected client, not just a requesting socket.
+ *
+ * A cancel is terminal and changes state every client renders. Leaving
+ * publication to the caller made reach depend on which emitter that caller
+ * happened to hold: the RPC route's per-request `emit` reaches one socket, while
+ * `chat.confirmAction` and `run.interactiveDevResolve` hold their own. Owning it
+ * here makes every cancel entry point publish identically.
+ *
+ * Imported lazily for the same reason `chat-tools.ts` does it: a static import
+ * would close a server -> run-lifecycle -> server cycle.
+ */
+async function broadcastTransitionEvent(event: string, payload: unknown): Promise<void> {
+  const { broadcastEvent } = await import('../server.js');
+  broadcastEvent(event, payload);
+}
+
+/**
  * Production collaborators. Slot teardown is imported lazily to keep the
  * `core`/`methods/slot` chain out of the transition module's import graph.
  */
-export function defaultCancelCollaborators(
-  emit: (event: string, payload: unknown) => void,
-): CancelCollaborators {
+export function defaultCancelCollaborators(): CancelCollaborators {
   return {
     cancelEngine: cancelRunEngine,
     invalidateWarmSessions: invalidateWarmReviewerSessions,
@@ -155,9 +170,15 @@ export function defaultCancelCollaborators(
       // can have stale/null flow metadata while their worker lives elsewhere.
       await killAgentInSession(vars, run.metrics.runner ?? undefined);
       await resetSlot(run.slotId!, true);
-      emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+      await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
       console.log(`[run-lifecycle] released slot ${run.slotId} on cancel`);
     },
-    emit,
+    emit: (event, payload) => {
+      void broadcastTransitionEvent(event, payload).catch((err) => {
+        console.warn(
+          `[run-lifecycle] broadcast of ${event} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    },
   };
 }

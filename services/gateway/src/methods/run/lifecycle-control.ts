@@ -29,10 +29,12 @@ import { getRun, updateRun } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
-export async function runCancel(params: RunCancelParams, emit: Emit): Promise<RunCancelResult> {
-  // ADR-052: propagation to backlog / work graph / slot is the router's job. This
-  // handler holds the per-request `emit`, which only reaches the requesting socket,
-  // so the index.ts event interceptor never sees an operator cancel.
+/**
+ * Takes no emitter: ADR-052 makes the transition own both store propagation and
+ * global publication. Passing one in is what made a cancel's reach depend on
+ * which caller invoked it.
+ */
+export async function runCancel(params: RunCancelParams): Promise<RunCancelResult> {
   const { run } = await routeRunTransition(
     {
       kind: 'cancel',
@@ -40,7 +42,7 @@ export async function runCancel(params: RunCancelParams, emit: Emit): Promise<Ru
       actor: 'operator',
       ...(params.reason ? { reason: params.reason } : {}),
     },
-    cancelTransitionDeps(defaultCancelCollaborators(emit)),
+    cancelTransitionDeps(defaultCancelCollaborators()),
   );
 
   return { run };

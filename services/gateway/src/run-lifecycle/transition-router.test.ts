@@ -274,6 +274,67 @@ test('the production backlog collaborator no longer swallows its own rejection',
   );
 
   // A run with no linked backlog item is a legitimate no-op, not a failure.
-  const collaborators = defaultCancelCollaborators(() => {});
+  const collaborators = defaultCancelCollaborators();
   await collaborators.settleBacklog({ id: 'run_without_backlog_link' } as Run);
+});
+
+test('concurrent cancels are serialized; only the first transitions the run', async () => {
+  // Codex round-2 blocker: the terminal guard ran before the awaited `before`
+  // effects, which yield. Two concurrent cancels both passed it and both ran the
+  // whole chain — duplicate mutation, duplicate broadcast, and a stale second slot
+  // release that can free a slot another run has since claimed.
+  const h = harness(run({ workGraphId: 'wg_1' }), {
+    cancelEngine: () => {
+      h.calls.push('cancelEngine');
+    },
+    settleBacklog: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      h.calls.push('settleBacklog');
+    },
+  });
+
+  const [first, second] = await Promise.allSettled([
+    routeRunTransition(cancelRequest, h.deps),
+    routeRunTransition(cancelRequest, h.deps),
+  ]);
+
+  assert.equal(first.status, 'fulfilled');
+  assert.equal(second.status, 'rejected');
+  assert.match((second as PromiseRejectedResult).reason.message, /already in terminal state/);
+
+  // Exactly one of each side effect, not two.
+  const count = (name: string) => h.calls.filter((call) => call === name).length;
+  assert.equal(count('settleBacklog'), 1);
+  assert.equal(count('tickWorkGraph'), 1);
+  assert.equal(count('releaseSlot'), 1, 'a duplicate release could free a reclaimed slot');
+  assert.equal(count('emit:run.updated'), 1);
+});
+
+test('a queued transition sees state left by the one ahead of it', async () => {
+  const h = harness(run());
+  await routeRunTransition(cancelRequest, h.deps);
+  // Guard re-evaluates inside the lock, not against the state it queued with.
+  await assert.rejects(
+    () => routeRunTransition(cancelRequest, h.deps),
+    /already in terminal state: cancelled/,
+  );
+});
+
+test('a publish failure is recorded but never aborts store settlement', async () => {
+  const h = harness(run({ workGraphId: 'wg_1' }));
+  const deps = {
+    ...h.deps,
+    onMutated: () => {
+      throw new Error('socket gone');
+    },
+  };
+
+  const result = await routeRunTransition(cancelRequest, deps);
+
+  const publish = result.effects.find((effect) => effect.name === 'publish')!;
+  assert.equal(publish.status, 'failed');
+  assert.match(publish.detail!, /socket gone/);
+  // The stores still settled — a dead client must not strand backlog/graph state.
+  assert.ok(h.calls.includes('settleBacklog'));
+  assert.ok(h.calls.includes('tickWorkGraph'));
 });

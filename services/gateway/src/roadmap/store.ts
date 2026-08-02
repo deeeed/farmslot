@@ -511,6 +511,7 @@ function deliveryProjectionFor(
 ): RoadmapDeliveryProjection[] {
   const runsByBacklogItemId = buildRunIndexByBacklogItem(getAllRuns());
   const backlogByRoadmapItemId = buildBacklogIndexByRoadmapItem(backlogItems);
+  const backlogById = new Map(backlogItems.map((entry) => [entry.id, entry]));
   const generatedAt = new Date().toISOString();
   return items.map((item) =>
     buildRoadmapDeliveryProjection({
@@ -518,6 +519,7 @@ function deliveryProjectionFor(
       backlogItems,
       runsByBacklogItemId,
       backlogByRoadmapItemId,
+      backlogById,
       generatedAt,
     }),
   );

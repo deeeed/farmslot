@@ -482,10 +482,10 @@ export async function executeTool(
         const id = String(args.run_id ?? '');
         const run = getRun(id) ?? listRuns({ limit: 200 }).runs.find((r) => r.id.startsWith(id));
         if (!run) throw new Error(`Run not found: ${id}`);
-        const { run: cancelled } = await runCancel(
-          { runId: run.id, reason: String(args.reason ?? 'Cancelled via co-pilot') },
-          emit,
-        );
+        const { run: cancelled } = await runCancel({
+          runId: run.id,
+          reason: String(args.reason ?? 'Cancelled via co-pilot'),
+        });
         result = { cancelled: true, runId: cancelled.id.slice(0, 8), status: cancelled.status };
         break;
       }

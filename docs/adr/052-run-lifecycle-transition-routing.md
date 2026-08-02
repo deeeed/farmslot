@@ -119,7 +119,21 @@ Effect ordering for `cancel`:
 | 5   | `work-graph-tick` | advisory | Only when `run.workGraphId`, and skipped outright if the settle failed — scheduling against a backlog we know is stale is the redispatch bug this router exists to prevent. |
 | 6   | `slot-release`    | advisory | tmux/window cleanup is slow and must not block the terminal state.                                                                                                          |
 
-`markBacklogRunObserved` changes its return type from `void` to `Promise<void>` so step 4 can be awaited. It already catches internally, so existing fire-and-forget callers are unaffected.
+`markBacklogRunObserved` changes its return type from `void` to `Promise<void>` **and stops
+catching its own rejection**, so `backlog-settle` can distinguish a failed settle from a successful
+one. Without that, the effect always reported `ok` and `work-graph-tick` scheduled against state that
+never settled. The one fire-and-forget caller — the `observedBroadcast` interceptor — attaches its
+own handler.
+
+Transitions are serialized per run. The terminal guard is only meaningful if nothing interleaves
+between it and the mutation, and `before` effects await; without the lock, two concurrent cancels
+both pass the guard and both run the chain, including a stale second slot release that can free a
+slot another run has already claimed.
+
+Publication is owned by the transition, not the caller. Passing an emitter in made a cancel's reach
+depend on which entry point invoked it: the RPC route's per-request `emit` reaches one socket, while
+`chat.confirmAction` and `run.interactiveDevResolve` hold their own. `runCancel` now takes no
+emitter and broadcasts globally.
 
 **Scope of this ADR's first slice:** `cancel` only. `dispatch`, `complete`, `fail`, `block` and `resume` keep their current paths until migrated. The `observedBroadcast` interceptor stays until every transition has moved, then is deleted.
 
