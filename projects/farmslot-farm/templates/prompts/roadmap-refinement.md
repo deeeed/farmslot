@@ -120,7 +120,10 @@ Tags: `<tag>`, `<tag>`
 ```
 
 Each draft must include a promotion-valid `## Acceptance Criteria` section and
-references needed by a future runner. Do not dispatch them yourself.
+references needed by a future runner. Write acceptance criteria as plain `- `
+bullets — never `- [ ]` checkboxes. Checkbox syntax is reserved for worker
+checklists; the dispatcher strips checkbox markers from ACs, but plain bullets
+are the contract. Do not dispatch them yourself.
 
 When the roadmap item is refined and the backlog drafts are ready, ask the
 operator whether to request promotion review. If they confirm, request human
