@@ -4,6 +4,8 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+## 0.6.0 - 2026-08-02
+
 - feat: drive swipe, pan, drag, and `hold_ms` long-press recipe actions through the assigned native device, select Android devices by ADB serial, retry failed tool/device discovery, reject unsupported native paths before execution, and retain resolved coordinate phases.
 
 ## 0.5.0 - 2026-08-01
