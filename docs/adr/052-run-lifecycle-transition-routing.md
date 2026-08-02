@@ -98,20 +98,26 @@ interface RunTransitionRequest {
 The router:
 
 1. **Guards** — rejects a missing run or an already-terminal run before mutating anything.
-2. **Mutates** the run store once, through `updateRun`.
-3. **Runs effects in declared order**, awaiting each. Effects are `required` (failure aborts the transition) or `advisory` (failure is recorded on the result and logged, never swallowed).
-4. **Emits** the UI event last, after the stores agree.
+2. **Runs `before` effects**, awaiting each. These are the steps that must happen while the run is
+   still non-terminal (stopping the engine, invalidating warm reviewer sessions).
+3. **Mutates** the run store once, through `updateRun`.
+4. **Publishes** the terminal state immediately through `onMutated`, _before_ the `after` effects.
+   The UI must not wait on slow teardown; slot release alone can take seconds of tmux work.
+5. **Runs `after` effects in declared order**, awaiting each — this is where the other aggregates
+   are settled. Effects are `required` (failure aborts the transition) or `advisory` (failure is
+   recorded on the result and logged, never swallowed). An effect may inspect earlier outcomes and
+   refuse to act on state a prior effect failed to settle.
 
 Effect ordering for `cancel`:
 
-| #   | Effect            | Severity | Rationale                                                                       |
-| --- | ----------------- | -------- | ------------------------------------------------------------------------------- |
-| 1   | `engine-cancel`   | required | Stop the engine before publishing a terminal state, so no step writes after it. |
-| 2   | `warm-sessions`   | required | A cancelled run's warm reviewer sessions must never be resumable.               |
-| 3   | _(core mutation)_ | —        | Terminal status, skipped steps, `outcome: 'cancelled'`.                         |
-| 4   | `backlog-settle`  | advisory | Awaited, so the graph cannot read a pre-settle backlog.                         |
-| 5   | `work-graph-tick` | advisory | Only when `run.workGraphId`; runs after the backlog settle.                     |
-| 6   | `slot-release`    | advisory | tmux/window cleanup is slow and must not block the terminal state.              |
+| #   | Effect            | Severity | Rationale                                                                                                                                                                   |
+| --- | ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `engine-cancel`   | required | Stop the engine before publishing a terminal state, so no step writes after it.                                                                                             |
+| 2   | `warm-sessions`   | required | A cancelled run's warm reviewer sessions must never be resumable.                                                                                                           |
+| 3   | _(core mutation)_ | —        | Terminal status, skipped steps, `outcome: 'cancelled'`.                                                                                                                     |
+| 4   | `backlog-settle`  | advisory | Awaited, so the graph cannot read a pre-settle backlog. Propagates failure.                                                                                                 |
+| 5   | `work-graph-tick` | advisory | Only when `run.workGraphId`, and skipped outright if the settle failed — scheduling against a backlog we know is stale is the redispatch bug this router exists to prevent. |
+| 6   | `slot-release`    | advisory | tmux/window cleanup is slow and must not block the terminal state.                                                                                                          |
 
 `markBacklogRunObserved` changes its return type from `void` to `Promise<void>` so step 4 can be awaited. It already catches internally, so existing fire-and-forget callers are unaffected.
 

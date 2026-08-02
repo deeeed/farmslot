@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import { type CancelCollaborators, cancelPlan } from './cancel-transition.js';
+import {
+  type CancelCollaborators,
+  cancelPlan,
+  defaultCancelCollaborators,
+} from './cancel-transition.js';
 import {
   type RunTransitionDeps,
   type RunTransitionRequest,
@@ -228,4 +232,48 @@ test('a missing run is rejected', async () => {
   const h = harness(run());
   const deps: RunTransitionDeps = { ...h.deps, getRun: () => undefined };
   await assert.rejects(() => routeRunTransition(cancelRequest, deps), /Run not found: run_1/);
+});
+
+test('a failed backlog settle blocks the work-graph tick instead of scheduling on stale state', async () => {
+  // Codex round-1 blocker: `markBacklogRunObserved` used to swallow its own
+  // rejection, so `backlog-settle` always reported ok and the scheduler could tick
+  // against a backlog that never settled — the redispatch shape of #466.
+  const h = harness(run({ workGraphId: 'wg_1' }), {
+    settleBacklog: async () => {
+      throw new Error('backlog persist failed');
+    },
+  });
+
+  const result = await routeRunTransition(cancelRequest, h.deps);
+
+  const settle = result.effects.find((effect) => effect.name === 'backlog-settle')!;
+  assert.equal(settle.status, 'failed');
+  assert.match(settle.detail!, /backlog persist failed/);
+
+  const tick = result.effects.find((effect) => effect.name === 'work-graph-tick')!;
+  assert.equal(tick.status, 'skipped');
+  assert.match(tick.detail!, /stale backlog state/);
+  assert.equal(h.calls.includes('tickWorkGraph'), false, 'must not schedule on stale state');
+
+  // The run still reaches its terminal state, and slot teardown still runs.
+  assert.equal(result.run.status, 'cancelled');
+  assert.ok(h.calls.includes('releaseSlot'));
+});
+
+test('the production backlog collaborator no longer swallows its own rejection', async () => {
+  // Guards the blocker fix at its source. `markBacklogRunObserved` used to end in
+  // `.catch(err => console.error(...))`, so it always resolved and the router could
+  // not distinguish a failed settle from a successful one. This is a regression
+  // guard on that specific shape; the behavioural consequence is covered by the
+  // stale-state test above.
+  const { markBacklogRunObserved } = await import('../backlog/store.js');
+  assert.equal(
+    /\.catch\s*\(/.test(markBacklogRunObserved.toString()),
+    false,
+    'markBacklogRunObserved must let the settle rejection reach its caller',
+  );
+
+  // A run with no linked backlog item is a legitimate no-op, not a failure.
+  const collaborators = defaultCancelCollaborators(() => {});
+  await collaborators.settleBacklog({ id: 'run_without_backlog_link' } as Run);
 });

@@ -2267,8 +2267,10 @@ export async function reconcileBacklogRun(
 
 /**
  * Returns the settle promise so ADR-052's transition router can await it before
- * ticking the work graph. Fire-and-forget callers (the index.ts event interceptor)
- * may keep ignoring it — rejections are already caught below.
+ * ticking the work graph, and **propagates failure** — a router that cannot tell a
+ * failed settle from a successful one would tick the scheduler against stale
+ * backlog state while reporting `ok`. Fire-and-forget callers must attach their own
+ * `.catch`.
  */
 export function markBacklogRunObserved(run: Run): Promise<void> {
   return withBacklogMutation(async () => {
@@ -2301,8 +2303,6 @@ export function markBacklogRunObserved(run: Run): Promise<void> {
       schedulePersist('run-observed');
       broadcastBacklog();
     }
-  }).catch((err) => {
-    console.error(`[backlog] failed to observe run: ${(err as Error).message}`);
   });
 }
 

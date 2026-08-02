@@ -14,6 +14,7 @@ import { invalidateWarmReviewerSessions } from '../self-review/session-policy.js
 import { schedulerTick } from '../work-graph/store.js';
 
 import {
+  effectFailed,
   type RunTransitionDeps,
   type RunTransitionEffect,
   type RunTransitionPlan,
@@ -65,8 +66,17 @@ function cancelEffects(collaborators: CancelCollaborators): {
         name: 'work-graph-tick',
         severity: 'advisory',
         // Ordered after the settle: the scheduler reads backlog state, so ticking
-        // first would let it act on a pre-cancel item.
-        apply: async ({ run }) => {
+        // first would let it act on a pre-cancel item. If the settle actually
+        // failed, ticking would schedule against state we know is stale — the
+        // exact shape of the redispatch bug this router exists to prevent — so
+        // bail and leave the periodic reconciler to recover.
+        apply: async ({ run, outcomes }) => {
+          if (effectFailed(outcomes, 'backlog-settle')) {
+            return {
+              status: 'skipped' as const,
+              detail: 'backlog-settle failed; refusing to schedule against stale backlog state',
+            };
+          }
           if (!run.workGraphId) return 'skipped';
           await collaborators.tickWorkGraph(run.workGraphId);
           return 'ok';

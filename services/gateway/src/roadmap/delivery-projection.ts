@@ -45,6 +45,24 @@ const IN_FLIGHT_BACKLOG_STATUSES = new Set<BacklogItem['status']>([
 ]);
 
 /**
+ * Index backlog items by the roadmap item they claim. Built once per request for
+ * the same reason as the run index: without it, a roadmap list with N rows scans
+ * the whole backlog N times.
+ */
+export function buildBacklogIndexByRoadmapItem(
+  backlogItems: readonly BacklogItem[],
+): Map<string, BacklogItem[]> {
+  const index = new Map<string, BacklogItem[]>();
+  for (const backlogItem of backlogItems) {
+    if (!backlogItem.roadmapItemId) continue;
+    const bucket = index.get(backlogItem.roadmapItemId);
+    if (bucket) bucket.push(backlogItem);
+    else index.set(backlogItem.roadmapItemId, [backlogItem]);
+  }
+  return index;
+}
+
+/**
  * Index every run by the backlog item it carried. Built once per request so a
  * roadmap list with N rows does not scan the whole run store N times.
  */
@@ -178,6 +196,8 @@ export interface RoadmapDeliveryProjectionInput {
   /** Complete backlog store contents, including archived items. */
   backlogItems: readonly BacklogItem[];
   runsByBacklogItemId: ReadonlyMap<string, Run[]>;
+  /** Optional prebuilt index; derived from `backlogItems` when omitted. */
+  backlogByRoadmapItemId?: ReadonlyMap<string, BacklogItem[]>;
   generatedAt: string;
 }
 
@@ -185,6 +205,8 @@ export function buildRoadmapDeliveryProjection(
   input: RoadmapDeliveryProjectionInput,
 ): RoadmapDeliveryProjection {
   const { item, backlogItems, runsByBacklogItemId, generatedAt } = input;
+  const backlogByRoadmapItemId =
+    input.backlogByRoadmapItemId ?? buildBacklogIndexByRoadmapItem(backlogItems);
   const byId = new Map(backlogItems.map((backlogItem) => [backlogItem.id, backlogItem]));
   const findings: RoadmapDeliveryFinding[] = [];
 
@@ -193,9 +215,9 @@ export function buildRoadmapDeliveryProjection(
     if (!entry.backlogItemId) continue;
     if (!promotionIds.includes(entry.backlogItemId)) promotionIds.push(entry.backlogItemId);
   }
-  const canonicalIds = backlogItems
-    .filter((backlogItem) => backlogItem.roadmapItemId === item.id)
-    .map((backlogItem) => backlogItem.id);
+  const canonicalIds = (backlogByRoadmapItemId.get(item.id) ?? []).map(
+    (backlogItem) => backlogItem.id,
+  );
 
   const linkSources = new Map<string, RoadmapDeliveryLinkSource>();
   for (const id of promotionIds) linkSources.set(id, 'promotion');

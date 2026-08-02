@@ -49,13 +49,33 @@ export interface RunTransitionEffectContext {
   /** The run after the core mutation. */
   run: Run;
   request: RunTransitionRequest;
+  /**
+   * Outcomes of the effects that already ran in this transition. Lets a later
+   * effect refuse to act on state an earlier one failed to settle, instead of
+   * silently operating on a stale read.
+   */
+  outcomes: readonly RunTransitionEffectOutcome[];
 }
+
+/** Return a bare status, or pair it with a reason worth surfacing on the result. */
+export type RunTransitionEffectOutcomeInput =
+  | RunTransitionEffectStatus
+  | { status: RunTransitionEffectStatus; detail: string }
+  | void;
 
 export interface RunTransitionEffect {
   name: string;
   severity: RunTransitionEffectSeverity;
   /** Return 'skipped' when the effect does not apply to this run. */
-  apply(context: RunTransitionEffectContext): Promise<RunTransitionEffectStatus | void>;
+  apply(context: RunTransitionEffectContext): Promise<RunTransitionEffectOutcomeInput>;
+}
+
+/** True when a named effect ran and failed; used by dependent effects to bail. */
+export function effectFailed(
+  outcomes: readonly RunTransitionEffectOutcome[],
+  name: string,
+): boolean {
+  return outcomes.some((outcome) => outcome.name === name && outcome.status === 'failed');
 }
 
 export interface RunTransitionPlan {
@@ -81,13 +101,17 @@ export interface RunTransitionDeps {
 
 async function runEffects(
   effects: readonly RunTransitionEffect[],
-  context: RunTransitionEffectContext,
+  context: Omit<RunTransitionEffectContext, 'outcomes'>,
   outcomes: RunTransitionEffectOutcome[],
 ): Promise<void> {
   for (const effect of effects) {
     try {
-      const status = (await effect.apply(context)) ?? 'ok';
-      outcomes.push({ name: effect.name, status });
+      const returned = (await effect.apply({ ...context, outcomes })) ?? 'ok';
+      outcomes.push(
+        typeof returned === 'string'
+          ? { name: effect.name, status: returned }
+          : { name: effect.name, status: returned.status, detail: returned.detail },
+      );
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       if (effect.severity === 'required') {

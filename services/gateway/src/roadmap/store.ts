@@ -4,6 +4,7 @@ import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/pro
 import path from 'node:path';
 
 import {
+  type BacklogItem,
   DEFAULT_ROADMAP_REFINEMENT_MODEL,
   DEFAULT_ROADMAP_REFINEMENT_RUNNER,
   isConcreteRoadmapProject,
@@ -73,6 +74,7 @@ import { getAllRuns } from '../runs/store.js';
 import { listWorkGraphs } from '../work-graph/store.js';
 
 import {
+  buildBacklogIndexByRoadmapItem,
   buildPlanningContextProjection,
   buildRoadmapDeliveryProjection,
   buildRunIndexByBacklogItem,
@@ -503,20 +505,29 @@ function itemMatchesSearch(item: RoadmapItem, search: string | undefined): boole
  * from a caller-supplied page. `listBacklogItems({ includeArchived: true })` is
  * required so an archived-but-shipped link stays visible as provenance.
  */
-function deliveryProjectionFor(items: readonly RoadmapItem[]): RoadmapDeliveryProjection[] {
-  const backlogItems = listBacklogItems({ includeArchived: true }).items;
+function deliveryProjectionFor(
+  items: readonly RoadmapItem[],
+  backlogItems: readonly BacklogItem[] = listBacklogItems({ includeArchived: true }).items,
+): RoadmapDeliveryProjection[] {
   const runsByBacklogItemId = buildRunIndexByBacklogItem(getAllRuns());
+  const backlogByRoadmapItemId = buildBacklogIndexByRoadmapItem(backlogItems);
   const generatedAt = new Date().toISOString();
   return items.map((item) =>
-    buildRoadmapDeliveryProjection({ item, backlogItems, runsByBacklogItemId, generatedAt }),
+    buildRoadmapDeliveryProjection({
+      item,
+      backlogItems,
+      runsByBacklogItemId,
+      backlogByRoadmapItemId,
+      generatedAt,
+    }),
   );
 }
 
 function planningContextFor(
   item: RoadmapItem,
   delivery: RoadmapDeliveryProjection,
+  backlogItems: readonly BacklogItem[],
 ): PlanningContextProjection {
-  const backlogItems = listBacklogItems({ includeArchived: true }).items;
   // The roadmap item's own planning context is anchored on its first canonical
   // backlog link, which is where WorkGraph relations (if any) live.
   const backlogItem = backlogItems.find((entry) => entry.roadmapItemId === item.id);
@@ -572,8 +583,11 @@ export async function getRoadmapItem(params: RoadmapGetParams): Promise<RoadmapG
   if (!params.itemId?.trim()) throw new Error('roadmap.get requires itemId');
   const item = await findRoadmapItemById(params.itemId.trim());
   if (!item) throw new Error(`Roadmap item not found: ${params.itemId}`);
-  const delivery = deliveryProjectionFor([item])[0];
-  return { item, delivery, planningContext: planningContextFor(item, delivery) };
+  // One backlog snapshot feeds both projections: they must agree, and a second
+  // scan could observe a concurrent backlog mutation between them.
+  const backlogItems = listBacklogItems({ includeArchived: true }).items;
+  const delivery = deliveryProjectionFor([item], backlogItems)[0];
+  return { item, delivery, planningContext: planningContextFor(item, delivery, backlogItems) };
 }
 
 export async function getRoadmapPrompt(
