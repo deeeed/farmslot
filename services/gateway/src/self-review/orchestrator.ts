@@ -24,6 +24,7 @@ import {
 import {
   markAgentContextStatus,
   resolveAgentTarget,
+  selectAgentContext,
   upsertAgentContext,
 } from '../agents/contexts.js';
 import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
@@ -42,14 +43,15 @@ import {
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
-  sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
+import { deliverPromptWithRetainedFallback } from '../runners/session-reactivation.js';
 import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
@@ -120,6 +122,8 @@ export interface SelfReviewOptions {
   publicationReview?: boolean | null;
   /** Overrides project self_review.session_policy for this review loop. */
   reviewSessionPolicy?: ReviewSessionPolicy | null;
+  /** Continue an operator-approved fix loop from findings already produced by this run. */
+  resumeFromResult?: SelfReviewResult;
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
@@ -245,6 +249,64 @@ export async function executeSelfReview(
         model,
         crossRunner: isCrossRunnerReview,
       };
+
+    if (options.resumeFromResult) {
+      if (
+        options.resumeFromResult.verdict !== 'issues' ||
+        !options.resumeFromResult.issues?.length
+      ) {
+        return {
+          ...options.resumeFromResult,
+          runner: reviewRunner,
+          model,
+          crossRunner: isCrossRunnerReview,
+        };
+      }
+      const priorAttempts = options.resumeFromResult.attempts ?? [];
+      const priorRetryCount = options.resumeFromResult.retryCount;
+      const previousAttempt = options.resumeFromResult.attempts?.at(-1);
+      const initialReviewResult: ReviewAgentResult = {
+        verdict: 'issues',
+        issues: options.resumeFromResult.issues ?? [],
+        validationDepth: options.resumeFromResult.validationDepth,
+        usage: options.resumeFromResult.usage,
+        reviewSnapshot: options.resumeFromResult.reviewSnapshot,
+        fixDelta: options.resumeFromResult.fixDelta,
+        artifactPaths: previousAttempt?.artifactPaths,
+        taskProgressArtifactPath: options.resumeFromResult.taskProgressArtifactPath,
+        timeline: options.resumeFromResult.timeline,
+        startedAt: previousAttempt?.startedAt,
+        completedAt: previousAttempt?.completedAt,
+      };
+      const retryResult = await runSelfReviewRetryLoop({
+        vars,
+        taskDir,
+        slotId,
+        runId,
+        start,
+        workerRunner,
+        reviewRunner,
+        model,
+        // An explicit operator "send feedback" action authorizes one fix pass
+        // even when automatic self-review retries are disabled for the project.
+        maxRetries: Math.max(priorRetryCount + 1, maxRetries),
+        reviewTimeoutMs,
+        reviewResult: initialReviewResult,
+        retryCount: priorRetryCount,
+        priorAttempts,
+        feedbackAlreadySent: options.resumeFromResult.feedbackSent,
+        validationDepth,
+        artifactScope,
+        sessionPolicy,
+      });
+      return {
+        ...retryResult,
+        usage: retryResult.attempts?.at(-1)?.usage,
+        runner: reviewRunner,
+        model,
+        crossRunner: isCrossRunnerReview,
+      };
+    }
 
     // First review pass
     debugSelfReviewLog(
@@ -455,6 +517,7 @@ export async function runSelfReviewRetryLoop({
   artifactScope = null,
   sessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
   feedbackAlreadySent = false,
+  priorAttempts = [],
   deps = PRODUCTION_DEPS,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -473,11 +536,15 @@ export async function runSelfReviewRetryLoop({
   artifactScope?: string | null;
   sessionPolicy?: ReviewSessionPolicy;
   feedbackAlreadySent?: boolean;
+  priorAttempts?: IndependentReviewAttempt[];
   deps?: SelfReviewRetryDeps;
 }): Promise<SelfReviewResult> {
   let result = reviewResult;
   let feedbackSent = feedbackAlreadySent;
-  const attempts: IndependentReviewAttempt[] = [reviewAttemptFromResult(result, retryCount + 1)];
+  const attempts: IndependentReviewAttempt[] =
+    priorAttempts.length > 0
+      ? [...priorAttempts]
+      : [reviewAttemptFromResult(result, retryCount + 1)];
 
   while (result.verdict === 'issues' && result.issues.length > 0 && retryCount < maxRetries) {
     console.log(
@@ -1014,6 +1081,7 @@ export async function retryDeferredFixDelivery({
   rediscover,
   persistTarget,
   getRun: getRunDep,
+  shouldAbort = () => false,
   retryIntervalMs = SELF_REVIEW_DELIVERY_RETRY_INTERVAL_MS,
   retryWindowMs = SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS,
 }: {
@@ -1023,6 +1091,7 @@ export async function retryDeferredFixDelivery({
   rediscover: (storedTarget: string) => Promise<WorkerPaneRediscovery>;
   persistTarget: (target: string, window: string | null) => Promise<void>;
   getRun: typeof getRun;
+  shouldAbort?: () => boolean;
   retryIntervalMs?: number;
   retryWindowMs?: number;
 }): Promise<FixDeliveryRetryResult> {
@@ -1031,7 +1100,7 @@ export async function retryDeferredFixDelivery({
   let sent = false;
   let attempt = 1;
   let seenWindows: string[] = [];
-  while (!sent && Date.now() < deadline) {
+  while (!sent && !shouldAbort() && Date.now() < deadline) {
     const current = getRunDep(runId);
     if (!current || isTerminalRunStatus(current.status)) {
       console.warn(
@@ -1121,6 +1190,7 @@ async function sendFeedbackToWorker(
   const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
   await removeSlotFiles(vars, [fixSignalPath]);
   const fixSignalBaseline = await readOptionalSlotFile(vars, fixSignalPath);
+  const fixLaunchAckBaseline = await readLaunchAckSignalSnapshot(vars, fixSignalPath);
 
   // Write the fix task to a file on the slot
   await writeTextFileOnSlot(
@@ -1136,9 +1206,9 @@ async function sendFeedbackToWorker(
     updateRun(runId, { activeTaskFile: fixTaskRel });
     const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
     const session = primaryTarget.session;
-    const roleWindowName =
-      getRun(runId)?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run?.flowType))
-        ?.target?.window ?? null;
+    const currentRun = getRun(runId);
+    const primaryContext = currentRun ? selectAgentContext(currentRun, { role: 'primary' }) : null;
+    const roleWindowName = primaryContext?.target?.window ?? null;
     let workerTarget = await ensureTmuxTargetReadyForRelaunch(
       vars,
       session,
@@ -1169,18 +1239,57 @@ async function sendFeedbackToWorker(
       taskFile: fixTaskFile,
       taskDir,
     });
-    let sent = await sendRunnerInstructionSafely(
-      vars,
-      workerTarget,
-      normalizeRunner(run?.metrics.runner),
-      cmd,
-      'self-review',
-      undefined,
-      // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-      { recovery: { runId } },
-    );
+    const runner = normalizeRunner(run?.metrics.runner);
+    let lastRetainedHoldReason: string | null = null;
+    let terminalRetainedHoldReason: string | null = null;
+    let structuredDeliveryAccepted = false;
+    let promptSendAttempted = false;
+    const loggedRetainedHoldReasons = new Set<string>();
+    const deliverFixPrompt = async (target: string, forceBusyPoll = false): Promise<boolean> => {
+      if (terminalRetainedHoldReason) return false;
+      const latestRun = getRun(runId);
+      const latestPrimaryContext = latestRun
+        ? selectAgentContext(latestRun, { role: 'primary' })
+        : null;
+      const deliveryOptions = {
+        vars,
+        target,
+        runnerId: runner,
+        sessionId: latestPrimaryContext?.runnerSessionId,
+        sessionPath: latestPrimaryContext?.runnerSessionPath,
+        model: latestRun?.metrics.model,
+        effort: latestRun?.effort,
+        prompt: cmd,
+        safetyTier: latestRun?.safetyTier,
+        runtimeDir,
+        taskDir,
+        launchAckSignalPath: fixSignalPath,
+        launchAckBaseline: fixLaunchAckBaseline,
+        priorPromptSendAttempted: promptSendAttempted,
+        recovery: { runId },
+        sendLogPrefix: 'self-review',
+        forceBusyPoll,
+      };
+      const retained = await deliverPromptWithRetainedFallback(deliveryOptions);
+      promptSendAttempted = true;
+      if (retained.delivered) {
+        structuredDeliveryAccepted = retained.acknowledgement === 'structured';
+        return true;
+      }
+      if (retained.disposition === 'hold') {
+        lastRetainedHoldReason = retained.reason;
+        if (retained.retryable === false) terminalRetainedHoldReason = retained.reason;
+        if (!loggedRetainedHoldReasons.has(retained.reason)) {
+          loggedRetainedHoldReasons.add(retained.reason);
+          console.warn(`[self-review] retained worker handoff held: ${retained.reason}`);
+        }
+        return false;
+      }
+      return false;
+    };
+    let sent = await deliverFixPrompt(workerTarget);
     let deliverySeenWindows: string[] = [];
-    if (!sent) {
+    if (!sent && !terminalRetainedHoldReason) {
       // A busy worker is the NORMAL state of a healthy worker — it is usually
       // busy doing this very run's work when the review lands. Two immediate
       // probes failed the same run three times in one day (02866fe6) while the
@@ -1192,24 +1301,9 @@ async function sendFeedbackToWorker(
       const retry = await retryDeferredFixDelivery({
         runId,
         target: workerTarget,
-        send: (retryTarget) =>
-          sendRunnerInstructionSafely(
-            vars,
-            retryTarget,
-            normalizeRunner(run?.metrics.runner),
-            cmd,
-            'self-review',
-            undefined,
-            // ADR-032 Phase 3A: persist a hook-only degraded hold through the ADR-031 audit.
-            { forceBusyPoll: true, recovery: { runId } },
-          ),
+        send: (retryTarget) => deliverFixPrompt(retryTarget, true),
         rediscover: (storedTarget) =>
-          rediscoverAcceptingWorkerPane(
-            vars,
-            session,
-            normalizeRunner(run?.metrics.runner),
-            storedTarget,
-          ),
+          rediscoverAcceptingWorkerPane(vars, session, runner, storedTarget),
         persistTarget: async (adopted, window) => {
           const corrected = { session, window, pane: null, target: adopted };
           await upsertAgentContext(runId, 'self-review-fix', { target: corrected });
@@ -1221,6 +1315,7 @@ async function sendFeedbackToWorker(
           }
         },
         getRun,
+        shouldAbort: () => terminalRetainedHoldReason != null,
       });
       sent = retry.sent;
       workerTarget = retry.target;
@@ -1228,7 +1323,7 @@ async function sendFeedbackToWorker(
       console.log(
         `[self-review] run ${runId.slice(0, 8)} — fix task ${sent ? `sent after ${retry.attempts} attempt(s)` : `NOT delivered after ${retry.attempts} attempt(s) over ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min`}: ${fixTaskFile}`,
       );
-    } else {
+    } else if (sent) {
       // Always-on: delivery state is the first question when a fix loop stalls.
       console.log(`[self-review] run ${runId.slice(0, 8)} — fix task sent: ${fixTaskFile}`);
     }
@@ -1241,10 +1336,17 @@ async function sendFeedbackToWorker(
       await unwatchContext(vars.slotId, 'self-review-fix');
       const seenSummary =
         deliverySeenWindows.length > 0 ? deliverySeenWindows.join('; ') : 'none inspected';
+      const retainedSummary = lastRetainedHoldReason
+        ? ` Retained-session handoff: ${lastRetainedHoldReason}.`
+        : '';
+      const failureSummary = terminalRetainedHoldReason
+        ? 'self-review fix task delivery stopped after the retained runner was replaced but did not acknowledge the prompt'
+        : `self-review fix task delivery kept deferring for ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt`;
       throw new Error(
-        `self-review fix task delivery kept deferring for ${Math.round(SELF_REVIEW_DELIVERY_RETRY_WINDOW_MS / 60_000)}min — worker never accepted the prompt (${fixTaskFile}). Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: deliver it manually (tell the worker to read that file in its session), then replay the self-review step.`,
+        `${failureSummary} (${fixTaskFile}).${retainedSummary} Pane re-resolution found no accepting runner pane in session ${session} (windows seen: ${seenSummary}). Escape: replay the self-review step after restoring runner observability.`,
       );
     }
+    if (structuredDeliveryAccepted) return fixSignalBaseline;
     // sent=true only proves keystrokes were injected and Enter pressed. A
     // context-saturated REPL swallows delivered prompts with a frozen pane —
     // require FURTHER pane activity after the send. The
@@ -1400,6 +1502,8 @@ async function relaunchWorkerForFix(
     status: 'working',
     runner,
     model,
+    runnerSessionId: null,
+    runnerSessionPath: null,
     target: {
       session: resolved.session,
       window,

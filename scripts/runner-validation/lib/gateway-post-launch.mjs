@@ -105,3 +105,79 @@ try {
     stderr: result.stderr?.trim() || null,
   };
 }
+
+/** Invoke the production retained-session handoff against a local tmux target. */
+export function runGatewayRetainedHandoff({
+  repo,
+  target,
+  runner,
+  sessionId,
+  sessionPath,
+  prompt,
+  runnerPath,
+  model,
+  timeoutMs = 120_000,
+}) {
+  const snippet = `
+import os from 'node:os';
+import { deliverPromptToRetainedRunnerSession } from './services/gateway/src/runners/session-reactivation.ts';
+
+const vars = {
+  slotId: 'runner-validate-local',
+  machine: os.hostname(),
+  platform: 'local',
+  host: 'localhost',
+  sshUser: os.userInfo().username,
+  osType: process.platform === 'darwin' ? 'darwin' : 'linux',
+  claudePath: ${JSON.stringify(runner === 'claude' ? runnerPath : '')},
+  codexPath: ${JSON.stringify(runner === 'codex' ? runnerPath : '')},
+  opencodePath: '',
+  cursorPath: '',
+  grokPath: '',
+  dispatchCmd: '',
+  recycleCmd: '',
+  repo: ${JSON.stringify(repo)},
+  session: ${JSON.stringify(target)},
+  slotMode: 'dispatch',
+  slotEnabled: true,
+  sshTarget: \`\${os.userInfo().username}@localhost\`,
+  remoteRepo: ${JSON.stringify(repo)},
+  projectName: '',
+  resourceVars: {},
+};
+
+const result = await deliverPromptToRetainedRunnerSession({
+  vars,
+  target: ${JSON.stringify(target)},
+  runnerId: ${JSON.stringify(runner)},
+  sessionId: ${JSON.stringify(sessionId)},
+  sessionPath: ${JSON.stringify(sessionPath)},
+  model: ${JSON.stringify(model)},
+  prompt: ${JSON.stringify(prompt)},
+  runtimeDir: '.agent',
+  timeoutMs: ${timeoutMs},
+});
+console.log(JSON.stringify(result));
+if (!result.delivered) process.exit(1);
+`;
+
+  const result = spawnSync(process.execPath, ['--import', 'tsx', '-e', snippet], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: timeoutMs + 90_000,
+    env: {
+      ...process.env,
+      FARMSLOT_HOME: process.env.FARMSLOT_HOME ?? `${os.homedir()}/.farmslot-dev`,
+    },
+  });
+  const stdout = result.stdout?.trim() ?? '';
+  const jsonLine = stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
+  return {
+    result: jsonLine ? JSON.parse(jsonLine) : null,
+    exitCode: result.status,
+    error: result.stderr?.trim() || (!jsonLine ? stdout : null),
+  };
+}

@@ -3,7 +3,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { execOnSlot, isLocal, type loadSlotVars } from '../../core/index.js';
+import { execOnSlot, isLocal, type loadSlotVars, slotWriteFiles } from '../../core/index.js';
 
 export async function writeTextFileOnSlot(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -33,4 +33,20 @@ export async function writeTextFileOnSlot(
     'PY',
   ].join('\n');
   await execOnSlot(vars, remoteScript);
+}
+
+/** Write a potentially multi-megabyte artifact without a shell-string or Python round-trip. */
+export async function writeLargeTextFileOnSlot(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  relativePath: string,
+  content: string,
+): Promise<void> {
+  const targetPath = `${vars.remoteRepo}/${relativePath}`;
+  const parentDir = path.dirname(targetPath);
+  await slotWriteFiles(vars, parentDir, [
+    {
+      path: path.basename(targetPath),
+      content: Buffer.from(content, 'utf-8').toString('base64'),
+    },
+  ]);
 }

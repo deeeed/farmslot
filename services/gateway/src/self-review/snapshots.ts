@@ -12,7 +12,10 @@ import {
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
-import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
+import {
+  writeLargeTextFileOnSlot,
+  writeTextFileOnSlot,
+} from '../methods/dispatch/slot-file-write.js';
 import {
   captureRunnerSessionMetadata,
   listRunnerSessionFiles,
@@ -162,7 +165,7 @@ export async function captureReviewSnapshot(
       diffStat: parseReviewNumstat(numstat.stdout),
       capturedAt: new Date().toISOString(),
     };
-    await writeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, diff.stdout);
+    await writeLargeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, diff.stdout);
     await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
     return { snapshot, artifactPaths: [diffRel, statRel] };
   } catch (err) {
@@ -259,7 +262,7 @@ export async function captureFixDeltaSnapshot(
       diffStat: parseReviewNumstat(numstat.stdout),
       capturedAt: new Date().toISOString(),
     };
-    await writeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, diff.stdout);
+    await writeLargeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, diff.stdout);
     await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
     return { snapshot, artifactPaths: [diffRel, statRel] };
   } catch (err) {

@@ -11,6 +11,8 @@ describe('codex account binding leaves launch home setup unchanged', () => {
     const b = buildCodexHomeSetup('/tmp/repo', '.agent');
     assert.equal(a, b);
     assert.match(a, /export CODEX_HOME=/);
+    assert.match(a, /FARMSLOT_CODEX_PLUGIN_HOOK_ARGS=''/);
+    assert.match(a, /unset CODEX_HOME; FARMSLOT_CODEX_PLUGIN_HOOK_ARGS='--disable plugin_hooks'/);
   });
 
   it('install command carries --account-label (node resolves path); launch still exports CODEX_HOME', () => {
@@ -33,6 +35,7 @@ describe('codex account binding leaves launch home setup unchanged', () => {
     });
     assert.match(launch, /--account-label 'codex-a'/);
     assert.match(launch, /export CODEX_HOME=/);
+    assert.match(launch, /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\}/);
   });
 
   it('non-codex runners do not gain account-label install flags', () => {

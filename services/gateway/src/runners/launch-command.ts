@@ -27,6 +27,7 @@ import {
 } from './runner-observability.js';
 
 const CODEX_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
+const CODEX_PLUGIN_HOOK_ARGS = ' ${FARMSLOT_CODEX_PLUGIN_HOOK_ARGS}';
 
 /**
  * Resolve reasoning effort for runners that support it.
@@ -192,7 +193,7 @@ export function buildRunnerSessionReloadCommand(
       withRunnerObservabilityInstall(
         `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
           vars.codexPath,
-        )} resume --disable plugin_hooks${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
+        )}${CODEX_PLUGIN_HOOK_ARGS} resume${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}${initialPrompt}`,
         installCommand,
       ),
       repo,
@@ -242,8 +243,8 @@ export function buildCodexHomeSetup(repo: string, runtimeDir = '.agent'): string
   // write the home here — that keeps the global config clean and avoids a half-built
   // home that codex would reject.
   return (
-    `if [ -e ${shellQuote(`${codexHome}/auth.json`)} ]; then export CODEX_HOME=${shellQuote(codexHome)}; ` +
-    `else echo "[farmslot] codex-home not provisioned; using global ~/.codex without observability" >&2; fi`
+    `if [ -e ${shellQuote(`${codexHome}/auth.json`)} ]; then export CODEX_HOME=${shellQuote(codexHome)}; FARMSLOT_CODEX_PLUGIN_HOOK_ARGS=''; ` +
+    `else unset CODEX_HOME; FARMSLOT_CODEX_PLUGIN_HOOK_ARGS='--disable plugin_hooks'; echo "[farmslot] codex-home not provisioned; using global ~/.codex without observability" >&2; fi`
   );
 }
 
@@ -264,7 +265,7 @@ export function buildCodexExecLaunch(options: {
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const prompt = options.prompt?.trim() ? ` ${shellQuote(options.prompt)}` : '';
   const codexHomeSetup = buildCodexHomeSetup(options.repo, options.runtimeDir ?? '.agent');
-  return `unset CLAUDECODE && cd ${shellQuote(options.repo)} && ${codexHomeSetup} && ${options.binary} --disable plugin_hooks${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
+  return `unset CLAUDECODE && cd ${shellQuote(options.repo)} && ${codexHomeSetup} && ${options.binary}${CODEX_PLUGIN_HOOK_ARGS}${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
 }
 
 function codexReasoningEffortFlag(effort?: string | null): string {
@@ -588,13 +589,17 @@ function injectCodexReasoningEffortFlag(
 ): string {
   const workerConfigFlags = codexWorkerConfigFlags();
   if (command.includes('mcp_servers.n8n-mcp.enabled=false')) {
-    return command;
+    return injectCodexWorkerConfigFlags(command, vars, CODEX_PLUGIN_HOOK_ARGS);
   }
   if (command.includes('model_reasoning_effort')) {
-    return injectCodexWorkerConfigFlags(command, vars, workerConfigFlags);
+    return injectCodexWorkerConfigFlags(
+      command,
+      vars,
+      `${CODEX_PLUGIN_HOOK_ARGS}${workerConfigFlags}`,
+    );
   }
   const effortFlag = codexReasoningEffortFlag(effort);
-  const flags = `${effortFlag}${workerConfigFlags}`;
+  const flags = `${CODEX_PLUGIN_HOOK_ARGS}${effortFlag}${workerConfigFlags}`;
   return injectCodexWorkerConfigFlags(command, vars, flags);
 }
 

@@ -755,15 +755,18 @@ export async function confirmTrustPromptWithFreshEvidence(opts: {
     tmuxCommand: string,
   ) => Promise<{ exitCode: number; stdout: string; stderr?: string | undefined }>;
   refreshCodexHooks?: () => Promise<void>;
+  logNoFreshEvidence?: boolean;
 }): Promise<{ outcome: 'sent'; key: string } | { outcome: 'no-fresh-evidence' }> {
   const fresh = await opts.exec(`capture-pane -p -t ${shellQuote(opts.target)} 2>/dev/null`);
   const runner = normalizeRunner(opts.runnerId);
   const blocker = detectRunnerLaunchBlocker(fresh.stdout, runner);
   const key = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null, fresh.stdout);
   if (!key) {
-    console.log(
-      `[${opts.logPrefix}] classifier reported a trust prompt in ${opts.target} but the fresh capture shows no actionable trust blocker; not sending`,
-    );
+    if (opts.logNoFreshEvidence !== false) {
+      console.log(
+        `[${opts.logPrefix}] classifier reported a trust prompt in ${opts.target} but the fresh capture shows no actionable trust blocker; not sending`,
+      );
+    }
     return { outcome: 'no-fresh-evidence' };
   }
   if (blocker?.autoAction === 'codex-refresh-hooks-and-trust') {
@@ -1374,26 +1377,23 @@ async function sendRunnerInstructionWhenPaneClear(
     if (submitted === 'stuck') return false;
     // Pending evidence was stale — nothing is actually buffered; type it below.
   } else if (runnerPaneContainsInstruction(pane, message)) {
-    if (runnerPaneHasProgressAfterInstruction(pane, message)) {
-      console.log(
-        `[${logPrefix}] instruction already submitted in ${target} — skip duplicate send`,
+    if (!runnerPaneHasProgressAfterInstruction(pane, message)) {
+      console.log(`[${logPrefix}] instruction already present in ${target}; sending submit key`);
+      const submitted = await submitRunnerInstruction(
+        vars,
+        target,
+        runner,
+        message,
+        logPrefix,
+        'submit-existing',
       );
-      return true;
+      if (submitted === 'ok') return true;
+      if (submitted === 'stuck') return false;
     }
-    console.log(`[${logPrefix}] instruction already present in ${target}; sending submit key`);
-    const submitted = await submitRunnerInstruction(
-      vars,
-      target,
-      runner,
-      message,
-      logPrefix,
-      'submit-existing',
-    );
-    if (submitted === 'ok') return true;
-    if (submitted === 'stuck') return false;
-    // The pane text was a transcript echo, not a buffered composer. Retyping a
-    // possibly-already-executed instruction is visible and recoverable; a
-    // false delivery success stalls the caller silently — prefer the retype.
+    // Transcript text is not delivery evidence for this send generation. Fix
+    // passes intentionally reuse the same task path with new file contents;
+    // treating an earlier turn as current acceptance strands the new feedback.
+    // Exact runner-native evidence above may deduplicate. Otherwise retype.
   }
   await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
   return (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok';
@@ -1467,7 +1467,7 @@ export async function runnerHasDurablePromptHandoff(
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
   const observability = getRunnerObservability(runner);
-  const usesNativePromptAcceptance = observability?.capturePromptAcceptanceBaseline !== undefined;
+  const usesNativePromptAcceptance = observability?.promptAcceptanceMode === 'native-text';
   const paneId = usesNativePromptAcceptance ? null : await resolveTmuxPaneId(vars, target);
   const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
     paneId,
@@ -1497,10 +1497,14 @@ export async function runnerHasDurablePromptHandoff(
     if (!isObservabilityReadingAuthoritative(reading) || reading.value !== true) {
       return { accepted: false, reason: 'runner prompt acceptance not observed' };
     }
-    if (opts.requirePromptDigest && reading.source !== 'signal') {
+    const exactPromptAccepted =
+      reading.exactPromptMatch === true &&
+      reading.confidence === 'high' &&
+      (usesNativePromptAcceptance ? reading.source === 'signal' : reading.source === 'hook');
+    if (opts.requirePromptDigest && !exactPromptAccepted) {
       return {
         accepted: false,
-        reason: `digest-required handoff rejected non-native ${reading.source} activity`,
+        reason: `digest-required handoff rejected non-exact ${reading.source} activity`,
       };
     }
     const nativeSignal = reading.source === 'signal';
@@ -2069,16 +2073,16 @@ export async function sendRunnerInstructionSafely(
       // never typed, so require pane evidence before submit-existing.
       const pane = await captureTmuxPane(vars, target);
       if (runnerPaneHasPendingInstruction(pane, message, runner)) {
-        return (
-          (await submitRunnerInstruction(
-            vars,
-            target,
-            runner,
-            message,
-            logPrefix,
-            'submit-existing',
-          )) === 'ok'
+        const submitted = await submitRunnerInstruction(
+          vars,
+          target,
+          runner,
+          message,
+          logPrefix,
+          'submit-existing',
         );
+        if (submitted === 'ok') return true;
+        if (submitted === 'stuck') return false;
       }
       return sendRunnerInstructionWhenPaneClear(
         vars,
@@ -2108,7 +2112,7 @@ export async function sendRunnerInstructionSafely(
   // the composer remains busy; sendRunnerInstructionWhenPaneClear performs
   // the required final native recheck immediately before any fresh send.
   const deferNativePromptProbe =
-    getRunnerObservability(runner)?.capturePromptAcceptanceBaseline !== undefined;
+    getRunnerObservability(runner)?.promptAcceptanceMode === 'native-text';
   let nativePromptProbeCompleted = false;
   while (Date.now() < deadline) {
     const pendingObs =
@@ -2134,31 +2138,31 @@ export async function sendRunnerInstructionSafely(
       // through to the busy-aware delivery below instead of a blind Enter.
       const captured = await ensurePane();
       if (runnerPaneHasPendingInstruction(captured, message, runner)) {
-        return (
-          (await submitRunnerInstruction(
-            vars,
-            target,
-            runner,
-            message,
-            logPrefix,
-            'submit-existing',
-          )) === 'ok'
+        const submitted = await submitRunnerInstruction(
+          vars,
+          target,
+          runner,
+          message,
+          logPrefix,
+          'submit-existing',
         );
+        if (submitted === 'ok') return true;
+        if (submitted === 'stuck') return false;
       }
     } else if (pendingObs.kind === 'fallback') {
       const captured = await ensurePane();
       const hasPending = runnerPaneHasPendingInstruction(captured, message, runner);
       if (hasPending) {
-        return (
-          (await submitRunnerInstruction(
-            vars,
-            target,
-            runner,
-            message,
-            logPrefix,
-            'submit-existing',
-          )) === 'ok'
+        const submitted = await submitRunnerInstruction(
+          vars,
+          target,
+          runner,
+          message,
+          logPrefix,
+          'submit-existing',
         );
+        if (submitted === 'ok') return true;
+        if (submitted === 'stuck') return false;
       }
     }
 

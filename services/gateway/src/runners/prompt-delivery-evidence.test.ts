@@ -161,7 +161,7 @@ test('launch acknowledgement snapshot degrades to null when the evidence probe c
   assert.equal(snapshot, null);
 });
 
-test('task signal proves generic delivery but cannot satisfy digest-required review delivery', async () => {
+test('task-scoped signal cannot replace exact prompt evidence when a digest is required', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'farmslot-launch-ack-probe-'));
   const signalPath = join(dir, 'SIGNAL.json');
   try {
