@@ -20,6 +20,7 @@ test('captures a full native surface without stopping at a premature virtualized
   let freezeCapture = false;
   let hideEndMarker = false;
   let omitScale = false;
+  let failTopSwipe = false;
   const client = {
     apps: { open: async () => ({ session: 'surface-session', identifiers: {} }) },
     interactions: {
@@ -32,6 +33,7 @@ test('captures a full native surface without stopping at a premature virtualized
         return { scrolled: true };
       },
       async swipe(options: Record<string, unknown>) {
+        if (failTopSwipe) throw new Error('reset to top failed');
         const from = options.from as { y: number };
         const to = options.to as { y: number };
         if (from.y < to.y) position = Math.max(0, position - 10);
@@ -46,17 +48,26 @@ test('captures a full native surface without stopping at a premature virtualized
             {
               identifier: 'catalog-surface',
               type: 'ScrollView',
-              rect: { x: 0, y: 1, width: 5, height: 8 },
+              rect: omitScale
+                ? { x: 0, y: 2, width: 10, height: 16 }
+                : { x: 0, y: 1, width: 5, height: 8 },
               hiddenContentAbove: position > 0,
               hiddenContentBelow: position < 20,
             },
-            { type: 'Window', rect: { x: 0, y: 0, width: 5, height: 10 } },
+            {
+              type: 'Window',
+              rect: omitScale
+                ? { x: 0, y: 0, width: 10, height: 20 }
+                : { x: 0, y: 0, width: 5, height: 10 },
+            },
             ...(position > 0 && !hideEndMarker
               ? [
                   {
                     identifier: 'catalog-end',
                     type: 'View',
-                    rect: { x: 0, y: 8, width: 5, height: 1 },
+                    rect: omitScale
+                      ? { x: 0, y: 16, width: 10, height: 1 }
+                      : { x: 0, y: 8, width: 5, height: 1 },
                     visibleToUser: true,
                   },
                 ]
@@ -154,6 +165,27 @@ test('captures a full native surface without stopping at a premature virtualized
     freezeCapture = false;
     hideEndMarker = false;
     omitScale = true;
+    const androidTransport = createAgentDeviceUiTransport({
+      platform: 'android',
+      device: 'emulator-5554',
+      app: 'net.siteed.farmslot.development',
+      session: 'android-surface-session',
+      client,
+    });
+    const androidResult = (await androidTransport.execute(
+      'ui.capture_surface',
+      {
+        path: 'screenshots/android-catalog.png',
+        surface_test_id: 'catalog-surface',
+        until_test_id: 'catalog-end',
+        max_scrolls: 2,
+      },
+      context,
+    )) as { output: { width: number; viewports: number } };
+    assert.equal(androidResult.output.width, 10);
+    assert.equal(androidResult.output.viewports, 3);
+    assert.equal(artifacts.length, 2);
+
     await assert.rejects(
       () =>
         transport.execute(
@@ -168,7 +200,25 @@ test('captures a full native surface without stopping at a premature virtualized
         ),
       /requires screenshot logical dimensions or pixel density/u,
     );
-    assert.equal(artifacts.length, 1);
+    assert.equal(artifacts.length, 2);
+
+    omitScale = false;
+    failTopSwipe = true;
+    await assert.rejects(
+      () =>
+        transport.execute(
+          'ui.capture_surface',
+          {
+            path: 'screenshots/restore-failed.png',
+            surface_test_id: 'catalog-surface',
+            until_test_id: 'catalog-end',
+            max_scrolls: 2,
+          },
+          context,
+        ),
+      /reset to top failed/u,
+    );
+    assert.equal(artifacts.length, 2);
   } finally {
     await rm(artifactsDir, { recursive: true, force: true });
   }

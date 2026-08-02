@@ -737,6 +737,7 @@ async function captureSurface(
   let surfaceResolved = false;
   let failure: { error: unknown } | undefined;
   let captureResult: UiTransportResult | undefined;
+  let captureArtifact: Parameters<ActionExecutionContext['registerArtifact']>[0] | undefined;
 
   await mkdir(temporaryDir, { recursive: true });
   try {
@@ -753,7 +754,7 @@ async function captureSurface(
     const firstImage = PNG.sync.read(await readFile(firstPath));
     pages.push({
       path: firstPath,
-      surface: physicalRectForSurface(surfaceRect, firstScreenshot, firstImage),
+      surface: physicalRectForSurface(surfaceRect, firstScreenshot, firstImage, selection.platform),
     });
     reachedEnd = await surfaceEndIsVisible(client, session, selection, surfaceTestId, untilTestId);
 
@@ -773,7 +774,12 @@ async function captureSurface(
       });
       const previous = PNG.sync.read(await readFile(pages.at(-1)!.path));
       const current = PNG.sync.read(await readFile(pagePath));
-      const currentSurface = physicalRectForSurface(surfaceRect, screenshot, current);
+      const currentSurface = physicalRectForSurface(
+        surfaceRect,
+        screenshot,
+        current,
+        selection.platform,
+      );
       const requestedRows = Math.round(
         requestedPoints * (currentSurface.height / surfaceRect.height),
       );
@@ -825,7 +831,7 @@ async function captureSurface(
       mimeType: 'image/png',
       label: optionalString(node.label) ?? 'Full UI surface',
     };
-    context.registerArtifact(artifact);
+    captureArtifact = artifact;
     captureResult = {
       kind: 'ui-transport-result',
       output: {
@@ -852,7 +858,10 @@ async function captureSurface(
     }
   }
   if (failure) throw failure.error;
-  if (!captureResult) throw new Error('ui.capture_surface produced no result.');
+  if (!captureResult || !captureArtifact) {
+    throw new Error('ui.capture_surface produced no result.');
+  }
+  context.registerArtifact(captureArtifact);
   return captureResult;
 }
 
@@ -1013,16 +1022,19 @@ function physicalRectForSurface(
     pixelDensity?: number;
   },
   image: PNG,
+  platform: 'ios' | 'android',
 ): PixelRect {
   const logicalWidth = positiveNumber(screenshot.logicalWidth);
   const logicalHeight = positiveNumber(screenshot.logicalHeight);
   const density = positiveNumber(screenshot.pixelDensity);
   const scaleX = logicalWidth
     ? image.width / logicalWidth
-    : (density ?? (logicalHeight ? image.height / logicalHeight : undefined));
+    : (density ??
+      (logicalHeight ? image.height / logicalHeight : platform === 'android' ? 1 : undefined));
   const scaleY = logicalHeight
     ? image.height / logicalHeight
-    : (density ?? (logicalWidth ? image.width / logicalWidth : undefined));
+    : (density ??
+      (logicalWidth ? image.width / logicalWidth : platform === 'android' ? 1 : undefined));
   if (!scaleX || !scaleY) {
     throw new Error(
       'ui.capture_surface requires screenshot logical dimensions or pixel density to map the native surface.',
@@ -1050,26 +1062,23 @@ function rectsIntersect(left: SurfaceRect, right: SurfaceRect): boolean {
 async function stitchSurfacePages(
   pages: Array<{ path: string; surface: PixelRect; revealedRows?: number }>,
 ): Promise<PNG> {
-  const decoded = await Promise.all(
-    pages.map(async (page) => PNG.sync.read(await readFile(page.path))),
-  );
-  const [first] = decoded;
-  if (!first) throw new Error('ui.capture_surface did not capture a viewport.');
+  const firstPage = pages[0];
+  if (!firstPage) throw new Error('ui.capture_surface did not capture a viewport.');
+  const first = PNG.sync.read(await readFile(firstPage.path));
   if (
-    decoded.some((image) => image.width !== first.width || image.height !== first.height) ||
     pages.some(
       (page) =>
-        page.surface.width !== pages[0].surface.width ||
-        page.surface.height !== pages[0].surface.height,
+        page.surface.width !== firstPage.surface.width ||
+        page.surface.height !== firstPage.surface.height,
     )
   ) {
     throw new Error('ui.capture_surface viewport or surface dimensions changed during capture.');
   }
   const revealed = pages.slice(1).map((page) => page.revealedRows!);
-  const firstSurface = pages[0].surface;
+  const firstSurface = firstPage.surface;
   const lastSurface = pages.at(-1)!.surface;
   const isFullWidth = pages.every(
-    (page, index) => page.surface.x === 0 && page.surface.width === decoded[index].width,
+    (page) => page.surface.x === 0 && page.surface.width === first.width,
   );
   const leadingRows = isFullWidth ? firstSurface.y : 0;
   const trailingRows = isFullWidth ? first.height - (lastSurface.y + lastSurface.height) : 0;
@@ -1084,18 +1093,17 @@ async function stitchSurfacePages(
   if (leadingRows > 0) copyImageRows(first, output, 0, 0, leadingRows, 0);
   let outputY = leadingRows;
   let sourceStart = 0;
-  for (let index = 0; index < decoded.length; index += 1) {
-    const image = decoded[index];
+  let image = first;
+  for (let index = 0; index < pages.length; index += 1) {
     const surface = pages[index].surface;
+    const nextPage = pages[index + 1];
+    const nextImage = nextPage ? PNG.sync.read(await readFile(nextPage.path)) : undefined;
+    if (nextImage && (nextImage.width !== first.width || nextImage.height !== first.height)) {
+      throw new Error('ui.capture_surface viewport or surface dimensions changed during capture.');
+    }
     const sourceEnd =
-      index < revealed.length
-        ? chooseSurfaceSeam(
-            image,
-            decoded[index + 1],
-            surface,
-            pages[index + 1].surface,
-            revealed[index],
-          )
+      nextImage && nextPage
+        ? chooseSurfaceSeam(image, nextImage, surface, nextPage.surface, revealed[index])
         : surface.height;
     const rows = sourceEnd - sourceStart;
     copyImageRows(
@@ -1107,11 +1115,13 @@ async function stitchSurfacePages(
       outputY,
     );
     outputY += rows;
-    if (index < revealed.length) sourceStart = sourceEnd - revealed[index];
+    if (nextImage) {
+      sourceStart = sourceEnd - revealed[index];
+      image = nextImage;
+    }
   }
-  const finalImage = decoded.at(-1)!;
   if (trailingRows > 0) {
-    copyImageRows(finalImage, output, 0, lastSurface.y + lastSurface.height, trailingRows, outputY);
+    copyImageRows(image, output, 0, lastSurface.y + lastSurface.height, trailingRows, outputY);
   }
   return output;
 }

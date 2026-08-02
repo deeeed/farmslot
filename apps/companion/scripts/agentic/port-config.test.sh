@@ -62,6 +62,31 @@ recipe_output="$(
   exit 1
 }
 
+cat > "${TMP_DIR}/slot-vars-bin" <<'EOF'
+#!/usr/bin/env bash
+printf "IOS_SIMULATOR='fs-slot-test'\nMETRO_PORT='45302'\nADB_SERIAL=''\n"
+EOF
+chmod +x "${TMP_DIR}/slot-vars-bin"
+cat > "${TMP_DIR}/native-recipe-bin" <<'EOF'
+#!/usr/bin/env bash
+printf '%s|%s|%s\n' "${FARMSLOT_RECIPE_APP_ID}" "${IOS_SIMULATOR}" "${METRO_PORT}"
+EOF
+chmod +x "${TMP_DIR}/native-recipe-bin"
+native_recipe_output="$(
+  FARMSLOT_BIN="${TMP_DIR}/slot-vars-bin" \
+    FARMSLOT_SLOT_ID=macwork-ff-test \
+    PLATFORM=ios \
+    GATEWAY_PORT=45301 METRO_PORT=45300 \
+    COMPANION_AGENTIC_PORT_ENV=/dev/null \
+    COMPANION_AGENTIC_LOCAL_CONF=/dev/null \
+    COMPANION_EXPO_RECIPE_BIN="${TMP_DIR}/native-recipe-bin" \
+    bash "${SCRIPT_DIR}/run-recipe.sh"
+)"
+[[ "${native_recipe_output}" == "net.siteed.farmslot.development|fs-slot-test|45302" ]] || {
+  echo "ERROR: recipe entry point did not apply the assigned slot app, device, and Metro context." >&2
+  exit 1
+}
+
 cat > "${TMP_DIR}/yarn" <<'EOF'
 #!/usr/bin/env bash
 printf '%s|%s|%s\n' "${METRO_PORT}" "${SIMULATOR}" "${ADB_SERIAL}"
@@ -84,6 +109,21 @@ validation_output="$(
   echo "ERROR: recipe validation did not preserve explicit device and Metro flags." >&2
   exit 1
 }
+
+if FARMSLOT_BIN="${TMP_DIR}/slot-vars-bin" \
+  FARMSLOT_SLOT_ID=macwork-ff-test \
+  GATEWAY_PORT=45301 METRO_PORT=45300 \
+  COMPANION_AGENTIC_PORT_ENV=/dev/null \
+  COMPANION_AGENTIC_LOCAL_CONF=/dev/null \
+  bash "${SCRIPT_DIR}/validate-recipe.sh" \
+    --platform ios \
+    --metro-port 45999 \
+    --simulator fs-slot-test \
+    --artifacts-dir "${TMP_DIR}/slot-conflict" \
+    --dry-run >/dev/null 2>&1; then
+  echo "ERROR: recipe validation silently replaced a Metro port that conflicted with the slot." >&2
+  exit 1
+fi
 
 # Metro protocol .js→.ts rewrite path detection (cwd / worktree safe)
 node "${APP_DIR}/metro-protocol-source.test.cjs"

@@ -575,7 +575,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
   );
 
   return (
-    <View testID="companion-screen-prs" style={baseStyles.container}>
+    <View testID="companion-screen-prs" collapsable={false} style={baseStyles.container}>
       {visibleRows.length === 0 && !loading ? (
         <View style={[styles.emptyContainer, { paddingBottom: insets.bottom }]}>
           {header}
@@ -726,6 +726,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
             <View
               testID="companion-screen-prs-end"
               accessible
+              collapsable={false}
               accessibilityLabel="End of Pull requests"
               style={styles.captureEndMarker}
             />

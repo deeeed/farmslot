@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -35,14 +35,17 @@ export function BacklogCreateSheet({ visible, onClose }: BacklogCreateSheetProps
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdLabel, setCreatedLabel] = useState<string | null>(null);
+  const wasVisible = useRef(false);
 
   useEffect(() => {
-    if (!visible) return;
-    setProject(suggestedProject);
-    setTitle('');
-    setNotes('');
-    setError(null);
-    setCreatedLabel(null);
+    if (visible && !wasVisible.current) {
+      setProject(suggestedProject);
+      setTitle('');
+      setNotes('');
+      setError(null);
+      setCreatedLabel(null);
+    }
+    wasVisible.current = visible;
   }, [suggestedProject, visible]);
 
   const submit = async () => {

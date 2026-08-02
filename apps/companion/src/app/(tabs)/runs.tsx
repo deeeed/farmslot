@@ -948,7 +948,7 @@ export default function RunsScreen() {
   );
 
   return (
-    <View testID="companion-screen-review" style={baseStyles.container}>
+    <View testID="companion-screen-review" collapsable={false} style={baseStyles.container}>
       {status === 'connected' ? runScopeHeader : null}
       {runRows.length === 0 ? (
         status === 'connected' && runsSyncMessage ? (
@@ -1004,6 +1004,7 @@ export default function RunsScreen() {
             <View
               testID="companion-screen-review-end"
               accessible
+              collapsable={false}
               accessibilityLabel="End of Review queue"
               style={styles.captureEndMarker}
             />

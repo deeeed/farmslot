@@ -464,6 +464,7 @@ export default function WorkersScreen() {
   return (
     <View
       testID="companion-screen-terminals"
+      collapsable={false}
       style={[styles.container, { paddingBottom: insets.bottom + spacing.sm }]}
     >
       <View style={styles.summaryRow}>
@@ -514,6 +515,7 @@ export default function WorkersScreen() {
           <View
             testID="companion-screen-terminals-end"
             accessible
+            collapsable={false}
             accessibilityLabel="End of Terminals"
             style={styles.captureEndMarker}
           />

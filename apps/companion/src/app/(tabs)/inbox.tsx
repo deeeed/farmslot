@@ -176,7 +176,7 @@ export default function InboxScreen() {
   );
 
   return (
-    <View testID="companion-screen-inbox" style={baseStyles.container}>
+    <View testID="companion-screen-inbox" collapsable={false} style={baseStyles.container}>
       {filteredDecisions.length === 0 ? (
         status === 'connected' && hasFilters ? (
           <FilterEmptyState
@@ -207,6 +207,7 @@ export default function InboxScreen() {
             <View
               testID="companion-screen-inbox-end"
               accessible
+              collapsable={false}
               accessibilityLabel="End of Decision inbox"
               style={styles.captureEndMarker}
             />

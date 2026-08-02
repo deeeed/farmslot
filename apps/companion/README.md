@@ -30,8 +30,8 @@ yarn start                      # Metro only
 UX catalog recipes:
 
 ```bash
-yarn recipe:run:ux-baseline:ios
-yarn recipe:run:ux-baseline:android
+FARMSLOT_SLOT_ID=<slot> yarn recipe:run:ux-baseline:ios
+FARMSLOT_SLOT_ID=<slot> yarn recipe:run:ux-baseline:android
 
 # Capture one live run and its complete Ready Gate.
 FARMSLOT_SLOT_ID=<slot> yarn recipe:run:ux-ready-gate <run-id>

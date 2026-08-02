@@ -14,10 +14,8 @@ if [[ -z "${FARMSLOT_SLOT_ID:-}" || -z "${RUN_ID}" ]]; then
 fi
 
 slot_id="${FARMSLOT_SLOT_ID}"
-eval "$("${FARMSLOT_BIN}" internal slot-vars "${slot_id}" --shell)"
-FARMSLOT_SLOT_ID="${slot_id}"
 PLATFORM="${PLATFORM_VALUE}"
-export FARMSLOT_SLOT_ID PLATFORM METRO_PORT IOS_SIMULATOR SIMULATOR ADB_SERIAL
+export FARMSLOT_SLOT_ID PLATFORM
 
 # shellcheck source=./agentic.conf
 source "${SCRIPT_DIR}/agentic.conf"

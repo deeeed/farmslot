@@ -202,7 +202,7 @@ export default function FleetScreen() {
   }, []);
 
   return (
-    <View testID="companion-screen-fleet" style={baseStyles.container}>
+    <View testID="companion-screen-fleet" collapsable={false} style={baseStyles.container}>
       <View style={styles.summaryBar}>
         <Text style={styles.summaryText}>{summaryText}</Text>
       </View>
@@ -241,6 +241,7 @@ export default function FleetScreen() {
             <View
               testID="companion-screen-fleet-end"
               accessible
+              collapsable={false}
               accessibilityLabel="End of Fleet"
               style={styles.captureEndMarker}
             />

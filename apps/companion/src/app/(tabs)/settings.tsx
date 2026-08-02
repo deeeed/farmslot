@@ -568,6 +568,7 @@ export default function SettingsScreen() {
   return (
     <ScrollView
       testID="companion-screen-settings"
+      collapsable={false}
       style={baseStyles.container}
       contentContainerStyle={[
         styles.content,
@@ -1241,6 +1242,7 @@ export default function SettingsScreen() {
       <View
         testID="companion-screen-settings-end"
         accessible
+        collapsable={false}
         accessibilityLabel="End of Settings"
         style={styles.captureEndMarker}
       />

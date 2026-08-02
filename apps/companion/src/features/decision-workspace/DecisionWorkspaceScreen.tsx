@@ -766,6 +766,7 @@ export default function DecisionDetailScreen() {
       </Animated.View>
       <Animated.ScrollView
         testID="companion-screen-decision-workspace"
+        collapsable={false}
         ref={scrollRef}
         onScroll={scrollHandler}
         scrollEventThrottle={16}
@@ -1370,7 +1371,9 @@ export default function DecisionDetailScreen() {
           )}
           <View
             testID="companion-screen-decision-workspace-end"
+            accessible
             collapsable={false}
+            accessibilityLabel="End of Decision workspace"
             style={styles.captureEndMarker}
           />
         </View>

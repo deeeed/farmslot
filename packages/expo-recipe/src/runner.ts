@@ -298,7 +298,7 @@ function resolveAgentDeviceTransport(): AgentDeviceUiTransport | undefined {
   const app = process.env.FARMSLOT_RECIPE_APP_ID;
   if (!platform || !device || !app) return undefined;
   const slot = process.env.FARMSLOT_SLOT_ID ?? path.basename(process.env.RUNTIME_DIR ?? 'local');
-  const stateKey = (process.env.FARMSLOT_SLOT_ID ?? device).replace(/[^a-zA-Z0-9._-]/gu, '-');
+  const deviceKey = device.replace(/[^a-zA-Z0-9._-]/gu, '-');
   return createAgentDeviceUiTransport({
     platform,
     device,
@@ -306,7 +306,7 @@ function resolveAgentDeviceTransport(): AgentDeviceUiTransport | undefined {
     session: `farmslot-${slot}-${process.pid}`.replace(/[^a-zA-Z0-9._-]/gu, '-'),
     stateDir:
       process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR ??
-      path.join(os.tmpdir(), 'farmslot-agent-device', stateKey),
+      path.join(os.tmpdir(), 'farmslot-agent-device', deviceKey),
   });
 }
 

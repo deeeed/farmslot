@@ -56,6 +56,7 @@ export default function AdvancedScreen() {
     <>
       <ScrollView
         testID="companion-screen-advanced"
+        collapsable={false}
         style={baseStyles.container}
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + spacing.xxxl }]}
       >
@@ -100,6 +101,7 @@ export default function AdvancedScreen() {
         <View
           testID="companion-screen-advanced-end"
           accessible
+          collapsable={false}
           accessibilityLabel="End of Advanced"
           style={styles.captureEndMarker}
         />

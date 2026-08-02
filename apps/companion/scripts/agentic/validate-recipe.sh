@@ -85,8 +85,23 @@ if [[ -z "${ARTIFACTS_DIR}" ]]; then
   exit 1
 fi
 
-if [[ -n "${FARMSLOT_SLOT_ID:-}" ]]; then
+if [[ -n "${FARMSLOT_SLOT_ID:-}" && -n "${PLATFORM_VALUE}" ]]; then
+  requested_metro_port="${METRO_PORT_VALUE}"
+  requested_simulator="${SIMULATOR_VALUE}"
+  requested_adb_serial="${ADB_SERIAL_VALUE}"
   companion_apply_farmslot_slot_context "${PLATFORM_VALUE}"
+  if [[ -n "${requested_metro_port}" && "${requested_metro_port}" != "${METRO_PORT}" ]]; then
+    echo "ERROR: --metro-port ${requested_metro_port} conflicts with slot ${FARMSLOT_SLOT_ID} port ${METRO_PORT}." >&2
+    exit 1
+  fi
+  if [[ "${PLATFORM_VALUE}" == "ios" && -n "${requested_simulator}" && "${requested_simulator}" != "${IOS_SIMULATOR:-${SIMULATOR:-}}" ]]; then
+    echo "ERROR: --simulator ${requested_simulator} conflicts with slot ${FARMSLOT_SLOT_ID} simulator ${IOS_SIMULATOR:-${SIMULATOR:-}}." >&2
+    exit 1
+  fi
+  if [[ "${PLATFORM_VALUE}" == "android" && -n "${requested_adb_serial}" && "${requested_adb_serial}" != "${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}" ]]; then
+    echo "ERROR: --adb-serial ${requested_adb_serial} conflicts with slot ${FARMSLOT_SLOT_ID} device ${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}." >&2
+    exit 1
+  fi
   METRO_PORT_VALUE="${METRO_PORT}"
   SIMULATOR_VALUE="${IOS_SIMULATOR:-${SIMULATOR:-}}"
   ADB_SERIAL_VALUE="${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}"

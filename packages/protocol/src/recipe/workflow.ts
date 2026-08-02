@@ -69,7 +69,7 @@ const UI_MECHANIC_INTENTS: Record<string, RegExp> = {
   'ui.scroll': /^(?:bring .* into view|scroll)\b/u,
   'ui.wait_for': /^wait\b/u,
   'ui.screenshot': /^(?:capture|take (?:a )?screenshot)\b/u,
-  'ui.capture_surface': /^(?:capture|take) (?:the )?(?:full|entire)\b/u,
+  'ui.capture_surface': /^(?:capture|take)\b/u,
 };
 
 const UI_IMPLEMENTATION_TERMS =
