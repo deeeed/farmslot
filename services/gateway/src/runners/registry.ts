@@ -1467,7 +1467,7 @@ export async function runnerHasDurablePromptHandoff(
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
   const observability = getRunnerObservability(runner);
-  const usesNativePromptAcceptance = observability?.capturePromptAcceptanceBaseline !== undefined;
+  const usesNativePromptAcceptance = observability?.promptAcceptanceMode === 'native-text';
   const paneId = usesNativePromptAcceptance ? null : await resolveTmuxPaneId(vars, target);
   const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
     paneId,
@@ -1497,10 +1497,13 @@ export async function runnerHasDurablePromptHandoff(
     if (!isObservabilityReadingAuthoritative(reading) || reading.value !== true) {
       return { accepted: false, reason: 'runner prompt acceptance not observed' };
     }
-    if (opts.requirePromptDigest && reading.source !== 'signal') {
+    const exactPromptAccepted = usesNativePromptAcceptance
+      ? reading.source === 'signal' && reading.confidence === 'high'
+      : reading.source === 'hook' && reading.confidence === 'high';
+    if (opts.requirePromptDigest && !exactPromptAccepted) {
       return {
         accepted: false,
-        reason: `digest-required handoff rejected non-native ${reading.source} activity`,
+        reason: `digest-required handoff rejected non-exact ${reading.source} activity`,
       };
     }
     const nativeSignal = reading.source === 'signal';
@@ -2108,7 +2111,7 @@ export async function sendRunnerInstructionSafely(
   // the composer remains busy; sendRunnerInstructionWhenPaneClear performs
   // the required final native recheck immediately before any fresh send.
   const deferNativePromptProbe =
-    getRunnerObservability(runner)?.capturePromptAcceptanceBaseline !== undefined;
+    getRunnerObservability(runner)?.promptAcceptanceMode === 'native-text';
   let nativePromptProbeCompleted = false;
   while (Date.now() < deadline) {
     const pendingObs =

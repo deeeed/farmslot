@@ -68,6 +68,7 @@ mock.module('./observability-sentinel.js', {
 mock.module('./claude-observability.js', {
   namedExports: {
     claudeHookObservability: {
+      promptAcceptanceMode: 'hook-digest',
       async getActivity() {
         return null;
       },
@@ -87,7 +88,7 @@ mock.module('./claude-observability.js', {
         return {
           // Simulate acceptance emitted while respawn-window is still returning.
           value: promptAccepted && (promptAcceptedAt === null || sinceMs <= promptAcceptedAt),
-          source: 'signal',
+          source: 'hook',
           confidence: 'high',
           observedAt: Date.now(),
         };
@@ -318,6 +319,40 @@ test('retained fallback accepts a fresh task signal after the original send veri
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
   assert.equal(
     commands.some((command) => command.includes('capture-pane')),
+    false,
+  );
+});
+
+test('retained fallback accepts delayed acknowledgement before replacing an idle session', async (t) => {
+  commands.length = 0;
+  paneCount = 1;
+  sessionPathExists = true;
+  promptAccepted = false;
+  sessionState = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  t.after(() => {
+    promptAccepted = true;
+  });
+
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    sessionId: 'session-123',
+    sessionPath: '/sessions/session-123.jsonl',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
+    priorPromptSendAttempted: true,
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.equal(
+    commands.some((command) => command.includes('respawn-window')),
     false,
   );
 });

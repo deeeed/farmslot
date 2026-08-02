@@ -7,7 +7,7 @@ import test from 'node:test';
 import type { CompleteStepOutput } from '@farmslot/protocol';
 
 import { writeResultPackageManifest } from '../evals/package-store.js';
-import { createRun, updateRun } from '../runs/store.js';
+import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import {
   executeHumanGateStep,
@@ -358,6 +358,66 @@ test('human-gate can approve a prepared local-first package when slot was detach
   assert.deepEqual(io.inputs, { gateType: 'ready', gateEnabled: true, forced: false });
   assert.equal(io.outputs?.resolvedAction, null);
   assert.equal(typeof io.outputs?.waitDurationMs, 'number');
+});
+
+test('human-gate restart replay restores the operator-requested review policy', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-REPLAY',
+    runner: 'claude',
+  });
+  updateRun(run.id, {
+    decisions: [
+      {
+        id: 'decision-review-replay',
+        type: 'engine_human_gate',
+        title: 'Publication gate',
+        description: 'Request a cross-runner review',
+        actions: [],
+        createdAt: '2026-08-02T00:00:00.000Z',
+        resolvedAt: '2026-08-02T00:01:00.000Z',
+        resolvedAction: 'request-cross-runner-review',
+        selectionData: {
+          reviewRequest: {
+            requireCrossRunner: true,
+            loops: [{ runner: 'codex', validationDepth: 'static-code' }],
+          },
+        },
+      },
+    ],
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  await assert.rejects(
+    executeHumanGateStep(run.id, {
+      activeMonitors: new Map(),
+      blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+      broadcastFn: () => {},
+      createEngineDecision: async () => 'decision-unused',
+      executeNoChangeGate: async () => {},
+      executePublishGateReviewPlan: async () => [],
+      executeReadyGate: async () => 'ready',
+      executeReviewGate: async () => {},
+      getDiffStat: async () => ({ files: 1, additions: 1, deletions: 0 }),
+      interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+      isHumanGateEnabled: async () => true,
+      monitorTerminalError: ({ reason }) => new Error(reason),
+      refreshRunLinks: async () => {},
+      stepPartialIO: new Map(),
+    }),
+    /No slot assigned/,
+  );
+
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewDepth, {
+    minimumIndependentReviews: 1,
+    requireCrossRunner: true,
+    extraLoopsRequested: 0,
+    requestedBy: 'human-gate',
+  });
 });
 
 test('review-pr always presents its publication gate in autonomous mode', async (t) => {

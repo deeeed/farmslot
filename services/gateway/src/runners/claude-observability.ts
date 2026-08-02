@@ -28,6 +28,7 @@ async function loadObservabilitySnapshot(vars: SlotVars, target: string) {
 }
 
 export const claudeHookObservability: RunnerObservability = {
+  promptAcceptanceMode: 'hook-digest',
   async getActivity(vars, target) {
     const { hooks, statusline } = await loadObservabilitySnapshot(vars, target);
     return deriveRunnerActivity(hooks, statusline);

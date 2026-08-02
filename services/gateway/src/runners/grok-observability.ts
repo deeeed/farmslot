@@ -258,6 +258,7 @@ export function createGrokLogObservability(
   readClock: (vars: SlotVars) => Promise<number> = readSlotClockMs,
 ): RunnerObservability {
   return {
+    promptAcceptanceMode: 'native-text',
     async getActivity(vars, target) {
       const signal = await probe(vars, target, 0, '');
       if (signal.status !== 'matched') return null;

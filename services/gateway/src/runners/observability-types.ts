@@ -51,6 +51,8 @@ export interface StatuslineRecord {
 }
 
 export interface RunnerObservability {
+  /** How this provider proves that the exact prompt was accepted. */
+  promptAcceptanceMode?: 'hook-digest' | 'native-text';
   getActivity(vars: SlotVars, target: string): Promise<ObservabilityReading<RunnerActivity> | null>;
   getContextPct(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
   activeTool(vars: SlotVars, target: string): Promise<ObservabilityReading<string> | null>;

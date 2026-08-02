@@ -273,26 +273,8 @@ export async function deliverPromptInPlace(
 ): Promise<RetainedSessionDeliveryResult> {
   const runner = normalizeRunner(options.runnerId);
   try {
-    if (
-      options.priorPromptSendAttempted &&
-      options.launchAckSignalPath &&
-      options.launchAckBaseline
-    ) {
-      const acknowledgement = await probeRunnerHandoffAck(
-        options.vars,
-        options.target,
-        options.prompt,
-        Date.now(),
-        {
-          launchAckSignalPath: options.launchAckSignalPath,
-          launchAckBaseline: options.launchAckBaseline,
-          preferHooks: false,
-        },
-      );
-      if (acknowledgement.accepted) {
-        return { delivered: true, acknowledgement: 'structured' };
-      }
-    }
+    const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
+    if (delayedAcknowledgement) return delayedAcknowledgement;
     const timeoutMs = options.timeoutMs ?? resolveSafeSendTimeoutMs(runner);
     const accepted = await sendRunnerInstructionSafely(
       options.vars,
@@ -322,10 +304,44 @@ export async function deliverPromptInPlace(
   }
 }
 
+async function probeDelayedPromptAcknowledgement(
+  options: RunnerSessionReactivationOptions,
+): Promise<RetainedSessionDeliveryResult | null> {
+  if (
+    !options.priorPromptSendAttempted ||
+    !options.launchAckSignalPath ||
+    !options.launchAckBaseline
+  ) {
+    return null;
+  }
+  const acknowledgement = await probeRunnerHandoffAck(
+    options.vars,
+    options.target,
+    options.prompt,
+    Date.now(),
+    {
+      launchAckSignalPath: options.launchAckSignalPath,
+      launchAckBaseline: options.launchAckBaseline,
+      preferHooks: false,
+    },
+  );
+  return acknowledgement.accepted ? { delivered: true, acknowledgement: 'structured' } : null;
+}
+
 /** Prefer native retained resume, then use the shared non-destructive in-place contract. */
 export async function deliverPromptWithRetainedFallback(
   options: RunnerSessionReactivationOptions,
 ): Promise<RetainedSessionDeliveryResult> {
+  try {
+    const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
+    if (delayedAcknowledgement) return delayedAcknowledgement;
+  } catch (error) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Delayed retained handoff acknowledgement probe failed: ${(error as Error).message}`,
+    };
+  }
   const retained = await deliverPromptToRetainedRunnerSession(options);
   if (!retained.delivered && retained.disposition === 'safe-send') {
     return deliverPromptInPlace(options);

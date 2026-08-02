@@ -44,6 +44,7 @@ let grokActivitySequence: RunnerActivity[] = ['idle'];
 mock.module('./claude-observability.js', {
   namedExports: {
     claudeHookObservability: {
+      promptAcceptanceMode: 'hook-digest',
       async getActivity() {
         callOrder.push('obs:getActivity');
         return activityReading;
@@ -71,6 +72,7 @@ mock.module('./claude-observability.js', {
 mock.module('./grok-observability.js', {
   namedExports: {
     grokLogObservability: {
+      promptAcceptanceMode: 'native-text',
       async getActivity() {
         const index = Math.min(grokActivityReads, grokActivitySequence.length - 1);
         grokActivityReads += 1;
@@ -533,7 +535,7 @@ test('digest-required recovery rejects hook activity without an exact digest', a
   promptAcceptedReading = {
     value: true,
     source: 'hook',
-    confidence: 'high',
+    confidence: 'medium',
     observedAt: Date.now(),
   };
 

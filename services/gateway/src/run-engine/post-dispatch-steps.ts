@@ -58,6 +58,8 @@ import { verifyWorkerPushedBranch } from './push-verification.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import {
   automaticPublicationReviewPlan,
+  humanGateReviewDepth,
+  humanGateReviewRequestFromDecision,
   remainingExplicitReviewPlan,
   resolveHumanGateReviewExecutionPlan,
 } from './review-plan.js';
@@ -767,6 +769,16 @@ export async function executeHumanGateStep(
               reviewsForInitial,
               beforeInitialPlan.metrics.runner,
             );
+      const recoveredReviewDepth = unconsumedReviewDecision
+        ? humanGateReviewDepth(
+            publicationReviewPolicyForRun(beforeInitialPlan),
+            humanGateReviewRequestFromDecision(unconsumedReviewDecision),
+            {
+              actionId: unconsumedReviewDecision.resolvedAction,
+              fallbackLoopCount: Math.max(1, fromUnconsumed.length),
+            },
+          )
+        : undefined;
       if (
         (explicitInitialPlan.length > 0 || fromUnconsumed.length > 0) &&
         initialPlan.length === 0
@@ -776,6 +788,7 @@ export async function executeHumanGateStep(
             ...beforeInitialPlan.engineState,
             publishGate: {
               ...beforeInitialPlan.engineState?.publishGate,
+              ...(recoveredReviewDepth ? { reviewDepth: recoveredReviewDepth } : {}),
               pendingReviewPlan: [],
               pendingReviewPlanRequestedAt: undefined,
             },
@@ -793,6 +806,7 @@ export async function executeHumanGateStep(
               ...beforeInitialPlan.engineState,
               publishGate: {
                 ...beforeInitialPlan.engineState?.publishGate,
+                ...(recoveredReviewDepth ? { reviewDepth: recoveredReviewDepth } : {}),
                 pendingReviewPlan: initialPlan,
                 pendingReviewPlanRequestedAt: new Date().toISOString(),
               },
