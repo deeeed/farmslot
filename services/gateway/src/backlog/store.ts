@@ -72,6 +72,9 @@ import {
   removeQueueItemInternal,
   tryDispatchNext,
 } from './dispatch-queue.js';
+import { extractBacklogAcceptanceCriteria } from './spec.js';
+
+export { extractBacklogAcceptanceCriteria } from './spec.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -413,22 +416,6 @@ function resolveSpecPath(specPath: string): string {
 async function readBacklogSpecMarkdown(item: BacklogItem): Promise<string | null> {
   if (!item.specPath) return null;
   return readFile(resolveSpecPath(item.specPath), 'utf-8');
-}
-
-export function extractBacklogAcceptanceCriteria(markdown: string): string[] {
-  const lines = markdown.split(/\r?\n/);
-  const headingIndex = lines.findIndex((line) => /^##\s+Acceptance Criteria\s*$/i.test(line));
-  if (headingIndex < 0) return [];
-  const body: string[] = [];
-  for (const line of lines.slice(headingIndex + 1)) {
-    if (/^#{1,2}\s+\S/.test(line)) break;
-    body.push(line);
-  }
-  return body
-    .join('\n')
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*[-*]\s+/, '').trim())
-    .filter(Boolean);
 }
 
 async function assertBacklogSpecReady(item: BacklogItem): Promise<void> {
