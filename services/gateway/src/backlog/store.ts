@@ -2265,8 +2265,13 @@ export async function reconcileBacklogRun(
   });
 }
 
-export function markBacklogRunObserved(run: Run): void {
-  withBacklogMutation(async () => {
+/**
+ * Returns the settle promise so ADR-052's transition router can await it before
+ * ticking the work graph. Fire-and-forget callers (the index.ts event interceptor)
+ * may keep ignoring it — rejections are already caught below.
+ */
+export function markBacklogRunObserved(run: Run): Promise<void> {
+  return withBacklogMutation(async () => {
     const item =
       items.find((candidate) => candidate.runId === run.id) ??
       (run.backlogItemId

@@ -1,6 +1,5 @@
 import {
   Events,
-  isTerminalRunStatus,
   type RunCancelParams,
   type RunCancelResult,
   type RunForceCompleteParams,
@@ -15,6 +14,11 @@ import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { bumpRunGeneration, cancelRunEngine, startRun } from '../../run-engine/orchestrator.js';
 import {
+  cancelTransitionDeps,
+  defaultCancelCollaborators,
+} from '../../run-lifecycle/cancel-transition.js';
+import { routeRunTransition } from '../../run-lifecycle/transition-router.js';
+import {
   isRunnerPaneRetired,
   normalizeRunner,
   runnerContinueCommand,
@@ -22,62 +26,22 @@ import {
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
 import { getRun, updateRun } from '../../runs/store.js';
-import { invalidateWarmReviewerSessions } from '../../self-review/session-policy.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
 export async function runCancel(params: RunCancelParams, emit: Emit): Promise<RunCancelResult> {
-  const existing = getRun(params.runId);
-  if (!existing) throw new Error(`Run not found: ${params.runId}`);
-
-  if (isTerminalRunStatus(existing.status)) {
-    throw new Error(`Run ${params.runId} already in terminal state: ${existing.status}`);
-  }
-
-  cancelRunEngine(params.runId);
-  // A cancelled run's warm reviewer sessions must never be resumable.
-  invalidateWarmReviewerSessions(params.runId);
-
-  const completedAt = new Date().toISOString();
-  const run = updateRun(params.runId, {
-    status: 'cancelled',
-    completedAt,
-    error: params.reason ?? 'Cancelled by user',
-    steps: existing.steps.map((step) =>
-      step.status === 'running' || step.status === 'pending'
-        ? { ...step, status: 'skipped', completedAt }
-        : step,
-    ),
-    metrics: { ...existing.metrics, outcome: 'cancelled' },
-    agentContexts: [],
-  });
-  emit(Events.RUN_UPDATED, { run });
-
-  // Release any claimed slot on cancel. Runs can be cancelled from human-gate /
-  // blocked review-gate states long after dispatch, and keeping the slot busy
-  // strands live validation until someone manually resets it. Do this after
-  // publishing the terminal run state so Command Center responds immediately
-  // even when tmux/window cleanup is slow.
-  if (existing.slotId) {
-    try {
-      const { loadSlotVars, resetSlot } = await import('../../core/index.js');
-      const { killAgentInSession, killAllAgentWindows } = await import('../slot.js');
-      const { loadFleetStatus } = await import('../../fleet/state.js');
-      const vars = await loadSlotVars(existing.slotId);
-      await killAllAgentWindows(vars);
-      // After role-scoped windows are gone, clean the base pane as a legacy
-      // fallback. Do not infer a role from the flow here: cancelled legacy runs
-      // can have stale/null flow metadata while their worker lives elsewhere.
-      await killAgentInSession(vars, existing.metrics.runner ?? undefined);
-      await resetSlot(existing.slotId, true);
-      emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
-      console.log(`[run] released slot ${existing.slotId} on cancel`);
-    } catch (err) {
-      console.warn(
-        `[run] failed to release slot ${existing.slotId} on cancel: ${(err as Error).message}`,
-      );
-    }
-  }
+  // ADR-052: propagation to backlog / work graph / slot is the router's job. This
+  // handler holds the per-request `emit`, which only reaches the requesting socket,
+  // so the index.ts event interceptor never sees an operator cancel.
+  const { run } = await routeRunTransition(
+    {
+      kind: 'cancel',
+      runId: params.runId,
+      actor: 'operator',
+      ...(params.reason ? { reason: params.reason } : {}),
+    },
+    cancelTransitionDeps(defaultCancelCollaborators(emit)),
+  );
 
   return { run };
 }
