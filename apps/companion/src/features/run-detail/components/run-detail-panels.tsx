@@ -418,6 +418,7 @@ export function RunReviewWorkspaceSummary({
         </View>
         {gate ? (
           <Pressable
+            testID="companion-open-run-gate"
             style={styles.workspaceGateButton}
             onPress={() => onOpenDecision(gate.decision.id)}
           >

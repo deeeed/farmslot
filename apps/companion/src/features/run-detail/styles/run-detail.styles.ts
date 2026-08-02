@@ -797,4 +797,7 @@ export const runDetailStyles = StyleSheet.create({
     fontSize: fonts.sizeSm,
     marginBottom: spacing.xl,
   },
+  surfaceEndMarker: {
+    height: 1,
+  },
 });

@@ -478,6 +478,32 @@
         }
       ]
     },
+    "ui.capture_surface": {
+      "description": "Capture the complete current web page as one PNG while keeping ui.screenshot viewport-only.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "ui.capture_surface",
+          "intent": "Preserve the complete application page as review evidence.",
+          "label": "full-application-page",
+          "next": "done"
+        }
+      ]
+    },
     "cdp.target": {
       "description": "cdp.target action.",
       "schema": {

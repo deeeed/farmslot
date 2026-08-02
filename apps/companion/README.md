@@ -27,6 +27,21 @@ yarn start                      # Metro only
 `yarn typecheck` — TypeScript check, zero-tolerance.
 `yarn eas:project` — confirm the local config is linked to the Expo project.
 
+UX catalog recipes:
+
+```bash
+FARMSLOT_SLOT_ID=<slot> yarn recipe:run:ux-baseline:ios
+FARMSLOT_SLOT_ID=<slot> yarn recipe:run:ux-baseline:android
+
+# Capture one live run and its complete Ready Gate.
+FARMSLOT_SLOT_ID=<slot> yarn recipe:run:ux-ready-gate <run-id>
+```
+
+The baseline recipe uses native test IDs on both platforms, so it does not trigger
+iOS custom-scheme confirmations or stop at the Android Expo launcher. Each run
+writes screenshots, a route manifest, and `.agent/ux-catalog-current/index.html`.
+Notes persist locally and can be downloaded as JSON.
+
 ## Scripts
 
 Use `package.json` commands as stable entrypoints. Helper files under `scripts/`

@@ -575,7 +575,7 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
   );
 
   return (
-    <View style={baseStyles.container}>
+    <View testID="companion-screen-prs" collapsable={false} style={baseStyles.container}>
       {visibleRows.length === 0 && !loading ? (
         <View style={[styles.emptyContainer, { paddingBottom: insets.bottom }]}>
           {header}
@@ -722,6 +722,15 @@ export function PRDashboardScreen({ showStackTitle = false }: { showStackTitle?:
             styles.listContent,
             { paddingBottom: styles.listContent.paddingBottom + insets.bottom },
           ]}
+          ListFooterComponent={
+            <View
+              testID="companion-screen-prs-end"
+              accessible
+              collapsable={false}
+              accessibilityLabel="End of Pull requests"
+              style={styles.captureEndMarker}
+            />
+          }
         />
       )}
     </View>
@@ -759,6 +768,7 @@ function SummaryPill({ label, value, color }: { label: string; value: number; co
 }
 
 const styles = StyleSheet.create({
+  captureEndMarker: { height: 1 },
   emptyContainer: {
     flex: 1,
     gap: spacing.xl,

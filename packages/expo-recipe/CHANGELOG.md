@@ -4,6 +4,8 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+- feat: add opt-in `ui.capture_surface` support for native Expo recipes, including targetable scroll surfaces, bounded full-height stitching, virtualized-list end detection, and position restoration.
+
 ## 0.6.0 - 2026-08-02
 
 - feat: drive swipe, pan, drag, and `hold_ms` long-press recipe actions through the assigned native device, select Android devices by ADB serial, retry failed tool/device discovery, reject unsupported native paths before execution, and retain resolved coordinate phases. Publish against `@farmslot/protocol` 0.16.0 and `@farmslot/recipe-harness` 0.12.0.

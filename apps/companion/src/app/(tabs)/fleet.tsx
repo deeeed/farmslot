@@ -202,7 +202,7 @@ export default function FleetScreen() {
   }, []);
 
   return (
-    <View style={baseStyles.container}>
+    <View testID="companion-screen-fleet" collapsable={false} style={baseStyles.container}>
       <View style={styles.summaryBar}>
         <Text style={styles.summaryText}>{summaryText}</Text>
       </View>
@@ -237,6 +237,15 @@ export default function FleetScreen() {
               <Text style={baseStyles.textSecondary}>No slots found</Text>
             )
           }
+          ListFooterComponent={
+            <View
+              testID="companion-screen-fleet-end"
+              accessible
+              collapsable={false}
+              accessibilityLabel="End of Fleet"
+              style={styles.captureEndMarker}
+            />
+          }
         />
       )}
     </View>
@@ -244,6 +253,7 @@ export default function FleetScreen() {
 }
 
 const styles = StyleSheet.create({
+  captureEndMarker: { height: 1 },
   summaryBar: {
     backgroundColor: colors.bgSurface,
     paddingVertical: spacing.md,

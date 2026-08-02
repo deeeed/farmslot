@@ -176,7 +176,7 @@ export default function InboxScreen() {
   );
 
   return (
-    <View style={baseStyles.container}>
+    <View testID="companion-screen-inbox" collapsable={false} style={baseStyles.container}>
       {filteredDecisions.length === 0 ? (
         status === 'connected' && hasFilters ? (
           <FilterEmptyState
@@ -203,6 +203,15 @@ export default function InboxScreen() {
             styles.listContent,
             { paddingBottom: styles.listContent.paddingBottom + insets.bottom },
           ]}
+          ListFooterComponent={
+            <View
+              testID="companion-screen-inbox-end"
+              accessible
+              collapsable={false}
+              accessibilityLabel="End of Decision inbox"
+              style={styles.captureEndMarker}
+            />
+          }
         />
       )}
     </View>
@@ -210,6 +219,7 @@ export default function InboxScreen() {
 }
 
 const styles = StyleSheet.create({
+  captureEndMarker: { height: 1 },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   listContent: { padding: spacing.lg, paddingBottom: spacing.xxxl },
   decisionCard: {

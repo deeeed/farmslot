@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+
+import { PNG } from 'pngjs';
 
 import type { ActionExecutionContext } from '@farmslot/recipe-harness';
 
@@ -7,6 +12,236 @@ import {
   type AgentDeviceUiTransportOptions,
   createAgentDeviceUiTransport,
 } from './agent-device-ui-transport.js';
+
+test('captures a full native surface without stopping at a premature virtualized end marker', async () => {
+  const artifactsDir = await mkdtemp(path.join(tmpdir(), 'farmslot-capture-surface-'));
+  let position = 0;
+  let bottomScrolls = 0;
+  let freezeCapture = false;
+  let hideEndMarker = false;
+  let omitScale = false;
+  let failTopSwipe = false;
+  let hideSurfaceMarker = false;
+  const client = {
+    apps: { open: async () => ({ session: 'surface-session', identifiers: {} }) },
+    interactions: {
+      async scroll(options: Record<string, unknown>) {
+        if (options.direction === 'top') position = 0;
+        if (options.direction === 'down') {
+          position = Math.min(20, position + 10);
+          bottomScrolls += 1;
+        }
+        return { scrolled: true };
+      },
+      async swipe(options: Record<string, unknown>) {
+        if (failTopSwipe) throw new Error('reset to top failed');
+        const from = options.from as { y: number };
+        const to = options.to as { y: number };
+        if (from.y < to.y) position = Math.max(0, position - 10);
+        return { scrolled: true };
+      },
+    },
+    command: { wait: async () => ({ stable: true }) },
+    capture: {
+      async snapshot() {
+        return {
+          nodes: [
+            {
+              identifier: hideSurfaceMarker ? undefined : 'catalog-surface',
+              type: 'ScrollView',
+              rect: omitScale
+                ? { x: 0, y: 2, width: 10, height: 16 }
+                : { x: 0, y: 1, width: 5, height: 8 },
+              hiddenContentAbove: position > 0,
+              hiddenContentBelow: position < 20,
+            },
+            {
+              type: 'Window',
+              rect: omitScale
+                ? { x: 0, y: 0, width: 10, height: 20 }
+                : { x: 0, y: 0, width: 5, height: 10 },
+            },
+            ...(position > 0 && !hideEndMarker
+              ? [
+                  {
+                    identifier: 'catalog-end',
+                    type: 'View',
+                    rect: omitScale
+                      ? { x: 0, y: 16, width: 10, height: 1 }
+                      : { x: 0, y: 8, width: 5, height: 1 },
+                    visibleToUser: true,
+                  },
+                ]
+              : []),
+          ],
+          truncated: false,
+        };
+      },
+      async screenshot(options: Record<string, unknown>) {
+        const image = new PNG({ width: 10, height: 20 });
+        for (let y = 0; y < image.height; y += 1) {
+          const documentValue =
+            y < 2 ? 7 : y >= 18 ? 9 : ((freezeCapture ? 0 : position) + y - 2) * 7;
+          for (let x = 0; x < image.width; x += 1) {
+            const value = y >= 14 && y < 17 && x >= 8 ? 99 : documentValue;
+            const offset = (y * image.width + x) * 4;
+            image.data[offset] = value;
+            image.data[offset + 1] = value;
+            image.data[offset + 2] = value;
+            image.data[offset + 3] = 255;
+          }
+        }
+        await writeFile(String(options.path), PNG.sync.write(image));
+        return {
+          width: 10,
+          height: 20,
+          ...(omitScale ? {} : { logicalWidth: 5, logicalHeight: 10, pixelDensity: 2 }),
+        };
+      },
+    },
+    sessions: { close: async () => ({ session: 'surface-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const artifacts: unknown[] = [];
+  const context = {
+    nodeId: 'capture-catalog',
+    artifactsDir,
+    resolveArtifactPath: (relativePath: string) => path.join(artifactsDir, relativePath),
+    registerArtifact: (artifact: unknown) => artifacts.push(artifact),
+  } as ActionExecutionContext;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'ios',
+    device: 'fs-1',
+    app: 'net.siteed.farmslot.development',
+    session: 'surface-session',
+    client,
+  });
+
+  try {
+    const result = (await transport.execute(
+      'ui.capture_surface',
+      {
+        path: 'screenshots/catalog.png',
+        surface_test_id: 'catalog-surface',
+        until_test_id: 'catalog-end',
+        max_scrolls: 4,
+      },
+      context,
+    )) as { output: { extent: string; viewports: number; height: number } };
+    const image = PNG.sync.read(await readFile(path.join(artifactsDir, 'screenshots/catalog.png')));
+
+    assert.equal(result.output.extent, 'full');
+    assert.equal(result.output.viewports, 3);
+    assert.equal(result.output.height, 40);
+    assert.equal(image.height, 40);
+    assert.equal(bottomScrolls, 2);
+    assert.equal(position, 0);
+    assert.equal(artifacts.length, 1);
+    assert.deepEqual([...image.data.subarray(0, 4)], [7, 7, 7, 255]);
+    assert.deepEqual([...image.data.subarray(image.data.length - 4)], [9, 9, 9, 255]);
+    assert.equal(
+      [...Array(image.height).keys()].filter(
+        (row) => image.data[(row * image.width + image.width - 1) * 4] === 99,
+      ).length,
+      3,
+    );
+
+    freezeCapture = true;
+    hideEndMarker = true;
+    await assert.rejects(
+      () =>
+        transport.execute(
+          'ui.capture_surface',
+          {
+            path: 'screenshots/incomplete.png',
+            surface_test_id: 'catalog-surface',
+            until_test_id: 'catalog-end',
+            max_scrolls: 2,
+          },
+          context,
+        ),
+      /(?:stopped moving before reaching|did not reach the end)/u,
+    );
+    assert.equal(artifacts.length, 1);
+
+    freezeCapture = false;
+    hideEndMarker = false;
+    omitScale = true;
+    const androidTransport = createAgentDeviceUiTransport({
+      platform: 'android',
+      device: 'emulator-5554',
+      app: 'net.siteed.farmslot.development',
+      session: 'android-surface-session',
+      client,
+    });
+    const androidResult = (await androidTransport.execute(
+      'ui.capture_surface',
+      {
+        path: 'screenshots/android-catalog.png',
+        surface_test_id: 'catalog-surface',
+        until_test_id: 'catalog-end',
+        max_scrolls: 2,
+      },
+      context,
+    )) as { output: { width: number; viewports: number } };
+    assert.equal(androidResult.output.width, 10);
+    assert.equal(androidResult.output.viewports, 3);
+    assert.equal(artifacts.length, 2);
+
+    hideSurfaceMarker = true;
+    await assert.rejects(
+      () =>
+        androidTransport.execute(
+          'ui.capture_surface',
+          {
+            path: 'screenshots/missing-surface.png',
+            surface_test_id: 'catalog-surface',
+            until_test_id: 'catalog-end',
+            max_scrolls: 2,
+          },
+          context,
+        ),
+      /could not resolve surface_test_id=catalog-surface/u,
+    );
+    assert.equal(artifacts.length, 2);
+    hideSurfaceMarker = false;
+
+    await assert.rejects(
+      () =>
+        transport.execute(
+          'ui.capture_surface',
+          {
+            path: 'screenshots/missing-scale.png',
+            surface_test_id: 'catalog-surface',
+            until_test_id: 'catalog-end',
+            max_scrolls: 2,
+          },
+          context,
+        ),
+      /requires screenshot logical dimensions or pixel density/u,
+    );
+    assert.equal(artifacts.length, 2);
+
+    omitScale = false;
+    failTopSwipe = true;
+    await assert.rejects(
+      () =>
+        transport.execute(
+          'ui.capture_surface',
+          {
+            path: 'screenshots/restore-failed.png',
+            surface_test_id: 'catalog-surface',
+            until_test_id: 'catalog-end',
+            max_scrolls: 2,
+          },
+          context,
+        ),
+      /reset to top failed/u,
+    );
+    assert.equal(artifacts.length, 2);
+  } finally {
+    await rm(artifactsDir, { recursive: true, force: true });
+  }
+});
 
 test('drives native actions, observations, artifacts, and non-owning cleanup', async () => {
   const calls: Array<{ method: string; options: Record<string, unknown> }> = [];

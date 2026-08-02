@@ -36,7 +36,10 @@ export default function RootLayout() {
     if (isStoreScreenshotMode) {
       seedStoreScreenshotMode();
     } else {
-      initNotifications();
+      // Recipe automation must not be blocked by the native notification prompt.
+      if (!__DEV__ || process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE !== '1') {
+        initNotifications();
+      }
       init();
     }
     void initTerminalPrefs();

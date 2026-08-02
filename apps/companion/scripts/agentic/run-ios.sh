@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=./agentic.conf
 source "${SCRIPT_DIR}/agentic.conf"
+# shellcheck source=./slot-context.sh
+source "${SCRIPT_DIR}/slot-context.sh"
 # shellcheck source=./network.sh
 source "${SCRIPT_DIR}/network.sh"
 
@@ -95,6 +97,7 @@ has_explicit_expo_device_arg() {
 }
 
 parse_ios_cli_args "$@"
+companion_apply_farmslot_slot_context ios
 IOS_TARGET="${IOS_DEVICE_UDID:-${IOS_SIMULATOR:-${SIMULATOR:-}}}"
 if [[ -n "${IOS_DEVICE_UDID:-}" ]]; then
   DEVICE_MODE="${DEVICE_MODE:-device}"

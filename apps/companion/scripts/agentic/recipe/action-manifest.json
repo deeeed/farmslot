@@ -460,6 +460,31 @@
         }
       ]
     },
+    "ui.capture_surface": {
+      "description": "Capture the full current scrollable screen as one PNG. This action is opt-in; ui.screenshot remains viewport-only.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" },
+          "label": { "type": "string" },
+          "surface_test_id": { "type": "string" },
+          "until_test_id": { "type": "string" },
+          "max_scrolls": { "type": "integer" },
+          "restore_position": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "action": "ui.capture_surface",
+          "intent": "Preserve the complete scrollable context for human review.",
+          "path": "screenshots/full-screen.png",
+          "surface_test_id": "screen-scroll-surface",
+          "until_test_id": "screen-bottom",
+          "next": "done"
+        }
+      ]
+    },
     "index_artifacts": {
       "description": "Copy generated screenshot artifacts into the recipe artifact package for review.",
       "schema": {

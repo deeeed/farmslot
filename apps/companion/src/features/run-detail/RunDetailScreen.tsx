@@ -667,6 +667,8 @@ export default function RunDetailScreen() {
         />
       </Animated.View>
       <Animated.ScrollView
+        testID="companion-screen-run-detail"
+        collapsable={false}
         onScroll={scrollHandler}
         scrollEventThrottle={16}
         contentContainerStyle={[
@@ -1248,6 +1250,13 @@ export default function RunDetailScreen() {
             </View>
           </View>
         ) : null}
+        <View
+          testID="companion-screen-run-detail-end"
+          accessible
+          collapsable={false}
+          accessibilityLabel="End of Run Detail"
+          style={styles.surfaceEndMarker}
+        />
       </Animated.ScrollView>
     </View>
   );

@@ -1,0 +1,282 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion native UX catalog",
+  "description": "Navigates the key Companion screens through stable native controls and creates an offline feedback catalog without external deep links.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "platform": {
+        "type": "string",
+        "enum": ["ios", "android"],
+        "default": "ios"
+      }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "ux-catalog",
+      "claim": "The key Companion screens are captured through native navigation in a reusable offline feedback catalog."
+    }
+  ],
+  "workflow": {
+    "entry": "open-review",
+    "nodes": {
+      "open-review": {
+        "action": "ui.press",
+        "test_id": "companion-tab-review",
+        "intent": "Open the Review workspace through native tab navigation.",
+        "next": "confirm-review"
+      },
+      "confirm-review": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "intent": "Confirm Review is visible before capture.",
+        "next": "capture-review"
+      },
+      "capture-review": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/01_review.png",
+        "label": "Review queue",
+        "surface_test_id": "companion-screen-review",
+        "until_test_id": "companion-screen-review-end",
+        "max_scrolls": 12,
+        "intent": "Preserve the visible Review queue so its information hierarchy can be assessed.",
+        "next": "open-terminals",
+        "proves": ["ux-catalog"]
+      },
+      "open-terminals": {
+        "action": "ui.press",
+        "test_id": "companion-tab-terminals",
+        "intent": "Open Terminals through native tab navigation.",
+        "next": "confirm-terminals"
+      },
+      "confirm-terminals": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-terminals",
+        "expected": "visible",
+        "intent": "Confirm Terminals is visible before capture.",
+        "next": "capture-terminals"
+      },
+      "capture-terminals": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/02_terminals.png",
+        "label": "Terminals",
+        "surface_test_id": "companion-screen-terminals",
+        "until_test_id": "companion-screen-terminals-end",
+        "max_scrolls": 12,
+        "intent": "Preserve the visible Terminals workspace so its operational layout can be assessed.",
+        "next": "open-advanced"
+      },
+      "open-advanced": {
+        "action": "ui.press",
+        "test_id": "companion-tab-advanced",
+        "intent": "Open Advanced through native tab navigation.",
+        "next": "confirm-advanced"
+      },
+      "confirm-advanced": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-advanced",
+        "expected": "visible",
+        "intent": "Confirm Advanced is visible before capture.",
+        "next": "capture-advanced"
+      },
+      "capture-advanced": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/03_advanced.png",
+        "label": "Advanced",
+        "surface_test_id": "companion-screen-advanced",
+        "until_test_id": "companion-screen-advanced-end",
+        "max_scrolls": 12,
+        "intent": "Preserve the visible Advanced hub so its navigation choices can be assessed.",
+        "next": "open-settings"
+      },
+      "open-settings": {
+        "action": "ui.press",
+        "test_id": "companion-tab-settings",
+        "intent": "Open Settings through native tab navigation.",
+        "next": "confirm-settings"
+      },
+      "confirm-settings": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-settings",
+        "expected": "visible",
+        "intent": "Confirm Settings is visible before capture.",
+        "next": "capture-settings"
+      },
+      "capture-settings": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/04_settings.png",
+        "label": "Settings",
+        "surface_test_id": "companion-screen-settings",
+        "until_test_id": "companion-screen-settings-end",
+        "max_scrolls": 12,
+        "intent": "Preserve the visible Settings screen so its connection controls can be assessed.",
+        "next": "return-advanced-for-fleet"
+      },
+      "return-advanced-for-fleet": {
+        "action": "ui.press",
+        "test_id": "companion-tab-advanced",
+        "intent": "Return to Advanced to open Fleet without a deep link.",
+        "next": "scroll-to-fleet"
+      },
+      "scroll-to-fleet": {
+        "action": "ui.scroll",
+        "intent": "Expose the Advanced route cards.",
+        "next": "open-fleet"
+      },
+      "open-fleet": {
+        "action": "ui.press",
+        "test_id": "companion-advanced-fleet",
+        "intent": "Open Fleet through the in-app route card.",
+        "next": "confirm-fleet"
+      },
+      "confirm-fleet": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-fleet",
+        "expected": "visible",
+        "intent": "Confirm Fleet is visible before capture.",
+        "next": "capture-fleet"
+      },
+      "capture-fleet": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/05_raw_fleet.png",
+        "label": "Fleet",
+        "surface_test_id": "companion-screen-fleet",
+        "until_test_id": "companion-screen-fleet-end",
+        "max_scrolls": 12,
+        "intent": "Preserve the visible Fleet workspace so its slot overview can be assessed.",
+        "next": "return-advanced-for-prs"
+      },
+      "return-advanced-for-prs": {
+        "action": "ui.press",
+        "test_id": "companion-tab-advanced",
+        "intent": "Return to Advanced to open the PR dashboard.",
+        "next": "scroll-to-prs"
+      },
+      "scroll-to-prs": {
+        "action": "ui.scroll",
+        "intent": "Expose the Advanced route cards.",
+        "next": "open-prs"
+      },
+      "open-prs": {
+        "action": "ui.press",
+        "test_id": "companion-advanced-prs",
+        "intent": "Open the PR dashboard through the in-app route card.",
+        "next": "confirm-prs"
+      },
+      "confirm-prs": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-prs",
+        "expected": "visible",
+        "intent": "Confirm the PR dashboard is visible before capture.",
+        "next": "capture-prs"
+      },
+      "capture-prs": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/06_raw_prs.png",
+        "label": "Pull requests",
+        "surface_test_id": "companion-screen-prs",
+        "until_test_id": "companion-screen-prs-end",
+        "max_scrolls": 12,
+        "intent": "Preserve the visible PR dashboard so its review status presentation can be assessed.",
+        "next": "return-advanced-for-inbox"
+      },
+      "return-advanced-for-inbox": {
+        "action": "ui.press",
+        "test_id": "companion-tab-advanced",
+        "intent": "Return to Advanced to open the decision inbox.",
+        "next": "scroll-to-inbox"
+      },
+      "scroll-to-inbox": {
+        "action": "ui.scroll",
+        "intent": "Expose the Advanced route cards.",
+        "next": "open-inbox"
+      },
+      "open-inbox": {
+        "action": "ui.press",
+        "test_id": "companion-advanced-inbox",
+        "intent": "Open the decision inbox through the in-app route card.",
+        "next": "confirm-inbox"
+      },
+      "confirm-inbox": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-inbox",
+        "expected": "visible",
+        "intent": "Confirm the decision inbox is visible before capture.",
+        "next": "capture-inbox"
+      },
+      "capture-inbox": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/07_raw_inbox.png",
+        "label": "Decision inbox",
+        "surface_test_id": "companion-screen-inbox",
+        "until_test_id": "companion-screen-inbox-end",
+        "max_scrolls": 12,
+        "intent": "Preserve the visible decision inbox so its gate presentation can be assessed.",
+        "next": "build-catalog"
+      },
+      "build-catalog": {
+        "action": "command",
+        "cmd": "node scripts/screenshots/build-native-ux-catalog.mjs \"$FARMSLOT_RECIPE_ARTIFACTS_DIR\" .agent/ux-catalog-current \"{{params.platform}}\"",
+        "timeout_ms": 20000,
+        "intent": "Build the offline HTML feedback catalog from the proven native screenshots.",
+        "next": "index-catalog"
+      },
+      "index-catalog": {
+        "action": "index_artifacts",
+        "intent": "Attach the reusable catalog, route manifest, and screenshots to the recipe run.",
+        "artifacts": [
+          {
+            "path": ".agent/ux-catalog-current/index.html",
+            "type": "html",
+            "label": "Companion UX feedback catalog"
+          },
+          {
+            "path": ".agent/ux-catalog-current/manifest.json",
+            "type": "json",
+            "label": "Companion UX route manifest"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/01_review.png",
+            "type": "image",
+            "label": "Review queue"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/02_terminals.png",
+            "type": "image",
+            "label": "Terminals"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/03_advanced.png",
+            "type": "image",
+            "label": "Advanced"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/04_settings.png",
+            "type": "image",
+            "label": "Settings"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/05_raw_fleet.png",
+            "type": "image",
+            "label": "Fleet"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/06_raw_prs.png",
+            "type": "image",
+            "label": "Pull requests"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/07_raw_inbox.png",
+            "type": "image",
+            "label": "Decision inbox"
+          }
+        ],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

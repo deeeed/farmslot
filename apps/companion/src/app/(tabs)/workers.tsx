@@ -462,7 +462,11 @@ export default function WorkersScreen() {
       : 'Not connected.';
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom + spacing.sm }]}>
+    <View
+      testID="companion-screen-terminals"
+      collapsable={false}
+      style={[styles.container, { paddingBottom: insets.bottom + spacing.sm }]}
+    >
       <View style={styles.summaryRow}>
         <Text style={styles.summaryTitle}>Terminals</Text>
         <Pressable
@@ -507,6 +511,15 @@ export default function WorkersScreen() {
         }}
         renderItem={renderItem}
         ListEmptyComponent={<Text style={styles.emptyText}>{empty}</Text>}
+        ListFooterComponent={
+          <View
+            testID="companion-screen-terminals-end"
+            accessible
+            collapsable={false}
+            accessibilityLabel="End of Terminals"
+            style={styles.captureEndMarker}
+          />
+        }
         contentContainerStyle={styles.listContent}
       />
     </View>
@@ -514,6 +527,7 @@ export default function WorkersScreen() {
 }
 
 const styles = StyleSheet.create({
+  captureEndMarker: { height: 1 },
   container: { flex: 1, backgroundColor: colors.bgBase },
   summaryRow: {
     alignItems: 'center',

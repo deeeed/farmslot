@@ -65,6 +65,7 @@ export default function TabLayout() {
           name="workers"
           options={{
             title: 'Terminals',
+            tabBarButtonTestID: 'companion-tab-terminals',
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="terminal-outline" size={size} color={color} />
             ),
