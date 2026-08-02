@@ -606,10 +606,9 @@ export function registerBacklogCommand(program: Command): void {
         );
         if (emit.machine) emit.ok(result);
         else {
-          const [statusLine, attachLine] = formatBacklogRefinementSessionOutput(result).split('\n');
-          const status = statusLine?.startsWith('running') ? green('running') : yellow('absent');
+          const status = result.exists ? green('running') : yellow('absent');
           ctx.output.write(`${status}  ${result.tmuxSession}\n`);
-          if (attachLine) ctx.output.write(`${dim(attachLine)}\n`);
+          ctx.output.write(`${dim(result.attachCommand)}\n`);
         }
       } catch (err) {
         emit.fail(err);
@@ -650,21 +649,4 @@ export function describeBacklogRefineOutput(result: BacklogRefineResult): {
     promptLine: `prompt: ${result.promptPath}`,
     attachLine: `attach: ${result.attachCommand}`,
   };
-}
-
-/** Format human-readable refine CLI output for prompt-only / launch / existing-session. */
-export function formatBacklogRefineOutput(result: BacklogRefineResult): string {
-  const lines = describeBacklogRefineOutput(result);
-  return [
-    `${lines.verb} refinement for ${result.item.sourceRef}`,
-    lines.promptLine,
-    lines.attachLine,
-  ].join('\n');
-}
-
-/** Format refinement-session inspection output. */
-export function formatBacklogRefinementSessionOutput(
-  result: BacklogRefinementSessionGetResult,
-): string {
-  return `${result.exists ? 'running' : 'absent'}  ${result.tmuxSession}\n${result.attachCommand}`;
 }
