@@ -14,6 +14,8 @@ import type {
   BacklogLaunchPlan,
   BacklogLaunchSlotPolicy,
   BacklogMarkReadyResult,
+  BacklogRefinementSessionGetResult,
+  BacklogRefineResult,
   BacklogSourceKind,
   BacklogSpecGetResult,
   BacklogStatus,
@@ -24,6 +26,7 @@ import type {
   FlowType,
   ProjectConfig,
   Run,
+  SafetyTier,
   SlotStatus,
   WorkerTemplateOption,
   WorkGraphActivateResult,
@@ -33,6 +36,8 @@ import type {
 import {
   BACKLOG_SOURCE_KINDS,
   BACKLOG_STATUSES,
+  DEFAULT_BACKLOG_REFINEMENT_MODEL,
+  DEFAULT_BACKLOG_REFINEMENT_RUNNER,
   isTerminalRunStatus,
   Methods,
 } from '@farmslot/protocol';
@@ -46,7 +51,13 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
-import { DEFAULT_MODEL, MODELS_BY_RUNNER, RUNNER_OPTIONS } from '../../utils/runner-options.js';
+import {
+  DEFAULT_MODEL,
+  modelForRunnerChange,
+  MODELS_BY_RUNNER,
+  modelsForRunner,
+  RUNNER_OPTIONS,
+} from '../../utils/runner-options.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
 import { templateOptionsRequestKey } from '../dispatch/dispatch-wizard-template-options.js';
@@ -87,11 +98,17 @@ import {
   type WorkInventoryColumnDef,
   workInventoryTableStyles,
 } from '../shared/work-inventory-table.js';
-import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
+import {
+  encodeWorkerRouteParam,
+  filterSlotsByGlobalFilters,
+} from '../terminal/split-view-model.js';
 
 import {
+  applyBacklogRefineItemRefresh,
   BACKLOG_SORT_KEYS,
   backlogItemMatchesStatusFilter,
+  backlogRefinementPickerView,
+  backlogRefineResultMessage,
   type BacklogSortDirection,
   type BacklogSortKey,
   backlogStatusCounts,
@@ -100,11 +117,15 @@ import {
   canDequeueBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
+  CUSTOM_REFINEMENT_CHOICE,
   DEFAULT_BACKLOG_STATUS_FILTER,
+  DEFAULT_REFINEMENT_CHOICE,
   displayedBacklogFlow,
   displayedBacklogStatus,
   parseBacklogStatusFilter,
+  refinementChoiceValue,
   serializeBacklogStatusFilter,
+  shouldForceReloadBacklogSpecAfterRefine,
   showsBacklogCleanupActionsForUi,
   sortBacklogItems,
   syncedBacklogDraftProject,
@@ -112,6 +133,7 @@ import {
 
 const FLOWS: FlowType[] = ['fix-bug', 'dev', 'review-pr', 'pr-complete', 'update-branch'];
 const SOURCES: BacklogSourceKind[] = [...BACKLOG_SOURCE_KINDS];
+const SAFETY_TIERS: SafetyTier[] = ['sandboxed', 'full-auto', 'dangerous'];
 const BACKLOG_PROJECT_PARAM = 'backlogProject';
 const BACKLOG_STATUS_PARAM = 'backlogStatus';
 const BACKLOG_SLOT_SELECTOR_PARAM = 'slotSelector';
@@ -122,6 +144,7 @@ const BACKLOG_DISPATCH_CONFIG_PARAM = 'dispatchConfig';
 const BACKLOG_SPEC_PARAM = 'spec';
 const BACKLOG_SORT_PARAM = 'sort';
 const BACKLOG_SORT_DIRECTION_PARAM = 'direction';
+const BACKLOG_RUNNER_PICKER_PARAM = 'runnerPicker';
 
 const BACKLOG_INVENTORY_COLUMNS: WorkInventoryColumnDef<BacklogSortKey>[] = [
   { key: 'status', label: 'Status', width: '92px', testId: 'backlog-sort-status' },
@@ -281,6 +304,16 @@ export class BacklogPanel extends LitElement {
     [NEW_PLAN_KEY]: defaultLaunchPlanDraft(),
   };
   @state() private _pendingConfirm: string | null = null;
+  @state() private _refineRunner = '';
+  @state() private _refineModel = '';
+  @state() private _refineCommand = '';
+  @state() private _refineSafetyTier = '';
+  @state() private _refineRunnerCustom = false;
+  @state() private _refineModelCustom = false;
+  @state() private _refineSafetyCustom = false;
+  @state() private _runnerPickerOpen = false;
+  @state() private _refinementSessionLoading = '';
+  @state() private _existingRefinementSession: BacklogRefinementSessionGetResult | null = null;
 
   private _unsub?: () => void;
   private _activityCacheItems: BacklogItem[] | null = null;
@@ -303,6 +336,11 @@ export class BacklogPanel extends LitElement {
     if (this._dispatchConfigOpen) {
       event.preventDefault();
       this._setDispatchConfigOpen(false);
+      return;
+    }
+    if (this._runnerPickerOpen) {
+      event.preventDefault();
+      this._setRunnerPickerOpen(false);
       return;
     }
     if (this._slotSelectorOpen || this._launchSlotSelector) return;
@@ -708,6 +746,67 @@ export class BacklogPanel extends LitElement {
         place-items: center;
         padding: ${unsafeCSS(spacing.lg)};
         background: rgb(0 0 0 / 0.58);
+      }
+      .runner-modal {
+        width: min(560px, calc(100vw - 32px));
+        max-height: min(760px, calc(100vh - 32px));
+        overflow: auto;
+        border: 1px solid ${unsafeCSS(colors.accent)}55;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.bgCard)};
+        box-shadow: 0 20px 60px rgb(0 0 0 / 0.35);
+        color: ${unsafeCSS(colors.textPrimary)};
+        display: grid;
+        gap: ${unsafeCSS(spacing.md)};
+        padding: ${unsafeCSS(spacing.lg)};
+      }
+      .runner-modal header,
+      .runner-modal footer {
+        display: flex;
+        flex-wrap: wrap;
+        gap: ${unsafeCSS(spacing.md)};
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+      .runner-modal footer {
+        justify-content: flex-end;
+      }
+      .session-card {
+        border: 1px solid ${unsafeCSS(colors.accent)}44;
+        border-radius: ${unsafeCSS(radii.sm)};
+        padding: ${unsafeCSS(spacing.md)};
+        display: grid;
+        gap: ${unsafeCSS(spacing.sm)};
+        background: ${unsafeCSS(colors.bgSurface)};
+      }
+      .session-card header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: ${unsafeCSS(spacing.md)};
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+      .session-card code {
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        color: ${unsafeCSS(colors.textSecondary)};
+      }
+      .runner-modal .grid {
+        display: grid;
+        gap: ${unsafeCSS(spacing.md)};
+      }
+      .runner-modal .full {
+        grid-column: 1 / -1;
+      }
+      .runner-modal .field,
+      .runner-modal label.full {
+        display: grid;
+        gap: 6px;
+        color: ${unsafeCSS(colors.textSecondary)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+      }
+      .runner-modal input {
+        width: 100%;
+        box-sizing: border-box;
       }
       .dispatch-config-modal {
         width: min(920px, calc(100vw - 32px));
@@ -1143,10 +1242,15 @@ export class BacklogPanel extends LitElement {
     this._dispatchConfigOpen =
       Boolean(this._selectedItemId) && params.get(BACKLOG_DISPATCH_CONFIG_PARAM) === '1';
     this._specViewerOpen = Boolean(this._selectedItemId) && params.get(BACKLOG_SPEC_PARAM) === '1';
+    this._runnerPickerOpen =
+      Boolean(this._selectedItemId) && params.get(BACKLOG_RUNNER_PICKER_PARAM) === '1';
     const sort = parseWorkInventorySort(params, BACKLOG_SORT_URL);
     this._sortKey = sort.key;
     this._sortDirection = sort.direction;
     if (this._slotSelectorOpen) this._createPanelOpen = true;
+    if (this._runnerPickerOpen && this._selectedItem) {
+      void this._loadRefinementSessionStatus(this._selectedItem);
+    }
   }
 
   private _writeUrlState() {
@@ -1176,6 +1280,11 @@ export class BacklogPanel extends LitElement {
     }
     if (this._specViewerOpen && this._selectedItemId) params.set(BACKLOG_SPEC_PARAM, '1');
     else params.delete(BACKLOG_SPEC_PARAM);
+    if (this._runnerPickerOpen && this._selectedItemId) {
+      params.set(BACKLOG_RUNNER_PICKER_PARAM, '1');
+    } else {
+      params.delete(BACKLOG_RUNNER_PICKER_PARAM);
+    }
     applyWorkInventorySort(
       params,
       { key: this._sortKey, direction: this._sortDirection },
@@ -1263,9 +1372,16 @@ export class BacklogPanel extends LitElement {
     if (open && item) void this._loadSpec(item);
   }
 
-  private async _loadSpec(item: BacklogItem) {
-    if (!item.specPath || this._specContents[item.id] || this._specLoadingItemId === item.id)
+  private _specForceReloadPending = new Set<string>();
+
+  private async _loadSpec(item: BacklogItem, options?: { force?: boolean }) {
+    if (!item.specPath) return;
+    if (this._specLoadingItemId === item.id) {
+      // Do not drop a forced refresh that lands during an in-flight load.
+      if (options?.force) this._specForceReloadPending.add(item.id);
       return;
+    }
+    if (!options?.force && this._specContents[item.id]) return;
     this._specLoadingItemId = item.id;
     this._specErrors = { ...this._specErrors, [item.id]: '' };
     try {
@@ -1274,13 +1390,26 @@ export class BacklogPanel extends LitElement {
       });
       this._specContents = { ...this._specContents, [item.id]: result };
     } catch (error) {
+      const nextContents = { ...this._specContents };
+      delete nextContents[item.id];
+      this._specContents = nextContents;
       this._specErrors = {
         ...this._specErrors,
         [item.id]: error instanceof Error ? error.message : String(error),
       };
     } finally {
       this._specLoadingItemId = '';
+      if (this._specForceReloadPending.has(item.id)) {
+        this._specForceReloadPending.delete(item.id);
+        void this._loadSpec(item, { force: true });
+      }
     }
+  }
+
+  /** After refinement, apply the returned item and re-fetch attached spec (surfaces validation errors). */
+  private async _refreshItemAfterRefinement(item: BacklogItem) {
+    this._items = applyBacklogRefineItemRefresh(this._items, item);
+    if (shouldForceReloadBacklogSpecAfterRefine(item)) await this._loadSpec(item, { force: true });
   }
 
   private get _projects(): string[] {
@@ -2590,10 +2719,297 @@ export class BacklogPanel extends LitElement {
     </div>`;
   }
 
+  private get _refinementRunnerOptions(): string[] {
+    const slotRunners = [
+      ...new Set(
+        this._slots
+          .map((slot) => slot.runner)
+          .filter((runner): runner is string => Boolean(runner)),
+      ),
+    ];
+    return [...new Set([...RUNNER_OPTIONS, ...slotRunners])].sort();
+  }
+
+  private get _refinementModelOptions(): string[] {
+    const runner = this._refineRunner || DEFAULT_BACKLOG_REFINEMENT_RUNNER;
+    return modelsForRunner(runner);
+  }
+
+  private get _refinementDefaultModelLabel(): string {
+    const runner = this._refineRunner || DEFAULT_BACKLOG_REFINEMENT_RUNNER;
+    return DEFAULT_MODEL[runner] ?? DEFAULT_BACKLOG_REFINEMENT_MODEL;
+  }
+
+  private _setRunnerPickerOpen(open: boolean) {
+    this._runnerPickerOpen = open;
+    if (open && this._selectedItem) void this._loadRefinementSessionStatus(this._selectedItem);
+    if (!open) {
+      this._refinementSessionLoading = '';
+      this._existingRefinementSession = null;
+      this._refineRunnerCustom = false;
+      this._refineModelCustom = false;
+      this._refineSafetyCustom = false;
+    }
+    this._writeUrlState();
+  }
+
+  private async _loadRefinementSessionStatus(item: BacklogItem) {
+    if (this._refinementSessionLoading === item.id) return;
+    this._refinementSessionLoading = item.id;
+    try {
+      const result = await gateway.request<BacklogRefinementSessionGetResult>(
+        Methods.BACKLOG_REFINEMENT_SESSION_GET,
+        { itemId: item.id },
+      );
+      if (this._selectedItem?.id !== item.id) return;
+      this._existingRefinementSession = result;
+    } catch (err) {
+      this._error = (err as Error).message;
+    } finally {
+      if (this._refinementSessionLoading === item.id) this._refinementSessionLoading = '';
+    }
+  }
+
+  private async _refineSelected(launch: boolean) {
+    if (!this._selectedItem) return;
+    this._busy = launch ? 'refine-launch' : 'refine';
+    this._error = '';
+    this._message = '';
+    try {
+      const result = await gateway.request<BacklogRefineResult>(Methods.BACKLOG_REFINE, {
+        itemId: this._selectedItem.id,
+        launch,
+        ...(this._refineRunner.trim() ? { runner: this._refineRunner.trim() } : {}),
+        ...(this._refineModel.trim() ? { model: this._refineModel.trim() } : {}),
+        ...(this._refineCommand.trim() ? { runnerCommand: this._refineCommand.trim() } : {}),
+        ...(this._refineSafetyTier ? { safetyTier: this._refineSafetyTier as SafetyTier } : {}),
+      });
+      this._message = backlogRefineResultMessage(result, launch);
+      await this._refreshItemAfterRefinement(result.item);
+      if (launch) this._setRunnerPickerOpen(false);
+      if (launch && result.tmuxWorker) this._navigateToWorkerTerminal(result.tmuxWorker);
+    } catch (err) {
+      this._error = (err as Error).message;
+    } finally {
+      this._busy = '';
+    }
+  }
+
+  private async _continueExistingRefinementSession() {
+    const session = this._existingRefinementSession;
+    if (!session?.exists) return;
+    if (session.tmuxWorker) {
+      this._setRunnerPickerOpen(false);
+      this._message = `Refinement terminal reopened: ${session.attachCommand}`;
+      this._navigateToWorkerTerminal(session.tmuxWorker);
+      return;
+    }
+    await this._refineSelected(true);
+  }
+
+  private _navigateToWorkerTerminal(worker: BacklogRefineResult['tmuxWorker']) {
+    if (!worker) return;
+    const { params } = parseHashRoute();
+    params.delete(BACKLOG_ITEM_PARAM);
+    params.delete(BACKLOG_MODE_PARAM);
+    params.delete(BACKLOG_RUNNER_PICKER_PARAM);
+    params.set('worker', encodeWorkerRouteParam(worker));
+    location.hash = buildHash('terminal', params);
+  }
+
+  private _renderRefinementChoice(args: {
+    label: string;
+    defaultLabel: string;
+    testId: string;
+    value: string;
+    options: string[];
+    customMode: boolean;
+    onChange: (value: string, customMode: boolean) => void;
+  }) {
+    const choiceValue = refinementChoiceValue(args.value, args.options, args.customMode);
+    return html`<div class="field">
+      ${args.label}
+      ${renderChoiceButtons({
+        options: [DEFAULT_REFINEMENT_CHOICE, ...args.options, CUSTOM_REFINEMENT_CHOICE],
+        value: choiceValue,
+        labels: {
+          [DEFAULT_REFINEMENT_CHOICE]: args.defaultLabel,
+          [CUSTOM_REFINEMENT_CHOICE]: 'Custom',
+        },
+        onSelect: (choice) => {
+          if (choice === DEFAULT_REFINEMENT_CHOICE) args.onChange('', false);
+          else if (choice === CUSTOM_REFINEMENT_CHOICE) args.onChange(args.value, true);
+          else args.onChange(choice, false);
+        },
+        testId: `${args.testId}-choices`,
+      })}
+      ${choiceValue === CUSTOM_REFINEMENT_CHOICE
+        ? html`<input
+            data-testid=${args.testId}
+            placeholder=${args.label.toLowerCase()}
+            .value=${args.value}
+            @input=${(event: Event) =>
+              args.onChange((event.target as HTMLInputElement).value, true)}
+          />`
+        : nothing}
+    </div>`;
+  }
+
+  private _renderRunnerPicker() {
+    if (!this._runnerPickerOpen || !this._selectedItem) return nothing;
+    const picker = backlogRefinementPickerView({
+      pickerOpen: this._runnerPickerOpen,
+      selectedItemId: this._selectedItem.id,
+      sessionLoadingItemId: this._refinementSessionLoading,
+      existingSession: this._existingRefinementSession,
+    });
+    const existingSession = picker.showContinueExisting ? this._existingRefinementSession : null;
+    return html`<div class="modal-backdrop" @click=${() => this._setRunnerPickerOpen(false)}>
+      <section
+        class="runner-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Refine with runner"
+        data-testid="backlog-refine-picker"
+        @click=${(event: Event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <h2>Refine with runner</h2>
+            <p class="muted">
+              Launch a tmux refinement session for ${this._selectedItem.title}. Completing
+              refinement does not mark ready, enqueue, or dispatch.
+            </p>
+            <p class="muted">
+              Default: ${DEFAULT_BACKLOG_REFINEMENT_RUNNER} / ${DEFAULT_BACKLOG_REFINEMENT_MODEL}
+            </p>
+          </div>
+          <button class="secondary" type="button" @click=${() => this._setRunnerPickerOpen(false)}>
+            Close
+          </button>
+        </header>
+        ${existingSession
+          ? html`<section class="session-card" data-testid="backlog-existing-refinement-session">
+              <header>
+                <div>
+                  <h3>Existing refinement session</h3>
+                  <p class="muted">
+                    This backlog item already has a tmux runner. Continuing keeps the conversation
+                    context.
+                  </p>
+                </div>
+                <button
+                  data-testid="backlog-refine-continue-existing"
+                  type="button"
+                  ?disabled=${this._busy === 'refine-launch'}
+                  @click=${() => this._continueExistingRefinementSession()}
+                >
+                  Continue existing
+                </button>
+              </header>
+              <code>${existingSession.tmuxSession} · ${existingSession.tmuxTarget}</code>
+            </section>`
+          : picker.showLoadingSession
+            ? html`<p class="muted">Checking for an existing refinement session...</p>`
+            : nothing}
+        <div class="grid">
+          <div class="full">
+            ${this._renderRefinementChoice({
+              label: 'Runner',
+              defaultLabel: `Default (${DEFAULT_BACKLOG_REFINEMENT_RUNNER})`,
+              testId: 'backlog-refine-runner',
+              value: this._refineRunner,
+              options: this._refinementRunnerOptions,
+              customMode: this._refineRunnerCustom,
+              onChange: (runner, customMode) => {
+                this._refineRunnerCustom = customMode;
+                this._refineRunner = runner;
+                if (!customMode) {
+                  this._refineModelCustom = false;
+                  this._refineModel = modelForRunnerChange(runner, this._refineModel, {
+                    defaultRunner: DEFAULT_BACKLOG_REFINEMENT_RUNNER,
+                  });
+                }
+              },
+            })}
+          </div>
+          <div class="full">
+            ${this._renderRefinementChoice({
+              label: 'Model',
+              defaultLabel: `Default (${this._refinementDefaultModelLabel})`,
+              testId: 'backlog-refine-model',
+              value: this._refineModel,
+              options: this._refinementModelOptions,
+              customMode: this._refineModelCustom,
+              onChange: (model, customMode) => {
+                this._refineModelCustom = customMode;
+                this._refineModel = model;
+              },
+            })}
+          </div>
+          <div class="full">
+            ${this._renderRefinementChoice({
+              label: 'Safety',
+              defaultLabel: 'Default (sandboxed)',
+              testId: 'backlog-refine-safety',
+              value: this._refineSafetyTier,
+              options: SAFETY_TIERS,
+              customMode: this._refineSafetyCustom,
+              onChange: (tier, customMode) => {
+                this._refineSafetyCustom = customMode;
+                this._refineSafetyTier = tier;
+              },
+            })}
+          </div>
+          <label class="full"
+            >Runner command override
+            <input
+              data-testid="backlog-refine-command"
+              placeholder="optional {{runner}} {{model}} {{prompt_path}} template"
+              .value=${this._refineCommand}
+              @input=${(event: Event) => {
+                this._refineCommand = (event.target as HTMLInputElement).value;
+              }}
+            />
+          </label>
+        </div>
+        <footer>
+          <button
+            class="secondary"
+            type="button"
+            data-testid="backlog-prepare-prompt"
+            ?disabled=${this._busy === 'refine' || this._busy === 'refine-launch'}
+            @click=${() => this._refineSelected(false)}
+          >
+            Prepare prompt
+          </button>
+          <button
+            type="button"
+            data-testid="backlog-refine-launch"
+            ?disabled=${this._busy === 'refine' || this._busy === 'refine-launch'}
+            @click=${() => this._refineSelected(true)}
+          >
+            ${picker.primaryLaunchLabel}
+          </button>
+        </footer>
+      </section>
+    </div>`;
+  }
+
   private _renderItemActionButtons(item: BacklogItem, mode: BacklogDetailMode) {
     const showEditDelete =
       mode === 'edit' && !showsBacklogCleanupActionsForUi(item) && canDeleteBacklogItemForUi(item);
     const hideDispatchActions = item.status === 'done' || item.status === 'archived';
+    const refineButton = html`<button
+      class="secondary"
+      data-testid="backlog-refine-open-picker"
+      type="button"
+      title="Choose a runner/model, then launch or attach the tmux refinement session for this backlog item."
+      ?disabled=${item.status === 'archived' || this._busy.endsWith(item.id)}
+      @click=${() => this._setRunnerPickerOpen(true)}
+    >
+      Refine with runner
+    </button>`;
     const editActions =
       mode === 'edit'
         ? html`<button
@@ -2621,10 +3037,10 @@ export class BacklogPanel extends LitElement {
               : nothing}`
         : nothing;
     if (hideDispatchActions) {
-      return editActions === nothing ? nothing : html`<div class="actions">${editActions}</div>`;
+      return html`<div class="actions">${editActions}${refineButton}</div>`;
     }
     return html`<div class="actions">
-      ${editActions}
+      ${editActions} ${refineButton}
       ${canMarkReadyBacklogItemForUi(item)
         ? html`<button
             ?disabled=${this._busy.endsWith(item.id)}
@@ -2839,6 +3255,7 @@ export class BacklogPanel extends LitElement {
       })}
       ${this._renderLaunchSlotSelectorModal()}
       ${this._selectedItem ? this._renderDispatchConfigModal(this._selectedItem) : nothing}
+      ${this._renderRunnerPicker()}
     </section>`;
   }
 }

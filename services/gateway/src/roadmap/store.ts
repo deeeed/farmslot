@@ -1,10 +1,7 @@
-import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
-import { promisify } from 'node:util';
 
 import {
   DEFAULT_ROADMAP_REFINEMENT_MODEL,
@@ -46,7 +43,6 @@ import {
   type RoadmapSaveResult,
   type RoadmapSource,
   type SafetyTier,
-  type TmuxWorkerRef,
 } from '@farmslot/protocol';
 
 import {
@@ -56,11 +52,18 @@ import {
   markBacklogItemReady,
   updateBacklogItem,
 } from '../backlog/store.js';
-import { isLocal } from '../core/exec.js';
 import { assertNoUnknownPlaceholders } from '../core/hooks.js';
 import { loadPromptTemplate } from '../core/prompt-templates.js';
 import { farmslotRoot, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
-import { runnerDefaultModel, runnerFlagsForTier } from '../runners/registry.js';
+import {
+  attachCommandForSession,
+  buildRefinementShellCommand as buildSharedRefinementShellCommand,
+  launchRefinementTmuxSession,
+  resolveTmuxSessionWorker,
+  shellQuote,
+  tmuxSessionExists,
+} from '../refinement/session.js';
+import { runnerDefaultModel } from '../runners/registry.js';
 
 const VALID_STAGES = new Set<RoadmapItemStage>(ROADMAP_ITEM_STAGES);
 const VALID_SOURCE_KINDS = new Set<string>(ROADMAP_SOURCE_KINDS);
@@ -71,7 +74,6 @@ const REFINEMENT_PROMPT_ROOT =
   process.env.FARMSLOT_ROADMAP_REFINEMENT_PROMPT_DIR ??
   path.join(ROADMAP_ROOT, 'refinement-prompts');
 const PROMOTION_DRAFT_ROOT = path.join(ROADMAP_ROOT, 'promotion-drafts');
-const execFileAsync = promisify(execFile);
 const DEFAULT_PROMPT_PROJECT = 'farmslot-farm';
 const ROADMAP_REFINEMENT_PROMPT_TEMPLATE = 'roadmap-refinement.md';
 let roadmapMutationTail: Promise<void> = Promise.resolve();
@@ -92,10 +94,6 @@ type RoadmapMeta = {
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function repoRelative(filePath: string): string {
@@ -1079,78 +1077,6 @@ function refinementSessionName(item: RoadmapItem): string {
   return `roadmap-${slugify(item.id)}`;
 }
 
-async function tmuxSessionExists(session: string): Promise<boolean> {
-  try {
-    await execFileAsync('tmux', ['has-session', '-t', `=${session}`]);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException & { code?: number }).code === 1) return false;
-    throw err;
-  }
-}
-
-function defaultRefinementRunnerCommand(
-  runner: string | undefined,
-  model: string | undefined,
-  promptPath: string,
-  safetyTier?: SafetyTier,
-): string | null {
-  const runnerId = runner?.trim();
-  if (!runnerId) return null;
-  const modelFlag = model?.trim() ? ` --model ${shellQuote(model.trim())}` : '';
-  const promptArg = `"$(cat ${shellQuote(promptPath)})"`;
-  const safetyFlags = runnerFlagsForTier(runnerId, safetyTier).map(shellQuote).join(' ');
-  if (runnerId === 'codex') {
-    const codexSafety = safetyFlags || '--sandbox workspace-write --ask-for-approval on-request';
-    return [
-      shellQuote('codex'),
-      `--cd ${shellQuote(farmslotRoot)}`,
-      codexSafety,
-      modelFlag.trim(),
-      promptArg,
-    ]
-      .filter(Boolean)
-      .join(' ');
-  }
-  if (runnerId === 'cursor') {
-    const flags = safetyFlags ? ` ${safetyFlags}` : '';
-    return `${shellQuote('cursor-agent')} --workspace ${shellQuote(farmslotRoot)}${flags}${modelFlag} ${promptArg}`;
-  }
-  const flags = safetyFlags ? ` ${safetyFlags}` : '';
-  return `${shellQuote(runnerId)}${flags}${modelFlag} ${promptArg}`;
-}
-
-function expandRefinementRunnerCommand(
-  command: string,
-  context: {
-    runner?: string;
-    model?: string;
-    promptPath: string;
-    itemFile: string;
-    safetyTier?: SafetyTier;
-  },
-): string {
-  const replacements: Record<string, string> = {
-    runner: shellQuote(context.runner ?? ''),
-    model: shellQuote(context.model ?? ''),
-    prompt_path: shellQuote(context.promptPath),
-    item_file: shellQuote(context.itemFile),
-    safety_tier: shellQuote(context.safetyTier ?? ''),
-    safety_flags: runnerFlagsForTier(context.runner ?? '', context.safetyTier)
-      .map(shellQuote)
-      .join(' '),
-  };
-  // A raw {{...}} surviving into a shell command is worse than into a prompt.
-  assertNoUnknownPlaceholders(command, Object.keys(replacements), 'Roadmap refinement command');
-  let expanded = command;
-  for (const [key, value] of Object.entries(replacements)) {
-    expanded = expanded.replaceAll(`{{${key}}}`, value);
-  }
-  if (!command.includes('{{prompt_path}}'))
-    expanded = `${expanded} ${shellQuote(context.promptPath)}`;
-  return expanded;
-}
-
 function roadmapRefinementRunnerPrelude(): string {
   return [
     'unset TMUX TMUX_PANE',
@@ -1167,38 +1093,22 @@ function buildRefinementShellCommand(
   model?: string,
   safetyTier?: SafetyTier,
 ): string {
-  const absolutePromptPath = path.resolve(farmslotRoot, promptPath);
-  const absoluteItemFile = path.resolve(farmslotRoot, item.filePath);
   const commandTemplate =
     runnerCommand?.trim() || process.env.FARMSLOT_ROADMAP_REFINER_COMMAND?.trim();
-  const defaultCommand = defaultRefinementRunnerCommand(
-    runner,
-    model,
-    absolutePromptPath,
-    safetyTier,
-  );
-  const prelude = roadmapRefinementRunnerPrelude();
-  if (commandTemplate) {
-    return `cd ${shellQuote(farmslotRoot)} && ${prelude} && ${expandRefinementRunnerCommand(
-      commandTemplate,
-      {
-        ...(runner ? { runner } : {}),
-        ...(model ? { model } : {}),
-        ...(safetyTier ? { safetyTier } : {}),
-        promptPath: absolutePromptPath,
-        itemFile: absoluteItemFile,
-      },
-    )}`;
-  }
-  if (defaultCommand)
-    return `cd ${shellQuote(farmslotRoot)} && ${prelude} && exec ${defaultCommand}`;
-  return [
-    `cd ${shellQuote(farmslotRoot)}`,
-    prelude,
-    `printf '%s\n' ${shellQuote(`Roadmap refinement prompt: ${absolutePromptPath}`)}`,
-    `printf '%s\n' ${shellQuote(`Edit roadmap item: ${path.resolve(farmslotRoot, item.filePath)}`)}`,
-    'exec ${SHELL:-zsh} -l',
-  ].join(' && ');
+  return buildSharedRefinementShellCommand({
+    promptPath,
+    itemFile: item.filePath,
+    ...(commandTemplate ? { runnerCommand: commandTemplate } : {}),
+    ...(runner ? { runner } : {}),
+    ...(model ? { model } : {}),
+    ...(safetyTier ? { safetyTier } : {}),
+    prelude: roadmapRefinementRunnerPrelude(),
+    commandLabel: 'Roadmap refinement command',
+    fallbackMessages: [
+      `Roadmap refinement prompt: ${path.resolve(farmslotRoot, promptPath)}`,
+      `Edit roadmap item: ${path.resolve(farmslotRoot, item.filePath)}`,
+    ],
+  });
 }
 
 async function launchRefinementTmux(
@@ -1210,7 +1120,6 @@ async function launchRefinementTmux(
   safetyTier?: SafetyTier,
 ): Promise<boolean> {
   const session = refinementSessionName(item);
-  if (await tmuxSessionExists(session)) return false;
   const shellCommand = buildRefinementShellCommand(
     item,
     promptPath,
@@ -1219,45 +1128,7 @@ async function launchRefinementTmux(
     model,
     safetyTier,
   );
-  await execFileAsync('tmux', [
-    'new-session',
-    '-d',
-    '-s',
-    session,
-    '-c',
-    farmslotRoot,
-    shellCommand,
-  ]);
-  return true;
-}
-
-async function localTmuxWorkerNodeId(): Promise<string> {
-  const pools = await loadPoolConfigs();
-  const localPool = pools.find((pool) => isLocal(pool.host, pool.machine));
-  return localPool?.machine ?? os.hostname().replace(/\.local$/, '');
-}
-
-async function resolveTmuxSessionWorker(session: string): Promise<TmuxWorkerRef> {
-  const { stdout } = await execFileAsync('tmux', [
-    'list-panes',
-    '-t',
-    `=${session}`,
-    '-F',
-    '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}',
-  ]);
-  const [line] = stdout.split('\n').filter(Boolean);
-  if (!line) throw new Error(`tmux session ${session} has no panes`);
-  const [sessionName, window, windowName, pane, paneId] = line.split('\t');
-  const target = paneId || `${sessionName}:${window}.${pane}`;
-  return {
-    nodeId: await localTmuxWorkerNodeId(),
-    session: sessionName,
-    window,
-    ...(windowName ? { windowName } : {}),
-    pane,
-    ...(paneId ? { paneId } : {}),
-    target,
-  };
+  return launchRefinementTmuxSession({ session, shellCommand });
 }
 
 export async function getRoadmapRefinementSession(
@@ -1274,7 +1145,7 @@ export async function getRoadmapRefinementSession(
     tmuxTarget: tmuxWorker?.target ?? session,
     exists,
     ...(tmuxWorker ? { tmuxWorker } : {}),
-    attachCommand: `tmux attach -t ${shellQuote(`=${session}`)}`,
+    attachCommand: attachCommandForSession(session),
   };
 }
 
@@ -1402,7 +1273,7 @@ export async function startRoadmapRefinement(
     ...(tmuxWorker ? { tmuxWorker } : {}),
     launched,
     ...(existingSession ? { attachedExisting: true } : {}),
-    attachCommand: `tmux attach -t ${shellQuote(`=${session}`)}`,
+    attachCommand: attachCommandForSession(session),
     ...(runner ? { runner } : {}),
     ...(model ? { model } : {}),
     ...(runnerCommand ? { runnerCommand } : {}),

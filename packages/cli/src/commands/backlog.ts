@@ -13,6 +13,8 @@ import type {
   BacklogItem,
   BacklogListResult,
   BacklogReconcileRunResult,
+  BacklogRefinementSessionGetResult,
+  BacklogRefineResult,
   BacklogSpecGetResult,
   BacklogUpcomingResult,
   BacklogUpdateResult,
@@ -534,4 +536,117 @@ export function registerBacklogCommand(program: Command): void {
         emit.fail(err);
       }
     });
+
+  backlog
+    .command('refine <ref>')
+    .description('Prepare (and optionally launch) a backlog refinement session')
+    .option('--runner <name>', 'Runner override')
+    .option('--model <name>', 'Model override')
+    .option('--runner-command <template>', 'Shell command template for refinement')
+    .option('--safety-tier <tier>', 'Runner safety tier (sandboxed|full-auto|dangerous)')
+    .option('--launch', 'Create or attach the tmux refinement session')
+    .action(
+      async (
+        ref: string,
+        opts: {
+          runner?: string;
+          model?: string;
+          runnerCommand?: string;
+          safetyTier?: string;
+          launch?: boolean;
+        },
+        cmd: Command,
+      ) => {
+        const ctx = resolveContext(cmd);
+        const emit = createEmitter(ctx.output, cmd);
+        try {
+          const result = await withProgress(
+            `Refining ${ref}`,
+            async () => {
+              const item = await resolveItem(ctx, ref);
+              return ctx.client.call<BacklogRefineResult>(
+                'backlog.refine',
+                backlogRefineRpcParams(item.id, opts),
+              );
+            },
+            !emit.machine,
+          );
+          if (emit.machine) emit.ok(result);
+          else {
+            const lines = describeBacklogRefineOutput(result);
+            ctx.output.write(
+              `${green(lines.verb)} refinement for ${cyan(result.item.sourceRef)}\n`,
+            );
+            ctx.output.write(`${dim(lines.promptLine)}\n`);
+            ctx.output.write(`${dim(lines.attachLine)}\n`);
+          }
+        } catch (err) {
+          emit.fail(err);
+        }
+      },
+    );
+
+  backlog
+    .command('refinement-session <ref>')
+    .description('Show refinement tmux session status for a backlog item')
+    .action(async (ref: string, _opts: unknown, cmd: Command) => {
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
+      try {
+        const result = await withProgress(
+          `Refinement session ${ref}`,
+          async () => {
+            const item = await resolveItem(ctx, ref);
+            return ctx.client.call<BacklogRefinementSessionGetResult>(
+              'backlog.refinementSession.get',
+              { itemId: item.id },
+            );
+          },
+          !emit.machine,
+        );
+        if (emit.machine) emit.ok(result);
+        else {
+          const status = result.exists ? green('running') : yellow('absent');
+          ctx.output.write(`${status}  ${result.tmuxSession}\n`);
+          ctx.output.write(`${dim(result.attachCommand)}\n`);
+        }
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+}
+
+/** Build the backlog.refine RPC params the CLI would send (testable without Commander). */
+export function backlogRefineRpcParams(
+  itemId: string,
+  opts: {
+    runner?: string;
+    model?: string;
+    runnerCommand?: string;
+    safetyTier?: string;
+    launch?: boolean;
+  },
+): Record<string, unknown> {
+  return {
+    itemId,
+    ...(opts.runner ? { runner: opts.runner } : {}),
+    ...(opts.model ? { model: opts.model } : {}),
+    ...(opts.runnerCommand ? { runnerCommand: opts.runnerCommand } : {}),
+    ...(opts.safetyTier?.trim() ? { safetyTier: opts.safetyTier.trim() } : {}),
+    ...(opts.launch ? { launch: true } : {}),
+  };
+}
+
+/** Structured human lines for refine CLI output (testable; used by the command handler). */
+export function describeBacklogRefineOutput(result: BacklogRefineResult): {
+  verb: 'Launched' | 'Reopened' | 'Prepared';
+  promptLine: string;
+  attachLine: string;
+} {
+  const verb = result.launched ? 'Launched' : result.attachedExisting ? 'Reopened' : 'Prepared';
+  return {
+    verb,
+    promptLine: `prompt: ${result.promptPath}`,
+    attachLine: `attach: ${result.attachCommand}`,
+  };
 }

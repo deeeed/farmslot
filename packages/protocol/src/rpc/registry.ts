@@ -60,6 +60,8 @@ export const Methods = {
   BACKLOG_SPEC_GET: 'backlog.spec.get',
   BACKLOG_RECONCILE_RUN: 'backlog.reconcileRun',
   BACKLOG_CLOSE_SHIPPED: 'backlog.closeShipped',
+  BACKLOG_REFINE: 'backlog.refine',
+  BACKLOG_REFINEMENT_SESSION_GET: 'backlog.refinementSession.get',
 
   // Work Graph
   WORK_GRAPH_CREATE: 'workGraph.create',

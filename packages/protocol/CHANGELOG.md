@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat(backlog): typed `backlog.refine` / `backlog.refinementSession.get` RPC contracts and default refinement runner/model constants.
+
 ## 0.16.0 - 2026-08-02
 
 - **BREAKING:** Replace the unused `ui.gesture` vocabulary with typed `ui.swipe`, `ui.pan`, `ui.drag`, and `ui.long_press` actions, including snake-case `hold_ms`, strict duration/path/direction validation, and manifest-owned adapter-specific parameter limits before and after template resolution. Publish `@farmslot/protocol`, then `@farmslot/recipe-harness`, then `@farmslot/expo-recipe`.

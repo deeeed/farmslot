@@ -3,7 +3,12 @@ import test from 'node:test';
 
 import type { CommandContext } from '../context.js';
 
-import { reconcileBacklogItemRun, resolveItem } from './backlog.js';
+import {
+  backlogRefineRpcParams,
+  describeBacklogRefineOutput,
+  reconcileBacklogItemRun,
+  resolveItem,
+} from './backlog.js';
 
 function ctxWithItems(items: Array<{ id: string; sourceRef?: string }>): CommandContext {
   return {
@@ -64,4 +69,51 @@ test('reconcileBacklogItemRun calls the shared typed gateway action', async () =
       params: { itemId: 'backlog-1', runId: 'run-1' },
     },
   ]);
+});
+
+test('backlog refine CLI params cover prompt-only and launch modes', () => {
+  assert.deepEqual(backlogRefineRpcParams('item-1', {}), { itemId: 'item-1' });
+  assert.deepEqual(
+    backlogRefineRpcParams('item-1', {
+      runner: 'codex',
+      model: 'gpt-5.6-sol',
+      launch: true,
+      runnerCommand: 'codex {{prompt_path}}',
+      safetyTier: 'sandboxed',
+    }),
+    {
+      itemId: 'item-1',
+      runner: 'codex',
+      model: 'gpt-5.6-sol',
+      runnerCommand: 'codex {{prompt_path}}',
+      safetyTier: 'sandboxed',
+      launch: true,
+    },
+  );
+});
+
+test('backlog refine CLI output distinguishes prepared, launched, and existing session', () => {
+  const base = {
+    item: { id: 'b1', sourceRef: 'MANUAL-000087' },
+    promptPath: '.backlog/refinement-prompts/x.md',
+    tmuxSession: 'backlog-manual-000087',
+    tmuxTarget: 'backlog-manual-000087',
+    attachCommand: "tmux attach -t '=backlog-manual-000087'",
+  } as const;
+
+  assert.equal(describeBacklogRefineOutput({ ...base, launched: false } as never).verb, 'Prepared');
+  assert.equal(describeBacklogRefineOutput({ ...base, launched: true } as never).verb, 'Launched');
+  assert.deepEqual(describeBacklogRefineOutput({ ...base, launched: false } as never), {
+    verb: 'Prepared',
+    promptLine: 'prompt: .backlog/refinement-prompts/x.md',
+    attachLine: "attach: tmux attach -t '=backlog-manual-000087'",
+  });
+  assert.equal(
+    describeBacklogRefineOutput({
+      ...base,
+      launched: false,
+      attachedExisting: true,
+    } as never).verb,
+    'Reopened',
+  );
 });

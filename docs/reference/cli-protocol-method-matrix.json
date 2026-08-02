@@ -203,6 +203,14 @@
       "command": "farmslot backlog",
       "tui": true
     },
+    "backlog.refine": {
+      "surface": "typed-command",
+      "command": "farmslot backlog refine"
+    },
+    "backlog.refinementSession.get": {
+      "surface": "typed-command",
+      "command": "farmslot backlog refinement-session"
+    },
     "workGraph.create": {
       "surface": "typed-command",
       "command": "farmslot graph create"

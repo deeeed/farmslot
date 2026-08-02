@@ -4,18 +4,25 @@ import { test } from 'node:test';
 import type { BacklogItem, BacklogStatus, Run } from '@farmslot/protocol';
 
 import {
+  applyBacklogRefineItemRefresh,
   backlogItemMatchesStatusFilter,
+  backlogRefinementPickerView,
+  backlogRefineResultMessage,
   backlogStatusCounts,
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
   canRestoreBacklogItemForUi,
+  CUSTOM_REFINEMENT_CHOICE,
   DEFAULT_BACKLOG_STATUS_FILTER,
+  DEFAULT_REFINEMENT_CHOICE,
   displayedBacklogFlow,
   displayedBacklogStatus,
   parseBacklogStatusFilter,
+  refinementChoiceValue,
   serializeBacklogStatusFilter,
+  shouldForceReloadBacklogSpecAfterRefine,
   showsBacklogCleanupActionsForUi,
   sortBacklogItems,
   syncedBacklogDraftProject,
@@ -329,4 +336,102 @@ test('backlog activity sorting treats terminal linked runs as inactive', () => {
     sortBacklogItems([terminal, idle], [terminalRun], 'activity', 'desc').map((item) => item.id),
     ['idle', 'terminal'],
   );
+});
+
+test('backlog refine picker covers launch and resume states', () => {
+  const launchView = backlogRefinementPickerView({
+    pickerOpen: true,
+    selectedItemId: 'item-1',
+    sessionLoadingItemId: '',
+    existingSession: null,
+  });
+  assert.equal(launchView.showPicker, true);
+  assert.equal(launchView.showContinueExisting, false);
+  assert.equal(launchView.primaryLaunchLabel, 'Launch runner');
+
+  const resumeView = backlogRefinementPickerView({
+    pickerOpen: true,
+    selectedItemId: 'item-1',
+    sessionLoadingItemId: '',
+    existingSession: {
+      itemId: 'item-1',
+      tmuxSession: 'backlog-manual-000087',
+      tmuxTarget: 'backlog-manual-000087:0.0',
+      exists: true,
+      attachCommand: "tmux attach -t ='backlog-manual-000087'",
+    },
+  });
+  assert.equal(resumeView.showContinueExisting, true);
+  assert.equal(resumeView.primaryLaunchLabel, 'Continue existing session');
+  assert.equal(resumeView.existingSessionId, 'backlog-manual-000087');
+
+  assert.match(
+    backlogRefineResultMessage(
+      {
+        item: { id: 'item-1', sourceRef: 'MANUAL-000087' } as never,
+        promptPath: '.backlog/refinement-prompts/x.md',
+        tmuxSession: 'backlog-manual-000087',
+        tmuxTarget: 'backlog-manual-000087',
+        launched: true,
+        attachCommand: "tmux attach -t ='backlog-manual-000087'",
+        runner: 'codex',
+        model: 'gpt-5.6-sol',
+      },
+      true,
+    ),
+    /Refinement terminal launched \(codex gpt-5.6-sol\)/,
+  );
+  assert.match(
+    backlogRefineResultMessage(
+      {
+        item: { id: 'item-1', sourceRef: 'MANUAL-000087' } as never,
+        promptPath: '.backlog/refinement-prompts/x.md',
+        tmuxSession: 'backlog-manual-000087',
+        tmuxTarget: 'backlog-manual-000087',
+        launched: false,
+        attachedExisting: true,
+        attachCommand: "tmux attach -t ='backlog-manual-000087'",
+      },
+      true,
+    ),
+    /Refinement terminal reopened/,
+  );
+});
+
+test('backlog refine completion refresh replaces inventory row and forces spec reload when present', () => {
+  const previous = {
+    id: 'item-1',
+    project: 'farmslot-farm',
+    sourceKind: 'manual',
+    sourceRef: 'MANUAL-000087',
+    title: 'Old title',
+    flowType: 'dev',
+    status: 'candidate',
+    notes: 'old',
+    priority: 10,
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+  } satisfies BacklogItem;
+  const refined = {
+    ...previous,
+    title: 'Refined title',
+    notes: 'new notes',
+    updatedAt: '2026-08-01T01:00:00.000Z',
+    specPath: '.backlog/specs/farmslot-farm/refined.md',
+  } satisfies BacklogItem;
+  const next = applyBacklogRefineItemRefresh([previous, { ...previous, id: 'item-2' }], refined);
+  assert.equal(next[0]?.title, 'Refined title');
+  assert.equal(next[0]?.notes, 'new notes');
+  assert.equal(next[1]?.id, 'item-2');
+  assert.equal(shouldForceReloadBacklogSpecAfterRefine(refined), true);
+  assert.equal(shouldForceReloadBacklogSpecAfterRefine(previous as BacklogItem), false);
+});
+
+test('refinement choice value highlights Custom when customMode is set', () => {
+  const options = ['codex', 'claude'];
+  assert.equal(refinementChoiceValue('', options, false), DEFAULT_REFINEMENT_CHOICE);
+  assert.equal(refinementChoiceValue('codex', options, false), 'codex');
+  assert.equal(refinementChoiceValue('', options, true), CUSTOM_REFINEMENT_CHOICE);
+  assert.equal(refinementChoiceValue('my-fork', options, true), CUSTOM_REFINEMENT_CHOICE);
+  assert.equal(refinementChoiceValue('my-fork', options, false), CUSTOM_REFINEMENT_CHOICE);
 });

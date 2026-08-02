@@ -2,6 +2,8 @@ import {
   ARCHIVABLE_BACKLOG_STATUSES,
   BACKLOG_STATUSES,
   type BacklogItem,
+  type BacklogRefinementSessionGetResult,
+  type BacklogRefineResult,
   type BacklogStatus,
   isTerminalRunStatus,
   type Run,
@@ -192,3 +194,74 @@ export function parseBacklogStatusFilter(raw: string | null): ReadonlySet<Backlo
 }
 
 export const syncedBacklogDraftProject = syncedDraftProject;
+
+/** Pure view-model for the backlog "Refine with runner" picker launch/resume UI. */
+export function backlogRefinementPickerView(state: {
+  pickerOpen: boolean;
+  selectedItemId: string;
+  sessionLoadingItemId: string;
+  existingSession: BacklogRefinementSessionGetResult | null;
+}): {
+  showPicker: boolean;
+  showContinueExisting: boolean;
+  showLoadingSession: boolean;
+  primaryLaunchLabel: string;
+  existingSessionId: string | null;
+} {
+  const existing =
+    state.existingSession?.exists && state.existingSession.itemId === state.selectedItemId
+      ? state.existingSession
+      : null;
+  return {
+    showPicker: state.pickerOpen,
+    showContinueExisting: Boolean(state.pickerOpen && existing),
+    showLoadingSession:
+      state.pickerOpen &&
+      !existing &&
+      state.sessionLoadingItemId === state.selectedItemId &&
+      Boolean(state.selectedItemId),
+    primaryLaunchLabel: existing ? 'Continue existing session' : 'Launch runner',
+    existingSessionId: existing?.tmuxSession ?? null,
+  };
+}
+
+/** Message shown after a refine RPC returns (launch vs resume vs prompt-only). */
+export function backlogRefineResultMessage(result: BacklogRefineResult, launch: boolean): string {
+  const selectedRunner = [result.runner, result.model, result.safetyTier].filter(Boolean).join(' ');
+  const runnerSuffix = selectedRunner ? ` (${selectedRunner})` : '';
+  if (!launch) return `Refinement prompt ready${runnerSuffix}: ${result.promptPath}`;
+  if (result.launched)
+    return `Refinement terminal launched${runnerSuffix}: ${result.attachCommand}`;
+  return `Refinement terminal reopened${runnerSuffix}: ${result.attachCommand}`;
+}
+
+/** Merge refine RPC item into local inventory (identity-preserving refresh). */
+export function applyBacklogRefineItemRefresh(
+  items: readonly BacklogItem[],
+  refined: BacklogItem,
+): BacklogItem[] {
+  return items.map((item) => (item.id === refined.id ? refined : item));
+}
+
+/** Spec cache should force-reload after refine when the item still has a spec path. */
+export function shouldForceReloadBacklogSpecAfterRefine(
+  item: BacklogItem | { specPath?: string | null },
+): boolean {
+  return Boolean(item.specPath?.trim());
+}
+
+const DEFAULT_REFINEMENT_CHOICE = '__default__';
+const CUSTOM_REFINEMENT_CHOICE = '__custom__';
+
+/** Chip selection state for runner/model/safety refine pickers (custom mode is explicit). */
+export function refinementChoiceValue(
+  value: string,
+  options: readonly string[],
+  customMode: boolean,
+): string {
+  if (customMode) return CUSTOM_REFINEMENT_CHOICE;
+  if (!value) return DEFAULT_REFINEMENT_CHOICE;
+  return options.includes(value) ? value : CUSTOM_REFINEMENT_CHOICE;
+}
+
+export { CUSTOM_REFINEMENT_CHOICE, DEFAULT_REFINEMENT_CHOICE };
