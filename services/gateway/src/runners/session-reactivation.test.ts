@@ -10,6 +10,7 @@ let paneCount = 1;
 let sessionPathExists = true;
 let promptAccepted = true;
 let promptAcceptedAt: number | null = null;
+let promptAcceptanceBaselineMs = 1_000;
 let capturedPane = '';
 let trustSendCount = 0;
 let sessionState: ObservabilityReading<RunnerSessionDeliveryState> | null = {
@@ -79,6 +80,9 @@ mock.module('./claude-observability.js', {
       async lastTurnCompletedAt() {
         return null;
       },
+      async capturePromptAcceptanceBaseline() {
+        return promptAcceptanceBaselineMs;
+      },
       async promptAccepted(_vars: SlotVars, _target: string, _digest: string, sinceMs: number) {
         return {
           // Simulate acceptance emitted while respawn-window is still returning.
@@ -122,12 +126,15 @@ const vars = {
   resourceVars: { platform: 'ios', slot_id: 'runner-local-test-1' },
 } as SlotVars;
 
-test('retained resume accepts a prompt hook emitted before respawn-window returns', async (t) => {
+test('retained resume accepts a slot-clock prompt hook emitted before respawn-window returns', async (t) => {
   commands.length = 0;
   paneCount = 1;
   sessionPathExists = true;
   promptAccepted = true;
-  promptAcceptedAt = 1_500;
+  // The slot clock lags the gateway sentinel clock (1_000). Acceptance must be
+  // compared with the provider's slot-clock baseline, not the gateway clock.
+  promptAcceptanceBaselineMs = 400;
+  promptAcceptedAt = 500;
   capturedPane = '';
   trustSendCount = 0;
   sessionState = {
@@ -137,6 +144,7 @@ test('retained resume accepts a prompt hook emitted before respawn-window return
     observedAt: Date.now() - 300_000,
   };
   t.after(() => {
+    promptAcceptanceBaselineMs = 1_000;
     promptAcceptedAt = null;
   });
 

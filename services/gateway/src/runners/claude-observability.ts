@@ -1,5 +1,6 @@
 import { resolveTmuxPaneId } from '../core/tmux.js';
 
+import { readSlotClockMs } from './observability-clock.js';
 import {
   activeToolFromHooks,
   contextPctFromStatusline,
@@ -45,6 +46,10 @@ export const claudeHookObservability: RunnerObservability = {
   async lastTurnCompletedAt(vars, target) {
     const { hooks } = await loadObservabilitySnapshot(vars, target);
     return lastTurnCompletedFromHooks(hooks);
+  },
+
+  async capturePromptAcceptanceBaseline(vars) {
+    return readSlotClockMs(vars);
   },
 
   async promptAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {

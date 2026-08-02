@@ -1,5 +1,6 @@
 import { execOnSlot } from '../core/exec.js';
 
+import { readSlotClockMs } from './observability-clock.js';
 import type { RunnerActivity, RunnerObservability, SlotVars } from './observability-types.js';
 
 type GrokPromptSignalProbe =
@@ -17,8 +18,6 @@ type ProbeGrokPromptSignal = (
   sinceMs: number,
   promptText: string,
 ) => Promise<GrokPromptSignalProbe>;
-
-type ReadGrokClockMs = (vars: SlotVars) => Promise<number>;
 
 export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
   const value = JSON.parse(raw) as Record<string, unknown>;
@@ -61,24 +60,6 @@ async function probeGrokPromptSignal(
     );
   }
   return parseGrokPromptSignalProbe(result.stdout.trim());
-}
-
-async function readGrokClockMs(vars: SlotVars): Promise<number> {
-  const result = await execOnSlot(
-    vars,
-    `python3 -c 'import time; print(time.time_ns() // 1000000)'`,
-    { timeout: 10_000 },
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `Grok remote clock probe failed: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
-    );
-  }
-  const clockMs = Number.parseInt(result.stdout.trim(), 10);
-  if (!Number.isSafeInteger(clockMs) || clockMs <= 0) {
-    throw new Error(`Invalid Grok remote clock probe: ${result.stdout.trim()}`);
-  }
-  return clockMs;
 }
 
 export function buildGrokPromptSignalProbeCommand(
@@ -274,7 +255,7 @@ PY`;
 
 export function createGrokLogObservability(
   probe: ProbeGrokPromptSignal = probeGrokPromptSignal,
-  readClock: ReadGrokClockMs = readGrokClockMs,
+  readClock: (vars: SlotVars) => Promise<number> = readSlotClockMs,
 ): RunnerObservability {
   return {
     async getActivity(vars, target) {

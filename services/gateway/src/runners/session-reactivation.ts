@@ -11,6 +11,7 @@ import {
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
 import { type LaunchAckSignalSnapshot, probeRunnerHandoffAck } from './prompt-delivery-evidence.js';
 import {
+  captureRunnerPromptAcceptanceBaseline,
   confirmTrustPromptWithFreshEvidence,
   getRunnerObservability,
   normalizeRunner,
@@ -142,6 +143,19 @@ async function reactivateRunnerSessionWithPrompt(
     const runtimeDir =
       options.runtimeDir ?? (await resolveProjectRuntimeDir(options.vars.projectName));
     const promptSentinel = await writeRunnerPromptSentinel(options.vars, options.prompt);
+    const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
+      options.vars,
+      options.target,
+      runner,
+      promptSentinel.sentAt,
+    );
+    if (promptAcceptanceBaselineMs == null) {
+      return {
+        delivered: false,
+        disposition: 'safe-send',
+        reason: `Retained ${runner} prompt acceptance baseline is unavailable`,
+      };
+    }
     const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       options.vars,
       runner,
@@ -166,10 +180,10 @@ async function reactivateRunnerSessionWithPrompt(
         options.target,
         runner,
         options.prompt,
-        promptSentinel.sentAt,
+        promptAcceptanceBaselineMs,
         {
           requirePromptDigest: true,
-          promptAcceptanceBaselineMs: promptSentinel.sentAt,
+          promptAcceptanceBaselineMs,
         },
       );
       // Only exact post-respawn prompt evidence is accepted; generic activity,

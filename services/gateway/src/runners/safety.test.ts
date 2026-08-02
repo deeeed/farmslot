@@ -149,7 +149,10 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { safetyTier: 'full-auto' });
     assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(cmd, /codex --sandbox workspace-write --ask-for-approval never .*--model gpt-5/);
+    assert.match(
+      cmd,
+      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --sandbox workspace-write --ask-for-approval never .*--model gpt-5/,
+    );
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
     assert.match(cmd, /model_reasoning_effort="xhigh"/);
   });
@@ -158,7 +161,10 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const vars = makeVars({ dispatchCmd: '' });
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { effort: 'xhigh' });
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(cmd, /codex --config 'model_reasoning_effort="xhigh"' .*--model gpt-5/);
+    assert.match(
+      cmd,
+      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --config 'model_reasoning_effort="xhigh"' .*--model gpt-5/,
+    );
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
   });
 
@@ -174,7 +180,10 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const vars = makeVars({ dispatchCmd: '' });
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { safetyTier: 'dangerous' });
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(cmd, /codex --dangerously-bypass-approvals-and-sandbox/);
+    assert.match(
+      cmd,
+      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox/,
+    );
   });
 
   it('codex inline fallback: does not hardcode Homebrew when codexPath is unset', () => {
@@ -185,7 +194,10 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { safetyTier: 'dangerous' });
     assert.doesNotMatch(cmd, /\/opt\/homebrew\/bin\/codex/);
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(cmd, /codex --dangerously-bypass-approvals-and-sandbox/);
+    assert.match(
+      cmd,
+      /codex \$\{FARMSLOT_CODEX_PLUGIN_HOOK_ARGS\} --dangerously-bypass-approvals-and-sandbox/,
+    );
   });
 
   it('resolveCodexBinary does not infer a node-sibling codex binary', () => {
