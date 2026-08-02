@@ -52,3 +52,17 @@ test('ticket context merge is idempotent across grade retries', () => {
   assert.equal(twice.description.match(/Additional Farmslot context/g)?.length, 1);
   assert.deepEqual(twice.acceptanceCriteria, ['Tracker AC', 'Spec AC']);
 });
+
+test('manual ticket data already carrying the spec is not duplicated', () => {
+  const manualTicket = {
+    ...trackerTicket,
+    source: 'manual' as const,
+    description: '## Acceptance Criteria\n\n- Spec AC',
+    acceptanceCriteria: ['Spec AC'],
+  };
+
+  assert.strictEqual(
+    mergeInitialContextIntoTicketData(manualTicket, manualTicket.description),
+    manualTicket,
+  );
+});
