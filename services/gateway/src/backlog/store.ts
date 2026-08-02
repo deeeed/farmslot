@@ -72,7 +72,7 @@ import {
   removeQueueItemInternal,
   tryDispatchNext,
 } from './dispatch-queue.js';
-import { extractBacklogAcceptanceCriteria } from './spec.js';
+import { extractBacklogAcceptanceCriteria, stripBacklogAcceptanceCriteriaSection } from './spec.js';
 
 export { extractBacklogAcceptanceCriteria } from './spec.js';
 
@@ -1644,10 +1644,14 @@ async function buildManualTicketData(
   if (item.sourceKind !== 'manual') return undefined;
   const specMarkdown = await readBacklogSpecMarkdown(item);
   const acceptanceCriteria = specMarkdown ? extractBacklogAcceptanceCriteria(specMarkdown) : [];
+  // ACs render via {{ACCEPTANCE_CRITERIA}}; keeping the spec's own AC section
+  // in the description duplicates the list in TASK.md — and its `- [ ]` lines
+  // are live checkboxes that skew step numbering for checklist consumers.
+  const description = specMarkdown ? stripBacklogAcceptanceCriteriaSection(specMarkdown) : '';
   return {
     source: 'manual',
     title: item.title,
-    description: specMarkdown?.trim() || item.notes?.trim() || item.title,
+    description: description || item.notes?.trim() || item.title,
     acceptanceCriteria,
     affectedArea: '',
     stepsToReproduce: [],

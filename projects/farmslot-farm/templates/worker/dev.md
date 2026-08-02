@@ -143,21 +143,21 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
     --task-dir {{TASK_DIR}}
   ```
   (`validate-recipe.sh` auto-promotes screenshots + `after.mp4` into `artifacts/` when `--task-dir` is set.)
-- [ ] **12a. Validate screenshots (HARD GATE)** — Read each promoted `artifacts/before-*.png` and `artifacts/after-*.png` via the Read tool. The claimed UI must be visible — not off-screen, wrong route, or generic shell. Re-run step 12 if not.
-- [ ] **12b. Write `{{TASK_DIR}}/artifacts/evidence-manifest.json`** — gateway uses this to embed screenshots + `after.mp4` in the created PR. Follow `{{recipe_quality_path}}` (before/after pairs + `videos.after: artifacts/after.mp4`).
-- [ ] **12c. Recipe coverage** — `recipe-coverage.md` (gateway computes recipe-quality). Visual ACs cannot be `pass` without screenshot/video proof.
-- [ ] **12d. Artifact contract**:
+- [ ] **13. Validate screenshots (HARD GATE)** — Read each promoted `artifacts/before-*.png` and `artifacts/after-*.png` via the Read tool. The claimed UI must be visible — not off-screen, wrong route, or generic shell. Re-run step 12 if not.
+- [ ] **14. Write `{{TASK_DIR}}/artifacts/evidence-manifest.json`** — gateway uses this to embed screenshots + `after.mp4` in the created PR. Follow `{{recipe_quality_path}}` (before/after pairs + `videos.after: artifacts/after.mp4`).
+- [ ] **15. Recipe coverage** — `recipe-coverage.md` (gateway computes recipe-quality). Visual ACs cannot be `pass` without screenshot/video proof.
+- [ ] **16. Artifact contract**:
   ```bash
   node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe
   ```
 
 ### Phase 6: Report + package
 
-- [ ] **13. Self-review** — read the diff against `{{review_quality_path}}` antipatterns; no inline protocol duplication or comment noise.
-- [ ] **14. Commit** — atomic commit(s) following Conventional Commits.
-- [ ] **15. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include root cause, fix summary, test results, and evidence paths (screenshots + `after.mp4`). Include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
-- [ ] **16. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
-- [ ] **17. Signal completion** — set `STATUS: done`, then:
+- [ ] **17. Self-review** — read the diff against `{{review_quality_path}}` antipatterns; no inline protocol duplication or comment noise.
+- [ ] **18. Commit** — atomic commit(s) following Conventional Commits.
+- [ ] **19. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include root cause, fix summary, test results, and evidence paths (screenshots + `after.mp4`). Include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
+- [ ] **20. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
+- [ ] **21. Signal completion** — set `STATUS: done`, then:
   ```bash
   {{TASK_DIR}}/mark complete --mark-last
   ```

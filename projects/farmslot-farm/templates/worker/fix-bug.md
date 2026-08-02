@@ -80,17 +80,17 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
   cd apps/command-center && yarn typecheck
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
-- [ ] **8b. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only: skip and state why.
+- [ ] **9. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only: skip and state why.
   ```bash
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
-- [ ] **8c. Evidence manifest** — when step 3 listed a UI/device surface, `evidence-manifest.json` must reference real screenshots/video (empty pairs are not proof). Gateway-cli-only may omit visual evidence.
-- [ ] **8d. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` (gateway computes recipe-quality) and run `check-task-artifact-contract.mjs --require-recipe-coverage-if-recipe`.
-- [ ] **9. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
-- [ ] **10. Commit** — single commit following the repo's Lore commit protocol.
-- [ ] **11. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
-- [ ] **12. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.
-- [ ] **12a. Optional visual evidence manifest** — if screenshots/videos prove the fix, write `{{TASK_DIR}}/artifacts/evidence-manifest.json` using the strict schema below. Use `before_after_pairs` for comparisons; unknown top-level keys are invalid. Omit this file when there is no visual evidence.
+- [ ] **10. Evidence manifest** — when step 3 listed a UI/device surface, `evidence-manifest.json` must reference real screenshots/video (empty pairs are not proof). Gateway-cli-only may omit visual evidence.
+- [ ] **11. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` (gateway computes recipe-quality) and run `check-task-artifact-contract.mjs --require-recipe-coverage-if-recipe`.
+- [ ] **12. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
+- [ ] **13. Commit** — single commit following the repo's Lore commit protocol.
+- [ ] **14. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
+- [ ] **15. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.
+- [ ] **16. Optional visual evidence manifest** — if screenshots/videos prove the fix, write `{{TASK_DIR}}/artifacts/evidence-manifest.json` using the strict schema below. Use `before_after_pairs` for comparisons; unknown top-level keys are invalid. Omit this file when there is no visual evidence.
   ```json
   {
     "version": 1,
@@ -108,7 +108,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
     "videos": { "after": "artifacts/after.mp4", "preferred": true, "note": "Full recipe replay at 2s slow playback" }
   }
   ```
-- [ ] **13. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
-- [ ] **14. Update status** — set `STATUS: done`.
-- [ ] **15. Write completion signal** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, pr-description, checklist, artifact contract)
+- [ ] **17. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
+- [ ] **18. Update status** — set `STATUS: done`.
+- [ ] **19. Write completion signal** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, pr-description, checklist, artifact contract)
       **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.

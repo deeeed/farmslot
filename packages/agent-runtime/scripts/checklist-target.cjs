@@ -12,6 +12,75 @@ const ROLE_SIGNAL_SUFFIX = '-SIGNAL.json';
 const SELF_REVIEW_CHECKLIST = 'SELF-REVIEW.md';
 const SELF_REVIEW_FIX_CHECKLIST = 'SELF-REVIEW-FIX.md';
 const CI_FIX_CHECKLIST = 'CI-FIX.md';
+// Sections whose checkboxes are informational (ACs, descriptions, upstream
+// PR-template fields) — not task steps. Canonical copy lives in
+// @farmslot/protocol/checklist-target CHECKLIST_SKIP_SECTIONS.
+const CHECKLIST_SKIP_SECTIONS =
+  /^\**\s*(acceptance criteria|description|task|affected area|screenshots|comments|root cause|rules|recipe acs|pre-merge)/i;
+
+// Behavioral mirror of @farmslot/protocol/checklist-target
+// enumerateChecklistCheckboxes — the single definition of which markdown
+// checkboxes are checklist steps. Any drift makes `mark N` check a different
+// box than the one gateway progress reporting counts as step N (see
+// test/checklist-target-sync.test.mjs for the parity fixture).
+function enumerateChecklistCheckboxes(markdown) {
+  const items = [];
+  const lines = markdown.split('\n');
+  let inCodeBlock = false;
+  let inDetails = 0;
+  let inSkippedSection = false;
+  let phase = null;
+  let phaseIndex = -1;
+  let stepNumber = 0;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const trimmed = lines[lineIndex].trim();
+    if (trimmed.startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) continue;
+    // Only lines STARTING with a details tag are structural — prose that
+    // mentions `<details>` (e.g. PR-description instructions) must stay inert.
+    // On a structural line, net opens minus closes handles both the plain
+    // one-liner (`<details>…</details>` opens nothing) and nested same-line
+    // opens that leave a block dangling.
+    if (trimmed.startsWith('<details')) {
+      const opens = (trimmed.match(/<details\b/g) || []).length;
+      const closes = (trimmed.match(/<\/details/g) || []).length;
+      inDetails = Math.max(0, inDetails + opens - closes);
+      continue;
+    }
+    if (trimmed.startsWith('</details')) {
+      inDetails = Math.max(0, inDetails - 1);
+      continue;
+    }
+    if (inDetails > 0) continue;
+    if (/^#{2,}\s+[^#]/.test(trimmed)) {
+      const name = trimmed.replace(/^#{2,}\s+/, '').trim();
+      if (CHECKLIST_SKIP_SECTIONS.test(name)) {
+        inSkippedSection = true;
+        continue;
+      }
+      inSkippedSection = false;
+      phase = name;
+      phaseIndex += 1;
+      continue;
+    }
+    if (inSkippedSection) continue;
+    const match = trimmed.match(/^- \[( |x|X)\]\s*(.*)$/);
+    if (!match) continue;
+    stepNumber += 1;
+    items.push({
+      lineIndex,
+      stepNumber,
+      checked: match[1].toLowerCase() === 'x',
+      phase,
+      phaseIndex,
+      rawLabel: match[2],
+    });
+  }
+  return items;
+}
 const WORKER_TERMINAL_CONTRACT_INPUT = path.join('inputs', 'worker-terminal-contract.json');
 
 function signalFileForChecklist(checklistBasename) {
@@ -196,6 +265,8 @@ function resolveChecklistPaths(taskDir) {
 }
 
 module.exports = {
+  CHECKLIST_SKIP_SECTIONS,
+  enumerateChecklistCheckboxes,
   CHECKLIST_TARGET_MANIFEST,
   TASK_PROGRESS_MARKDOWN,
   INTERACTIVE_CHECKLIST_MARKDOWN,

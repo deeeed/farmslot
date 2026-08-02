@@ -1,7 +1,11 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { TaskPhaseProgress, TaskProgressStructured } from '@farmslot/protocol';
+import {
+  enumerateChecklistCheckboxes,
+  type TaskPhaseProgress,
+  type TaskProgressStructured,
+} from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
@@ -11,16 +15,13 @@ interface Step {
 }
 
 function parseSteps(markdown: string): Step[] {
-  const steps: Step[] = [];
-  for (const line of markdown.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('- [x]') || trimmed.startsWith('- [X]')) {
-      steps.push({ text: trimmed.slice(5).trim(), done: true });
-    } else if (trimmed.startsWith('- [ ]')) {
-      steps.push({ text: trimmed.slice(5).trim(), done: false });
-    }
-  }
-  return steps;
+  // Shared enumeration from @farmslot/protocol — the same skip rules the
+  // gateway parsers and the `mark` helper use, so the markdown fallback cannot
+  // count informational checkboxes (ACs, pre-merge sections) as steps.
+  return enumerateChecklistCheckboxes(markdown).map((item) => ({
+    text: item.rawLabel,
+    done: item.checked,
+  }));
 }
 
 const STATUS_ICONS: Record<string, string> = {

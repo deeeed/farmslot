@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(progress): markdown-fallback step parsing uses the shared protocol enumerator, so informational checkboxes (ACs, pre-merge sections) no longer inflate step counts.
+
 - feat(backlog): **Refine with runner** picker on backlog detail with launch/resume (Continue existing) parity to roadmap refinement.
 
 - feat(inventory): extract a domain-neutral shared work-inventory table shell and migrate Backlog, Roadmap, Work Graph, and Runs onto it with shared sort/selection/ARIA/overflow tokens (MANUAL-000074).

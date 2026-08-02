@@ -9,6 +9,7 @@ import path from 'node:path';
 import { executionTemplateReference } from '@farmslot/agent-runtime';
 import {
   type ArtifactRef,
+  enumerateChecklistCheckboxes,
   type FlowType,
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
@@ -982,6 +983,14 @@ export async function writeTaskFile(
       finalContent,
     );
   }
+  // Warn (not fail) so a template bug in one farm pack cannot brick dispatch;
+  // the log line names the template so the pack can be fixed.
+  const numberingMismatches = checklistNumberingMismatches(finalContent);
+  if (numberingMismatches.length > 0) {
+    console.warn(
+      `[task-writer] checklist label numbering diverges from step positions in ${templatePath ?? templateName} (${numberingMismatches.join('; ')}) — 'mark N' targets positions; renumber the template labels`,
+    );
+  }
   await writeFile(taskFilePath, finalContent, 'utf-8');
   await writeChecklistMarker(taskAbsDir, farmslotDirForSlot);
   await writeWorkerChecklistTargetLocal(taskAbsDir);
@@ -1095,6 +1104,23 @@ async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: stri
 }
 
 /**
+ * Step labels carrying explicit numbering (`**N. …**`) must match the
+ * enumerated step position — `mark N` targets positions, and a worker follows
+ * the visible label. Sub-step labels (12a) or unnumbered boxes between
+ * numbered ones silently shift every later step onto the wrong box.
+ */
+export function checklistNumberingMismatches(content: string): string[] {
+  const mismatches: string[] = [];
+  for (const item of enumerateChecklistCheckboxes(content)) {
+    const labeled = item.rawLabel.match(/^\*{0,2}(\d+)[.)]/);
+    if (labeled && Number(labeled[1]) !== item.stepNumber) {
+      mismatches.push(`position ${item.stepNumber} is labeled "${labeled[1]}"`);
+    }
+  }
+  return mismatches;
+}
+
+/**
  * Parse a rendered TASK.md template into a TaskSchema.
  * See docs/reference/template-variables.md (§ TASK format) for the full format spec.
  *
@@ -1105,73 +1131,26 @@ async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: stri
  * - Checkboxes before any heading go into a "Checklist" phase
  */
 export function generateTaskSchema(templateContent: string, flowType: string): TaskSchema {
+  // Shared enumeration (skip sections, <details>, code fences) lives in
+  // @farmslot/protocol — the same logic the progress parser and the agent
+  // `mark` helper use, so schema indices always match marked boxes.
   const phases: TaskSchemaPhase[] = [];
   let currentPhase: TaskSchemaPhase | null = null;
-  let stepIndex = 0;
-  let inDetails = 0;
-  let inCodeBlock = false;
-  let inSkippedSection = false;
+  let currentPhaseIndex: number | null = null;
+  let totalSteps = 0;
 
-  // Sections that contain informational checkboxes (ACs, descriptions, upstream
-  // PR-template fields) — not task steps. `pre-merge` covers Example App's
-  // upstream "Pre-merge author/reviewer checklist" sections that arrive via
-  // {{PR_BODY}} interpolation and would otherwise inflate the worker schema.
-  const SKIP_SECTIONS =
-    /^\**\s*(acceptance criteria|description|task|affected area|screenshots|comments|root cause|rules|recipe acs|pre-merge)/i;
-
-  for (const line of templateContent.split('\n')) {
-    const trimmed = line.trim();
-
-    // Track fenced code blocks (``` or ```lang) — skip embedded markdown
-    if (trimmed.startsWith('```')) {
-      inCodeBlock = !inCodeBlock;
-      continue;
-    }
-    if (inCodeBlock) continue;
-
-    // Track <details> nesting — skip reference sections
-    if (trimmed.startsWith('<details')) inDetails++;
-    if (trimmed.startsWith('</details')) {
-      inDetails = Math.max(0, inDetails - 1);
-      continue;
-    }
-    if (inDetails > 0) continue;
-
-    // Any markdown heading (##, ###, ####, etc.) starts a new phase group.
-    // The heading level doesn't matter — whatever heading sits above checkboxes
-    // becomes the phase name. Empty phases (no checkboxes) are pruned later.
-    if (/^#{2,}\s+[^#]/.test(trimmed)) {
-      const name = trimmed.replace(/^#{2,}\s+/, '').trim();
-      if (SKIP_SECTIONS.test(name)) {
-        inSkippedSection = true;
-        continue;
-      }
-      inSkippedSection = false;
-      currentPhase = { name, steps: [] };
+  for (const item of enumerateChecklistCheckboxes(templateContent)) {
+    if (!currentPhase || currentPhaseIndex !== item.phaseIndex) {
+      // Checkboxes before any heading go into a default "Checklist" phase.
+      currentPhase = { name: item.phase ?? 'Checklist', steps: [] };
+      currentPhaseIndex = item.phaseIndex;
       phases.push(currentPhase);
-      continue;
     }
-
-    if (inSkippedSection) continue;
-
-    // - [ ] or - [x] or - [X] — step within current phase
-    if (/^- \[[xX ]\]/.test(trimmed)) {
-      // If no phase yet, create a default one
-      if (!currentPhase) {
-        currentPhase = { name: 'Checklist', steps: [] };
-        phases.push(currentPhase);
-      }
-      stepIndex++;
-      // Extract step name: strip the checkbox prefix and bold numbering like "**1. Text**"
-      let stepName = trimmed.replace(/^- \[[xX ]\]\s*/, '');
-      // Remove bold markdown wrapper if present: **1. Text** → 1. Text
-      stepName = stepName.replace(/^\*\*(.+?)\*\*.*$/, '$1').trim();
-      currentPhase.steps.push({ index: stepIndex, name: stepName });
-    }
+    totalSteps = item.stepNumber;
+    // Step name: bold numbering like "**1. Text**" collapses to "1. Text"
+    const stepName = item.rawLabel.replace(/^\*\*(.+?)\*\*.*$/, '$1').trim();
+    currentPhase.steps.push({ index: item.stepNumber, name: stepName });
   }
-
-  // Remove empty phases (e.g. headers with no steps)
-  const nonEmpty = phases.filter((p) => p.steps.length > 0);
 
   // Extract title from first H1 or H2
   let title = flowType;
@@ -1183,7 +1162,7 @@ export function generateTaskSchema(templateContent: string, flowType: string): T
   return {
     flowType,
     title,
-    totalSteps: stepIndex,
-    phases: nonEmpty,
+    totalSteps,
+    phases,
   };
 }

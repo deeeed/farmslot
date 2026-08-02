@@ -18,7 +18,10 @@ import {
   type TemplateProvenance,
 } from '@farmslot/protocol';
 
-import { extractBacklogAcceptanceCriteria } from '../backlog/spec.js';
+import {
+  extractBacklogAcceptanceCriteria,
+  stripBacklogAcceptanceCriteriaSection,
+} from '../backlog/spec.js';
 import { farmslotRoot, getOrchestratorTaskRoot, getProjectField } from '../core/config.js';
 import { updateSlotStatus } from '../core/state.js';
 import { fetchPRDiffFiles } from '../external/github.js';
@@ -71,11 +74,16 @@ export function mergeInitialContextIntoTicketData(
     (ticketData.description.trim().length > 0 || ticketData.acceptanceCriteria.length > 0);
   if (!context || manualTicketAlreadyCarriesContext) return ticketData;
 
-  const description = ticketData.description.includes(context)
-    ? ticketData.description
-    : [ticketData.description.trim(), `Additional Farmslot context:\n${context}`]
-        .filter(Boolean)
-        .join('\n\n');
+  // ACs are merged into acceptanceCriteria below and render separately —
+  // appending the spec's own AC section here would duplicate the list in the
+  // task markdown.
+  const contextForDescription = stripBacklogAcceptanceCriteriaSection(context);
+  const description =
+    !contextForDescription || ticketData.description.includes(contextForDescription)
+      ? ticketData.description
+      : [ticketData.description.trim(), `Additional Farmslot context:\n${contextForDescription}`]
+          .filter(Boolean)
+          .join('\n\n');
   const acceptanceCriteria = [
     ...new Set([...ticketData.acceptanceCriteria, ...extractBacklogAcceptanceCriteria(context)]),
   ];

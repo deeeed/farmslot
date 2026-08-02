@@ -342,3 +342,53 @@ result = spawnSync(process.execPath, [helper, legacyTask, legacySignal, 'start']
 });
 assert.notEqual(result.status, 0, 'legacy explicit-args mark surface must be rejected');
 assert.doesNotMatch(result.stderr, /Explicit mode/);
+
+// Regression: checkbox-formatted Acceptance Criteria (and other informational
+// sections) must not shift step numbering — `mark 1` targets the first real
+// checklist step, and terminal completion ignores informational boxes.
+const acSkewDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-ac-skew-'));
+writeManifest(acSkewDir, 'TASK.md');
+const acSkewTask = path.join(acSkewDir, 'TASK.md');
+const acSkewSignal = path.join(acSkewDir, 'SIGNAL.json');
+mkdirSync(path.join(acSkewDir, 'artifacts'), { recursive: true });
+writeFileSync(path.join(acSkewDir, 'artifacts', 'learnings.md'), '- AC skew regression.\n');
+writeFileSync(path.join(acSkewDir, 'artifacts', 'report.md'), '# Report\n\nDone.\n');
+writeFileSync(
+  acSkewTask,
+  [
+    '# Worker: Feature — DEMO-AC',
+    '',
+    '## Acceptance Criteria',
+    '',
+    '- [ ] Informational AC one',
+    '- [ ] Informational AC two',
+    '',
+    '## Checklist',
+    '',
+    '- [ ] **1. Real first step**',
+    '- [ ] **2. Real second step**',
+  ].join('\n'),
+);
+result = spawnSync(process.execPath, [helper, acSkewDir, '1'], { encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+let acSkewContent = readFileSync(acSkewTask, 'utf8');
+assert.match(acSkewContent, /- \[x\] \*\*1\. Real first step\*\*/, 'mark 1 must check step 1');
+assert.match(
+  acSkewContent,
+  /- \[ \] Informational AC one/,
+  'AC checkboxes must not be touched by mark',
+);
+parsed = JSON.parse(readFileSync(acSkewSignal, 'utf8'));
+assert.equal(parsed.checklistTiming.events[0].stepNumber, 1);
+assert.equal(parsed.checklistTiming.events[0].label, '1. Real first step');
+
+result = spawnSync(process.execPath, [helper, acSkewDir, '2'], { encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+
+// Terminal completion must succeed with informational AC boxes still [ ].
+result = spawnSync(process.execPath, [helper, acSkewDir, 'complete', '--mark-last'], {
+  encoding: 'utf8',
+});
+assert.equal(result.status, 0, result.stderr);
+acSkewContent = readFileSync(acSkewTask, 'utf8');
+assert.match(acSkewContent, /- \[ \] Informational AC two/, 'AC boxes stay unchecked at complete');
