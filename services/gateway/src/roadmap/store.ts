@@ -60,6 +60,7 @@ import {
   buildRefinementShellCommand as buildSharedRefinementShellCommand,
   launchRefinementTmuxSession,
   resolveTmuxSessionWorker,
+  shellQuote,
   tmuxSessionExists,
 } from '../refinement/session.js';
 import { runnerDefaultModel } from '../runners/registry.js';
@@ -93,10 +94,6 @@ type RoadmapMeta = {
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function repoRelative(filePath: string): string {

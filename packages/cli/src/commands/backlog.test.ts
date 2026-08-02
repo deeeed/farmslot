@@ -5,6 +5,7 @@ import type { CommandContext } from '../context.js';
 
 import {
   backlogRefineRpcParams,
+  describeBacklogRefineOutput,
   formatBacklogRefinementSessionOutput,
   formatBacklogRefineOutput,
   reconcileBacklogItemRun,
@@ -80,12 +81,14 @@ test('backlog refine CLI params cover prompt-only and launch modes', () => {
       model: 'gpt-5.6-sol',
       launch: true,
       runnerCommand: 'codex {{prompt_path}}',
+      safetyTier: 'sandboxed',
     }),
     {
       itemId: 'item-1',
       runner: 'codex',
       model: 'gpt-5.6-sol',
       runnerCommand: 'codex {{prompt_path}}',
+      safetyTier: 'sandboxed',
       launch: true,
     },
   );
@@ -97,24 +100,22 @@ test('backlog refine CLI output distinguishes prepared, launched, and existing s
     promptPath: '.backlog/refinement-prompts/x.md',
     tmuxSession: 'backlog-manual-000087',
     tmuxTarget: 'backlog-manual-000087',
-    attachCommand: "tmux attach -t ='backlog-manual-000087'",
+    attachCommand: "tmux attach -t '=backlog-manual-000087'",
   } as const;
 
-  assert.match(
-    formatBacklogRefineOutput({ ...base, launched: false } as never),
-    /Prepared refinement for MANUAL-000087/,
-  );
-  assert.match(
-    formatBacklogRefineOutput({ ...base, launched: true } as never),
-    /Launched refinement for MANUAL-000087/,
-  );
-  assert.match(
-    formatBacklogRefineOutput({
+  assert.equal(describeBacklogRefineOutput({ ...base, launched: false } as never).verb, 'Prepared');
+  assert.equal(describeBacklogRefineOutput({ ...base, launched: true } as never).verb, 'Launched');
+  assert.equal(
+    describeBacklogRefineOutput({
       ...base,
       launched: false,
       attachedExisting: true,
-    } as never),
-    /Reopened refinement for MANUAL-000087/,
+    } as never).verb,
+    'Reopened',
+  );
+  assert.match(
+    formatBacklogRefineOutput({ ...base, launched: false } as never),
+    /Prepared refinement for MANUAL-000087/,
   );
 
   assert.match(
@@ -123,7 +124,7 @@ test('backlog refine CLI output distinguishes prepared, launched, and existing s
       tmuxSession: 'backlog-manual-000087',
       tmuxTarget: 'backlog-manual-000087',
       exists: true,
-      attachCommand: "tmux attach -t ='backlog-manual-000087'",
+      attachCommand: "tmux attach -t '=backlog-manual-000087'",
     }),
     /running/,
   );
@@ -133,7 +134,7 @@ test('backlog refine CLI output distinguishes prepared, launched, and existing s
       tmuxSession: 'backlog-manual-000087',
       tmuxTarget: 'backlog-manual-000087',
       exists: false,
-      attachCommand: "tmux attach -t ='backlog-manual-000087'",
+      attachCommand: "tmux attach -t '=backlog-manual-000087'",
     }),
     /absent/,
   );

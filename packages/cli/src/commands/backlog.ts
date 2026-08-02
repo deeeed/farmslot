@@ -543,6 +543,7 @@ export function registerBacklogCommand(program: Command): void {
     .option('--runner <name>', 'Runner override')
     .option('--model <name>', 'Model override')
     .option('--runner-command <template>', 'Shell command template for refinement')
+    .option('--safety-tier <tier>', 'Runner safety tier (sandboxed|full-auto|dangerous)')
     .option('--launch', 'Create or attach the tmux refinement session')
     .action(
       async (
@@ -551,6 +552,7 @@ export function registerBacklogCommand(program: Command): void {
           runner?: string;
           model?: string;
           runnerCommand?: string;
+          safetyTier?: string;
           launch?: boolean;
         },
         cmd: Command,
@@ -571,12 +573,12 @@ export function registerBacklogCommand(program: Command): void {
           );
           if (emit.machine) emit.ok(result);
           else {
-            const [verbLine, promptLine, attachLine] =
-              formatBacklogRefineOutput(result).split('\n');
-            const verb = verbLine?.split(' ')[0] ?? 'Prepared';
-            ctx.output.write(`${green(verb)} refinement for ${cyan(result.item.sourceRef)}\n`);
-            if (promptLine) ctx.output.write(`${dim(promptLine)}\n`);
-            if (attachLine) ctx.output.write(`${dim(attachLine)}\n`);
+            const lines = describeBacklogRefineOutput(result);
+            ctx.output.write(
+              `${green(lines.verb)} refinement for ${cyan(result.item.sourceRef)}\n`,
+            );
+            ctx.output.write(`${dim(lines.promptLine)}\n`);
+            ctx.output.write(`${dim(lines.attachLine)}\n`);
           }
         } catch (err) {
           emit.fail(err);
@@ -622,6 +624,7 @@ export function backlogRefineRpcParams(
     runner?: string;
     model?: string;
     runnerCommand?: string;
+    safetyTier?: string;
     launch?: boolean;
   },
 ): Record<string, unknown> {
@@ -630,17 +633,32 @@ export function backlogRefineRpcParams(
     ...(opts.runner ? { runner: opts.runner } : {}),
     ...(opts.model ? { model: opts.model } : {}),
     ...(opts.runnerCommand ? { runnerCommand: opts.runnerCommand } : {}),
+    ...(opts.safetyTier?.trim() ? { safetyTier: opts.safetyTier.trim() } : {}),
     ...(opts.launch ? { launch: true } : {}),
+  };
+}
+
+/** Structured human lines for refine CLI output (testable; used by the command handler). */
+export function describeBacklogRefineOutput(result: BacklogRefineResult): {
+  verb: 'Launched' | 'Reopened' | 'Prepared';
+  promptLine: string;
+  attachLine: string;
+} {
+  const verb = result.launched ? 'Launched' : result.attachedExisting ? 'Reopened' : 'Prepared';
+  return {
+    verb,
+    promptLine: `prompt: ${result.promptPath}`,
+    attachLine: `attach: ${result.attachCommand}`,
   };
 }
 
 /** Format human-readable refine CLI output for prompt-only / launch / existing-session. */
 export function formatBacklogRefineOutput(result: BacklogRefineResult): string {
-  const verb = result.launched ? 'Launched' : result.attachedExisting ? 'Reopened' : 'Prepared';
+  const lines = describeBacklogRefineOutput(result);
   return [
-    `${verb} refinement for ${result.item.sourceRef}`,
-    `prompt: ${result.promptPath}`,
-    `attach: ${result.attachCommand}`,
+    `${lines.verb} refinement for ${result.item.sourceRef}`,
+    lines.promptLine,
+    lines.attachLine,
   ].join('\n');
 }
 

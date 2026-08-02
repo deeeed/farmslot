@@ -7,6 +7,9 @@ import {
   BACKLOG_SOURCE_KINDS,
   BACKLOG_STATUSES,
   BacklogMethods,
+  type BacklogRefinementSessionGetResult,
+  type BacklogRefineParams,
+  type BacklogRefineResult,
   Events,
   Methods,
 } from '../../src/index.js';
@@ -41,7 +44,7 @@ test('backlog refinement contracts carry runner/model overrides and session iden
     runner: 'codex',
     model: 'gpt-5.6-sol',
     launch: true,
-  };
+  } satisfies BacklogRefineParams;
   const refineResult = {
     item: {
       id: 'backlog-1',
@@ -59,23 +62,25 @@ test('backlog refinement contracts carry runner/model overrides and session iden
     tmuxSession: 'backlog-manual-000087',
     tmuxTarget: 'backlog-manual-000087:0.0',
     launched: true,
-    attachCommand: "tmux attach -t ='backlog-manual-000087'",
+    // Matches attachCommandForSession: shellQuote(`=${session}`) → '=session' inside single quotes.
+    attachCommand: "tmux attach -t '=backlog-manual-000087'",
     runner: 'codex',
     model: 'gpt-5.6-sol',
-  };
+  } satisfies BacklogRefineResult;
   const session = {
     itemId: 'backlog-1',
     tmuxSession: 'backlog-manual-000087',
     tmuxTarget: 'backlog-manual-000087:0.0',
     exists: true,
-    attachCommand: "tmux attach -t ='backlog-manual-000087'",
-  };
+    attachCommand: "tmux attach -t '=backlog-manual-000087'",
+  } satisfies BacklogRefinementSessionGetResult;
 
   assert.equal(refineParams.runner, 'codex');
   assert.equal(refineParams.model, 'gpt-5.6-sol');
   assert.equal(refineResult.tmuxSession, session.tmuxSession);
   assert.equal(refineResult.tmuxTarget, session.tmuxTarget);
   assert.equal(session.exists, true);
+  assert.match(refineResult.attachCommand, /tmux attach -t '=backlog-/);
 });
 
 test('backlog protocol carries optional roadmap spec metadata and tags', () => {

@@ -104,6 +104,7 @@ import {
 } from '../terminal/split-view-model.js';
 
 import {
+  applyBacklogRefineItemRefresh,
   BACKLOG_SORT_KEYS,
   backlogItemMatchesStatusFilter,
   backlogRefinementPickerView,
@@ -121,6 +122,7 @@ import {
   displayedBacklogStatus,
   parseBacklogStatusFilter,
   serializeBacklogStatusFilter,
+  shouldForceReloadBacklogSpecAfterRefine,
   showsBacklogCleanupActionsForUi,
   sortBacklogItems,
   syncedBacklogDraftProject,
@@ -1366,8 +1368,15 @@ export class BacklogPanel extends LitElement {
     if (open && item) void this._loadSpec(item);
   }
 
+  private _specForceReloadPending = new Set<string>();
+
   private async _loadSpec(item: BacklogItem, options?: { force?: boolean }) {
-    if (!item.specPath || this._specLoadingItemId === item.id) return;
+    if (!item.specPath) return;
+    if (this._specLoadingItemId === item.id) {
+      // Do not drop a forced refresh that lands during an in-flight load.
+      if (options?.force) this._specForceReloadPending.add(item.id);
+      return;
+    }
     if (!options?.force && this._specContents[item.id]) return;
     this._specLoadingItemId = item.id;
     this._specErrors = { ...this._specErrors, [item.id]: '' };
@@ -1386,13 +1395,17 @@ export class BacklogPanel extends LitElement {
       };
     } finally {
       this._specLoadingItemId = '';
+      if (this._specForceReloadPending.has(item.id)) {
+        this._specForceReloadPending.delete(item.id);
+        void this._loadSpec(item, { force: true });
+      }
     }
   }
 
   /** After refinement, apply the returned item and re-fetch attached spec (surfaces validation errors). */
   private async _refreshItemAfterRefinement(item: BacklogItem) {
-    this._items = this._items.map((candidate) => (candidate.id === item.id ? item : candidate));
-    if (item.specPath) await this._loadSpec(item, { force: true });
+    this._items = applyBacklogRefineItemRefresh(this._items, item);
+    if (shouldForceReloadBacklogSpecAfterRefine(item)) await this._loadSpec(item, { force: true });
   }
 
   private get _projects(): string[] {
