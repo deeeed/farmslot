@@ -44,6 +44,7 @@ export function ReviewPackageTabs({
           return (
             <Pressable
               key={tab.id}
+              testID={`companion-review-package-tab-${tab.id}`}
               disabled={tab.disabled}
               style={[styles.tab, selected && styles.tabActive, tab.disabled && styles.tabDisabled]}
               onPress={tab.onPress}

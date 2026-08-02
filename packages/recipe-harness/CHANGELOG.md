@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- feat(recipe): standardize `ui.capture_surface` and implement full-page CDP evidence capture.
+
 ## 0.13.0 - 2026-08-02
 
 - **BREAKING:** Add canonical `recipes/<adapter>/<domain>/*.recipe.json`

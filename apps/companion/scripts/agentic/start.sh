@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=./agentic.conf
 source "${SCRIPT_DIR}/agentic.conf"
+# shellcheck source=./slot-context.sh
+source "${SCRIPT_DIR}/slot-context.sh"
 # shellcheck source=./network.sh
 source "${SCRIPT_DIR}/network.sh"
 
@@ -132,12 +134,26 @@ DEVICE_MODE="${DEVICE_MODE:-auto}"
 cd "${APP_DIR}"
 
 should_open_android=0
+should_open_ios=0
 for arg in "${EXPO_ARGS[@]}"; do
   if [[ "${arg}" == "--android" || "${arg}" == "-a" ]]; then
     should_open_android=1
     break
   fi
+  if [[ "${arg}" == "--ios" || "${arg}" == "-i" ]]; then
+    should_open_ios=1
+  fi
 done
+
+if [[ -n "${FARMSLOT_SLOT_ID:-}" ]]; then
+  if [[ "${should_open_android}" -eq 1 ]]; then
+    companion_apply_farmslot_slot_context android
+  elif [[ "${should_open_ios}" -eq 1 ]]; then
+    companion_apply_farmslot_slot_context ios
+  else
+    companion_apply_farmslot_slot_context metro
+  fi
+fi
 
 ANDROID_TARGET="${ANDROID_DEVICE:-${ADB_SERIAL:-}}"
 if [[ -n "${ANDROID_TARGET}" ]]; then

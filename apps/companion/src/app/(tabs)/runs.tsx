@@ -137,6 +137,7 @@ function RunCard({
         />
       </View>
       <Pressable
+        testID={`companion-run-${run.id}`}
         style={[styles.runCard, isFamilyRoot && styles.rootRunCard]}
         onPress={() =>
           router.push({
@@ -945,7 +946,7 @@ export default function RunsScreen() {
   );
 
   return (
-    <View style={baseStyles.container}>
+    <View testID="companion-screen-review" style={baseStyles.container}>
       {status === 'connected' ? runScopeHeader : null}
       {runRows.length === 0 ? (
         status === 'connected' && runsSyncMessage ? (
@@ -997,6 +998,14 @@ export default function RunsScreen() {
             styles.listContent,
             { paddingBottom: styles.listContent.paddingBottom + insets.bottom },
           ]}
+          ListFooterComponent={
+            <View
+              testID="companion-screen-review-end"
+              accessible
+              accessibilityLabel="End of Review queue"
+              style={styles.captureEndMarker}
+            />
+          }
         />
       )}
       <RunFiltersSheet open={filtersOpen} onClose={() => setFiltersOpen(false)} />
@@ -1005,6 +1014,7 @@ export default function RunsScreen() {
 }
 
 const styles = StyleSheet.create({
+  captureEndMarker: { height: 1 },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: spacing.md },
   syncEmptyText: {
     marginTop: spacing.sm,

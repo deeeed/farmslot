@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+
+import { PNG } from 'pngjs';
 
 import type { ActionExecutionContext } from '@farmslot/recipe-harness';
 
@@ -7,6 +12,125 @@ import {
   type AgentDeviceUiTransportOptions,
   createAgentDeviceUiTransport,
 } from './agent-device-ui-transport.js';
+
+test('captures a full native surface without stopping at a premature virtualized end marker', async () => {
+  const artifactsDir = await mkdtemp(path.join(tmpdir(), 'farmslot-capture-surface-'));
+  let position = 0;
+  let bottomSwipes = 0;
+  let freezeCapture = false;
+  let hideEndMarker = false;
+  const client = {
+    apps: { open: async () => ({ session: 'surface-session', identifiers: {} }) },
+    interactions: {
+      async scroll(options: Record<string, unknown>) {
+        if (options.direction === 'top') position = 0;
+        return { scrolled: true };
+      },
+      async swipe(options: Record<string, unknown>) {
+        const from = options.from as { y: number };
+        const to = options.to as { y: number };
+        if (from.y > to.y) {
+          position = Math.min(2, position + 1);
+          bottomSwipes += 1;
+        } else {
+          position = Math.max(0, position - 1);
+        }
+        return { swiped: true };
+      },
+    },
+    command: { wait: async () => ({ stable: true }) },
+    capture: {
+      async snapshot() {
+        return {
+          nodes: [
+            {
+              identifier: 'catalog-surface',
+              type: 'ScrollView',
+              rect: { x: 0, y: 0, width: 10, height: 10 },
+              hiddenContentAbove: position > 0,
+              hiddenContentBelow: position < 2,
+            },
+            { type: 'Window', rect: { x: 0, y: 0, width: 10, height: 10 } },
+            ...(position > 0 && !hideEndMarker
+              ? [
+                  {
+                    identifier: 'catalog-end',
+                    type: 'View',
+                    rect: { x: 0, y: 8, width: 10, height: 2 },
+                    visibleToUser: true,
+                  },
+                ]
+              : []),
+          ],
+          truncated: false,
+        };
+      },
+      async screenshot(options: Record<string, unknown>) {
+        const image = new PNG({ width: 10, height: 20 });
+        image.data.fill(40 + (freezeCapture ? 0 : position * 60));
+        await writeFile(String(options.path), PNG.sync.write(image));
+        return { width: 10, height: 20, logicalHeight: 10, pixelDensity: 2 };
+      },
+    },
+    sessions: { close: async () => ({ session: 'surface-session', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const artifacts: unknown[] = [];
+  const context = {
+    nodeId: 'capture-catalog',
+    artifactsDir,
+    resolveArtifactPath: (relativePath: string) => path.join(artifactsDir, relativePath),
+    registerArtifact: (artifact: unknown) => artifacts.push(artifact),
+  } as ActionExecutionContext;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'ios',
+    device: 'fs-1',
+    app: 'net.siteed.farmslot.development',
+    session: 'surface-session',
+    client,
+  });
+
+  try {
+    const result = (await transport.execute(
+      'ui.capture_surface',
+      {
+        path: 'screenshots/catalog.png',
+        surface_test_id: 'catalog-surface',
+        until_test_id: 'catalog-end',
+        max_scrolls: 4,
+      },
+      context,
+    )) as { output: { extent: string; viewports: number; height: number } };
+    const image = PNG.sync.read(await readFile(path.join(artifactsDir, 'screenshots/catalog.png')));
+
+    assert.equal(result.output.extent, 'full');
+    assert.equal(result.output.viewports, 3);
+    assert.equal(result.output.height, 52);
+    assert.equal(image.height, 52);
+    assert.equal(bottomSwipes, 2);
+    assert.equal(position, 0);
+    assert.equal(artifacts.length, 1);
+
+    freezeCapture = true;
+    hideEndMarker = true;
+    await assert.rejects(
+      () =>
+        transport.execute(
+          'ui.capture_surface',
+          {
+            path: 'screenshots/incomplete.png',
+            surface_test_id: 'catalog-surface',
+            until_test_id: 'catalog-end',
+            max_scrolls: 2,
+          },
+          context,
+        ),
+      /(?:stopped moving before reaching|did not reach the end)/u,
+    );
+    assert.equal(artifacts.length, 1);
+  } finally {
+    await rm(artifactsDir, { recursive: true, force: true });
+  }
+});
 
 test('drives native actions, observations, artifacts, and non-owning cleanup', async () => {
   const calls: Array<{ method: string; options: Record<string, unknown> }> = [];

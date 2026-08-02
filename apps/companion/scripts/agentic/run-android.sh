@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=./agentic.conf
 source "${SCRIPT_DIR}/agentic.conf"
+# shellcheck source=./slot-context.sh
+source "${SCRIPT_DIR}/slot-context.sh"
 # shellcheck source=./network.sh
 source "${SCRIPT_DIR}/network.sh"
 
@@ -324,6 +326,7 @@ select_android_device() {
 
 main() {
 parse_android_cli_args "$@"
+companion_apply_farmslot_slot_context android
 DEVICE_MODE="${DEVICE_MODE:-device}"
 companion_load_local_auth_env
 

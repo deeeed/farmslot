@@ -765,6 +765,7 @@ export default function DecisionDetailScreen() {
         />
       </Animated.View>
       <Animated.ScrollView
+        testID="companion-screen-decision-workspace"
         ref={scrollRef}
         onScroll={scrollHandler}
         scrollEventThrottle={16}
@@ -1332,7 +1333,11 @@ export default function DecisionDetailScreen() {
           );
         })()}
 
-        <View style={styles.section} onLayout={rememberSection('actions')}>
+        <View
+          testID="companion-screen-decision-workspace-actions"
+          style={styles.section}
+          onLayout={rememberSection('actions')}
+        >
           <Text style={styles.sectionTitle}>Evidence-reviewed actions</Text>
           <View style={styles.safetyCard}>
             <Text style={styles.safetyTitle}>Resolve only from full context</Text>

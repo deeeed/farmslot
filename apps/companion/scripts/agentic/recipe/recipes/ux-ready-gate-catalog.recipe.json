@@ -1,0 +1,118 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Companion ready-gate UX catalog",
+  "description": "Opens a live run through native controls and captures its complete review package and Ready Gate as full-surface feedback evidence.",
+  "paramsSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["platform", "run_id"],
+    "properties": {
+      "platform": { "type": "string", "enum": ["ios", "android"] },
+      "run_id": { "type": "string" }
+    }
+  },
+  "proofTargets": [
+    {
+      "id": "ready-gate-catalog",
+      "claim": "The selected run package and its entire ready-gate workflow are available in an offline feedback catalog."
+    }
+  ],
+  "workflow": {
+    "entry": "open-review",
+    "nodes": {
+      "open-review": {
+        "action": "ui.press",
+        "test_id": "companion-tab-review",
+        "intent": "Open the live review queue through native tab navigation.",
+        "next": "wait-review"
+      },
+      "wait-review": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-review",
+        "expected": "visible",
+        "intent": "Keep the active run inventory visible so the requested package can be selected.",
+        "next": "open-run"
+      },
+      "open-run": {
+        "action": "ui.press",
+        "test_id": "companion-run-{{params.run_id}}",
+        "intent": "Open the selected run without an external deep link.",
+        "next": "wait-run"
+      },
+      "wait-run": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-run-detail",
+        "expected": "visible",
+        "intent": "Confirm the review package is loaded.",
+        "next": "capture-run"
+      },
+      "capture-run": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/10_run_detail.png",
+        "label": "Ready run package — full surface",
+        "surface_test_id": "companion-screen-run-detail",
+        "until_test_id": "companion-screen-run-detail-end",
+        "max_scrolls": 12,
+        "restore_position": false,
+        "intent": "Preserve the complete run package from its summary through its final scrollable section.",
+        "proves": ["ready-gate-catalog"],
+        "next": "open-ready-gate"
+      },
+      "open-ready-gate": {
+        "action": "ui.press",
+        "test_id": "companion-open-primary-run-gate",
+        "intent": "Open the primary ready gate from the decision card reached at the end of the full-surface capture.",
+        "next": "wait-ready-gate"
+      },
+      "wait-ready-gate": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-decision-workspace",
+        "expected": "visible",
+        "intent": "Confirm the full decision workspace is loaded.",
+        "next": "capture-ready-gate"
+      },
+      "capture-ready-gate": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/11_ready_gate_full.png",
+        "label": "Ready Gate — full surface",
+        "surface_test_id": "companion-screen-decision-workspace",
+        "until_test_id": "companion-screen-decision-workspace-actions",
+        "max_scrolls": 30,
+        "restore_position": false,
+        "intent": "Preserve the complete Ready Gate from its summary through its operator actions.",
+        "proves": ["ready-gate-catalog"],
+        "next": "build-catalog"
+      },
+      "build-catalog": {
+        "action": "command",
+        "cmd": "node scripts/screenshots/build-ready-gate-ux-catalog.mjs \"$FARMSLOT_RECIPE_ARTIFACTS_DIR\" .agent/ux-catalog-current \"{{params.platform}}\"",
+        "timeout_ms": 30000,
+        "intent": "Refresh the offline feedback catalog from the full-surface recipe artifacts.",
+        "next": "index-catalog"
+      },
+      "index-catalog": {
+        "action": "index_artifacts",
+        "intent": "Attach the deep ready-gate catalog and full-height image.",
+        "artifacts": [
+          {
+            "path": ".agent/ux-catalog-current/index.html",
+            "type": "html",
+            "label": "Companion UX feedback catalog"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/10_run_detail.png",
+            "type": "image",
+            "label": "Ready run package"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/11_ready_gate_full.png",
+            "type": "image",
+            "label": "Ready gate full height"
+          }
+        ],
+        "next": "done"
+      },
+      "done": { "action": "end", "status": "pass" }
+    }
+  }
+}

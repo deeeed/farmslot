@@ -637,6 +637,7 @@ async function main() {
     'ui.long_press',
     'ui.wait_for',
     'ui.screenshot',
+    'ui.capture_surface',
     'app.status',
     'app.lifecycle',
     'app.hud',

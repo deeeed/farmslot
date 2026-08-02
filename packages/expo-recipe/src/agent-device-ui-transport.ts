@@ -1,6 +1,9 @@
 import { execFile } from 'node:child_process';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+
+import { PNG } from 'pngjs';
 
 import type { UiObserverRef } from '@farmslot/protocol';
 import {
@@ -31,6 +34,8 @@ export interface AgentDeviceSnapshotNode {
   hittable?: boolean;
   visibleToUser?: boolean;
   interactionBlocked?: 'covered';
+  hiddenContentAbove?: boolean;
+  hiddenContentBelow?: boolean;
   rect?: { x: number; y: number; width: number; height: number };
 }
 
@@ -47,11 +52,18 @@ export interface AgentDeviceClientLike {
     press(options: Record<string, unknown>): Promise<unknown>;
     fill(options: Record<string, unknown>): Promise<unknown>;
     scroll(options: Record<string, unknown>): Promise<unknown>;
+    swipe(options: Record<string, unknown>): Promise<unknown>;
   };
   command: { wait(options: Record<string, unknown>): Promise<unknown> };
   capture: {
     snapshot(options: Record<string, unknown>): Promise<AgentDeviceSnapshot>;
-    screenshot(options: Record<string, unknown>): Promise<{ width?: number; height?: number }>;
+    screenshot(options: Record<string, unknown>): Promise<{
+      width?: number;
+      height?: number;
+      logicalWidth?: number;
+      logicalHeight?: number;
+      pixelDensity?: number;
+    }>;
   };
   sessions: { close(options: Record<string, unknown>): Promise<unknown> };
 }
@@ -68,6 +80,7 @@ export const NATIVE_UI_ACTIONS = [
   'ui.long_press',
   'ui.wait_for',
   'ui.screenshot',
+  'ui.capture_surface',
 ] as const;
 
 export interface AgentDeviceUiTransportOptions {
@@ -263,6 +276,8 @@ export function createAgentDeviceUiTransport(
         }
         case 'ui.screenshot':
           return captureScreenshot(client, options.session, node, context);
+        case 'ui.capture_surface':
+          return captureSurface(client, options.session, selection, node, context);
         default:
           throw new Error(`${action} is not supported by the Agent Device UI transport.`);
       }
@@ -697,6 +712,328 @@ async function captureScreenshot(
     output: { captured: true, path: normalizedPath, width: result.width, height: result.height },
     control: { artifacts: [artifact] },
   };
+}
+
+async function captureSurface(
+  client: AgentDeviceClient,
+  session: string,
+  selection: AgentDeviceSelection,
+  node: Record<string, unknown>,
+  context: ActionExecutionContext,
+): Promise<UiTransportResult> {
+  const relativePath = optionalString(node.path) ?? `screenshots/${context.nodeId}.png`;
+  const normalizedPath = relativePath.split(path.sep).join('/');
+  const outputPath = context.resolveArtifactPath(normalizedPath);
+  const surfaceTestId = optionalString(node.surface_test_id ?? node.surfaceTestId);
+  const untilTestId = optionalString(node.until_test_id ?? node.untilTestId);
+  const maxScrolls = boundedPositiveInteger(node.max_scrolls ?? node.maxScrolls, 12, 60);
+  const restorePosition = node.restore_position !== false && node.restorePosition !== false;
+  const temporaryDir = context.resolveArtifactPath(
+    `.capture-surface/${context.nodeId.replaceAll(/[^a-zA-Z0-9._-]/gu, '-')}`,
+  );
+  const pages: Array<{ path: string; revealedPixels?: number }> = [];
+  let reachedEnd = false;
+  let surfaceRect: SurfaceRect | undefined;
+  let surfaceResolved = false;
+  let failure: { error: unknown } | undefined;
+  let captureResult: UiTransportResult | undefined;
+
+  await mkdir(temporaryDir, { recursive: true });
+  try {
+    surfaceRect = await resolveSurfaceRect(client, session, selection, surfaceTestId);
+    surfaceResolved = true;
+    await resetSurfaceToTop(client, session, selection);
+
+    const firstPath = path.join(temporaryDir, 'page-00.png');
+    await client.capture.screenshot({ session, path: firstPath, stabilize: true });
+    pages.push({ path: firstPath });
+    reachedEnd = await surfaceEndIsVisible(client, session, selection, surfaceTestId, untilTestId);
+
+    for (let index = 1; index <= maxScrolls && !reachedEnd; index += 1) {
+      const revealedPoints = await moveSurface(
+        client,
+        session,
+        selection,
+        surfaceRect,
+        'toward-bottom',
+      );
+      const pagePath = path.join(temporaryDir, `page-${String(index).padStart(2, '0')}.png`);
+      const screenshot = await client.capture.screenshot({
+        session,
+        path: pagePath,
+        stabilize: true,
+      });
+      const previous = PNG.sync.read(await readFile(pages.at(-1)!.path));
+      const current = PNG.sync.read(await readFile(pagePath));
+      if (screenshotsEquivalent(previous, current)) {
+        reachedEnd =
+          untilTestId === undefined ||
+          (await surfaceEndIsVisible(client, session, selection, surfaceTestId, untilTestId));
+        if (!reachedEnd) {
+          throw new Error(
+            `ui.capture_surface stopped moving before reaching until_test_id=${untilTestId}.`,
+          );
+        }
+        break;
+      }
+      pages.push({
+        path: pagePath,
+        revealedPixels: Math.min(
+          physicalPixelsForLogicalDistance(revealedPoints, screenshot, current.height),
+          current.height,
+        ),
+      });
+      reachedEnd = await surfaceEndIsVisible(
+        client,
+        session,
+        selection,
+        surfaceTestId,
+        untilTestId,
+      );
+    }
+
+    if (!reachedEnd) {
+      throw new Error(
+        `ui.capture_surface did not reach the end within ${maxScrolls} scrolls. Increase max_scrolls or provide an earlier until_test_id.`,
+      );
+    }
+
+    const stitched = await stitchSurfacePages(pages);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, PNG.sync.write(stitched));
+    const artifact = {
+      path: normalizedPath,
+      type: 'screenshot' as const,
+      nodeId: context.nodeId,
+      mimeType: 'image/png',
+      label: optionalString(node.label) ?? 'Full UI surface',
+    };
+    context.registerArtifact(artifact);
+    captureResult = {
+      kind: 'ui-transport-result',
+      output: {
+        captured: true,
+        extent: 'full',
+        path: normalizedPath,
+        width: stitched.width,
+        height: stitched.height,
+        viewports: pages.length,
+      },
+      control: { artifacts: [artifact] },
+    };
+  } catch (error) {
+    failure = { error };
+  } finally {
+    try {
+      if (restorePosition && surfaceResolved) {
+        await resetSurfaceToTop(client, session, selection);
+      }
+    } catch (restoreError) {
+      failure ??= { error: restoreError };
+    } finally {
+      await rm(temporaryDir, { recursive: true, force: true });
+    }
+  }
+  if (failure) throw failure.error;
+  if (!captureResult) throw new Error('ui.capture_surface produced no result.');
+  return captureResult;
+}
+
+type SurfaceRect = { x: number; y: number; width: number; height: number };
+
+async function resolveSurfaceRect(
+  client: AgentDeviceClient,
+  session: string,
+  selection: AgentDeviceSelection,
+  surfaceTestId: string | undefined,
+): Promise<SurfaceRect | undefined> {
+  if (!surfaceTestId) return undefined;
+  const snapshot = await client.capture.snapshot({
+    ...selection,
+    session,
+    interactiveOnly: false,
+    forceFull: true,
+  });
+  const surface = snapshot.nodes.find((candidate) => candidate.identifier === surfaceTestId);
+  if (!surface?.rect || surface.rect.width <= 0 || surface.rect.height <= 0) {
+    throw new Error(`ui.capture_surface could not resolve surface_test_id=${surfaceTestId}.`);
+  }
+  return surface.rect;
+}
+
+async function resetSurfaceToTop(
+  client: AgentDeviceClient,
+  session: string,
+  selection: AgentDeviceSelection,
+): Promise<void> {
+  await client.interactions.scroll({
+    ...selection,
+    session,
+    direction: 'top',
+    responseLevel: 'digest',
+  });
+  await awaitNativeStability(client, session, selection, 'ui.capture_surface', 10_000);
+}
+
+async function moveSurface(
+  client: AgentDeviceClient,
+  session: string,
+  selection: AgentDeviceSelection,
+  surfaceRect: SurfaceRect | undefined,
+  direction: 'toward-top' | 'toward-bottom',
+): Promise<number> {
+  if (!surfaceRect) {
+    const result = await client.interactions.scroll({
+      ...selection,
+      session,
+      direction: direction === 'toward-top' ? 'up' : 'down',
+      responseLevel: 'digest',
+    });
+    return scrollPixels(result, 1_000);
+  }
+
+  // Stay clear of iOS edge gestures and the Companion's right-side floating controls.
+  const x = Math.round(surfaceRect.x + surfaceRect.width * 0.25);
+  const top = Math.round(surfaceRect.y + surfaceRect.height * 0.1);
+  const bottom = Math.round(surfaceRect.y + surfaceRect.height * 0.9);
+  await client.interactions.swipe({
+    ...selection,
+    session,
+    from: { x, y: direction === 'toward-top' ? top : bottom },
+    to: { x, y: direction === 'toward-top' ? bottom : top },
+    durationMs: 400,
+    responseLevel: 'digest',
+  });
+  return Math.abs(bottom - top);
+}
+
+async function surfaceEndIsVisible(
+  client: AgentDeviceClient,
+  session: string,
+  selection: AgentDeviceSelection,
+  surfaceTestId: string | undefined,
+  untilTestId: string | undefined,
+): Promise<boolean> {
+  if (!untilTestId) return false;
+  const snapshot = await client.capture.snapshot({
+    ...selection,
+    session,
+    interactiveOnly: false,
+    forceFull: true,
+  });
+  const viewport = snapshot.nodes
+    .filter((candidate) => /Application|Window/u.test(candidate.type ?? '') && candidate.rect)
+    .map((candidate) => candidate.rect!)
+    .sort((left, right) => right.width * right.height - left.width * left.height)[0];
+  const surface = surfaceTestId
+    ? snapshot.nodes.find((candidate) => candidate.identifier === surfaceTestId)
+    : undefined;
+  const hasHiddenContentBelow = surface
+    ? surface.hiddenContentBelow === true
+    : snapshot.nodes.some(
+        (candidate) =>
+          candidate.hiddenContentBelow === true &&
+          (!viewport || !candidate.rect || rectsIntersect(candidate.rect, viewport)),
+      );
+  if (hasHiddenContentBelow) return false;
+  return snapshot.nodes.some((candidate) => {
+    if (candidate.identifier !== untilTestId || !candidate.rect || !isVisibleNode(candidate)) {
+      return false;
+    }
+    return viewport ? rectsIntersect(candidate.rect, viewport) : true;
+  });
+}
+
+function physicalPixelsForLogicalDistance(
+  logicalDistance: number,
+  screenshot: {
+    logicalHeight?: number;
+    pixelDensity?: number;
+  },
+  physicalHeight: number,
+): number {
+  const logicalHeight = positiveNumber(screenshot.logicalHeight);
+  const scale = logicalHeight
+    ? physicalHeight / logicalHeight
+    : (positiveNumber(screenshot.pixelDensity) ?? 1);
+  return Math.max(1, Math.round(logicalDistance * scale));
+}
+
+function rectsIntersect(left: SurfaceRect, right: SurfaceRect): boolean {
+  return (
+    left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.y < right.y + right.height &&
+    left.y + left.height > right.y
+  );
+}
+
+function scrollPixels(result: unknown, viewportHeight: number): number {
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    const pixels = positiveNumber((result as Record<string, unknown>).pixels);
+    if (pixels) return Math.min(Math.round(pixels), viewportHeight);
+  }
+  return Math.round(viewportHeight * 0.6);
+}
+
+async function stitchSurfacePages(
+  pages: Array<{ path: string; revealedPixels?: number }>,
+): Promise<PNG> {
+  const decoded = await Promise.all(
+    pages.map(async (page) => PNG.sync.read(await readFile(page.path))),
+  );
+  const [first, ...continuations] = decoded;
+  if (!first) throw new Error('ui.capture_surface did not capture a viewport.');
+  if (decoded.some((image) => image.width !== first.width)) {
+    throw new Error('ui.capture_surface viewports changed width during capture.');
+  }
+  const revealed = pages
+    .slice(1)
+    .map((page, index) =>
+      Math.min(page.revealedPixels ?? continuations[index].height, continuations[index].height),
+    );
+  const output = new PNG({
+    width: first.width,
+    height: first.height + revealed.reduce((sum, pixels) => sum + pixels, 0),
+  });
+  first.data.copy(output.data, 0);
+  let outputY = first.height;
+  for (let index = 0; index < continuations.length; index += 1) {
+    const image = continuations[index];
+    const rows = revealed[index];
+    const sourceStart = (image.height - rows) * image.width * 4;
+    const sourceEnd = image.height * image.width * 4;
+    image.data.copy(output.data, outputY * output.width * 4, sourceStart, sourceEnd);
+    outputY += rows;
+  }
+  return output;
+}
+
+function screenshotsEquivalent(previous: PNG, current: PNG): boolean {
+  if (previous.width !== current.width || previous.height !== current.height) return false;
+  const top = Math.floor(previous.height * 0.18);
+  let difference = 0;
+  let samples = 0;
+  for (let y = top; y < previous.height; y += 4) {
+    for (let x = 8; x < previous.width - 8; x += 4) {
+      const offset = (y * previous.width + x) * 4;
+      difference += Math.abs(previous.data[offset] - current.data[offset]);
+      difference += Math.abs(previous.data[offset + 1] - current.data[offset + 1]);
+      difference += Math.abs(previous.data[offset + 2] - current.data[offset + 2]);
+      samples += 3;
+    }
+  }
+  return samples > 0 && difference / samples < 1;
+}
+
+function boundedPositiveInteger(value: unknown, fallback: number, maximum: number): number {
+  const parsed = value == null ? fallback : Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > maximum) {
+    throw new Error(
+      `Expected a positive integer no greater than ${maximum}; got ${String(value)}.`,
+    );
+  }
+  return parsed;
 }
 
 function observationsFromSnapshot(

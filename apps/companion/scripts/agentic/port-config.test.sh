@@ -62,6 +62,29 @@ recipe_output="$(
   exit 1
 }
 
+cat > "${TMP_DIR}/yarn" <<'EOF'
+#!/usr/bin/env bash
+printf '%s|%s|%s\n' "${METRO_PORT}" "${SIMULATOR}" "${ADB_SERIAL}"
+EOF
+chmod +x "${TMP_DIR}/yarn"
+validation_output="$(
+  PATH="${TMP_DIR}:${PATH}" \
+    GATEWAY_PORT=45201 METRO_PORT=45200 \
+    COMPANION_AGENTIC_PORT_ENV=/dev/null \
+    COMPANION_AGENTIC_LOCAL_CONF=/dev/null \
+    bash "${SCRIPT_DIR}/validate-recipe.sh" \
+      --platform ios \
+      --metro-port 45202 \
+      --simulator fs-test \
+      --adb-serial emulator-test \
+      --artifacts-dir "${TMP_DIR}/artifacts" \
+      --dry-run
+)"
+[[ "${validation_output}" == "45202|fs-test|emulator-test" ]] || {
+  echo "ERROR: recipe validation did not preserve explicit device and Metro flags." >&2
+  exit 1
+}
+
 # Metro protocol .js→.ts rewrite path detection (cwd / worktree safe)
 node "${APP_DIR}/metro-protocol-source.test.cjs"
 

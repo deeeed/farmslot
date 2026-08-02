@@ -567,6 +567,7 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView
+      testID="companion-screen-settings"
       style={baseStyles.container}
       contentContainerStyle={[
         styles.content,
@@ -1237,11 +1238,18 @@ export default function SettingsScreen() {
           </View>
         </SafeAreaView>
       </Modal>
+      <View
+        testID="companion-screen-settings-end"
+        accessible
+        accessibilityLabel="End of Settings"
+        style={styles.captureEndMarker}
+      />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  captureEndMarker: { height: 1 },
   content: {
     padding: spacing.xl,
   },

@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=./agentic.conf
 source "${SCRIPT_DIR}/agentic.conf"
+# shellcheck source=./slot-context.sh
+source "${SCRIPT_DIR}/slot-context.sh"
 
 RECIPE_PATH="scripts/agentic/recipe/recipes/expo.config.recipe.json"
 ARTIFACTS_DIR=""
@@ -81,6 +83,13 @@ done
 if [[ -z "${ARTIFACTS_DIR}" ]]; then
   echo "ERROR: --artifacts-dir is required." >&2
   exit 1
+fi
+
+if [[ -n "${FARMSLOT_SLOT_ID:-}" ]]; then
+  companion_apply_farmslot_slot_context "${PLATFORM_VALUE}"
+  METRO_PORT_VALUE="${METRO_PORT}"
+  SIMULATOR_VALUE="${IOS_SIMULATOR:-${SIMULATOR:-}}"
+  ADB_SERIAL_VALUE="${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}"
 fi
 
 ARGS=(farmslot-expo-recipe run "${RECIPE_PATH}" --artifacts-dir "${ARTIFACTS_DIR}")

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat(recipe): add the opt-in `ui.capture_surface` action for full-page and full-scroll-surface evidence while keeping `ui.screenshot` viewport-only.
+
 ## 0.17.0 - 2026-08-03
 
 - feat(backlog): typed `backlog.refine` / `backlog.refinementSession.get` RPC contracts and default refinement runner/model constants.

@@ -839,9 +839,23 @@ export class CdpWebPage {
       }
   > {
     const timeoutMs = typeof metadata.timeoutMs === 'number' ? metadata.timeoutMs : 30_000;
+    const fullPage = metadata.fullPage === true;
+    let clip: { x: number; y: number; width: number; height: number; scale: number } | undefined;
+    if (fullPage) {
+      const metrics = await this.session.call<{
+        cssContentSize?: { width?: number; height?: number };
+        contentSize?: { width?: number; height?: number };
+      }>('Page.getLayoutMetrics');
+      const contentSize = metrics.cssContentSize ?? metrics.contentSize;
+      if (typeof contentSize?.width !== 'number' || typeof contentSize.height !== 'number') {
+        throw new Error('CDP did not report the full page dimensions.');
+      }
+      clip = { x: 0, y: 0, width: contentSize.width, height: contentSize.height, scale: 1 };
+    }
     const result = await withTimeout(
       this.session.call<{ data?: string }>('Page.captureScreenshot', {
         format: 'png',
+        ...(clip ? { captureBeyondViewport: true, clip } : {}),
       }),
       timeoutMs,
       `Page.captureScreenshot timed out after ${timeoutMs}ms`,
@@ -1008,6 +1022,8 @@ export function createCdpWebUiTransport(
             );
           case 'ui.screenshot':
             return captureCdpScreenshot(page, node, context);
+          case 'ui.capture_surface':
+            return captureCdpScreenshot(page, node, context, true);
           case 'app.status':
             return page.evaluate('(() => ({ url: location.href, title: document.title }))()');
           case 'app.lifecycle':
@@ -1271,15 +1287,20 @@ async function captureCdpScreenshot(
   page: CdpWebPage,
   node: Record<string, unknown>,
   context: ActionExecutionContext,
+  fullPage = false,
 ): Promise<UiTransportResult> {
-  const artifactPath = asOptionalString(node.path, 'ui.screenshot.path') ?? `${context.nodeId}.png`;
+  const action = fullPage ? 'ui.capture_surface' : 'ui.screenshot';
+  const artifactPath = asOptionalString(node.path, `${action}.path`) ?? `${context.nodeId}.png`;
   const normalizedPath = artifactPath.split(path.sep).join('/');
-  const label = asOptionalString(node.label, 'ui.screenshot.label') ?? 'UI screenshot';
+  const label =
+    asOptionalString(node.label, `${action}.label`) ??
+    (fullPage ? 'Full UI surface' : 'UI screenshot');
   const captured = await page.screenshot(context, normalizedPath, {
     label,
-    category: asOptionalString(node.category, 'ui.screenshot.category') ?? 'evidence',
+    category: asOptionalString(node.category, `${action}.category`) ?? 'evidence',
+    fullPage,
     timeoutMs:
-      node.timeout_ms == null ? undefined : asNumber(node.timeout_ms, 'ui.screenshot.timeout_ms'),
+      node.timeout_ms == null ? undefined : asNumber(node.timeout_ms, `${action}.timeout_ms`),
   });
   const artifact =
     typeof captured === 'object' && captured !== null

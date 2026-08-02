@@ -667,6 +667,7 @@ export default function RunDetailScreen() {
         />
       </Animated.View>
       <Animated.ScrollView
+        testID="companion-screen-run-detail"
         onScroll={scrollHandler}
         scrollEventThrottle={16}
         contentContainerStyle={[
@@ -1013,6 +1014,11 @@ export default function RunDetailScreen() {
             {(run.decisions ?? []).map((d) => (
               <DecisionSummaryCard
                 key={d.id}
+                testID={
+                  d.id === workspaceGates[0]?.decision.id
+                    ? 'companion-open-primary-run-gate'
+                    : undefined
+                }
                 presentation={decisionPresentationForRun(run, d)}
                 resolvedAction={d.resolvedAction}
                 resolvedAt={d.resolvedAt}
@@ -1248,6 +1254,12 @@ export default function RunDetailScreen() {
             </View>
           </View>
         ) : null}
+        <View
+          testID="companion-screen-run-detail-end"
+          accessible
+          accessibilityLabel="End of Run Detail"
+          style={styles.surfaceEndMarker}
+        />
       </Animated.ScrollView>
     </View>
   );
