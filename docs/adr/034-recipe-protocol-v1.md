@@ -37,8 +37,10 @@ Farmslot owns graph execution, static resolution, trust, trace, and artifact con
 
 Libraries contain `recipes/` and may add runner-owned manifests/actions. Recipe
 identity derives from the path; provenance names come from the configured alias
-or directory. Adapter suffixes `.core`, `.extension`, and `.mobile` select
-variants without changing the id.
+or directory. Canonical adapter variants live under
+`recipes/<adapter>/<domain>/*.recipe.json` without changing the id. The older
+`.core`, `.extension`, and `.mobile` filename suffixes remain readable only for
+migration compatibility.
 
 Prefer parameters over near-duplicate recipes. Add reusable recipes only when they reduce repeated inference or enforce a safety invariant.
 

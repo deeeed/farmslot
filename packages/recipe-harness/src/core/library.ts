@@ -234,6 +234,7 @@ function recipeIdentity(
 ): { ref: string; adapter?: string } | undefined {
   const portable = relativeFile.split(path.sep).join('/');
   if (!portable.endsWith(RECIPE_FILE_SUFFIX)) return undefined;
+  const libraryFile = `${LIBRARY_RECIPES_DIR}/${portable}`;
   const base = portable.slice(0, -RECIPE_FILE_SUFFIX.length);
   const firstSeparator = base.indexOf('/');
   const firstDirectory = firstSeparator < 0 ? undefined : base.slice(0, firstSeparator);
@@ -244,7 +245,7 @@ function recipeIdentity(
   if (directoryAdapter && filenameAdapter) {
     throw new RecipeResolutionError(
       'RECIPE_LIBRARY_ADAPTER_DECLARATION_CONFLICT',
-      `Library recipe ${path.join(LIBRARY_RECIPES_DIR, relativeFile)} declares adapter ${directoryAdapter} in its directory and ${filenameAdapter} in its filename.`,
+      `Library recipe ${libraryFile} declares adapter ${directoryAdapter} in its directory and ${filenameAdapter} in its filename.`,
       'declare the adapter once using recipes/<adapter>/.../*.recipe.json or keep the legacy *.<adapter>.recipe.json path',
     );
   }
@@ -257,7 +258,7 @@ function recipeIdentity(
   if (declaredAdapter && !idPath.trim()) {
     throw new RecipeResolutionError(
       'RECIPE_LIBRARY_RECIPE_INVALID',
-      `Library recipe ${path.join(LIBRARY_RECIPES_DIR, relativeFile)} declares adapter ${declaredAdapter} but has no recipe id.`,
+      `Library recipe ${libraryFile} declares adapter ${declaredAdapter} but has no recipe id.`,
       `move it to recipes/${declaredAdapter}/<name>.recipe.json or rename it to <name>.${declaredAdapter}.recipe.json`,
     );
   }

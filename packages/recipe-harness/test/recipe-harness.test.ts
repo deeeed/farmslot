@@ -385,32 +385,29 @@ test('CLI parameter parsing preserves prototype-sensitive keys for loud schema v
   assert.equal(Object.getPrototypeOf(params), Object.prototype);
 });
 
-async function captureConsoleLog(callback: () => Promise<void>): Promise<string> {
-  const originalLog = console.log;
+async function captureConsole(
+  method: 'log' | 'error',
+  callback: () => Promise<void>,
+): Promise<string> {
+  const original = console[method];
   const lines: string[] = [];
-  console.log = (...values: unknown[]) => {
+  console[method] = (...values: unknown[]) => {
     lines.push(values.map((value) => String(value)).join(' '));
   };
   try {
     await callback();
   } finally {
-    console.log = originalLog;
+    console[method] = original;
   }
   return lines.join('\n');
 }
 
+async function captureConsoleLog(callback: () => Promise<void>): Promise<string> {
+  return captureConsole('log', callback);
+}
+
 async function captureConsoleError(callback: () => Promise<void>): Promise<string> {
-  const originalError = console.error;
-  const lines: string[] = [];
-  console.error = (...values: unknown[]) => {
-    lines.push(values.map((value) => String(value)).join(' '));
-  };
-  try {
-    await callback();
-  } finally {
-    console.error = originalError;
-  }
-  return lines.join('\n');
+  return captureConsole('error', callback);
 }
 
 function createSmokeRecipe(): unknown {

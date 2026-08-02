@@ -4,7 +4,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
-- **BREAKING:** Add canonical `recipes/<adapter>/<domain>/*.recipe.json` discovery and reserve top-level adapter directory names; preserve stable ids and temporary legacy suffixes, keep `validate` adapter-aware with actionable resolution errors, name both duplicate paths, and reject adapter filenames without a recipe id.
+- **BREAKING:** Add canonical `recipes/<adapter>/<domain>/*.recipe.json`
+  discovery and reserve top-level adapter directory names. Stable ids and
+  temporary legacy suffixes remain supported; resolution errors are actionable
+  and deterministic across `run` and `validate`.
 
 ## 0.12.1 - 2026-08-02
 

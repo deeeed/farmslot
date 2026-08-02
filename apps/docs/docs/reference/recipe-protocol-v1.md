@@ -75,11 +75,9 @@ Action parameters are sibling fields on the node. The `params` object is reserve
 
 `proofTargets` declares semantic `{ id, claim }` pairs. Nodes link evidence with `proves: [id]`. Every target must be covered, and every referenced id must be declared.
 
-## Actions and libraries
+## Actions and manifests
 
 Every action is declared in a runner manifest with a strict parameter schema. Actions with result routing also declare their finite result cases. Product actions use namespaces; product behavior does not belong in the official action vocabulary.
-
-Recipe identity comes from its path below a library's `recipes/` directory. Adapter suffixes select variants without changing the id. Ordered sources use first-match precedence; shadows are reported and same-source duplicates are errors.
 
 ```bash
 farmslot-recipe run --list --adapter mobile
@@ -87,6 +85,24 @@ farmslot-recipe run perps.smoke --describe --adapter mobile
 ```
 
 Prefer an existing recipe, then an existing action. Add a shared recipe only when reuse removes repeated inference or enforces a safety invariant.
+
+## Libraries
+
+```text
+recipes/
+  wallet/ensure_unlocked.recipe.json
+  extension/perps/smoke.recipe.json
+  mobile/perps/smoke.recipe.json
+```
+
+Recipe identity comes from its path below `recipes/`. An initial `core`,
+`extension`, or `mobile` directory selects an adapter variant without changing
+the id. Legacy filename suffixes remain readable during migration, but a file
+cannot use both forms and duplicate adapter/id declarations are rejected.
+Ordered sources use first-match precedence; shadows are reported and same-source
+duplicates are errors. The top-level adapter directory names are reserved for
+adapter selection, so existing generic domains with those names must move before
+adopting this layout.
 
 ## Trust and evidence
 
