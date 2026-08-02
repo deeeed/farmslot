@@ -17,10 +17,7 @@ import {
   Events,
 } from '@farmslot/protocol';
 
-import {
-  getBacklogRefinementSession,
-  startBacklogRefinement,
-} from '../backlog/refinement.js';
+import { getBacklogRefinementSession, startBacklogRefinement } from '../backlog/refinement.js';
 import {
   archiveBacklogItem,
   autoDispatchBacklogReady,
@@ -36,12 +33,17 @@ import {
   upcomingBacklogItems,
   updateBacklogItem,
 } from '../backlog/store.js';
+import { schedulerTick } from '../work-graph/store.js';
 
 export const backlogCreate = (params: BacklogCreateParams) => createBacklogItem(params);
 export const backlogList = (params: BacklogListParams = {}) => listBacklogItems(params);
 export const backlogUpdate = (params: BacklogUpdateParams) => updateBacklogItem(params);
 export const backlogDelete = (params: BacklogDeleteParams) => deleteBacklogItem(params.itemId);
-export const backlogMarkReady = (params: BacklogMarkReadyParams) => markBacklogItemReady(params);
+export const backlogMarkReady = async (params: BacklogMarkReadyParams) => {
+  const result = await markBacklogItemReady(params);
+  if (result.item.workGraphId) await schedulerTick({ graphId: result.item.workGraphId });
+  return result;
+};
 export const backlogArchive = (params: BacklogArchiveParams) => archiveBacklogItem(params);
 export const backlogEnqueue = (params: BacklogEnqueueParams) => enqueueBacklogItem(params);
 export const backlogDequeue = (params: BacklogDequeueParams) => dequeueBacklogItem(params);

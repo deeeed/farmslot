@@ -6,6 +6,7 @@ import {
   type DecisionAction,
   Events,
   type Run,
+  type RunCreateParams,
   type RunDecision,
   type RunDecisionPayload,
   type RunStatus,
@@ -123,6 +124,37 @@ export function autoResolveEngineDecision(
   return null;
 }
 
+export function buildCollisionSuccessorParams(
+  current: Run,
+  familyId: string,
+  variant: string,
+): RunCreateParams {
+  return {
+    project: current.project,
+    flowType: current.flowType,
+    ticketOrPr: current.ticketOrPr,
+    ticketData: current.ticketData,
+    mode: current.mode,
+    familyId,
+    lane: 'comparison',
+    variant,
+    runner: current.metrics?.runner ?? undefined,
+    model: current.metrics?.model ?? undefined,
+    effort: current.effort,
+    safetyTier: current.safetyTier,
+    app: current.app,
+    prNumber: hasValidPrNumber(current) ? current.prNumber : undefined,
+    parentRunId: current.id,
+    backlogItemId: current.backlogItemId,
+    workGraphId: current.workGraphId,
+    workNodeId: current.workNodeId,
+    allowedSlots:
+      current.allowedSlots && current.allowedSlots.length > 0
+        ? [...current.allowedSlots]
+        : undefined,
+  };
+}
+
 /**
  * Shared collision-decision handler. Emits engine_collision with a list of prior runs
  * that own the colliding task dirs, and processes the operator's chosen action:
@@ -213,31 +245,7 @@ export async function handleCollisionDecision(
     let successor;
     try {
       successor = await runCreate(
-        {
-          project: current.project,
-          flowType: current.flowType,
-          ticketOrPr: current.ticketOrPr,
-          ticketData: current.ticketData,
-          mode: current.mode,
-          familyId,
-          lane: 'comparison',
-          variant,
-          runner: current.metrics?.runner ?? undefined,
-          model: current.metrics?.model ?? undefined,
-          effort: current.effort,
-          safetyTier: current.safetyTier,
-          app: current.app,
-          prNumber: hasValidPrNumber(current) ? current.prNumber : undefined,
-          parentRunId: current.id,
-          backlogItemId: current.backlogItemId,
-          // Carry the operator's slot filter into the fork — without this the
-          // comparison sibling would land on any project slot, escaping the
-          // machine/slot scope that filtered the original dispatch.
-          allowedSlots:
-            current.allowedSlots && current.allowedSlots.length > 0
-              ? [...current.allowedSlots]
-              : undefined,
-        },
+        buildCollisionSuccessorParams(current, familyId, variant),
         broadcastFn,
       );
     } catch (err) {

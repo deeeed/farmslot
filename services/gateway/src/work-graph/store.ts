@@ -664,6 +664,18 @@ function mergedEvidenceFromRuns(runs: readonly Run[]): { prNumber?: number } | n
   return null;
 }
 
+const OPERATOR_CANCEL_WAIT_DETAIL =
+  'Run cancelled by operator; replay it or mark the backlog item ready to retry';
+
+function isOperatorCancelledRun(run: Run | undefined): boolean {
+  return run?.status === 'cancelled' && !run.redirectedToRunId;
+}
+
+function nodeHasOperatorCancelledRun(node: WorkNode, runs: readonly Run[]): boolean {
+  if (!node.latestRunId) return false;
+  return isOperatorCancelledRun(runs.find((run) => run.id === node.latestRunId));
+}
+
 /**
  * Returns true when the node was reclaimed — reset to `ready` because the run it
  * pointed at is gone. The caller needs to know: a reclaimed node reads `ready`
@@ -673,14 +685,14 @@ function mergedEvidenceFromRuns(runs: readonly Run[]): { prNumber?: number } | n
 function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boolean {
   if (!isBacklogNode(node)) return false;
   const backlog = node.backlogItemId ? getBacklogItemSnapshot(node.backlogItemId) : null;
-  // Cancellation is an operator stop, not an automatic retry. Keep the
-  // cancelled run authoritative until the operator explicitly marks the
-  // backlog item ready (or replays the run).
+  // Cancellation is an operator stop, not an automatic retry. Keep an
+  // operator-cancelled run authoritative until the item is explicitly reopened.
+  // Redirected cancellations are handoffs, so the successor remains authoritative.
   const linkedRuns = runs.filter(
     (run) =>
       run.workGraphId === node.graphId &&
       run.workNodeId === node.id &&
-      !(run.status === 'cancelled' && backlog?.status === 'ready'),
+      !(run.status === 'cancelled' && (run.redirectedToRunId || backlog?.status === 'ready')),
   );
   const latestRun = linkedRuns.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   const queued = getQueueSnapshot().find(
@@ -690,12 +702,12 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): boo
     node.latestRunId = latestRun.id;
     node.currentFamilyId = latestRun.familyId;
     if (!latestRun.parentRunId) node.currentRootRunId = latestRun.id;
-    if (latestRun.status === 'cancelled') {
+    if (isOperatorCancelledRun(latestRun)) {
       node.status = 'needs-attention';
       node.waitingOn = [
         {
           kind: 'policy',
-          detail: 'Run cancelled by operator; replay it or mark the backlog item ready to retry',
+          detail: OPERATOR_CANCEL_WAIT_DETAIL,
         },
       ];
     } else if (latestRun.status === 'blocked' || latestRun.status === 'human-gating')
@@ -1190,18 +1202,15 @@ export async function schedulerTick(
         const latestRun = node.latestRunId
           ? runs.find((candidate) => candidate.id === node.latestRunId)
           : undefined;
-        if (latestRun?.status === 'cancelled') {
+        if (isOperatorCancelledRun(latestRun)) {
           node.status = 'needs-attention';
           node.waitingOn = [
             {
               kind: 'policy',
-              detail:
-                'Run cancelled by operator; replay it or mark the backlog item ready to retry',
+              detail: OPERATOR_CANCEL_WAIT_DETAIL,
             },
           ];
           node.updatedAt = now;
-          snapshot.graph.status = 'needs-attention';
-          graphNeedsAttention = true;
           continue;
         }
         const inbound = snapshot.edges.filter((edge) => edge.toNodeId === node.id);
@@ -1334,7 +1343,12 @@ export async function schedulerTick(
       }
       if (
         graphNeedsAttention ||
-        snapshot.nodes.some((node) => isBacklogNode(node) && node.status === 'needs-attention')
+        snapshot.nodes.some(
+          (node) =>
+            isBacklogNode(node) &&
+            node.status === 'needs-attention' &&
+            !nodeHasOperatorCancelledRun(node, runs),
+        )
       ) {
         snapshot.graph.status = 'needs-attention';
       } else {
