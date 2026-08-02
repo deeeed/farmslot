@@ -65,6 +65,16 @@ test('production Expo validation rejects gestures unsupported by the active adap
         }),
       /recipe\.action_not_supported_by_adapter.*Supporting adapters: ios\./u,
     );
+
+    process.env.PLATFORM = 'web';
+    await assert.rejects(
+      () =>
+        runExpoRecipeDocument(DEFAULT_EXPO_RECIPE_PATH, {
+          projectRoot: root,
+          artifactsDir: path.join(root, 'web-artifacts'),
+        }),
+      /Adapter web does not support recipe action ui\.pan\. Supporting adapters: ios\./u,
+    );
   } finally {
     if (previousPlatform === undefined) delete process.env.PLATFORM;
     else process.env.PLATFORM = previousPlatform;

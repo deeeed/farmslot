@@ -63,7 +63,7 @@ export async function validateExpoRecipeDocument(
   const projectRoot = path.resolve(options.projectRoot ?? process.cwd());
   const recipeAbsolutePath = resolveRecipeCliPath(recipePath, projectRoot);
   const librarySources = await resolveRecipeLibrarySources({ recipePath: recipeAbsolutePath });
-  const platform = normalizeNativePlatform(process.env.PLATFORM);
+  const platform = normalizeRecipeAdapter(process.env.PLATFORM);
   return validateRecipeCliInput({
     recipePath: recipeAbsolutePath,
     actionManifestPath: options.manifestPath ?? DEFAULT_EXPO_RECIPE_MANIFEST_PATH,
@@ -91,7 +91,7 @@ export async function runExpoRecipeDocument(
   );
 
   const manifest = (await readJsonFile(manifestPath)) as RecipeActionManifestDocument;
-  const platform = normalizeNativePlatform(process.env.PLATFORM);
+  const platform = normalizeRecipeAdapter(process.env.PLATFORM);
   const actions = getRecipeActionManifestActionNames(manifest);
   const trust = resolveRecipeTrustInput();
   const invocationTrust = trust.source?.trust ?? 'trusted';
@@ -99,7 +99,7 @@ export async function runExpoRecipeDocument(
     await resolveRecipeLibrarySources({ recipePath: recipeAbsolutePath }),
     invocationTrust,
   );
-  if (!options.dryRun) {
+  if (!options.dryRun && platform !== 'web') {
     await assertNativeRecipeContext(recipeAbsolutePath, librarySources, process.env);
   }
   const transport = createExpoUiTransport(options);
@@ -314,6 +314,10 @@ function normalizeNativePlatform(value: string | undefined): 'ios' | 'android' |
   if (value?.startsWith('ios')) return 'ios';
   if (value?.startsWith('android')) return 'android';
   return undefined;
+}
+
+function normalizeRecipeAdapter(value: string | undefined): 'ios' | 'android' | 'web' | undefined {
+  return normalizeNativePlatform(value) ?? (value?.startsWith('web') ? 'web' : undefined);
 }
 
 function isNativeUiAction(action: string): boolean {

@@ -735,6 +735,7 @@ async function main() {
     ...trust,
     recipeDocument: recipeRaw,
     recipePath,
+    adapter: 'web',
     params,
     ...(librarySources.length ? { librarySources } : {}),
     artifactsDir,
