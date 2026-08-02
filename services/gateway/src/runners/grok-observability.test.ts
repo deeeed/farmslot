@@ -46,7 +46,13 @@ describe('Grok structured prompt observability', () => {
         false,
         'Read TASK.md',
       ),
-      { value: true, source: 'signal', confidence: 'high', observedAt: 1200 },
+      {
+        value: true,
+        source: 'signal',
+        confidence: 'high',
+        observedAt: 1200,
+        exactPromptMatch: true,
+      },
     );
   });
 

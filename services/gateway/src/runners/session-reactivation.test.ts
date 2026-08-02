@@ -91,6 +91,7 @@ mock.module('./claude-observability.js', {
           source: 'hook',
           confidence: 'high',
           observedAt: Date.now(),
+          exactPromptMatch: true,
         };
       },
       async getSessionDeliveryState() {

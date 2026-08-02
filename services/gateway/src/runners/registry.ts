@@ -1485,12 +1485,6 @@ export async function runnerHasDurablePromptHandoff(
   if (promptAcceptedSinceMs == null) {
     return { accepted: false, reason: 'prompt acceptance baseline unavailable' };
   }
-  if (opts.requirePromptDigest && !usesNativePromptAcceptance) {
-    return {
-      accepted: false,
-      reason: 'prompt digest did not match handoff evidence',
-    };
-  }
   try {
     const reading = await observability.promptAccepted(
       vars,
@@ -1504,7 +1498,9 @@ export async function runnerHasDurablePromptHandoff(
       return { accepted: false, reason: 'runner prompt acceptance not observed' };
     }
     const exactPromptAccepted =
-      usesNativePromptAcceptance && reading.source === 'signal' && reading.confidence === 'high';
+      reading.exactPromptMatch === true &&
+      reading.confidence === 'high' &&
+      (usesNativePromptAcceptance ? reading.source === 'signal' : reading.source === 'hook');
     if (opts.requirePromptDigest && !exactPromptAccepted) {
       return {
         accepted: false,

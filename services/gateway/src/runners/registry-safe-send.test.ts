@@ -25,6 +25,7 @@ let promptAcceptedReading: ObservabilityReading<boolean> | null = {
   source: 'hook',
   confidence: 'high',
   observedAt: Date.now(),
+  exactPromptMatch: true,
 };
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
@@ -111,6 +112,7 @@ mock.module('./grok-observability.js', {
           source: 'signal',
           confidence: accepted ? 'high' : 'medium',
           observedAt: accepted ? grokPromptAcceptedAtMs : Date.now(),
+          exactPromptMatch: accepted,
         };
       },
       async getSessionDeliveryState() {
@@ -213,6 +215,7 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
     source: 'hook',
     confidence: 'high',
     observedAt: Date.now(),
+    exactPromptMatch: false,
   };
   paneText = '›\nContext 88%\n';
 
@@ -544,8 +547,8 @@ test('digest-required recovery rejects hook activity without an exact digest', a
   });
 
   assert.equal(handoff.accepted, false);
-  assert.match(handoff.reason, /prompt digest did not match/);
-  assert.equal(callOrder.includes('obs:promptAccepted'), false);
+  assert.match(handoff.reason, /digest-required handoff rejected/);
+  assert.equal(callOrder.includes('obs:promptAccepted'), true);
   assert.deepEqual(handoffRequirePromptDigestValues, [true]);
 });
 

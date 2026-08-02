@@ -13,6 +13,7 @@ import {
   executeHumanGateStep,
   executeSelfReviewStep,
   persistedUpdateBranchNeedsSelfReview,
+  type PostDispatchStepContext,
   readyGateReviewSubjectMatches,
   shouldSkipRetrospectiveAtComplete,
 } from './post-dispatch-steps.js';
@@ -23,6 +24,25 @@ import {
   makeReadyGatePackage,
   makeRun,
 } from './test-fixtures.js';
+
+function restartReplayContext(): PostDispatchStepContext {
+  return {
+    activeMonitors: new Map(),
+    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {},
+    createEngineDecision: async () => 'decision-unused',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async () => [],
+    executeReadyGate: async () => 'ready',
+    executeReviewGate: async () => {},
+    getDiffStat: async () => ({ files: 1, additions: 1, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => true,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    refreshRunLinks: async () => {},
+    stepPartialIO: new Map(),
+  };
+}
 
 test('complete-step retrospective gating defers only CI-watch flows', () => {
   assert.equal(
@@ -402,29 +422,62 @@ test('human-gate restart replay restores the operator-requested review policy', 
     await deleteTestRunIfPresent(run.id);
   });
 
-  await assert.rejects(
-    executeHumanGateStep(run.id, {
-      activeMonitors: new Map(),
-      blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
-      broadcastFn: () => {},
-      createEngineDecision: async () => 'decision-unused',
-      executeNoChangeGate: async () => {},
-      executePublishGateReviewPlan: async () => [],
-      executeReadyGate: async () => 'ready',
-      executeReviewGate: async () => {},
-      getDiffStat: async () => ({ files: 1, additions: 1, deletions: 0 }),
-      interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
-      isHumanGateEnabled: async () => true,
-      monitorTerminalError: ({ reason }) => new Error(reason),
-      refreshRunLinks: async () => {},
-      stepPartialIO: new Map(),
-    }),
-    /No slot assigned/,
-  );
+  await assert.rejects(executeHumanGateStep(run.id, restartReplayContext()), /No slot assigned/);
 
   assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewDepth, {
     minimumIndependentReviews: 2,
     requireCrossRunner: true,
+    extraLoopsRequested: 0,
+    requestedBy: 'human-gate',
+  });
+});
+
+test('human-gate restart replay does not inherit a prior temporary review request', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-REPLAY-NEW',
+    runner: 'claude',
+  });
+  updateRun(run.id, {
+    engineState: {
+      publishGate: {
+        reviewDepth: {
+          minimumIndependentReviews: 2,
+          requireCrossRunner: true,
+          extraLoopsRequested: 0,
+          requestedBy: 'human-gate',
+        },
+      },
+    },
+    decisions: [
+      {
+        id: 'decision-review-replay-new',
+        type: 'engine_human_gate',
+        title: 'Publication gate',
+        description: 'Request one new review',
+        actions: [],
+        createdAt: '2026-08-02T00:00:00.000Z',
+        resolvedAt: '2026-08-02T00:01:00.000Z',
+        resolvedAction: 'request-extra-review',
+        selectionData: {
+          reviewRequest: {
+            loops: [{ runner: 'codex', validationDepth: 'static-code' }],
+          },
+        },
+      },
+    ],
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  await assert.rejects(executeHumanGateStep(run.id, restartReplayContext()), /No slot assigned/);
+
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewDepth, {
+    minimumIndependentReviews: 1,
+    requireCrossRunner: false,
     extraLoopsRequested: 0,
     requestedBy: 'human-gate',
   });

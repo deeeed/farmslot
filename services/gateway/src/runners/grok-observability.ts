@@ -286,12 +286,19 @@ export function createGrokLogObservability(
       const signal = await probe(vars, target, sinceMs, promptText);
       if (signal.status !== 'matched') return null;
       return signal.promptAcceptedAt === null
-        ? { value: false, source: 'signal', confidence: 'medium', observedAt: Date.now() }
+        ? {
+            value: false,
+            source: 'signal',
+            confidence: 'medium',
+            observedAt: Date.now(),
+            exactPromptMatch: false,
+          }
         : {
             value: true,
             source: 'signal',
             confidence: 'high',
             observedAt: signal.promptAcceptedAt,
+            exactPromptMatch: true,
           };
     },
     async getSessionDeliveryState() {

@@ -13,6 +13,7 @@ import {
   parseHookJsonl,
   parseStatuslineJson,
   promptAcceptedFromHooks,
+  promptDigestMatchedFromHooks,
   readRunnerObservabilityFiles,
   readRunnerPaneObservabilityState,
   readRunnerSessionObservabilityState,
@@ -55,7 +56,7 @@ export const claudeHookObservability: RunnerObservability = {
 
   async promptAccepted(vars, target, promptDigest, sinceMs, paneRetired = false) {
     const { hooks } = await loadObservabilitySnapshot(vars, target);
-    return promptAcceptedFromHooks(
+    const reading = promptAcceptedFromHooks(
       hooks,
       promptDigest,
       sinceMs,
@@ -64,6 +65,12 @@ export const claudeHookObservability: RunnerObservability = {
       undefined,
       paneRetired,
     );
+    return reading
+      ? {
+          ...reading,
+          exactPromptMatch: promptDigestMatchedFromHooks(hooks, promptDigest, sinceMs),
+        }
+      : null;
   },
 
   async getSessionDeliveryState(vars, target, sessionId, sessionPath) {

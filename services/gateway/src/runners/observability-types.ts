@@ -9,6 +9,8 @@ export interface ObservabilityReading<T> {
   confidence: ObservabilityConfidence;
   /** ms since epoch of the underlying event/file mtime. */
   observedAt: number;
+  /** True only when prompt-acceptance evidence matched the requested prompt itself. */
+  exactPromptMatch?: boolean;
 }
 
 export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';
