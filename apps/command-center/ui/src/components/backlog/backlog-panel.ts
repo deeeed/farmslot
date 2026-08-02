@@ -1366,9 +1366,9 @@ export class BacklogPanel extends LitElement {
     if (open && item) void this._loadSpec(item);
   }
 
-  private async _loadSpec(item: BacklogItem) {
-    if (!item.specPath || this._specContents[item.id] || this._specLoadingItemId === item.id)
-      return;
+  private async _loadSpec(item: BacklogItem, options?: { force?: boolean }) {
+    if (!item.specPath || this._specLoadingItemId === item.id) return;
+    if (!options?.force && this._specContents[item.id]) return;
     this._specLoadingItemId = item.id;
     this._specErrors = { ...this._specErrors, [item.id]: '' };
     try {
@@ -1377,6 +1377,9 @@ export class BacklogPanel extends LitElement {
       });
       this._specContents = { ...this._specContents, [item.id]: result };
     } catch (error) {
+      const nextContents = { ...this._specContents };
+      delete nextContents[item.id];
+      this._specContents = nextContents;
       this._specErrors = {
         ...this._specErrors,
         [item.id]: error instanceof Error ? error.message : String(error),
@@ -1384,6 +1387,12 @@ export class BacklogPanel extends LitElement {
     } finally {
       this._specLoadingItemId = '';
     }
+  }
+
+  /** After refinement, apply the returned item and re-fetch attached spec (surfaces validation errors). */
+  private async _refreshItemAfterRefinement(item: BacklogItem) {
+    this._items = this._items.map((candidate) => (candidate.id === item.id ? item : candidate));
+    if (item.specPath) await this._loadSpec(item, { force: true });
   }
 
   private get _projects(): string[] {
@@ -2761,6 +2770,7 @@ export class BacklogPanel extends LitElement {
         ...(this._refineSafetyTier ? { safetyTier: this._refineSafetyTier as SafetyTier } : {}),
       });
       this._message = backlogRefineResultMessage(result, launch);
+      await this._refreshItemAfterRefinement(result.item);
       if (launch) this._setRunnerPickerOpen(false);
       if (launch && result.tmuxWorker) this._navigateToWorkerTerminal(result.tmuxWorker);
     } catch (err) {

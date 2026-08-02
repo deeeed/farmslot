@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import type { BacklogItem, BacklogStatus, Run } from '@farmslot/protocol';
 
 import {
+  applyBacklogRefineItemRefresh,
   backlogItemMatchesStatusFilter,
   backlogRefinementPickerView,
   backlogRefineResultMessage,
@@ -18,6 +19,7 @@ import {
   displayedBacklogStatus,
   parseBacklogStatusFilter,
   serializeBacklogStatusFilter,
+  shouldForceReloadBacklogSpecAfterRefine,
   showsBacklogCleanupActionsForUi,
   sortBacklogItems,
   syncedBacklogDraftProject,
@@ -391,4 +393,33 @@ test('backlog refine picker covers launch and resume states', () => {
     ),
     /Refinement terminal reopened/,
   );
+});
+
+test('backlog refine completion refresh replaces inventory row and forces spec reload when present', () => {
+  const previous = {
+    id: 'item-1',
+    project: 'farmslot-farm',
+    sourceKind: 'manual',
+    sourceRef: 'MANUAL-000087',
+    title: 'Old title',
+    flowType: 'dev',
+    status: 'candidate',
+    notes: 'old',
+    priority: 10,
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+  } satisfies BacklogItem;
+  const refined = {
+    ...previous,
+    title: 'Refined title',
+    notes: 'new notes',
+    updatedAt: '2026-08-01T01:00:00.000Z',
+    specPath: '.backlog/specs/farmslot-farm/refined.md',
+  } satisfies BacklogItem;
+  const next = applyBacklogRefineItemRefresh([previous, { ...previous, id: 'item-2' }], refined);
+  assert.equal(next[0]?.title, 'Refined title');
+  assert.equal(next[0]?.notes, 'new notes');
+  assert.equal(next[1]?.id, 'item-2');
+  assert.equal(shouldForceReloadBacklogSpecAfterRefine(refined), true);
+  assert.equal(shouldForceReloadBacklogSpecAfterRefine(previous as BacklogItem), false);
 });

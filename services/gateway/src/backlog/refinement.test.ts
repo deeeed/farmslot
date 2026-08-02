@@ -19,6 +19,18 @@ process.env.FARMSLOT_BACKLOG_REFINEMENT_PROMPT_DIR = promptRoot;
 
 const execFileAsync = promisify(execFile);
 
+/** Kill a tmux session when present; only swallow the expected missing-session exit. */
+async function killTmuxSessionIfPresent(session: string): Promise<void> {
+  try {
+    await execFileAsync('tmux', ['kill-session', '-t', `=${session}`]);
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException & { status?: number };
+    // tmux exits 1 when the named session does not exist.
+    if (e.status === 1 || e.code === '1' || Number(e.code) === 1) return;
+    throw err;
+  }
+}
+
 test.after(async () => {
   const backlog = await import('./store.js');
   await backlog.flushBacklogForTests();
@@ -145,9 +157,18 @@ test('backlog refinement preserves source identity for manual and external items
   const { backlog, refinement } = await fresh();
   const manualSpec = await writeSpec(
     'manual.md',
-    ['# Manual', '', '## Acceptance Criteria', '', '- [ ] ok `test`', '', '## Non-goals', '', '- n/a', ''].join(
-      '\n',
-    ),
+    [
+      '# Manual',
+      '',
+      '## Acceptance Criteria',
+      '',
+      '- [ ] ok `test`',
+      '',
+      '## Non-goals',
+      '',
+      '- n/a',
+      '',
+    ].join('\n'),
   );
   const manual = await backlog.createBacklogItem({
     project: 'farmslot-farm',
@@ -192,11 +213,7 @@ test('backlog refinement reuses one existing tmux session instead of creating a 
     flowType: 'dev',
   });
   const session = refinement.__backlogRefinementTest.backlogRefinementSessionName(created.item);
-  try {
-    await execFileAsync('tmux', ['kill-session', '-t', `=${session}`]).catch(() => undefined);
-  } catch {
-    // session may not exist
-  }
+  await killTmuxSessionIfPresent(session);
 
   const first = await refinement.startBacklogRefinement({
     itemId: created.item.id,
@@ -219,7 +236,7 @@ test('backlog refinement reuses one existing tmux session instead of creating a 
   assert.equal(sessionStatus.exists, true);
   assert.equal(sessionStatus.tmuxSession, first.tmuxSession);
 
-  await execFileAsync('tmux', ['kill-session', '-t', `=${session}`]);
+  await killTmuxSessionIfPresent(session);
 });
 
 test('completing or reopening refinement does not mutate lifecycle or linkage', async () => {
@@ -246,11 +263,7 @@ test('completing or reopening refinement does not mutate lifecycle or linkage', 
   assert.deepEqual(lifecycleSnapshot(prepared.item), before);
 
   const session = refinement.__backlogRefinementTest.backlogRefinementSessionName(ready.item);
-  try {
-    await execFileAsync('tmux', ['kill-session', '-t', `=${session}`]).catch(() => undefined);
-  } catch {
-    // ignore
-  }
+  await killTmuxSessionIfPresent(session);
   const launched = await refinement.startBacklogRefinement({
     itemId: ready.item.id,
     launch: true,
@@ -263,7 +276,22 @@ test('completing or reopening refinement does not mutate lifecycle or linkage', 
     runnerCommand: "bash -lc 'exec sleep 60'",
   });
   assert.deepEqual(lifecycleSnapshot(reopened.item), before);
-  await execFileAsync('tmux', ['kill-session', '-t', `=${session}`]).catch(() => undefined);
+  await killTmuxSessionIfPresent(session);
+});
+
+test('backlog refinement fails closed when an attached spec path cannot be read', async () => {
+  const { backlog, refinement } = await fresh();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Broken attached spec',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    specPath: path.relative(farmslotRoot, path.join(specRoot, 'farmslot-farm', 'missing-spec.md')),
+  });
+  await assert.rejects(
+    () => refinement.startBacklogRefinement({ itemId: created.item.id, launch: false }),
+    /ENOENT|no such file|attached spec|specPath|Backlog item has no attached spec|must stay within/i,
+  );
 });
 
 test('backlog refinement shell prelude clears ambient tmux and scopes the runner', async () => {

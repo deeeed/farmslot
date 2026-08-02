@@ -234,3 +234,18 @@ export function backlogRefineResultMessage(result: BacklogRefineResult, launch: 
     return `Refinement terminal launched${runnerSuffix}: ${result.attachCommand}`;
   return `Refinement terminal reopened${runnerSuffix}: ${result.attachCommand}`;
 }
+
+/** Merge refine RPC item into local inventory (identity-preserving refresh). */
+export function applyBacklogRefineItemRefresh(
+  items: readonly BacklogItem[],
+  refined: BacklogItem,
+): BacklogItem[] {
+  return items.map((item) => (item.id === refined.id ? refined : item));
+}
+
+/** Spec cache should force-reload after refine when the item still has a spec path. */
+export function shouldForceReloadBacklogSpecAfterRefine(
+  item: BacklogItem | { specPath?: string | null },
+): boolean {
+  return Boolean(item.specPath?.trim());
+}

@@ -125,6 +125,47 @@ export function resolveGrokBinary(preferred?: string | null): string {
   return 'grok';
 }
 
+/**
+ * Interactive refinement launch argv (roadmap/backlog tmux sessions).
+ * Runner-name CLI syntax lives here — not in domain refinement modules.
+ * Prompt content is read from `promptPath` at shell runtime via `cat`.
+ */
+export function buildInteractiveRefinementRunnerCommand(options: {
+  runner: string;
+  model?: string | null;
+  promptPath: string;
+  repo: string;
+  safetyTier?: SafetyTier;
+}): string | null {
+  const runnerId = options.runner.trim();
+  if (!runnerId) return null;
+  const modelFlag = options.model?.trim() ? ` --model ${shellQuote(options.model.trim())}` : '';
+  const promptArg = `"$(cat ${shellQuote(options.promptPath)})"`;
+  const safetyFlags = runnerFlagsForTier(runnerId, options.safetyTier).map(shellQuote).join(' ');
+  if (runnerId === 'codex') {
+    const codexSafety = safetyFlags || '--sandbox workspace-write --ask-for-approval on-request';
+    return [
+      shellQuote(resolveCodexBinary()),
+      `--cd ${shellQuote(options.repo)}`,
+      codexSafety,
+      modelFlag.trim(),
+      promptArg,
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+  if (runnerId === 'cursor') {
+    const flags = safetyFlags ? ` ${safetyFlags}` : '';
+    return `${shellQuote(resolveCursorAgentBinary())} --workspace ${shellQuote(options.repo)}${flags}${modelFlag} ${promptArg}`;
+  }
+  if (runnerId === 'grok') {
+    const flags = safetyFlags ? ` ${safetyFlags}` : '';
+    return `${shellQuote(resolveGrokBinary())}${flags}${modelFlag} ${promptArg}`;
+  }
+  const flags = safetyFlags ? ` ${safetyFlags}` : '';
+  return `${shellQuote(runnerId)}${flags}${modelFlag} ${promptArg}`;
+}
+
 /** Runners whose persisted sessions can be resumed via buildRunnerSessionReloadCommand. */
 export function runnerSupportsSessionReload(runnerId: string): boolean {
   return runnerSessionReloadCapability(runnerId) !== 'none';

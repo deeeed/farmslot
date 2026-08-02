@@ -10,6 +10,7 @@ import type { SafetyTier, TmuxWorkerRef } from '@farmslot/protocol';
 import { isLocal } from '../core/exec.js';
 import { assertNoUnknownPlaceholders } from '../core/hooks.js';
 import { farmslotRoot, loadPoolConfigs } from '../fleet/state.js';
+import { buildInteractiveRefinementRunnerCommand } from '../runners/launch-command.js';
 import { runnerFlagsForTier } from '../runners/registry.js';
 
 const execFileAsync = promisify(execFile);
@@ -65,27 +66,13 @@ export function defaultRefinementRunnerCommand(
 ): string | null {
   const runnerId = runner?.trim();
   if (!runnerId) return null;
-  const modelFlag = model?.trim() ? ` --model ${shellQuote(model.trim())}` : '';
-  const promptArg = `"$(cat ${shellQuote(promptPath)})"`;
-  const safetyFlags = runnerFlagsForTier(runnerId, safetyTier).map(shellQuote).join(' ');
-  if (runnerId === 'codex') {
-    const codexSafety = safetyFlags || '--sandbox workspace-write --ask-for-approval on-request';
-    return [
-      shellQuote('codex'),
-      `--cd ${shellQuote(farmslotRoot)}`,
-      codexSafety,
-      modelFlag.trim(),
-      promptArg,
-    ]
-      .filter(Boolean)
-      .join(' ');
-  }
-  if (runnerId === 'cursor') {
-    const flags = safetyFlags ? ` ${safetyFlags}` : '';
-    return `${shellQuote('cursor-agent')} --workspace ${shellQuote(farmslotRoot)}${flags}${modelFlag} ${promptArg}`;
-  }
-  const flags = safetyFlags ? ` ${safetyFlags}` : '';
-  return `${shellQuote(runnerId)}${flags}${modelFlag} ${promptArg}`;
+  return buildInteractiveRefinementRunnerCommand({
+    runner: runnerId,
+    model,
+    promptPath,
+    repo: farmslotRoot,
+    safetyTier,
+  });
 }
 
 export function expandRefinementRunnerCommand(

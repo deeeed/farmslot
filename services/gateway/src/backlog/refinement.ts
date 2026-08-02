@@ -72,11 +72,7 @@ function formatDispatchSettings(item: BacklogItem): string {
     `- app: ${item.app?.trim() || '(unset)'}`,
     `- prepareProfile: ${item.prepareProfile?.trim() || '(unset)'}`,
     `- allowedSlots: ${(item.allowedSlots ?? []).join(', ') || '(any)'}`,
-    `- taskTemplate: ${
-      item.taskTemplate
-        ? JSON.stringify(item.taskTemplate)
-        : '(unset)'
-    }`,
+    `- taskTemplate: ${item.taskTemplate ? JSON.stringify(item.taskTemplate) : '(unset)'}`,
     `- reviewDepth: ${item.reviewDepth ? JSON.stringify(item.reviewDepth) : '(unset)'}`,
     `- launchPlan: ${item.launchPlan ? JSON.stringify(item.launchPlan) : '(unset)'}`,
   ];
@@ -103,28 +99,20 @@ async function loadSpecSection(item: BacklogItem): Promise<string> {
       '',
     ].join('\n');
   }
-  try {
-    const spec = await getBacklogSpec({ itemId: item.id });
-    return [
-      '## Attached spec',
-      '',
-      `Path: ${spec.path}`,
-      `Hash: ${spec.hash}`,
-      '',
-      '```markdown',
-      spec.content.trimEnd(),
-      '```',
-      '',
-    ].join('\n');
-  } catch (err) {
-    return [
-      '## Attached spec',
-      '',
-      `Path: ${item.specPath}`,
-      `Could not read attached spec: ${(err as Error).message}`,
-      '',
-    ].join('\n');
-  }
+  // Fail closed: attached-spec read/validation errors must surface to RPC/UI,
+  // not be embedded into a successful refinement prompt.
+  const spec = await getBacklogSpec({ itemId: item.id });
+  return [
+    '## Attached spec',
+    '',
+    `Path: ${spec.path}`,
+    `Hash: ${spec.hash}`,
+    '',
+    '```markdown',
+    spec.content.trimEnd(),
+    '```',
+    '',
+  ].join('\n');
 }
 
 export async function renderBacklogRefinementPrompt(
