@@ -1,9 +1,8 @@
 import { type Command } from 'commander';
 
 import { resolveRecipeLibrarySources } from '../core/library.js';
-import { RecipeResolutionError } from '../core/resolution-error.js';
 
-import { reportRecipeCliError } from './error-output.js';
+import { isRecipeCliError, reportRecipeCliError } from './error-output.js';
 import { validateRecipeCliInput } from './support.js';
 
 interface ValidateCommandOptions {
@@ -59,7 +58,7 @@ export function registerValidateCommand(program: Command): void {
         }
         if (result.status === 'invalid') process.exit(1);
       } catch (error) {
-        if (!(error instanceof RecipeResolutionError)) throw error;
+        if (!isRecipeCliError(error)) throw error;
         reportRecipeCliError(error, options.json === true);
       }
     });

@@ -2758,6 +2758,36 @@ test('validate reports adapter declaration conflicts with recovery guidance', as
   }
 });
 
+test('validate reports escaping library symlinks with trust refusal guidance', async () => {
+  const tempRoot = await createTempRoot();
+  const outsideRoot = await createTempRoot();
+  const originalExitCode = process.exitCode;
+  try {
+    const libraryRoot = path.join(tempRoot, 'library');
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    const outsideRecipePath = path.join(outsideRoot, 'outside.recipe.json');
+    await writeJsonFile(recipePath, recipeDocument({ done: { action: 'end', status: 'pass' } }));
+    await writeJsonFile(
+      outsideRecipePath,
+      recipeDocument({ done: { action: 'end', status: 'pass' } }),
+    );
+    await mkdir(path.join(libraryRoot, 'recipes'), { recursive: true });
+    await symlink(outsideRecipePath, path.join(libraryRoot, 'recipes/linked.recipe.json'));
+    process.exitCode = undefined;
+
+    const output = await captureConsoleError(() =>
+      runRecipeHarnessCli(['validate', recipePath, '--library', `team=${libraryRoot}`]),
+    );
+    assert.match(output, /Error \[RECIPE_SOURCE_INVALID\]/u);
+    assert.match(output, /Next: move the recipe inside the library root/u);
+    assert.equal(process.exitCode, 1);
+  } finally {
+    process.exitCode = originalExitCode;
+    await rm(tempRoot, { recursive: true, force: true });
+    await rm(outsideRoot, { recursive: true, force: true });
+  }
+});
+
 test('CLI discovers, describes, and runs a parameterized library recipe by id', async () => {
   const tempRoot = await createTempRoot();
   try {
