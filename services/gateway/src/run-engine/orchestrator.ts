@@ -545,6 +545,20 @@ export async function startRun(runId: string): Promise<void> {
         return;
       }
 
+      // An operator may cancel or pause while an asynchronous step is failing.
+      // The operator-owned terminal/paused state wins over the late exception.
+      const interruptedRun = getRun(runId);
+      if (
+        !interruptedRun ||
+        interruptedRun.status === 'cancelled' ||
+        interruptedRun.status === 'paused'
+      ) {
+        console.log(
+          `[run-engine] run ${runId.slice(0, 8)} step ${stepName} threw after ${interruptedRun?.status ?? 'deletion'}; preserving operator state`,
+        );
+        return;
+      }
+
       if (err instanceof BlockedRunError) {
         console.log(
           `[run-engine] run ${runId.slice(0, 8)} step ${stepName} blocked without failure: ${err.message}`,

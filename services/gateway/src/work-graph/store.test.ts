@@ -951,7 +951,7 @@ test('scheduler retries enqueue when completed ledger is stale after backlog res
   );
 });
 
-test('scheduler resets an orphaned running node once its run is gone', async () => {
+test('scheduler resets an orphaned running node once its run is deleted', async () => {
   const { backlog, queue, runs, workGraph } = await freshStores();
   const created = await createReadyBacklogItem(backlog, 'Orphaned running node');
   const graph = await workGraph.createWorkGraph({
@@ -983,8 +983,9 @@ test('scheduler resets an orphaned running node once its run is gone', async () 
   const started = await workGraph.schedulerTick({ graphId });
   assert.equal(started.graphs[0]?.nodes.find((n) => n.id === nodeId)?.status, 'running');
 
-  // The run is cancelled and the backlog item is released (mirrors runCancel).
-  runs.updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  // Deleting the run releases the backlog item and makes the node orphaned.
+  runs.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+  await runs.deleteRun(run.id);
   await backlog.markBacklogRunReleased(run.id);
 
   // The orphaned running node must not stay stuck — it is actually re-enqueued
@@ -999,6 +1000,58 @@ test('scheduler resets an orphaned running node once its run is gone', async () 
       .getQueueSnapshot()
       .some((item) => item.workGraphId === graphId && item.workNodeId === nodeId),
   );
+});
+
+test('operator cancellation holds graph work until an explicit retry', async () => {
+  const { backlog, queue, runs, workGraph } = await freshStores();
+  const created = await createReadyBacklogItem(backlog, 'Cancelled graph node');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Cancelled graph',
+  });
+  const graphId = graph.graph.graph.id;
+  const nodeId = 'wn_cancelled';
+  await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
+  await workGraph.activateWorkGraph({ graphId });
+
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === nodeId);
+  assert.ok(queued);
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    workGraphId: graphId,
+    workNodeId: nodeId,
+  });
+  await backlog.markBacklogRunStarted(queued, run);
+  queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
+  const cancelled = runs.updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+  });
+  backlog.markBacklogRunObserved(cancelled);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const held = await workGraph.schedulerTick({ graphId });
+  const heldNode = held.graphs[0]?.nodes.find((node) => node.id === nodeId);
+  assert.equal(heldNode?.status, 'needs-attention');
+  assert.equal(heldNode?.latestRunId, run.id);
+  assert.equal(
+    queue.getQueueSnapshot().some((item) => item.workNodeId === nodeId),
+    false,
+  );
+  assert.equal(
+    backlog.listBacklogItems().items.find((item) => item.id === created.item.id)?.status,
+    'needs-attention',
+  );
+
+  await backlog.markBacklogItemReady({ itemId: created.item.id });
+  const retried = await workGraph.schedulerTick({ graphId });
+  assert.equal(retried.graphs[0]?.nodes.find((node) => node.id === nodeId)?.status, 'queued');
+  assert.ok(queue.getQueueSnapshot().some((item) => item.workNodeId === nodeId));
 });
 
 test('manual gate resolution rejects ambiguous gate ids and can disambiguate by graph and edge', async () => {
