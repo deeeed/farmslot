@@ -58,7 +58,6 @@ import { verifyWorkerPushedBranch } from './push-verification.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import {
   automaticPublicationReviewPlan,
-  effectiveReviewRunner,
   remainingExplicitReviewPlan,
   resolveHumanGateReviewExecutionPlan,
 } from './review-plan.js';
@@ -748,7 +747,7 @@ export async function executeHumanGateStep(
       // the durable pending plan was cleared. Execute only the still-missing
       // portion; otherwise every restart launches another already-satisfied
       // reviewer (and a two-loop plan can replay loop one twice).
-      const initialPlan = fromUnconsumed.some((loop) => effectiveReviewRunner(loop))
+      const initialPlan = unconsumedReviewDecision
         ? remainingExplicitReviewPlan(fromUnconsumed, reviewsForInitial, {
             requestedAt: unconsumedReviewDecision?.resolvedAt,
             source: 'human-gate',
@@ -788,10 +787,7 @@ export async function executeHumanGateStep(
         }
       }
       if (initialPlan.length) {
-        if (
-          explicitInitialPlan.length === 0 ||
-          fromUnconsumed.some((loop) => effectiveReviewRunner(loop))
-        ) {
+        if (explicitInitialPlan.length === 0 || unconsumedReviewDecision) {
           updateRun(runId, {
             engineState: {
               ...beforeInitialPlan.engineState,

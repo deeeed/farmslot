@@ -138,7 +138,7 @@ async function reactivateRunnerSessionWithPrompt(
       };
     }
 
-    await writeRunnerPromptSentinel(options.vars, options.prompt);
+    const promptSentinel = await writeRunnerPromptSentinel(options.vars, options.prompt);
     const command = `${WORKER_ENV_PREFIX} && ${buildRunnerSessionReloadCommand(
       options.vars,
       runner,
@@ -155,7 +155,6 @@ async function reactivateRunnerSessionWithPrompt(
     )}`;
     paneMutationStarted = true;
     await respawnTmuxWindowWithCommand(options.vars, options.target, command);
-    const respawnedAt = Date.now();
     let trustPromptConfirmed = false;
 
     const deadline = Date.now() + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
@@ -165,10 +164,10 @@ async function reactivateRunnerSessionWithPrompt(
         options.target,
         runner,
         options.prompt,
-        respawnedAt,
+        promptSentinel.sentAt,
         {
           requirePromptDigest: true,
-          promptAcceptanceBaselineMs: respawnedAt,
+          promptAcceptanceBaselineMs: promptSentinel.sentAt,
         },
       );
       // Only exact post-respawn prompt evidence is accepted; generic activity,

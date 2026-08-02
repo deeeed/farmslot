@@ -254,6 +254,31 @@ test('resolveHumanGateReviewExecutionPlan falls back to pending when selection h
   assert.deepEqual(plan, pending);
 });
 
+test('resolveHumanGateReviewExecutionPlan preserves a default same-runner request without pending work', () => {
+  const decisions: RunDecision[] = [
+    {
+      id: 'd0',
+      type: 'engine_human_gate',
+      title: 'default review',
+      description: '',
+      actions: [],
+      createdAt: '2026-08-01T13:00:00.000Z',
+      resolvedAt: '2026-08-01T13:01:00.000Z',
+      resolvedAction: 'request-extra-review',
+      selectionData: { reviewRequest: { extraLoopsRequested: 1 } },
+    },
+  ];
+
+  assert.deepEqual(
+    resolveHumanGateReviewExecutionPlan({
+      gateAction: 'request-extra-review',
+      pendingPlan: [],
+      decisions,
+    }),
+    [{ order: 1, runner: 'same', validationDepth: 'full-live' }],
+  );
+});
+
 test('humanGateReviewDepth makes explicit gate review requests temporary but required', () => {
   const basePolicy = {
     minimumIndependentReviews: 0,

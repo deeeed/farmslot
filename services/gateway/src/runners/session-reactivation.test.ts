@@ -9,6 +9,7 @@ const commands: string[] = [];
 let paneCount = 1;
 let sessionPathExists = true;
 let promptAccepted = true;
+let promptAcceptedAt: number | null = null;
 let capturedPane = '';
 let trustSendCount = 0;
 let sessionState: ObservabilityReading<RunnerSessionDeliveryState> | null = {
@@ -59,7 +60,7 @@ mock.module('../core/exec.js', {
 
 mock.module('./observability-sentinel.js', {
   namedExports: {
-    writeRunnerPromptSentinel: async () => ({ digest: 'digest-123', sentAt: Date.now() }),
+    writeRunnerPromptSentinel: async () => ({ digest: 'digest-123', sentAt: 1_000 }),
   },
 });
 
@@ -78,9 +79,10 @@ mock.module('./claude-observability.js', {
       async lastTurnCompletedAt() {
         return null;
       },
-      async promptAccepted() {
+      async promptAccepted(_vars: SlotVars, _target: string, _digest: string, sinceMs: number) {
         return {
-          value: promptAccepted,
+          // Simulate acceptance emitted while respawn-window is still returning.
+          value: promptAccepted && (promptAcceptedAt === null || sinceMs <= promptAcceptedAt),
           source: 'signal',
           confidence: 'high',
           observedAt: Date.now(),
@@ -120,11 +122,12 @@ const vars = {
   resourceVars: { platform: 'ios', slot_id: 'runner-local-test-1' },
 } as SlotVars;
 
-test('retained resume delivers the prompt through runner argv without send-keys', async () => {
+test('retained resume accepts a prompt hook emitted before respawn-window returns', async (t) => {
   commands.length = 0;
   paneCount = 1;
   sessionPathExists = true;
   promptAccepted = true;
+  promptAcceptedAt = 1_500;
   capturedPane = '';
   trustSendCount = 0;
   sessionState = {
@@ -133,6 +136,9 @@ test('retained resume delivers the prompt through runner argv without send-keys'
     confidence: 'high',
     observedAt: Date.now() - 300_000,
   };
+  t.after(() => {
+    promptAcceptedAt = null;
+  });
 
   const result = await deliverPromptToRetainedRunnerSession({
     vars,
