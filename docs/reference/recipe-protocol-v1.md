@@ -151,15 +151,19 @@ Prefer an existing recipe, then an existing action. Add a shared recipe only whe
 ```text
 recipes/
   wallet/ensure_unlocked.recipe.json
-  perps/smoke.mobile.recipe.json
-  perps/smoke.extension.recipe.json
+  extension/perps/smoke.recipe.json
+  mobile/perps/smoke.recipe.json
 ```
 
 Recipe identity comes from its path below `recipes/`. The configured source
 alias, or directory name when no alias is provided, identifies provenance.
-Adapter suffixes select variants without changing the id. Ordered library
-sources use first-match precedence; shadows are reported, duplicates within one
-source are errors, and symlinks may not escape the library root.
+An initial `core`, `extension`, or `mobile` directory selects an adapter variant
+without changing the id. Legacy filename suffixes remain readable during
+migration, but a file cannot use both forms and duplicate adapter/id declarations
+are rejected. Ordered library sources use first-match precedence; shadows are
+reported, duplicates within one source are errors, and symlinks may not escape
+the library root. The top-level `core`, `extension`, and `mobile` directory names
+below `recipes/` are reserved for adapter selection.
 
 ## Trust and evidence
 

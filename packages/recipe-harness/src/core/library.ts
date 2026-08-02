@@ -17,7 +17,7 @@ import type { LoadedRecipeLibrarySource, RecipeLibrarySource, RecipeLogger } fro
 
 const LIBRARY_RECIPES_DIR = 'recipes';
 const RECIPE_FILE_SUFFIX = '.recipe.json';
-const RECIPE_ADAPTER_SUFFIXES = new Set(['core', 'extension', 'mobile']);
+const RECIPE_ADAPTERS = new Set(['core', 'extension', 'mobile']);
 
 export type RecipeLibraryEnv = Record<string, string | undefined>;
 
@@ -234,10 +234,26 @@ function recipeIdentity(
   const portable = relativeFile.split(path.sep).join('/');
   if (!portable.endsWith(RECIPE_FILE_SUFFIX)) return undefined;
   const base = portable.slice(0, -RECIPE_FILE_SUFFIX.length);
+  const firstSeparator = base.indexOf('/');
+  const firstDirectory = firstSeparator < 0 ? undefined : base.slice(0, firstSeparator);
+  const directoryAdapter =
+    firstDirectory && RECIPE_ADAPTERS.has(firstDirectory) ? firstDirectory : undefined;
   const suffix = base.slice(base.lastIndexOf('.') + 1);
-  const declaredAdapter = RECIPE_ADAPTER_SUFFIXES.has(suffix) ? suffix : undefined;
+  const filenameAdapter = RECIPE_ADAPTERS.has(suffix) ? suffix : undefined;
+  if (directoryAdapter && filenameAdapter) {
+    throw new RecipeResolutionError(
+      'RECIPE_LIBRARY_ADAPTER_DECLARATION_CONFLICT',
+      `Library recipe ${path.join(LIBRARY_RECIPES_DIR, relativeFile)} declares adapter ${directoryAdapter} in its directory and ${filenameAdapter} in its filename.`,
+      'declare the adapter once using recipes/<adapter>/.../*.recipe.json or keep the legacy *.<adapter>.recipe.json path',
+    );
+  }
+  const declaredAdapter = directoryAdapter ?? filenameAdapter;
   if (declaredAdapter && declaredAdapter !== adapter) return undefined;
-  const idPath = declaredAdapter ? base.slice(0, -(declaredAdapter.length + 1)) : base;
+  const idPath = directoryAdapter
+    ? base.slice(directoryAdapter.length + 1)
+    : filenameAdapter
+      ? base.slice(0, -(filenameAdapter.length + 1))
+      : base;
   const ref = idPath.replaceAll('/', '.').trim();
   return ref ? { ref, ...(declaredAdapter ? { adapter: declaredAdapter } : {}) } : undefined;
 }
