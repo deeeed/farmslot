@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(run-completion): prefer the dedicated worker report over the PR description for automated comments, identify comments by run so finalize replays are idempotent, and publish evidence through disposable blobless sparse checkouts instead of a shared full-history artifact-repo clone.
+- fix(run-completion): avoid reposting dev/fix-bug PR descriptions as worker comments, identify other comments by run so finalize replays are idempotent, and publish evidence through disposable blobless sparse checkouts instead of a shared full-history artifact-repo clone.
 - fix(backlog): markdown-backed specs are allowed on jira/github items — tracker identity and live ticket data stay authoritative while spec context and acceptance criteria are merged into the worker task inputs.
 - fix(self-review): resume retained workers through structured runner handoff, keep managed Codex hooks enabled, continue interactive feedback from existing findings, write remote review artifacts through node RPC, never treat an identical prompt from an older Grok transcript as acceptance of a new fix-pass generation, and accept a fresh task signal after a delayed prompt acknowledgement.
 - fix(work-graph): reclaim `waiting` nodes when the backlog item is ready and the run/queue are gone, and retry stale completed-enqueue ledger entries for `waiting` as well as `ready`, so fail+delete no longer leaves Dispatch stuck reporting upstream wait with an empty `waitingOn`.

@@ -47,7 +47,12 @@ import {
   materializeIndependentReviewArtifacts,
 } from './independent-reviews.js';
 import { buildPackageEvidenceManifest } from './package-evidence-manifest.js';
-import { markPRReady, postPRComment, updatePRTitle } from './pr-publication.js';
+import {
+  markPRReady,
+  postPRComment,
+  shouldPostWorkerReportComment,
+  updatePRTitle,
+} from './pr-publication.js';
 import {
   assertSelectedEvidencePublished,
   expandEvidenceSelectionForManifest,
@@ -731,9 +736,15 @@ export async function runCompletionPipeline(
   // `done` until the whole pipeline returns, so status is `completing` during
   // this call. The fact that we reached step 3 is itself the evidence we need.
   const reportIsSubstantive = typeof report === 'string' && report.trim().length > 0;
-  if (!isReviewPR && ciRepo && prNumber && reportIsSubstantive) {
+  if (
+    !isReviewPR &&
+    shouldPostWorkerReportComment(run.flowType) &&
+    ciRepo &&
+    prNumber &&
+    reportIsSubstantive
+  ) {
     flags.prCommentPosted = await postPRComment(run, report, ciRepo, prNumber);
-  } else if (!isReviewPR && ciRepo && prNumber) {
+  } else if (!isReviewPR && shouldPostWorkerReportComment(run.flowType) && ciRepo && prNumber) {
     console.log(
       `[run-completion] skipping pr-comment for ${runId.slice(0, 8)}: status=${run.status} report=${reportIsSubstantive ? 'present' : 'missing'}`,
     );
@@ -960,7 +971,7 @@ export async function publishCompletionPackage(
     const latestRun = getRun(runId) ?? run;
     const report = await readWorkerReport(latestRun);
     const reportIsSubstantive = typeof report === 'string' && report.trim().length > 0;
-    if (reportIsSubstantive) {
+    if (reportIsSubstantive && shouldPostWorkerReportComment(latestRun.flowType)) {
       emit('substep', {
         name: 'post-worker-report',
         detail: `Posting worker report to PR #${prNumber}`,

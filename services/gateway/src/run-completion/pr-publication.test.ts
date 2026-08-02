@@ -5,6 +5,7 @@ import {
   paginatedPrCommentOutputContainsRun,
   prCommentBelongsToRun,
   prCommentIdentityMarker,
+  shouldPostWorkerReportComment,
 } from './pr-publication.js';
 
 test('PR comment identity is stable per run and supports legacy comments', () => {
@@ -21,4 +22,12 @@ test('PR comment identity is stable per run and supports legacy comments', () =>
     ),
     true,
   );
+});
+
+test('worker report comments exclude flows whose report is the PR description', () => {
+  assert.equal(shouldPostWorkerReportComment('dev'), false);
+  assert.equal(shouldPostWorkerReportComment('fix-bug'), false);
+  assert.equal(shouldPostWorkerReportComment('review-pr'), true);
+  assert.equal(shouldPostWorkerReportComment('pr-complete'), true);
+  assert.equal(shouldPostWorkerReportComment('update-branch'), true);
 });

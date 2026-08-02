@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { modelsMatch, type Run } from '@farmslot/protocol';
+import { type FlowType, modelsMatch, type Run } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
 import { ghRequest } from '../integrations/github-client.js';
@@ -30,6 +30,13 @@ export function paginatedPrCommentOutputContainsRun(output: string, runId: strin
     .split('\n')
     .filter(Boolean)
     .some((line) => prCommentBelongsToRun(JSON.parse(line) as string, runId));
+}
+
+export function shouldPostWorkerReportComment(flowType: FlowType): boolean {
+  // dev/fix-bug use pr-description.md as their sole outcome artifact. It is
+  // published as the PR body, so reposting it as a comment duplicates the
+  // content and can expose local evidence paths before body post-processing.
+  return flowType !== 'dev' && flowType !== 'fix-bug';
 }
 
 function formatDuration(ms: number | undefined): string {

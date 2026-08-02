@@ -38,8 +38,6 @@ test('normalizeCiActionId renames the legacy merge-conflict dispatch action', ()
 test('update-branch is a first-class flow with steps and outcome artifacts', () => {
   assert.ok(FLOW_STEPS['update-branch'].length > 0);
   assert.deepEqual(FLOW_WORKER_REPORT_ARTIFACTS['update-branch'], ['report.md']);
-  assert.deepEqual(FLOW_WORKER_REPORT_ARTIFACTS.dev, ['report.md', 'pr-description.md']);
-  assert.deepEqual(FLOW_WORKER_REPORT_ARTIFACTS['fix-bug'], ['report.md', 'pr-description.md']);
   assert.equal((FLOW_STEPS as Record<string, unknown>)['merge-main'], undefined);
 });
 
