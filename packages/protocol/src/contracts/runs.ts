@@ -1839,9 +1839,9 @@ export const FLOW_STEPS: Record<FlowType, PipelineStep[]> = {
  * Falls back to `report.md` for any flow not listed.
  */
 export const FLOW_WORKER_REPORT_ARTIFACTS: Record<FlowType, string[]> = {
-  'fix-bug': ['pr-description.md', 'report.md'],
+  'fix-bug': ['report.md', 'pr-description.md'],
   'review-pr': ['review.md', 'report.md'],
-  dev: ['pr-description.md', 'report.md'],
+  dev: ['report.md', 'pr-description.md'],
   'pr-complete': ['comments-report.md', 'report.md'],
   'update-branch': ['report.md'],
 };

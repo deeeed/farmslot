@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix(runs): prefer the dedicated worker report over the PR description for dev and fix-bug report consumers; PR body construction continues to read the description explicitly.
 - feat(backlog): typed `backlog.refine` / `backlog.refinementSession.get` RPC contracts and default refinement runner/model constants.
 
 ## 0.16.0 - 2026-08-02

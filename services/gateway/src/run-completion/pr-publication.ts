@@ -14,6 +14,24 @@ import { localPrBodyPathResidues } from './publication-artifacts.js';
 
 // ─── PR comment ───
 
+export function prCommentIdentityMarker(runId: string): string {
+  return `<!-- farmslot-run:${runId} -->`;
+}
+
+export function prCommentBelongsToRun(body: string, runId: string): boolean {
+  return (
+    body.includes(prCommentIdentityMarker(runId)) ||
+    body.includes(`| Run | \`${runId.slice(0, 8)}\` |`)
+  );
+}
+
+export function paginatedPrCommentOutputContainsRun(output: string, runId: string): boolean {
+  return output
+    .split('\n')
+    .filter(Boolean)
+    .some((line) => prCommentBelongsToRun(JSON.parse(line) as string, runId));
+}
+
 function formatDuration(ms: number | undefined): string {
   if (!ms) return '?';
   return `${Math.round(ms / 60000)}m`;
@@ -166,7 +184,11 @@ export async function postPRComment(
       }
     }
 
-    const comment = await buildPRComment(run, report, workflowMmd);
+    const generatedComment = await buildPRComment(run, report, workflowMmd);
+    const identityMarker = prCommentIdentityMarker(run.id);
+    const comment = generatedComment.includes(identityMarker)
+      ? generatedComment
+      : `${identityMarker}\n${generatedComment}`;
     const localResidues = localPrBodyPathResidues(comment);
     if (localResidues.length > 0) {
       const message = `PR comment still contains local artifact path(s): ${localResidues.join(', ')}`;
@@ -178,24 +200,20 @@ export async function postPRComment(
     const tmpFile = `/tmp/farmslot-pr-comment-${run.id.slice(0, 8)}.md`;
     await writeFile(tmpFile, comment, 'utf-8');
 
-    // Check for existing bot comment to avoid duplicates
+    // A replay after posting must be idempotent for this run, while a distinct
+    // run on the same PR may still publish its own report.
     try {
       const existing = await ghRequest([
         'api',
+        '--paginate',
         `repos/${ciRepo}/issues/${prNumber}/comments`,
         '--jq',
-        '[.[] | select(.body | startswith("## Automated")) | .id] | length',
+        '.[].body | @json',
       ]);
-      if (parseInt(existing.stdout.trim(), 10) > 0) {
-        if (options.failOnError) {
-          throw new Error(
-            `PR #${prNumber} already has an Automated comment; refresh/update the publication comment before marking ready`,
-          );
-        }
-        console.log(
-          `[run-completion] skipping comment — bot comment already exists on PR #${prNumber}`,
-        );
-        return false;
+      const alreadyPosted = paginatedPrCommentOutputContainsRun(existing.stdout, run.id);
+      if (alreadyPosted) {
+        console.log(`[run-completion] comment already posted for run ${run.id.slice(0, 8)}`);
+        return true;
       }
     } catch (err) {
       if (options.failOnError) throw err;
