@@ -1,6 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { gitStateChips, gitStatusColor } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 type BranchDiffStatus = 'M' | 'A' | 'D' | 'R';
@@ -12,6 +13,15 @@ export interface BranchDiffFile {
   oldPath?: string;
   additions: number;
   deletions: number;
+  /** Worktree scope: file also has committed changes vs base. */
+  committed?: boolean;
+}
+
+/** Working-tree entry used to derive per-file state chips (staged/unstaged/untracked). */
+export interface WorktreeChangeEntry {
+  path: string;
+  status: string;
+  staged: boolean;
 }
 
 interface TreeNode {
@@ -20,24 +30,14 @@ interface TreeNode {
   type: 'file' | 'dir';
   status?: BranchDiffStatus;
   oldPath?: string;
+  committed?: boolean;
   additions: number;
   deletions: number;
   children: TreeNode[];
   commentCount: number;
 }
 
-function statusColor(status: BranchDiffStatus): string {
-  switch (status) {
-    case 'M':
-      return '#6366f1';
-    case 'A':
-      return '#00ff88';
-    case 'D':
-      return '#ff4444';
-    case 'R':
-      return '#ffcc00';
-  }
-}
+const statusColor = gitStatusColor;
 
 function basename(path: string): string {
   const parts = path.split('/');
@@ -81,6 +81,7 @@ function buildTree(files: BranchDiffFile[], commentCounts: Map<string, number>):
       type: 'file',
       status: file.status,
       oldPath: file.oldPath,
+      committed: file.committed,
       additions: file.additions,
       deletions: file.deletions,
       children: [],
@@ -132,6 +133,8 @@ export class BranchChangedFiles extends LitElement {
   @property({ attribute: false }) commentCounts: Map<string, number> = new Map();
   @property() selectedPath = '';
   @property({ attribute: false }) branches: string[] = [];
+  /** Working-tree status entries — enables IDE-style C/S/M/U state chips per row. */
+  @property({ attribute: false }) changes: WorktreeChangeEntry[] = [];
 
   @state() private _collapsed = new Set<string>();
   @state() private _baseInput = '';
@@ -257,6 +260,18 @@ export class BranchChangedFiles extends LitElement {
       font-size: ${unsafeCSS(fonts.sizeXs)};
       color: ${unsafeCSS(colors.textMuted)};
       white-space: nowrap;
+    }
+
+    .state-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      margin-right: 2px;
     }
 
     .add-stat {
@@ -556,6 +571,7 @@ export class BranchChangedFiles extends LitElement {
         >
         <span class="file-name">${node.name}</span>
         <span class="file-stats">
+          ${this._renderStateChips(node.path, node.committed)}
           ${node.commentCount > 0
             ? html`<span class="comment-badge">${node.commentCount}</span>`
             : ''}
@@ -571,6 +587,22 @@ export class BranchChangedFiles extends LitElement {
     `;
   }
 
+  private _renderStateChips(path: string, committed: boolean | undefined) {
+    if (this.changes.length === 0 && committed === undefined) return nothing;
+    return gitStateChips({
+      committed,
+      worktreeEntries: this.changes.filter((entry) => entry.path === path),
+    }).map(
+      (chip) =>
+        html`<span
+          class="state-chip"
+          style="background: ${chip.color}22; color: ${chip.color};"
+          title=${chip.title}
+          >${chip.label}</span
+        >`,
+    );
+  }
+
   private _renderListFile(file: BranchDiffFile): unknown {
     const color = statusColor(file.status);
     return html`
@@ -584,6 +616,7 @@ export class BranchChangedFiles extends LitElement {
         <span class="file-name">${basename(file.path)}</span>
         <span class="file-dir">${file.path.slice(0, -basename(file.path).length)}</span>
         <span class="file-stats">
+          ${this._renderStateChips(file.path, file.committed)}
           ${(this.commentCounts.get(file.path) ?? 0) > 0
             ? html`<span class="comment-badge">${this.commentCounts.get(file.path)}</span>`
             : nothing}

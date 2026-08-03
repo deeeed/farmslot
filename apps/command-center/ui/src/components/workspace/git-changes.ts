@@ -1,6 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { gitStateChips, gitStatusColor } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 // Local types (protocol types not imported in isolated phase)
@@ -19,6 +20,8 @@ interface BranchDiffFile {
   oldPath?: string;
   additions: number;
   deletions: number;
+  /** Worktree scope: file also has committed changes vs base. */
+  committed?: boolean;
 }
 
 type FileListViewMode = 'tree' | 'list';
@@ -35,20 +38,7 @@ interface ChangeTreeNode {
   committedFile?: BranchDiffFile;
 }
 
-function statusColor(status: GitChangeStatus): string {
-  switch (status) {
-    case 'M':
-      return '#6366f1';
-    case 'A':
-      return '#00ff88';
-    case 'D':
-      return '#ff4444';
-    case '?':
-      return '#888';
-    case 'R':
-      return '#ffcc00';
-  }
-}
+const statusColor = gitStatusColor;
 
 function basename(path: string): string {
   const parts = path.split('/');
@@ -324,6 +314,18 @@ export class GitChanges extends LitElement {
 
     .file-row:hover .file-actions {
       opacity: 1;
+    }
+
+    .state-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      margin-right: 2px;
     }
 
     .file-action-btn {
@@ -611,10 +613,16 @@ export class GitChanges extends LitElement {
             : nothing}
         </span>
         <span class="file-stats">
-          ${wt
-            ? html`<span title="Has uncommitted ${wt.staged ? 'staged' : 'local'} changes"
-                >&#9679;</span
-              >`
+          ${this.committedScope === 'worktree'
+            ? gitStateChips({ committed: f.committed, worktreeEntries: wtEntries }).map(
+                (chip) =>
+                  html`<span
+                    class="state-chip"
+                    style="background: ${chip.color}22; color: ${chip.color};"
+                    title=${chip.title}
+                    >${chip.label}</span
+                  >`,
+              )
             : nothing}
           ${f.additions > 0
             ? html`<span style="color: ${statusColor('A')}">+${f.additions}</span>`

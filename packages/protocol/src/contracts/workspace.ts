@@ -32,6 +32,12 @@ export interface GitBranchDiffFile {
   oldPath?: string; // for renames
   additions: number;
   deletions: number;
+  /**
+   * Worktree-target only: whether this file also has committed changes vs the
+   * base (false = purely local). Undefined for head-target diffs, where every
+   * listed file is committed by definition.
+   */
+  committed?: boolean;
 }
 
 // ─── Diagnostics ───
