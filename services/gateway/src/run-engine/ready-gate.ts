@@ -22,7 +22,6 @@ import {
 
 import { getProjectField, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { shellQuote } from '../core/tmux.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import {
   invalidateArtifactTextCache,
@@ -76,16 +75,16 @@ import {
   requiresPublicationApproval,
 } from './publication-policy.js';
 import {
+  assertIndependentReviewLaunchStateForSlot,
+  publicationReviewLaunchRejectionFromError,
+} from './review-launch-gate.js';
+import {
   effectiveReviewRunner,
   humanGateReviewDepth,
   MAX_PUBLISH_GATE_REVIEW_LOOPS,
   requestedReviewLoopCount,
   reviewPlanFromSelection,
 } from './review-plan.js';
-import {
-  assertIndependentReviewLaunchStateForSlot,
-  publicationReviewLaunchRejectionFromError,
-} from './review-launch-gate.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
 
 const S = PipelineSteps;
@@ -234,6 +233,23 @@ function clearPublicationReviewLaunchRejection(runId: string, rejectedAt?: strin
       },
     },
   });
+}
+
+export function reviewLaunchRejectionForHead(
+  runId: string,
+  headSha: string | undefined,
+): PublicationReviewLaunchRejection | undefined {
+  const rejection = getRun(runId)?.engineState?.publishGate?.reviewLaunchRejection;
+  const rejectedHeadSha =
+    rejection?.details &&
+    typeof rejection.details === 'object' &&
+    'currentHeadSha' in rejection.details &&
+    typeof rejection.details.currentHeadSha === 'string'
+      ? rejection.details.currentHeadSha
+      : undefined;
+  if (!rejection || !rejectedHeadSha || !headSha || rejectedHeadSha === headSha) return rejection;
+  clearPublicationReviewLaunchRejection(runId, rejection.rejectedAt);
+  return undefined;
 }
 
 export async function executePublishGateReviewPlan(
@@ -638,19 +654,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
       );
     }
   }
-  let reviewLaunchRejection = getRun(runId)?.engineState?.publishGate?.reviewLaunchRejection;
-  const rejectedHeadSha =
-    reviewLaunchRejection?.details &&
-    typeof reviewLaunchRejection.details === 'object' &&
-    'currentHeadSha' in reviewLaunchRejection.details &&
-    typeof reviewLaunchRejection.details.currentHeadSha === 'string'
-      ? reviewLaunchRejection.details.currentHeadSha
-      : undefined;
-  if (reviewLaunchRejection && rejectedHeadSha && headSha && rejectedHeadSha !== headSha) {
-    const staleRejection = reviewLaunchRejection;
-    reviewLaunchRejection = undefined;
-    clearPublicationReviewLaunchRejection(runId, staleRejection.rejectedAt);
-  }
+  const reviewLaunchRejection = reviewLaunchRejectionForHead(runId, headSha);
 
   const baseDescription =
     publicationApprovalGate && preparedPackage

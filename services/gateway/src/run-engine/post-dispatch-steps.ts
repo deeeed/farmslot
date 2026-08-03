@@ -56,9 +56,11 @@ import {
   shouldPrepareLocalFirstPackage,
 } from './publication-policy.js';
 import { verifyWorkerPushedBranch } from './push-verification.js';
-import { resumeInterruptedPublicationReview } from './ready-gate.js';
+import {
+  type PublishGateReviewPlanResult,
+  resumeInterruptedPublicationReview,
+} from './ready-gate.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
-import type { PublishGateReviewPlanResult } from './ready-gate.js';
 import {
   automaticPublicationReviewPlan,
   humanGateReviewDepth,
@@ -950,34 +952,40 @@ export async function executeHumanGateStep(
           boundedPlan,
           'human-gate',
         );
-        if (reviewPlanResult.rejection) {
-          gateAction = await executeReadyGate(runId);
-          continue;
-        }
-        reviewRequestLoops += boundedPlan.length;
         const newReviewIds = reviewPlanResult.reviewIds;
+        const completedReviewCount = reviewPlanResult.rejection
+          ? Math.min(newReviewIds.length, boundedPlan.length)
+          : boundedPlan.length;
+        reviewRequestLoops += completedReviewCount;
+        const remainingPlan = reviewPlanResult.rejection
+          ? boundedPlan.slice(completedReviewCount)
+          : [];
         const afterReviewPlan = getRun(runId)!;
         updateRun(runId, {
           engineState: {
             ...afterReviewPlan.engineState,
             publishGate: {
               ...afterReviewPlan.engineState?.publishGate,
-              pendingReviewPlan: [],
-              pendingReviewPlanRequestedAt: undefined,
+              pendingReviewPlan: remainingPlan,
+              pendingReviewPlanRequestedAt: remainingPlan.length
+                ? afterReviewPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt
+                : undefined,
             },
           },
         });
-        const diffStat = await getDiffStat(getRun(runId)!);
-        const prepared = await prepareCompletionPackage(runId, {
-          diffStat,
-          reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
-          publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
-          selectedEvidenceKeys: reviewedPackage?.selectedEvidenceKeys,
-          priorEvidenceManifest: reviewedPackage?.evidenceManifest,
-          stampReviews: false,
-          requireArtifactMirror: true,
-        });
-        stampFreshReviewsForPreparedPackage(runId, newReviewIds, prepared.prPackage);
+        if (!reviewPlanResult.rejection || newReviewIds.length > 0) {
+          const diffStat = await getDiffStat(getRun(runId)!);
+          const prepared = await prepareCompletionPackage(runId, {
+            diffStat,
+            reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
+            publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
+            selectedEvidenceKeys: reviewedPackage?.selectedEvidenceKeys,
+            priorEvidenceManifest: reviewedPackage?.evidenceManifest,
+            stampReviews: false,
+            requireArtifactMirror: true,
+          });
+          stampFreshReviewsForPreparedPackage(runId, newReviewIds, prepared.prPackage);
+        }
         gateAction = await executeReadyGate(runId);
         continue;
       }

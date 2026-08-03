@@ -3,6 +3,7 @@
 ## Unreleased
 
 - fix(run): independent review state records when restart recovery explicitly owes a worker fix/re-review continuation, and reviewer contexts retain the loop that owns their launch snapshot.
+- fix(runs): expose structured publication-review launch rejections in ready-gate payloads and persisted publish-gate state so clients can present recoverable dirty-tree and stale-HEAD guidance.
 
 ## 0.18.0 - 2026-08-03
 

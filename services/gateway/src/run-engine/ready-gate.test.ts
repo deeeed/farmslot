@@ -14,6 +14,7 @@ import {
   executePublishGateReviewPlan,
   localVideoProofWarning,
   resumeInterruptedPublicationReview,
+  reviewLaunchRejectionForHead,
 } from './ready-gate.js';
 import {
   assertIndependentReviewLaunchState,
@@ -296,6 +297,36 @@ test('empty publish-gate review plans clear a prior recoverable rejection', asyn
     await executePublishGateReviewPlan(run.id, 'test-review-empty-plan-slot', [], 'human-gate'),
     { reviewIds: [] },
   );
+  assert.equal(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, undefined);
+});
+
+test('ready-gate rejection is retained at the same HEAD and cleared after HEAD drift', async (t) => {
+  const rejection: PublicationReviewLaunchRejection = {
+    code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+    message: 'A prior review launch was refused.',
+    userAction: 'Commit fixes.',
+    details: { currentHeadSha: 'aaaaaaaa' },
+    rejectedAt: '2026-08-03T00:00:00.000Z',
+  };
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-HEAD-DRIFT',
+    runner: 'claude',
+    slotId: 'test-review-head-drift-slot',
+    engineState: { publishGate: { reviewLaunchRejection: rejection } },
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  const sameHeadPayloadRejection = reviewLaunchRejectionForHead(run.id, 'aaaaaaaa');
+  assert.deepEqual(sameHeadPayloadRejection, rejection);
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, rejection);
+
+  const advancedHeadPayloadRejection = reviewLaunchRejectionForHead(run.id, 'bbbbbbbb');
+  assert.equal(advancedHeadPayloadRejection, undefined);
   assert.equal(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, undefined);
 });
 
