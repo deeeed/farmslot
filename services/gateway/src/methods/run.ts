@@ -5,6 +5,7 @@ import {
   type DevInteractiveProfile,
   Events,
   type ExecutionTemplateReference,
+  failedRunCancelEffects,
   FLOW_STEPS,
   isInteractiveDevRun,
   isTerminalRunStatus,
@@ -768,12 +769,24 @@ export async function runInteractiveDevResolve(
 
   if (params.action === 'abort') {
     updateRun(run.id, { engineState: appendInteractiveDevAction(run.id, params, run) });
+    const cancelled = await runCancel({
+      runId: run.id,
+      reason: params.reason ?? 'Interactive dev aborted by operator',
+    });
+    // Spreading the whole result leaked `effects` outside this union, so the UI saw a
+    // bare `ok: true` and ignored a partially applied abort. Carry the failures on the
+    // union's existing `reason` field instead of widening the contract.
+    const failed = failedRunCancelEffects(cancelled.effects);
     return {
       ok: true,
-      ...(await runCancel({
-        runId: run.id,
-        reason: params.reason ?? 'Interactive dev aborted by operator',
-      })),
+      run: cancelled.run,
+      ...(failed.length
+        ? {
+            reason: `Aborted, but teardown was incomplete: ${failed
+              .map((effect) => `${effect.name} (${effect.detail ?? 'failed'})`)
+              .join('; ')}`,
+          }
+        : {}),
     };
   }
 

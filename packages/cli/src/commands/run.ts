@@ -7,8 +7,10 @@ import type { Command } from 'commander';
 import {
   buildRunResolveDecisionParams,
   type EventFrame,
+  failedRunCancelEffects,
   type HumanGrade,
   type Run,
+  type RunCancelEffect,
   type RunForceCompleteResult,
   type RunGetGradeResult,
   type RunGradeResult,
@@ -433,7 +435,17 @@ export function registerRunCommand(program: Command): void {
           !emit.machine,
         );
         if (emit.machine) emit.ok(result);
-        else output.write(`Cancelled ${runId}\n`);
+        else {
+          output.write(`Cancelled ${runId}\n`);
+          // The run is terminal, but an advisory effect can still have failed. Printing
+          // only "Cancelled" hid a slot that was never released or a backlog left
+          // unsettled, which is the whole reason the effects travel with the result.
+          for (const effect of failedRunCancelEffects(
+            (result as { effects?: RunCancelEffect[] }).effects,
+          )) {
+            output.write(`  warning: ${effect.name} failed — ${effect.detail ?? 'no detail'}\n`);
+          }
+        }
       } catch (err) {
         emit.fail(err);
       }
