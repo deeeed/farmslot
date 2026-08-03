@@ -38,6 +38,18 @@
         "test_id": "companion-screen-review",
         "expected": "visible",
         "intent": "Keep the active run inventory visible so the requested package can be selected.",
+        "next": "capture-review"
+      },
+      "capture-review": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/01_review.png",
+        "label": "Review queue",
+        "surface_test_id": "companion-screen-review",
+        "until_test_id": "companion-screen-review-end",
+        "max_scrolls": 12,
+        "restore_position": true,
+        "intent": "Anchor the selected run branch in the app navigation tree.",
+        "proves": ["ready-gate-catalog"],
         "next": "open-run"
       },
       "open-run": {
@@ -61,6 +73,10 @@
         "until_test_id": "companion-screen-run-detail-end",
         "max_scrolls": 12,
         "restore_position": true,
+        "visual_review": {
+          "parent": "capture-review",
+          "navigation": [{ "from": "capture-review", "kind": "push" }]
+        },
         "intent": "Preserve the complete run package from its summary through its final scrollable section.",
         "proves": ["ready-gate-catalog"],
         "next": "open-ready-gate"
@@ -86,13 +102,99 @@
         "until_test_id": "companion-screen-decision-workspace-end",
         "max_scrolls": 30,
         "restore_position": false,
+        "visual_review": {
+          "parent": "capture-run",
+          "navigation": [{ "from": "capture-run", "kind": "push" }]
+        },
         "intent": "Preserve the complete Ready Gate from its summary through its operator actions.",
+        "proves": ["ready-gate-catalog"],
+        "next": "open-ready-evidence"
+      },
+      "open-ready-evidence": {
+        "action": "ui.press",
+        "test_id": "companion-review-package-tab-evidence",
+        "intent": "Select the Evidence surface through the visible review-package control.",
+        "next": "wait-ready-evidence"
+      },
+      "wait-ready-evidence": {
+        "action": "ui.wait_for",
+        "test_id": "companion-decision-section-evidence",
+        "expected": "visible",
+        "intent": "Confirm the Evidence section is visible before capturing its review state.",
+        "next": "capture-ready-evidence"
+      },
+      "capture-ready-evidence": {
+        "action": "ui.screenshot",
+        "path": "{{params.platform}}/12_ready_gate_evidence.png",
+        "label": "Ready Gate — Evidence",
+        "visual_review": {
+          "parent": "capture-ready-gate",
+          "navigation": [{ "from": "capture-ready-gate", "kind": "in-place" }],
+          "related": ["capture-ready-diff", "capture-ready-timeline"]
+        },
+        "intent": "Preserve the Evidence child surface selected from the Ready Gate.",
+        "proves": ["ready-gate-catalog"],
+        "next": "open-ready-timeline"
+      },
+      "open-ready-timeline": {
+        "action": "ui.press",
+        "test_id": "companion-review-package-tab-timeline",
+        "intent": "Select the Timeline surface through the visible review-package control.",
+        "next": "wait-ready-timeline"
+      },
+      "wait-ready-timeline": {
+        "action": "ui.wait_for",
+        "test_id": "companion-decision-section-timeline",
+        "expected": "visible",
+        "intent": "Confirm the Timeline section is visible before capturing its review state.",
+        "next": "capture-ready-timeline"
+      },
+      "capture-ready-timeline": {
+        "action": "ui.screenshot",
+        "path": "{{params.platform}}/13_ready_gate_timeline.png",
+        "label": "Ready Gate — Timeline",
+        "visual_review": {
+          "parent": "capture-ready-gate",
+          "navigation": [{ "from": "capture-ready-gate", "kind": "in-place" }],
+          "related": ["capture-ready-evidence", "capture-ready-diff"]
+        },
+        "intent": "Preserve the Timeline child surface selected from the Ready Gate.",
+        "proves": ["ready-gate-catalog"],
+        "next": "open-ready-diff"
+      },
+      "open-ready-diff": {
+        "action": "ui.press",
+        "test_id": "companion-review-package-tab-diff",
+        "intent": "Select the Diff surface through the visible review-package control.",
+        "next": "wait-ready-diff"
+      },
+      "wait-ready-diff": {
+        "action": "ui.wait_for",
+        "test_id": "companion-screen-run-diff",
+        "expected": "visible",
+        "intent": "Confirm the routed Diff surface is loaded before capturing it.",
+        "next": "capture-ready-diff"
+      },
+      "capture-ready-diff": {
+        "action": "ui.capture_surface",
+        "path": "{{params.platform}}/14_ready_gate_diff_full.png",
+        "label": "Ready Gate — Diff",
+        "surface_test_id": "companion-screen-run-diff",
+        "until_test_id": "companion-screen-run-diff-end",
+        "max_scrolls": 30,
+        "restore_position": false,
+        "visual_review": {
+          "parent": "capture-ready-gate",
+          "navigation": [{ "from": "capture-ready-gate", "kind": "push" }],
+          "related": ["capture-ready-evidence", "capture-ready-timeline"]
+        },
+        "intent": "Preserve the complete Diff child surface selected from the Ready Gate.",
         "proves": ["ready-gate-catalog"],
         "next": "build-catalog"
       },
       "build-catalog": {
         "action": "command",
-        "cmd": "node scripts/screenshots/build-ready-gate-ux-catalog.mjs \"$FARMSLOT_RECIPE_ARTIFACTS_DIR\" .agent/ux-catalog-current \"{{params.platform}}\"",
+        "cmd": "node scripts/screenshots/build-recipe-ux-catalog.mjs \"$FARMSLOT_RECIPE_ARTIFACTS_DIR\" .agent/ux-catalog-current \"{{params.platform}}\" scripts/agentic/recipe/recipes/ux-ready-gate-catalog.recipe.json",
         "timeout_ms": 30000,
         "intent": "Refresh the offline feedback catalog from the full-surface recipe artifacts.",
         "next": "index-catalog"
@@ -107,6 +209,16 @@
             "label": "Companion UX feedback catalog"
           },
           {
+            "path": ".agent/ux-catalog-current/visual-review-source.json",
+            "type": "json",
+            "label": "Portable visual review source"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/01_review.png",
+            "type": "image",
+            "label": "Review queue navigation root"
+          },
+          {
             "path": ".agent/ux-catalog-current/{{params.platform}}/10_run_detail.png",
             "type": "image",
             "label": "Ready run package"
@@ -115,6 +227,21 @@
             "path": ".agent/ux-catalog-current/{{params.platform}}/11_ready_gate_full.png",
             "type": "image",
             "label": "Ready gate full height"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/12_ready_gate_evidence.png",
+            "type": "image",
+            "label": "Ready gate Evidence"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/13_ready_gate_timeline.png",
+            "type": "image",
+            "label": "Ready gate Timeline"
+          },
+          {
+            "path": ".agent/ux-catalog-current/{{params.platform}}/14_ready_gate_diff_full.png",
+            "type": "image",
+            "label": "Ready gate Diff"
           }
         ],
         "next": "done"

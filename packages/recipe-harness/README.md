@@ -195,6 +195,23 @@ const uiAdapters = createStandardUiAdapters({
 
 Use `ui.*` for user-visible proof and domain actions for deterministic setup/teardown. Never mutate app state to manufacture evidence. HUD text should state the current human intent; detailed diagnostics belong in trace.
 
+## Visual review boards
+
+Turn visual capture nodes from any Recipe v1 run into a static annotation board:
+
+```bash
+farmslot-visual-review build-recipe recipe.json \
+  --artifacts artifacts \
+  --platform ios \
+  --source-id metamask-mobile-farm:perps-surfaces \
+  --project metamask-mobile-farm
+```
+
+The recipe supplies capture paths plus optional `visual_review` hierarchy, related links, and typed
+navigation edges (`tab`, `push`, `in-place`, `modal`, or `replace`). The shared tool copies the
+images, emits `visual-review-source.json`, and builds the navigation/annotation board; projects do
+not need a renderer.
+
 ## Public imports
 
 - `@farmslot/recipe-harness`
@@ -204,6 +221,7 @@ Use `ui.*` for user-visible proof and domain actions for deterministic setup/tea
 - `/runtime/deps-readiness`, `/runtime/log-analysis`, `/runtime/metro-probe`
 - `/runtime/decision-types`, `/runtime/orchestrate-up`
 - `/cli`, `/cli/support`
+- `/visual-review`
 
 Other `src/` modules are internal.
 

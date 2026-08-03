@@ -24,6 +24,7 @@ import { loadPromptTemplate } from '../core/prompt-templates.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { getLLMConfig } from '../llm/config.js';
 import { callLLMChat } from '../llm/index.js';
+import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
 
 // ─── Chat State (with TTL) ───
@@ -310,7 +311,11 @@ export function emitImprovementPlaceholder(runId: string): string | null {
   };
   const decisions = [...(run.decisions ?? []), placeholder];
   updateRun(runId, { decisions });
-  broadcastFn(Events.RUN_DECISION_NEW, { runId, decision: placeholder, slotId: run.slotId });
+  broadcastFn(Events.RUN_DECISION_NEW, {
+    runId,
+    decision: pendingDecisionForRun(run, placeholder),
+    slotId: run.slotId,
+  });
   return placeholder.id;
 }
 
@@ -365,8 +370,17 @@ export function markImprovementTerminal(
     ...(status === 'error' ? { analysisError: message } : {}),
   };
   updateRun(runId, { decisions: run.decisions });
-  broadcastFn(Events.RUN_DECISION_UPDATED, { runId, decision, slotId: run.slotId });
-  broadcastFn(Events.DECISION_UPDATED, { decision, runId, slotId: run.slotId });
+  const pendingDecision = pendingDecisionForRun(run, decision);
+  broadcastFn(Events.RUN_DECISION_UPDATED, {
+    runId,
+    decision: pendingDecision,
+    slotId: run.slotId,
+  });
+  broadcastFn(Events.DECISION_UPDATED, {
+    decision: pendingDecision,
+    runId,
+    slotId: run.slotId,
+  });
 }
 
 export async function analyzeAndPropose(
@@ -521,13 +535,14 @@ export async function analyzeAndPropose(
         ];
         placeholder.payload = payload;
         updateRun(runId, { decisions: updatedRun.decisions });
+        const pendingDecision = pendingDecisionForRun(updatedRun, placeholder);
         broadcastFn(Events.RUN_DECISION_UPDATED, {
           runId,
-          decision: placeholder,
+          decision: pendingDecision,
           slotId: updatedRun.slotId,
         });
         broadcastFn(Events.DECISION_UPDATED, {
-          decision: placeholder,
+          decision: pendingDecision,
           runId,
           slotId: updatedRun.slotId,
         });
@@ -553,7 +568,11 @@ export async function analyzeAndPropose(
     };
     const decisions = [...(updatedRun.decisions ?? []), decision];
     updateRun(runId, { decisions });
-    broadcastFn(Events.RUN_DECISION_NEW, { runId, decision, slotId: updatedRun.slotId });
+    broadcastFn(Events.RUN_DECISION_NEW, {
+      runId,
+      decision: pendingDecisionForRun(updatedRun, decision),
+      slotId: updatedRun.slotId,
+    });
     console.log(
       `[improvement] created improvement decision ${decision.id} for run ${runId} (${payload.proposedChanges.length} file(s))`,
     );

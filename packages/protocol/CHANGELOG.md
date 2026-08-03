@@ -7,6 +7,7 @@
 - feat(git): `target: 'worktree'` on `git.diff` / `git.branchDiff` — diff the merge-base against the working tree (every branch change, committed or not).
 
 - feat(recipe): add the opt-in `ui.capture_surface` action for full-page and full-scroll-surface evidence while keeping `ui.screenshot` viewport-only.
+- feat(visual-review): define portable source and self-contained feedback documents for hierarchical full-surface or explicit viewport captures, typed multi-path navigation edges, and normalized color-coded point and area annotations.
 
 ## 0.17.0 - 2026-08-03
 

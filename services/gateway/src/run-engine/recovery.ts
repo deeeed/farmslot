@@ -19,6 +19,7 @@ import {
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
+import { pendingDecisionForRun } from './decision-projection.js';
 import { reviewerContextNeedsRecovery } from './recover-inflight-reviews.js';
 import { recoveryReviewPlanForActiveFix } from './review-plan.js';
 
@@ -422,7 +423,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
           if (d.resolvedAt) continue;
           deps.broadcast(Events.RUN_DECISION_NEW, {
             runId: run.id,
-            decision: d,
+            decision: pendingDecisionForRun(run, d),
             slotId: run.slotId,
           });
         }

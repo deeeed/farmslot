@@ -11,7 +11,6 @@ import {
   type PendingDecision,
   type PRUpdatedPayload,
   type Run,
-  type RunDecision,
   type SlotStatus,
 } from '@farmslot/protocol';
 
@@ -70,17 +69,17 @@ const GATEWAY_URL_KEY = '@farmslot:gatewayUrl';
 const GATEWAY_PROFILES_KEY = '@farmslot:gatewayProfiles';
 const ACTIVE_GATEWAY_PROFILE_KEY = '@farmslot:activeGatewayProfileId';
 const LIVENESS_PROBE_TIMEOUT_MS = 8_000;
+const DECISION_LIST_TIMEOUT_MS = 30_000;
 
 let livenessController: ConnectionLivenessController | null = null;
 let appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
+let requestDecisionRefresh: (() => Promise<void>) | null = null;
 const probeAttemptTracker = new ConnectionProbeAttemptTracker();
 
 export type { ConnectionProbeResult } from '../lib/connection-probe';
 
 type DecisionNewEventPayload = {
-  decision?: PendingDecision | RunDecision;
-  slotId?: string | null;
-  runId?: string;
+  decision?: PendingDecision;
 };
 
 interface ConnectionStore {
@@ -117,6 +116,7 @@ interface ConnectionStore {
   disconnect: () => void;
   probeConnection: () => Promise<ConnectionProbeResult>;
   testConnection: () => Promise<ConnectionProbeResult>;
+  retryDecisionSync: () => Promise<void>;
   syncRunHistory: () => Promise<void>;
 }
 
@@ -197,17 +197,39 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         if (data.pr) usePRStore.getState().upsertPR(data.pr);
       });
 
-      const refreshDecisions = (reason: string) => {
-        client
-          .request<DecisionListResult>('decision.list')
+      let decisionRefreshInFlight: Promise<void> | null = null;
+      let decisionRefreshQueued = false;
+      const clearDecisionSyncError = () => {
+        set((state) => ({
+          lastSyncError: state.lastSyncError?.startsWith('Failed to refresh decisions')
+            ? null
+            : state.lastSyncError,
+        }));
+      };
+      const refreshDecisions = (reason: string): Promise<void> => {
+        if (decisionRefreshInFlight) {
+          decisionRefreshQueued = true;
+          return decisionRefreshInFlight;
+        }
+        decisionRefreshInFlight = client
+          .request<DecisionListResult>(Methods.DECISION_LIST, undefined, DECISION_LIST_TIMEOUT_MS)
           .then((result) => {
             useDecisionStore.getState().setDecisions(result.decisions);
-            set({ lastSyncError: null });
+            clearDecisionSyncError();
           })
           .catch((err: Error) => {
             set({ lastSyncError: `Failed to refresh decisions after ${reason}: ${err.message}` });
+          })
+          .finally(() => {
+            decisionRefreshInFlight = null;
+            if (decisionRefreshQueued) {
+              decisionRefreshQueued = false;
+              void refreshDecisions('queued event');
+            }
           });
+        return decisionRefreshInFlight;
       };
+      requestDecisionRefresh = () => refreshDecisions('manual retry');
 
       // Decision events + notifications
       client.subscribe(Events.DECISION_NEW, (payload) => {
@@ -222,23 +244,31 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
       client.subscribe(Events.RUN_DECISION_NEW, (payload) => {
         const d = normalizeDecisionEvent(payload);
-        if (d?.id) {
+        if (d?.id && d.runMeta) {
           useDecisionStore.getState().addDecision(d);
           notifyDecision(d);
-          if (!hasDecisionPayload(d) || !d.runMeta) refreshDecisions('run.decision.new fallback');
+          if (d.type === 'retrospective' && !d.payload) {
+            refreshDecisions('run.decision.new incomplete retrospective');
+          } else {
+            clearDecisionSyncError();
+          }
         } else {
-          refreshDecisions('run.decision.new');
+          refreshDecisions('run.decision.new fallback');
         }
       });
 
       const upsertDecisionFromEvent = (payload: unknown, reason: string) => {
         const d = normalizeDecisionEvent(payload);
-        if (d?.id) {
+        if (d?.id && d.runMeta) {
           useDecisionStore.getState().upsertDecision(d);
-          if (!hasDecisionPayload(d) || !d.runMeta) refreshDecisions(`${reason} fallback`);
+          if (d.type === 'retrospective' && !d.payload) {
+            refreshDecisions(`${reason} incomplete retrospective`);
+          } else {
+            clearDecisionSyncError();
+          }
           return;
         }
-        refreshDecisions(reason);
+        refreshDecisions(`${reason} fallback`);
       };
 
       client.subscribe(Events.DECISION_UPDATED, (payload) => {
@@ -309,15 +339,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
               set({ lastSyncError: `Failed to refresh runs: ${err.message}` });
             });
 
-          client
-            .request<DecisionListResult>(Methods.DECISION_LIST)
-            .then((result) => {
-              useDecisionStore.getState().setDecisions(result.decisions);
-              set({ lastSyncError: null });
-            })
-            .catch((err: Error) =>
-              set({ lastSyncError: `Failed to refresh decisions: ${err.message}` }),
-            );
+          refreshDecisions('connection sync');
 
           // PR_LIST fans out through GitHub and can legitimately outlive a cold
           // connect. Keep it lazy on the PR screen so a slow PR refresh does not
@@ -746,6 +768,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     return get().probeConnection();
   },
 
+  retryDecisionSync: async () => {
+    if (get().status !== 'connected') return;
+    await requestDecisionRefresh?.();
+  },
+
   syncRunHistory: async () => {
     const { client, status } = get();
     if (!client || status !== 'connected') return;
@@ -791,31 +818,7 @@ function normalizeDecisionEvent(payload: unknown): PendingDecision | null {
   const event = payload as DecisionNewEventPayload;
   const raw = event.decision ?? (payload as PendingDecision | undefined);
   if (!raw?.id || !raw.title || !raw.description || !raw.actions || !raw.createdAt) return null;
-
-  if ('runMeta' in raw && raw.runMeta) return raw as PendingDecision;
-
-  // Run-decision websocket events can carry the decision payload before the
-  // richer PendingDecision projection exists. The inbox tolerates optional
-  // runMeta, and the subscriber above refetches when metadata is incomplete.
-  const decision: PendingDecision = {
-    id: raw.id,
-    type: raw.type as PendingDecision['type'],
-    slotId: event.slotId ?? (raw as PendingDecision).slotId ?? null,
-    title: raw.title,
-    description: raw.description,
-    context: {
-      ...(raw.context ?? {}),
-      ...(event.runId ? { runId: event.runId } : {}),
-    },
-    actions: raw.actions,
-    createdAt: raw.createdAt,
-    payload: (raw as RunDecision).payload,
-  };
-  return decision;
-}
-
-function hasDecisionPayload(decision: PendingDecision): boolean {
-  return 'payload' in decision && Boolean((decision as { payload?: unknown }).payload);
+  return raw;
 }
 
 function livenessFromStore(

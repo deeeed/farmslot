@@ -12,6 +12,7 @@ import type {
 
 import { loadPendingDecisions } from '../observability/fleet-monitor.js';
 import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
+import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { enrichDecisionsWithGateSummary } from '../run-engine/gate-summary.js';
 import { listRuns } from '../runs/store.js';
 
@@ -48,34 +49,7 @@ export async function decisionList(): Promise<DecisionListResult> {
         d.type === 'retrospective' && !d.payload
           ? await buildRetrospectivePayload(enrichedRun, null)
           : d.payload;
-      runDecisions.push({
-        id: d.id,
-        type: d.type as PendingDecision['type'],
-        slotId: run.slotId,
-        title: d.title,
-        description: d.description,
-        context: {
-          runId: run.id,
-          project: run.project,
-          flowType: run.flowType,
-          ticketOrPr: run.ticketOrPr,
-          ...(d.context ?? {}),
-        },
-        actions: d.actions,
-        createdAt: d.createdAt,
-        payload,
-        runMeta: {
-          runId: run.id,
-          familyId: run.familyId,
-          flowType: run.flowType,
-          ticketOrPr: run.ticketOrPr,
-          prNumber: run.prNumber ?? undefined,
-          branch: run.branch ?? undefined,
-          runner: run.metrics.runner ?? undefined,
-          model: run.metrics.model ?? undefined,
-          summary: run.summary ?? undefined,
-        },
-      });
+      runDecisions.push(pendingDecisionForRun(run, d, payload));
     }
   }
 

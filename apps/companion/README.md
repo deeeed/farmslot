@@ -39,8 +39,15 @@ FARMSLOT_SLOT_ID=<slot> yarn recipe:run:ux-ready-gate <run-id>
 
 The baseline recipe uses native test IDs on both platforms, so it does not trigger
 iOS custom-scheme confirmations or stop at the Android Expo launcher. Each run
-writes screenshots, a route manifest, and `.agent/ux-catalog-current/index.html`.
-Notes persist locally and can be downloaded as JSON.
+writes recipe-derived screenshots, a portable review-source manifest, and
+`.agent/ux-catalog-current/index.html`. Feedback persists locally and downloads
+as JSON. To regenerate a focused board from captures already on disk, use the
+capture node ID shown in the catalog index:
+
+```bash
+yarn exec farmslot-visual-review build .agent/ux-catalog-current/visual-review-source.json \
+  --output .agent/ux-catalog-focused --surface capture-ready-gate
+```
 
 ## Scripts
 

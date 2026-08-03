@@ -25,6 +25,7 @@ export * from './slots.js';
 export * from './task.js';
 export * from './terminal.js';
 export * from './validation-plan.js';
+export * from './visual-review.js';
 export * from './work-graph.js';
 export * from './worker-terminal.js';
 export * from './workspace.js';

@@ -17,11 +17,14 @@ test('captures a full native surface without stopping at a premature virtualized
   const artifactsDir = await mkdtemp(path.join(tmpdir(), 'farmslot-capture-surface-'));
   let position = 0;
   let bottomScrolls = 0;
+  let bottomSwipeAttempts = 0;
+  let dropNextBottomSwipe = true;
   let freezeCapture = false;
   let hideEndMarker = false;
   let omitScale = false;
   let failTopSwipe = false;
   let hideSurfaceMarker = false;
+  let staleHiddenContentBelow = false;
   const client = {
     apps: { open: async () => ({ session: 'surface-session', identifiers: {} }) },
     interactions: {
@@ -38,6 +41,15 @@ test('captures a full native surface without stopping at a premature virtualized
         const from = options.from as { y: number };
         const to = options.to as { y: number };
         if (from.y < to.y) position = Math.max(0, position - 10);
+        if (from.y > to.y) {
+          bottomSwipeAttempts += 1;
+          if (dropNextBottomSwipe) {
+            dropNextBottomSwipe = false;
+            return { scrolled: false };
+          }
+          position = Math.min(20, position + 10);
+          bottomScrolls += 1;
+        }
         return { scrolled: true };
       },
     },
@@ -47,13 +59,20 @@ test('captures a full native surface without stopping at a premature virtualized
         return {
           nodes: [
             {
+              identifier: 'nested-scroll-surface',
+              type: 'ScrollView',
+              rect: omitScale
+                ? { x: 0, y: 1, width: 10, height: 18 }
+                : { x: 0, y: 0, width: 5, height: 9 },
+            },
+            {
               identifier: hideSurfaceMarker ? undefined : 'catalog-surface',
               type: 'ScrollView',
               rect: omitScale
                 ? { x: 0, y: 2, width: 10, height: 16 }
                 : { x: 0, y: 1, width: 5, height: 8 },
               hiddenContentAbove: position > 0,
-              hiddenContentBelow: position < 20,
+              hiddenContentBelow: position < 20 || staleHiddenContentBelow,
             },
             {
               type: 'Window',
@@ -134,6 +153,7 @@ test('captures a full native surface without stopping at a premature virtualized
     assert.equal(result.output.height, 40);
     assert.equal(image.height, 40);
     assert.equal(bottomScrolls, 2);
+    assert.equal(bottomSwipeAttempts, 3);
     assert.equal(position, 0);
     assert.equal(artifacts.length, 1);
     assert.deepEqual([...image.data.subarray(0, 4)], [7, 7, 7, 255]);
@@ -144,6 +164,22 @@ test('captures a full native surface without stopping at a premature virtualized
       ).length,
       3,
     );
+
+    staleHiddenContentBelow = true;
+    const staleHintResult = (await transport.execute(
+      'ui.capture_surface',
+      {
+        path: 'screenshots/stale-hidden-content-hint.png',
+        surface_test_id: 'catalog-surface',
+        until_test_id: 'catalog-end',
+        max_scrolls: 4,
+      },
+      context,
+    )) as { output: { extent: string; viewports: number } };
+    assert.equal(staleHintResult.output.extent, 'full');
+    assert.equal(staleHintResult.output.viewports, 3);
+    assert.equal(artifacts.length, 2);
+    staleHiddenContentBelow = false;
 
     freezeCapture = true;
     hideEndMarker = true;
@@ -161,7 +197,7 @@ test('captures a full native surface without stopping at a premature virtualized
         ),
       /(?:stopped moving before reaching|did not reach the end)/u,
     );
-    assert.equal(artifacts.length, 1);
+    assert.equal(artifacts.length, 2);
 
     freezeCapture = false;
     hideEndMarker = false;
@@ -185,7 +221,7 @@ test('captures a full native surface without stopping at a premature virtualized
     )) as { output: { width: number; viewports: number } };
     assert.equal(androidResult.output.width, 10);
     assert.equal(androidResult.output.viewports, 3);
-    assert.equal(artifacts.length, 2);
+    assert.equal(artifacts.length, 3);
 
     hideSurfaceMarker = true;
     await assert.rejects(
@@ -202,7 +238,7 @@ test('captures a full native surface without stopping at a premature virtualized
         ),
       /could not resolve surface_test_id=catalog-surface/u,
     );
-    assert.equal(artifacts.length, 2);
+    assert.equal(artifacts.length, 3);
     hideSurfaceMarker = false;
 
     await assert.rejects(
@@ -219,7 +255,7 @@ test('captures a full native surface without stopping at a premature virtualized
         ),
       /requires screenshot logical dimensions or pixel density/u,
     );
-    assert.equal(artifacts.length, 2);
+    assert.equal(artifacts.length, 3);
 
     omitScale = false;
     failTopSwipe = true;
@@ -237,7 +273,7 @@ test('captures a full native surface without stopping at a premature virtualized
         ),
       /reset to top failed/u,
     );
-    assert.equal(artifacts.length, 2);
+    assert.equal(artifacts.length, 3);
   } finally {
     await rm(artifactsDir, { recursive: true, force: true });
   }

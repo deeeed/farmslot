@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Publish Recipe v1 visual-review hierarchy, navigation, and related-surface metadata in the hosted schema.
 - Publish the opt-in `ui.capture_surface` Action Manifest schema for full-page and full-scroll-surface evidence.
 - Document canonical adapter-first recipe library directories and temporary legacy suffix compatibility.
 - Publish typed continuous-gesture actions and manifest-owned adapter-specific parameter validation in the hosted Recipe v1 schemas and runner reference.

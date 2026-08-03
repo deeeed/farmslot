@@ -4,6 +4,7 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+- fix: make native full-surface capture reliably target explicit scroll views, tolerate dropped iOS swipes, and stop at the requested end marker.
 - feat: add opt-in `ui.capture_surface` support for native Expo recipes, including targetable scroll surfaces, bounded full-height stitching, virtualized-list end detection, and position restoration.
 
 ## 0.6.0 - 2026-08-02

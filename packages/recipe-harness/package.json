@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "farmslot-recipe": "./bin/farmslot-recipe.mjs"
+    "farmslot-recipe": "./bin/farmslot-recipe.mjs",
+    "farmslot-visual-review": "./bin/farmslot-visual-review.mjs"
   },
   "exports": {
     ".": {
@@ -92,11 +93,16 @@
       "types": "./dist/runtime/orchestrate-up.d.ts",
       "import": "./dist/runtime/orchestrate-up.js",
       "default": "./dist/runtime/orchestrate-up.js"
+    },
+    "./visual-review": {
+      "types": "./visual-review/index.d.mts",
+      "import": "./visual-review/index.mjs",
+      "default": "./visual-review/index.mjs"
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
-    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json test src/core/observations.test.ts",
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json test src/core/observations.test.ts && node --test test/visual-review-tool.test.mjs",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -141,6 +147,8 @@
     "README.md",
     "LICENSE",
     "bin/**/*.mjs",
+    "visual-review/**/*.mjs",
+    "visual-review/**/*.d.mts",
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",

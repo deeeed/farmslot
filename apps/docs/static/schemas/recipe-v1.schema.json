@@ -216,10 +216,52 @@
         "proves": {
           "$ref": "#/$defs/proofLinks",
           "description": "Proof target ids established by successful execution of this node."
+        },
+        "visual_review": {
+          "$ref": "#/$defs/visualReviewRelationship",
+          "description": "Optional visual-review hierarchy and related-surface links for ui.capture_surface and ui.screenshot nodes."
         }
       },
       "allOf": [{ "$ref": "#/$defs/transition" }],
       "additionalProperties": true
+    },
+    "visualReviewRelationship": {
+      "type": "object",
+      "properties": {
+        "parent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Parent visual capture node id within this recipe."
+        },
+        "navigation": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Source visual capture node id for this observed navigation path."
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["tab", "push", "in-place", "modal", "replace"],
+                "description": "How the destination surface is presented from the source."
+              }
+            },
+            "required": ["from", "kind"],
+            "additionalProperties": false
+          },
+          "description": "Observed navigation paths into this captured surface."
+        },
+        "related": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "description": "Related visual capture node ids within this recipe."
+        }
+      },
+      "additionalProperties": false
     },
     "callNode": {
       "type": "object",

@@ -15,7 +15,7 @@
     "prebuild": "bash -c 'source scripts/agentic/agentic.conf && exec expo prebuild'",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test:lib": "METRO_PORT=41234 node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src && bash scripts/agentic/port-config.test.sh && GATEWAY_PORT=41235 METRO_PORT=41234 bash scripts/agentic/identity.test.sh",
+    "test:lib": "METRO_PORT=41234 node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src && node --test scripts/screenshots/build-recipe-ux-catalog.test.mjs && bash scripts/agentic/port-config.test.sh && GATEWAY_PORT=41235 METRO_PORT=41234 bash scripts/agentic/identity.test.sh",
     "doctor:ios": "bash scripts/doctor/ios-build.sh --verbose",
     "ios:expo-go": "bash -c 'source scripts/agentic/agentic.conf && exec expo start --ios --go --port \"$METRO_PORT\" --localhost'",
     "ios:native": "bash scripts/agentic/run-ios.sh",

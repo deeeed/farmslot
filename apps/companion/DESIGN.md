@@ -3,9 +3,9 @@
 ## Source of truth
 
 - Status: Active evidence-first UX simplification
-- Last refreshed: 2026-06-19
+- Last refreshed: 2026-08-03
 - Primary product surfaces: Mobile Companion review flow, evidence viewer, PR/diff context, worker terminal control.
-- Evidence reviewed: `docs/PRD-mobile-companion-canonical.md`, `docs/ROADMAP-next.md`, current Expo Router routes under `src/app`, run/evidence/diff/terminal feature modules, and existing screenshot/recipe harnesses.
+- Evidence reviewed: `docs/PRD-mobile-companion-canonical.md`, `docs/ROADMAP-next.md`, `docs/adr/052-recipe-derived-visual-review-boards.md`, current Expo Router routes under `src/app`, run/evidence/diff/terminal feature modules, and the full-surface UX catalog recipes.
 
 ## Brand
 
@@ -40,6 +40,8 @@
 
 ## Information architecture
 
+- Review, Terminals, Advanced, and Settings are peer bottom-tab roots; screens opened from a tab are descendants of that tab rather than descendants of Review.
+
 - Primary navigation:
   - Review: default evidence/decision queue across active runs, PRs, family retros, and ready/review gates.
   - Terminals: all worker/tmux access, with recently-related workers first.
@@ -52,6 +54,7 @@
   - Terminal: linked worker/tmux control.
   - Files: full artifact list and raw supporting data.
 - Content hierarchy: signal summary → primary evidence → next action → supporting detail.
+- Offline visual-review catalogs: recipe capture nodes define stable surfaces; optional parent and related links provide breadcrumbs, subscreens, and cross-surface navigation without a separate screen registry.
 
 ## Design principles
 
@@ -59,7 +62,10 @@
 - Contextual steering: every run/PR/family screen should answer “which worker do I talk to?”
 - Progressive disclosure: raw fleet, filters, JSON, retry internals, and diagnostics are Advanced.
 - One review package model: run detail, PR evidence, family retros, and decision workspaces should feel like the same tabbed review object.
+- Honest review navigation: Evidence and Timeline move in place within one review workspace; Diff opens its dedicated comparison route. Controls must not imply unrelated top-level screens.
 - Preserve escape hatches: power-user surfaces remain reachable but should not dominate first launch.
+- Separate discovery from proof: use interactive device inspection to learn the app, then retain
+  only stable selectors, explicit expectations, and observed navigation relationships in recipes.
 
 ## Visual language
 
@@ -79,6 +85,7 @@
   - Evidence-first review card for queue rows.
   - Sticky Review Actions bar (`Open diff`, `Terminal`, `Approve/Follow up` where available).
   - Advanced drawer/list for parity surfaces.
+  - Recipe-derived visual review board with overall notes and normalized point/area annotations.
 - Variants and states:
   - No evidence, visual-only, diff-only, failed run, terminal unavailable, stale worker, offline gateway.
 - Token/component ownership: app-local theme tokens in `src/lib/theme.ts`; avoid a new design system layer.
@@ -118,7 +125,10 @@
 - Design-token constraints: use `src/lib/theme.ts`; do not introduce Tailwind or a separate UI kit.
 - Performance constraints: media thumbnails/video must not stall route transitions; lazy-load files tab.
 - Compatibility constraints: keep existing deep links and gateway protocol; no protocol additions for the first simplification slice unless evidence proves a gap.
-- Test/screenshot expectations: every feature slice should include before/after screenshot recipe artifacts for changed screens.
+- Capture ownership: Companion supplies stable test ids and task-local screen recipes; Agent Device
+  supplies native discovery/control; the shared Recipe harness supplies deterministic execution,
+  full-surface capture, and portable review artifacts.
+- Test/screenshot expectations: every feature slice should include before/after screenshot recipe artifacts for changed screens; review-board changes require browser validation of hierarchy and annotation export.
 
 ## Open questions
 

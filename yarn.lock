@@ -4602,6 +4602,7 @@ __metadata:
     ws: "npm:^8.18.0"
   bin:
     farmslot-recipe: ./bin/farmslot-recipe.mjs
+    farmslot-visual-review: ./bin/farmslot-visual-review.mjs
   languageName: unknown
   linkType: soft
 

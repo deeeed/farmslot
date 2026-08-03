@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - feat(git): worktree branch diffs flag each file's committed state via an extra merge-base..HEAD listing.
+- fix(decisions): project stored run decisions into the full websocket decision contract before broadcasting new or updated events, so Companion no longer reloads the entire decision inbox after every event and surfaces false request-timeout warnings.
 
 - feat(git): worktree-target branch diffs — `git.branchDiff` can list every change vs base including uncommitted and untracked files (deduped per file); `git.diff` gains the same target for per-file content.
 

@@ -1139,7 +1139,11 @@ export default function DecisionDetailScreen() {
         {recipeAvailabilityError && <Text style={styles.errorText}>{recipeAvailabilityError}</Text>}
 
         {activeTaskProgress ? (
-          <View style={styles.section} onLayout={rememberSection('progress')}>
+          <View
+            testID="companion-decision-section-timeline"
+            style={styles.section}
+            onLayout={rememberSection('progress')}
+          >
             <Text style={styles.sectionTitle}>Worker progress</Text>
             <TaskProgressPanel
               run={sourceRun}
@@ -1149,7 +1153,11 @@ export default function DecisionDetailScreen() {
             />
           </View>
         ) : fallbackTaskProgress ? (
-          <View style={styles.section} onLayout={rememberSection('progress')}>
+          <View
+            testID="companion-decision-section-timeline"
+            style={styles.section}
+            onLayout={rememberSection('progress')}
+          >
             <Text style={styles.sectionTitle}>Worker progress</Text>
             <TaskProgressFallbackPanel
               summary={fallbackTaskProgress}
@@ -1160,7 +1168,15 @@ export default function DecisionDetailScreen() {
         ) : null}
 
         {presentation.highlights.length > 0 && (
-          <View style={styles.section} onLayout={rememberSection('signals')}>
+          <View
+            testID={
+              !activeTaskProgress && !fallbackTaskProgress
+                ? 'companion-decision-section-timeline'
+                : undefined
+            }
+            style={styles.section}
+            onLayout={rememberSection('signals')}
+          >
             <Text style={styles.sectionTitle}>Gate signals</Text>
             <View style={styles.chipWrap}>
               {presentation.highlights.map((item) => {
@@ -1222,7 +1238,11 @@ export default function DecisionDetailScreen() {
         )}
 
         {presentation.artifactManifest.length > 0 && presentation.runId && (
-          <View style={styles.section} onLayout={rememberSection('evidence')}>
+          <View
+            testID="companion-decision-section-evidence"
+            style={styles.section}
+            onLayout={rememberSection('evidence')}
+          >
             <Text style={styles.sectionTitle}>Evidence</Text>
             <EvidenceReviewWorkspace
               runId={presentation.runId}
