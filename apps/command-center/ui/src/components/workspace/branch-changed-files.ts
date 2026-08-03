@@ -475,10 +475,10 @@ export class BranchChangedFiles extends LitElement {
     this._collapsed = next;
   }
 
-  private _selectFile(path: string, status: BranchDiffStatus) {
+  private _selectFile(path: string, status: BranchDiffStatus, oldPath?: string) {
     this.dispatchEvent(
       new CustomEvent('file-select', {
-        detail: { path, status },
+        detail: { path, status, oldPath },
         bubbles: true,
         composed: true,
       }),
@@ -576,7 +576,7 @@ export class BranchChangedFiles extends LitElement {
     return html`
       <div
         class="file-row ${this.selectedPath === file.path ? 'selected' : ''}"
-        @click=${() => this._selectFile(file.path, file.status)}
+        @click=${() => this._selectFile(file.path, file.status, file.oldPath)}
       >
         <span class="status-badge" style="background:${color}22; color:${color};"
           >${file.status}</span

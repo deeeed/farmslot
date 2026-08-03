@@ -496,7 +496,7 @@ export class GitChanges extends LitElement {
     this.selectedPath = file.path;
     this.dispatchEvent(
       new CustomEvent('committed-select', {
-        detail: { path: file.path, status: file.status },
+        detail: { path: file.path, status: file.status, oldPath: file.oldPath },
         bubbles: true,
         composed: true,
       }),
@@ -586,6 +586,10 @@ export class GitChanges extends LitElement {
 
   private _renderCommittedFileRow(f: BranchDiffFile, indent?: number) {
     const color = statusColor(f.status as GitChangeStatus);
+    // In worktree scope this group is the only list, so rows keep the
+    // working-tree actions for files with local modifications.
+    const wt =
+      this.committedScope === 'worktree' ? this.changes.find((c) => c.path === f.path) : undefined;
     return html`
       <div
         class="file-row ${this.selectedPath === f.path ? 'selected' : ''}"
@@ -602,6 +606,11 @@ export class GitChanges extends LitElement {
             : nothing}
         </span>
         <span class="file-stats">
+          ${wt
+            ? html`<span title="Has uncommitted ${wt.staged ? 'staged' : 'local'} changes"
+                >&#9679;</span
+              >`
+            : nothing}
           ${f.additions > 0
             ? html`<span style="color: ${statusColor('A')}">+${f.additions}</span>`
             : nothing}
@@ -609,6 +618,36 @@ export class GitChanges extends LitElement {
             ? html`<span style="color: ${statusColor('D')}">-${f.deletions}</span>`
             : nothing}
         </span>
+        ${wt
+          ? html`<span class="file-actions">
+              ${wt.staged
+                ? html`<button
+                    class="file-action-btn"
+                    title="Unstage"
+                    @click=${(e: Event) => this._unstage(wt.path, e)}
+                  >
+                    &minus;
+                  </button>`
+                : html`<button
+                      class="file-action-btn"
+                      title="Stage"
+                      @click=${(e: Event) => this._stage(wt.path, e)}
+                    >
+                      +
+                    </button>
+                    <button
+                      class="file-action-btn danger ${this._confirmDiscard === wt.path
+                        ? 'confirming'
+                        : ''}"
+                      title="${this._confirmDiscard === wt.path
+                        ? 'Click again to confirm'
+                        : 'Discard changes'}"
+                      @click=${(e: Event) => this._discard(wt.path, e)}
+                    >
+                      ${'↩'}
+                    </button>`}
+            </span>`
+          : nothing}
       </div>
       ${f.status === 'R' && f.oldPath ? html`<div class="old-path">&larr; ${f.oldPath}</div>` : ''}
     `;
@@ -750,30 +789,36 @@ export class GitChanges extends LitElement {
                   : 'No changes'}
               </div>
             </div>`
-          : html`
-              ${this._renderGroup(
-                'Staged Changes',
-                staged,
-                this._stagedOpen,
-                '_stagedOpen',
-                'staged',
-              )}
-              ${this._renderGroup(
-                'Changes',
-                unstaged,
-                this._changesOpen,
-                '_changesOpen',
-                'unstaged',
-              )}
-              ${this._renderGroup(
-                'Untracked',
-                untracked,
-                this._untrackedOpen,
-                '_untrackedOpen',
-                'untracked',
-              )}
-              ${this._renderCommittedGroup()}
-            `}
+          : this.committedScope === 'worktree' && committed > 0
+            ? // Worktree scope: the union group already lists every file
+              // (committed + uncommitted) — separate working-tree groups would
+              // render the same files twice. Rows carry stage/discard actions
+              // for files with local modifications.
+              this._renderCommittedGroup()
+            : html`
+                ${this._renderGroup(
+                  'Staged Changes',
+                  staged,
+                  this._stagedOpen,
+                  '_stagedOpen',
+                  'staged',
+                )}
+                ${this._renderGroup(
+                  'Changes',
+                  unstaged,
+                  this._changesOpen,
+                  '_changesOpen',
+                  'unstaged',
+                )}
+                ${this._renderGroup(
+                  'Untracked',
+                  untracked,
+                  this._untrackedOpen,
+                  '_untrackedOpen',
+                  'untracked',
+                )}
+                ${this._renderCommittedGroup()}
+              `}
       </div>
     `;
   }

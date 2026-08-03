@@ -158,7 +158,12 @@ export async function gitDiff(params: GitDiffParams): Promise<GitDiffResult> {
     args.push(params.target === 'worktree' ? mergeBase.trim() : `${mergeBase.trim()}..HEAD`);
   }
 
-  if (params.path) args.push('--', params.path);
+  if (params.path) {
+    args.push('--', params.path);
+    // A renamed file needs both sides in the limiter, or the diff degrades
+    // to a plain add of the new path.
+    if (params.oldPath && params.oldPath !== params.path) args.push(params.oldPath);
+  }
 
   const { stdout } = await gitExec(params.slotId, args, { maxBuffer: 10 * 1024 * 1024 });
   return { diff: stdout };
@@ -210,6 +215,14 @@ export async function gitUnstage(params: GitUnstageParams): Promise<OkResult> {
 export async function gitDiscard(params: GitDiscardParams): Promise<OkResult> {
   await gitExec(params.slotId, ['checkout', '--', params.path]);
   return { ok: true };
+}
+
+function numstatNewPath(raw: string): string {
+  const braced = raw.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
+  if (braced) return `${braced[1]}${braced[3]}${braced[4]}`;
+  const plain = raw.match(/^(.*) => (.*)$/);
+  if (plain) return plain[2];
+  return raw;
 }
 
 const VALID_BRANCH_DIFF_STATUSES: BranchDiffStatus[] = ['M', 'A', 'D', 'R'];
@@ -265,7 +278,9 @@ export async function gitBranchDiff(
       : Promise.resolve({ stdout: '', stderr: '' }),
   ]);
 
-  // Parse --numstat: "additions\tdeletions\tpath"
+  // Parse --numstat: "additions\tdeletions\tpath". Rename rows format the
+  // path as "old => new" or "prefix/{old => new}/suffix" — normalize to the
+  // new path so the --name-status lookup (which uses newPath) finds counts.
   const statMap = new Map<string, { additions: number; deletions: number }>();
   for (const line of numstatResult.stdout.split('\n')) {
     if (!line) continue;
@@ -273,8 +288,7 @@ export async function gitBranchDiff(
     if (parts.length >= 3) {
       const add = parseInt(parts[0], 10) || 0;
       const del = parseInt(parts[1], 10) || 0;
-      // For renames, numstat shows "old => new" or just the new path
-      const path = parts.slice(2).join('\t');
+      const path = numstatNewPath(parts.slice(2).join('\t'));
       statMap.set(path, { additions: add, deletions: del });
     }
   }

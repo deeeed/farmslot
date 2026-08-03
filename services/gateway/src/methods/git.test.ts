@@ -98,3 +98,17 @@ test('gitBranchDiff worktree target diffs against the working tree and appends u
   assert.equal(untracked?.status, 'A');
   assert.equal(result.totalAdditions, 12);
 });
+
+test('gitBranchDiff aligns rename numstat paths with name-status newPath', async () => {
+  const { deps } = branchDiffDeps({
+    nameStatus: 'R100\tsrc/old.ts\tsrc/renamed.ts\nR095\told-name.txt\tnew-name.txt\n',
+    numstat: '3\t1\tsrc/{old.ts => renamed.ts}\n5\t2\told-name.txt => new-name.txt\n',
+  });
+  const result = await gitBranchDiff({ slotId: 's', base: 'main' }, deps);
+  assert.deepEqual(result.files, [
+    { path: 'src/renamed.ts', status: 'R', oldPath: 'src/old.ts', additions: 3, deletions: 1 },
+    { path: 'new-name.txt', status: 'R', oldPath: 'old-name.txt', additions: 5, deletions: 2 },
+  ]);
+  assert.equal(result.totalAdditions, 8);
+  assert.equal(result.totalDeletions, 3);
+});

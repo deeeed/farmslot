@@ -791,8 +791,8 @@ export class SlotView extends SlotViewRecipePresenter {
     handleSlotViewBranchDiffBaseChange(this, base);
   }
 
-  async _handleBranchDiffSelect(path: string, status: string) {
-    return await handleSlotViewBranchDiffSelect(this, path, status);
+  async _handleBranchDiffSelect(path: string, status: string, oldPath?: string) {
+    return await handleSlotViewBranchDiffSelect(this, path, status, oldPath);
   }
 
   _openBranchDiffFile(path: string, cacheKey: string) {

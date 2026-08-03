@@ -11,6 +11,8 @@ export interface GitStatusParams {
 export interface GitDiffParams {
   slotId: string;
   path?: string;
+  /** Rename old side — included in the path limiter so renames diff correctly. */
+  oldPath?: string;
   base?: string; // three-dot diff against merge-base when set
   /**
    * With a base: 'head' (default) diffs merge-base..HEAD (committed only);
@@ -131,6 +133,7 @@ export interface GitBranchDiffResult {
   base: string;
   head: string;
   files: import('../contracts/index.js').GitBranchDiffFile[];
+  /** Line totals exclude untracked files (worktree target lists them with 0/0). */
   totalAdditions: number;
   totalDeletions: number;
 }

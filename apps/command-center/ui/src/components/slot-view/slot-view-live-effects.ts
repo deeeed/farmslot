@@ -13,7 +13,7 @@ import { gateway } from '../../gateway-client.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
-import { branchDiffPollAction } from './slot-view-branch-model.js';
+import { branchDiffPollAction, gitChangesFingerprint } from './slot-view-branch-model.js';
 import {
   isDirectoryReadErrorMessage,
   isImageFile,
@@ -26,6 +26,8 @@ type LoadContentOptions = {
   diffBase?: string;
   /** With diffBase: 'worktree' diffs merge-base→working tree (default committed only). */
   diffTarget?: 'head' | 'worktree';
+  /** Rename old side — keeps renamed files diffing as renames, not adds. */
+  requestOldPath?: string;
   errorFallback?: string | null;
   requestPath?: string;
   skipMedia?: boolean;
@@ -116,6 +118,9 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
     if (!isCurrentLiveResult(view, epoch)) return;
     const prevBranch = view._liveGitData?.branch;
     const prevAhead = view._liveGitData?.ahead;
+    const prevChangesKey = view._liveGitData
+      ? gitChangesFingerprint(view._liveGitData.changes)
+      : undefined;
     view._liveGitData = {
       branch: result.branch,
       ahead: result.ahead,
@@ -127,6 +132,8 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
       nextBranch: result.branch,
       prevAhead,
       nextAhead: result.ahead,
+      prevChangesKey,
+      nextChangesKey: gitChangesFingerprint(result.changes),
       lastLoadFailed: view._branchDiffError !== null,
       loading: view._branchDiffLoading,
     });
@@ -231,6 +238,7 @@ export async function loadSlotViewDiffContent(
       path: options.requestPath ?? path,
       ...(options.diffBase ? { base: options.diffBase } : {}),
       ...(options.diffBase && options.diffTarget ? { target: options.diffTarget } : {}),
+      ...(options.requestOldPath ? { oldPath: options.requestOldPath } : {}),
     });
     if (!isCurrentLiveResult(view, epoch)) return false;
     const next = new Map(view._liveDiffContents);

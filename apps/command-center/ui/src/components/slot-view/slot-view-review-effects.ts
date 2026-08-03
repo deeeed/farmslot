@@ -162,7 +162,12 @@ export function handleSlotViewBranchDiffBaseChange(view: SlotView, base: string)
   view._loadBranchDiff();
 }
 
-export async function handleSlotViewBranchDiffSelect(view: SlotView, path: string, status: string) {
+export async function handleSlotViewBranchDiffSelect(
+  view: SlotView,
+  path: string,
+  status: string,
+  oldPath?: string,
+) {
   view._cancelFileRestoreRetry();
   const useCodeView = status === 'A';
 
@@ -182,6 +187,7 @@ export async function handleSlotViewBranchDiffSelect(view: SlotView, path: strin
     diffTarget: 'worktree',
     errorFallback: 'Failed to load diff',
     requestPath: path,
+    requestOldPath: oldPath,
   });
   if (!loaded) return;
   view._openBranchDiffFile(path, cacheKey);

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   branchDiffPollAction,
+  gitChangesFingerprint,
   isBranchDiffTicketCurrent,
   slotViewBranchList,
 } from './slot-view-branch-model.js';
@@ -30,9 +31,35 @@ const POLL_BASE = {
   nextBranch: 'feat/x',
   prevAhead: 2 as number | undefined,
   nextAhead: 2,
+  prevChangesKey: 'a.ts:M:0' as string | undefined,
+  nextChangesKey: 'a.ts:M:0',
   lastLoadFailed: false,
   loading: false,
 };
+
+test('branchDiffPollAction reloads and clears the cache when the working tree changes', () => {
+  assert.equal(
+    branchDiffPollAction({ ...POLL_BASE, nextChangesKey: 'a.ts:M:0|b.ts:A:0' }),
+    'reload-and-clear-cache',
+  );
+});
+
+test('gitChangesFingerprint is order-independent and state-sensitive', () => {
+  assert.equal(
+    gitChangesFingerprint([
+      { path: 'b.ts', status: 'A', staged: false },
+      { path: 'a.ts', status: 'M', staged: true },
+    ]),
+    gitChangesFingerprint([
+      { path: 'a.ts', status: 'M', staged: true },
+      { path: 'b.ts', status: 'A', staged: false },
+    ]),
+  );
+  assert.notEqual(
+    gitChangesFingerprint([{ path: 'a.ts', status: 'M', staged: true }]),
+    gitChangesFingerprint([{ path: 'a.ts', status: 'M', staged: false }]),
+  );
+});
 
 test('branchDiffPollAction reloads and clears the diff cache on branch change', () => {
   assert.equal(
@@ -62,7 +89,12 @@ test('branchDiffPollAction stays idle when nothing changed and last load succeed
 
 test('branchDiffPollAction does not treat the first poll as git movement', () => {
   assert.equal(
-    branchDiffPollAction({ ...POLL_BASE, prevBranch: undefined, prevAhead: undefined }),
+    branchDiffPollAction({
+      ...POLL_BASE,
+      prevBranch: undefined,
+      prevAhead: undefined,
+      prevChangesKey: undefined,
+    }),
     'none',
   );
 });
