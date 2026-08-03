@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -811,4 +811,27 @@ test('getAllRunsWithArchived dedupes a run present in both the live map and the 
     all.some((candidate) => candidate.id === throwaway.id),
     'genuinely archived runs are still returned',
   );
+});
+
+test('a failed archive write keeps the run in memory instead of evicting it', async (t) => {
+  // Claude round-10: the run was deleted from the live map before the archive copy
+  // was durable, so a failed write dropped it from memory until the next restart
+  // re-read it from the still-present source file.
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-archive-durability`,
+  });
+  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+
+  const archiveDir = path.join(os.tmpdir(), `farmslot-test-runs-${process.pid}`, 'archive');
+  await mkdir(archiveDir, { recursive: true });
+  await chmod(archiveDir, 0o500);
+  t.after(async () => {
+    await chmod(archiveDir, 0o700);
+    await cleanupRun(run.id);
+  });
+
+  await assert.rejects(() => archiveRun(run.id), 'the archive write failure must surface');
+  assert.ok(getRun(run.id), 'the run stays live when its archive copy was never written');
 });

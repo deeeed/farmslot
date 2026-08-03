@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(runs): `archiveRun` evicts from the live map only after the archive copy is durable; a failed write previously dropped the run from memory until the next restart re-read it from the still-present source file.
 - feat(git): worktree branch diffs flag each file's committed state via an extra merge-base..HEAD listing.
 - fix(decisions): project stored run decisions into the full websocket decision contract before broadcasting new or updated events, so Companion no longer reloads the entire decision inbox after every event and surfaces false request-timeout warnings.
 

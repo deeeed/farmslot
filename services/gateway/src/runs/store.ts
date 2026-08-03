@@ -1071,7 +1071,6 @@ export async function archiveRun(id: string): Promise<boolean> {
       return false;
     }
   }
-  runs.delete(id);
   await mkdir(ARCHIVE_DIR, { recursive: true });
   const src = path.join(RUNS_DIR, `${id}.json`);
   const dst = path.join(ARCHIVE_DIR, `${id}.json`);
@@ -1080,6 +1079,11 @@ export async function archiveRun(id: string): Promise<boolean> {
   // racing on src; renaming src could move that stale pre-archive JSON and lose
   // archivedAt. Direct dst write makes the archived record authoritative.
   await writeFile(dst, JSON.stringify(archivedRun, null, 2), 'utf-8');
+  // Evict only once the archive copy is durable. A failed write previously left the
+  // run gone from memory until the next restart re-read it from `src`. The window
+  // where the id is both live and archived is harmless: `getAllRunsWithArchived`
+  // dedupes with the live record winning.
+  runs.delete(id);
   invalidateArchivedRunsCache();
   try {
     await unlink(src);
