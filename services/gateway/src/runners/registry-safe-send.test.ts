@@ -297,6 +297,46 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
   acceptDigestHandoff = false;
 });
 
+test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', async () => {
+  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  paneText = '❯\nctx:12%\n';
+  paneTextByCapture = null;
+  paneTextAfterLiteralSend = `${reviewMessage}\n❯\nfs · Opus 5\n`;
+  paneTextAfterBareSend = paneTextAfterLiteralSend;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    exactPromptMatch: false,
+  };
+
+  await assert.rejects(
+    sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'SELF-REVIEW.md', '[test]', {
+      readyTimeoutMs: 100,
+      stabilityPolls: 1,
+      pollIntervalMs: 0,
+      verifyWaitMs: 0,
+      maxAttempts: 2,
+      requirePromptDigest: true,
+    }),
+    /Prompt delivery failed/,
+  );
+
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send').length,
+    2,
+    'the retry should submit the existing composer, but pane cosmetics must not prove acceptance',
+  );
+  paneTextAfterLiteralSend = null;
+  paneTextAfterBareSend = null;
+  paneClearsAfterSubmit = true;
+});
+
 test('sendRunnerPostLaunchPrompt honors an explicit null launch-ack baseline', async () => {
   launchAckSnapshotReads = 0;
   promptAcceptedReading = {

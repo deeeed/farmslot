@@ -1539,11 +1539,16 @@ async function runnerShowsPromptDeliveryAccepted(
     promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<boolean> {
-  if (
-    (await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, opts)).accepted
-  ) {
+  const handoff = await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, opts);
+  if (handoff.accepted) {
     return true;
   }
+  // Digest-required callers (review/fix delivery) explicitly opted into the
+  // runner capability contract. Cosmetic pane output is not acceptance: an
+  // unsubmitted Claude composer can contain both the full prompt and a later
+  // `❯` status line. Keep pane fallback only for callers that did not request
+  // exact runner acknowledgement.
+  if (opts.requirePromptDigest) return false;
   return runnerPaneShowsPromptAccepted(postPane, previousPane, message, marker, runner);
 }
 
