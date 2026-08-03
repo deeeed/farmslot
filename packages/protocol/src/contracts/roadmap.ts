@@ -244,15 +244,8 @@ export interface PlanningRelation {
   reason: string;
 }
 
-/** Hard cap on rendered relations. Briefs are context, not a dependency dump. */
+/** Cap on relations *rendered* into a brief. Briefs are context, not a dependency dump. */
 export const PLANNING_CONTEXT_MAX_RELATIONS = 24;
-
-export interface PlanningContextTruncation {
-  /** Relations dropped to stay within {@link PLANNING_CONTEXT_MAX_RELATIONS}. */
-  omitted: number;
-  /** Total before truncation, so a reader knows the shape of what was cut. */
-  total: number;
-}
 
 export interface PlanningContextProjection {
   backlogItemId?: string;
@@ -264,9 +257,12 @@ export interface PlanningContextProjection {
   workGraphId?: string;
   workNodeId?: string;
   delivery?: RoadmapDeliverySummary;
+  /**
+   * Every relation, upstream-first. Renderers cap at
+   * {@link PLANNING_CONTEXT_MAX_RELATIONS}; the projection stays complete so the
+   * frozen artifact can supply the full set and the hash covers every relation.
+   */
   relations: PlanningRelation[];
-  /** Present only when relations were dropped; absent means the list is complete. */
-  truncated?: PlanningContextTruncation;
   generatedAt: string;
   /**
    * Content hash over the projection excluding `generatedAt`. Worker and reviewer

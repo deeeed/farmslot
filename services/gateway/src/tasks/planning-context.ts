@@ -9,6 +9,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  PLANNING_CONTEXT_MAX_RELATIONS,
   type PlanningContextProjection,
   type PlanningRelation,
   type Run,
@@ -87,23 +88,28 @@ export function buildPlanningContextSection(
       : '- Roadmap delivery: not applicable',
   ];
 
-  const body = projection.relations.length
+  // Truncation is a rendering concern: the brief stays bounded while the frozen
+  // artifact keeps every relation, so "read the full set from the snapshot" is true.
+  const rendered = projection.relations.slice(0, PLANNING_CONTEXT_MAX_RELATIONS);
+  const omitted = projection.relations.length - rendered.length;
+  const body = rendered.length
     ? [
-        ...relationGroup(projection.relations, 'upstream', 'Upstream'),
+        ...relationGroup(rendered, 'upstream', 'Upstream'),
         '',
-        ...relationGroup(projection.relations, 'downstream', 'Downstream'),
+        ...relationGroup(rendered, 'downstream', 'Downstream'),
         '',
-        ...relationGroup(projection.relations, 'sibling', 'Siblings'),
+        ...relationGroup(rendered, 'sibling', 'Siblings'),
       ]
     : ['### Related work', '- None: this backlog item has no roadmap or WorkGraph relations.'];
 
-  const truncation = projection.truncated
-    ? [
-        '',
-        `_${projection.truncated.omitted} of ${projection.truncated.total} relations omitted to keep this brief bounded._`,
-        `_Read the full set from the snapshot artifact above._`,
-      ]
-    : [];
+  const truncation =
+    omitted > 0
+      ? [
+          '',
+          `_${omitted} of ${projection.relations.length} relations omitted here to keep this brief bounded._`,
+          `_The snapshot artifact above holds all ${projection.relations.length}._`,
+        ]
+      : [];
 
   return [
     '',

@@ -133,7 +133,7 @@ export async function buildIndependentReviewPlanningBrief(
 }
 
 export async function readReviewArtifacts(runId: string): Promise<ReviewArtifacts> {
-  const run = getRun(runId)!;
+  const run = getRun(runId);
   const result: ReviewArtifacts = {
     recommendation: 'COMMENT',
     summary: '',
@@ -143,7 +143,7 @@ export async function readReviewArtifacts(runId: string): Promise<ReviewArtifact
     lineComments: [],
   };
 
-  if (!run.taskFile) return result;
+  if (!run?.taskFile) return result;
   const taskDir = path.dirname(run.taskFile);
   const reviewPath = path.join(taskDir, 'artifacts', 'review.md');
   const lcPath = path.join(taskDir, 'artifacts', 'line-comments.json');

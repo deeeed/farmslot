@@ -2271,6 +2271,10 @@ export async function reconcileBacklogRun(
  * failed settle from a successful one would tick the scheduler against stale
  * backlog state while reporting `ok`. Fire-and-forget callers must attach their own
  * `.catch`.
+ *
+ * ⚠ Do not add a trailing `.catch` here. Swallowing the rejection would make
+ * ADR-052's `backlog-settle` effect report success on failure, and the work-graph
+ * tick would then schedule against a backlog that never settled.
  */
 export function markBacklogRunObserved(run: Run): Promise<void> {
   return withBacklogMutation(async () => {

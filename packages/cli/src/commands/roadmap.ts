@@ -81,9 +81,19 @@ export async function resolveRoadmapGetResult(
   const exact = items.find((item) => item.id === needle);
   if (exact) return { item: exact };
   const prefixed = items.filter((item) => item.id.startsWith(needle));
-  // The list fallback only runs when `roadmap.get` could not answer, so there is
-  // no delivery projection to carry here; `roadmap get` prints the item alone.
-  if (prefixed.length === 1) return { item: prefixed[0] };
+  // Re-fetch by the resolved id. The exact `roadmap.get` above failed only because
+  // a prefix is not an id — the gateway can answer perfectly well once we know the
+  // full one. Returning the bare list row here made `roadmap get <prefix>` silently
+  // omit delivery and planning context that the same item shows by full id.
+  if (prefixed.length === 1) {
+    try {
+      return await ctx.client.call<RoadmapGetResult>('roadmap.get', { itemId: prefixed[0].id });
+    } catch {
+      // A gateway that cannot answer by full id either has nothing more to give;
+      // the list row is still a correct, if thinner, answer.
+      return { item: prefixed[0] };
+    }
+  }
   if (prefixed.length > 1) {
     throw Object.assign(
       new Error(

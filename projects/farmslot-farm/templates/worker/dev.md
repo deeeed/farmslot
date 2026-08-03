@@ -61,7 +61,7 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
 ### Phase 1: Setup
 
 - [ ] **1. Read requirements** — map acceptance criteria to proof mode (`state`, `visual`, `mixed`) in this TASK file. Record **which surfaces the ticket actually needs** (choose only what ACs require; default is none extra):
-  - `gateway-cli` — backend/gateway/scripts/tests only
+  - `gateway-cli` — backend/gateway only. **Still needs a recipe** via CLI/RPC/logs (Phase 2).
   - `command-center` — Command Center browser UI (CDP / Vite)
   - `companion-device` — Companion app UX on the slot sim/device (install + launch; Metro alone is not enough)
   Recipe proof is the default for every mode; surface list decides what (if anything) to boot in step 4 and which evidence Phase 5 needs.
@@ -81,7 +81,15 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
 
 ### Phase 2: Baseline recipe (all executable ACs)
 
-Skip Phase 2 only when no declared project recipe action can exercise the changed behavior. State the exact limitation and replacement deterministic validation in this TASK file; backend-only is not by itself a skip reason.
+**A recipe proves a protocol action through a real client endpoint** — Command Center (`ui.*`), CLI
+(`command` → `farmslot …`), gateway RPC (`command` → `cdp.mjs gateway …`), logs (`watch_logs`), or
+Companion. Not UI-only. Assert at the level that proves the claim: screenshots for rendering, log/RPC
+reads for state and cross-store effects. Never proof: "backend-only"; mocked unit tests; a `#dev/*`
+fixture when the claim is that the gateway *derives* the value; asserting a call returned when the
+claim is its side effect. Endpoint/assertion table: `{{recipe_quality_path}}`.
+
+Skip Phase 2 only when no manifest action reaches the change through **any** endpoint above; state
+the limitation and replacement validation here.
 
 - [ ] **6. Write `{{TASK_DIR}}/artifacts/recipe.json`** — cover all acceptance criteria using manifest actions from `{{recipe_manifest_path}}`. The document must include the required `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, `description`, and `workflow`. For modifications, the recipe should fail on current code before your fix.
 - [ ] **7. Baseline recipe run** — must exit non-zero on unfixed code (or document `Baseline: N/A — purely additive` with rationale):

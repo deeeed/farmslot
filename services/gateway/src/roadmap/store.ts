@@ -70,7 +70,7 @@ import {
   tmuxSessionExists,
 } from '../refinement/session.js';
 import { runnerDefaultModel } from '../runners/registry.js';
-import { getAllRuns } from '../runs/store.js';
+import { getAllRuns, getArchivedRuns } from '../runs/store.js';
 import { listWorkGraphs } from '../work-graph/store.js';
 
 import {
@@ -505,11 +505,16 @@ function itemMatchesSearch(item: RoadmapItem, search: string | undefined): boole
  * from a caller-supplied page. `listBacklogItems({ includeArchived: true })` is
  * required so an archived-but-shipped link stays visible as provenance.
  */
-function deliveryProjectionFor(
+async function deliveryProjectionFor(
   items: readonly RoadmapItem[],
   backlogItems: readonly BacklogItem[] = listBacklogItems({ includeArchived: true }).items,
-): RoadmapDeliveryProjection[] {
-  const runsByBacklogItemId = buildRunIndexByBacklogItem(getAllRuns());
+): Promise<RoadmapDeliveryProjection[]> {
+  // Archived runs leave the live map but remain durable evidence. Omitting them
+  // would drop exactly the historical lineage this projection promises.
+  const runsByBacklogItemId = buildRunIndexByBacklogItem([
+    ...getAllRuns(),
+    ...(await getArchivedRuns()),
+  ]);
   const backlogByRoadmapItemId = buildBacklogIndexByRoadmapItem(backlogItems);
   const backlogById = new Map(backlogItems.map((entry) => [entry.id, entry]));
   const generatedAt = new Date().toISOString();
@@ -578,7 +583,10 @@ export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<
     }
     return true;
   });
-  return { items, delivery: deliveryProjectionFor(items).map(summarizeRoadmapDelivery) };
+  return {
+    items,
+    delivery: (await deliveryProjectionFor(items)).map(summarizeRoadmapDelivery),
+  };
 }
 
 export async function getRoadmapItem(params: RoadmapGetParams): Promise<RoadmapGetResult> {
@@ -588,7 +596,7 @@ export async function getRoadmapItem(params: RoadmapGetParams): Promise<RoadmapG
   // One backlog snapshot feeds both projections: they must agree, and a second
   // scan could observe a concurrent backlog mutation between them.
   const backlogItems = listBacklogItems({ includeArchived: true }).items;
-  const delivery = deliveryProjectionFor([item], backlogItems)[0];
+  const delivery = (await deliveryProjectionFor([item], backlogItems))[0];
   return { item, delivery, planningContext: planningContextFor(item, delivery, backlogItems) };
 }
 

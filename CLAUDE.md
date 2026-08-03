@@ -25,6 +25,16 @@ farmslot/
 
 **STOP and ask before building anything not already in a PRD or roadmap.** Canonical roadmaps: [docs/ROADMAP.md](docs/ROADMAP.md) (whole-product) and [docs/ROADMAP-next.md](docs/ROADMAP-next.md) (near-term). If a task doesn't map to an existing milestone: (1) do NOT start coding, (2) capture it and propose where it belongs (new PRD entry, sub-item of existing milestone, or deferred), (3) get explicit approval before writing code. Bug fixes for code you just wrote are fine. New features, components, or protocol changes are not — unless already on a canonical roadmap.
 
+### Recipes Prove Protocol Actions, Not Just UI — HARD RULE
+
+**A recipe proves a protocol action through a real client endpoint** — Command Center, CLI, gateway
+RPC (`cdp.mjs gateway …`), runtime logs (`watch_logs`), or Companion. Not UI-only. Assert at the level
+that proves the claim: screenshots for rendering, log/RPC reads for state and cross-store effects.
+
+Never proof: "backend-only, so no recipe"; mocked unit tests; a `#dev/*` fixture when the claim is
+gateway _derivation_; asserting a call returned when the claim is its side effect. Details:
+`projects/<project>/fixtures/runtime/recipe-quality.md`.
+
 ### Validate UI Via CDP — HARD RULE
 
 **Every UI change must be validated in the browser via CDP, not just TypeScript compilation.** Use the committed helpers — do NOT write throwaway `cdp-*.mjs` scripts:

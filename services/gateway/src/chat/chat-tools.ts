@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 
-import type { FlowType } from '@farmslot/protocol';
+import { type FlowType, parseGitHubRef } from '@farmslot/protocol';
 
 import { farmslotRoot, getCachedFleet } from '../fleet/state.js';
 import { decisionList } from '../methods/decisions.js';
@@ -202,25 +202,18 @@ export async function executeTool(
       }
       case 'check_pr': {
         const prRef = String(args.pr_ref ?? '');
-        let owner = 'example-org',
-          repo = 'example-mobile',
-          number: string;
-        if (prRef.includes('#')) {
-          const hashIdx = prRef.lastIndexOf('#');
-          const repoFull = prRef.slice(0, hashIdx).split('/');
-          owner = repoFull[0];
-          repo = repoFull[1];
-          number = prRef.slice(hashIdx + 1);
-        } else {
-          number = prRef;
-        }
+        // Shared parser rather than a local lastIndexOf split, which mis-handled
+        // refs like `foo/bar/baz#123` and silently produced an undefined repo.
+        const parsedRef = parseGitHubRef(prRef);
+        const repoSlug = parsedRef?.repo ?? 'example-org/example-mobile';
+        const number = parsedRef ? String(parsedRef.number) : prRef;
         const { ghRequest } = await import('../integrations/github-client.js');
         const pr = await ghRequest([
           'pr',
           'view',
           String(number),
           '--repo',
-          `${owner}/${repo}`,
+          repoSlug,
           '--json',
           'state,title,url,mergeable,headRefName,reviews',
         ]);

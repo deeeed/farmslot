@@ -13,7 +13,6 @@ import {
   githubPullUrl,
   parseGitHubPullUrl,
   parseGitHubRef,
-  PLANNING_CONTEXT_MAX_RELATIONS,
   type PlanningContextProjection,
   type PlanningRelation,
   type PlanningRelationLabel,
@@ -335,18 +334,14 @@ export function buildRoadmapDeliveryProjection(
     // Across backlog items, identical refs merge but bare numbers never absorb a
     // qualified ref from a different item — that would forge provenance.
     prs: dedupePrRefs(
-      backlogRefs.flatMap(
-        (entry) =>
-          entry.prs.flatMap(
-            (pr) =>
-              pr.sources.map((source) => ({
-                ref: pr.ref,
-                ...(pr.url ? { url: pr.url } : {}),
-                source,
-              })),
-            { foldBareNumbers: false },
-          ),
-        { foldBareNumbers: false },
+      backlogRefs.flatMap((entry) =>
+        entry.prs.flatMap((pr) =>
+          pr.sources.map((source) => ({
+            ref: pr.ref,
+            ...(pr.url ? { url: pr.url } : {}),
+            source,
+          })),
+        ),
       ),
       { foldBareNumbers: false },
     ),
@@ -552,9 +547,11 @@ export function buildPlanningContextProjection(
     }
   }
 
-  // Bound the brief. Upstream first (prerequisites gate the work), then downstream
-  // (what this unblocks), then siblings — so truncation drops the least
-  // actionable relations rather than an arbitrary tail.
+  // Order upstream-first (prerequisites gate the work), then downstream, then
+  // siblings, so a renderer that must truncate drops the least actionable tail.
+  // The projection itself keeps every relation: it is the frozen artifact a
+  // reviewer diffs, and a hash over a truncated set could not detect a changed
+  // prerequisite that fell outside the cap.
   const priority: Record<PlanningRelation['direction'], number> = {
     upstream: 0,
     downstream: 1,
@@ -565,8 +562,6 @@ export function buildPlanningContextProjection(
       priority[a.direction] - priority[b.direction] ||
       Number(b.schedulerAuthority) - Number(a.schedulerAuthority),
   );
-  const kept = ordered.slice(0, PLANNING_CONTEXT_MAX_RELATIONS);
-  const omitted = ordered.length - kept.length;
 
   const projection: Omit<PlanningContextProjection, 'snapshotHash'> = {
     ...(backlogItem ? { backlogItemId: backlogItem.id } : {}),
@@ -580,8 +575,7 @@ export function buildPlanningContextProjection(
       : {}),
     ...(node ? { workGraphId: node.graphId, workNodeId: node.id } : {}),
     ...(delivery ? { delivery } : {}),
-    relations: kept,
-    ...(omitted > 0 ? { truncated: { omitted, total: ordered.length } } : {}),
+    relations: ordered,
     generatedAt,
   };
   return { ...projection, snapshotHash: planningContextSnapshotHash(projection) };

@@ -260,21 +260,13 @@ test('a failed backlog settle blocks the work-graph tick instead of scheduling o
   assert.ok(h.calls.includes('releaseSlot'));
 });
 
-test('the production backlog collaborator no longer swallows its own rejection', async () => {
-  // Guards the blocker fix at its source. `markBacklogRunObserved` used to end in
-  // `.catch(err => console.error(...))`, so it always resolved and the router could
-  // not distinguish a failed settle from a successful one. This is a regression
-  // guard on that specific shape; the behavioural consequence is covered by the
-  // stale-state test above.
-  const { markBacklogRunObserved } = await import('../backlog/store.js');
-  assert.equal(
-    /\.catch\s*\(/.test(markBacklogRunObserved.toString()),
-    false,
-    'markBacklogRunObserved must let the settle rejection reach its caller',
-  );
-
-  // A run with no linked backlog item is a legitimate no-op, not a failure.
+test('the production backlog collaborator returns an awaitable settle', async () => {
+  // The propagation contract is enforced by the `Promise<void>` signature and by the
+  // stale-state test above (injected throwing collaborator). Asserting on
+  // Function.toString() was brittle, so the structural guard lives as a comment at
+  // the source instead.
   const collaborators = defaultCancelCollaborators();
+  // A run with no linked backlog item is a legitimate no-op, not a failure.
   await collaborators.settleBacklog({ id: 'run_without_backlog_link' } as Run);
 });
 

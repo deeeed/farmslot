@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- fix(roadmap): `roadmap get <unique-prefix>` re-fetches by resolved id, so a prefix lookup carries the same delivery lineage and planning context as the full id instead of silently returning the bare list row.
 - feat(roadmap): `roadmap get` prints implementation lineage (backlog refs, run families, PRs, findings, related planning context) and passes the shared projection through unchanged in machine mode.
 - feat(backlog): `farmslot backlog refine` and `backlog refinement-session` commands for prompt-only, launch, and existing-session inspection.
 

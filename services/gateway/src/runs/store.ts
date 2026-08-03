@@ -962,6 +962,48 @@ export async function deleteRun(id: string): Promise<boolean> {
 
 const ARCHIVE_DIR = path.join(RUNS_DIR, 'archive');
 
+/**
+ * Archived runs leave the live map but stay durable on disk, so any projection
+ * that claims historical lineage must read them too — archiving is exactly the
+ * "outside the current page" case. Cached because roadmap delivery reads this per
+ * request; `archiveRun`/`deleteRun` invalidate it.
+ */
+let archivedRunsCache: Run[] | null = null;
+
+function invalidateArchivedRunsCache(): void {
+  archivedRunsCache = null;
+}
+
+export async function getArchivedRuns(): Promise<Run[]> {
+  if (archivedRunsCache) return archivedRunsCache;
+  let files: string[];
+  try {
+    files = await readdir(ARCHIVE_DIR);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      archivedRunsCache = [];
+      return archivedRunsCache;
+    }
+    throw err;
+  }
+  const loaded: Run[] = [];
+  for (const file of files) {
+    if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
+    const filePath = path.join(ARCHIVE_DIR, file);
+    try {
+      loaded.push(JSON.parse(await readFile(filePath, 'utf-8')) as Run);
+    } catch (err) {
+      // One unreadable archive record must not blind every lineage read. Skipping
+      // it is explicit recovery: the file stays on disk for inspection.
+      console.warn(
+        `[run-store] skipping unreadable archived run ${file}: ${(err as Error).message.slice(0, 200)}`,
+      );
+    }
+  }
+  archivedRunsCache = loaded;
+  return loaded;
+}
+
 export async function archiveRun(id: string): Promise<boolean> {
   const run = runs.get(id);
   if (!run) return false;
@@ -993,6 +1035,7 @@ export async function archiveRun(id: string): Promise<boolean> {
   // racing on src; renaming src could move that stale pre-archive JSON and lose
   // archivedAt. Direct dst write makes the archived record authoritative.
   await writeFile(dst, JSON.stringify(archivedRun, null, 2), 'utf-8');
+  invalidateArchivedRunsCache();
   try {
     await unlink(src);
   } catch (err) {

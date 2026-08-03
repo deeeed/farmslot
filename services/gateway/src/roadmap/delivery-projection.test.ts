@@ -540,7 +540,7 @@ test('a repo-less PR number only folds when exactly one qualified ref matches', 
   );
 });
 
-test('a bare PR number from one backlog item never absorbs another itemevidence', () => {
+test('a bare PR number from one backlog item never absorbs evidence from another item', () => {
   // Codex round-3 blocker: aggregate dedup folded backlog A's `#421` into backlog
   // B's `acme/repo#421`, attributing A's delivery to B's repository and
   // undercounting multi-PR delivery.
@@ -571,10 +571,10 @@ test('a bare PR number from one backlog item never absorbs another itemevidence'
   );
 });
 
-test('planning context is actually bounded and reports what it dropped', () => {
-  // Codex round-3 blocker: the section was described as bounded but collected every
-  // sibling and incident edge, and the <4000 char test used three relations, so it
-  // could never have caught an unbounded brief.
+test('planning context keeps every relation so the frozen artifact is complete', () => {
+  // Codex round-4 P2: the brief told the worker to read the full set from the
+  // snapshot, but the projection only stored the rendered subset — so omitted
+  // prerequisites were unrecoverable and could not affect snapshotHash.
   const target = backlogItem('bk_target', { roadmapItemId: 'ri_big' });
   const siblings = Array.from({ length: 60 }, (_, index) =>
     backlogItem(`bk_sibling_${index}`, {
@@ -591,10 +591,19 @@ test('planning context is actually bounded and reports what it dropped', () => {
     generatedAt: NOW,
   });
 
-  assert.equal(context.relations.length, PLANNING_CONTEXT_MAX_RELATIONS);
-  assert.ok(context.truncated, 'truncation must be reported, not silent');
-  assert.equal(context.truncated.total, 61); // 60 siblings + the roadmap parent
-  assert.equal(context.truncated.omitted, 61 - PLANNING_CONTEXT_MAX_RELATIONS);
-  // The roadmap parent is upstream, so it survives truncation ahead of siblings.
+  assert.equal(context.relations.length, 61, 'projection keeps every relation');
+  assert.ok(context.relations.length > PLANNING_CONTEXT_MAX_RELATIONS, 'fixture exceeds the cap');
+  // Upstream-first ordering means truncation drops the least actionable tail.
   assert.equal(context.relations[0].label, 'parent-roadmap');
+  assert.equal(context.relations[0].direction, 'upstream');
+
+  // A relation beyond the render cap still moves the hash — otherwise a changed
+  // prerequisite outside the cap would be invisible to a reviewer.
+  const extended = buildPlanningContextProjection({
+    backlogItem: target,
+    roadmapItem: roadmapItem({ id: 'ri_big' }),
+    backlogItems: [target, ...siblings, backlogItem('bk_extra', { roadmapItemId: 'ri_big' })],
+    generatedAt: NOW,
+  });
+  assert.notEqual(context.snapshotHash, extended.snapshotHash);
 });

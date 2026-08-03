@@ -7,7 +7,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { PlanningContextProjection, Run } from '@farmslot/protocol';
+import {
+  PLANNING_CONTEXT_MAX_RELATIONS,
+  type PlanningContextProjection,
+  type Run,
+} from '@farmslot/protocol';
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
@@ -978,4 +982,29 @@ test('standalone backlog run renders an explicit empty planning-context state', 
 test('run without a backlog item states why planning context is empty', () => {
   const section = buildPlanningContextSection('tasks/dev/manual-000074', null);
   assert.match(section, /No related planning context: this run is not linked to a backlog item\./);
+});
+
+test('the rendered brief is capped while the snapshot keeps everything', () => {
+  const relations = Array.from({ length: 40 }, (_, index) => ({
+    label: 'promoted-sibling' as const,
+    direction: 'sibling' as const,
+    targetKind: 'backlog' as const,
+    targetId: `bk_${index}`,
+    targetRef: `MANUAL-${String(index).padStart(6, '0')}`,
+    source: 'roadmap-promotion' as const,
+    schedulerAuthority: false,
+    reason: 'Shares roadmap parent ri_x.',
+  }));
+  const projection: PlanningContextProjection = {
+    backlogItemId: 'bk_target',
+    relations,
+    generatedAt: '2026-08-02T10:00:00.000Z',
+    snapshotHash: 'cafebabecafebabe',
+  };
+
+  const section = buildPlanningContextSection('tasks/dev/x', projection);
+  const rendered = section.match(/`promoted-sibling`/g) ?? [];
+  assert.equal(rendered.length, PLANNING_CONTEXT_MAX_RELATIONS, 'brief stays bounded');
+  assert.match(section, /16 of 40 relations omitted here/);
+  assert.match(section, /snapshot artifact above holds all 40/);
 });

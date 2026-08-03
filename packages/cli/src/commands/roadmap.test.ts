@@ -15,13 +15,18 @@ import {
 function ctxWith(
   items: Array<{ id: string; title?: string; stage?: string }>,
   getExact: boolean = true,
+  needleRef = '',
 ): CommandContext {
   return {
     client: {
       call: async (method: string, params: { itemId?: string }) => {
         if (method === 'roadmap.get') {
+          // `getExact: false` models a gateway that cannot resolve the *caller's*
+          // ref, not one that is broken: a full id still resolves. The previous
+          // always-throw stub was unlike any real gateway and drove a regression
+          // where prefix lookups silently dropped the delivery projection.
           const item = items.find((entry) => entry.id === params.itemId);
-          if (item && getExact) return { item };
+          if (item && (getExact || params.itemId !== needleRef)) return { item };
           throw new Error(`Roadmap item not found: ${params.itemId}`);
         }
         if (method === 'roadmap.list') return { items };
@@ -48,8 +53,33 @@ test('resolveRoadmapItem accepts unique id prefixes via list fallback', async ()
       { id: 'ri_bbb222', title: 'B' },
     ],
     false,
+    'ri_bbb',
   );
   assert.equal((await resolveRoadmapItem(ctx, 'ri_bbb')).id, 'ri_bbb222');
+});
+
+test('a prefix lookup still carries the delivery projection', async () => {
+  // Regression: the prefix path returned the bare list row, so the same item showed
+  // lineage by full id and silently omitted it by prefix.
+  const delivery = { roadmapItemId: 'ri_bbb222', status: 'delivered' };
+  const ctx = {
+    client: {
+      call: async (method: string, params: { itemId?: string }) => {
+        if (method === 'roadmap.get') {
+          if (params.itemId === 'ri_bbb222') return { item: { id: 'ri_bbb222' }, delivery };
+          throw new Error(`Roadmap item not found: ${params.itemId}`);
+        }
+        if (method === 'roadmap.list') return { items: [{ id: 'ri_bbb222' }] };
+        throw new Error(`unexpected method ${method}`);
+      },
+    },
+    output: {},
+    target: {},
+  } as unknown as CommandContext;
+
+  const result = await resolveRoadmapGetResult(ctx, 'ri_bbb');
+  assert.equal(result.item.id, 'ri_bbb222');
+  assert.deepEqual(result.delivery, delivery);
 });
 
 test('resolveRoadmapItem rethrows non-not-found roadmap.get failures', async () => {
