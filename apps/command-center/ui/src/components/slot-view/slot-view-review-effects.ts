@@ -10,11 +10,27 @@ import { gateway } from '../../gateway-client.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
-import { slotViewBranchList } from './slot-view-branch-model.js';
+import {
+  type BranchDiffRequestTicket,
+  isBranchDiffTicketCurrent,
+  slotViewBranchList,
+} from './slot-view-branch-model.js';
 import { loadSlotViewDiffContent, loadSlotViewFileContent } from './slot-view-live-effects.js';
 
 function isCurrentReviewResult(view: SlotView, epoch: number) {
   return epoch === view._recoveryEpoch && isRecoveryEpochCurrent(epoch);
+}
+
+function branchDiffTicket(view: SlotView): BranchDiffRequestTicket {
+  return { generation: view._branchDiffGeneration, epoch: view._recoveryEpoch };
+}
+
+function isTicketCurrent(view: SlotView, ticket: BranchDiffRequestTicket): boolean {
+  return isBranchDiffTicketCurrent(ticket, {
+    generation: view._branchDiffGeneration,
+    epoch: view._recoveryEpoch,
+    epochCurrent: isRecoveryEpochCurrent(ticket.epoch),
+  });
 }
 
 export async function detectSlotViewPR(view: SlotView) {
@@ -67,16 +83,15 @@ export async function loadSlotViewPRComments(view: SlotView) {
 
 export async function loadSlotViewBranchDiff(view: SlotView) {
   if (!view._isLive) return;
-  const epoch = view._recoveryEpoch;
   // The recovery epoch is a global reconnect counter — it does NOT change on
-  // slot switch, so a completion must also verify the request's slot still
-  // owns the view before writing any branch-diff state.
-  const requestSlotId = view.slotId;
-  const isCurrent = () => view.slotId === requestSlotId && isCurrentReviewResult(view, epoch);
+  // slot switch, and slot identity alone is not A→B→A safe. The generation
+  // ticket stales any completion from an earlier visit.
+  const ticket = branchDiffTicket(view);
+  const isCurrent = () => isTicketCurrent(view, ticket);
   view._branchDiffLoading = true;
   try {
     const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
-      slotId: requestSlotId,
+      slotId: view.slotId,
       base: view._branchDiffBase,
     });
     if (!isCurrent()) return;
@@ -111,11 +126,13 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
 
 export async function loadSlotViewBranchList(view: SlotView) {
   if (!view._isLive) return;
+  const ticket = branchDiffTicket(view);
   try {
     // Use git log to list branches via gateway
     await gateway.request<{
       entries: Array<{ hash: string; message: string; author: string; date: string }>;
     }>(Methods.GIT_LOG, { slotId: view.slotId, limit: 1 });
+    if (!isTicketCurrent(view, ticket)) return;
     // We need branch names — use a git command via the status branch name + common branches.
     // For now, provide the known base + current branch.
     view._branchDiffBranches = slotViewBranchList({

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { branchDiffPollAction, slotViewBranchList } from './slot-view-branch-model.js';
+import {
+  branchDiffPollAction,
+  isBranchDiffTicketCurrent,
+  slotViewBranchList,
+} from './slot-view-branch-model.js';
 
 test('slotViewBranchList includes default and active branch candidates', () => {
   assert.deepEqual(
@@ -60,5 +64,34 @@ test('branchDiffPollAction does not treat the first poll as git movement', () =>
   assert.equal(
     branchDiffPollAction({ ...POLL_BASE, prevBranch: undefined, prevAhead: undefined }),
     'none',
+  );
+});
+
+test('isBranchDiffTicketCurrent stales tickets across A-to-B-to-A navigation', () => {
+  // Visit A (generation 0): request starts.
+  const staleTicket = { generation: 0, epoch: 7 };
+  // Switch A->B (gen 1), then B->A (gen 2): same slot id as the original
+  // visit, but the ticket must still be stale.
+  assert.equal(
+    isBranchDiffTicketCurrent(staleTicket, { generation: 2, epoch: 7, epochCurrent: true }),
+    false,
+  );
+  // A request issued during the current visit is valid.
+  assert.equal(
+    isBranchDiffTicketCurrent(
+      { generation: 2, epoch: 7 },
+      { generation: 2, epoch: 7, epochCurrent: true },
+    ),
+    true,
+  );
+});
+
+test('isBranchDiffTicketCurrent stales tickets across gateway reconnects', () => {
+  assert.equal(
+    isBranchDiffTicketCurrent(
+      { generation: 3, epoch: 7 },
+      { generation: 3, epoch: 8, epochCurrent: false },
+    ),
+    false,
   );
 });

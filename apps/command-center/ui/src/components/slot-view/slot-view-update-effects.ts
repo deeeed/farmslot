@@ -27,6 +27,7 @@ export function prepareSlotViewSlotChange(view: SlotView): void {
   view._branchDiffLoading = false;
   view._branchDiffError = null;
   view._branchDiffBranches = [];
+  view._branchDiffGeneration += 1;
   view._selectedAgentContextId = view._selectedAgentContextIds[view.slotId] ?? 'primary';
   view._unavailableContextKeys = new Set();
   view._revealLine = 0;

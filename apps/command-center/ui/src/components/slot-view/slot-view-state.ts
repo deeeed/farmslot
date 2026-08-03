@@ -85,6 +85,8 @@ export abstract class SlotViewState extends LitElement {
   @state() _branchDiffTotalDel = 0;
   @state() _branchDiffLoading = false;
   @state() _branchDiffError: string | null = null;
+  /** Bumped on every slot switch — stales in-flight branch-diff completions (A→B→A safe). */
+  _branchDiffGeneration = 0;
   @state() _branchDiffBranches: string[] = [];
 
   // --- Layout state ---

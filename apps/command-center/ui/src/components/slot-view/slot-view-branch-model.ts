@@ -49,3 +49,28 @@ export function branchDiffPollAction({
   if (lastLoadFailed) return 'reload';
   return 'none';
 }
+
+export interface BranchDiffRequestTicket {
+  /** _branchDiffGeneration at request time — bumped on every slot switch. */
+  generation: number;
+  /** Global recovery epoch at request time. */
+  epoch: number;
+}
+
+/**
+ * Decide whether an async branch-diff/branch-list completion may write into
+ * the view. Slot identity alone is not generation-safe: navigating A→B→A
+ * restores the same slotId while a stale first-visit request is still in
+ * flight. The generation counter increments on every slot switch, so a
+ * ticket from any earlier visit — same slot or not — is stale.
+ */
+export function isBranchDiffTicketCurrent(
+  ticket: BranchDiffRequestTicket,
+  current: { generation: number; epoch: number; epochCurrent: boolean },
+): boolean {
+  return (
+    ticket.generation === current.generation &&
+    ticket.epoch === current.epoch &&
+    current.epochCurrent
+  );
+}
