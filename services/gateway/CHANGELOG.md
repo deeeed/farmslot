@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(tasks): `checklistNumberingMismatches` reports suffixed labels such as `17a.` instead of skipping them. Matching digits only meant an inserted sub-step was invisible and the drift surfaced a row later, at the first purely numeric label — which is exactly how a checklist silently desynchronises from the positions `mark N` targets.
 - fix(chat): the co-pilot `cancel_run` tool and the confirmed-action path report `partiallyApplied` with the failed effects instead of an unqualified success, so an operator is never told a cancel landed while a slot is still claimed.
 - fix(runs): `archiveRun` evicts from the live map only after the archive copy is durable; a failed write previously dropped the run from memory until the next restart re-read it from the still-present source file.
 - feat(git): worktree branch diffs flag each file's committed state via an extra merge-base..HEAD listing.

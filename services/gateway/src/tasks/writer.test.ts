@@ -865,7 +865,13 @@ test('checklistNumberingMismatches flags labels that diverge from step positions
     '- [ ] **1a. Sub-step without its own number**',
     '- [ ] **2. Now sits at position 3**',
   ].join('\n');
-  assert.deepEqual(checklistNumberingMismatches(skewed), ['position 3 is labeled "2"']);
+  // The suffixed label is itself reported, not just the drift it causes one row later.
+  // `mark N` targets positions, so `1a` at position 2 is already the divergence; leaving
+  // it unflagged is how an inserted step silently desynchronises a whole checklist.
+  assert.deepEqual(checklistNumberingMismatches(skewed), [
+    'position 2 is labeled "1a"',
+    'position 3 is labeled "2"',
+  ]);
 
   const aligned = [
     '## Checklist',

@@ -1124,8 +1124,11 @@ async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: stri
 export function checklistNumberingMismatches(content: string): string[] {
   const mismatches: string[] = [];
   for (const item of enumerateChecklistCheckboxes(content)) {
-    const labeled = item.rawLabel.match(/^\*{0,2}(\d+)[.)]/);
-    if (labeled && Number(labeled[1]) !== item.stepNumber) {
+    // Capture an optional letter suffix: a label like `17a.` is exactly how an inserted
+    // step silently desynchronises numbering, and matching digits only skipped it —
+    // the drift was reported one row later, at the first purely numeric label.
+    const labeled = item.rawLabel.match(/^\*{0,2}(\d+[a-z]?)[.)]/i);
+    if (labeled && labeled[1] !== String(item.stepNumber)) {
       mismatches.push(`position ${item.stepNumber} is labeled "${labeled[1]}"`);
     }
   }
