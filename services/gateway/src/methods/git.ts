@@ -217,7 +217,13 @@ export async function gitDiscard(params: GitDiscardParams): Promise<OkResult> {
   return { ok: true };
 }
 
-function numstatNewPath(raw: string): string {
+/**
+ * Normalize a `--numstat` rename path ("old => new" or "pre/{old => new}/post")
+ * to the new path. Git quotes pathological names (tabs, braces) in C-style
+ * quoting, which never matches these patterns — such rows pass through raw,
+ * matching the pre-rename behavior.
+ */
+export function numstatNewPath(raw: string): string {
   const braced = raw.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
   if (braced) return `${braced[1]}${braced[3]}${braced[4]}`;
   const plain = raw.match(/^(.*) => (.*)$/);

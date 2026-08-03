@@ -4,7 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- feat(slot-view): IDE-style per-file state chips (C committed / S staged / M unstaged / U untracked) in the unified diff list and changes activity, with one shared git-status palette across the source panel, changes activity, and file tree.
+- feat(slot-view): IDE-style per-file state chips (C committed / S staged / M unstaged / U untracked) in the unified diff list and changes activity, with one shared git-status palette across the source panel, changes activity, and file tree (untracked is now green everywhere, VSCode-style, instead of gray in the source panel).
 
 - feat(slot-view): the source-control panel shows every change vs the base branch — committed or not — as one deduped list ("All changes vs main"), with per-file diffs computed against the working tree.
 

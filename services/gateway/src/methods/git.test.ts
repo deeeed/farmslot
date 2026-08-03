@@ -156,3 +156,11 @@ test('gitBranchDiff worktree rename keeps its committed flag via the old path', 
   assert.equal(result.files[0].path, 'new.txt');
   assert.equal(result.files[0].committed, true);
 });
+
+test('numstatNewPath normalizes rename notations and passes plain paths through', async () => {
+  const { numstatNewPath } = await import('./git.js');
+  assert.equal(numstatNewPath('old.txt => new.txt'), 'new.txt');
+  assert.equal(numstatNewPath('src/{old.ts => renamed.ts}/index.ts'), 'src/renamed.ts/index.ts');
+  assert.equal(numstatNewPath('src/{old.ts => renamed.ts}'), 'src/renamed.ts');
+  assert.equal(numstatNewPath('plain/path.ts'), 'plain/path.ts');
+});

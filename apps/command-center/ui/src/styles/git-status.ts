@@ -1,3 +1,5 @@
+import { css } from 'lit';
+
 // Single source of truth for git file-state visuals across Command Center —
 // the source-control panel, the branch-diff activity, and the file tree must
 // speak the same color/letter language (IDE convention: VSCode-style SCM).
@@ -55,3 +57,18 @@ export function gitStateChips(input: {
   }
   return chips;
 }
+
+/** Shared chip styling — include in a component's static styles array. */
+export const stateChipStyles = css`
+  .state-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    margin-right: 2px;
+  }
+`;
