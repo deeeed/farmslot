@@ -15,6 +15,7 @@ import {
   buildPlanningContextProjection,
   buildRoadmapDeliveryProjection,
   buildRunIndexByBacklogItem,
+  planningContextSnapshotHash,
 } from './delivery-projection.js';
 
 const NOW = '2026-08-02T10:00:00.000Z';
@@ -725,4 +726,54 @@ test('a retried node surfaces its own superseded run family', () => {
   assert.match(superseded.reason, /fam_old/, 'the superseded family id is the pointer to evidence');
   assert.equal(superseded.targetRef, 'MANUAL-000020');
   assert.equal(superseded.schedulerAuthority, false);
+});
+
+test('the snapshot hash ignores the order optional fields were assembled in', () => {
+  // Claude round-9 should-fix: `JSON.stringify` follows insertion order, and these
+  // projections are built with conditional spreads. Two projections with identical
+  // content must hash identically regardless of the build path that produced them.
+  const base = buildPlanningContextProjection({
+    backlogItem: backlogItem('bk_hash', { sourceRef: 'MANUAL-000030', roadmapItemId: 'ri_hash' }),
+    roadmapItem: roadmapItem({ id: 'ri_hash' }),
+    backlogItems: [backlogItem('bk_hash', { sourceRef: 'MANUAL-000030', roadmapItemId: 'ri_hash' })],
+    generatedAt: NOW,
+  });
+
+  // Rebuild the same content with every object key reversed. Only insertion order
+  // differs, so the digest must not move.
+  const reorder = (value: unknown): unknown => {
+    if (value === null || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(reorder);
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .reverse()
+        .map(([key, entry]) => [key, reorder(entry)]),
+    );
+  };
+  const reordered = reorder(base) as typeof base;
+
+  assert.equal(planningContextSnapshotHash(reordered), planningContextSnapshotHash(base));
+});
+
+test('a canonical backlog link missing from promotion never downgrades delivery to inconsistent', () => {
+  // The exclusion is deliberate: the link itself is valid, so the item still reports
+  // real delivery. Pinning it stops a future finding-code edit from silently
+  // reclassifying manually backlinked items.
+  const linked = backlogItem('bk_manual', {
+    roadmapItemId: 'ri_manual',
+    status: 'done',
+    shipped: { prRef: 'deeeed/farmslot#421', closedAt: NOW },
+  });
+  const projection = buildRoadmapDeliveryProjection({
+    item: roadmapItem({ id: 'ri_manual' }),
+    backlogItems: [linked],
+    runsByBacklogItemId: buildRunIndexByBacklogItem([]),
+    generatedAt: NOW,
+  });
+
+  assert.ok(
+    projection.findings.some((finding) => finding.code === 'backlog-link-not-in-promotion'),
+    'the missing provenance is still reported',
+  );
+  assert.equal(projection.status, 'delivered', 'but it does not make the lineage untrustworthy');
 });

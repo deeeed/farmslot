@@ -596,6 +596,21 @@ export function buildPlanningContextProjection(
  * Content hash of everything except `generatedAt`, so the worker brief and the
  * reviewer brief quote the same value while the timestamps differ.
  */
+/**
+ * Deterministic JSON: object keys are sorted at every level. `JSON.stringify` follows
+ * *insertion* order, and these projections are assembled with conditional spreads, so
+ * insertion order is an artifact of the build path rather than a property of the
+ * content. Array order is preserved — relation ordering IS content.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entry]) => entry !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`).join(',')}}`;
+}
+
 export function planningContextSnapshotHash(
   projection: Omit<PlanningContextProjection, 'snapshotHash'> & { snapshotHash?: string },
 ): string {
@@ -603,5 +618,5 @@ export function planningContextSnapshotHash(
   // 16 hex chars (64 bits) — this identifies content for "did the brief change?"
   // comparisons and is never a security or uniqueness boundary, so the shorter,
   // quotable digest is worth more than the extra collision margin.
-  return createHash('sha256').update(JSON.stringify(content)).digest('hex').slice(0, 16);
+  return createHash('sha256').update(stableStringify(content)).digest('hex').slice(0, 16);
 }

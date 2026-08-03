@@ -56,6 +56,12 @@ function relationGroup(
 /**
  * Renders the frozen snapshot. Pure so both the worker task writer and the
  * independent-review brief render byte-identical content from the same artifact.
+ *
+ * Note the deliberate asymmetry: `snapshotHash` covers every relation, while this
+ * section renders at most `PLANNING_CONTEXT_MAX_RELATIONS`. Two snapshots differing
+ * only beyond the cap therefore render identically but carry different hashes — the
+ * hash tracks the artifact, not the excerpt, which is what makes "re-read the
+ * snapshot when the hash moves" correct.
  */
 export function buildPlanningContextSection(
   taskDir: string,

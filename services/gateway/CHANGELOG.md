@@ -7,6 +7,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - feat(git): worktree branch diffs flag each file's committed state via an extra merge-base..HEAD listing.
 - fix(decisions): project stored run decisions into the full websocket decision contract before broadcasting new or updated events, so Companion no longer reloads the entire decision inbox after every event and surfaces false request-timeout warnings.
 
+- fix(roadmap): the planning-context snapshot hash uses a key-sorted serializer, so two projections with identical content hash identically regardless of the order their optional fields were assembled in.
 - fix(backlog): `markBacklogRunObserved` awaits the backlog write instead of merely scheduling it — a failed persist previously resolved the settle, so ADR-052's `backlog-settle` effect reported `ok`, ticked the scheduler, and skipped `backlogReconcilePending` while the durable file still held pre-cancel state.
 - feat(git): worktree-target branch diffs — `git.branchDiff` can list every change vs base including uncommitted and untracked files (deduped per file); `git.diff` gains the same target for per-file content.
 
