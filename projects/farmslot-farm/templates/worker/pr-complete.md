@@ -44,14 +44,14 @@ STATUS: pending
   git fetch origin main
   behindMain=$(git rev-list --count HEAD..origin/main)
   echo "behindMain=$behindMain"
-  base=$(git merge-base HEAD origin/main)
-  probe=$(git merge-tree "$base" HEAD origin/main)
-  if printf '%s\n' "$probe" | grep -E '^(<<<<<<<|=======|>>>>>>>|CONFLICT )' >/dev/null; then
-    mergeConflicts=true
-  else
-    mergeConflicts=false
-  fi
+  # Non-destructive: --write-tree exit 1 = conflicts (classic merge-tree markers are +<<<<<<<).
+  set +e
+  mt_out=$(git merge-tree --write-tree --name-only HEAD origin/main 2>&1)
+  mt_rc=$?
+  set -e
+  if [ "$mt_rc" -eq 1 ]; then mergeConflicts=true; else mergeConflicts=false; fi
   echo "mergeConflicts=$mergeConflicts"
+  echo "$mt_out" | sed -n 's/^CONFLICT ([^)]*): Merge conflict in //p'
   ```
   **Failure path:** if `mergeConflicts=true` or `behindMain` is material, update
   the branch first — **prefer** `git merge origin/main` during open review loops;

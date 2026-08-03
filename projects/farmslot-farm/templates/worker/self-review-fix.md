@@ -98,15 +98,16 @@ Long fix/review loops leave the feature branch behind `origin/main`. Surface tha
   git fetch origin main
   behindMain=$(git rev-list --count HEAD..origin/main)
   echo "behindMain=$behindMain"
-  base=$(git merge-base HEAD origin/main)
   # Non-destructive conflict probe (does not update the index or working tree).
-  probe=$(git merge-tree "$base" HEAD origin/main)
-  if printf '%s\n' "$probe" | grep -E '^(<<<<<<<|=======|>>>>>>>|CONFLICT )' >/dev/null; then
-    mergeConflicts=true
-  else
-    mergeConflicts=false
-  fi
+  # git merge-tree --write-tree: exit 0 = clean, exit 1 = conflicts; --name-only lists paths.
+  # Classic merge-tree $(merge-base) form prints +<<<<<<< markers and is NOT reliable with ^-anchored greps.
+  set +e
+  mt_out=$(git merge-tree --write-tree --name-only HEAD origin/main 2>&1)
+  mt_rc=$?
+  set -e
+  if [ "$mt_rc" -eq 1 ]; then mergeConflicts=true; else mergeConflicts=false; fi
   echo "mergeConflicts=$mergeConflicts"
+  echo "$mt_out" | sed -n 's/^CONFLICT ([^)]*): Merge conflict in //p'
   ```
   **Failure path (must fix before re-review ready):**
   - If `mergeConflicts=true` **or** `behindMain` is above the project threshold

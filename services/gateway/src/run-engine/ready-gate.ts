@@ -21,7 +21,6 @@ import {
 } from '@farmslot/protocol';
 
 import { getProjectField, loadSlotVars } from '../core/config.js';
-import { execOnSlot } from '../core/exec.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import {
   invalidateArtifactTextCache,
@@ -631,22 +630,25 @@ export async function executeReadyGate(runId: string): Promise<string> {
       await persistRunPrNumber(current.id, mergedPrNumber);
     }
   }
-  if (publicationApprovalGate && !mergedPrNumber && current.slotId) {
-    // Zero commits ahead of the default branch also means there is nothing to
-    // publish (spec Phase 2 AC) even when no merged PR is discoverable.
+  // defaultBranch is shared by zero-ahead + branch-freshness (single slot probe).
+  const defaultBranch =
+    (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || 'main';
+
+  // One slot exec: HEAD, behind/ahead, merge-tree --write-tree (soft fields + zero-ahead).
+  let headSha: string | undefined;
+  let branchFreshness: BranchFreshnessSummary | null = null;
+  if (current.slotId) {
     try {
       const vars = await loadSlotVars(current.slotId);
-      const defaultBranch =
-        (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || 'main';
-      const r = await execOnSlot(
-        vars,
-        `git -C '${vars.remoteRepo}' rev-list --count origin/${defaultBranch}..HEAD 2>/dev/null`,
-        { timeout: 15_000 },
-      );
-      branchZeroAhead = r.stdout.trim() === '0';
+      const strategy = resolveBranchUpdateStrategy(pv?.projectJson);
+      branchFreshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
+      if (branchFreshness?.headSha) headSha = branchFreshness.headSha;
+      if (publicationApprovalGate && !mergedPrNumber && branchFreshness) {
+        branchZeroAhead = branchFreshness.aheadMain === 0;
+      }
     } catch (err) {
       console.warn(
-        `[run-engine] ready-gate zero-ahead probe failed for ${runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+        `[run-engine] ready-gate branch-freshness probe failed for ${runId.slice(0, 8)}: ${(err as Error).message}`,
       );
     }
   }
@@ -869,21 +871,11 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const inputSnapshot = await buildReadyGateInputSnapshot(current);
 
   // Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost).
-  const gateSummaryBase = buildGateSummary(current, GATE_SUMMARY_KINDS.publication, {
+  // Soft branch-freshness fields live on the typed ReadyGatePayload only
+  // (not mirrored into the untyped gate-summary extras bag).
+  const gateSummary = buildGateSummary(current, GATE_SUMMARY_KINDS.publication, {
     gatePolicy: preparedPackage?.gatePolicy,
   });
-  const gateSummary = branchFreshness
-    ? {
-        ...gateSummaryBase,
-        custom: {
-          ...(gateSummaryBase.custom ?? {}),
-          behindMain: branchFreshness.behindMain,
-          mergeConflicts: branchFreshness.mergeConflicts,
-          mergeConflictPaths: branchFreshness.mergeConflictPaths,
-          branchFreshnessHint: branchFreshness.hint,
-        },
-      }
-    : gateSummaryBase;
 
   const readyPayload: ReadyGatePayload = {
     kind: 'ready',
