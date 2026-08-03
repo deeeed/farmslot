@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.0 - 2026-08-03
+
+- Publish against `@farmslot/protocol` 0.18.0 so downstream recipe tooling resolves one protocol version.
+
 ## 0.6.0 - 2026-08-03
 
 - fix(mark): step enumeration now skips informational sections (Acceptance Criteria, pre-merge, `<details>`) exactly like the gateway parsers — checkbox-formatted ACs no longer shift `mark N` onto the wrong box. Also tightens checkbox matching to `- [ ]` (no `* [ ]`), matching gateway behavior.
