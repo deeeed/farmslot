@@ -8,14 +8,17 @@ import type {
 } from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
-import { createRun, getRun, updateRun } from '../runs/store.js';
+import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import {
   executePublishGateReviewPlan,
   localVideoProofWarning,
   resumeInterruptedPublicationReview,
 } from './ready-gate.js';
-import { assertIndependentReviewLaunchState } from './review-launch-gate.js';
+import {
+  assertIndependentReviewLaunchState,
+  publicationReviewLaunchRejectionFromError,
+} from './review-launch-gate.js';
 import { deleteTestRunIfPresent } from './test-fixtures.js';
 
 function gitExecutor(status: string, headSha: string): (command: string) => Promise<ExecResult> {
@@ -236,6 +239,66 @@ test('independent publication re-review allows a clean advanced HEAD', async () 
   );
 });
 
+test('independent publication review surfaces a recoverable non-zero git probe failure', async () => {
+  await assert.rejects(
+    assertIndependentReviewLaunchState([], async (command) => ({
+      stdout: '',
+      stderr: command.includes('status --porcelain') ? 'not a git worktree' : '',
+      exitCode: command.includes('status --porcelain') ? 128 : 0,
+    })),
+    (error: unknown) => {
+      const rejection = publicationReviewLaunchRejectionFromError(error);
+      assert.equal(rejection?.code, 'PUBLICATION_REVIEW_GIT_PROBE_FAILED');
+      assert.match(rejection?.message ?? '', /git status failed \(exit 128\)/u);
+      assert.match(rejection?.userAction ?? '', /git status.*git rev-parse HEAD/iu);
+      return true;
+    },
+  );
+});
+
+test('independent publication review surfaces a recoverable empty HEAD probe failure', async () => {
+  await assert.rejects(
+    assertIndependentReviewLaunchState([], gitExecutor('', '')),
+    (error: unknown) => {
+      const rejection = publicationReviewLaunchRejectionFromError(error);
+      assert.equal(rejection?.code, 'PUBLICATION_REVIEW_GIT_PROBE_FAILED');
+      assert.match(rejection?.message ?? '', /returned no commit/u);
+      assert.match(rejection?.userAction ?? '', /valid commit.*git rev-parse HEAD/iu);
+      return true;
+    },
+  );
+});
+
+test('empty publish-gate review plans clear a prior recoverable rejection', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-EMPTY-PLAN',
+    runner: 'claude',
+    slotId: 'test-review-empty-plan-slot',
+    engineState: {
+      publishGate: {
+        reviewLaunchRejection: {
+          code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+          message: 'A prior launch was refused.',
+          userAction: 'Commit fixes.',
+          rejectedAt: '2026-08-03T00:00:00.000Z',
+        },
+      },
+    },
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  assert.deepEqual(
+    await executePublishGateReviewPlan(run.id, 'test-review-empty-plan-slot', [], 'human-gate'),
+    { reviewIds: [] },
+  );
+  assert.equal(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, undefined);
+});
+
 test('publish-gate review orchestration preserves a recoverable gate and launches no reviewer when refused', async (t) => {
   const pendingPlan = [{ order: 1, runner: 'codex' as const }];
   const run = createRun({
@@ -264,6 +327,19 @@ test('publish-gate review orchestration preserves a recoverable gate and launche
     'human-gate',
     {
       assertLaunchAllowed: async () => {
+        const latest = getRun(run.id)!;
+        updateRun(run.id, {
+          engineState: {
+            ...latest.engineState,
+            publishGate: {
+              ...latest.engineState?.publishGate,
+              feedbackArtifactPath: 'artifacts/concurrent-feedback.md',
+            },
+          },
+        });
+        updateRunStep(run.id, 'human-gate', {
+          outputs: { concurrentMarker: true },
+        });
         throw new GatewayMethodError(
           'PUBLICATION_REVIEW_LAUNCH_REJECTED',
           'Independent review launch refused: test worktree is dirty.',
@@ -287,11 +363,16 @@ test('publish-gate review orchestration preserves a recoverable gate and launche
   const persisted = getRun(run.id)!;
   assert.deepEqual(persisted.engineState?.publishGate?.pendingReviewPlan, pendingPlan);
   assert.equal(
+    persisted.engineState?.publishGate?.feedbackArtifactPath,
+    'artifacts/concurrent-feedback.md',
+  );
+  assert.equal(
     persisted.engineState?.publishGate?.reviewLaunchRejection?.userAction,
     'Commit the validated fixes, then request re-review.',
   );
   const humanGateStep = persisted.steps.find((step) => step.name === 'human-gate');
   assert.equal(humanGateStep?.status, 'pending');
+  assert.equal(humanGateStep?.outputs?.concurrentMarker, true);
   assert.equal(
     (humanGateStep?.outputs?.reviewLaunchRejection as PublicationReviewLaunchRejection | undefined)
       ?.userAction,

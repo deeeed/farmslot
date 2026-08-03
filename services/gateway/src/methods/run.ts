@@ -72,7 +72,7 @@ import {
   startRun,
 } from '../run-engine/orchestrator.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
-import { assertIndependentReviewLaunchState } from '../run-engine/review-launch-gate.js';
+import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
 import {
   probeWorkerSignalForRun,
   readFreshTerminalSignalForRun,
@@ -1139,16 +1139,6 @@ export interface RunResolveDecisionDependencies {
   ) => Promise<void>;
 }
 
-async function assertReviewLaunchAllowed(
-  reviews: readonly IndependentReviewStatus[],
-  slotId: string,
-): Promise<void> {
-  const vars = await loadSlotVars(slotId);
-  await assertIndependentReviewLaunchState(reviews, (command) =>
-    execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
-  );
-}
-
 export async function runResolveDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
@@ -1179,7 +1169,7 @@ export async function runResolveDecision(
     if (!existing.slotId) {
       throw new Error('Publication review launch requires an assigned slot');
     }
-    await (dependencies.assertReviewLaunchAllowed ?? assertReviewLaunchAllowed)(
+    await (dependencies.assertReviewLaunchAllowed ?? assertIndependentReviewLaunchStateForSlot)(
       existing.engineState?.publishGate?.independentReviews ?? [],
       existing.slotId,
     );
@@ -1189,6 +1179,20 @@ export async function runResolveDecision(
   // auto-recovery) may have resolved this decision during that window. Re-read
   // from the store so the first resolution wins instead of being overwritten.
   assertDecisionStillUnresolved(params.runId, params.decisionId);
+  if (decision.type === 'engine_human_gate') {
+    const fresh = getRun(params.runId)!;
+    if (fresh.engineState?.publishGate?.reviewLaunchRejection) {
+      updateRun(params.runId, {
+        engineState: {
+          ...fresh.engineState,
+          publishGate: {
+            ...fresh.engineState.publishGate,
+            reviewLaunchRejection: undefined,
+          },
+        },
+      });
+    }
+  }
 
   // Store selectionData on decision so engine steps can use it
   if (params.selectionData) {

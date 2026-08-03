@@ -113,6 +113,60 @@ test('runResolveDecision keeps a review request unresolved when launch validatio
   assert.equal(persistedDecision?.resolvedAction, undefined);
 });
 
+test('runResolveDecision clears a prior launch rejection after successful gate resolution', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-DECISION-SUCCESS',
+    runner: 'claude',
+    slotId: 'test-review-decision-slot',
+    engineState: {
+      publishGate: {
+        reviewLaunchRejection: {
+          code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+          message: 'A prior review request was refused.',
+          userAction: 'Commit the validated fixes, then request re-review.',
+          rejectedAt: '2026-08-03T00:00:00.000Z',
+        },
+      },
+    },
+  });
+  const decision: RunDecision = {
+    id: 'review-decision-success',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Request another independent review',
+    actions: [
+      {
+        id: 'request-extra-review',
+        label: 'Request Independent Review',
+        style: 'secondary',
+      },
+    ],
+    createdAt: '2026-08-03T00:00:00.000Z',
+  };
+  updateRun(run.id, { status: 'done', decisions: [decision] });
+  t.after(async () => {
+    await deleteRun(run.id);
+  });
+
+  await runResolveDecision(
+    {
+      runId: run.id,
+      decisionId: decision.id,
+      actionId: 'request-extra-review',
+    },
+    () => {},
+    { assertReviewLaunchAllowed: async () => {} },
+  );
+
+  const persisted = getRun(run.id)!;
+  assert.equal(persisted.engineState?.publishGate?.reviewLaunchRejection, undefined);
+  assert.equal(persisted.decisions[0]?.resolvedAction, 'request-extra-review');
+  assert.ok(persisted.decisions[0]?.resolvedAt);
+});
+
 function makeReadyGatePackage(overrides: Partial<ReadyGatePrPackage> = {}): ReadyGatePrPackage {
   const packageWithoutHash: Omit<ReadyGatePrPackage, 'packageHash'> = {
     id: overrides.id ?? 'pkg-test',

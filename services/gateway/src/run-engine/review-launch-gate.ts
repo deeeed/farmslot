@@ -4,7 +4,10 @@ import type {
   PublicationReviewLaunchRejection,
 } from '@farmslot/protocol';
 
+import { loadSlotVars } from '../core/config.js';
+import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { shellQuote } from '../core/tmux.js';
 
 type GitExecutor = (command: string) => Promise<ExecResult>;
 
@@ -127,4 +130,14 @@ export async function assertIndependentReviewLaunchState(
   }
 
   return { dirtyPathCount, headSha };
+}
+
+export async function assertIndependentReviewLaunchStateForSlot(
+  reviews: readonly IndependentReviewStatus[],
+  slotId: string,
+): Promise<void> {
+  const vars = await loadSlotVars(slotId);
+  await assertIndependentReviewLaunchState(reviews, (command) =>
+    execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
+  );
 }
