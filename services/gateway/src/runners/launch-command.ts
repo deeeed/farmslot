@@ -23,6 +23,7 @@ import {
 } from './registry.js';
 import {
   buildRunnerObservabilityInstallCommand,
+  claudeObservabilitySettingsPath,
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
 
@@ -206,9 +207,12 @@ export function buildRunnerSessionReloadCommand(
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const claudePath = vars.claudePath || 'claude';
+    const settingsFlag = ` --settings ${shellExpressionForRemotePath(
+      claudeObservabilitySettingsPath(repo, opts.runtimeDir),
+    )}`;
     return withTaskRecipeTrustEnvironment(
       withRunnerObservabilityInstall(
-        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
+        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
         installCommand,
       ),
       repo,
@@ -516,13 +520,16 @@ export function buildLaunchCommand(
       repo,
       opts.runtimeDir,
     );
+    const settingsFlag = ` --settings ${shellExpressionForRemotePath(
+      claudeObservabilitySettingsPath(repo, opts.runtimeDir),
+    )}`;
     if (opts.claudeUsesDispatchCmd) {
       if (!hasDispatchCmd) {
         throw new Error(`No dispatch_cmd in pool config for ${vars.machine}`);
       }
       return withRecipeTrust(
         withRunnerObservabilityInstall(
-          `unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}`,
+          `unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}${settingsFlag}`,
           installCommand,
         ),
       );
@@ -532,7 +539,7 @@ export function buildLaunchCommand(
     const flags = flagList.join(' ');
     return withRecipeTrust(
       withRunnerObservabilityInstall(
-        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`,
+        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${settingsFlag}`,
         installCommand,
       ),
     );

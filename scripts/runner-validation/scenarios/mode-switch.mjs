@@ -57,15 +57,23 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
 
     sleepMs(5000);
     const newRows = readHookLines(logPath).slice(beforeCount);
-    const sessionStart = newRows.find((row) => (row.hook_event_name || row.event) === 'SessionStart');
+    const sessionStart = newRows.find(
+      (row) => (row.hook_event_name || row.event) === 'SessionStart',
+    );
     report.permissionMode = sessionStart?.permission_mode ?? null;
-    const launchUsesBypass = runnerAdapter
-      .buildLaunchCommand(DEFAULT_PROMPT)
-      .includes('dangerously-skip-permissions');
-    const sawSubmit = newRows.some((row) => (row.hook_event_name || row.event) === 'UserPromptSubmit');
+    const launchCommand =
+      runner === 'claude' || runner === 'codex'
+        ? runnerAdapter.buildLaunchCommand(repo, runtimeDir, DEFAULT_PROMPT)
+        : runnerAdapter.buildLaunchCommand(DEFAULT_PROMPT);
+    const launchUsesBypass = launchCommand.includes('dangerously-skip-permissions');
+    const sawSubmit = newRows.some(
+      (row) => (row.hook_event_name || row.event) === 'UserPromptSubmit',
+    );
     report.pass =
       launchUsesBypass &&
-      (report.permissionMode === 'bypassPermissions' || report.bypassPermissionsSeen || sawSubmit) &&
+      (report.permissionMode === 'bypassPermissions' ||
+        report.bypassPermissionsSeen ||
+        sawSubmit) &&
       (completion.sawMarker || completion.sawStop);
   } catch (error) {
     report.error = error?.message || String(error);

@@ -27,7 +27,7 @@ export function binaryPath() {
 }
 
 export function prepareRepo() {
-  // Claude hooks read project-scoped .claude/settings.local.json — no git required.
+  // Farmslot passes its runtime-owned hook settings explicitly at launch.
 }
 
 export function assertBinary() {
@@ -37,10 +37,11 @@ export function assertBinary() {
 }
 
 /** One-shot print mode — reliable in tmux shell panes (interactive compose does not submit). */
-export function buildLaunchCommand(prompt = DEFAULT_PROMPT, model = 'opus') {
+export function buildLaunchCommand(repo, runtimeDir, prompt = DEFAULT_PROMPT, model = 'opus') {
   assertBinary();
   const modelFlag = model ? ` --model ${shSingleQuote(model)}` : '';
-  return `${shSingleQuote(CLAUDE_BIN)} --dangerously-skip-permissions${modelFlag} -p ${shSingleQuote(prompt)}`;
+  const settingsPath = path.join(repo, runtimeDir, '.observability', 'claude-settings.json');
+  return `${shSingleQuote(CLAUDE_BIN)} --dangerously-skip-permissions${modelFlag} --settings ${shSingleQuote(settingsPath)} -p ${shSingleQuote(prompt)}`;
 }
 
 export function launchMode() {

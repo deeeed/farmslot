@@ -701,7 +701,7 @@ function installClaude({ repo, runtimeDir = '.agent', slotId }) {
     slotId,
     runner: 'claude',
   });
-  const settingsPath = path.join(repoPath, '.claude', 'settings.local.json');
+  const settingsPath = path.join(obsDir, 'claude-settings.json');
   const markerPath = path.join(obsDir, '.farmslot-owned');
   const statuslinePath = path.join(obsDir, 'bin', 'farmslot-statusline.mjs');
   fs.writeFileSync(statuslinePath, STATUSLINE_SCRIPT);

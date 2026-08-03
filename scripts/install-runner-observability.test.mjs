@@ -28,7 +28,8 @@ function installToTempDir(runner = 'claude') {
   );
   const obsDir = path.join(repo, '.agent', '.observability');
   const hookPath = path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs');
-  return { repo, obsDir, hookPath };
+  const claudeSettingsPath = path.join(obsDir, 'claude-settings.json');
+  return { repo, obsDir, hookPath, claudeSettingsPath };
 }
 
 function runHook(hookPath, obsDir, payload, runner = 'claude') {
@@ -44,11 +45,9 @@ function runHook(hookPath, obsDir, payload, runner = 'claude') {
   });
 }
 
-test('claude install registers observability hook events validated against Claude Code surface', () => {
-  const { repo } = installToTempDir('claude');
-  const settings = JSON.parse(
-    fs.readFileSync(path.join(repo, '.claude', 'settings.local.json'), 'utf8'),
-  );
+test('claude install registers hooks in Farmslot runtime without modifying repository settings', () => {
+  const { repo, claudeSettingsPath } = installToTempDir('claude');
+  const settings = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8'));
   const registered = Object.keys(settings.hooks).sort();
   assert.deepEqual(registered, [
     'Notification',
@@ -62,6 +61,7 @@ test('claude install registers observability hook events validated against Claud
     'SubagentStop',
     'UserPromptSubmit',
   ]);
+  assert.equal(fs.existsSync(path.join(repo, '.claude')), false);
 });
 
 test('claude install replaces a stale compatibility symlink and remains idempotent', () => {
@@ -90,7 +90,7 @@ test('claude install replaces a stale compatibility symlink and remains idempote
   const expected = path.join(repo, 'temp', 'recipe', 'runtime', '.observability');
   assert.equal(path.resolve(repo, fs.readlinkSync(compat)), expected);
   assert.ok(fs.existsSync(path.join(expected, 'bin', 'farmslot-observability-hook.mjs')));
-  const settings = fs.readFileSync(path.join(repo, '.claude', 'settings.local.json'), 'utf8');
+  const settings = fs.readFileSync(path.join(expected, 'claude-settings.json'), 'utf8');
   assert.match(settings, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'u'));
   assert.doesNotMatch(settings, /\.agent\/\.observability/u);
 });

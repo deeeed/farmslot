@@ -10,6 +10,10 @@ const REMOTE_AGENT_DIR = '~/farmslot-node';
 const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs';
 const localHostname = os.hostname().replace(/\.local$/, '');
 
+export function claudeObservabilitySettingsPath(repo: string, runtimeDir = '.agent'): string {
+  return path.posix.join(repo, runtimeDir, '.observability', 'claude-settings.json');
+}
+
 function farmslotDirForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): string {
   const slotHost = vars.host.replace(/\.local$/, '');
   const isLocal =

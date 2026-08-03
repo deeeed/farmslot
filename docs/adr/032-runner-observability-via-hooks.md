@@ -42,7 +42,7 @@ Adopt **event-driven runner observability** as the primary signal path, with pan
 
 **Common stdin payload** every event receives: `session_id`, `transcript_path`, `cwd`, `permission_mode` (`default`/`plan`/`acceptEdits`/`auto`/`dontAsk`/`bypassPermissions`), `hook_event_name`, `effort.level`.
 
-**Settings scope.** Farmslot ships `.claude/settings.json` at the **project scope** (committed inside the slot's worker repo, NOT user-global at `~/.claude/`). Precedence is: managed > local > project > user — our project-scoped fixture is overridable by operator-edited local `settings.local.json` but not by stale user settings. Permission rules merge across scopes; most scalar settings override (highest wins).
+**Settings scope.** Farmslot generates `{{runtime_dir}}/.observability/claude-settings.json` and passes it explicitly with Claude's `--settings` flag. Observability is therefore runtime-owned: it neither commits nor modifies `.claude/settings.json` or `.claude/settings.local.json` in the worker repository. Claude still loads the operator's normal settings sources alongside this additional file.
 
 **Hook script body** (slot fixture writes this; receives event JSON on stdin):
 
@@ -86,7 +86,7 @@ Full matrix (29 hook events, full payload fields, full statusline JSON contract)
 
 ### Signal sources, by question
 
-All "Hook JSONL" rows below are written by **Farmslot-owned hook scripts** declared in the slot's `.claude/settings.json` fixture; Claude triggers the script on the named event, the script appends one JSON line per event. We own the schema.
+All "Hook JSONL" rows below are written by **Farmslot-owned hook scripts** declared in the runtime-owned Claude settings file; Claude triggers the script on the named event, the script appends one JSON line per event. We own the schema.
 
 | Question                                             | Authoritative source (Farmslot-emitted unless noted)                                                                                                                                                                          | Fallback                          |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
@@ -140,7 +140,7 @@ Correlation flow:
 
 If the sentinel file is missing (e.g. the gateway crashed mid-send), the hook still emits the event without `sentAt`, but it is not authoritative for a gateway delivery decision.
 
-Hook files and statusline JSON are written by **Farmslot's hook scripts** (shipped via the slot's `.claude/settings.json` fixture) — triggered by the runner, but with schema, format, and rotation owned by us. They reflect runner-process truth (turn boundaries, tool calls, token usage) because the runner invokes the hooks at those exact moments. `SIGNAL.json` is written by the **worker** (the LLM via its task template) and reflects task-template truth (recipe pass, report.md written, etc.). Keeping them separated preserves the existing ADR-024 family-observability ledger model — the worker still owns task semantics; runner-process semantics now have their own channel.
+Hook files and statusline JSON are written by **Farmslot's hook scripts** (loaded from `{{runtime_dir}}/.observability/claude-settings.json`) — triggered by the runner, but with schema, format, and rotation owned by us. They reflect runner-process truth (turn boundaries, tool calls, token usage) because the runner invokes the hooks at those exact moments. `SIGNAL.json` is written by the **worker** (the LLM via its task template) and reflects task-template truth (recipe pass, report.md written, etc.). Keeping them separated preserves the existing ADR-024 family-observability ledger model — the worker still owns task semantics; runner-process semantics now have their own channel.
 
 ### Files on disk
 
@@ -299,7 +299,7 @@ Operator guide: [runner-validation-harness.md](../operations/runner-validation-h
 
 ### Interaction with `oh-my-claudecode` (OMC)
 
-OMC ships Claude hooks at **user scope** (`~/.claude/hooks/`). Our slot fixture installs at **project scope** (`.claude/settings.json` inside the worker repo). Claude Code merges hook arrays across scopes — **both fire**. Specifically:
+OMC ships Claude hooks at **user scope** (`~/.claude/hooks/`). Farmslot supplies an additional runtime-owned settings file with `--settings`; it does not edit the worker repo or the user settings. Claude Code loads both hook sets. Specifically:
 
 - OMC's `SessionStart` (writes `~/.claude/.omc/state/sessions/<id>/skill-active-state.json`) and Farmslot's `SessionStart` (writes our `hooks.jsonl`) both run on session start. Order is undefined; our hook must be idempotent.
 - OMC's `PreToolUse` / `PostToolUse` (mutate `skill-active-state.json`) and ours (append to `hooks.jsonl`) coexist via the `flock`-protected append in our hook script.
@@ -358,13 +358,13 @@ Source: explore-lane inventory, 2026-05-21.
 
 ## Risks
 
-- **Hook-disable footguns.** Claude lets users disable hooks via settings.json. Mitigation: slot fixture writes hooks under `{{runtime_dir}}/settings.json` (slot-specific, not user-global), and gateway detects "no hook events within 10 s of `UserPromptSubmit`-equivalent send-keys" as a degraded mode that re-engages pane fallback automatically.
-- **settings.json drift across slots.** Different fixture revisions could ship inconsistent hook scripts. Mitigation: hook script committed under `projects/<name>/fixtures/.claude/settings.json` and validated against a schema at preflight (existing fixture-sync path), same model used for `.tool-versions`.
+- **Hook-disable footguns.** Claude lets users disable hooks via settings. Mitigation: every managed launch passes the generated `{{runtime_dir}}/.observability/claude-settings.json` explicitly, and the gateway detects missing hook events as a degraded mode that re-engages pane fallback automatically.
+- **Settings drift across slots.** Different support revisions could install inconsistent hook scripts. Mitigation: the installer and launch command come from the same Farmslot support digest, and both target the slot's configured runtime directory.
 - **Sandbox / timeout interactions.** `UserPromptSubmit` hook has a verified **30 s** ceiling (overrides the default 600 s). Aggregate across all hooks for that event must stay under 30 s. Farmslot hook script targets **<100 ms** end-to-end; current draft uses `jq -c` twice per event (~40-80 ms total bench-pending). If `jq` is too slow on the target machine, replace with bash-native printf/heredoc. **Phase 1 first task: bench hook latency on runner-local + mini + runner-a worker shells; abort phase if median > 150 ms.**
 - **`$TMUX_PANE` availability inside Claude's hook child process is empirically unverified.** Hook script's de-multiplexing strategy at line 76 relies on `${TMUX_PANE:-}` being populated when Claude spawns the hook. Claude _should_ propagate parent env to children, but this has not been verified on actual fleet machines. **Phase 1 first task: install a minimal hook on runner-browser-1, trigger `SessionStart`, verify the hook child sees `TMUX_PANE`. If empty, switch de-multiplexing to a `{cwd, session_id}` composite key.**
 - **Ordering races.** Gateway can observe a `send-keys` complete before the corresponding `UserPromptSubmit` hook is written. Mitigation: `promptAccepted()` polls with a 500 ms grace window after send-keys before reporting `false`; this is still 60× faster than the current 30 s timeout.
 - **Hook crash.** Hook script error must not throw inside the runner. Two options:
-  - **A (preferred):** declare the hook as `"async": true` in the slot's `.claude/settings.json` so non-zero exit is logged but does not block the runner — sidesteps the suppression entirely.
+  - **A (preferred):** declare the hook as `"async": true` in the runtime-owned Claude settings file so non-zero exit is logged but does not block the runner — sidesteps the suppression entirely.
   - **B (fallback):** trailing `|| true` on the append, which is a benign suppression. This is **a documented waiver of the project HARD RULE "No Swallowed Exceptions"** (see `CLAUDE.md`). The waiver applies _only to the writer-level append in the hook script fixture_ and only because the runner cannot recover from a hook crash; the gateway-side absence-detection (below) does the actual error handling.
 
   Degraded-mode signal (concrete spec): `sendRunnerInstructionSafely` at `services/gateway/src/runners.ts:805` gains a post-send-keys poll on `{{runtime_dir}}/.observability/hooks.jsonl` mtime; if mtime hasn't advanced within 5 s of send-keys completion AND the worker is supposed to have received a prompt, log a `[observability] degraded — falling back to pane` warning and the call site reverts to current pane-regex behavior for that operation. The 5 s window is tunable per-runner via `RunnerDefinition.observabilityHeartbeatMs` (new field; Claude default 5000, others null = skip the check).
