@@ -72,22 +72,22 @@ function isFailedReviewPlaceholder(
   );
 }
 
+type RecoverableReviewRecord = Pick<IndependentReviewStatus, 'id'> &
+  Partial<
+    Pick<
+      IndependentReviewStatus,
+      | 'source'
+      | 'verdict'
+      | 'unresolvedCount'
+      | 'feedbackSent'
+      | 'recoveryContinuationPending'
+      | 'issues'
+    >
+  >;
+
 export function reviewerContextNeedsRecovery(
   ctx: Pick<AgentContext, 'role' | 'status' | 'artifactScope'>,
-  reviews: Array<
-    Pick<IndependentReviewStatus, 'id'> &
-      Partial<
-        Pick<
-          IndependentReviewStatus,
-          | 'source'
-          | 'verdict'
-          | 'unresolvedCount'
-          | 'feedbackSent'
-          | 'recoveryContinuationPending'
-          | 'issues'
-        >
-      >
-  >,
+  reviews: RecoverableReviewRecord[],
   options: { includeFailed?: boolean } = {},
 ): boolean {
   if (!isRecoverableReviewerContext(ctx, options)) return false;
@@ -122,6 +122,36 @@ export function reviewerContextNeedsRecovery(
       unresolvedCount: recorded.unresolvedCount,
       feedbackSent: recorded.feedbackSent,
     })
+  );
+}
+
+/**
+ * A non-terminal reviewer context is only live while its artifact scope still
+ * needs recovery. Once that review is terminal, or a later review has already
+ * been persisted, keeping the old context `working` creates a ghost reviewer in
+ * the run/slot UI and makes restart recovery revisit work that has settled.
+ */
+export function reviewerContextIsSettled(
+  ctx: Pick<AgentContext, 'role' | 'status' | 'artifactScope'>,
+  reviews: RecoverableReviewRecord[],
+): boolean {
+  if (ctx.role !== 'self-review' || (ctx.status !== 'working' && ctx.status !== 'launching')) {
+    return false;
+  }
+  const artifactScope = ctx.artifactScope?.trim();
+  if (!artifactScope) return false;
+  const recordedIndex = reviews.findIndex((review) => review.id === artifactScope);
+  if (recordedIndex < 0) return false;
+  if (!reviewerContextNeedsRecovery(ctx, reviews)) return true;
+  return reviews.slice(recordedIndex + 1).some(
+    (review) =>
+      review.verdict !== undefined &&
+      review.unresolvedCount !== undefined &&
+      !isFailedReviewPlaceholder({
+        verdict: review.verdict,
+        unresolvedCount: review.unresolvedCount,
+        feedbackSent: review.feedbackSent,
+      }),
   );
 }
 
@@ -348,9 +378,23 @@ export async function recoverInflightPublicationReviews(
   runId: string,
   slotId: string,
 ): Promise<string[]> {
-  const run = getRun(runId);
+  let run = getRun(runId);
   if (!run) return [];
-  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  let reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const settledContexts = (run.agentContexts ?? []).filter((ctx) =>
+    reviewerContextIsSettled(ctx, reviews),
+  );
+  for (const ctx of settledContexts) {
+    await markAgentContextStatus(runId, 'self-review', 'complete', { id: ctx.id });
+  }
+  if (settledContexts.length > 0) {
+    console.log(
+      `[run-engine] run ${runId.slice(0, 8)} — settled ${settledContexts.length} superseded reviewer context(s)`,
+    );
+    run = getRun(runId);
+    if (!run) return [];
+    reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  }
   const candidates = (run.agentContexts ?? []).filter((ctx) =>
     reviewerContextNeedsRecovery(ctx, reviews, { includeFailed: true }),
   );

@@ -8,6 +8,7 @@ import {
   isRecoverableReviewerContext,
   recoveredReviewAlreadyIngested,
   recoveredReviewArtifactScope,
+  reviewerContextIsSettled,
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
 
@@ -119,6 +120,68 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
   assert.equal(
     reviewerContextNeedsRecovery(reviewerContext({ status: 'working', artifactScope: null }), []),
     true,
+  );
+});
+
+test('reviewerContextIsSettled terminalizes persisted and superseded reviewer ghosts', () => {
+  const working = reviewerContext({
+    status: 'working',
+    artifactScope: 'independent-review-7',
+  });
+  assert.equal(
+    reviewerContextIsSettled(working, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+    ]),
+    true,
+    'a persisted terminal verdict settles its lingering reviewer context',
+  );
+  assert.equal(
+    reviewerContextIsSettled(working, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+        issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+      },
+    ]),
+    false,
+    'the current review remains live while its continuation is pending',
+  );
+  assert.equal(
+    reviewerContextIsSettled(working, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+        issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+      },
+      {
+        id: 'independent-review-8',
+        source: 'dispatch',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+    ]),
+    true,
+    'a later persisted review supersedes an older pending continuation',
+  );
+  assert.equal(
+    reviewerContextIsSettled(
+      reviewerContext({ status: 'complete', artifactScope: 'independent-review-7' }),
+      [{ id: 'independent-review-7', verdict: 'pass', unresolvedCount: 0 }],
+    ),
+    false,
   );
 });
 
