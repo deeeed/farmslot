@@ -549,7 +549,7 @@ export class BranchChangedFiles extends LitElement {
       <div
         class="file-row ${this.selectedPath === node.path ? 'selected' : ''}"
         style="padding-left:${indent}px"
-        @click=${() => this._selectFile(node.path, node.status!)}
+        @click=${() => this._selectFile(node.path, node.status!, node.oldPath)}
       >
         <span class="status-badge" style="background:${color}22; color:${color};"
           >${node.status}</span

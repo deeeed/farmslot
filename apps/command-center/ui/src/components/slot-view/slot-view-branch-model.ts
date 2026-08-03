@@ -56,6 +56,11 @@ export function branchDiffPollAction({
   const changesChanged = prevChangesKey !== undefined && nextChangesKey !== prevChangesKey;
   if (branchChanged || aheadChanged || changesChanged) return 'reload-and-clear-cache';
   if (lastLoadFailed) return 'reload';
+  // A dirty worktree can change content without changing status (more edits
+  // to an already-modified file), which the fingerprint cannot see — keep the
+  // union list fresh every poll while dirty. Per-file worktree diffs bypass
+  // the cache on click, so no cache clear is needed here.
+  if (nextChangesKey !== '') return 'reload';
   return 'none';
 }
 

@@ -587,9 +587,14 @@ export class GitChanges extends LitElement {
   private _renderCommittedFileRow(f: BranchDiffFile, indent?: number) {
     const color = statusColor(f.status as GitChangeStatus);
     // In worktree scope this group is the only list, so rows keep the
-    // working-tree actions for files with local modifications.
-    const wt =
-      this.committedScope === 'worktree' ? this.changes.find((c) => c.path === f.path) : undefined;
+    // working-tree actions for files with local modifications. A file can
+    // appear twice in changes (staged AND unstaged) — collect all entries so
+    // neither action set is lost.
+    const wtEntries =
+      this.committedScope === 'worktree' ? this.changes.filter((c) => c.path === f.path) : [];
+    const wtStaged = wtEntries.some((c) => c.staged);
+    const wtUnstaged = wtEntries.some((c) => !c.staged);
+    const wt = wtEntries.length > 0 ? wtEntries[0] : undefined;
     return html`
       <div
         class="file-row ${this.selectedPath === f.path ? 'selected' : ''}"
@@ -620,32 +625,35 @@ export class GitChanges extends LitElement {
         </span>
         ${wt
           ? html`<span class="file-actions">
-              ${wt.staged
+              ${wtStaged
                 ? html`<button
                     class="file-action-btn"
                     title="Unstage"
-                    @click=${(e: Event) => this._unstage(wt.path, e)}
+                    @click=${(e: Event) => this._unstage(f.path, e)}
                   >
                     &minus;
                   </button>`
-                : html`<button
+                : nothing}
+              ${wtUnstaged
+                ? html`<button
                       class="file-action-btn"
                       title="Stage"
-                      @click=${(e: Event) => this._stage(wt.path, e)}
+                      @click=${(e: Event) => this._stage(f.path, e)}
                     >
                       +
                     </button>
                     <button
-                      class="file-action-btn danger ${this._confirmDiscard === wt.path
+                      class="file-action-btn danger ${this._confirmDiscard === f.path
                         ? 'confirming'
                         : ''}"
-                      title="${this._confirmDiscard === wt.path
+                      title="${this._confirmDiscard === f.path
                         ? 'Click again to confirm'
                         : 'Discard changes'}"
-                      @click=${(e: Event) => this._discard(wt.path, e)}
+                      @click=${(e: Event) => this._discard(f.path, e)}
                     >
                       ${'↩'}
-                    </button>`}
+                    </button>`
+                : nothing}
             </span>`
           : nothing}
       </div>

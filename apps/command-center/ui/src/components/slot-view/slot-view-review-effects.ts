@@ -180,8 +180,15 @@ export async function handleSlotViewBranchDiffSelect(
     return;
   }
 
-  // M/D/R: fetch branch diff and open as diff tab
+  // M/D/R: fetch branch diff and open as diff tab. Worktree-target content
+  // can change without any status transition, so drop the cached entry and
+  // fetch fresh on every click.
   const cacheKey = `branch:${view._branchDiffBase}:${path}`;
+  if (view._liveDiffContents.has(cacheKey)) {
+    const next = new Map(view._liveDiffContents);
+    next.delete(cacheKey);
+    view._liveDiffContents = next;
+  }
   const loaded = await loadSlotViewDiffContent(view, cacheKey, {
     diffBase: view._branchDiffBase,
     diffTarget: 'worktree',
