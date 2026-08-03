@@ -32,8 +32,10 @@ test('gitStateChips marks untracked files and omits absent states', () => {
   assert.deepEqual(gitStateChips({ committed: undefined, worktreeEntries: [] }), []);
 });
 
-test('gitStatusColor covers every status with a stable palette', () => {
-  for (const status of ['M', 'A', 'D', 'R', '?'] as const) {
-    assert.match(gitStatusColor(status), /^#[0-9a-f]{6}$/);
-  }
+test('gitStatusColor pins the shared palette exactly', () => {
+  assert.equal(gitStatusColor('M'), '#6366f1');
+  assert.equal(gitStatusColor('A'), '#00ff88');
+  assert.equal(gitStatusColor('D'), '#ff4444');
+  assert.equal(gitStatusColor('R'), '#ffcc00');
+  assert.equal(gitStatusColor('?'), '#00ff88');
 });

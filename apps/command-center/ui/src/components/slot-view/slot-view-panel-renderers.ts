@@ -238,6 +238,7 @@ export function renderSlotViewChangesPanel(view: SlotView) {
   return html`<branch-changed-files
     .files=${view._branchDiffFiles}
     .changes=${view._git?.changes ?? []}
+    .scope=${'worktree'}
     .base=${view._branchDiffBase}
     .head=${view._branchDiffHead}
     .totalAdditions=${view._branchDiffTotalAdd}

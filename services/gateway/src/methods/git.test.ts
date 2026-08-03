@@ -145,3 +145,14 @@ test('gitBranchDiff head target leaves committed undefined', async () => {
   const result = await gitBranchDiff({ slotId: 's', base: 'main' }, deps);
   assert.equal(result.files[0].committed, undefined);
 });
+
+test('gitBranchDiff worktree rename keeps its committed flag via the old path', async () => {
+  const { deps } = branchDiffDeps({
+    nameStatus: 'R100\told.txt\tnew.txt\n',
+    numstat: '0\t0\told.txt => new.txt\n',
+    committedNameStatus: 'M\told.txt\n',
+  });
+  const result = await gitBranchDiff({ slotId: 's', base: 'main', target: 'worktree' }, deps);
+  assert.equal(result.files[0].path, 'new.txt');
+  assert.equal(result.files[0].committed, true);
+});

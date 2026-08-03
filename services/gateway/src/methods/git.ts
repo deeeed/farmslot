@@ -360,7 +360,11 @@ export async function gitBranchDiff(
       if (parts.length >= 2) committedPaths.add(parts[parts.length - 1]);
     }
     for (const file of files) {
-      file.committed = committedPaths.has(file.path);
+      // A worktree rename lists the file under its new path while the
+      // committed set may know it by the old one — either match counts.
+      file.committed =
+        committedPaths.has(file.path) ||
+        (file.oldPath !== undefined && committedPaths.has(file.oldPath));
     }
   }
 

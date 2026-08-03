@@ -135,6 +135,8 @@ export class BranchChangedFiles extends LitElement {
   @property({ attribute: false }) branches: string[] = [];
   /** Working-tree status entries — enables IDE-style C/S/M/U state chips per row. */
   @property({ attribute: false }) changes: WorktreeChangeEntry[] = [];
+  /** State chips render only in worktree scope — head-scope lists are committed by definition. */
+  @property() scope: 'head' | 'worktree' = 'head';
 
   @state() private _collapsed = new Set<string>();
   @state() private _baseInput = '';
@@ -588,7 +590,7 @@ export class BranchChangedFiles extends LitElement {
   }
 
   private _renderStateChips(path: string, committed: boolean | undefined) {
-    if (this.changes.length === 0 && committed === undefined) return nothing;
+    if (this.scope !== 'worktree') return nothing;
     return gitStateChips({
       committed,
       worktreeEntries: this.changes.filter((entry) => entry.path === path),
