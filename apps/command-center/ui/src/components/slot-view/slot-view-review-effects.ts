@@ -145,6 +145,9 @@ export async function loadSlotViewBranchList(view: SlotView) {
       '[slot-view] branch list load failed:',
       err instanceof Error ? err.message : String(err),
     );
+    // A stale rejection (slot switched, reconnect) must not clobber the
+    // current slot's branch list with the fallback.
+    if (!isTicketCurrent(view, ticket)) return;
     view._branchDiffBranches = ['main'];
   }
 }
