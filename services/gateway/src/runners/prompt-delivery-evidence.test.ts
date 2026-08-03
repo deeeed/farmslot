@@ -161,7 +161,7 @@ test('launch acknowledgement snapshot degrades to null when the evidence probe c
   assert.equal(snapshot, null);
 });
 
-test('fresh task-scoped signal cannot replace exact prompt evidence when a digest is required', async () => {
+test('task-scoped signal remains authoritative when a digest is required', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'farmslot-launch-ack-probe-'));
   const signalPath = join(dir, 'SIGNAL.json');
   try {
@@ -183,8 +183,17 @@ test('fresh task-scoped signal cannot replace exact prompt evidence when a diges
       preferHooks: false,
       requirePromptDigest: true,
     });
-    assert.equal(digestRequired.accepted, false);
-    assert.equal(digestRequired.reason, 'hook handoff disabled for runner');
+    assert.equal(digestRequired.accepted, true);
+    assert.equal(digestRequired.source, 'launch-signal');
+
+    const recovered = await probeRunnerHandoffAck(vars, 'unused', 'review prompt', NOW, {
+      launchAckSignalPath: signalPath,
+      launchAckBaseline: await readLaunchAckSignalSnapshot(vars, signalPath),
+      preferHooks: false,
+      requirePromptDigest: true,
+    });
+    assert.equal(recovered.accepted, true);
+    assert.equal(recovered.source, 'launch-signal');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
