@@ -7,6 +7,7 @@ import { parseSelfReviewIssueBullets } from './issues.js';
 import {
   canRecoverSelfReviewFixPass,
   resolveSelfReviewRunnerModel,
+  resumeSelfReviewFixPromptDelivery,
   retryDeferredFixDelivery,
   runSelfReviewRetryLoop,
   type SelfReviewRetryDeps,
@@ -259,6 +260,61 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
     false,
     'legacy contexts without the scoped signal path are not valid recovery state',
   );
+});
+
+test('restart recovery re-delivers the existing fix task without rewriting it', async () => {
+  let delivered = false;
+  const run = {
+    id: 'run-1',
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    effort: 'high',
+    safetyTier: 'dangerous',
+    metrics: { runner: 'claude', model: 'opus' },
+    agentContexts: [
+      {
+        id: 'fix-bug',
+        role: 'fix-bug',
+        runnerSessionId: 'session-1',
+        runnerSessionPath: '/sessions/session-1.jsonl',
+      },
+    ],
+  };
+  const result = await resumeSelfReviewFixPromptDelivery(
+    { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
+    'run-1',
+    {
+      id: 'self-review-fix',
+      runner: 'claude',
+      model: 'opus',
+      taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW-FIX-SIGNAL.json',
+      target: { session: 'ff-1', window: 'bugfix', target: 'ff-1:bugfix' },
+      startedAt: '2026-08-03T12:00:00.000Z',
+    },
+    {
+      getRun: (() => run) as never,
+      resolvePrompt: async (_project, input) => `read ${input.taskFile}`,
+      resolveRuntimeDir: async () => '.sandbox/farmslot-farm/agent',
+      readLaunchAck: async (_vars, signalPath) => {
+        assert.equal(signalPath, '/repo/tasks/run-1/SELF-REVIEW-FIX-SIGNAL.json');
+        return null;
+      },
+      deliver: async (options) => {
+        delivered = true;
+        assert.equal(options.target, 'ff-1:bugfix');
+        assert.equal(options.prompt, 'read tasks/run-1/SELF-REVIEW-FIX.md');
+        assert.equal(options.sessionId, 'session-1');
+        assert.equal(options.sessionPath, '/sessions/session-1.jsonl');
+        assert.equal(options.priorPromptSendAttempted, true);
+        assert.equal(options.forceBusyPoll, true);
+        return { delivered: true, acknowledgement: 'safe-send' };
+      },
+    },
+  );
+
+  assert.equal(result, 'delivered');
+  assert.equal(delivered, true);
 });
 
 test('resolveSelfReviewRunnerModel keeps self-review on the worker runner by default', () => {

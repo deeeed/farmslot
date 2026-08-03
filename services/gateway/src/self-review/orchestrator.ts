@@ -855,6 +855,86 @@ export function canRecoverSelfReviewFixPass(
   );
 }
 
+type FixPromptRecoveryContext = Pick<
+  AgentContext,
+  | 'id'
+  | 'runner'
+  | 'model'
+  | 'taskFile'
+  | 'signalFile'
+  | 'target'
+  | 'attemptStartedAt'
+  | 'startedAt'
+>;
+
+interface FixPromptRecoveryDeps {
+  getRun: typeof getRun;
+  resolvePrompt: typeof resolveWorkerDispatchPrompt;
+  resolveRuntimeDir: typeof resolveProjectRuntimeDir;
+  readLaunchAck: typeof readLaunchAckSignalSnapshot;
+  deliver: typeof deliverPromptWithRetainedFallback;
+}
+
+const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
+  getRun,
+  resolvePrompt: resolveWorkerDispatchPrompt,
+  resolveRuntimeDir: resolveProjectRuntimeDir,
+  readLaunchAck: readLaunchAckSignalSnapshot,
+  deliver: deliverPromptWithRetainedFallback,
+};
+
+/**
+ * Re-submit an already-materialized fix task after restart without rewriting the
+ * task or clearing its signal. The retained-session delivery layer owns runner
+ * differences and exact prompt acknowledgement; this function only supplies
+ * the persisted run/context facts.
+ */
+export async function resumeSelfReviewFixPromptDelivery(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  context: FixPromptRecoveryContext,
+  deps: FixPromptRecoveryDeps = FIX_PROMPT_RECOVERY_DEPS,
+): Promise<'delivered' | 'deferred' | 'unsupported'> {
+  const target = context.target?.target;
+  const taskFile = context.taskFile;
+  const runner = normalizeRunner(context.runner);
+  if (!target || !taskFile || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
+    return 'unsupported';
+  }
+
+  const run = deps.getRun(runId);
+  if (!run) return 'unsupported';
+  const taskDir = path.posix.dirname(taskFile);
+  const prompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
+  const primaryContext = selectAgentContext(run, { role: 'primary' });
+  const signalRelPath =
+    context.signalFile ?? taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
+  const signalPath = `${vars.remoteRepo}/${signalRelPath}`;
+  const launchAckBaseline = await deps.readLaunchAck(vars, signalPath);
+  const runtimeDir = await deps.resolveRuntimeDir(run.project);
+  const result = await deps.deliver({
+    vars,
+    target,
+    runnerId: runner,
+    sessionId: primaryContext?.runnerSessionId,
+    sessionPath: primaryContext?.runnerSessionPath,
+    model: context.model ?? run.metrics.model,
+    effort: run.effort,
+    prompt,
+    safetyTier: run.safetyTier,
+    runtimeDir,
+    taskDir,
+    launchAckSignalPath: signalPath,
+    launchAckBaseline,
+    priorPromptSendAttempted: true,
+    timeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
+    recovery: { runId },
+    sendLogPrefix: 'self-review-fix-recovery',
+    forceBusyPoll: true,
+  });
+  return result.delivered ? 'delivered' : 'deferred';
+}
+
 async function recoverSelfReviewFixPass({
   vars,
   taskDir,
@@ -919,6 +999,16 @@ async function recoverSelfReviewFixPass({
     );
 
     if (!fixSignal) {
+      const delivery = await resumeSelfReviewFixPromptDelivery(vars, runId, fixContext);
+      debugSelfReviewLog(
+        `[self-review] run ${runId.slice(0, 8)} — recovered fix prompt ${delivery}`,
+      );
+      if (delivery === 'deferred') {
+        setProgressDetail(
+          runId,
+          `Recovered reviewer findings; fix prompt delivery deferred while worker is busy...`,
+        );
+      }
       const fixTaskPath = slotTaskRelPath(
         vars,
         taskDir,
