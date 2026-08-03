@@ -84,6 +84,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _branchDiffTotalAdd = 0;
   @state() _branchDiffTotalDel = 0;
   @state() _branchDiffLoading = false;
+  @state() _branchDiffError: string | null = null;
   @state() _branchDiffBranches: string[] = [];
 
   // --- Layout state ---

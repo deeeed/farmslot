@@ -79,16 +79,19 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     view._branchDiffHead = result.head;
     view._branchDiffTotalAdd = result.totalAdditions;
     view._branchDiffTotalDel = result.totalDeletions;
+    view._branchDiffError = null;
   } catch (err) {
-    console.warn(
-      '[slot-view] branch diff files load failed:',
-      err instanceof Error ? err.message : String(err),
-    );
+    // Expected transient failures (node reconnecting, gateway restart). The
+    // error is surfaced in the panel and the git-status poll retries the load
+    // — see shouldReloadBranchDiff.
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn('[slot-view] branch diff files load failed:', message);
     if (!isCurrentReviewResult(view, epoch)) return;
     view._branchDiffFiles = [];
     view._branchDiffHead = '';
     view._branchDiffTotalAdd = 0;
     view._branchDiffTotalDel = 0;
+    view._branchDiffError = message;
   } finally {
     view._branchDiffLoading = false;
   }

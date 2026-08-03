@@ -135,6 +135,7 @@ export function renderSlotViewSidebarSource(view: SlotView) {
   return html`<git-changes
     .changes=${git.changes}
     .committedFiles=${view._branchDiffFiles}
+    .committedError=${view._branchDiffError}
     .branch=${git.branch}
     .ahead=${git.ahead}
     .behind=${git.behind}
@@ -225,6 +226,12 @@ export function renderSlotViewChangesPanel(view: SlotView) {
   if (view._branchDiffLoading) {
     return html`<div style="padding: 12px; color: ${colors.textMuted}; font-size: ${fonts.sizeSm}">
       Loading branch diff...
+    </div>`;
+  }
+  if (view._branchDiffError && view._branchDiffFiles.length === 0) {
+    return html`<div style="padding: 12px; color: ${colors.statusWarn}; font-size: ${fonts.sizeSm}">
+      Branch diff unavailable — retrying with status poll.
+      <div style="color: ${colors.textMuted}; margin-top: 4px">${view._branchDiffError}</div>
     </div>`;
   }
   return html`<branch-changed-files

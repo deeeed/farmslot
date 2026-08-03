@@ -151,6 +151,8 @@ export class GitChanges extends LitElement {
   @property({ type: Number }) ahead = 0;
   @property({ type: Number }) behind = 0;
   @property() branchDiffBase = '';
+  /** Last branch-diff load failure — distinguishes "empty" from "unavailable". */
+  @property() committedError: string | null = null;
 
   @property() selectedPath = '';
   @state() private _stagedOpen = true;
@@ -727,7 +729,14 @@ export class GitChanges extends LitElement {
       </div>
       <div class="file-list">
         ${total === 0
-          ? html`<div class="empty-state"><div>No changes</div></div>`
+          ? html`<div class="empty-state">
+              <div>
+                ${this.committedError
+                  ? html`Branch diff unavailable — retrying with status poll.<br />${this
+                        .committedError}`
+                  : 'No changes'}
+              </div>
+            </div>`
           : html`
               ${this._renderGroup(
                 'Staged Changes',
