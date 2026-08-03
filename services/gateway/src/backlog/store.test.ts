@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -2164,5 +2164,39 @@ test('closeShipped refuses items whose queue row is mid-dispatch', async () => {
       assert.match(rich.userAction ?? '', /run cancel/u);
       return true;
     },
+  );
+});
+
+test('a failed backlog write rejects the settle instead of reporting a settled cancel', async (t) => {
+  // Codex round-8 P2: the settle resolved after merely *scheduling* the persist, and
+  // `schedulePersist` drops the write's rejection. ADR-052's `backlog-settle` effect
+  // would report `ok`, tick the scheduler, and skip `backlogReconcilePending` while
+  // the durable file still held pre-cancel state.
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Settle must fail loudly',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  created.item.status = 'needs-attention';
+  created.item.runId = 'settle-persist-failure';
+  created.item.lastObservedRunStatus = 'blocked';
+
+  // Make the backlog file undeletable/unwritable by removing write permission on its
+  // directory, so `persist()` fails on the temp-file write.
+  const backlogDir = path.dirname(process.env.FARMSLOT_BACKLOG_FILE!);
+  await chmod(backlogDir, 0o500);
+  t.after(() => chmod(backlogDir, 0o700));
+
+  await assert.rejects(
+    () =>
+      backlog.markBacklogRunObserved({
+        id: 'settle-persist-failure',
+        status: 'done',
+        backlogItemId: created.item.id,
+      } as never),
+    'a backlog write failure must reach the transition router',
   );
 });

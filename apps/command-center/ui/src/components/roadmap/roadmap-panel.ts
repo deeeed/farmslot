@@ -195,6 +195,12 @@ export class RoadmapPanel extends LitElement {
   private _deliveryGeneration = 0;
   private _deliveryReloadInFlight = false;
   private _deliveryReloadQueued = false;
+  /**
+   * Detail requests need their own stamp: the item id alone does not order two
+   * overlapping `roadmap.get` calls for the *same* selected item, so the older
+   * response could land last and restore stale lineage.
+   */
+  private _deliveryDetailGeneration = 0;
   @state() private _deliveryDetail: RoadmapDeliveryProjection | null = null;
   @state() private _allItems: RoadmapItem[] = [];
   @state() private _slots: SlotStatus[] = [];
@@ -1581,13 +1587,19 @@ export class RoadmapPanel extends LitElement {
   }
 
   private async _loadDeliveryDetail(itemId: string) {
+    const generation = ++this._deliveryDetailGeneration;
+    const superseded = () =>
+      this._selectedId !== itemId || generation !== this._deliveryDetailGeneration;
     try {
       const result = await gateway.request<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId });
-      if (this._selectedId !== itemId) return;
+      if (superseded()) return;
       this._deliveryDetail = result.delivery ?? null;
     } catch (err) {
       // Lineage is supplementary to the editor; surface the failure instead of
-      // rendering a silently empty delivery panel.
+      // rendering a silently empty delivery panel. A superseded request's error is
+      // dropped deliberately: a newer request owns the panel, and reporting the stale
+      // one would show an error for lineage the user is no longer looking at.
+      if (superseded()) return;
       this._error = `Delivery lineage unavailable: ${(err as Error).message}`;
     }
   }

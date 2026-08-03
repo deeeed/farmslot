@@ -2304,7 +2304,11 @@ export function markBacklogRunObserved(run: Run): Promise<void> {
     }
     if (!shouldApplyLinkedRunObservation(item, run)) return;
     if (applyRunObservation(item, run)) {
-      schedulePersist('run-observed');
+      // Awaited, not scheduled: `schedulePersist` drops the write's rejection, so a
+      // failed backlog write would still resolve this promise and ADR-052's
+      // `backlog-settle` effect would report `ok` — ticking the scheduler and skipping
+      // `backlogReconcilePending` while the durable file still holds pre-cancel state.
+      await persistNow('run-observed');
       broadcastBacklog();
     }
   });
