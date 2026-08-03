@@ -113,6 +113,7 @@ export interface PostDispatchStepContext {
     mode: Run['mode'],
   ) => Promise<boolean>;
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
+  prepareCompletionPackageForRun?: typeof prepareCompletionPackage;
   executeSelfReviewForRun?: typeof executeSelfReview;
   resumeInterruptedPublicationReviewForRun?: typeof resumeInterruptedPublicationReview;
   probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
@@ -167,6 +168,58 @@ function stampFreshReviewsForPreparedPackage(
       },
     },
   });
+}
+
+async function reconcilePublishGateReviewPlanResult(
+  runId: string,
+  plan: ReviewLoopRequest[],
+  result: PublishGateReviewPlanResult,
+  context: Pick<PostDispatchStepContext, 'getDiffStat' | 'prepareCompletionPackageForRun'>,
+  options: {
+    reviewedPackage?: ReadyGatePrPackage;
+    stampFreshReviews?: boolean;
+  } = {},
+): Promise<number> {
+  const completedReviewCount = result.rejection
+    ? Math.min(result.reviewIds.length, plan.length)
+    : plan.length;
+  const remainingPlan = result.rejection ? plan.slice(completedReviewCount) : [];
+  const afterReviewPlan = getRun(runId)!;
+  updateRun(runId, {
+    engineState: {
+      ...afterReviewPlan.engineState,
+      publishGate: {
+        ...afterReviewPlan.engineState?.publishGate,
+        pendingReviewPlan: remainingPlan,
+        pendingReviewPlanRequestedAt: remainingPlan.length
+          ? afterReviewPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt
+          : undefined,
+      },
+    },
+  });
+  if (!result.rejection || result.reviewIds.length > 0) {
+    const diffStat = await context.getDiffStat(getRun(runId)!);
+    const prepared = await (context.prepareCompletionPackageForRun ?? prepareCompletionPackage)(
+      runId,
+      {
+        diffStat,
+        reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
+        publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
+        ...(options.stampFreshReviews
+          ? {
+              selectedEvidenceKeys: options.reviewedPackage?.selectedEvidenceKeys,
+              priorEvidenceManifest: options.reviewedPackage?.evidenceManifest,
+              stampReviews: false,
+            }
+          : {}),
+        requireArtifactMirror: true,
+      },
+    );
+    if (options.stampFreshReviews) {
+      stampFreshReviewsForPreparedPackage(runId, result.reviewIds, prepared.prPackage);
+    }
+  }
+  return completedReviewCount;
 }
 
 async function evalReviewAxisSkip(run: Run): Promise<{
@@ -621,7 +674,6 @@ export async function executeHumanGateStep(
     executePublishGateReviewPlan,
     executeReadyGate,
     executeReviewGate,
-    getDiffStat,
     isHumanGateEnabled,
   } = context;
   const current = getRun(runId)!;
@@ -862,26 +914,7 @@ export async function executeHumanGateStep(
           dispatchPlan,
           reviewSource,
         );
-        if (!reviewPlanResult.rejection) {
-          const afterDispatchReviews = getRun(runId)!;
-          updateRun(runId, {
-            engineState: {
-              ...afterDispatchReviews.engineState,
-              publishGate: {
-                ...afterDispatchReviews.engineState?.publishGate,
-                pendingReviewPlan: [],
-                pendingReviewPlanRequestedAt: undefined,
-              },
-            },
-          });
-          const diffStat = await getDiffStat(getRun(runId)!);
-          await prepareCompletionPackage(runId, {
-            diffStat,
-            reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
-            publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
-            requireArtifactMirror: true,
-          });
-        }
+        await reconcilePublishGateReviewPlanResult(runId, dispatchPlan, reviewPlanResult, context);
       } else if (recoveredReviewIds.length > 0 || resumedInterruptedReview) {
         const beforeRefresh = await readReadyGatePreparedPackage(getRun(runId)!);
         const diffStat = await getDiffStat(getRun(runId)!);
@@ -952,40 +985,13 @@ export async function executeHumanGateStep(
           boundedPlan,
           'human-gate',
         );
-        const newReviewIds = reviewPlanResult.reviewIds;
-        const completedReviewCount = reviewPlanResult.rejection
-          ? Math.min(newReviewIds.length, boundedPlan.length)
-          : boundedPlan.length;
-        reviewRequestLoops += completedReviewCount;
-        const remainingPlan = reviewPlanResult.rejection
-          ? boundedPlan.slice(completedReviewCount)
-          : [];
-        const afterReviewPlan = getRun(runId)!;
-        updateRun(runId, {
-          engineState: {
-            ...afterReviewPlan.engineState,
-            publishGate: {
-              ...afterReviewPlan.engineState?.publishGate,
-              pendingReviewPlan: remainingPlan,
-              pendingReviewPlanRequestedAt: remainingPlan.length
-                ? afterReviewPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt
-                : undefined,
-            },
-          },
-        });
-        if (!reviewPlanResult.rejection || newReviewIds.length > 0) {
-          const diffStat = await getDiffStat(getRun(runId)!);
-          const prepared = await prepareCompletionPackage(runId, {
-            diffStat,
-            reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
-            publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
-            selectedEvidenceKeys: reviewedPackage?.selectedEvidenceKeys,
-            priorEvidenceManifest: reviewedPackage?.evidenceManifest,
-            stampReviews: false,
-            requireArtifactMirror: true,
-          });
-          stampFreshReviewsForPreparedPackage(runId, newReviewIds, prepared.prPackage);
-        }
+        reviewRequestLoops += await reconcilePublishGateReviewPlanResult(
+          runId,
+          boundedPlan,
+          reviewPlanResult,
+          context,
+          { reviewedPackage, stampFreshReviews: true },
+        );
         gateAction = await executeReadyGate(runId);
         continue;
       }

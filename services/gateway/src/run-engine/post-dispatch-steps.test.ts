@@ -4,9 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { CompleteStepOutput } from '@farmslot/protocol';
+import type {
+  CompleteStepOutput,
+  PublicationReviewLaunchRejection,
+  ReviewLoopRequest,
+} from '@farmslot/protocol';
 
 import { writeResultPackageManifest } from '../evals/package-store.js';
+import type { PrepareCompletionPackageResult } from '../run-completion/orchestrator.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import {
@@ -481,6 +486,133 @@ test('human-gate restart replay does not inherit a prior temporary review reques
     extraLoopsRequested: 0,
     requestedBy: 'human-gate',
   });
+});
+
+test('human-gate partial review refusal retains only unconsumed work and rebuilds the package', async (t) => {
+  const requestedAt = '2026-08-03T00:00:00.000Z';
+  const plan: ReviewLoopRequest[] = [
+    { order: 1, runner: 'codex', model: null, validationDepth: 'static-code' },
+    { order: 2, runner: 'claude', model: null, validationDepth: 'full-live' },
+  ];
+  const rejection: PublicationReviewLaunchRejection = {
+    code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+    message: 'The slot worktree became dirty after the first review.',
+    userAction: 'Commit or discard the changes before requesting another review.',
+    rejectedAt: '2026-08-03T00:02:00.000Z',
+  };
+  const reviewDepth = {
+    minimumIndependentReviews: 1,
+    requireCrossRunner: false,
+    extraLoopsRequested: 0,
+    requestedBy: 'dispatch' as const,
+  };
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-PARTIAL-REVIEW',
+    runner: 'claude',
+    slotId: 'remote-mobile-1',
+    engineState: {
+      publishGate: {
+        publicationTarget: 'ready',
+        publicationStatus: 'not_published',
+        reviewDepth,
+        pendingReviewPlanRequestedAt: requestedAt,
+        independentReviews: [
+          {
+            id: 'baseline-review',
+            source: 'dispatch',
+            runner: 'codex',
+            crossRunner: true,
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  let readyGateCalls = 0;
+  let packageRebuilds = 0;
+  const preparedResult: PrepareCompletionPackageResult = {
+    completion: {
+      prNumber: null,
+      ciRepo: null,
+      artifactsCopied: true,
+      prCommentPosted: false,
+      prTitleUpdated: false,
+      prMarkedReady: false,
+      retrospectiveCreated: false,
+      artifacts: [],
+    },
+    prPackage: makeReadyGatePackage(),
+    reviewDepth,
+    independentReviews: [],
+  };
+  await executeHumanGateStep(run.id, {
+    activeMonitors: new Map(),
+    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {},
+    createEngineDecision: async () => 'decision-unused',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async (_runId, _slotId, actualPlan, trigger) => {
+      assert.deepEqual(actualPlan, plan);
+      assert.equal(trigger, 'human-gate');
+      return { reviewIds: ['r1'], rejection };
+    },
+    executeReadyGate: async () => {
+      readyGateCalls += 1;
+      if (readyGateCalls > 1) return 'ready';
+      const latest = getRun(run.id)!;
+      updateRun(run.id, {
+        decisions: [
+          {
+            id: 'decision-partial-review',
+            type: 'engine_human_gate',
+            title: 'Publication gate',
+            description: 'Request two reviews',
+            actions: [],
+            createdAt: requestedAt,
+            resolvedAt: '2026-08-03T00:00:01.000Z',
+            resolvedAction: 'request-extra-review',
+            selectionData: { reviewRequest: { loops: plan } },
+          },
+        ],
+        engineState: {
+          ...latest.engineState,
+          publishGate: {
+            ...latest.engineState?.publishGate,
+            pendingReviewPlan: plan,
+            pendingReviewPlanRequestedAt: requestedAt,
+          },
+        },
+      });
+      return 'request-extra-review';
+    },
+    executeReviewGate: async () => {},
+    getDiffStat: async () => ({ files: 1, additions: 2, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => true,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    prepareCompletionPackageForRun: async (_runId, options) => {
+      packageRebuilds += 1;
+      assert.equal(options?.stampReviews, false);
+      assert.equal(options?.requireArtifactMirror, true);
+      return preparedResult;
+    },
+    refreshRunLinks: async () => {},
+    stepPartialIO: new Map(),
+  });
+
+  const persistedGate = getRun(run.id)?.engineState?.publishGate;
+  assert.deepEqual(persistedGate?.pendingReviewPlan, [plan[1]]);
+  assert.equal(persistedGate?.pendingReviewPlanRequestedAt, requestedAt);
+  assert.equal(packageRebuilds, 1);
 });
 
 test('review-pr always presents its publication gate in autonomous mode', async (t) => {
