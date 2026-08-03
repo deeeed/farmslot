@@ -54,6 +54,7 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 import { buildCIWatchChainedRunParams } from '../run-engine/ci-watch-chain.js';
+import { isHumanGateReviewRequestAction } from '../run-engine/decision-replay.js';
 import { resolveEngineDecision } from '../run-engine/engine-decisions.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
@@ -70,6 +71,7 @@ import {
   startRun,
 } from '../run-engine/orchestrator.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
+import { assertIndependentReviewLaunchState } from '../run-engine/review-launch-gate.js';
 import {
   probeWorkerSignalForRun,
   readFreshTerminalSignalForRun,
@@ -1149,6 +1151,21 @@ export async function runResolveDecision(
         'Interactive PR-complete handoff can resume only after a fresh terminal SIGNAL.json is written on the slot.',
       );
     }
+  }
+  if (
+    decision.type === 'engine_human_gate' &&
+    isHumanGateReviewRequestAction(params.actionId) &&
+    requiresPublicationApproval(existing)
+  ) {
+    if (!existing.slotId) {
+      throw new Error('Publication review launch requires an assigned slot');
+    }
+    const vars = await loadSlotVars(existing.slotId);
+    await assertIndependentReviewLaunchState(
+      existing.engineState?.publishGate?.independentReviews ?? [],
+      (command) =>
+        execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
+    );
   }
   await assertReadyPublishResolveIsFresh(existing, decision, params);
   // The probes above await; a concurrent resolver (operator abort vs re-armed

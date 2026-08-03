@@ -21,6 +21,7 @@ import {
 
 import { getProjectField, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { shellQuote } from '../core/tmux.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import {
   invalidateArtifactTextCache,
@@ -80,6 +81,7 @@ import {
   requestedReviewLoopCount,
   reviewPlanFromSelection,
 } from './review-plan.js';
+import { assertIndependentReviewLaunchState } from './review-launch-gate.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
 
 const S = PipelineSteps;
@@ -213,6 +215,12 @@ export async function executePublishGateReviewPlan(
   const reviewIds: string[] = [];
   for (const planStep of boundedPlan) {
     const latestBeforeReview = getRun(runId)!;
+    const vars = await loadSlotVars(slotId);
+    await assertIndependentReviewLaunchState(
+      latestBeforeReview.engineState?.publishGate?.independentReviews ?? [],
+      (command) =>
+        execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
+    );
     const reviewedPackage =
       source === 'human-gate' ? await readPreparedPackage(latestBeforeReview) : undefined;
     // ID + artifact paths flow through EXTRA_REVIEW_SOURCE so this stream stays

@@ -1,10 +1,41 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { ExecResult, IndependentReviewStatus } from '@farmslot/protocol';
+
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import { localVideoProofWarning, resumeInterruptedPublicationReview } from './ready-gate.js';
+import { assertIndependentReviewLaunchState } from './review-launch-gate.js';
 import { deleteTestRunIfPresent } from './test-fixtures.js';
+
+function gitExecutor(status: string, headSha: string): (command: string) => Promise<ExecResult> {
+  return async (command) => {
+    if (command.includes('status --porcelain')) {
+      return { stdout: status, stderr: '', exitCode: 0 };
+    }
+    if (command.includes('rev-parse HEAD')) {
+      return { stdout: `${headSha}\n`, stderr: '', exitCode: 0 };
+    }
+    throw new Error(`Unexpected git probe: ${command}`);
+  };
+}
+
+function issuesReview(reviewedHeadSha: string): IndependentReviewStatus {
+  return {
+    id: 'extra-review-1',
+    source: 'human-gate',
+    crossRunner: true,
+    loopNumber: 1,
+    verdict: 'issues',
+    unresolvedCount: 1,
+    reviewedHeadSha,
+    artifactPaths: [
+      'artifacts/extra-review-loop-1/review.diff',
+      'artifacts/extra-review-loop-1/self-review.md',
+    ],
+  };
+}
 
 test('localVideoProofWarning flags screenshot packages without local video proof', () => {
   assert.match(
@@ -143,5 +174,55 @@ test('resumeInterruptedPublicationReview keeps feedback recoverable when deliver
   assert.equal(
     getRun(run.id)?.engineState?.publishGate?.independentReviews?.[0]?.feedbackSent,
     false,
+  );
+});
+
+test('independent publication review refuses a dirty slot with a commit action', async () => {
+  await assert.rejects(
+    assertIndependentReviewLaunchState(
+      [],
+      gitExecutor(' M services/gateway/src/run-engine/ready-gate.ts\n?? scratch.txt\n', 'abc123'),
+    ),
+    (error: unknown) => {
+      const envelope = error as {
+        code?: string;
+        message?: string;
+        userAction?: string;
+        details?: { dirtyPathCount?: number };
+      };
+      assert.equal(envelope.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
+      assert.match(envelope.message ?? '', /dirty tree.*2 uncommitted path/iu);
+      assert.match(envelope.userAction ?? '', /git status.*git commit/iu);
+      assert.equal(envelope.details?.dirtyPathCount, 2);
+      return true;
+    },
+  );
+});
+
+test('independent publication re-review refuses the same HEAD after issues', async () => {
+  await assert.rejects(
+    assertIndependentReviewLaunchState([issuesReview('abc123')], gitExecutor('', 'abc123')),
+    (error: unknown) => {
+      const envelope = error as {
+        code?: string;
+        message?: string;
+        userAction?: string;
+        details?: { priorReviewCommit?: string; priorFeedbackPath?: string };
+      };
+      assert.equal(envelope.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
+      assert.match(envelope.message ?? '', /prior issues review.*abc123/iu);
+      assert.match(envelope.message ?? '', /extra-review-loop-1\/self-review\.md/u);
+      assert.match(envelope.userAction ?? '', /fix.*git commit.*new HEAD/iu);
+      assert.equal(envelope.details?.priorReviewCommit, 'abc123');
+      assert.ok(envelope.details?.priorFeedbackPath);
+      return true;
+    },
+  );
+});
+
+test('independent publication re-review allows a clean advanced HEAD', async () => {
+  assert.deepEqual(
+    await assertIndependentReviewLaunchState([issuesReview('abc123')], gitExecutor('', 'def456')),
+    { dirtyPathCount: 0, headSha: 'def456' },
   );
 });
