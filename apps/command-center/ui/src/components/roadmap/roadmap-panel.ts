@@ -201,6 +201,8 @@ export class RoadmapPanel extends LitElement {
    * response could land last and restore stale lineage.
    */
   private _deliveryDetailGeneration = 0;
+  /** Distinguishes "lineage still loading" from "no lineage" so the panel never blanks silently. */
+  @state() private _deliveryDetailLoading = false;
   @state() private _deliveryDetail: RoadmapDeliveryProjection | null = null;
   @state() private _allItems: RoadmapItem[] = [];
   @state() private _slots: SlotStatus[] = [];
@@ -1590,6 +1592,7 @@ export class RoadmapPanel extends LitElement {
     const generation = ++this._deliveryDetailGeneration;
     const superseded = () =>
       this._selectedId !== itemId || generation !== this._deliveryDetailGeneration;
+    this._deliveryDetailLoading = true;
     try {
       const result = await gateway.request<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId });
       if (superseded()) return;
@@ -1601,6 +1604,10 @@ export class RoadmapPanel extends LitElement {
       // one would show an error for lineage the user is no longer looking at.
       if (superseded()) return;
       this._error = `Delivery lineage unavailable: ${(err as Error).message}`;
+    } finally {
+      // Only the newest request owns the flag; a superseded one clearing it would
+      // hide the placeholder while its replacement is still in flight.
+      if (generation === this._deliveryDetailGeneration) this._deliveryDetailLoading = false;
     }
   }
 
@@ -2425,7 +2432,14 @@ export class RoadmapPanel extends LitElement {
   private _renderDeliveryLineage(item: RoadmapItem) {
     const projection =
       this._deliveryDetail?.roadmapItemId === item.id ? this._deliveryDetail : null;
-    if (!projection) return nothing;
+    if (!projection) {
+      // A blank panel reads as "nothing shipped". Say which one it is.
+      return this._deliveryDetailLoading
+        ? html`<div class="path-panel">
+            <p class="muted" data-testid="delivery-lineage-loading">Loading delivery lineage…</p>
+          </div>`
+        : nothing;
+    }
     const links = roadmapDeliveryBacklinks(projection);
     return html`<div class="path-panel">
       <div class="editor-head">

@@ -6,6 +6,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - feat(slot-view): IDE-style per-file state chips (C committed / S staged / M unstaged / U untracked) in the unified diff list and changes activity, with one shared git-status palette across the source panel, changes activity, and file tree (untracked is now green everywhere, VSCode-style, instead of gray in the source panel).
 
+- fix(roadmap): the delivery lineage panel shows an explicit loading placeholder instead of rendering nothing, so a slow projection read no longer looks identical to "nothing shipped".
 - fix(roadmap): delivery *detail* requests are generation-stamped too, so two overlapping `roadmap.get` calls for the same selected item cannot land out of order and restore stale lineage, and a superseded request's error no longer surfaces after the selection moved on.
 - feat(slot-view): the source-control panel shows every change vs the base branch — committed or not — as one deduped list ("All changes vs main"), with per-file diffs computed against the working tree.
 

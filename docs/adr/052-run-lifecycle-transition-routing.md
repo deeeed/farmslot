@@ -1,6 +1,6 @@
 # ADR-052: Run Lifecycle Transition Routing
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-08-02
 **Relates to:** [ADR-013](013-gateway-mediated-orchestration.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-027](027-unified-gateway-state.md), [ADR-040](040-work-graph-orchestration.md)
 
