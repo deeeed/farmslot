@@ -162,24 +162,50 @@ export interface RoadmapDeliveryBacklink {
  * run family, and merged PR. No run-page cache lookup, so historical runs stay
  * reachable.
  */
+/** The run fields roadmap delivery is derived from. */
+export interface DeliveryRevisionRun {
+  id: string;
+  updatedAt: string;
+  status: string;
+  prNumber?: number | null;
+}
+
+/** The backlog fields roadmap delivery is derived from. */
+export interface DeliveryRevisionBacklogItem {
+  id: string;
+  updatedAt: string;
+  status: string;
+  roadmapItemId?: string;
+  shipped?: { prRef?: string };
+}
+
 /**
  * Content revision of the projection's gateway-side inputs. Lengths alone miss the
  * transitions that matter most — a run reaching `done`, a backlog item shipping —
  * so identity plus `updatedAt` is folded in.
  */
 export function deliveryInputRevision(
-  runs: ReadonlyArray<{ id: string; updatedAt: string }>,
-  backlogItems: ReadonlyArray<{ id: string; updatedAt: string }>,
+  runs: ReadonlyArray<DeliveryRevisionRun>,
+  backlogItems: ReadonlyArray<DeliveryRevisionBacklogItem>,
 ): string {
   // Count plus max timestamp is not enough: swapping one linked row for another keeps
-  // both, and two edits inside the same millisecond keep the timestamp. Fold every
-  // row's identity so any substitution changes the key.
-  const fold = (rows: ReadonlyArray<{ id: string; updatedAt: string }>): string =>
+  // both, and two edits inside the same millisecond keep the timestamp. Fold each row's
+  // identity *and* the fields the projection actually derives from, so a second
+  // transition in the same millisecond still moves the key.
+  const foldRuns = (rows: ReadonlyArray<DeliveryRevisionRun>): string =>
     rows
-      .map((row) => `${row.id}:${row.updatedAt}`)
+      .map((row) => `${row.id}:${row.updatedAt}:${row.status}:${row.prNumber ?? ''}`)
       .sort()
       .join(',');
-  return `${fold(runs)}|${fold(backlogItems)}`;
+  const foldBacklog = (rows: ReadonlyArray<DeliveryRevisionBacklogItem>): string =>
+    rows
+      .map(
+        (row) =>
+          `${row.id}:${row.updatedAt}:${row.status}:${row.roadmapItemId ?? ''}:${row.shipped?.prRef ?? ''}`,
+      )
+      .sort()
+      .join(',');
+  return `${foldRuns(runs)}|${foldBacklog(backlogItems)}`;
 }
 
 export function roadmapDeliveryBacklinks(

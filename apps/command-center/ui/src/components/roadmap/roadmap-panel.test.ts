@@ -299,9 +299,9 @@ test('an archived-only run family is shown without a dead navigation link', () =
 test('delivery revision changes when a run transitions without changing counts', () => {
   // Codex round-6 P2: the detector compared array lengths, so monitoring -> done —
   // the transition that actually changes delivery — never triggered a refresh.
-  const runsBefore = [{ id: 'r1', updatedAt: '2026-08-01T00:00:00.000Z' }];
-  const runsAfter = [{ id: 'r1', updatedAt: '2026-08-01T01:00:00.000Z' }];
-  const backlog = [{ id: 'b1', updatedAt: '2026-08-01T00:00:00.000Z' }];
+  const runsBefore = [{ id: 'r1', updatedAt: '2026-08-01T00:00:00.000Z', status: 'done' }];
+  const runsAfter = [{ id: 'r1', updatedAt: '2026-08-01T01:00:00.000Z', status: 'done' }];
+  const backlog = [{ id: 'b1', updatedAt: '2026-08-01T00:00:00.000Z', status: 'done' }];
 
   assert.notEqual(
     deliveryInputRevision(runsBefore, backlog),
@@ -316,7 +316,7 @@ test('delivery revision changes when a run transitions without changing counts',
   // A backlog item shipping is caught for the same reason.
   assert.notEqual(
     deliveryInputRevision(runsBefore, backlog),
-    deliveryInputRevision(runsBefore, [{ id: 'b1', updatedAt: '2026-08-02T00:00:00.000Z' }]),
+    deliveryInputRevision(runsBefore, [{ id: 'b1', updatedAt: '2026-08-02T00:00:00.000Z', status: 'done' }]),
   );
 });
 
@@ -325,31 +325,31 @@ test('delivery revision changes when one row is swapped for another', () => {
   // two edits inside the same millisecond, produced an identical key and the panel
   // skipped the reload, leaving badges stale until some later update.
   const stamp = '2026-08-01T00:00:00.000Z';
-  const backlog = [{ id: 'b1', updatedAt: stamp }];
+  const backlog = [{ id: 'b1', updatedAt: stamp, status: 'done' }];
 
   assert.notEqual(
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp }], backlog),
-    deliveryInputRevision([{ id: 'r2', updatedAt: stamp }], backlog),
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done' }], backlog),
+    deliveryInputRevision([{ id: 'r2', updatedAt: stamp, status: 'done' }], backlog),
     'a different run at the same timestamp is different delivery input',
   );
   assert.notEqual(
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp }], backlog),
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp }], [{ id: 'b2', updatedAt: stamp }]),
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done' }], backlog),
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done' }], [{ id: 'b2', updatedAt: stamp, status: 'done' }]),
     'the same holds for a swapped backlog item',
   );
   // Order must not matter: the store can return the same rows in a different order.
   assert.equal(
     deliveryInputRevision(
       [
-        { id: 'r1', updatedAt: stamp },
-        { id: 'r2', updatedAt: stamp },
+        { id: 'r1', updatedAt: stamp, status: 'done' },
+        { id: 'r2', updatedAt: stamp, status: 'done' },
       ],
       backlog,
     ),
     deliveryInputRevision(
       [
-        { id: 'r2', updatedAt: stamp },
-        { id: 'r1', updatedAt: stamp },
+        { id: 'r2', updatedAt: stamp, status: 'done' },
+        { id: 'r1', updatedAt: stamp, status: 'done' },
       ],
       backlog,
     ),
@@ -375,4 +375,33 @@ test('unresolved backlog provenance is evidence, not a link', () => {
   const link = roadmapDeliveryBacklinks(dangling).find((entry) => entry.kind === 'backlog')!;
   assert.equal(link.href, '', 'no link to an item that cannot exist');
   assert.match(link.detail, /missing backlog item/);
+});
+
+test('delivery revision moves when a row changes twice within one millisecond', () => {
+  // Codex round-9 P2: `id:updatedAt` alone collides when two transitions land in the
+  // same millisecond. If the first reload finished before the second transition, no
+  // further reload was queued and the badges stayed stale.
+  const stamp = '2026-08-03T00:00:00.000Z';
+  const backlog = [{ id: 'b1', updatedAt: stamp, status: 'done' }];
+
+  assert.notEqual(
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'monitoring' }], backlog),
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done' }], backlog),
+    'a status change is delivery-affecting even at an identical timestamp',
+  );
+  assert.notEqual(
+    deliveryInputRevision(
+      [{ id: 'r1', updatedAt: stamp, status: 'done', prNumber: null }],
+      backlog,
+    ),
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done', prNumber: 421 }], backlog),
+    'a PR landing on the run is delivery-affecting too',
+  );
+  assert.notEqual(
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done' }], backlog),
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done' }], [
+      { id: 'b1', updatedAt: stamp, status: 'done', shipped: { prRef: 'deeeed/farmslot#421' } },
+    ]),
+    'a backlog item shipping at the same timestamp is delivery-affecting',
+  );
 });

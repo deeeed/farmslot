@@ -1574,7 +1574,12 @@ export class RoadmapPanel extends LitElement {
       });
       if (generation === this._deliveryGeneration) this._deliverySummaries = result.delivery ?? [];
     } catch (err) {
-      this._error = `Delivery badges unavailable: ${(err as Error).message}`;
+      // Same generation guard as the success path. A superseded request failing after
+      // a newer `_refresh` already succeeded would otherwise report "unavailable" over
+      // data that is in fact loaded and current.
+      if (generation === this._deliveryGeneration) {
+        this._error = `Delivery badges unavailable: ${(err as Error).message}`;
+      }
     }
     if (this._selectedId && generation === this._deliveryGeneration) {
       this._deliveryDetail = null;
