@@ -208,11 +208,12 @@ test('applyBranchFreshnessToReadyGatePayload clears stale keys (package-refresh 
     hint: 'Branch is up to date with origin/main (behindMain: 0, mergeConflicts: false).',
   });
   assert.equal(cleaned.mergeConflicts, false);
-  assert.deepEqual(cleaned.mergeConflictPaths, []);
   assert.equal(cleaned.behindMain, 0);
   assert.match(cleaned.branchFreshnessHint ?? '', /up to date/);
-  // Stale path sample must not survive.
+  // Stale path sample must not survive (assert before deepEqual so [] does not
+  // narrow mergeConflictPaths to never[] under assert.deepEqual's type predicate).
   assert.ok(!cleaned.mergeConflictPaths?.includes('f.ts'));
+  assert.deepEqual(cleaned.mergeConflictPaths, [] as string[]);
 
   const cleared = applyBranchFreshnessToReadyGatePayload(stale, null);
   assert.equal(cleared.behindMain, undefined);

@@ -86,6 +86,7 @@ import {
   reviewPlanFromSelection,
 } from './review-plan.js';
 import {
+  applyBranchFreshnessToReadyGatePayload,
   probeSlotBranchFreshness,
   resolveBranchUpdateStrategy,
   type BranchFreshnessSummary,
@@ -672,28 +673,6 @@ export async function executeReadyGate(runId: string): Promise<string> {
     }
   }
 
-  // Snapshot the slot's HEAD SHA at gate-creation time so post-hoc viewers
-  // can tell when the workspace's live diff has drifted from what was
-  // reviewed. Non-fatal — legacy gates without this field fall back to
-  // the "live diff" warning banner in ready-workspace.
-  let headSha: string | undefined;
-  let branchFreshness: BranchFreshnessSummary | null = null;
-  if (current.slotId) {
-    try {
-      const vars = await loadSlotVars(current.slotId);
-      const r = await execOnSlot(vars, `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`);
-      const sha = r.stdout.trim();
-      if (sha && /^[0-9a-f]{7,40}$/i.test(sha)) headSha = sha;
-      const defaultBranch =
-        (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || 'main';
-      const strategy = resolveBranchUpdateStrategy(pv?.projectJson);
-      branchFreshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
-    } catch (err) {
-      console.warn(
-        `[run-engine] ready-gate headSha/branch-freshness capture failed for ${runId.slice(0, 8)}: ${(err as Error).message}`,
-      );
-    }
-  }
   const reviewLaunchRejection = reconcileReviewLaunchRejectionForCurrentHead(runId, headSha);
 
   const baseDescription =
@@ -896,60 +875,51 @@ export async function executeReadyGate(runId: string): Promise<string> {
     gatePolicy: preparedPackage?.gatePolicy,
   });
 
-  const readyPayload: ReadyGatePayload = {
-    kind: 'ready',
-    prNumber,
-    repo: ciRepo,
-    gateSummary,
-    diffStat: preparedPackage?.diffStat ?? diffStat,
-    workerReport: report ?? '',
-    branch: preparedPackage?.branch ?? current.branch ?? '',
-    slotId: current.slotId ?? undefined,
-    headSha: preparedPackage?.headSha ?? headSha,
-    ...(branchFreshness
-      ? {
-          ...(typeof branchFreshness.behindMain === 'number'
-            ? { behindMain: branchFreshness.behindMain }
-            : {}),
-          ...(typeof branchFreshness.mergeConflicts === 'boolean'
-            ? { mergeConflicts: branchFreshness.mergeConflicts }
-            : {}),
-          ...(branchFreshness.mergeConflictPaths.length
-            ? { mergeConflictPaths: branchFreshness.mergeConflictPaths }
-            : {}),
-          branchFreshnessHint: branchFreshness.hint,
-        }
-      : {}),
-    recipeJson,
-    recipeQualityArtifact: (
-      await loadRecipeQualityEvaluation({
-        run: current,
-        workerReport: report ?? '',
-        recipeJson,
-        recipeCoverage,
-      })
-    ).artifact,
-    artifactManifest: preparedPackage?.evidenceManifest ?? artifactManifest,
-    selfReviewVerdict,
-    selfReviewSummary,
-    workerLearnings,
-    reviewLaunchRejection,
-    ciChecks,
-    acceptanceCriteria,
-    inputSnapshot,
-    ...(preparedPackage
-      ? {
-          prPackage: preparedPackage,
-          reviewDepth,
-          independentReviews,
-          gatePolicy: preparedPackage.gatePolicy,
-          validationSummary: preparedPackage.validationSummaryPath ?? undefined,
-          publicationTarget: preparedPackage.publicationTarget,
-          publicationStatus: publicationStatusForRun(current),
-          stale: staleReviewCount > 0,
-        }
-      : {}),
-  };
+  // Soft freshness fields go through the same clear-then-set helper as package-refresh
+  // so empty mergeConflictPaths and unknown counts share one encoding.
+  const readyPayload: ReadyGatePayload = applyBranchFreshnessToReadyGatePayload(
+    {
+      kind: 'ready',
+      prNumber,
+      repo: ciRepo,
+      gateSummary,
+      diffStat: preparedPackage?.diffStat ?? diffStat,
+      workerReport: report ?? '',
+      branch: preparedPackage?.branch ?? current.branch ?? '',
+      slotId: current.slotId ?? undefined,
+      headSha: preparedPackage?.headSha ?? headSha,
+      recipeJson,
+      recipeQualityArtifact: (
+        await loadRecipeQualityEvaluation({
+          run: current,
+          workerReport: report ?? '',
+          recipeJson,
+          recipeCoverage,
+        })
+      ).artifact,
+      artifactManifest: preparedPackage?.evidenceManifest ?? artifactManifest,
+      selfReviewVerdict,
+      selfReviewSummary,
+      workerLearnings,
+      reviewLaunchRejection,
+      ciChecks,
+      acceptanceCriteria,
+      inputSnapshot,
+      ...(preparedPackage
+        ? {
+            prPackage: preparedPackage,
+            reviewDepth,
+            independentReviews,
+            gatePolicy: preparedPackage.gatePolicy,
+            validationSummary: preparedPackage.validationSummaryPath ?? undefined,
+            publicationTarget: preparedPackage.publicationTarget,
+            publicationStatus: publicationStatusForRun(current),
+            stale: staleReviewCount > 0,
+          }
+        : {}),
+    },
+    branchFreshness,
+  );
 
   updateRunStep(runId, S.HUMAN_GATE, { detail: 'Waiting for operator decision' });
   const actionId = await createEngineDecision(runId, 'human_gate', desc, actions, readyPayload);
