@@ -162,6 +162,9 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
 ### Phase 6: Report + package
 
 - [ ] **17. Self-review** — read the diff against `{{review_quality_path}}` antipatterns; no inline protocol duplication or comment noise.
+- [ ] **17a. Extend + re-run the recipe for anything you changed since Phase 2** — every review or self-review fix
+  needs a node proving its claim, then a full re-run. Act on the result: failing node means fix the code, or fix an
+  assertion that over-claims. Prove each new node can fail before trusting it. Unit tests do not cover wiring.
 - [ ] **18. Commit** — atomic commit(s) following Conventional Commits.
 - [ ] **19. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include root cause, fix summary, test results, and evidence paths (screenshots + `after.mp4`). Include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
 - [ ] **20. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`

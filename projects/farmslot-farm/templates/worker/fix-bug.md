@@ -91,7 +91,9 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
   ```
 - [ ] **10. Evidence manifest** — when step 3 listed a UI/device surface, `evidence-manifest.json` must reference real screenshots/video (empty pairs are not proof). Gateway-cli-only may omit visual evidence.
 - [ ] **11. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` (gateway computes recipe-quality) and run `check-task-artifact-contract.mjs --require-recipe-coverage-if-recipe`.
-- [ ] **12. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
+- [ ] **12. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`.
+- [ ] **12a. Extend + re-run the recipe for anything changed since the baseline** — each fix needs a node
+  proving its claim, then a full re-run; act on what it shows. Prove each new node can fail. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
 - [ ] **13. Commit** — single commit following the repo's Lore commit protocol.
 - [ ] **14. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
 - [ ] **15. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.

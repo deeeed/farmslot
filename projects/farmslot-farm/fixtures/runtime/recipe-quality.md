@@ -76,6 +76,13 @@ Never proof:
    the recipe proves anything — run the baseline with your change stashed.
 7. State-mode proof still runs against the **running gateway**, not a test harness. `command` +
    `assert_output` against the live CLI/RPC is a first-class recipe, not a fallback.
+8. **Revalidate and extend on every change.** The recipe is living proof, not a one-time gate. Any
+   behaviour change — including fixes made during review rounds — needs a node covering the new claim
+   and a re-run. Then act on the result: a failing node means fix the code, or fix an assertion that
+   over-claims. A review fix with no recipe node is unproven.
+9. **Unit tests are not a substitute for wiring.** A pure helper can be fully unit-tested while the
+   code that calls it is dead. If the claim is "the panel refreshes" or "the effect fires", the recipe
+   must exercise the wiring in the running app.
 
 ## PR evidence package (gateway embeds this in created PRs)
 

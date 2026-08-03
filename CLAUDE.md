@@ -32,8 +32,13 @@ RPC (`cdp.mjs gateway …`), runtime logs (`watch_logs`), or Companion. Not UI-o
 that proves the claim: screenshots for rendering, log/RPC reads for state and cross-store effects.
 
 Never proof: "backend-only, so no recipe"; mocked unit tests; a `#dev/*` fixture when the claim is
-gateway _derivation_; asserting a call returned when the claim is its side effect. Details:
-`projects/<project>/fixtures/runtime/recipe-quality.md`.
+gateway _derivation_; asserting a call returned when the claim is its side effect.
+
+**The recipe is living proof, not a one-time gate.** Every time you change behaviour — including
+fixes made during review rounds — extend the recipe to cover the new claim and re-run it, then
+adjust the code or the assertion based on what it shows. A review fix with no recipe node is
+unproven. Prove each new node can fail (break the code path, watch that node fail, restore).
+Details: `projects/<project>/fixtures/runtime/recipe-quality.md`.
 
 ### Validate UI Via CDP — HARD RULE
 
