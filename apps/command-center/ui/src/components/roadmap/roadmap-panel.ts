@@ -1394,9 +1394,15 @@ export class RoadmapPanel extends LitElement {
   }
 
   private async _deleteSelected() {
-    if (!this._selected) return;
+    // Snapshot the target before the confirm dialog yields. `_selected` falls back to
+    // `_items[0]`, so a filter or run update arriving while the dialog is open can move
+    // it — and `_editHash` moves with it, so the hash guard does not catch the swap.
+    // Without this the operator confirms deleting one item and a different one goes.
+    const target = this._selected;
+    const expectedHash = this._editHash;
+    if (!target) return;
     const ok = window.confirm(
-      `Delete roadmap item "${this._selected.title}"? This removes its markdown file.`,
+      `Delete roadmap item "${target.title}"? This removes its markdown file.`,
     );
     if (!ok) return;
     this._busy = 'delete';
@@ -1404,8 +1410,8 @@ export class RoadmapPanel extends LitElement {
     this._message = '';
     try {
       await gateway.request(Methods.ROADMAP_DELETE, {
-        itemId: this._selected.id,
-        expectedHash: this._editHash,
+        itemId: target.id,
+        expectedHash,
       });
       this._message = 'Roadmap item deleted';
       await this._refresh('');
