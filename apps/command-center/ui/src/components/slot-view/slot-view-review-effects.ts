@@ -10,11 +10,27 @@ import { gateway } from '../../gateway-client.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
-import { slotViewBranchList } from './slot-view-branch-model.js';
+import {
+  type BranchDiffRequestTicket,
+  isBranchDiffTicketCurrent,
+  slotViewBranchList,
+} from './slot-view-branch-model.js';
 import { loadSlotViewDiffContent, loadSlotViewFileContent } from './slot-view-live-effects.js';
 
 function isCurrentReviewResult(view: SlotView, epoch: number) {
   return epoch === view._recoveryEpoch && isRecoveryEpochCurrent(epoch);
+}
+
+function branchDiffTicket(view: SlotView): BranchDiffRequestTicket {
+  return { generation: view._branchDiffGeneration, epoch: view._recoveryEpoch };
+}
+
+function isTicketCurrent(view: SlotView, ticket: BranchDiffRequestTicket): boolean {
+  return isBranchDiffTicketCurrent(ticket, {
+    generation: view._branchDiffGeneration,
+    epoch: view._recoveryEpoch,
+    epochCurrent: isRecoveryEpochCurrent(ticket.epoch),
+  });
 }
 
 export async function detectSlotViewPR(view: SlotView) {
@@ -67,45 +83,56 @@ export async function loadSlotViewPRComments(view: SlotView) {
 
 export async function loadSlotViewBranchDiff(view: SlotView) {
   if (!view._isLive) return;
-  const epoch = view._recoveryEpoch;
+  // The recovery epoch is a global reconnect counter — it does NOT change on
+  // slot switch, and slot identity alone is not A→B→A safe. The generation
+  // ticket stales any completion from an earlier visit.
+  const ticket = branchDiffTicket(view);
+  const isCurrent = () => isTicketCurrent(view, ticket);
   view._branchDiffLoading = true;
   try {
     const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
       slotId: view.slotId,
       base: view._branchDiffBase,
     });
-    if (!isCurrentReviewResult(view, epoch)) return;
+    if (!isCurrent()) return;
     view._branchDiffFiles = result.files;
     view._branchDiffHead = result.head;
     view._branchDiffTotalAdd = result.totalAdditions;
     view._branchDiffTotalDel = result.totalDeletions;
+    view._branchDiffError = null;
   } catch (err) {
-    console.warn(
-      '[slot-view] branch diff files load failed:',
-      err instanceof Error ? err.message : String(err),
-    );
-    if (!isCurrentReviewResult(view, epoch)) return;
+    // Expected transient failures (node reconnecting, gateway restart). The
+    // error is surfaced in the panel and the git-status poll retries the load
+    // — see branchDiffPollAction.
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn('[slot-view] branch diff files load failed:', message);
+    if (!isCurrent()) return;
     view._branchDiffFiles = [];
     view._branchDiffHead = '';
     view._branchDiffTotalAdd = 0;
     view._branchDiffTotalDel = 0;
+    view._branchDiffError = message;
   } finally {
-    view._branchDiffLoading = false;
+    // A stale completion (slot switched away) must not clear the loading
+    // flag the new slot's own load now owns.
+    if (isCurrent()) view._branchDiffLoading = false;
   }
 
-  // Load branch list for the dropdown (only once)
-  if (view._branchDiffBranches.length === 0) {
+  // Load branch list for the dropdown (only once per slot)
+  if (isCurrent() && view._branchDiffBranches.length === 0) {
     view._loadBranchList();
   }
 }
 
 export async function loadSlotViewBranchList(view: SlotView) {
   if (!view._isLive) return;
+  const ticket = branchDiffTicket(view);
   try {
     // Use git log to list branches via gateway
     await gateway.request<{
       entries: Array<{ hash: string; message: string; author: string; date: string }>;
     }>(Methods.GIT_LOG, { slotId: view.slotId, limit: 1 });
+    if (!isTicketCurrent(view, ticket)) return;
     // We need branch names — use a git command via the status branch name + common branches.
     // For now, provide the known base + current branch.
     view._branchDiffBranches = slotViewBranchList({
@@ -118,6 +145,9 @@ export async function loadSlotViewBranchList(view: SlotView) {
       '[slot-view] branch list load failed:',
       err instanceof Error ? err.message : String(err),
     );
+    // A stale rejection (slot switched, reconnect) must not clobber the
+    // current slot's branch list with the fallback.
+    if (!isTicketCurrent(view, ticket)) return;
     view._branchDiffBranches = ['main'];
   }
 }
