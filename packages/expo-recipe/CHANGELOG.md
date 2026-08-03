@@ -4,6 +4,10 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+## 0.7.1 - 2026-08-03
+
+- fix: expose the canonical native UI action set from the package root so consumers can verify provider capability wiring without duplicating it.
+
 ## 0.7.0 - 2026-08-03
 
 - fix: make native full-surface capture reliably target explicit scroll views, tolerate dropped iOS swipes, and stop at the requested end marker.
