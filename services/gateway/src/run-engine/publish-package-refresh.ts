@@ -24,6 +24,7 @@ import { computeReadyGateReviewSubjectHash } from '../run-completion/ready-gate-
 import { getRun, updateRun } from '../runs/store.js';
 
 import {
+  applyBranchFreshnessToReadyGatePayload,
   probeSlotBranchFreshness,
   resolveBranchUpdateStrategy,
 } from './branch-freshness.js';
@@ -243,10 +244,9 @@ export async function refreshPublishPackage(params: {
   ];
   // Soft gate chip: re-probe behind-main + merge-tree on package refresh so the
   // operator sees staleness before more review loops. Never auto-rebases.
-  let branchFreshnessFields: Pick<
-    ReadyGatePayload,
-    'behindMain' | 'mergeConflicts' | 'mergeConflictPaths' | 'branchFreshnessHint'
-  > = {};
+  // Always replace (not partial-spread) freshness keys so stale mergeConflictPaths
+  // / hints cannot survive a clean or failed probe via ...oldPayload.
+  let freshness: Awaited<ReturnType<typeof probeSlotBranchFreshness>> = null;
   let freshnessLine = '';
   if (refreshedRun.slotId) {
     try {
@@ -255,24 +255,8 @@ export async function refreshPublishPackage(params: {
       const defaultBranch =
         getProjectField(projectVars.projectJson, 'default_branch') || 'main';
       const strategy = resolveBranchUpdateStrategy(projectVars.projectJson);
-      const freshness = await probeSlotBranchFreshness(
-        vars,
-        String(defaultBranch),
-        strategy,
-      );
+      freshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
       if (freshness) {
-        branchFreshnessFields = {
-          ...(typeof freshness.behindMain === 'number'
-            ? { behindMain: freshness.behindMain }
-            : {}),
-          ...(typeof freshness.mergeConflicts === 'boolean'
-            ? { mergeConflicts: freshness.mergeConflicts }
-            : {}),
-          ...(freshness.mergeConflictPaths.length
-            ? { mergeConflictPaths: freshness.mergeConflictPaths }
-            : {}),
-          branchFreshnessHint: freshness.hint,
-        };
         const behindLabel =
           typeof freshness.behindMain === 'number' ? String(freshness.behindMain) : 'unknown';
         const conflictLabel =
@@ -291,28 +275,31 @@ export async function refreshPublishPackage(params: {
       console.warn(
         `[run-engine] package-refresh branch-freshness probe failed for ${params.runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
       );
+      freshness = null;
     }
   }
-  const nextPayload: ReadyGatePayload = {
-    ...oldPayload,
-    diffStat: prPackage.diffStat,
-    branch: prPackage.branch,
-    headSha: prPackage.headSha,
-    artifactManifest: prPackage.evidenceManifest,
-    prPackage,
-    reviewDepth,
-    independentReviews,
-    gatePolicy: prPackage.gatePolicy,
-    validationSummary: prPackage.validationSummaryPath ?? undefined,
-    publicationTarget: prPackage.publicationTarget,
-    publicationStatus: publicationStatusForRun(refreshedRun),
-    stale: staleReviewCount > 0,
-    draftEdits: {
-      ...(oldPayload.draftEdits ?? {}),
-      selectedEvidenceKeys: prPackage.selectedEvidenceKeys,
+  const nextPayload: ReadyGatePayload = applyBranchFreshnessToReadyGatePayload(
+    {
+      ...oldPayload,
+      diffStat: prPackage.diffStat,
+      branch: prPackage.branch,
+      headSha: prPackage.headSha,
+      artifactManifest: prPackage.evidenceManifest,
+      prPackage,
+      reviewDepth,
+      independentReviews,
+      gatePolicy: prPackage.gatePolicy,
+      validationSummary: prPackage.validationSummaryPath ?? undefined,
+      publicationTarget: prPackage.publicationTarget,
+      publicationStatus: publicationStatusForRun(refreshedRun),
+      stale: staleReviewCount > 0,
+      draftEdits: {
+        ...(oldPayload.draftEdits ?? {}),
+        selectedEvidenceKeys: prPackage.selectedEvidenceKeys,
+      },
     },
-    ...branchFreshnessFields,
-  };
+    freshness,
+  );
   const nextDecision: RunDecision = {
     ...decision,
     actions,

@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { ReadyGatePayload } from '@farmslot/protocol';
+
 import {
+  applyBranchFreshnessToReadyGatePayload,
   buildBranchFreshnessProbeScript,
   formatBranchFreshnessHint,
   parseBranchFreshnessProbeOutput,
@@ -179,6 +182,46 @@ test('sanitizeDefaultBranch and resolveBranchUpdateStrategy fail closed to safe 
   assert.equal(resolveBranchUpdateStrategy({ merge_main_strategy: 'merge' }), 'merge');
   assert.equal(resolveBranchUpdateStrategy({}), 'merge');
   assert.equal(resolveBranchUpdateStrategy(null), 'merge');
+});
+
+test('applyBranchFreshnessToReadyGatePayload clears stale keys (package-refresh wiring)', () => {
+  const stale: ReadyGatePayload = {
+    kind: 'ready',
+    prNumber: null,
+    repo: null,
+    diffStat: { files: 1, additions: 1, deletions: 0 },
+    workerReport: '',
+    branch: 'feat/x',
+    behindMain: 21,
+    mergeConflicts: true,
+    mergeConflictPaths: ['f.ts'],
+    branchFreshnessHint: 'behindMain: 21, mergeConflicts: true. Next: git merge origin/main',
+  };
+
+  const cleaned = applyBranchFreshnessToReadyGatePayload(stale, {
+    behindMain: 0,
+    aheadMain: 1,
+    mergeConflicts: false,
+    mergeConflictPaths: [],
+    defaultBranch: 'main',
+    remoteRefOk: true,
+    hint: 'Branch is up to date with origin/main (behindMain: 0, mergeConflicts: false).',
+  });
+  assert.equal(cleaned.mergeConflicts, false);
+  assert.deepEqual(cleaned.mergeConflictPaths, []);
+  assert.equal(cleaned.behindMain, 0);
+  assert.match(cleaned.branchFreshnessHint ?? '', /up to date/);
+  // Stale path sample must not survive.
+  assert.ok(!cleaned.mergeConflictPaths?.includes('f.ts'));
+
+  const cleared = applyBranchFreshnessToReadyGatePayload(stale, null);
+  assert.equal(cleared.behindMain, undefined);
+  assert.equal(cleared.mergeConflicts, undefined);
+  assert.equal(cleared.mergeConflictPaths, undefined);
+  assert.equal(cleared.branchFreshnessHint, undefined);
+  // Other payload fields preserved.
+  assert.equal(cleared.branch, 'feat/x');
+  assert.equal(cleared.kind, 'ready');
 });
 
 /**

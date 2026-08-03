@@ -5,6 +5,8 @@
 // Fail-closed: when origin/<branch> is missing or a count cannot be computed,
 // fields are omitted (unknown) — never treated as ahead=0 or mergeConflicts=true.
 
+import type { ReadyGatePayload } from '@farmslot/protocol';
+
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
@@ -304,4 +306,39 @@ export function resolveBranchUpdateStrategy(projectJson: unknown): MergeMainStra
       typeof resolveMergeMainStrategy
     >[0],
   );
+}
+
+const FRESHNESS_PAYLOAD_KEYS = [
+  'behindMain',
+  'mergeConflicts',
+  'mergeConflictPaths',
+  'branchFreshnessHint',
+] as const satisfies ReadonlyArray<keyof ReadyGatePayload>;
+
+/**
+ * Replace soft branch-freshness fields on a ready-gate payload.
+ *
+ * Spreading a partial probe result onto `...oldPayload` leaves stale keys when the
+ * new probe omits them (e.g. mergeConflicts became false but mergeConflictPaths
+ * was not re-set). Always clear the four keys first; re-attach only known values.
+ * When `freshness` is null (probe failed), all four are cleared.
+ */
+export function applyBranchFreshnessToReadyGatePayload(
+  payload: ReadyGatePayload,
+  freshness: BranchFreshnessSummary | null,
+): ReadyGatePayload {
+  const next: ReadyGatePayload = { ...payload };
+  for (const key of FRESHNESS_PAYLOAD_KEYS) {
+    delete next[key];
+  }
+  if (!freshness) return next;
+
+  if (typeof freshness.behindMain === 'number') next.behindMain = freshness.behindMain;
+  if (typeof freshness.mergeConflicts === 'boolean') {
+    next.mergeConflicts = freshness.mergeConflicts;
+  }
+  // Always write paths (empty array when clean) so a prior conflict sample cannot linger.
+  next.mergeConflictPaths = [...freshness.mergeConflictPaths];
+  next.branchFreshnessHint = freshness.hint;
+  return next;
 }
