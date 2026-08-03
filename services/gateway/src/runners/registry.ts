@@ -2704,10 +2704,23 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    const preSendPane = await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
-      deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
-      pollIntervalMs,
-    });
+    // A previous attempt can leave the exact instruction buffered when the
+    // runner swallows the submit key. That composer is intentionally not idle,
+    // so waiting for idle here would time out before the retry could send the
+    // promised submit-only key. Preserve the buffered pane and let the guarded
+    // submit path below consume it without retyping.
+    const preSendPane = runnerPaneShouldSubmitExistingInstruction(
+      immediatePane,
+      message,
+      marker,
+      runner,
+      { allowMarkerOnly: attempt > 1 },
+    )
+      ? immediatePane
+      : await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
+          deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
+          pollIntervalMs,
+        });
     const preSendHandoff = await runnerHasDurablePromptHandoff(
       vars,
       target,
