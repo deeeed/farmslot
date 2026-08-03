@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { shouldReloadBranchDiff, slotViewBranchList } from './slot-view-branch-model.js';
+import { branchDiffPollAction, slotViewBranchList } from './slot-view-branch-model.js';
 
 test('slotViewBranchList includes default and active branch candidates', () => {
   assert.deepEqual(
@@ -21,7 +21,7 @@ test('slotViewBranchList deduplicates main and empty candidates', () => {
   );
 });
 
-const RELOAD_BASE = {
+const POLL_BASE = {
   prevBranch: 'feat/x' as string | undefined,
   nextBranch: 'feat/x',
   prevAhead: 2 as number | undefined,
@@ -30,32 +30,35 @@ const RELOAD_BASE = {
   loading: false,
 };
 
-test('shouldReloadBranchDiff reloads on branch change', () => {
-  assert.equal(shouldReloadBranchDiff({ ...RELOAD_BASE, nextBranch: 'feat/y' }), true);
-});
-
-test('shouldReloadBranchDiff reloads when the ahead count changes (new commits)', () => {
-  assert.equal(shouldReloadBranchDiff({ ...RELOAD_BASE, nextAhead: 6 }), true);
-});
-
-test('shouldReloadBranchDiff retries after a failed load even with no git movement', () => {
-  assert.equal(shouldReloadBranchDiff({ ...RELOAD_BASE, lastLoadFailed: true }), true);
-});
-
-test('shouldReloadBranchDiff stays idle while a load is in flight', () => {
+test('branchDiffPollAction reloads and clears the diff cache on branch change', () => {
   assert.equal(
-    shouldReloadBranchDiff({ ...RELOAD_BASE, lastLoadFailed: true, nextAhead: 6, loading: true }),
-    false,
+    branchDiffPollAction({ ...POLL_BASE, nextBranch: 'feat/y' }),
+    'reload-and-clear-cache',
   );
 });
 
-test('shouldReloadBranchDiff stays idle when nothing changed and last load succeeded', () => {
-  assert.equal(shouldReloadBranchDiff(RELOAD_BASE), false);
+test('branchDiffPollAction reloads and clears the diff cache when ahead changes', () => {
+  assert.equal(branchDiffPollAction({ ...POLL_BASE, nextAhead: 6 }), 'reload-and-clear-cache');
 });
 
-test('shouldReloadBranchDiff does not treat the first poll as a change', () => {
+test('branchDiffPollAction retries without clearing the cache after a failed load', () => {
+  assert.equal(branchDiffPollAction({ ...POLL_BASE, lastLoadFailed: true }), 'reload');
+});
+
+test('branchDiffPollAction stays idle while a load is in flight', () => {
   assert.equal(
-    shouldReloadBranchDiff({ ...RELOAD_BASE, prevBranch: undefined, prevAhead: undefined }),
-    false,
+    branchDiffPollAction({ ...POLL_BASE, lastLoadFailed: true, nextAhead: 6, loading: true }),
+    'none',
+  );
+});
+
+test('branchDiffPollAction stays idle when nothing changed and last load succeeded', () => {
+  assert.equal(branchDiffPollAction(POLL_BASE), 'none');
+});
+
+test('branchDiffPollAction does not treat the first poll as git movement', () => {
+  assert.equal(
+    branchDiffPollAction({ ...POLL_BASE, prevBranch: undefined, prevAhead: undefined }),
+    'none',
   );
 });

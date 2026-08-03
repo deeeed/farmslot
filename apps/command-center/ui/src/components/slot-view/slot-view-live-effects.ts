@@ -13,7 +13,7 @@ import { gateway } from '../../gateway-client.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
-import { shouldReloadBranchDiff } from './slot-view-branch-model.js';
+import { branchDiffPollAction } from './slot-view-branch-model.js';
 import {
   isDirectoryReadErrorMessage,
   isImageFile,
@@ -120,17 +120,16 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
       behind: result.behind,
       changes: result.changes,
     };
-    if (
-      shouldReloadBranchDiff({
-        prevBranch,
-        nextBranch: result.branch,
-        prevAhead,
-        nextAhead: result.ahead,
-        lastLoadFailed: view._branchDiffError !== null,
-        loading: view._branchDiffLoading,
-      })
-    ) {
-      if (prevBranch && result.branch !== prevBranch) view._liveDiffContents.clear();
+    const pollAction = branchDiffPollAction({
+      prevBranch,
+      nextBranch: result.branch,
+      prevAhead,
+      nextAhead: result.ahead,
+      lastLoadFailed: view._branchDiffError !== null,
+      loading: view._branchDiffLoading,
+    });
+    if (pollAction !== 'none') {
+      if (pollAction === 'reload-and-clear-cache') view._liveDiffContents.clear();
       view._loadBranchDiff();
     }
   } catch (err) {

@@ -68,13 +68,18 @@ export async function loadSlotViewPRComments(view: SlotView) {
 export async function loadSlotViewBranchDiff(view: SlotView) {
   if (!view._isLive) return;
   const epoch = view._recoveryEpoch;
+  // The recovery epoch is a global reconnect counter — it does NOT change on
+  // slot switch, so a completion must also verify the request's slot still
+  // owns the view before writing any branch-diff state.
+  const requestSlotId = view.slotId;
+  const isCurrent = () => view.slotId === requestSlotId && isCurrentReviewResult(view, epoch);
   view._branchDiffLoading = true;
   try {
     const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
-      slotId: view.slotId,
+      slotId: requestSlotId,
       base: view._branchDiffBase,
     });
-    if (!isCurrentReviewResult(view, epoch)) return;
+    if (!isCurrent()) return;
     view._branchDiffFiles = result.files;
     view._branchDiffHead = result.head;
     view._branchDiffTotalAdd = result.totalAdditions;
@@ -83,21 +88,23 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
   } catch (err) {
     // Expected transient failures (node reconnecting, gateway restart). The
     // error is surfaced in the panel and the git-status poll retries the load
-    // — see shouldReloadBranchDiff.
+    // — see branchDiffPollAction.
     const message = err instanceof Error ? err.message : String(err);
     console.warn('[slot-view] branch diff files load failed:', message);
-    if (!isCurrentReviewResult(view, epoch)) return;
+    if (!isCurrent()) return;
     view._branchDiffFiles = [];
     view._branchDiffHead = '';
     view._branchDiffTotalAdd = 0;
     view._branchDiffTotalDel = 0;
     view._branchDiffError = message;
   } finally {
-    view._branchDiffLoading = false;
+    // A stale completion (slot switched away) must not clear the loading
+    // flag the new slot's own load now owns.
+    if (isCurrent()) view._branchDiffLoading = false;
   }
 
-  // Load branch list for the dropdown (only once)
-  if (view._branchDiffBranches.length === 0) {
+  // Load branch list for the dropdown (only once per slot)
+  if (isCurrent() && view._branchDiffBranches.length === 0) {
     view._loadBranchList();
   }
 }
