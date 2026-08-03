@@ -1463,6 +1463,7 @@ export async function runnerHasDurablePromptHandoff(
     launchAckSignalPath?: string | null;
     launchAckBaseline?: LaunchAckSignalSnapshot | null;
     requirePromptDigest?: boolean;
+    acceptExistingLaunchAck?: boolean;
     promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
@@ -1474,6 +1475,7 @@ export async function runnerHasDurablePromptHandoff(
     launchAckSignalPath: opts.launchAckSignalPath,
     launchAckBaseline: opts.launchAckBaseline,
     requirePromptDigest: opts.requirePromptDigest,
+    acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
     preferHooks: !usesNativePromptAcceptance,
   });
   if (handoff.accepted) {
@@ -1536,6 +1538,7 @@ async function runnerShowsPromptDeliveryAccepted(
     launchAckSignalPath?: string | null;
     launchAckBaseline?: LaunchAckSignalSnapshot | null;
     requirePromptDigest?: boolean;
+    acceptExistingLaunchAck?: boolean;
     promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<boolean> {
@@ -2230,6 +2233,7 @@ export async function sendRunnerPostLaunchPrompt(
     launchAckBaseline?: LaunchAckSignalSnapshot | null;
     promptAcceptanceBaselineMs?: number | null;
     requirePromptDigest?: boolean;
+    acceptExistingLaunchAck?: boolean;
     softAcceptOnHandoffAck?: boolean;
     handoffAckSinceMs?: number;
     /** Bound provider subscription label for typed usage-limit errors. */
@@ -2688,6 +2692,7 @@ export async function sendRunnerPostLaunchPrompt(
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
+        acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
         promptAcceptanceBaselineMs,
       },
     );
@@ -2709,24 +2714,10 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    // A previous attempt can leave the exact instruction buffered when the
-    // runner swallows the submit key. That composer is intentionally not idle,
-    // so waiting for idle here would time out before the retry could send the
-    // promised submit-only key. Preserve the buffered pane and let the guarded
-    // submit path below consume it without retyping.
-    const bufferedRetry = runnerPaneShouldSubmitExistingInstruction(
-      immediatePane,
-      message,
-      marker,
-      runner,
-      { allowMarkerOnly: attempt > 1 },
-    );
-    const preSendPane = bufferedRetry
-      ? immediatePane
-      : await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
-          deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
-          pollIntervalMs,
-        });
+    const preSendPane = await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
+      deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
+      pollIntervalMs,
+    });
     const preSendHandoff = await runnerHasDurablePromptHandoff(
       vars,
       target,
@@ -2737,6 +2728,7 @@ export async function sendRunnerPostLaunchPrompt(
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
+        acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
         promptAcceptanceBaselineMs,
       },
     );
@@ -2811,6 +2803,7 @@ export async function sendRunnerPostLaunchPrompt(
           launchAckSignalPath: opts.launchAckSignalPath,
           launchAckBaseline,
           requirePromptDigest,
+          acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
           promptAcceptanceBaselineMs,
         },
       )
@@ -2873,6 +2866,7 @@ export async function sendRunnerPostLaunchPrompt(
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
+        acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
         promptAcceptanceBaselineMs,
       },
     );

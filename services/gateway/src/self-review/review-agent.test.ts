@@ -31,17 +31,16 @@ test('restart recovery reclaims only the newest matching in-flight reviewer', ()
   const contexts = [
     context('rev-claude', 'working', 'independent-review-2'),
     context('rev1-claude', 'complete', 'independent-review-2'),
-    context('rev2-claude', 'working', 'independent-review-2'),
+    { ...context('rev2-claude', 'working', 'independent-review-2'), reviewLoopNumber: 4 },
   ];
 
-  assert.equal(
-    selectRecoverableReviewContext(contexts, {
-      taskDir: 'tasks/run-1',
-      runner: 'claude',
-      artifactScope: 'independent-review-2',
-    })?.id,
-    'rev2-claude',
-  );
+  const recovered = selectRecoverableReviewContext(contexts, {
+    taskDir: 'tasks/run-1',
+    runner: 'claude',
+    artifactScope: 'independent-review-2',
+  });
+  assert.equal(recovered?.id, 'rev2-claude');
+  assert.equal(recovered?.reviewLoopNumber, 4);
   assert.equal(
     selectRecoverableReviewContext(contexts, {
       taskDir: 'tasks/run-1',

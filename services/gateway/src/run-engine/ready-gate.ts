@@ -121,7 +121,7 @@ function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus):
     model: review.model ?? undefined,
     crossRunner: review.crossRunner,
     retryCount: Math.max(0, (review.attempts?.length ?? 1) - 1),
-    feedbackSent: false,
+    feedbackSent: review.feedbackSent,
   };
 }
 
@@ -159,14 +159,22 @@ async function resumeInterruptedPublicationReviewOnce(
   if (!interrupted) return null;
 
   const executeReview = dependencies.executeReview ?? executeSelfReview;
-  const result = await executeReview(runId, slotId, {
-    reviewRunner: interrupted.runner ?? null,
-    model: interrupted.model ?? null,
-    validationDepth: interrupted.validationDepth ?? null,
-    artifactScope: interrupted.id,
-    publicationReview: true,
-    resumeFromResult: selfReviewResultFromInterruptedReview(interrupted),
-  });
+  let result: SelfReviewResult;
+  try {
+    result = await executeReview(runId, slotId, {
+      reviewRunner: interrupted.runner ?? null,
+      model: interrupted.model ?? null,
+      validationDepth: interrupted.validationDepth ?? null,
+      artifactScope: interrupted.id,
+      publicationReview: true,
+      resumeFromResult: selfReviewResultFromInterruptedReview(interrupted),
+    });
+  } catch (error) {
+    console.warn(
+      `[ready-gate] run ${runId.slice(0, 8)} — interrupted review continuation remains recoverable: ${(error as Error).message}`,
+    );
+    return null;
+  }
   const latest = getRun(runId)!;
   const latestReviews = latest.engineState?.publishGate?.independentReviews ?? [];
   const reviewStatus = buildPublishGateReviewStatus({
@@ -223,6 +231,7 @@ export async function executePublishGateReviewPlan(
       planStep.validationDepth ??
       reviewValidationDepthForLoop(planStep.order - 1, boundedPlan.length);
     let reviewResult: SelfReviewResult;
+    let reviewRecoveryPending = false;
     try {
       reviewResult = await executeSelfReview(runId, slotId, {
         reviewRunner: requestedRunner,
@@ -235,6 +244,7 @@ export async function executePublishGateReviewPlan(
         // re-reviews before the next configured reviewer starts.
       });
     } catch (err) {
+      reviewRecoveryPending = true;
       const message = err instanceof Error ? err.message : String(err);
       console.warn(
         `[run-engine] run ${runId.slice(0, 8)} — ${source} review ${reviewId} unavailable: ${message}`,
@@ -258,7 +268,7 @@ export async function executePublishGateReviewPlan(
     }
     const latest = getRun(runId)!;
     const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
-    const reviewStatus = buildPublishGateReviewStatus({
+    const builtReviewStatus = buildPublishGateReviewStatus({
       source,
       priorReviewCount: priorReviews.length,
       reviewResult,
@@ -268,6 +278,9 @@ export async function executePublishGateReviewPlan(
       reviewId,
       reviewedPackage,
     });
+    const reviewStatus = reviewRecoveryPending
+      ? { ...builtReviewStatus, recoveryContinuationPending: true }
+      : builtReviewStatus;
     const reviewStatuses = await persistIndependentReviewArtifactsForRun(latest, [reviewStatus]);
     reviewIds.push(...reviewStatuses.map((review) => review.id));
     updateRun(runId, {

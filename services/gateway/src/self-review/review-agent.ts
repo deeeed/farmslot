@@ -201,6 +201,7 @@ export async function resumeReviewAgentPromptDelivery(
       launchAckSignalPath: context.signalFile ?? taskDirRelPath(taskDir, reviewTarget.signal),
       promptAcceptanceBaselineMs: baselineMs,
       requirePromptDigest: true,
+      acceptExistingLaunchAck: true,
       handoffAckSinceMs: baselineMs,
       softAcceptOnHandoffAck: true,
       runtimeDir,
@@ -333,19 +334,43 @@ async function recoverRunningReviewAgent(params: {
   )
     return null;
 
+  const abandonRecoveredReviewer = async (reason: string): Promise<null> => {
+    await markAgentContextStatus(params.runId, 'self-review', 'failed', { id: context.id });
+    try {
+      await killSelfReviewWindow(params.vars, params.session, reason, context.target?.window);
+    } catch (error) {
+      console.warn(
+        `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} cleanup failed: ${(error as Error).message}`,
+      );
+    }
+    return null;
+  };
+
   const pane = await resolveExactTmuxWindowPane(params.vars, context.target.target);
   if (
     !pane ||
     !(await isRunnerAliveUnderPane(params.vars, pane.panePid, params.runner, { timeout: 10_000 }))
   ) {
-    await markAgentContextStatus(params.runId, 'self-review', 'failed', { id: context.id });
-    return null;
+    return abandonRecoveredReviewer('inactive recovered reviewer cleanup');
   }
 
   debugSelfReviewLog(
     `[self-review] run ${params.runId.slice(0, 8)} — reclaiming active reviewer ${context.id} after restart`,
   );
-  await resumeReviewAgentPromptDelivery(params.vars, params.runId, context);
+  try {
+    const delivery = await resumeReviewAgentPromptDelivery(params.vars, params.runId, context);
+    if (delivery !== 'delivered') {
+      console.warn(
+        `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} is ${delivery}; starting a fresh review`,
+      );
+      return abandonRecoveredReviewer('unsupported recovered reviewer cleanup');
+    }
+  } catch (error) {
+    console.warn(
+      `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} prompt recovery failed: ${(error as Error).message}`,
+    );
+    return abandonRecoveredReviewer('failed recovered reviewer prompt cleanup');
+  }
   updateRun(params.runId, { activeTaskFile: context.taskFile });
   const reviewWindow = context.target.window;
   const signalBasename = path.posix.basename(context.signalFile);
@@ -353,15 +378,14 @@ async function recoverRunningReviewAgent(params: {
   const reviewSnapshot = await readPersistedReviewSnapshot(
     params.vars,
     params.taskDir,
-    params.loopNumber,
+    context.reviewLoopNumber ?? params.loopNumber,
     params.artifactScope,
   );
   if (!reviewSnapshot) {
     console.warn(
       `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} has no valid launch snapshot; starting a fresh review`,
     );
-    await markAgentContextStatus(params.runId, 'self-review', 'failed', { id: context.id });
-    return null;
+    return abandonRecoveredReviewer('snapshot-less recovered reviewer cleanup');
   }
   const watcher = startProgressWatcher(params.vars, context.taskFile, params.runId, 'Review', {
     contextId: context.id,
@@ -541,6 +565,7 @@ export async function runReviewAgent(
     taskFile: taskDirRelPath(taskDir, reviewChecklistTarget.checklist),
     signalFile: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
     artifactScope: artifactScope ?? null,
+    reviewLoopNumber: loopNumber,
     runner,
     model,
     target: null,

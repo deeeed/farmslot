@@ -185,7 +185,7 @@ test('reviewerContextIsSettled terminalizes persisted and superseded reviewer gh
   );
 });
 
-test('a one-shot scan can replace a failed placeholder without arming the watcher', () => {
+test('a one-shot scan only replaces an explicitly recoverable failed placeholder', () => {
   const failed = reviewerContext({
     status: 'failed',
     artifactScope: 'independent-review-7',
@@ -210,11 +210,28 @@ test('a one-shot scan can replace a failed placeholder without arming the watche
           verdict: 'failed',
           unresolvedCount: 0,
           feedbackSent: false,
+          recoveryContinuationPending: true,
         },
       ],
       { includeFailed: true },
     ),
     true,
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(
+      failed,
+      [
+        {
+          id: 'independent-review-7',
+          verdict: 'failed',
+          unresolvedCount: 0,
+          feedbackSent: false,
+        },
+      ],
+      { includeFailed: true },
+    ),
+    false,
+    'a genuine terminal failure is not overwritten by unrelated artifacts',
   );
   assert.equal(
     reviewerContextNeedsRecovery(

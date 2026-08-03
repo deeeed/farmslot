@@ -141,17 +141,18 @@ export async function probeRunnerHandoffAck(
     launchAckBaseline?: LaunchAckSignalSnapshot | null;
     preferHooks?: boolean;
     requirePromptDigest?: boolean;
+    acceptExistingLaunchAck?: boolean;
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
   if (opts.launchAckSignalPath && opts.launchAckBaseline) {
     const launchAck = await readLaunchAckSignalSnapshot(vars, opts.launchAckSignalPath);
     // Each caller supplies the signal file for this exact task/checklist. An
-    // advancing signal proves first delivery; during restart recovery an
-    // already-running signal proves the same scoped prompt was accepted before
-    // the gateway lost its in-memory await.
+    // advancing signal proves first delivery. Restart recovery may explicitly
+    // accept an existing task-scoped signal from the lost in-memory await.
     if (
       launchAck?.status &&
-      (launchAckSignalAdvanced(opts.launchAckBaseline, launchAck) || opts.requirePromptDigest)
+      (launchAckSignalAdvanced(opts.launchAckBaseline, launchAck) ||
+        opts.acceptExistingLaunchAck === true)
     ) {
       return {
         accepted: true,

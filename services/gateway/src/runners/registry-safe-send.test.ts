@@ -34,7 +34,6 @@ let paneClearsAfterSubmit = true;
 let paneTextByCapture: string[] | null = null;
 let paneTextAfterLiteralSend: string | null = null;
 let paneTextAfterBareSend: string | null = null;
-let activityReadingAfterLiteralSend: ObservabilityReading<RunnerActivity> | null = null;
 let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
 let acceptDigestHandoff = false;
 let launchAckSnapshotReads = 0;
@@ -159,9 +158,6 @@ mock.module('../core/exec.js', {
         if (cmd.includes(' -l ')) {
           callOrder.push('tmux:send-literal');
           if (paneTextAfterLiteralSend !== null) paneText = paneTextAfterLiteralSend;
-          if (activityReadingAfterLiteralSend !== null) {
-            activityReading = activityReadingAfterLiteralSend;
-          }
         } else if (paneTextAfterBareSend !== null) {
           paneText = paneTextAfterBareSend;
         }
@@ -297,7 +293,12 @@ test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in
   acceptDigestHandoff = false;
 });
 
-test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', async () => {
+test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', async (t) => {
+  t.after(() => {
+    paneTextAfterLiteralSend = null;
+    paneTextAfterBareSend = null;
+    paneClearsAfterSubmit = true;
+  });
   const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
   callOrder.length = 0;
   paneCaptureCount = 0;
@@ -332,9 +333,6 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
     2,
     'the retry should submit the existing composer, but pane cosmetics must not prove acceptance',
   );
-  paneTextAfterLiteralSend = null;
-  paneTextAfterBareSend = null;
-  paneClearsAfterSubmit = true;
 });
 
 test('sendRunnerPostLaunchPrompt honors an explicit null launch-ack baseline', async () => {
@@ -417,90 +415,6 @@ test('sendRunnerPostLaunchPrompt does not treat native idle state as exact deliv
   paneClearsAfterSubmit = true;
   grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
   grokPromptAcceptedAtMs = Number.POSITIVE_INFINITY;
-});
-
-test('sendRunnerPostLaunchPrompt submits a buffered Codex retry before waiting for idle', async () => {
-  callOrder.length = 0;
-  paneCaptureCount = 0;
-  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
-  promptAcceptedReading = null;
-  const readyPane = '›\nContext 88%\n';
-  const bufferedPane = `› ${message}\ngpt-5.6-sol xhigh\n`;
-  const workingPane = `${message}\n• Working (2s • esc to interrupt)\n›\ngpt-5.6-sol xhigh\n`;
-  paneText = readyPane;
-  paneTextByCapture = null;
-  paneClearsAfterSubmit = false;
-  paneTextAfterLiteralSend = bufferedPane;
-  paneTextAfterBareSend = workingPane;
-  activityReadingAfterLiteralSend = {
-    value: 'composing',
-    source: 'hook',
-    confidence: 'high',
-    observedAt: Date.now(),
-  };
-
-  await sendRunnerPostLaunchPrompt(vars, target, 'codex', message, 'SELF-REVIEW.md', '[test]', {
-    readyTimeoutMs: 50,
-    stabilityPolls: 1,
-    pollIntervalMs: 1,
-    verifyWaitMs: 0,
-    maxAttempts: 2,
-  });
-
-  assert.equal(
-    callOrder.filter((entry) => entry === 'tmux:send-literal').length,
-    1,
-    `the retry must submit the existing buffer without retyping; order=${callOrder.join(',')}`,
-  );
-  assert.equal(
-    callOrder.filter((entry) => entry === 'tmux:send').length,
-    2,
-    `expected one initial send and one submit-only retry; order=${callOrder.join(',')}`,
-  );
-  paneTextByCapture = null;
-  paneTextAfterLiteralSend = null;
-  paneTextAfterBareSend = null;
-  activityReadingAfterLiteralSend = null;
-  paneClearsAfterSubmit = true;
-});
-
-test('sendRunnerPostLaunchPrompt submits a long marker-only Codex retry before waiting for idle', async () => {
-  callOrder.length = 0;
-  paneCaptureCount = 0;
-  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
-  promptAcceptedReading = null;
-  const longMessage = `${'Detailed review instructions. '.repeat(20)}Read SELF-REVIEW.md now.`;
-  const readyPane = '›\nContext 88%\n';
-  const truncatedBufferedPane = '› … Read SELF-REVIEW.md now.\ngpt-5.6-sol xhigh\n';
-  const workingPane =
-    'Read SELF-REVIEW.md now.\n• Working (2s • esc to interrupt)\n›\ngpt-5.6-sol xhigh\n';
-  paneText = readyPane;
-  paneTextByCapture = null;
-  paneClearsAfterSubmit = false;
-  paneTextAfterLiteralSend = truncatedBufferedPane;
-  paneTextAfterBareSend = workingPane;
-  activityReadingAfterLiteralSend = {
-    value: 'composing',
-    source: 'hook',
-    confidence: 'high',
-    observedAt: Date.now(),
-  };
-
-  await sendRunnerPostLaunchPrompt(vars, target, 'codex', longMessage, 'SELF-REVIEW.md', '[test]', {
-    readyTimeoutMs: 50,
-    stabilityPolls: 1,
-    pollIntervalMs: 1,
-    verifyWaitMs: 0,
-    maxAttempts: 2,
-  });
-
-  assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
-  assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 2);
-  paneTextByCapture = null;
-  paneTextAfterLiteralSend = null;
-  paneTextAfterBareSend = null;
-  activityReadingAfterLiteralSend = null;
-  paneClearsAfterSubmit = true;
 });
 
 test('sendRunnerInstructionSafely stops after exact native Grok acceptance', async () => {

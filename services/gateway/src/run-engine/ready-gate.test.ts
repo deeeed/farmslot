@@ -132,13 +132,13 @@ test('resumeInterruptedPublicationReview keeps feedback recoverable when deliver
     },
   });
 
-  await assert.rejects(
-    resumeInterruptedPublicationReview(run.id, 'slot-1', {
+  assert.equal(
+    await resumeInterruptedPublicationReview(run.id, 'slot-1', {
       executeReview: async () => {
         throw new Error('delivery failed');
       },
     }),
-    /delivery failed/,
+    null,
   );
   assert.equal(
     getRun(run.id)?.engineState?.publishGate?.independentReviews?.[0]?.feedbackSent,

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- fix(run): independent review state records when restart recovery explicitly owes a worker fix/re-review continuation, instead of inferring it from an issues verdict.
+- fix(run): independent review state records when restart recovery explicitly owes a worker fix/re-review continuation, and reviewer contexts retain the loop that owns their launch snapshot.
 
 ## 0.18.0 - 2026-08-03
 

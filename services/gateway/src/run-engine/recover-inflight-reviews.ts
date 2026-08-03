@@ -38,6 +38,7 @@ import {
   resumeReviewAgentPromptDelivery,
   reviewerFeedbackRelPath,
 } from '../self-review/review-agent.js';
+import { killSelfReviewWindow } from '../self-review/snapshots.js';
 import { getSelfReviewConfig } from '../self-review/templates.js';
 import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
@@ -65,10 +66,16 @@ export function isRecoverableReviewerContext(
 }
 
 function isFailedReviewPlaceholder(
-  review: Pick<IndependentReviewStatus, 'verdict' | 'unresolvedCount' | 'feedbackSent'>,
+  review: Pick<
+    IndependentReviewStatus,
+    'verdict' | 'unresolvedCount' | 'feedbackSent' | 'recoveryContinuationPending'
+  >,
 ): boolean {
   return (
-    review.verdict === 'failed' && review.unresolvedCount === 0 && review.feedbackSent !== true
+    review.verdict === 'failed' &&
+    review.unresolvedCount === 0 &&
+    review.feedbackSent !== true &&
+    review.recoveryContinuationPending === true
   );
 }
 
@@ -121,6 +128,7 @@ export function reviewerContextNeedsRecovery(
       verdict: recorded.verdict,
       unresolvedCount: recorded.unresolvedCount,
       feedbackSent: recorded.feedbackSent,
+      recoveryContinuationPending: recorded.recoveryContinuationPending,
     })
   );
 }
@@ -151,6 +159,7 @@ export function reviewerContextIsSettled(
         verdict: review.verdict,
         unresolvedCount: review.unresolvedCount,
         feedbackSent: review.feedbackSent,
+        recoveryContinuationPending: review.recoveryContinuationPending,
       }),
   );
 }
@@ -384,7 +393,22 @@ export async function recoverInflightPublicationReviews(
   const settledContexts = (run.agentContexts ?? []).filter((ctx) =>
     reviewerContextIsSettled(ctx, reviews),
   );
+  let vars = settledContexts.length > 0 ? await loadSlotVars(slotId) : null;
   for (const ctx of settledContexts) {
+    if (ctx.target?.session && ctx.target.window) {
+      try {
+        await killSelfReviewWindow(
+          vars!,
+          ctx.target.session,
+          'superseded reviewer cleanup',
+          ctx.target.window,
+        );
+      } catch (error) {
+        console.warn(
+          `[run-engine] run ${runId.slice(0, 8)} — failed to clean superseded reviewer ${ctx.id}: ${(error as Error).message}`,
+        );
+      }
+    }
     await markAgentContextStatus(runId, 'self-review', 'complete', { id: ctx.id });
   }
   if (settledContexts.length > 0) {
@@ -399,8 +423,8 @@ export async function recoverInflightPublicationReviews(
     reviewerContextNeedsRecovery(ctx, reviews, { includeFailed: true }),
   );
   if (candidates.length === 0) return [];
+  vars ??= await loadSlotVars(slotId);
 
-  const vars = await loadSlotVars(slotId);
   const selfReviewConfig = await getSelfReviewConfig(run.project);
   const recoveryContinuationPending = Math.max(0, selfReviewConfig.max_retries ?? 1) > 0;
   const reviewedPackage = await readPreparedPackage(run);

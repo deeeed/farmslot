@@ -4,7 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix(run-engine): reclaim the exact surviving reviewer and resume its fix/re-review continuation after a gateway restart, re-deliver an already-materialized self-review fix prompt when restart occurred before delivery completed, require exact runner or task-scoped signal acknowledgement for digest-scoped review prompts instead of trusting cosmetic pane output, reject tmux prefix matches to dead review windows, deduplicate concurrent recovery of the same terminal verdict, and settle reviewer contexts whose persisted review is terminal or superseded.
+- fix(run-engine): reclaim the exact surviving reviewer after a gateway restart, resume its fix/re-review continuation without failing the run when delivery is temporarily unavailable, and deduplicate terminal verdict recovery.
+- fix(run-engine): settle superseded reviewer contexts, close their retained tmux windows, and only replace failed review records explicitly marked for late recovery.
+- fix(runners): require exact runner or task-scoped acknowledgement for review prompts, accepting an unchanged task signal only during explicit restart recovery.
 - fix(runs): cancellation now sets a write-ahead backlog repair marker before publication, blocks archive/delete until the durable settle clears it, retries archive scans invalidated mid-read, and retains a live run when source-file unlink fails.
 - fix(run): `run.cancel` returns the transitioned snapshot instead of re-reading the live map. The router publishes `cancelled` before teardown finishes, so another client can archive or delete the run while effects are still running — the re-read could return undefined and the `backlogReconcilePending` write could throw, losing the repair marker.
 - fix(run): an interactive-dev abort reports incomplete teardown through the result's existing `reason` field. Spreading the cancel result leaked `effects` outside the declared union, so the UI saw a bare `ok: true` and ignored a partially applied abort.
@@ -12,7 +14,6 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - fix(chat): the co-pilot `cancel_run` tool and the confirmed-action path report `partiallyApplied` with the failed effects instead of an unqualified success, so an operator is never told a cancel landed while a slot is still claimed.
 - fix(runs): `archiveRun` evicts from the live map only after the archive copy is durable; a failed write previously dropped the run from memory until the next restart re-read it from the still-present source file.
 - fix(ready-gate): make stale publish-package errors respect zero-review policy instead of incorrectly demanding another review.
-- fix(runners): when a runner leaves the exact prompt buffered after swallowing Enter, retry the submit key immediately instead of waiting for the intentionally non-idle composer and timing out.
 - feat(git): worktree branch diffs flag each file's committed state via an extra merge-base..HEAD listing.
 - fix(decisions): project stored run decisions into the full websocket decision contract before broadcasting new or updated events, so Companion no longer reloads the entire decision inbox after every event and surfaces false request-timeout warnings.
 
@@ -48,14 +49,14 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - fix(run-engine): keep operator-cancelled graph runs stopped until an explicit retry, preserve cancelled state when an in-flight step fails late, and retain graph linkage across collision redirects.
 - fix(run-completion): avoid reposting dev/fix-bug PR descriptions as worker comments, identify other comments by run so finalize replays are idempotent, and publish evidence through disposable blobless sparse checkouts instead of a shared full-history artifact-repo clone.
 - fix(backlog): markdown-backed specs are allowed on jira/github items — tracker identity and live ticket data stay authoritative while spec context and acceptance criteria are merged into the worker task inputs.
-- fix(self-review): resume retained workers through structured runner handoff, keep managed Codex hooks enabled, continue interactive feedback from existing findings, write remote review artifacts through node RPC, never treat an identical prompt from an older Grok transcript as acceptance of a new fix-pass generation, and recover a later clean completion over an infrastructure-failed review placeholder.
+- fix(self-review): resume retained workers through structured runner handoff, keep managed Codex hooks enabled, continue interactive feedback from existing findings, write remote review artifacts through node RPC, never treat an identical prompt from an older Grok transcript as acceptance of a new fix-pass generation, and accept a fresh task signal after a delayed prompt acknowledgement.
 - fix(work-graph): reclaim `waiting` nodes when the backlog item is ready and the run/queue are gone, and retry stale completed-enqueue ledger entries for `waiting` as well as `ready`, so fail+delete no longer leaves Dispatch stuck reporting upstream wait with an empty `waitingOn`.
 - fix(ready-gate): restore finalize-step decision helper wiring and type-check review-plan decision fixtures after the dual-fix merge.
 - fix(ready-gate): honor the latest request-extra-review loop runner (e.g. codex after claude) instead of a stale pending plan or approval-only decision lookup that could re-launch the previous reviewer.
 - feat(backlog): agent-assisted backlog refinement sessions via shared tmux launch/attach primitive with roadmap refinement; prompt includes item/spec/dispatch/linkage context and the fs-backlog-spec contract without lifecycle mutation.
 
 - fix(dispatch): prepare profile is explicit-only — queue dispatch, FIND_SLOT, resource eligibility, and branch-affinity nudge no longer apply `detectProfileFit` suggestions; `dispatch.preview` may still attach a non-binding `profileFit` UI hint; empty prepare resolves to `project.prepare.default` (MANUAL-000088).
-- fix(runners): treat a task-scoped worker signal change as runner-agnostic prompt-delivery evidence when exact prompt matching is not required, while rejecting unchanged signals left by an earlier attempt.
+- fix(runners): treat a task-scoped worker signal change as runner-agnostic prompt-delivery evidence, including self-review and terminal signals, while rejecting unchanged signals left by an earlier attempt.
 - fix(runners): consume Grok's pane-bound structured session events for activity and exact prompt acceptance instead of retrying a task that Grok already accepted, using a provider-clock baseline across nodes and the generic pane fallback only when native activity is unknown.
 - fix(resources): let dry-run cleanup and pressure previews skip fleet rows whose slot config was removed or gated after the fleet snapshot, while live cleanup still fails closed.
 - feat(recipe): validate structured run summaries and failure attribution when packaging recipe evidence.
