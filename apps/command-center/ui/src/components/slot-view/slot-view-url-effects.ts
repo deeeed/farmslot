@@ -184,6 +184,9 @@ export async function openSlotViewFileFromUrl(view: SlotView, file: string): Pro
           slotId: view.slotId,
           path,
           base,
+          // branch: cache keys hold worktree-target diffs in the slot view —
+          // restoring with head semantics would poison the cache.
+          target: 'worktree',
         });
         if (!result.diff.trim()) {
           await view._handleFileSelect(path);

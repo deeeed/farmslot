@@ -136,6 +136,7 @@ export function renderSlotViewSidebarSource(view: SlotView) {
     .changes=${git.changes}
     .committedFiles=${view._branchDiffFiles}
     .committedError=${view._branchDiffError}
+    .committedScope=${'worktree'}
     .branch=${git.branch}
     .ahead=${git.ahead}
     .behind=${git.behind}
@@ -143,7 +144,7 @@ export function renderSlotViewSidebarSource(view: SlotView) {
     .selectedPath=${realPath(view._activeFile)}
     @change-select=${(e: CustomEvent) => view._handleChangeSelect(e.detail.path, e.detail.status)}
     @committed-select=${(e: CustomEvent) =>
-      view._handleBranchDiffSelect(e.detail.path, e.detail.status)}
+      view._handleBranchDiffSelect(e.detail.path, e.detail.status, e.detail.oldPath)}
     @git-stage=${(e: CustomEvent) => view._gitAction('git.stage', e.detail.path)}
     @git-unstage=${(e: CustomEvent) => view._gitAction('git.unstage', e.detail.path)}
     @git-discard=${(e: CustomEvent) => view._gitAction('git.discard', e.detail.path)}
@@ -243,7 +244,8 @@ export function renderSlotViewChangesPanel(view: SlotView) {
     .commentCounts=${view._branchDiffCommentCounts}
     .selectedPath=${view._activeFile}
     .branches=${view._branchDiffBranches}
-    @file-select=${(e: CustomEvent) => view._handleBranchDiffSelect(e.detail.path, e.detail.status)}
+    @file-select=${(e: CustomEvent) =>
+      view._handleBranchDiffSelect(e.detail.path, e.detail.status, e.detail.oldPath)}
     @base-change=${(e: CustomEvent) => view._handleBranchDiffBaseChange(e.detail.base)}
   ></branch-changed-files>`;
 }

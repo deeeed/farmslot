@@ -93,6 +93,10 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
       slotId: view.slotId,
       base: view._branchDiffBase,
+      // Every change on the branch vs base — committed or not — deduped per
+      // file. Publish flows (ready/review workspaces) keep the committed-only
+      // default.
+      target: 'worktree',
     });
     if (!isCurrent()) return;
     view._branchDiffFiles = result.files;
@@ -158,7 +162,12 @@ export function handleSlotViewBranchDiffBaseChange(view: SlotView, base: string)
   view._loadBranchDiff();
 }
 
-export async function handleSlotViewBranchDiffSelect(view: SlotView, path: string, status: string) {
+export async function handleSlotViewBranchDiffSelect(
+  view: SlotView,
+  path: string,
+  status: string,
+  oldPath?: string,
+) {
   view._cancelFileRestoreRetry();
   const useCodeView = status === 'A';
 
@@ -171,12 +180,21 @@ export async function handleSlotViewBranchDiffSelect(view: SlotView, path: strin
     return;
   }
 
-  // M/D/R: fetch branch diff and open as diff tab
+  // M/D/R: fetch branch diff and open as diff tab. Worktree-target content
+  // can change without any status transition, so drop the cached entry and
+  // fetch fresh on every click.
   const cacheKey = `branch:${view._branchDiffBase}:${path}`;
+  if (view._liveDiffContents.has(cacheKey)) {
+    const next = new Map(view._liveDiffContents);
+    next.delete(cacheKey);
+    view._liveDiffContents = next;
+  }
   const loaded = await loadSlotViewDiffContent(view, cacheKey, {
     diffBase: view._branchDiffBase,
+    diffTarget: 'worktree',
     errorFallback: 'Failed to load diff',
     requestPath: path,
+    requestOldPath: oldPath,
   });
   if (!loaded) return;
   view._openBranchDiffFile(path, cacheKey);

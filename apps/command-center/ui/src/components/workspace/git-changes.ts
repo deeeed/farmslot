@@ -153,6 +153,12 @@ export class GitChanges extends LitElement {
   @property() branchDiffBase = '';
   /** Last branch-diff load failure — distinguishes "empty" from "unavailable". */
   @property() committedError: string | null = null;
+  /**
+   * Semantics of committedFiles: 'head' lists committed-only changes vs base;
+   * 'worktree' lists every change vs base (committed + uncommitted, deduped),
+   * so the header total is that union rather than a double-count.
+   */
+  @property() committedScope: 'head' | 'worktree' = 'head';
 
   @property() selectedPath = '';
   @state() private _stagedOpen = true;
@@ -490,7 +496,7 @@ export class GitChanges extends LitElement {
     this.selectedPath = file.path;
     this.dispatchEvent(
       new CustomEvent('committed-select', {
-        detail: { path: file.path, status: file.status },
+        detail: { path: file.path, status: file.status, oldPath: file.oldPath },
         bubbles: true,
         composed: true,
       }),
@@ -510,7 +516,11 @@ export class GitChanges extends LitElement {
         }}
       >
         <span class="group-arrow">${open ? '▾' : '▸'}</span>
-        <span>Committed${this.branchDiffBase ? ` vs ${this.branchDiffBase}` : ''}</span>
+        <span
+          >${this.committedScope === 'worktree' ? 'All changes' : 'Committed'}${this.branchDiffBase
+            ? ` vs ${this.branchDiffBase}`
+            : ''}</span
+        >
         <span class="group-badge">${this.committedFiles.length}</span>
       </div>
       ${open
@@ -576,6 +586,15 @@ export class GitChanges extends LitElement {
 
   private _renderCommittedFileRow(f: BranchDiffFile, indent?: number) {
     const color = statusColor(f.status as GitChangeStatus);
+    // In worktree scope this group is the only list, so rows keep the
+    // working-tree actions for files with local modifications. A file can
+    // appear twice in changes (staged AND unstaged) — collect all entries so
+    // neither action set is lost.
+    const wtEntries =
+      this.committedScope === 'worktree' ? this.changes.filter((c) => c.path === f.path) : [];
+    const wtStaged = wtEntries.some((c) => c.staged);
+    const wtUnstaged = wtEntries.some((c) => !c.staged);
+    const wt = wtEntries.length > 0 ? wtEntries[0] : undefined;
     return html`
       <div
         class="file-row ${this.selectedPath === f.path ? 'selected' : ''}"
@@ -592,6 +611,11 @@ export class GitChanges extends LitElement {
             : nothing}
         </span>
         <span class="file-stats">
+          ${wt
+            ? html`<span title="Has uncommitted ${wt.staged ? 'staged' : 'local'} changes"
+                >&#9679;</span
+              >`
+            : nothing}
           ${f.additions > 0
             ? html`<span style="color: ${statusColor('A')}">+${f.additions}</span>`
             : nothing}
@@ -599,6 +623,39 @@ export class GitChanges extends LitElement {
             ? html`<span style="color: ${statusColor('D')}">-${f.deletions}</span>`
             : nothing}
         </span>
+        ${wt
+          ? html`<span class="file-actions">
+              ${wtStaged
+                ? html`<button
+                    class="file-action-btn"
+                    title="Unstage"
+                    @click=${(e: Event) => this._unstage(f.path, e)}
+                  >
+                    &minus;
+                  </button>`
+                : nothing}
+              ${wtUnstaged
+                ? html`<button
+                      class="file-action-btn"
+                      title="Stage"
+                      @click=${(e: Event) => this._stage(f.path, e)}
+                    >
+                      +
+                    </button>
+                    <button
+                      class="file-action-btn danger ${this._confirmDiscard === f.path
+                        ? 'confirming'
+                        : ''}"
+                      title="${this._confirmDiscard === f.path
+                        ? 'Click again to confirm'
+                        : 'Discard changes'}"
+                      @click=${(e: Event) => this._discard(f.path, e)}
+                    >
+                      ${'↩'}
+                    </button>`
+                : nothing}
+            </span>`
+          : nothing}
       </div>
       ${f.status === 'R' && f.oldPath ? html`<div class="old-path">&larr; ${f.oldPath}</div>` : ''}
     `;
@@ -703,7 +760,10 @@ export class GitChanges extends LitElement {
     const untracked = this.changes.filter((c) => !c.staged && c.status === '?');
     const uncommitted = this.changes.length;
     const committed = this.committedFiles.length;
-    const total = uncommitted + committed;
+    // Worktree scope already includes uncommitted changes — summing would
+    // double-count files that are both committed-ahead and locally modified.
+    const total =
+      this.committedScope === 'worktree' && committed > 0 ? committed : uncommitted + committed;
 
     return html`
       <div class="header">
@@ -737,30 +797,36 @@ export class GitChanges extends LitElement {
                   : 'No changes'}
               </div>
             </div>`
-          : html`
-              ${this._renderGroup(
-                'Staged Changes',
-                staged,
-                this._stagedOpen,
-                '_stagedOpen',
-                'staged',
-              )}
-              ${this._renderGroup(
-                'Changes',
-                unstaged,
-                this._changesOpen,
-                '_changesOpen',
-                'unstaged',
-              )}
-              ${this._renderGroup(
-                'Untracked',
-                untracked,
-                this._untrackedOpen,
-                '_untrackedOpen',
-                'untracked',
-              )}
-              ${this._renderCommittedGroup()}
-            `}
+          : this.committedScope === 'worktree' && committed > 0
+            ? // Worktree scope: the union group already lists every file
+              // (committed + uncommitted) — separate working-tree groups would
+              // render the same files twice. Rows carry stage/discard actions
+              // for files with local modifications.
+              this._renderCommittedGroup()
+            : html`
+                ${this._renderGroup(
+                  'Staged Changes',
+                  staged,
+                  this._stagedOpen,
+                  '_stagedOpen',
+                  'staged',
+                )}
+                ${this._renderGroup(
+                  'Changes',
+                  unstaged,
+                  this._changesOpen,
+                  '_changesOpen',
+                  'unstaged',
+                )}
+                ${this._renderGroup(
+                  'Untracked',
+                  untracked,
+                  this._untrackedOpen,
+                  '_untrackedOpen',
+                  'untracked',
+                )}
+                ${this._renderCommittedGroup()}
+              `}
       </div>
     `;
   }

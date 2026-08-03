@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(git): worktree-target branch diffs — `git.branchDiff` can list every change vs base including uncommitted and untracked files (deduped per file); `git.diff` gains the same target for per-file content.
+
 - fix(tasks): checklist step enumeration moved to the shared protocol helper, and manual backlog specs no longer duplicate their Acceptance Criteria into the task description (checkbox markers are stripped from extracted ACs); jira/github spec context gets the same AC-section dedup, and dispatch warns when template label numbering diverges from step positions.
 - fix(run-engine): keep operator-cancelled graph runs stopped until an explicit retry, preserve cancelled state when an in-flight step fails late, and retain graph linkage across collision redirects.
 - fix(run-completion): avoid reposting dev/fix-bug PR descriptions as worker comments, identify other comments by run so finalize replays are idempotent, and publish evidence through disposable blobless sparse checkouts instead of a shared full-history artifact-repo clone.

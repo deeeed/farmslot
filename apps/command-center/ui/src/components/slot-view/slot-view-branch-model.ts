@@ -32,6 +32,8 @@ export function branchDiffPollAction({
   nextBranch,
   prevAhead,
   nextAhead,
+  prevChangesKey,
+  nextChangesKey,
   lastLoadFailed,
   loading,
 }: {
@@ -39,15 +41,37 @@ export function branchDiffPollAction({
   nextBranch: string;
   prevAhead: number | undefined;
   nextAhead: number;
+  /** gitChangesFingerprint of the previous/next working-tree status. */
+  prevChangesKey: string | undefined;
+  nextChangesKey: string;
   lastLoadFailed: boolean;
   loading: boolean;
 }): BranchDiffPollAction {
   if (loading) return 'none';
   const branchChanged = prevBranch !== undefined && nextBranch !== prevBranch;
   const aheadChanged = prevAhead !== undefined && nextAhead !== prevAhead;
-  if (branchChanged || aheadChanged) return 'reload-and-clear-cache';
+  // Worktree-scope diffs include uncommitted changes, so working-tree
+  // movement stales the union list and per-file diff cache exactly like a
+  // commit does.
+  const changesChanged = prevChangesKey !== undefined && nextChangesKey !== prevChangesKey;
+  if (branchChanged || aheadChanged || changesChanged) return 'reload-and-clear-cache';
   if (lastLoadFailed) return 'reload';
+  // A dirty worktree can change content without changing status (more edits
+  // to an already-modified file), which the fingerprint cannot see — keep the
+  // union list fresh every poll while dirty. Per-file worktree diffs bypass
+  // the cache on click, so no cache clear is needed here.
+  if (nextChangesKey !== '') return 'reload';
   return 'none';
+}
+
+/** Stable fingerprint of the working-tree status for poll-change detection. */
+export function gitChangesFingerprint(
+  changes: Array<{ path: string; status: string; staged: boolean }>,
+): string {
+  return changes
+    .map((change) => `${change.path}:${change.status}:${change.staged ? 1 : 0}`)
+    .sort()
+    .join('|');
 }
 
 export interface BranchDiffRequestTicket {

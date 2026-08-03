@@ -41,15 +41,17 @@ async function resolveRepoPath(slotId: string): Promise<string> {
 /**
  * Run a git command for a slot — locally via execFile, or remotely via agent exec.
  */
+export interface GitExecDeps {
+  resolveRepo?: typeof resolveRepoPath;
+  loadVars?: typeof loadSlotVars;
+  runOnSlot?: typeof execArgvOnSlot;
+}
+
 export async function gitExec(
   slotId: string,
   args: string[],
   opts?: { maxBuffer?: number },
-  deps: {
-    resolveRepo?: typeof resolveRepoPath;
-    loadVars?: typeof loadSlotVars;
-    runOnSlot?: typeof execArgvOnSlot;
-  } = {},
+  deps: GitExecDeps = {},
 ): Promise<CommandOutput> {
   const repoPath = await (deps.resolveRepo ?? resolveRepoPath)(slotId);
   const slotVars = await (deps.loadVars ?? loadSlotVars)(slotId);
@@ -151,10 +153,17 @@ export async function gitDiff(params: GitDiffParams): Promise<GitDiffResult> {
     }
 
     const { stdout: mergeBase } = await gitExec(params.slotId, ['merge-base', baseRef, 'HEAD']);
-    args.push(`${mergeBase.trim()}..HEAD`);
+    // 'worktree' diffs merge-base against the working tree (committed +
+    // uncommitted); default diffs committed history only.
+    args.push(params.target === 'worktree' ? mergeBase.trim() : `${mergeBase.trim()}..HEAD`);
   }
 
-  if (params.path) args.push('--', params.path);
+  if (params.path) {
+    args.push('--', params.path);
+    // A renamed file needs both sides in the limiter, or the diff degrades
+    // to a plain add of the new path.
+    if (params.oldPath && params.oldPath !== params.path) args.push(params.oldPath);
+  }
 
   const { stdout } = await gitExec(params.slotId, args, { maxBuffer: 10 * 1024 * 1024 });
   return { diff: stdout };
@@ -208,6 +217,14 @@ export async function gitDiscard(params: GitDiscardParams): Promise<OkResult> {
   return { ok: true };
 }
 
+function numstatNewPath(raw: string): string {
+  const braced = raw.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
+  if (braced) return `${braced[1]}${braced[3]}${braced[4]}`;
+  const plain = raw.match(/^(.*) => (.*)$/);
+  if (plain) return plain[2];
+  return raw;
+}
+
 const VALID_BRANCH_DIFF_STATUSES: BranchDiffStatus[] = ['M', 'A', 'D', 'R'];
 
 function toBranchDiffStatus(char: string): BranchDiffStatus {
@@ -216,32 +233,54 @@ function toBranchDiffStatus(char: string): BranchDiffStatus {
     : 'M';
 }
 
-export async function gitBranchDiff(params: GitBranchDiffParams): Promise<GitBranchDiffResult> {
+export async function gitBranchDiff(
+  params: GitBranchDiffParams,
+  deps: GitExecDeps = {},
+): Promise<GitBranchDiffResult> {
   const base = params.base || 'main';
 
   let baseRef = base;
   try {
-    await gitExec(params.slotId, ['rev-parse', '--verify', `origin/${base}`]);
+    await gitExec(params.slotId, ['rev-parse', '--verify', `origin/${base}`], undefined, deps);
     baseRef = `origin/${base}`;
   } catch {
     /* use local ref */
   }
 
   const [mergeBaseResult, branchResult] = await Promise.all([
-    gitExec(params.slotId, ['merge-base', baseRef, 'HEAD']),
-    gitExec(params.slotId, ['branch', '--show-current']),
+    gitExec(params.slotId, ['merge-base', baseRef, 'HEAD'], undefined, deps),
+    gitExec(params.slotId, ['branch', '--show-current'], undefined, deps),
   ]);
 
   const mergeBase = mergeBaseResult.stdout.trim();
   const head = branchResult.stdout.trim();
-  const diffRange = `${mergeBase}..HEAD`;
+  // 'worktree' diffs the merge-base against the working tree — every change
+  // on the branch (committed + uncommitted), deduped per file by git itself.
+  // Default compares committed history only (what a PR would contain).
+  const worktree = params.target === 'worktree';
+  const diffRange = worktree ? mergeBase : `${mergeBase}..HEAD`;
 
-  const [nameStatusResult, numstatResult] = await Promise.all([
-    gitExec(params.slotId, ['diff', '--name-status', diffRange], { maxBuffer: 10 * 1024 * 1024 }),
-    gitExec(params.slotId, ['diff', '--numstat', diffRange], { maxBuffer: 10 * 1024 * 1024 }),
+  const [nameStatusResult, numstatResult, untrackedResult] = await Promise.all([
+    gitExec(
+      params.slotId,
+      ['diff', '--name-status', diffRange],
+      { maxBuffer: 10 * 1024 * 1024 },
+      deps,
+    ),
+    gitExec(params.slotId, ['diff', '--numstat', diffRange], { maxBuffer: 10 * 1024 * 1024 }, deps),
+    worktree
+      ? gitExec(
+          params.slotId,
+          ['ls-files', '--others', '--exclude-standard'],
+          { maxBuffer: 10 * 1024 * 1024 },
+          deps,
+        )
+      : Promise.resolve({ stdout: '', stderr: '' }),
   ]);
 
-  // Parse --numstat: "additions\tdeletions\tpath"
+  // Parse --numstat: "additions\tdeletions\tpath". Rename rows format the
+  // path as "old => new" or "prefix/{old => new}/suffix" — normalize to the
+  // new path so the --name-status lookup (which uses newPath) finds counts.
   const statMap = new Map<string, { additions: number; deletions: number }>();
   for (const line of numstatResult.stdout.split('\n')) {
     if (!line) continue;
@@ -249,8 +288,7 @@ export async function gitBranchDiff(params: GitBranchDiffParams): Promise<GitBra
     if (parts.length >= 3) {
       const add = parseInt(parts[0], 10) || 0;
       const del = parseInt(parts[1], 10) || 0;
-      // For renames, numstat shows "old => new" or just the new path
-      const path = parts.slice(2).join('\t');
+      const path = numstatNewPath(parts.slice(2).join('\t'));
       statMap.set(path, { additions: add, deletions: del });
     }
   }
@@ -291,6 +329,15 @@ export async function gitBranchDiff(params: GitBranchDiffParams): Promise<GitBra
         deletions: stats.deletions,
       });
     }
+  }
+
+  // Untracked files are invisible to `git diff` but are part of "every change
+  // vs base" in worktree mode. Counts stay 0 — reading each file to count
+  // lines is not worth the exec fan-out.
+  const seen = new Set(files.map((f) => f.path));
+  for (const path of untrackedResult.stdout.split('\n')) {
+    if (!path || seen.has(path)) continue;
+    files.push({ path, status: 'A', additions: 0, deletions: 0 });
   }
 
   return { base, head, files, totalAdditions, totalDeletions };
