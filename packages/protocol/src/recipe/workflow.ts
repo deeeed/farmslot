@@ -667,10 +667,15 @@ function validateVisualReviewGraph(
   ctx: MutableValidationContext,
   nodes: Record<string, Record<string, unknown>>,
 ): void {
+  const isVisualReviewCaptureNode = (node: Record<string, unknown> | undefined): boolean =>
+    Boolean(
+      node &&
+      (node.action === 'ui.capture_surface' ||
+        (node.action === 'ui.screenshot' && isRecord(node.visual_review))),
+    );
   const parents = new Map<string, string>();
   for (const [nodeId, node] of Object.entries(nodes)) {
-    if (!VISUAL_REVIEW_CAPTURE_ACTIONS.has(String(node.action)) || !isRecord(node.visual_review))
-      continue;
+    if (!isVisualReviewCaptureNode(node) || !isRecord(node.visual_review)) continue;
     const targets = [
       node.visual_review.parent,
       ...(Array.isArray(node.visual_review.related) ? node.visual_review.related : []),
@@ -679,7 +684,7 @@ function validateVisualReviewGraph(
         : []),
     ].filter(isNonEmptyString);
     for (const target of targets) {
-      if (!VISUAL_REVIEW_CAPTURE_ACTIONS.has(String(nodes[target]?.action))) {
+      if (!isVisualReviewCaptureNode(nodes[target])) {
         addFinding(
           ctx,
           'error',

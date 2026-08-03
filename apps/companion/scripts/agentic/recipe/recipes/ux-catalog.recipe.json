@@ -255,11 +255,6 @@
             "label": "Companion UX feedback catalog"
           },
           {
-            "path": ".agent/ux-catalog-current/manifest.json",
-            "type": "json",
-            "label": "Companion UX capture manifest"
-          },
-          {
             "path": ".agent/ux-catalog-current/visual-review-source.json",
             "type": "json",
             "label": "Portable visual review source"

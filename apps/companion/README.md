@@ -45,8 +45,8 @@ as JSON. To regenerate a focused board from captures already on disk, use the
 capture node ID shown in the catalog index:
 
 ```bash
-node scripts/screenshots/generate-ux-catalog.mjs .agent/ux-catalog-current \
-  --surface capture-ready-gate
+yarn exec farmslot-visual-review build .agent/ux-catalog-current/visual-review-source.json \
+  --output .agent/ux-catalog-focused --surface capture-ready-gate
 ```
 
 ## Scripts

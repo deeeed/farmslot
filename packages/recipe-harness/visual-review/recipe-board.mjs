@@ -19,7 +19,7 @@ function visualCaptureNodes(recipe, surfaceLocations) {
       ...(node.visual_review?.parent ? { parentId: node.visual_review.parent } : {}),
       navigation: node.visual_review?.navigation ?? [],
       ...(node.visual_review?.related ? { relatedSurfaceIds: node.visual_review.related } : {}),
-      imageTemplate: node.path,
+      imageTemplate: node.path ?? `screenshots/${nodeId}.png`,
     }));
 }
 

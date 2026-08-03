@@ -437,7 +437,6 @@ function clientScript(reviewSource) {
 (() => {
   const storageKey = document.body.dataset.feedbackKey;
   const source = ${JSON.stringify(reviewSource)};
-  const sessionPrefix = storageKey + ':';
   const platformStorageKey = storageKey + ':platform';
   const platforms = document.body.dataset.platforms.split(',').filter(Boolean);
   const defaultPlatform = document.body.dataset.defaultPlatform;
@@ -451,7 +450,7 @@ function clientScript(reviewSource) {
   const annotationPalette = ['#5855ee', '#e84a8a', '#20b486', '#f29d38', '#38a9f2', '#b266e8'];
   const annotationColor = (annotation) => {
     if (/^#[0-9a-f]{6}$/iu.test(annotation.color || '')) return annotation.color;
-    const numericId = Number(/^annotation-(\d+)$/u.exec(annotation.id)?.[1] || 1);
+    const numericId = Number(/^annotation-(\\d+)$/u.exec(annotation.id)?.[1] || 1);
     return annotationPalette[(numericId - 1) % annotationPalette.length];
   };
   const platformName = (platform) => ({ ios: 'iOS', android: 'Android', web: 'Web' })[platform] || platform;
@@ -466,7 +465,7 @@ function clientScript(reviewSource) {
     for (const capture of document.querySelectorAll('[data-capture-platform]')) {
       capture.hidden = platform !== 'all' && capture.dataset.capturePlatform !== platform;
     }
-    for (const card of document.querySelectorAll('[data-surface-platforms]')) {
+    for (const card of document.querySelectorAll('.screen-link[data-surface-platforms]')) {
       const available = card.dataset.surfacePlatforms.split(',').filter(Boolean);
       const matches = platform === 'all' || available.includes(platform);
       card.dataset.platformAvailable = String(matches);
@@ -549,18 +548,20 @@ function clientScript(reviewSource) {
   };
 
   const stored = parseSaved(localStorage.getItem(storageKey), 'stored');
-  const session = window.name.startsWith(sessionPrefix)
-    ? parseSaved(window.name.slice(sessionPrefix.length), 'session')
-    : emptyFeedback();
   const feedback = {
-    surfaceNotes: { ...stored.surfaceNotes, ...session.surfaceNotes },
-    annotations: session.annotations.length > 0 ? session.annotations : stored.annotations,
+    surfaceNotes: stored.surfaceNotes,
+    annotations: stored.annotations,
   };
+  const currentSurfaceIds = new Set(source.surfaces.map((surface) => surface.id));
+  const currentCaptureIds = new Set(
+    source.surfaces.flatMap((surface) =>
+      surface.captures.map((capture) => surface.id + ':' + capture.id),
+    ),
+  );
 
   const persist = () => {
     const serialized = JSON.stringify(feedback);
     localStorage.setItem(storageKey, serialized);
-    window.name = sessionPrefix + serialized;
     for (const status of document.querySelectorAll('[data-feedback-status]')) status.textContent = 'Saved';
   };
 
@@ -818,9 +819,13 @@ function clientScript(reviewSource) {
     kind: 'visual-review-feedback',
     source,
     surfaceNotes: Object.entries(feedback.surfaceNotes)
-      .filter(([, body]) => body.trim())
+      .filter(([surfaceId, body]) => currentSurfaceIds.has(surfaceId) && body.trim())
       .map(([surfaceId, body]) => ({ surfaceId, body })),
-    annotations: feedback.annotations.filter((annotation) => annotation.body.trim()),
+    annotations: feedback.annotations.filter(
+      (annotation) =>
+        currentCaptureIds.has(annotation.surfaceId + ':' + annotation.captureId) &&
+        annotation.body.trim(),
+    ),
   });
 
   for (const button of document.querySelectorAll('[data-feedback-download]')) {

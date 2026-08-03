@@ -62,7 +62,7 @@
 - Contextual steering: every run/PR/family screen should answer “which worker do I talk to?”
 - Progressive disclosure: raw fleet, filters, JSON, retry internals, and diagnostics are Advanced.
 - One review package model: run detail, PR evidence, family retros, and decision workspaces should feel like the same tabbed review object.
-- Honest tabs: Evidence, Diff, and Timeline switch content inside one review workspace; tab controls do not scroll to distant sections or push a new route.
+- Honest review navigation: Evidence and Timeline move in place within one review workspace; Diff opens its dedicated comparison route. Controls must not imply unrelated top-level screens.
 - Preserve escape hatches: power-user surfaces remain reachable but should not dominate first launch.
 - Separate discovery from proof: use interactive device inspection to learn the app, then retain
   only stable selectors, explicit expectations, and observed navigation relationships in recipes.

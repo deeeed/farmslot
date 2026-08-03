@@ -597,6 +597,19 @@ test('keeps visual review relationships out of adapter params and validates thei
       (finding) => finding.code === 'workflow.missing_visual_review_surface',
     ),
   );
+
+  const unannotatedScreenshotTarget = structuredClone(document);
+  const unannotatedNodes = (
+    unannotatedScreenshotTarget.workflow as {
+      nodes: Record<string, Record<string, unknown>>;
+    }
+  ).nodes;
+  unannotatedNodes.overview.action = 'ui.screenshot';
+  assert.ok(
+    validateRecipeWithManifest(unannotatedScreenshotTarget, actionManifest).findings.some(
+      (finding) => finding.code === 'workflow.missing_visual_review_surface',
+    ),
+  );
 });
 
 test('allows manifest-defined action parameters that share call and terminal field names', () => {
