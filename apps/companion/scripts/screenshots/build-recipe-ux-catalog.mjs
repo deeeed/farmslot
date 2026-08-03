@@ -5,6 +5,21 @@ import { pathToFileURL } from 'node:url';
 
 import { buildRecipeReviewBoard } from '@farmslot/recipe-harness/visual-review';
 
+export const COMPANION_SURFACE_LOCATIONS = {
+  'capture-review': '/(tabs)/runs',
+  'capture-terminals': '/(tabs)/workers',
+  'capture-advanced': '/(tabs)/advanced',
+  'capture-settings': '/(tabs)/settings',
+  'capture-fleet': '/(tabs)/fleet',
+  'capture-prs': '/(tabs)/prs',
+  'capture-inbox': '/(tabs)/inbox',
+  'capture-run': '/run/[id]',
+  'capture-ready-gate': '/decision/[id]',
+  'capture-ready-evidence': '/decision/[id]',
+  'capture-ready-timeline': '/decision/[id]',
+  'capture-ready-diff': '/diff/[runId]',
+};
+
 export function buildRecipeUxCatalog({ artifactsDir, outputDir, platform, recipePath }) {
   return buildRecipeReviewBoard({
     artifactsDir,
@@ -13,6 +28,8 @@ export function buildRecipeUxCatalog({ artifactsDir, outputDir, platform, recipe
     recipePath,
     sourceId: 'farmslot-farm:companion-ux-catalog',
     project: 'farmslot-farm',
+    runId: process.env.FARMSLOT_RUN_ID,
+    surfaceLocations: COMPANION_SURFACE_LOCATIONS,
     title: 'Companion UX catalog',
     storageKey: 'farmslot-companion-ux-feedback',
   });

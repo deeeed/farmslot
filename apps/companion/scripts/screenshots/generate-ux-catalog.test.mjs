@@ -72,6 +72,7 @@ test('generates a compact index, annotated surface pages, and a portable source'
     assert.equal(existsSync(path.join(outputDir, 'assets', 'review-board.js')), true);
     assert.equal(source.kind, 'visual-review-source');
     assert.equal(source.surfaces[0].nodeId, 'capture-review');
+    assert.equal(source.surfaces[0].location, '/(tabs)/runs');
     assert.deepEqual(source.surfaces[0].proofTargets, ['ux-catalog']);
     assert.equal(source.surfaces[1].parentId, 'capture-review');
     assert.deepEqual(source.surfaces[1].relatedSurfaceIds, ['capture-review']);
@@ -126,6 +127,7 @@ test('derives review surfaces from recipe capture nodes', async () => {
     );
     assert.equal(source.id, 'farmslot-farm:companion-ux-catalog');
     assert.equal(source.surfaces[0].id, 'capture-review');
+    assert.equal(source.surfaces[0].location, '/(tabs)/runs');
     assert.equal(source.surfaces[0].captures[0].image.path, 'ios/review.png');
     assert.equal(source.surfaces[1].parentId, 'capture-review');
     assert.deepEqual(source.surfaces[1].relatedSurfaceIds, ['capture-review']);

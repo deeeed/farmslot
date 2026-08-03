@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -159,11 +160,11 @@ function surfaceTreeHtml(source, parentId, depth = 0) {
     .join('')}</ul>`;
 }
 
-function indexHtml(source, storageKey, defaultPlatform) {
+function indexHtml(source, storageKey, defaultPlatform, assetVersion) {
   return documentShell({
     title: source.title,
     assetPrefix: '',
-    assetVersion: source.capturedAt,
+    assetVersion,
     bodyAttributes: bodyAttributes(source, storageKey, defaultPlatform),
     body: `
   <header class="board-header">
@@ -197,7 +198,7 @@ function indexHtml(source, storageKey, defaultPlatform) {
   });
 }
 
-function screenHtml(source, storageKey, defaultPlatform, surface, index) {
+function screenHtml(source, storageKey, defaultPlatform, surface, index, assetVersion) {
   const byId = surfaceById(source);
   const ancestors = surfaceAncestors(source, surface);
   const children = source.surfaces.filter((candidate) => candidate.parentId === surface.id);
@@ -240,7 +241,7 @@ function screenHtml(source, storageKey, defaultPlatform, surface, index) {
   return documentShell({
     title: `${surface.title} · ${source.title}`,
     assetPrefix: '../',
-    assetVersion: source.capturedAt,
+    assetVersion,
     bodyAttributes: bodyAttributes(source, storageKey, defaultPlatform),
     body: `
   <header class="screen-header">
@@ -427,13 +428,11 @@ textarea { width: 100%; resize: vertical; border: 1px solid #333348; border-radi
 }
 `;
 
-const clientScript = `
+function clientScript(reviewSource) {
+  return `
 (() => {
   const storageKey = document.body.dataset.feedbackKey;
-  const source = {
-    id: document.body.dataset.sourceId,
-    capturedAt: document.body.dataset.capturedAt,
-  };
+  const source = ${JSON.stringify(reviewSource)};
   const sessionPrefix = storageKey + ':';
   const platformStorageKey = storageKey + ':platform';
   const platforms = document.body.dataset.platforms.split(',').filter(Boolean);
@@ -833,6 +832,7 @@ const clientScript = `
   }
 })();
 `;
+}
 
 export function generateReviewBoard({ outputDir, source, storageKey, defaultPlatform }) {
   const normalizedSource = {
@@ -860,6 +860,13 @@ export function generateReviewBoard({ outputDir, source, storageKey, defaultPlat
   const normalizedDefaultPlatform = platforms.includes(defaultPlatform)
     ? defaultPlatform
     : (platforms[0] ?? '');
+  const renderedClientScript = clientScript(normalizedSource);
+  const assetVersion = createHash('sha256')
+    .update(stylesheet)
+    .update('\0')
+    .update(renderedClientScript)
+    .digest('hex')
+    .slice(0, 16);
   const assetsDir = path.join(outputDir, 'assets');
   const screensDir = path.join(outputDir, 'screens');
   mkdirSync(assetsDir, { recursive: true });
@@ -875,15 +882,22 @@ export function generateReviewBoard({ outputDir, source, storageKey, defaultPlat
     `${JSON.stringify(normalizedSource, null, 2)}\n`,
   );
   writeFileSync(path.join(assetsDir, 'review-board.css'), stylesheet);
-  writeFileSync(path.join(assetsDir, 'review-board.js'), clientScript);
+  writeFileSync(path.join(assetsDir, 'review-board.js'), renderedClientScript);
   writeFileSync(
     path.join(outputDir, 'index.html'),
-    indexHtml(normalizedSource, storageKey, normalizedDefaultPlatform),
+    indexHtml(normalizedSource, storageKey, normalizedDefaultPlatform, assetVersion),
   );
   normalizedSource.surfaces.forEach((surface, index) => {
     writeFileSync(
       path.join(screensDir, `${surface.id}.html`),
-      screenHtml(normalizedSource, storageKey, normalizedDefaultPlatform, surface, index),
+      screenHtml(
+        normalizedSource,
+        storageKey,
+        normalizedDefaultPlatform,
+        surface,
+        index,
+        assetVersion,
+      ),
     );
   });
 }

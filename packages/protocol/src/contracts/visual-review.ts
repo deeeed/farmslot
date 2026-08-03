@@ -49,11 +49,6 @@ export interface VisualReviewSourceDocument {
   navigationEdges?: VisualReviewNavigationEdge[];
 }
 
-export interface VisualReviewFeedbackSource {
-  id: string;
-  capturedAt: string;
-}
-
 export interface VisualReviewSurfaceNote {
   surfaceId: string;
   body: string;
@@ -91,7 +86,8 @@ export interface VisualReviewAreaAnnotation extends VisualReviewAnnotationBase {
 export interface VisualReviewFeedbackDocument {
   version: typeof VISUAL_REVIEW_FEEDBACK_VERSION;
   kind: 'visual-review-feedback';
-  source: VisualReviewFeedbackSource;
+  /** Exact source snapshot so downloaded feedback remains self-contained. */
+  source: VisualReviewSourceDocument;
   surfaceNotes: VisualReviewSurfaceNote[];
   annotations: Array<VisualReviewPointAnnotation | VisualReviewAreaAnnotation>;
 }

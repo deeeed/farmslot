@@ -37,6 +37,7 @@ test('builds and serves a hierarchical visual review board on a dynamic port', a
           {
             id: 'detail',
             title: 'Detail',
+            location: '/detail/[id]',
             parentId: 'overview',
             relatedSurfaceIds: ['overview'],
             captures: [{ id: 'web-detail', platform: 'web', image: { path: 'detail.png' } }],
@@ -67,7 +68,7 @@ test('builds and serves a hierarchical visual review board on a dynamic port', a
     assert.match(index, /navigation-kind--push/u);
     assert.match(index, /data-default-platform="ios"/u);
     assert.match(index, /data-platform-filter="ios"/u);
-    assert.match(index, /review-board\.js\?v=2026-08-03T00%3A00%3A00\.000Z/u);
+    assert.match(index, /review-board\.js\?v=[a-f0-9]{16}/u);
     assert.match(detail, /Surface hierarchy/u);
     assert.match(detail, /data-capture-platform="web"/u);
     assert.match(detail, /data-platform-empty/u);
@@ -82,6 +83,8 @@ test('builds and serves a hierarchical visual review board on a dynamic port', a
     assert.match(client, /moveState/u);
     assert.match(client, /applyPlatformFilter/u);
     assert.match(client, /platformStorageKey/u);
+    assert.match(client, /"kind":"visual-review-source"/u);
+    assert.match(client, /"location":"\/detail\/\[id\]"/u);
     assert.match(client, /Runtime state may differ between capture sessions/u);
     assert.match(client, /platformComparison/u);
     const stylesheet = await readFile(path.join(outputDir, 'assets', 'review-board.css'), 'utf8');
@@ -143,6 +146,8 @@ test('builds a project review board directly from recipe artifacts', async () =>
       recipePath,
       sourceId: 'metamask-mobile-farm:perps-surfaces',
       project: 'metamask-mobile-farm',
+      runId: 'run-123',
+      surfaceLocations: { detail: '/markets/[id]' },
     });
 
     assert.equal(source.id, 'metamask-mobile-farm:perps-surfaces');
@@ -151,6 +156,8 @@ test('builds a project review board directly from recipe artifacts', async () =>
       { fromSurfaceId: 'markets', toSurfaceId: 'detail', kind: 'push' },
     ]);
     assert.equal(source.surfaces[1].captures[0].platform, 'ios');
+    assert.equal(source.surfaces[1].location, '/markets/[id]');
+    assert.equal(source.runId, 'run-123');
     const index = await readFile(path.join(outputDir, 'index.html'), 'utf8');
     assert.match(index, /Perps surfaces/u);
     assert.match(index, /data-default-platform="ios"/u);

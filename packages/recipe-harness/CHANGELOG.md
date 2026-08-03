@@ -6,7 +6,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 - feat(visual-review): start navigation maps at the top level with independently collapsible branches and expand/collapse-all controls.
 - feat(visual-review): label multi-platform captures as variants of one surface and expose an explicit Compare mode.
-- feat(visual-review): provide a lightweight project-agnostic review-board builder, recipe-artifact converter, and dynamic-port server with a typed navigation map plus color-coded, movable point and drag-area annotations.
+- feat(visual-review): provide a lightweight project-agnostic review-board builder, recipe-artifact converter, and dynamic-port server with self-contained route/capture feedback plus color-coded, movable point and drag-area annotations.
 - feat(visual-review): default multi-platform boards to the platform from the latest build, remember the operator's iOS/Android selection across pages, and keep an explicit All comparison mode.
 
 - feat(recipe): standardize `ui.capture_surface` and implement full-page CDP evidence capture.

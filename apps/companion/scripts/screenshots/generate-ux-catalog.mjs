@@ -6,6 +6,8 @@ import { pathToFileURL } from 'node:url';
 
 import { generateReviewBoard } from '@farmslot/recipe-harness/visual-review';
 
+import { COMPANION_SURFACE_LOCATIONS } from './build-recipe-ux-catalog.mjs';
+
 export function generateUxCatalog(outputArg, options = {}) {
   const outputDir = path.resolve(outputArg);
   const manifest = JSON.parse(readFileSync(path.join(outputDir, 'manifest.json'), 'utf8'));
@@ -25,7 +27,7 @@ export function generateUxCatalog(outputArg, options = {}) {
     .map((route) => ({
       id: route.id,
       title: route.title,
-      location: route.path,
+      location: route.path ?? COMPANION_SURFACE_LOCATIONS[route.id],
       ...(route.nodeId ? { nodeId: route.nodeId } : {}),
       ...(route.proofTargets ? { proofTargets: route.proofTargets } : {}),
       ...(route.parentId && includedIds.has(route.parentId) ? { parentId: route.parentId } : {}),

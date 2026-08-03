@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { generateReviewBoard } from './review-board.mjs';
 
-function visualCaptureNodes(recipe) {
+function visualCaptureNodes(recipe, surfaceLocations) {
   return Object.entries(recipe.workflow?.nodes ?? {})
     .filter(
       ([, node]) =>
@@ -15,6 +15,7 @@ function visualCaptureNodes(recipe) {
       title: node.label ?? nodeId,
       nodeId,
       proofTargets: node.proves ?? [],
+      ...(surfaceLocations[nodeId] ? { location: surfaceLocations[nodeId] } : {}),
       ...(node.visual_review?.parent ? { parentId: node.visual_review.parent } : {}),
       navigation: node.visual_review?.navigation ?? [],
       ...(node.visual_review?.related ? { relatedSurfaceIds: node.visual_review.related } : {}),
@@ -38,11 +39,13 @@ export function buildRecipeReviewBoard({
   recipePath,
   sourceId,
   project,
+  runId,
+  surfaceLocations = {},
   title,
   storageKey = `farmslot-visual-review:${sourceId}`,
 }) {
   const recipe = JSON.parse(readFileSync(recipePath, 'utf8'));
-  const captures = visualCaptureNodes(recipe);
+  const captures = visualCaptureNodes(recipe, surfaceLocations);
   if (captures.length === 0) {
     throw new Error(`Recipe has no visual review capture nodes: ${recipePath}`);
   }
@@ -84,6 +87,7 @@ export function buildRecipeReviewBoard({
       title: capture.title,
       nodeId: capture.nodeId,
       proofTargets: capture.proofTargets,
+      ...(capture.location ? { location: capture.location } : {}),
       ...(capture.parentId ? { parentId: capture.parentId } : {}),
       ...(capture.relatedSurfaceIds ? { relatedSurfaceIds: capture.relatedSurfaceIds } : {}),
       captures: [
@@ -120,6 +124,7 @@ export function buildRecipeReviewBoard({
     capturedAt: new Date().toISOString(),
     description: `${surfaces.length} surface${surfaces.length === 1 ? '' : 's'} · ${platforms.join('/')}`,
     ...(project ? { project } : {}),
+    ...(runId ? { runId } : {}),
     surfaces,
     ...(navigationEdges.length > 0 ? { navigationEdges } : {}),
   };

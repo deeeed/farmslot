@@ -22,6 +22,8 @@ export function buildRecipeReviewBoard(options: {
   recipePath: string;
   sourceId: string;
   project?: string;
+  runId?: string;
+  surfaceLocations?: Record<string, string>;
   title?: string;
   storageKey?: string;
 }): VisualReviewSourceDocument;
