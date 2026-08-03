@@ -1,6 +1,9 @@
 // branch-freshness.ts — Early behind-main + merge-tree conflict probe for
 // human-gate rework and ready-gate soft chips. Non-destructive: never rebases
 // or force-pushes; only reports counts/conflict state and operator-facing hints.
+//
+// Fail-closed: when origin/<branch> is missing or a count cannot be computed,
+// fields are omitted (unknown) — never treated as ahead=0 or mergeConflicts=true.
 
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -12,39 +15,47 @@ import {
 
 /** Soft-gate fields exposed on ready-gate / package-refresh summaries. */
 export interface BranchFreshnessSummary {
-  /** Commits HEAD is behind origin/<defaultBranch> (`git rev-list --count HEAD..origin/<branch>`). */
-  behindMain: number;
-  /** Commits HEAD is ahead of origin/<defaultBranch> (`git rev-list --count origin/<branch>..HEAD`). */
-  aheadMain: number;
-  /** True when a non-destructive merge-tree probe reports conflicts with origin/<defaultBranch>. */
-  mergeConflicts: boolean;
+  /**
+   * Commits HEAD is behind origin/<defaultBranch>.
+   * Omitted when the count could not be computed (ref missing / rev-list failed).
+   */
+  behindMain?: number;
+  /**
+   * Commits HEAD is ahead of origin/<defaultBranch>.
+   * Omitted when unknown — callers must not treat missing as zero (close-as-shipped).
+   */
+  aheadMain?: number;
+  /**
+   * True/false only when merge-tree ran against a verified ref.
+   * Omitted when the remote ref is missing or the probe is incomplete.
+   */
+  mergeConflicts?: boolean;
   /** Sample of conflicted paths (capped) for operator copy. */
   mergeConflictPaths: string[];
   defaultBranch: string;
-  /** Slot HEAD SHA when the probe ran (optional; filled by the combined ready-gate probe). */
+  /** Slot HEAD SHA when the probe ran (optional). */
   headSha?: string;
+  /** True when origin/<defaultBranch> resolved after fetch. */
+  remoteRefOk: boolean;
   /**
-   * Operator-facing next command: prefer merge during open review loops;
+   * Operator-facing next command / status. Prefer merge during open review loops;
    * rebase only when the project already standardizes on it.
    */
   hint: string;
 }
 
-/** @deprecated Prefer {@link MergeMainStrategy} from slot-tracking — kept as an alias for call sites. */
-export type BranchUpdateStrategy = MergeMainStrategy;
-
 const CONFLICT_PATH_CAP = 8;
 
-/** Parse `git rev-list --count` stdout into a non-negative integer. */
-export function parseRevListCount(stdout: string): number {
+/** Parse `git rev-list --count` stdout into a non-negative integer, or null if not a count. */
+export function parseRevListCount(stdout: string): number | null {
   const n = Number.parseInt(String(stdout ?? '').trim(), 10);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 /**
  * Extract conflicted path samples from `git merge-tree --write-tree --name-only`
  * stdout (CONFLICT lines + bare name-only paths). Does **not** decide conflict
- * status — that comes from the merge-tree exit code (1 = conflict).
+ * status — that comes from the merge-tree exit code when the ref is verified.
  */
 export function parseMergeTreeConflictPaths(mergeTreeOutput: string): string[] {
   const text = String(mergeTreeOutput ?? '');
@@ -69,7 +80,6 @@ export function parseMergeTreeConflictPaths(mergeTreeOutput: string): string[] {
     if (/^\+?(<<<<<<<|=======|>>>>>>>)/.test(trimmed)) continue;
 
     // name-only path lines: "f.txt" or "apps/foo/bar.ts" (must look like a path).
-    // Skip bare words like "merged" from classic merge-tree chatter.
     if (
       /^[A-Za-z0-9_./@+-]+$/.test(trimmed) &&
       !trimmed.startsWith('-') &&
@@ -82,30 +92,32 @@ export function parseMergeTreeConflictPaths(mergeTreeOutput: string): string[] {
   return [...paths].slice(0, CONFLICT_PATH_CAP);
 }
 
-/**
- * @deprecated Prefer exit-status-driven detection via {@link parseBranchFreshnessProbeOutput}.
- * Kept for tests that only exercise path extraction from CONFLICT lines.
- */
-export function parseMergeTreeConflicts(mergeTreeOutput: string): {
-  mergeConflicts: boolean;
-  paths: string[];
-} {
-  const paths = parseMergeTreeConflictPaths(mergeTreeOutput);
-  // Structured CONFLICT (content|add/add|…): lines only — never free-text "conflict".
-  const hasStructuredConflict = /^CONFLICT \([^)]+\):/m.test(String(mergeTreeOutput ?? ''));
-  return { mergeConflicts: hasStructuredConflict || paths.length > 0, paths };
-}
-
 /** Build operator-facing copy: behind count, optional paths, next git command. */
 export function formatBranchFreshnessHint(params: {
-  behindMain: number;
-  mergeConflicts: boolean;
+  behindMain?: number;
+  mergeConflicts?: boolean;
   mergeConflictPaths?: readonly string[];
   defaultBranch: string;
   strategy?: MergeMainStrategy;
+  remoteRefOk?: boolean;
 }): string {
   const branch = params.defaultBranch || 'main';
   const strategy: MergeMainStrategy = params.strategy === 'rebase' ? 'rebase' : 'merge';
+
+  if (params.remoteRefOk === false) {
+    return (
+      `Branch freshness unknown: origin/${branch} is not available after fetch ` +
+      `(not treated as a merge conflict or zero-ahead). Re-run after a successful fetch.`
+    );
+  }
+
+  if (params.mergeConflicts === undefined || params.behindMain === undefined) {
+    return (
+      `Branch freshness incomplete for origin/${branch} ` +
+      `(behind/merge status unknown — not treated as zero-ahead or conflicts).`
+    );
+  }
+
   const paths =
     params.mergeConflictPaths && params.mergeConflictPaths.length
       ? ` Conflict paths (sample): ${params.mergeConflictPaths.join(', ')}.`
@@ -129,9 +141,9 @@ export function formatBranchFreshnessHint(params: {
 }
 
 /**
- * Build a non-destructive probe script (fetch + rev-list counts + merge-tree
- * --write-tree --name-only). Conflict detection keys off merge-tree exit status
- * (1 = conflict). Never rebases or pushes.
+ * Build a non-destructive probe script (fetch + rev-parse verify + rev-list +
+ * merge-tree --write-tree --name-only). Unknown markers when the remote ref or
+ * a count cannot be resolved. Never rebases or pushes.
  */
 export function buildBranchFreshnessProbeScript(
   repoPath: string,
@@ -143,15 +155,32 @@ export function buildBranchFreshnessProbeScript(
     'set +e',
     `git -C ${repo} fetch origin ${branch} --quiet 2>/dev/null`,
     `head=$(git -C ${repo} rev-parse HEAD 2>/dev/null)`,
-    `behind=$(git -C ${repo} rev-list --count "HEAD..origin/${branch}" 2>/dev/null || echo 0)`,
-    `ahead=$(git -C ${repo} rev-list --count "origin/${branch}..HEAD" 2>/dev/null || echo 0)`,
-    // --write-tree: exit 0 clean, exit 1 conflicts. --name-only lists conflict paths.
-    `mt_out=$(git -C ${repo} merge-tree --write-tree --name-only HEAD "origin/${branch}" 2>&1)`,
-    'mt_rc=$?',
+    // Fail closed: only treat origin/<branch> as mergeable after rev-parse --verify.
+    `git -C ${repo} rev-parse --verify --quiet "origin/${branch}^{commit}" >/dev/null 2>&1`,
+    'ref_rc=$?',
+    'if [ "$ref_rc" -eq 0 ]; then',
+    '  ref_ok=1',
+    `  behind=$(git -C ${repo} rev-list --count "HEAD..origin/${branch}" 2>/dev/null)`,
+    '  behind_rc=$?',
+    `  ahead=$(git -C ${repo} rev-list --count "origin/${branch}..HEAD" 2>/dev/null)`,
+    '  ahead_rc=$?',
+    // --write-tree: exit 0 clean, exit 1 conflicts (only when ref exists).
+    `  mt_out=$(git -C ${repo} merge-tree --write-tree --name-only HEAD "origin/${branch}" 2>&1)`,
+    '  mt_rc=$?',
+    'else',
+    '  ref_ok=0',
+    '  behind=""',
+    '  behind_rc=1',
+    '  ahead=""',
+    '  ahead_rc=1',
+    '  mt_out=""',
+    '  mt_rc=""',
+    'fi',
     'printf "HEAD:%s\\n" "${head:-}"',
-    'printf "BEHIND:%s\\n" "${behind:-0}"',
-    'printf "AHEAD:%s\\n" "${ahead:-0}"',
-    'printf "CONFLICT_EXIT:%s\\n" "${mt_rc:-1}"',
+    'printf "REF_OK:%s\\n" "${ref_ok}"',
+    'if [ "$behind_rc" -eq 0 ] && [ -n "$behind" ]; then printf "BEHIND:%s\\n" "$behind"; else printf "BEHIND:unknown\\n"; fi',
+    'if [ "$ahead_rc" -eq 0 ] && [ -n "$ahead" ]; then printf "AHEAD:%s\\n" "$ahead"; else printf "AHEAD:unknown\\n"; fi',
+    'if [ "$ref_ok" -eq 1 ] && [ -n "$mt_rc" ]; then printf "CONFLICT_EXIT:%s\\n" "$mt_rc"; else printf "CONFLICT_EXIT:unknown\\n"; fi',
     'printf "TREE_BEGIN\\n"',
     'printf "%s\\n" "$mt_out"',
     'printf "TREE_END\\n"',
@@ -165,6 +194,16 @@ export function sanitizeDefaultBranch(raw: string | null | undefined): string {
   return candidate;
 }
 
+/** Parse optional `BEHIND:N` / `AHEAD:N` / `unknown` markers. */
+function parseCountMarker(text: string, label: 'BEHIND' | 'AHEAD'): number | undefined {
+  const unknown = text.match(new RegExp(`^${label}:unknown\\s*$`, 'm'));
+  if (unknown) return undefined;
+  const match = text.match(new RegExp(`^${label}:(\\d+)\\s*$`, 'm'));
+  if (!match) return undefined;
+  const n = parseRevListCount(match[1]);
+  return n === null ? undefined : n;
+}
+
 /** Parse combined probe stdout produced by {@link buildBranchFreshnessProbeScript}. */
 export function parseBranchFreshnessProbeOutput(
   stdout: string,
@@ -174,14 +213,21 @@ export function parseBranchFreshnessProbeOutput(
   const branch = sanitizeDefaultBranch(defaultBranch);
   const text = String(stdout ?? '');
   const headMatch = text.match(/^HEAD:([0-9a-f]{7,40})?\s*$/im);
-  const behindMatch = text.match(/^BEHIND:(\d+)\s*$/m);
-  const aheadMatch = text.match(/^AHEAD:(\d+)\s*$/m);
-  const conflictExitMatch = text.match(/^CONFLICT_EXIT:(\d+)\s*$/m);
-  const behindMain = behindMatch ? parseRevListCount(behindMatch[1]) : 0;
-  const aheadMain = aheadMatch ? parseRevListCount(aheadMatch[1]) : 0;
-  // merge-tree --write-tree: 0 = clean, 1 = conflicts. Missing marker → fail closed (unknown).
-  const conflictExit = conflictExitMatch ? Number.parseInt(conflictExitMatch[1], 10) : 0;
-  const mergeConflicts = conflictExit === 1;
+  const refOkMatch = text.match(/^REF_OK:([01])\s*$/m);
+  const conflictExitMatch = text.match(/^CONFLICT_EXIT:(\d+|unknown)\s*$/m);
+  const remoteRefOk = refOkMatch ? refOkMatch[1] === '1' : false;
+  const behindMain = parseCountMarker(text, 'BEHIND');
+  const aheadMain = parseCountMarker(text, 'AHEAD');
+
+  // mergeConflicts only when ref verified and merge-tree reported a numeric exit.
+  // Missing / unknown → omit (fail closed). Never treat "ref missing" exit 1 as conflict.
+  let mergeConflicts: boolean | undefined;
+  if (remoteRefOk && conflictExitMatch && conflictExitMatch[1] !== 'unknown') {
+    const conflictExit = Number.parseInt(conflictExitMatch[1], 10);
+    if (conflictExit === 0) mergeConflicts = false;
+    else if (conflictExit === 1) mergeConflicts = true;
+    // Other exit codes (tool errors) stay unknown — do not claim conflicts.
+  }
 
   let tree = '';
   const begin = text.indexOf('TREE_BEGIN');
@@ -190,21 +236,26 @@ export function parseBranchFreshnessProbeOutput(
     tree = text.slice(begin + 'TREE_BEGIN'.length, end).replace(/^\n/, '');
   }
 
-  const paths = parseMergeTreeConflictPaths(tree);
+  // Only surface path samples when we know there are conflicts; otherwise ignore noise.
+  const mergeConflictPaths =
+    mergeConflicts === true ? parseMergeTreeConflictPaths(tree) : [];
+
   const headSha = headMatch?.[1] && /^[0-9a-f]{7,40}$/i.test(headMatch[1]) ? headMatch[1] : undefined;
   const hint = formatBranchFreshnessHint({
     behindMain,
     mergeConflicts,
-    mergeConflictPaths: paths,
+    mergeConflictPaths,
     defaultBranch: branch,
     strategy,
+    remoteRefOk,
   });
   return {
-    behindMain,
-    aheadMain,
-    mergeConflicts,
-    mergeConflictPaths: paths,
+    ...(behindMain !== undefined ? { behindMain } : {}),
+    ...(aheadMain !== undefined ? { aheadMain } : {}),
+    ...(mergeConflicts !== undefined ? { mergeConflicts } : {}),
+    mergeConflictPaths,
     defaultBranch: branch,
+    remoteRefOk,
     ...(headSha ? { headSha } : {}),
     hint,
   };
@@ -225,7 +276,11 @@ export async function probeSlotBranchFreshness(
   try {
     const result = await execOnSlot(vars, script, { timeout: 45_000 });
     // Even non-zero exit may still carry markers after set +e.
-    if (!result.stdout.includes('BEHIND:') || !result.stdout.includes('CONFLICT_EXIT:')) {
+    if (
+      !result.stdout.includes('REF_OK:') ||
+      !result.stdout.includes('BEHIND:') ||
+      !result.stdout.includes('CONFLICT_EXIT:')
+    ) {
       console.warn(
         `[run-engine] branch-freshness probe produced incomplete markers for ${vars.remoteRepo}: exit=${result.exitCode}`,
       );
@@ -241,9 +296,7 @@ export async function probeSlotBranchFreshness(
 }
 
 /** Prefer project merge_main_strategy when set; default merge for open review loops. */
-export function resolveBranchUpdateStrategy(
-  projectJson: unknown,
-): MergeMainStrategy {
+export function resolveBranchUpdateStrategy(projectJson: unknown): MergeMainStrategy {
   // Reuse the slot-tracking helper (same key, same default) — do not re-roll the in-check.
   return resolveMergeMainStrategy(
     (projectJson && typeof projectJson === 'object' ? projectJson : {}) as Parameters<

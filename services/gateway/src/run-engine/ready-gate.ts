@@ -643,7 +643,14 @@ export async function executeReadyGate(runId: string): Promise<string> {
       const strategy = resolveBranchUpdateStrategy(pv?.projectJson);
       branchFreshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
       if (branchFreshness?.headSha) headSha = branchFreshness.headSha;
-      if (publicationApprovalGate && !mergedPrNumber && branchFreshness) {
+      // Fail closed: only promote close-as-shipped when ahead count is a known 0.
+      // Unknown/missing ahead (ref not resolved) must not look like zero-ahead.
+      if (
+        publicationApprovalGate &&
+        !mergedPrNumber &&
+        branchFreshness &&
+        typeof branchFreshness.aheadMain === 'number'
+      ) {
         branchZeroAhead = branchFreshness.aheadMain === 0;
       }
     } catch (err) {
@@ -889,9 +896,15 @@ export async function executeReadyGate(runId: string): Promise<string> {
     headSha: preparedPackage?.headSha ?? headSha,
     ...(branchFreshness
       ? {
-          behindMain: branchFreshness.behindMain,
-          mergeConflicts: branchFreshness.mergeConflicts,
-          mergeConflictPaths: branchFreshness.mergeConflictPaths,
+          ...(typeof branchFreshness.behindMain === 'number'
+            ? { behindMain: branchFreshness.behindMain }
+            : {}),
+          ...(typeof branchFreshness.mergeConflicts === 'boolean'
+            ? { mergeConflicts: branchFreshness.mergeConflicts }
+            : {}),
+          ...(branchFreshness.mergeConflictPaths.length
+            ? { mergeConflictPaths: branchFreshness.mergeConflictPaths }
+            : {}),
           branchFreshnessHint: branchFreshness.hint,
         }
       : {}),

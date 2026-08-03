@@ -262,12 +262,30 @@ export async function refreshPublishPackage(params: {
       );
       if (freshness) {
         branchFreshnessFields = {
-          behindMain: freshness.behindMain,
-          mergeConflicts: freshness.mergeConflicts,
-          mergeConflictPaths: freshness.mergeConflictPaths,
+          ...(typeof freshness.behindMain === 'number'
+            ? { behindMain: freshness.behindMain }
+            : {}),
+          ...(typeof freshness.mergeConflicts === 'boolean'
+            ? { mergeConflicts: freshness.mergeConflicts }
+            : {}),
+          ...(freshness.mergeConflictPaths.length
+            ? { mergeConflictPaths: freshness.mergeConflictPaths }
+            : {}),
           branchFreshnessHint: freshness.hint,
         };
-        freshnessLine = `\n**Branch freshness:** behindMain=${freshness.behindMain}, mergeConflicts=${freshness.mergeConflicts}${freshness.mergeConflicts || freshness.behindMain > 0 ? ` — ${freshness.hint}` : ''}`;
+        const behindLabel =
+          typeof freshness.behindMain === 'number' ? String(freshness.behindMain) : 'unknown';
+        const conflictLabel =
+          typeof freshness.mergeConflicts === 'boolean'
+            ? String(freshness.mergeConflicts)
+            : 'unknown';
+        const detail =
+          freshness.mergeConflicts === true ||
+          (typeof freshness.behindMain === 'number' && freshness.behindMain > 0) ||
+          !freshness.remoteRefOk
+            ? ` — ${freshness.hint}`
+            : '';
+        freshnessLine = `\n**Branch freshness:** behindMain=${behindLabel}, mergeConflicts=${conflictLabel}${detail}`;
       }
     } catch (err) {
       console.warn(

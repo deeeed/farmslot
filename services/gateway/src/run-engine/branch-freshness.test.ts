@@ -10,7 +10,6 @@ import {
   formatBranchFreshnessHint,
   parseBranchFreshnessProbeOutput,
   parseMergeTreeConflictPaths,
-  parseMergeTreeConflicts,
   parseRevListCount,
   resolveBranchUpdateStrategy,
   sanitizeDefaultBranch,
@@ -20,8 +19,8 @@ test('parseRevListCount accepts non-negative integers and rejects garbage', () =
   assert.equal(parseRevListCount('21\n'), 21);
   assert.equal(parseRevListCount('0'), 0);
   assert.equal(parseRevListCount(' 3 '), 3);
-  assert.equal(parseRevListCount('not-a-number'), 0);
-  assert.equal(parseRevListCount(''), 0);
+  assert.equal(parseRevListCount('not-a-number'), null);
+  assert.equal(parseRevListCount(''), null);
 });
 
 test('parseMergeTreeConflictPaths reads CONFLICT lines and name-only paths; ignores free-text conflict', () => {
@@ -38,11 +37,9 @@ test('parseMergeTreeConflictPaths reads CONFLICT lines and name-only paths; igno
   const paths = parseMergeTreeConflictPaths(writeTreeStyle);
   assert.ok(paths.some((p) => p.includes('gate.ts')));
 
-  // Docs that say "CONFLICT" must not flip path extraction or free-text detection.
+  // Docs that say "CONFLICT" must not flip path extraction.
   const docsOnly = 'See the CONFLICT section of the guide for details.\n';
   assert.deepEqual(parseMergeTreeConflictPaths(docsOnly), []);
-  const structuredOnly = parseMergeTreeConflicts(docsOnly);
-  assert.equal(structuredOnly.mergeConflicts, false);
 });
 
 test('formatBranchFreshnessHint prefers merge during open review loops', () => {
@@ -50,6 +47,7 @@ test('formatBranchFreshnessHint prefers merge during open review loops', () => {
     behindMain: 0,
     mergeConflicts: false,
     defaultBranch: 'main',
+    remoteRefOk: true,
   });
   assert.match(upToDate, /behindMain: 0/);
   assert.match(upToDate, /up to date/);
@@ -59,48 +57,39 @@ test('formatBranchFreshnessHint prefers merge during open review loops', () => {
     mergeConflicts: false,
     defaultBranch: 'main',
     strategy: 'merge',
+    remoteRefOk: true,
   });
   assert.match(behind, /behindMain: 21/);
   assert.match(behind, /git merge origin\/main/);
   assert.doesNotMatch(behind, /force-with-lease/);
 
-  const conflicts = formatBranchFreshnessHint({
-    behindMain: 3,
-    mergeConflicts: true,
-    mergeConflictPaths: ['a.ts', 'b.ts'],
+  const missingRef = formatBranchFreshnessHint({
     defaultBranch: 'main',
-    strategy: 'merge',
+    remoteRefOk: false,
   });
-  assert.match(conflicts, /mergeConflicts: true/);
-  assert.match(conflicts, /a\.ts/);
-  assert.match(conflicts, /git merge origin\/main/);
-
-  const rebase = formatBranchFreshnessHint({
-    behindMain: 2,
-    mergeConflicts: true,
-    defaultBranch: 'main',
-    strategy: 'rebase',
-  });
-  assert.match(rebase, /git rebase origin\/main/);
-  assert.match(rebase, /force-with-lease only when the project already standardizes/);
+  assert.match(missingRef, /not available after fetch/);
+  assert.doesNotMatch(missingRef, /git merge origin\/main/);
 });
 
-test('buildBranchFreshnessProbeScript uses write-tree exit status and is non-destructive', () => {
+test('buildBranchFreshnessProbeScript verifies remote ref and is non-destructive', () => {
   const script = buildBranchFreshnessProbeScript('/tmp/slot-repo', 'main');
   assert.match(script, /git -C .* fetch origin main/);
+  assert.match(script, /rev-parse --verify --quiet "origin\/main\^\{commit\}"/);
   assert.match(script, /rev-list --count "HEAD\.\.origin\/main"/);
   assert.match(script, /merge-tree --write-tree --name-only HEAD "origin\/main"/);
-  assert.match(script, /CONFLICT_EXIT/);
+  assert.match(script, /BEHIND:unknown/);
+  assert.match(script, /AHEAD:unknown/);
+  assert.match(script, /CONFLICT_EXIT:unknown/);
+  assert.doesNotMatch(script, /\|\| echo 0/);
   assert.doesNotMatch(script, /rebase/);
   assert.doesNotMatch(script, /push/);
-  assert.doesNotMatch(script, /force-with-lease/);
-  // bare --force is not used (force-with-lease only in operator hint text elsewhere)
   assert.equal(script.includes('--force'), false);
 });
 
-test('parseBranchFreshnessProbeOutput keys mergeConflicts off CONFLICT_EXIT not free text', () => {
+test('parseBranchFreshnessProbeOutput fails closed when ref missing or counts unknown', () => {
   const withConflict = [
     'HEAD:abc1234',
+    'REF_OK:1',
     'BEHIND:21',
     'AHEAD:2',
     'CONFLICT_EXIT:1',
@@ -117,11 +106,33 @@ test('parseBranchFreshnessProbeOutput keys mergeConflicts off CONFLICT_EXIT not 
   assert.equal(summary.mergeConflicts, true);
   assert.ok(summary.mergeConflictPaths.some((p) => p.includes('x.ts')));
   assert.equal(summary.headSha, 'abc1234');
-  assert.match(summary.hint, /git merge origin\/main/);
+  assert.equal(summary.remoteRefOk, true);
 
-  // Free-text "CONFLICT" in docs with clean exit must NOT report conflicts.
+  // Missing remote ref: do NOT claim conflicts or zero-ahead.
+  const missingRef = [
+    'HEAD:abc1234',
+    'REF_OK:0',
+    'BEHIND:unknown',
+    'AHEAD:unknown',
+    'CONFLICT_EXIT:unknown',
+    'TREE_BEGIN',
+    'merge-tree: origin/main - not something we can merge',
+    'TREE_END',
+    '',
+  ].join('\n');
+  const unknown = parseBranchFreshnessProbeOutput(missingRef, 'main', 'merge');
+  assert.equal(unknown.remoteRefOk, false);
+  assert.equal(unknown.behindMain, undefined);
+  assert.equal(unknown.aheadMain, undefined);
+  assert.equal(unknown.mergeConflicts, undefined);
+  assert.deepEqual(unknown.mergeConflictPaths, []);
+  // Must not look like zero-ahead for close-as-shipped.
+  assert.notEqual(unknown.aheadMain, 0);
+
+  // Free-text "CONFLICT" with clean exit must NOT report conflicts.
   const cleanWithDocs = [
     'HEAD:abc1234',
+    'REF_OK:1',
     'BEHIND:0',
     'AHEAD:1',
     'CONFLICT_EXIT:0',
@@ -133,6 +144,20 @@ test('parseBranchFreshnessProbeOutput keys mergeConflicts off CONFLICT_EXIT not 
   const clean = parseBranchFreshnessProbeOutput(cleanWithDocs, 'main', 'merge');
   assert.equal(clean.mergeConflicts, false);
   assert.equal(clean.behindMain, 0);
+  assert.equal(clean.aheadMain, 1);
+
+  // Missing CONFLICT_EXIT marker → fail closed (unknown), not false.
+  const missingExit = [
+    'HEAD:abc1234',
+    'REF_OK:1',
+    'BEHIND:0',
+    'AHEAD:1',
+    'TREE_BEGIN',
+    'TREE_END',
+    '',
+  ].join('\n');
+  const incomplete = parseBranchFreshnessProbeOutput(missingExit, 'main', 'merge');
+  assert.equal(incomplete.mergeConflicts, undefined);
 });
 
 test('sanitizeDefaultBranch and resolveBranchUpdateStrategy fail closed to safe defaults', () => {
@@ -146,10 +171,10 @@ test('sanitizeDefaultBranch and resolveBranchUpdateStrategy fail closed to safe 
 });
 
 /**
- * Real-git proof: classic merge-tree markers are +<<<<<<< so exit-status write-tree
- * is the only reliable detector. This is the claim the recipe also runs.
+ * Real-git proof: write-tree exit status detects conflicts; missing remote ref
+ * does not report mergeConflicts or aheadMain=0.
  */
-test('real git: write-tree probe reports mergeConflicts on conflicting branches only', () => {
+test('real git: write-tree probe reports conflicts only when origin ref exists', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'branch-freshness-'));
   const bare = path.join(root, 'remote.git');
   const work = path.join(root, 'work');
@@ -177,19 +202,19 @@ test('real git: write-tree probe reports mergeConflicts on conflicting branches 
   git(['push', 'origin', 'main']);
 
   git(['checkout', 'feature']);
-  // feature is behind main and conflicts — run the production probe script.
   const script = buildBranchFreshnessProbeScript(work, 'main');
   const stdout = execFileSync('bash', ['-lc', script], { encoding: 'utf8' });
   const summary = parseBranchFreshnessProbeOutput(stdout, 'main', 'merge');
   assert.equal(summary.mergeConflicts, true, `expected conflicts; probe out:\n${stdout}`);
-  assert.ok(summary.behindMain >= 1, `expected behindMain>=1; got ${summary.behindMain}`);
+  assert.ok((summary.behindMain ?? 0) >= 1, `expected behindMain>=1; got ${summary.behindMain}`);
   assert.ok(
     summary.mergeConflictPaths.some((p) => p.includes('f.txt')),
     `expected f.txt in paths; got ${JSON.stringify(summary.mergeConflictPaths)}`,
   );
+  assert.equal(summary.remoteRefOk, true);
+  assert.equal(typeof summary.aheadMain, 'number');
 
-  // Clean pair: feature tip vs itself via a branch that has no divergence content.
-  // Make a non-conflicting merge by resetting main content to match feature.
+  // Clean pair after making main content match feature.
   git(['checkout', 'main']);
   writeFileSync(path.join(work, 'f.txt'), 'feature-side\n');
   git(['commit', '-am', 'main-matches-feature']);
@@ -204,4 +229,15 @@ test('real git: write-tree probe reports mergeConflicts on conflicting branches 
     false,
     `expected clean merge; probe out:\n${cleanOut}`,
   );
+
+  // Missing remote ref: delete origin/main tracking and probe a non-existent branch name.
+  const missingOut = execFileSync('bash', [
+    '-lc',
+    buildBranchFreshnessProbeScript(work, 'does-not-exist-branch'),
+  ], { encoding: 'utf8' });
+  const missing = parseBranchFreshnessProbeOutput(missingOut, 'does-not-exist-branch', 'merge');
+  assert.equal(missing.remoteRefOk, false, `probe out:\n${missingOut}`);
+  assert.equal(missing.mergeConflicts, undefined);
+  assert.equal(missing.aheadMain, undefined);
+  assert.equal(missing.behindMain, undefined);
 });
