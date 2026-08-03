@@ -86,9 +86,44 @@ STATUS: pending
   ```
   Conventional Commits; never `--amend`; never commit secrets or `{{TASK_DIR}}` contents into the repo.
 
+### Branch freshness before re-review ready (step 9) — HARD GATE
+
+Long fix/review loops leave the feature branch behind `origin/main`. Surface that
+**before** signaling re-review ready so merge pain is not deferred to CI.
+
+- [ ] **9. Behind-main + merge-tree conflict probe** — after each must-fix commit and
+  before signaling re-review ready:
+  ```bash
+  cd {{REPO}}
+  git fetch origin main
+  behindMain=$(git rev-list --count HEAD..origin/main)
+  echo "behindMain=$behindMain"
+  base=$(git merge-base HEAD origin/main)
+  # Non-destructive conflict probe (does not update the index or working tree).
+  probe=$(git merge-tree "$base" HEAD origin/main)
+  if printf '%s\n' "$probe" | grep -E '^(<<<<<<<|=======|>>>>>>>|CONFLICT )' >/dev/null; then
+    mergeConflicts=true
+  else
+    mergeConflicts=false
+  fi
+  echo "mergeConflicts=$mergeConflicts"
+  ```
+  **Failure path (must fix before re-review ready):**
+  - If `mergeConflicts=true` **or** `behindMain` is above the project threshold
+    (default: any behindMain > 0 when continuing a re-review loop):
+    - **Prefer merge** into the feature branch during open review loops (avoids
+      force-push): `git merge origin/main`, resolve conflicts, commit, push.
+    - Use **rebase** only when the project already standardizes on it
+      (`merge_main_strategy: rebase` / BRANCH_UPDATE_STRATEGY):
+      `git rebase origin/main` then `git push --force-with-lease` — never bare
+      `--force`, and never auto force-push mid-loop without project policy.
+  - Record `behindMain`, `mergeConflicts`, conflict path samples, and the
+    concrete next command you ran in `{{TASK_DIR}}/artifacts/report.md`.
+  - Do **not** mark complete while merge conflicts remain unresolved.
+
 ### Complete
 
-- [ ] **9. Signal completion:**
+- [ ] **10. Signal completion:**
   ```bash
   {{TASK_DIR}}/mark complete --mark-last
   ```

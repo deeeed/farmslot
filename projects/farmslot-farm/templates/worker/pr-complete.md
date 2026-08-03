@@ -38,6 +38,26 @@ STATUS: pending
   git rev-list origin/{{PR_BRANCH}}..HEAD | wc -l   # must print 0
   ```
   The gateway verifies the branch is pushed before accepting your completion signal; an unpushed `mark complete` blocks the run.
-- [ ] **9. Write report** — create `{{TASK_DIR}}/artifacts/comments-report.md` with: files changed, issue addressed, validation results.
-- [ ] **10. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- No reviewer-driven learnings — no actionable comment fixes on this run.`
-- [ ] **11. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, report, checklist, artifact contract)
+- [ ] **9. Behind-main + merge-tree conflict probe** — before signaling re-review /
+  completion ready (after must-fix commits):
+  ```bash
+  git fetch origin main
+  behindMain=$(git rev-list --count HEAD..origin/main)
+  echo "behindMain=$behindMain"
+  base=$(git merge-base HEAD origin/main)
+  probe=$(git merge-tree "$base" HEAD origin/main)
+  if printf '%s\n' "$probe" | grep -E '^(<<<<<<<|=======|>>>>>>>|CONFLICT )' >/dev/null; then
+    mergeConflicts=true
+  else
+    mergeConflicts=false
+  fi
+  echo "mergeConflicts=$mergeConflicts"
+  ```
+  **Failure path:** if `mergeConflicts=true` or `behindMain` is material, update
+  the branch first — **prefer** `git merge origin/main` during open review loops;
+  use `git rebase origin/main` + `git push --force-with-lease` only when the
+  project already standardizes on rebase. Never auto force-push mid-loop.
+  Record `behindMain`, `mergeConflicts`, and the next command used in the report.
+- [ ] **10. Write report** — create `{{TASK_DIR}}/artifacts/comments-report.md` with: files changed, issue addressed, validation results, behindMain/mergeConflicts.
+- [ ] **11. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- No reviewer-driven learnings — no actionable comment fixes on this run.`
+- [ ] **12. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, report, checklist, artifact contract)

@@ -85,6 +85,11 @@ import {
   requestedReviewLoopCount,
   reviewPlanFromSelection,
 } from './review-plan.js';
+import {
+  probeSlotBranchFreshness,
+  resolveBranchUpdateStrategy,
+  type BranchFreshnessSummary,
+} from './branch-freshness.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
 
 const S = PipelineSteps;
@@ -651,15 +656,20 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // reviewed. Non-fatal — legacy gates without this field fall back to
   // the "live diff" warning banner in ready-workspace.
   let headSha: string | undefined;
+  let branchFreshness: BranchFreshnessSummary | null = null;
   if (current.slotId) {
     try {
       const vars = await loadSlotVars(current.slotId);
       const r = await execOnSlot(vars, `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`);
       const sha = r.stdout.trim();
       if (sha && /^[0-9a-f]{7,40}$/i.test(sha)) headSha = sha;
+      const defaultBranch =
+        (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || 'main';
+      const strategy = resolveBranchUpdateStrategy(pv?.projectJson);
+      branchFreshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
     } catch (err) {
       console.warn(
-        `[run-engine] ready-gate headSha capture failed for ${runId.slice(0, 8)}: ${(err as Error).message}`,
+        `[run-engine] ready-gate headSha/branch-freshness capture failed for ${runId.slice(0, 8)}: ${(err as Error).message}`,
       );
     }
   }
@@ -859,9 +869,21 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const inputSnapshot = await buildReadyGateInputSnapshot(current);
 
   // Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost).
-  const gateSummary = buildGateSummary(current, GATE_SUMMARY_KINDS.publication, {
+  const gateSummaryBase = buildGateSummary(current, GATE_SUMMARY_KINDS.publication, {
     gatePolicy: preparedPackage?.gatePolicy,
   });
+  const gateSummary = branchFreshness
+    ? {
+        ...gateSummaryBase,
+        custom: {
+          ...(gateSummaryBase.custom ?? {}),
+          behindMain: branchFreshness.behindMain,
+          mergeConflicts: branchFreshness.mergeConflicts,
+          mergeConflictPaths: branchFreshness.mergeConflictPaths,
+          branchFreshnessHint: branchFreshness.hint,
+        },
+      }
+    : gateSummaryBase;
 
   const readyPayload: ReadyGatePayload = {
     kind: 'ready',
@@ -873,6 +895,14 @@ export async function executeReadyGate(runId: string): Promise<string> {
     branch: preparedPackage?.branch ?? current.branch ?? '',
     slotId: current.slotId ?? undefined,
     headSha: preparedPackage?.headSha ?? headSha,
+    ...(branchFreshness
+      ? {
+          behindMain: branchFreshness.behindMain,
+          mergeConflicts: branchFreshness.mergeConflicts,
+          mergeConflictPaths: branchFreshness.mergeConflictPaths,
+          branchFreshnessHint: branchFreshness.hint,
+        }
+      : {}),
     recipeJson,
     recipeQualityArtifact: (
       await loadRecipeQualityEvaluation({
