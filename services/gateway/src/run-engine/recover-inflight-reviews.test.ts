@@ -41,11 +41,18 @@ function terminalSignal(overrides: Partial<WorkerSignal> = {}): WorkerSignal {
   };
 }
 
-test('isRecoverableReviewerContext accepts in-flight, completed, and delivery-failed reviewers', () => {
+test('isRecoverableReviewerContext keeps failed reviewers out of the long-lived watcher', () => {
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'working' }), true);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'launching' }), true);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'complete' }), true);
-  assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'failed' }), true);
+  assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'failed' }), false);
+  assert.equal(
+    isRecoverableReviewerContext(
+      { role: 'self-review', status: 'failed' },
+      { includeFailed: true },
+    ),
+    true,
+  );
   // Other roles never produce a publish-gate independent review.
   assert.equal(isRecoverableReviewerContext({ role: 'primary', status: 'working' }), false);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review-fix', status: 'working' }), false);
@@ -68,7 +75,7 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
   );
 });
 
-test('reviewerContextNeedsRecovery retries a failed placeholder when its reviewer later completes', () => {
+test('a one-shot scan can replace a failed placeholder without arming the watcher', () => {
   const failed = reviewerContext({
     status: 'failed',
     artifactScope: 'independent-review-7',
@@ -82,17 +89,36 @@ test('reviewerContextNeedsRecovery retries a failed placeholder when its reviewe
         feedbackSent: false,
       },
     ]),
+    false,
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(
+      failed,
+      [
+        {
+          id: 'independent-review-7',
+          verdict: 'failed',
+          unresolvedCount: 0,
+          feedbackSent: false,
+        },
+      ],
+      { includeFailed: true },
+    ),
     true,
   );
   assert.equal(
-    reviewerContextNeedsRecovery(failed, [
-      {
-        id: 'independent-review-7',
-        verdict: 'issues',
-        unresolvedCount: 1,
-        feedbackSent: false,
-      },
-    ]),
+    reviewerContextNeedsRecovery(
+      failed,
+      [
+        {
+          id: 'independent-review-7',
+          verdict: 'issues',
+          unresolvedCount: 1,
+          feedbackSent: false,
+        },
+      ],
+      { includeFailed: true },
+    ),
     false,
   );
 });

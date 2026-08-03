@@ -54,6 +54,26 @@ test('hasRecoverablePublicationReviewer ignores an already-ingested completed co
     }),
     true,
   );
+
+  assert.equal(
+    hasRecoverablePublicationReviewer({
+      ...run,
+      agentContexts: [{ ...context, status: 'failed' }],
+      engineState: {
+        publishGate: {
+          independentReviews: [
+            {
+              ...run.engineState!.publishGate!.independentReviews![0]!,
+              verdict: 'failed',
+              unresolvedCount: 0,
+              feedbackSent: false,
+            },
+          ],
+        },
+      },
+    }),
+    false,
+  );
 });
 
 test('recoverActiveRuns re-presents a blocked gate after its completed review was ingested', async () => {

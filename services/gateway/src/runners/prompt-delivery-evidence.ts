@@ -143,11 +143,7 @@ export async function probeRunnerHandoffAck(
     requirePromptDigest?: boolean;
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
-  // An explicit signal path is task-scoped and snapshotted before the send.
-  // Its advancement therefore proves this task accepted work independently of
-  // runner-specific hooks/session logs; digest requirements still govern the
-  // unscoped observability fallbacks below.
-  if (opts.launchAckSignalPath && opts.launchAckBaseline) {
+  if (opts.launchAckSignalPath && opts.launchAckBaseline && !opts.requirePromptDigest) {
     const launchAck = await readLaunchAckSignalSnapshot(vars, opts.launchAckSignalPath);
     if (launchAck && launchAckSignalAdvanced(opts.launchAckBaseline, launchAck)) {
       return {

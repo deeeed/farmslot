@@ -420,7 +420,6 @@ export async function runReviewAgent(
               maxAttempts: 5,
               blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
               signalPath,
-              launchAckSignalPath: signalPath,
               promptAcceptanceBaselineMs,
               requirePromptDigest: true,
               handoffAckSinceMs,

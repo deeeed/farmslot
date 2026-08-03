@@ -41,19 +41,22 @@ import { buildPublishGateReviewStatus } from './gate-policy.js';
 import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
 
 /**
- * A reviewer context can need recovery while in-flight, after its runner was
- * reconciled to `complete`, or after prompt verification marked it `failed`
- * while the already-started reviewer continued. Recorded artifact scopes
- * provide the dedup key; only an infrastructure-failed zero-finding placeholder
- * may be replaced by a later clean terminal signal and parseable feedback.
+ * A reviewer context can need recovery while in-flight or after its runner was
+ * reconciled to `complete`. A failed context is included only in an explicit
+ * one-shot artifact scan; it must never keep the six-hour watcher alive because
+ * persisted review data cannot distinguish a delivery placeholder from a real
+ * terminal failure.
  */
-export function isRecoverableReviewerContext(ctx: Pick<AgentContext, 'role' | 'status'>): boolean {
+export function isRecoverableReviewerContext(
+  ctx: Pick<AgentContext, 'role' | 'status'>,
+  options: { includeFailed?: boolean } = {},
+): boolean {
   return (
     ctx.role === 'self-review' &&
     (ctx.status === 'working' ||
       ctx.status === 'launching' ||
       ctx.status === 'complete' ||
-      ctx.status === 'failed')
+      (options.includeFailed === true && ctx.status === 'failed'))
   );
 }
 
@@ -71,8 +74,9 @@ export function reviewerContextNeedsRecovery(
     Pick<IndependentReviewStatus, 'id'> &
       Partial<Pick<IndependentReviewStatus, 'verdict' | 'unresolvedCount' | 'feedbackSent'>>
   >,
+  options: { includeFailed?: boolean } = {},
 ): boolean {
-  if (!isRecoverableReviewerContext(ctx)) return false;
+  if (!isRecoverableReviewerContext(ctx, options)) return false;
   const artifactScope = ctx.artifactScope?.trim();
   // Legacy complete contexts without a persisted scope cannot be distinguished
   // from normally ingested reviews. In-flight contexts remain recoverable via
@@ -310,7 +314,7 @@ export async function recoverInflightPublicationReviews(
   if (!run) return [];
   const reviews = run.engineState?.publishGate?.independentReviews ?? [];
   const candidates = (run.agentContexts ?? []).filter((ctx) =>
-    reviewerContextNeedsRecovery(ctx, reviews),
+    reviewerContextNeedsRecovery(ctx, reviews, { includeFailed: true }),
   );
   if (candidates.length === 0) return [];
 
