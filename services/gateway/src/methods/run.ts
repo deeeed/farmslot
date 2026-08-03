@@ -7,6 +7,7 @@ import {
   type ExecutionTemplateReference,
   failedRunCancelEffects,
   FLOW_STEPS,
+  type IndependentReviewStatus,
   isInteractiveDevRun,
   isTerminalRunStatus,
   parseGitHubRef,
@@ -1131,9 +1132,27 @@ export function assertDecisionStillUnresolved(runId: string, decisionId: string)
   if (!fresh || fresh.resolvedAt) throw new Error(`Decision already resolved`);
 }
 
+export interface RunResolveDecisionDependencies {
+  assertReviewLaunchAllowed?: (
+    reviews: readonly IndependentReviewStatus[],
+    slotId: string,
+  ) => Promise<void>;
+}
+
+async function assertReviewLaunchAllowed(
+  reviews: readonly IndependentReviewStatus[],
+  slotId: string,
+): Promise<void> {
+  const vars = await loadSlotVars(slotId);
+  await assertIndependentReviewLaunchState(reviews, (command) =>
+    execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
+  );
+}
+
 export async function runResolveDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
+  dependencies: RunResolveDecisionDependencies = {},
 ): Promise<RunResolveDecisionResult> {
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
@@ -1160,11 +1179,9 @@ export async function runResolveDecision(
     if (!existing.slotId) {
       throw new Error('Publication review launch requires an assigned slot');
     }
-    const vars = await loadSlotVars(existing.slotId);
-    await assertIndependentReviewLaunchState(
+    await (dependencies.assertReviewLaunchAllowed ?? assertReviewLaunchAllowed)(
       existing.engineState?.publishGate?.independentReviews ?? [],
-      (command) =>
-        execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
+      existing.slotId,
     );
   }
   await assertReadyPublishResolveIsFresh(existing, decision, params);

@@ -9,6 +9,7 @@ import {
   GATE_SUMMARY_KINDS,
   type IndependentReviewStatus,
   PipelineSteps,
+  type PublicationReviewLaunchRejection,
   type ReadyGateInputSnapshot,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
@@ -81,7 +82,10 @@ import {
   requestedReviewLoopCount,
   reviewPlanFromSelection,
 } from './review-plan.js';
-import { assertIndependentReviewLaunchState } from './review-launch-gate.js';
+import {
+  assertIndependentReviewLaunchState,
+  publicationReviewLaunchRejectionFromError,
+} from './review-launch-gate.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
 
 const S = PipelineSteps;
@@ -204,23 +208,81 @@ async function resumeInterruptedPublicationReviewOnce(
   return { reviewId: interrupted.id, verdict: result.verdict };
 }
 
+export interface PublishGateReviewPlanResult {
+  reviewIds: string[];
+  rejection?: PublicationReviewLaunchRejection;
+}
+
+export interface PublishGateReviewPlanDependencies {
+  assertLaunchAllowed?: (
+    reviews: readonly IndependentReviewStatus[],
+    slotId: string,
+  ) => Promise<void>;
+  executeReview?: typeof executeSelfReview;
+}
+
+async function assertPublicationReviewLaunchAllowed(
+  reviews: readonly IndependentReviewStatus[],
+  slotId: string,
+): Promise<void> {
+  const vars = await loadSlotVars(slotId);
+  await assertIndependentReviewLaunchState(reviews, (command) =>
+    execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
+  );
+}
+
 export async function executePublishGateReviewPlan(
   runId: string,
   slotId: string,
   plan: ReviewLoopRequest[],
   source: 'dispatch' | 'human-gate',
-): Promise<string[]> {
+  dependencies: PublishGateReviewPlanDependencies = {},
+): Promise<PublishGateReviewPlanResult> {
   const boundedPlan = plan.slice(0, MAX_PUBLISH_GATE_REVIEW_LOOPS);
-  if (boundedPlan.length === 0) return [];
+  if (boundedPlan.length === 0) return { reviewIds: [] };
+  const assertLaunchAllowed =
+    dependencies.assertLaunchAllowed ?? assertPublicationReviewLaunchAllowed;
+  const executeReview = dependencies.executeReview ?? executeSelfReview;
   const reviewIds: string[] = [];
   for (const planStep of boundedPlan) {
     const latestBeforeReview = getRun(runId)!;
-    const vars = await loadSlotVars(slotId);
-    await assertIndependentReviewLaunchState(
-      latestBeforeReview.engineState?.publishGate?.independentReviews ?? [],
-      (command) =>
-        execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} ${command}`, { timeout: 15_000 }),
-    );
+    try {
+      await assertLaunchAllowed(
+        latestBeforeReview.engineState?.publishGate?.independentReviews ?? [],
+        slotId,
+      );
+    } catch (error) {
+      const rejection = publicationReviewLaunchRejectionFromError(error);
+      if (!rejection) throw error;
+      updateRun(runId, {
+        engineState: {
+          ...latestBeforeReview.engineState,
+          publishGate: {
+            ...latestBeforeReview.engineState?.publishGate,
+            reviewLaunchRejection: rejection,
+          },
+        },
+      });
+      updateRunStep(runId, S.HUMAN_GATE, {
+        detail: `${rejection.message} ${rejection.userAction}`,
+        outputs: {
+          ...latestBeforeReview.steps.find((step) => step.name === S.HUMAN_GATE)?.outputs,
+          reviewLaunchRejection: rejection,
+        },
+      });
+      return { reviewIds, rejection };
+    }
+    if (latestBeforeReview.engineState?.publishGate?.reviewLaunchRejection) {
+      updateRun(runId, {
+        engineState: {
+          ...latestBeforeReview.engineState,
+          publishGate: {
+            ...latestBeforeReview.engineState.publishGate,
+            reviewLaunchRejection: undefined,
+          },
+        },
+      });
+    }
     const reviewedPackage =
       source === 'human-gate' ? await readPreparedPackage(latestBeforeReview) : undefined;
     // ID + artifact paths flow through EXTRA_REVIEW_SOURCE so this stream stays
@@ -240,7 +302,7 @@ export async function executePublishGateReviewPlan(
     let reviewResult: SelfReviewResult;
     let reviewRecoveryPending = false;
     try {
-      reviewResult = await executeSelfReview(runId, slotId, {
+      reviewResult = await executeReview(runId, slotId, {
         reviewRunner: requestedRunner,
         model: planStep.model ?? null,
         validationDepth,
@@ -301,7 +363,7 @@ export async function executePublishGateReviewPlan(
     });
     if (reviewResult.verdict !== 'pass') break;
   }
-  return reviewIds;
+  return { reviewIds };
 }
 export async function persistIndependentReviewArtifactsForRun(
   run: Run,
@@ -495,6 +557,7 @@ export function localVideoProofWarning(
 export async function executeReadyGate(runId: string): Promise<string> {
   const current = getRun(runId)!;
   const artifactOnly = isArtifactOnlyRun(current);
+  const reviewLaunchRejection = current.engineState?.publishGate?.reviewLaunchRejection;
 
   // Find PR + CI repo
   const pv = await loadProjectVarsOrNull(current.project, 'run step', current.id);
@@ -560,7 +623,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
     }
   }
 
-  const desc =
+  const baseDescription =
     publicationApprovalGate && preparedPackage
       ? [
           `**Package:** ${preparedPackage.id}`,
@@ -585,6 +648,14 @@ export async function executeReadyGate(runId: string): Promise<string> {
       : report
         ? `**Branch:** ${current.branch ?? 'unknown'}\n**Files:** ${diffStat.files} (+${diffStat.additions} -${diffStat.deletions})\n\n${report.slice(0, 300)}`
         : `Worker finished. Branch: ${current.branch ?? 'unknown'}`;
+  const desc = reviewLaunchRejection
+    ? [
+        baseDescription,
+        '',
+        `**Review launch paused:** ${reviewLaunchRejection.message}`,
+        `**Next:** ${reviewLaunchRejection.userAction}`,
+      ].join('\n')
+    : baseDescription;
 
   const reviewDepth =
     preparedPackage?.reviewDepth ??
@@ -790,6 +861,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
     selfReviewVerdict,
     selfReviewSummary,
     workerLearnings,
+    reviewLaunchRejection,
     ciChecks,
     acceptanceCriteria,
     inputSnapshot,

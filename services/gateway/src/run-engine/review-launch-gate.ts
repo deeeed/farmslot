@@ -1,4 +1,8 @@
-import type { ExecResult, IndependentReviewStatus } from '@farmslot/protocol';
+import type {
+  ExecResult,
+  IndependentReviewStatus,
+  PublicationReviewLaunchRejection,
+} from '@farmslot/protocol';
 
 import { GatewayMethodError } from '../core/method-error.js';
 
@@ -7,6 +11,33 @@ type GitExecutor = (command: string) => Promise<ExecResult>;
 export interface IndependentReviewLaunchState {
   dirtyPathCount: number;
   headSha: string;
+}
+
+function isRecoverableReviewLaunchCode(
+  code: string,
+): code is PublicationReviewLaunchRejection['code'] {
+  return (
+    code === 'PUBLICATION_REVIEW_LAUNCH_REJECTED' || code === 'PUBLICATION_REVIEW_GIT_PROBE_FAILED'
+  );
+}
+
+export function publicationReviewLaunchRejectionFromError(
+  error: unknown,
+): PublicationReviewLaunchRejection | null {
+  if (
+    !(error instanceof GatewayMethodError) ||
+    !isRecoverableReviewLaunchCode(error.code) ||
+    !error.userAction
+  ) {
+    return null;
+  }
+  return {
+    code: error.code,
+    message: error.message,
+    userAction: error.userAction,
+    details: error.details,
+    rejectedAt: new Date().toISOString(),
+  };
 }
 
 function assertGitProbe(result: ExecResult, probe: string): void {

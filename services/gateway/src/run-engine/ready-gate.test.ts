@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { ExecResult, IndependentReviewStatus } from '@farmslot/protocol';
+import type {
+  ExecResult,
+  IndependentReviewStatus,
+  PublicationReviewLaunchRejection,
+} from '@farmslot/protocol';
 
+import { GatewayMethodError } from '../core/method-error.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
-import { localVideoProofWarning, resumeInterruptedPublicationReview } from './ready-gate.js';
+import {
+  executePublishGateReviewPlan,
+  localVideoProofWarning,
+  resumeInterruptedPublicationReview,
+} from './ready-gate.js';
 import { assertIndependentReviewLaunchState } from './review-launch-gate.js';
 import { deleteTestRunIfPresent } from './test-fixtures.js';
 
@@ -224,5 +233,68 @@ test('independent publication re-review allows a clean advanced HEAD', async () 
   assert.deepEqual(
     await assertIndependentReviewLaunchState([issuesReview('abc123')], gitExecutor('', 'def456')),
     { dirtyPathCount: 0, headSha: 'def456' },
+  );
+});
+
+test('publish-gate review orchestration preserves a recoverable gate and launches no reviewer when refused', async (t) => {
+  const pendingPlan = [{ order: 1, runner: 'codex' as const }];
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-LAUNCH-REFUSAL',
+    runner: 'claude',
+    slotId: 'test-review-launch-slot',
+    engineState: {
+      publishGate: {
+        pendingReviewPlan: pendingPlan,
+        pendingReviewPlanRequestedAt: '2026-08-03T00:00:00.000Z',
+      },
+    },
+  });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  let reviewerLaunches = 0;
+  const result = await executePublishGateReviewPlan(
+    run.id,
+    'test-review-launch-slot',
+    pendingPlan,
+    'human-gate',
+    {
+      assertLaunchAllowed: async () => {
+        throw new GatewayMethodError(
+          'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+          'Independent review launch refused: test worktree is dirty.',
+          {
+            userAction: 'Commit the validated fixes, then request re-review.',
+            details: { dirtyPathCount: 1 },
+          },
+        );
+      },
+      executeReview: async () => {
+        reviewerLaunches += 1;
+        throw new Error('reviewer must not launch');
+      },
+    },
+  );
+
+  assert.equal(reviewerLaunches, 0);
+  assert.equal(result.reviewIds.length, 0);
+  assert.equal(result.rejection?.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
+  assert.equal(result.rejection?.userAction, 'Commit the validated fixes, then request re-review.');
+  const persisted = getRun(run.id)!;
+  assert.deepEqual(persisted.engineState?.publishGate?.pendingReviewPlan, pendingPlan);
+  assert.equal(
+    persisted.engineState?.publishGate?.reviewLaunchRejection?.userAction,
+    'Commit the validated fixes, then request re-review.',
+  );
+  const humanGateStep = persisted.steps.find((step) => step.name === 'human-gate');
+  assert.equal(humanGateStep?.status, 'pending');
+  assert.equal(
+    (humanGateStep?.outputs?.reviewLaunchRejection as PublicationReviewLaunchRejection | undefined)
+      ?.userAction,
+    'Commit the validated fixes, then request re-review.',
   );
 });

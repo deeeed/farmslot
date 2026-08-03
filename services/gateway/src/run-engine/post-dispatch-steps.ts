@@ -58,6 +58,7 @@ import {
 import { verifyWorkerPushedBranch } from './push-verification.js';
 import { resumeInterruptedPublicationReview } from './ready-gate.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
+import type { PublishGateReviewPlanResult } from './ready-gate.js';
 import {
   automaticPublicationReviewPlan,
   humanGateReviewDepth,
@@ -99,7 +100,7 @@ export interface PostDispatchStepContext {
     slotId: string,
     plan: ReviewLoopRequest[],
     trigger: 'dispatch' | 'human-gate',
-  ) => Promise<string[]>;
+  ) => Promise<PublishGateReviewPlanResult>;
   executeReadyGate: (runId: string) => Promise<string>;
   executeReviewGate: (runId: string) => Promise<void>;
   getDiffStat: (run: Run) => Promise<DiffStat>;
@@ -853,25 +854,32 @@ export async function executeHumanGateStep(
           getRun(runId)?.engineState?.publishGate?.reviewDepth?.requestedBy === 'human-gate'
             ? 'human-gate'
             : 'dispatch';
-        await executePublishGateReviewPlan(runId, dispatchReviewSlotId, dispatchPlan, reviewSource);
-        const afterDispatchReviews = getRun(runId)!;
-        updateRun(runId, {
-          engineState: {
-            ...afterDispatchReviews.engineState,
-            publishGate: {
-              ...afterDispatchReviews.engineState?.publishGate,
-              pendingReviewPlan: [],
-              pendingReviewPlanRequestedAt: undefined,
+        const reviewPlanResult = await executePublishGateReviewPlan(
+          runId,
+          dispatchReviewSlotId,
+          dispatchPlan,
+          reviewSource,
+        );
+        if (!reviewPlanResult.rejection) {
+          const afterDispatchReviews = getRun(runId)!;
+          updateRun(runId, {
+            engineState: {
+              ...afterDispatchReviews.engineState,
+              publishGate: {
+                ...afterDispatchReviews.engineState?.publishGate,
+                pendingReviewPlan: [],
+                pendingReviewPlanRequestedAt: undefined,
+              },
             },
-          },
-        });
-        const diffStat = await getDiffStat(getRun(runId)!);
-        await prepareCompletionPackage(runId, {
-          diffStat,
-          reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
-          publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
-          requireArtifactMirror: true,
-        });
+          });
+          const diffStat = await getDiffStat(getRun(runId)!);
+          await prepareCompletionPackage(runId, {
+            diffStat,
+            reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
+            publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
+            requireArtifactMirror: true,
+          });
+        }
       } else if (recoveredReviewIds.length > 0 || resumedInterruptedReview) {
         const beforeRefresh = await readReadyGatePreparedPackage(getRun(runId)!);
         const diffStat = await getDiffStat(getRun(runId)!);
@@ -936,13 +944,18 @@ export async function executeHumanGateStep(
             'Publication gate requested an independent review but no slot is assigned',
             gateAction,
           );
-        reviewRequestLoops += boundedPlan.length;
-        const newReviewIds = await executePublishGateReviewPlan(
+        const reviewPlanResult = await executePublishGateReviewPlan(
           runId,
           reviewSlotId,
           boundedPlan,
           'human-gate',
         );
+        if (reviewPlanResult.rejection) {
+          gateAction = await executeReadyGate(runId);
+          continue;
+        }
+        reviewRequestLoops += boundedPlan.length;
+        const newReviewIds = reviewPlanResult.reviewIds;
         const afterReviewPlan = getRun(runId)!;
         updateRun(runId, {
           engineState: {
