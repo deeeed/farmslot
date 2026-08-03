@@ -217,6 +217,11 @@ test('cancel marks in-flight steps skipped and records the operator reason', asy
   );
   assert.equal(result.run.metrics.outcome, 'cancelled');
   assert.deepEqual(result.run.agentContexts, []);
+  assert.equal(
+    result.run.backlogReconcilePending,
+    true,
+    'the repair marker must exist before the terminal state is published',
+  );
 });
 
 test('an already-terminal run is rejected without re-running effects', async () => {

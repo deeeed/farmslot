@@ -49,18 +49,16 @@ export async function runCancel(params: RunCancelParams): Promise<RunCancelResul
   // only `run` reported unqualified success for a partially-applied cancel; the
   // outcomes travel with the result so callers and operators can see the gap.
   const failed = effects.filter((effect) => effect.status === 'failed');
-  // The router publishes `cancelled` before the after-effects finish, so another
-  // client can archive or delete this run while teardown is still running. Never
-  // re-read the live map to build the result: `getRun` can legitimately return
-  // undefined here, and `updateRun` throws once the run is evicted.
+  // The router publishes `cancelled` before the after-effects finish. The mutation's
+  // write-ahead marker blocks archive/delete until backlog settlement clears it, so
+  // a failed settle always leaves a live repair source.
   let settled = run;
   if (failed.length > 0) {
     // The backlog projection is repaired from this durable marker on next load,
     // so a failed settle self-heals instead of waiting for someone to notice.
     if (failed.some((effect) => effect.name === 'backlog-settle')) {
-      // Persist the marker when the run is still live; when it has already been
-      // archived the returned snapshot still carries it, and the durable archive
-      // record was written from the same terminal state.
+      // A marker-clear write can itself fail after the backlog write succeeds. Re-set
+      // it on any reported settle failure so restart reconciliation remains conservative.
       settled = getRun(run.id)
         ? updateRun(run.id, { backlogReconcilePending: true })
         : { ...run, backlogReconcilePending: true };

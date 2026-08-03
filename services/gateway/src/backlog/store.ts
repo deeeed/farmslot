@@ -2276,8 +2276,8 @@ export async function reconcileBacklogRun(
  * ADR-053's `backlog-settle` effect report success on failure, and the work-graph
  * tick would then schedule against a backlog that never settled.
  */
-export function markBacklogRunObserved(run: Run): Promise<void> {
-  return withBacklogMutation(async () => {
+export async function markBacklogRunObserved(run: Run): Promise<void> {
+  await withBacklogMutation(async () => {
     const item =
       items.find((candidate) => candidate.runId === run.id) ??
       (run.backlogItemId
@@ -2312,6 +2312,15 @@ export function markBacklogRunObserved(run: Run): Promise<void> {
       broadcastBacklog();
     }
   });
+
+  // A cancel publishes its terminal run before this awaited settle. Clear the
+  // write-ahead marker only after the backlog mutation above is durable; eviction
+  // rejects marked runs, so a failed settle cannot discard the only repair source.
+  const storedRun = getRun(run.id);
+  if (storedRun?.backlogReconcilePending) {
+    const settledRun = updateRun(run.id, { backlogReconcilePending: undefined });
+    await persistRunNow(settledRun, 'backlog-run-observed-settled');
+  }
 }
 
 export async function markBacklogRunReleased(runId: string): Promise<string[]> {

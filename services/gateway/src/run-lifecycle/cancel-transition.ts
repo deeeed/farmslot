@@ -121,6 +121,10 @@ export function cancelPlan(
         status: 'cancelled',
         completedAt,
         error: request.reason ?? DEFAULT_CANCEL_REASON[request.actor],
+        // Write-ahead repair marker. The terminal state is published before the
+        // awaited backlog settle, so archive/delete must see this synchronously and
+        // refuse eviction until markBacklogRunObserved clears it after a durable write.
+        backlogReconcilePending: true,
         steps: run.steps.map((step) =>
           step.status === 'running' || step.status === 'pending'
             ? { ...step, status: 'skipped' as const, completedAt }

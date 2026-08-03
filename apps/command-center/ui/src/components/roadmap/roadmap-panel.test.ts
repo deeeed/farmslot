@@ -20,6 +20,7 @@ import {
   deliveryInputRevision,
   deliverySummaryFor,
   roadmapDeliveryBacklinks,
+  roadmapDeliveryRefreshRevision,
   sortRoadmapItems,
 } from './roadmap-panel-model.js';
 
@@ -299,9 +300,15 @@ test('an archived-only run family is shown without a dead navigation link', () =
 test('delivery revision changes when a run transitions without changing counts', () => {
   // Codex round-6 P2: the detector compared array lengths, so monitoring -> done —
   // the transition that actually changes delivery — never triggered a refresh.
-  const runsBefore = [{ id: 'r1', updatedAt: '2026-08-01T00:00:00.000Z', status: 'done', backlogItemId: 'bk1' }];
-  const runsAfter = [{ id: 'r1', updatedAt: '2026-08-01T01:00:00.000Z', status: 'done', backlogItemId: 'bk1' }];
-  const backlog = [{ id: 'b1', updatedAt: '2026-08-01T00:00:00.000Z', status: 'done', roadmapItemId: 'ri1' }];
+  const runsBefore = [
+    { id: 'r1', updatedAt: '2026-08-01T00:00:00.000Z', status: 'done', backlogItemId: 'bk1' },
+  ];
+  const runsAfter = [
+    { id: 'r1', updatedAt: '2026-08-01T01:00:00.000Z', status: 'done', backlogItemId: 'bk1' },
+  ];
+  const backlog = [
+    { id: 'b1', updatedAt: '2026-08-01T00:00:00.000Z', status: 'done', roadmapItemId: 'ri1' },
+  ];
 
   assert.notEqual(
     deliveryInputRevision(runsBefore, backlog),
@@ -316,7 +323,9 @@ test('delivery revision changes when a run transitions without changing counts',
   // A backlog item shipping is caught for the same reason.
   assert.notEqual(
     deliveryInputRevision(runsBefore, backlog),
-    deliveryInputRevision(runsBefore, [{ id: 'b1', updatedAt: '2026-08-02T00:00:00.000Z', status: 'done', roadmapItemId: 'ri1' }]),
+    deliveryInputRevision(runsBefore, [
+      { id: 'b1', updatedAt: '2026-08-02T00:00:00.000Z', status: 'done', roadmapItemId: 'ri1' },
+    ]),
   );
 });
 
@@ -328,13 +337,25 @@ test('delivery revision changes when one row is swapped for another', () => {
   const backlog = [{ id: 'b1', updatedAt: stamp, status: 'done', roadmapItemId: 'ri1' }];
 
   assert.notEqual(
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }], backlog),
-    deliveryInputRevision([{ id: 'r2', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }], backlog),
+    deliveryInputRevision(
+      [{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }],
+      backlog,
+    ),
+    deliveryInputRevision(
+      [{ id: 'r2', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }],
+      backlog,
+    ),
     'a different run at the same timestamp is different delivery input',
   );
   assert.notEqual(
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }], backlog),
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }], [{ id: 'b2', updatedAt: stamp, status: 'done', roadmapItemId: 'ri1' }]),
+    deliveryInputRevision(
+      [{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }],
+      backlog,
+    ),
+    deliveryInputRevision(
+      [{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }],
+      [{ id: 'b2', updatedAt: stamp, status: 'done', roadmapItemId: 'ri1' }],
+    ),
     'the same holds for a swapped backlog item',
   );
   // Order must not matter: the store can return the same rows in a different order.
@@ -385,8 +406,14 @@ test('delivery revision moves when a row changes twice within one millisecond', 
   const backlog = [{ id: 'b1', updatedAt: stamp, status: 'done', roadmapItemId: 'ri1' }];
 
   assert.notEqual(
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'monitoring', backlogItemId: 'bk1' }], backlog),
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }], backlog),
+    deliveryInputRevision(
+      [{ id: 'r1', updatedAt: stamp, status: 'monitoring', backlogItemId: 'bk1' }],
+      backlog,
+    ),
+    deliveryInputRevision(
+      [{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }],
+      backlog,
+    ),
     'a status change is delivery-affecting even at an identical timestamp',
   );
   assert.notEqual(
@@ -394,14 +421,29 @@ test('delivery revision moves when a row changes twice within one millisecond', 
       [{ id: 'r1', updatedAt: stamp, status: 'done', prNumber: null, backlogItemId: 'bk1' }],
       backlog,
     ),
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done', prNumber: 421, backlogItemId: 'bk1' }], backlog),
+    deliveryInputRevision(
+      [{ id: 'r1', updatedAt: stamp, status: 'done', prNumber: 421, backlogItemId: 'bk1' }],
+      backlog,
+    ),
     'a PR landing on the run is delivery-affecting too',
   );
   assert.notEqual(
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }], backlog),
-    deliveryInputRevision([{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }], [
-      { id: 'b1', updatedAt: stamp, status: 'done', roadmapItemId: 'ri1', shipped: { prRef: 'deeeed/farmslot#421' } },
-    ]),
+    deliveryInputRevision(
+      [{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }],
+      backlog,
+    ),
+    deliveryInputRevision(
+      [{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }],
+      [
+        {
+          id: 'b1',
+          updatedAt: stamp,
+          status: 'done',
+          roadmapItemId: 'ri1',
+          shipped: { prRef: 'deeeed/farmslot#421' },
+        },
+      ],
+    ),
     'a backlog item shipping at the same timestamp is delivery-affecting',
   );
 });
@@ -430,7 +472,10 @@ test('delivery revision ignores rows that cannot reach a roadmap projection', ()
   assert.equal(
     deliveryInputRevision(
       [{ id: 'r1', updatedAt: stamp, status: 'done', backlogItemId: 'bk1' }],
-      [...linkedBacklog, { id: 'b-unlinked', updatedAt: '2026-08-03T02:00:00.000Z', status: 'ready' }],
+      [
+        ...linkedBacklog,
+        { id: 'b-unlinked', updatedAt: '2026-08-03T02:00:00.000Z', status: 'ready' },
+      ],
     ),
     base,
     'a backlog item with no roadmap link is not in any item lineage',
@@ -455,16 +500,37 @@ test('delivery revision tracks backlog rows reachable only through promotion', (
 
   assert.notEqual(
     deliveryInputRevision([], promotionOnly, promoted),
-    deliveryInputRevision(
-      [],
-      [{ id: 'bk_promo', updatedAt: stamp, status: 'done' }],
-      promoted,
-    ),
+    deliveryInputRevision([], [{ id: 'bk_promo', updatedAt: stamp, status: 'done' }], promoted),
     'a promotion-referenced row still moves the revision when it ships',
   );
   assert.equal(
     deliveryInputRevision([], promotionOnly),
     deliveryInputRevision([], [{ id: 'bk_promo', updatedAt: stamp, status: 'done' }]),
     'and without the promotion set it is correctly treated as unreachable',
+  );
+});
+
+test('delivery refresh revision moves for an off-page run deletion', () => {
+  const runs = [
+    {
+      id: 'visible-run',
+      updatedAt: '2026-08-03T00:00:00.000Z',
+      status: 'done',
+      backlogItemId: 'visible-backlog',
+    },
+  ];
+  const backlog = [
+    {
+      id: 'visible-backlog',
+      updatedAt: '2026-08-03T00:00:00.000Z',
+      status: 'done',
+      roadmapItemId: 'ri-visible',
+    },
+  ];
+
+  assert.notEqual(
+    roadmapDeliveryRefreshRevision(0, runs, backlog),
+    roadmapDeliveryRefreshRevision(1, runs, backlog),
+    'RUN_DELETED must invalidate even when the paginated run rows are unchanged',
   );
 });

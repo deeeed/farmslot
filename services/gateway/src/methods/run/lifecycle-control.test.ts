@@ -31,6 +31,11 @@ test('runCancel marks non-terminal runs cancelled without slot release side effe
   assert.equal(result.run.status, 'cancelled');
   assert.equal(result.run.error, 'operator cleanup');
   assert.equal(result.run.metrics.outcome, 'cancelled');
+  assert.equal(
+    result.run.backlogReconcilePending,
+    undefined,
+    'a successful backlog settle clears the write-ahead repair marker',
+  );
   assert.deepEqual(
     result.run.steps.map((step) => [step.name, step.status]),
     [

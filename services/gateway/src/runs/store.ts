@@ -944,6 +944,9 @@ export async function deleteRun(id: string): Promise<boolean> {
   if (ACTIVE_STATUSES.has(run.status)) {
     throw new Error(`Cannot delete active run ${id} (status=${run.status})`);
   }
+  if (run.backlogReconcilePending) {
+    throw new Error(`Cannot delete run ${id} while backlog reconciliation is pending`);
+  }
   if (run.decisions?.some((d) => d.type === 'improvement' && !d.resolvedAt)) {
     console.warn(`[run-store] deleting run ${id} with unresolved improvement decision(s)`);
   }
@@ -999,41 +1002,46 @@ function invalidateArchivedRunsCache(): void {
  * the first read after startup (or after an archive) to scale with archive size.
  */
 export async function getArchivedRuns(): Promise<Run[]> {
-  if (archivedRunsCache) return archivedRunsCache;
-  const generation = archivedRunsGeneration;
-  let files: string[];
-  try {
-    files = await readdir(ARCHIVE_DIR);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      if (generation === archivedRunsGeneration) archivedRunsCache = [];
-      return [];
-    }
-    throw err;
-  }
-  const loaded: Run[] = [];
-  for (const file of files) {
-    if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
-    const filePath = path.join(ARCHIVE_DIR, file);
+  while (true) {
+    if (archivedRunsCache) return archivedRunsCache;
+    const generation = archivedRunsGeneration;
+    let files: string[];
     try {
-      const archived = JSON.parse(await readFile(filePath, 'utf-8')) as Run;
-      // Same migrations as the live load. Without them a pre-backfill archive keeps
-      // a missing familyId and every such run groups under one undefined family,
-      // merging lineage across unrelated backlog items.
-      normalizePersistedRun(archived);
-      loaded.push(archived);
+      files = await readdir(ARCHIVE_DIR);
     } catch (err) {
-      // One unreadable archive record must not blind every lineage read. Skipping
-      // it is explicit recovery: the file stays on disk for inspection.
-      console.warn(
-        `[run-store] skipping unreadable archived run ${file}: ${(err as Error).message.slice(0, 200)}`,
-      );
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (generation !== archivedRunsGeneration) continue;
+        archivedRunsCache = [];
+        return archivedRunsCache;
+      }
+      throw err;
     }
+    const loaded: Run[] = [];
+    for (const file of files) {
+      if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
+      const filePath = path.join(ARCHIVE_DIR, file);
+      try {
+        const archived = JSON.parse(await readFile(filePath, 'utf-8')) as Run;
+        // Same migrations as the live load. Without them a pre-backfill archive keeps
+        // a missing familyId and every such run groups under one undefined family,
+        // merging lineage across unrelated backlog items.
+        normalizePersistedRun(archived);
+        loaded.push(archived);
+      } catch (err) {
+        // One unreadable archive record must not blind every lineage read. Skipping
+        // it is explicit recovery: the file stays on disk for inspection.
+        console.warn(
+          `[run-store] skipping unreadable archived run ${file}: ${(err as Error).message.slice(0, 200)}`,
+        );
+      }
+    }
+    // An archive invalidated this scan after its directory listing was captured.
+    // Retry before returning: callers read the live map only after this resolves,
+    // and the moved run would otherwise be absent from both halves of the union.
+    if (generation !== archivedRunsGeneration) continue;
+    archivedRunsCache = loaded;
+    return archivedRunsCache;
   }
-  // Only publish this scan if no archive landed while it ran; a stale snapshot would
-  // hide the run that was just archived.
-  if (generation === archivedRunsGeneration) archivedRunsCache = loaded;
-  return loaded;
 }
 
 /**
@@ -1054,6 +1062,9 @@ export async function archiveRun(id: string): Promise<boolean> {
   if (!run) return false;
   if (ACTIVE_STATUSES.has(run.status)) {
     throw new Error(`Cannot archive active run ${id} (status=${run.status})`);
+  }
+  if (run.backlogReconcilePending) {
+    throw new Error(`Cannot archive run ${id} while backlog reconciliation is pending`);
   }
   const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
   // Catch-all: write the analytics record before the run is evicted. Await it and DON'T archive
@@ -1079,12 +1090,10 @@ export async function archiveRun(id: string): Promise<boolean> {
   // racing on src; renaming src could move that stale pre-archive JSON and lose
   // archivedAt. Direct dst write makes the archived record authoritative.
   await writeFile(dst, JSON.stringify(archivedRun, null, 2), 'utf-8');
-  // Evict only once the archive copy is durable. A failed write previously left the
-  // run gone from memory until the next restart re-read it from `src`. The window
-  // where the id is both live and archived is harmless: `getAllRunsWithArchived`
-  // dedupes with the live record winning.
-  runs.delete(id);
-  invalidateArchivedRunsCache();
+  // Evict only after both the archive copy and live-file removal succeed. Reporting
+  // an unlink failure after eviction tells callers the archive failed while leaving
+  // no live run to retry; the temporary duplicate is harmless because combined reads
+  // dedupe with the live record winning.
   try {
     await unlink(src);
   } catch (err) {
@@ -1092,14 +1101,24 @@ export async function archiveRun(id: string): Promise<boolean> {
     // Source absence is expected when the run file was already removed or never
     // persisted before archive; dst above is the durable archived copy.
   }
+  runs.delete(id);
+  invalidateArchivedRunsCache();
   return true;
 }
 
 export async function bulkDeleteRuns(ids: string[]): Promise<number> {
   let deleted = 0;
   for (const id of ids) {
-    const ok = await deleteRun(id);
-    if (ok) deleted++;
+    try {
+      const ok = await deleteRun(id);
+      if (ok) deleted++;
+    } catch (err) {
+      // Same reason as the cleanup sweep: a pending-reconciliation run refuses deletion,
+      // and one such id must not strand the rest of the batch.
+      console.warn(
+        `[run-store] bulk delete skipped ${id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
   return deleted;
 }
@@ -1131,10 +1150,20 @@ export async function cleanupRuns(
     if (run.status !== 'failed' && run.status !== 'cancelled') continue;
     const age = now - new Date(run.updatedAt).getTime();
     if (age < CLEANUP_AGE_MS) continue;
-    runsArchived.push(id);
     if (!dryRun) {
-      await archiveRun(id);
+      try {
+        await archiveRun(id);
+      } catch (err) {
+        // Explicit recovery: a run still carrying `backlogReconcilePending` refuses to
+        // archive by design. Skip it so one unsettled run cannot abort the sweep for
+        // every later run; the next pass takes it once reconciliation clears the marker.
+        console.warn(
+          `[run-store] cleanup skipped ${id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        continue;
+      }
     }
+    runsArchived.push(id);
   }
 
   // Scan task dirs for orphaned tasks from failed/cancelled runs

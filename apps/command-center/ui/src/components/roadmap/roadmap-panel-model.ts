@@ -225,6 +225,24 @@ export function deliveryInputRevision(
   return `${foldRuns(runs)}|${foldBacklog(backlogItems)}`;
 }
 
+/**
+ * Adds the unconditional RUN_DELETED/archive signal to the content-derived key.
+ * The deleted id can be outside the paginated run rows, so row folding alone cannot
+ * observe every gateway-side delivery projection change.
+ */
+export function roadmapDeliveryRefreshRevision(
+  runDeletionsRevision: number,
+  runs: ReadonlyArray<DeliveryRevisionRun>,
+  backlogItems: ReadonlyArray<DeliveryRevisionBacklogItem>,
+  promotionBacklogIds: ReadonlySet<string> = new Set(),
+): string {
+  return `${runDeletionsRevision}:${deliveryInputRevision(
+    runs,
+    backlogItems,
+    promotionBacklogIds,
+  )}`;
+}
+
 export function roadmapDeliveryBacklinks(
   projection: RoadmapDeliveryProjection,
 ): RoadmapDeliveryBacklink[] {

@@ -84,7 +84,6 @@ import {
   defaultSpecBody,
   deliveryBadgeLabel,
   deliveryBadgeTone,
-  deliveryInputRevision,
   deliverySummaryFor,
   filterRoadmapItemsByGlobalProjects,
   parsePromotionDraftAttachment,
@@ -94,6 +93,7 @@ import {
   promotionDraftAttachment,
   promotionDraftsFromRoadmapItem,
   roadmapDeliveryBacklinks,
+  roadmapDeliveryRefreshRevision,
   type RoadmapSortDirection,
   type RoadmapSortKey,
   sortRoadmapItems,
@@ -903,10 +903,17 @@ export class RoadmapPanel extends LitElement {
     // backlog row, so those ids have to be named explicitly or their updates go unseen.
     const promotionBacklogIds = new Set(
       (this.items ?? this._allItems).flatMap((item) =>
-        (item.promotion ?? []).flatMap((entry) => (entry.backlogItemId ? [entry.backlogItemId] : [])),
+        (item.promotion ?? []).flatMap((entry) =>
+          entry.backlogItemId ? [entry.backlogItemId] : [],
+        ),
       ),
     );
-    const revision = deliveryInputRevision(state.runs, state.backlogItems, promotionBacklogIds);
+    const revision = roadmapDeliveryRefreshRevision(
+      state.runDeletionsRevision,
+      state.runs,
+      state.backlogItems,
+      promotionBacklogIds,
+    );
     const deliveryInputsChanged = this._deliveryRevision !== revision;
     this._deliveryRevision = revision;
     this._backlogItems = state.backlogItems;
