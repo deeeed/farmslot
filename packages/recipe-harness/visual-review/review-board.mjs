@@ -66,7 +66,7 @@ function platformFilterHtml(source, defaultPlatform) {
           `<button type="button" data-platform-filter="${escapeHtml(platform)}" aria-pressed="false">${escapeHtml(platformLabel(platform))}</button>`,
       )
       .join('')}
-    <button type="button" data-platform-filter="all" aria-pressed="false">Compare</button>
+    <button type="button" data-platform-filter="all" aria-pressed="false">Compare platforms</button>
   </div>`;
 }
 
@@ -216,7 +216,7 @@ function screenHtml(source, storageKey, defaultPlatform, surface, index) {
       (capture) => `
       <article class="capture" data-capture-platform="${escapeHtml(capture.platform)}">
         <header class="capture__header">
-          <div><span>Platform variant</span><h2>${escapeHtml(platformLabel(capture.platform))}</h2></div>
+          <div><span>Same screen</span><h2>${escapeHtml(surface.title)} · ${escapeHtml(platformLabel(capture.platform))}</h2></div>
           <code>${escapeHtml(capture.id)}</code>
         </header>
         <div class="capture__image">
@@ -304,8 +304,8 @@ function screenHtml(source, storageKey, defaultPlatform, surface, index) {
     <textarea id="surface-note" data-surface-note="${escapeHtml(surface.id)}" placeholder="Describe changes that apply to the whole surface…"></textarea>
     <p data-feedback-status class="autosave">Feedback saves in this review session.</p>
   </section>
-  <section class="platform-context" data-platform-context data-surface-platforms="${escapeHtml(surface.captures.map(({ platform }) => platform).join(','))}">
-    <div><span>Platform variants</span><strong>One ${escapeHtml(surface.title)} surface</strong></div>
+  <section class="platform-context" data-platform-context data-surface-title="${escapeHtml(surface.title)}" data-surface-platforms="${escapeHtml(surface.captures.map(({ platform }) => platform).join(','))}">
+    <div><span>Screen</span><strong>${escapeHtml(surface.title)}</strong></div>
     <p data-platform-context-copy></p>
   </section>
   <p class="platform-empty" data-platform-empty hidden>The selected platform is not captured for this surface.</p>
@@ -372,12 +372,14 @@ p { color: #aaaabb; margin: 0; }
 .screen-note label { font-weight: 650; }
 .screen-note textarea { min-height: 100px; }
 .captures { display: grid; gap: 24px; max-width: 1180px; margin: 0 auto; }
+.captures[data-platform-comparison="true"] { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 .platform-context { display: flex; justify-content: space-between; align-items: center; gap: 20px; max-width: 1180px; margin: 0 auto 16px; padding: 14px 18px; border: 1px solid #30304a; border-radius: 12px; background: #12121c; }
 .platform-context div { display: grid; gap: 3px; }
 .platform-context span, .capture__header span { color: #85859a; font-size: 11px; font-weight: 750; letter-spacing: 0.06em; text-transform: uppercase; }
 .platform-context strong { font-size: 15px; }
 .platform-empty { max-width: 1180px; margin: 0 auto 24px; padding: 18px; border: 1px solid #4b3e2c; border-radius: 12px; background: #241d14; color: #e8c98c; }
 .capture { display: grid; grid-template-columns: minmax(280px, 720px) minmax(280px, 420px); justify-content: center; align-items: start; overflow: clip; border: 1px solid #2a2a3a; border-radius: 12px; background: #12121c; }
+.capture[hidden] { display: none; }
 .capture__header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 18px; border-bottom: 1px solid #2a2a3a; background: #171722; }
 .capture__header div { display: grid; gap: 3px; }
 .capture__header h2 { font-size: 16px; }
@@ -390,6 +392,8 @@ p { color: #aaaabb; margin: 0; }
 .annotation-area { position: absolute; display: grid; place-items: start; min-width: 18px; min-height: 18px; padding: 3px; border: 2px solid var(--annotation-color, #8c8aff); border-radius: 5px; background: color-mix(in srgb, var(--annotation-color, #5855ee) 18%, transparent); color: white; font-size: 12px; font-weight: 750; pointer-events: auto; touch-action: none; }
 .annotation-area--draft { border-style: dashed; pointer-events: none; }
 .capture__notes { position: sticky; top: 24px; display: grid; gap: 12px; padding: 18px; }
+.captures[data-platform-comparison="true"] .capture { display: block; }
+.captures[data-platform-comparison="true"] .capture__notes { position: static; }
 .annotation-tools { display: flex; gap: 8px; }
 .annotation-tools button { padding: 6px 10px; background: transparent; }
 .annotation-tools button[aria-pressed="true"] { background: #3333aa; }
@@ -417,6 +421,9 @@ textarea { width: 100%; resize: vertical; border: 1px solid #333348; border-radi
   .navigation-map__heading { display: grid; }
   .navigation-map__tools { justify-items: start; }
   .navigation-legend { justify-content: start; }
+}
+@media (max-width: 980px) {
+  .captures[data-platform-comparison="true"] { grid-template-columns: 1fr; }
 }
 `;
 
@@ -474,14 +481,16 @@ const clientScript = `
     if (empty) empty.hidden = visibleCaptures.length > 0;
     const context = document.querySelector('[data-platform-context]');
     const contextCopy = context?.querySelector('[data-platform-context-copy]');
+    const captures = document.querySelector('.captures');
+    if (captures) captures.dataset.platformComparison = String(platform === 'all');
     if (context && contextCopy) {
       const available = context.dataset.surfacePlatforms.split(',').filter(Boolean);
       if (platform === 'all') {
         contextCopy.textContent = available.length > 1
-          ? 'Comparing ' + available.map(platformName).join(' and ') + ' captures of this same surface.'
+          ? 'Same screen · separate ' + available.map(platformName).join(' and ') + ' captures. Runtime state may differ between capture sessions.'
           : 'Only the ' + platformName(available[0]) + ' capture is available for this surface.';
       } else if (available.includes(platform)) {
-        contextCopy.textContent = 'Showing the ' + platformName(platform) + ' capture. Choose Compare to view every captured platform.';
+        contextCopy.textContent = 'Showing ' + context.dataset.surfaceTitle + ' · ' + platformName(platform) + '. Choose Compare platforms to view every captured platform.';
       } else {
         contextCopy.textContent = 'This surface was not captured on ' + platformName(platform) + '.';
       }

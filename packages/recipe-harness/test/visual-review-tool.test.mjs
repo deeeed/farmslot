@@ -71,9 +71,10 @@ test('builds and serves a hierarchical visual review board on a dynamic port', a
     assert.match(detail, /Surface hierarchy/u);
     assert.match(detail, /data-capture-platform="web"/u);
     assert.match(detail, /data-platform-empty/u);
-    assert.match(detail, /One Detail surface/u);
-    assert.match(detail, /Platform variant/u);
-    assert.match(index, />Compare</u);
+    assert.match(detail, /<span>Screen<\/span><strong>Detail<\/strong>/u);
+    assert.match(detail, /Same screen/u);
+    assert.match(detail, /Detail · Web/u);
+    assert.match(index, />Compare platforms</u);
     assert.match(detail, /data-annotation-mode="area"/u);
     assert.match(detail, /draggable="false"/u);
     assert.match(client, /setPointerCapture/u);
@@ -81,7 +82,10 @@ test('builds and serves a hierarchical visual review board on a dynamic port', a
     assert.match(client, /moveState/u);
     assert.match(client, /applyPlatformFilter/u);
     assert.match(client, /platformStorageKey/u);
-    assert.match(client, /Comparing.*captures of this same surface/u);
+    assert.match(client, /Runtime state may differ between capture sessions/u);
+    assert.match(client, /platformComparison/u);
+    const stylesheet = await readFile(path.join(outputDir, 'assets', 'review-board.css'), 'utf8');
+    assert.match(stylesheet, /\.capture\[hidden\] \{ display: none; \}/u);
     assert.match(client, /setSurfaceExpanded/u);
     assert.match(client, /data-tree-action/u);
 
