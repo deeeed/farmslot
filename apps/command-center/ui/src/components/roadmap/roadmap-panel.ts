@@ -1220,6 +1220,11 @@ export class RoadmapPanel extends LitElement {
     }
     this._busy = 'refresh';
     this._error = '';
+    // Same generation stamp as `_reloadDelivery`: an explicit refresh is the newest
+    // read, so it claims the generation and invalidates any reload still in flight —
+    // and, because two refreshes can overlap (double-click, or a filter change during
+    // an in-flight read), it must also drop its own result if a newer one claimed it.
+    const generation = ++this._deliveryGeneration;
     try {
       const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
         ...(this._filterProject !== 'all' ? { project: this._filterProject } : {}),
@@ -1228,10 +1233,8 @@ export class RoadmapPanel extends LitElement {
         ...(this._filterSearch.trim() ? { search: this._filterSearch.trim() } : {}),
         includeArchived: this._includeArchived,
       });
+      if (generation !== this._deliveryGeneration) return;
       this._allItems = result.items;
-      // Same generation stamp as `_reloadDelivery`: an explicit refresh is the newest
-      // read, so it claims the generation and invalidates any reload still in flight.
-      this._deliveryGeneration++;
       this._deliverySummaries = result.delivery ?? [];
       // Promoting or shipping changes lineage without changing the selection, so
       // an explicit refresh must re-fetch the detail projection rather than reuse
@@ -1242,7 +1245,8 @@ export class RoadmapPanel extends LitElement {
       this._syncEditor(selected);
       this._writeUrlState();
     } catch (err) {
-      this._error = (err as Error).message;
+      // A superseded refresh's failure must not report over the newer one's data.
+      if (generation === this._deliveryGeneration) this._error = (err as Error).message;
     } finally {
       this._busy = '';
     }

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(roadmap): an explicit refresh drops its own result (and its error) when a newer refresh has claimed the panel, completing the stale-response guard across every read that writes shared roadmap state.
 - feat(slot-view): IDE-style per-file state chips (C committed / S staged / M unstaged / U untracked) in the unified diff list and changes activity, with one shared git-status palette across the source panel, changes activity, and file tree (untracked is now green everywhere, VSCode-style, instead of gray in the source panel).
 
 - fix(roadmap): the delivery revision folds the fields the projection derives from (run status/PR number, backlog status/roadmap link/shipped ref), so two transitions inside the same millisecond still trigger a refresh instead of leaving badges stale.
