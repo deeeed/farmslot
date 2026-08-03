@@ -899,7 +899,14 @@ export class RoadmapPanel extends LitElement {
     // but it must still notice that the inputs moved. Counting entries is not enough:
     // the transitions that matter most (a run reaching done, a backlog item shipping)
     // leave both lengths unchanged, so the revision tracks content freshness too.
-    const revision = deliveryInputRevision(state.runs, state.backlogItems);
+    // Promotion provenance is a supported lineage path with no `roadmapItemId` on the
+    // backlog row, so those ids have to be named explicitly or their updates go unseen.
+    const promotionBacklogIds = new Set(
+      (this.items ?? this._allItems).flatMap((item) =>
+        (item.promotion ?? []).flatMap((entry) => (entry.backlogItemId ? [entry.backlogItemId] : [])),
+      ),
+    );
+    const revision = deliveryInputRevision(state.runs, state.backlogItems, promotionBacklogIds);
     const deliveryInputsChanged = this._deliveryRevision !== revision;
     this._deliveryRevision = revision;
     this._backlogItems = state.backlogItems;

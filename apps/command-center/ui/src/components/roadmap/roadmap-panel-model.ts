@@ -189,6 +189,12 @@ export interface DeliveryRevisionBacklogItem {
 export function deliveryInputRevision(
   runs: ReadonlyArray<DeliveryRevisionRun>,
   backlogItems: ReadonlyArray<DeliveryRevisionBacklogItem>,
+  /**
+   * Backlog ids reachable only through `RoadmapItem.promotion`. The projection unions
+   * promotion provenance with canonical `roadmapItemId` links, so filtering on the
+   * canonical link alone would drop a supported lineage case and leave it stale.
+   */
+  promotionBacklogIds: ReadonlySet<string> = new Set(),
 ): string {
   // Count plus max timestamp is not enough: swapping one linked row for another keeps
   // both, and two edits inside the same millisecond keep the timestamp. Fold each row's
@@ -209,7 +215,7 @@ export function deliveryInputRevision(
       .join(',');
   const foldBacklog = (rows: ReadonlyArray<DeliveryRevisionBacklogItem>): string =>
     rows
-      .filter((row) => row.roadmapItemId)
+      .filter((row) => row.roadmapItemId || promotionBacklogIds.has(row.id))
       .map(
         (row) =>
           `${row.id}:${row.updatedAt}:${row.status}:${row.roadmapItemId ?? ''}:${row.shipped?.prRef ?? ''}`,

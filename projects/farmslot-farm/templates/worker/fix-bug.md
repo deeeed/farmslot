@@ -92,14 +92,14 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
 - [ ] **10. Evidence manifest** — when step 3 listed a UI/device surface, `evidence-manifest.json` must reference real screenshots/video (empty pairs are not proof). Gateway-cli-only may omit visual evidence.
 - [ ] **11. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` (gateway computes recipe-quality) and run `check-task-artifact-contract.mjs --require-recipe-coverage-if-recipe`.
 - [ ] **12. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`.
-- [ ] **12b. Blast radius** — list every caller, shared-state reader/writer, schema/doc, and test that
+- [ ] **13. Blast radius** — list every caller, shared-state reader/writer, schema/doc, and test that
   references what you changed; verify each and fix sibling instances in the same pass.
-- [ ] **12a. Extend + re-run the recipe for anything changed since the baseline** — each fix needs a node
+- [ ] **14. Extend + re-run the recipe for anything changed since the baseline** — each fix needs a node
   proving its claim, then a full re-run; act on what it shows. Prove each new node can fail. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
-- [ ] **13. Commit** — single commit following the repo's Lore commit protocol.
-- [ ] **14. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
-- [ ] **15. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.
-- [ ] **16. Optional visual evidence manifest** — if screenshots/videos prove the fix, write `{{TASK_DIR}}/artifacts/evidence-manifest.json` using the strict schema below. Use `before_after_pairs` for comparisons; unknown top-level keys are invalid. Omit this file when there is no visual evidence.
+- [ ] **15. Commit** — single commit following the repo's Lore commit protocol.
+- [ ] **16. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
+- [ ] **17. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.
+- [ ] **18. Optional visual evidence manifest** — if screenshots/videos prove the fix, write `{{TASK_DIR}}/artifacts/evidence-manifest.json` using the strict schema below. Use `before_after_pairs` for comparisons; unknown top-level keys are invalid. Omit this file when there is no visual evidence.
   ```json
   {
     "version": 1,
@@ -117,7 +117,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
     "videos": { "after": "artifacts/after.mp4", "preferred": true, "note": "Full recipe replay at 2s slow playback" }
   }
   ```
-- [ ] **17. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
-- [ ] **18. Update status** — set `STATUS: done`.
-- [ ] **19. Write completion signal** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, pr-description, checklist, artifact contract)
+- [ ] **19. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
+- [ ] **20. Update status** — set `STATUS: done`.
+- [ ] **21. Write completion signal** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, pr-description, checklist, artifact contract)
       **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.

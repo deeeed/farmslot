@@ -444,3 +444,27 @@ test('delivery revision ignores rows that cannot reach a roadmap projection', ()
     'but re-linking a run to a different backlog item does change delivery',
   );
 });
+
+test('delivery revision tracks backlog rows reachable only through promotion', () => {
+  // Codex round-11 P2: the projection unions promotion provenance with canonical
+  // roadmapItemId links, so a promotion-only row has no roadmapItemId. Filtering on
+  // the canonical link alone dropped it, and its updates never triggered a reload.
+  const stamp = '2026-08-03T00:00:00.000Z';
+  const promotionOnly = [{ id: 'bk_promo', updatedAt: stamp, status: 'ready' }];
+  const promoted = new Set(['bk_promo']);
+
+  assert.notEqual(
+    deliveryInputRevision([], promotionOnly, promoted),
+    deliveryInputRevision(
+      [],
+      [{ id: 'bk_promo', updatedAt: stamp, status: 'done' }],
+      promoted,
+    ),
+    'a promotion-referenced row still moves the revision when it ships',
+  );
+  assert.equal(
+    deliveryInputRevision([], promotionOnly),
+    deliveryInputRevision([], [{ id: 'bk_promo', updatedAt: stamp, status: 'done' }]),
+    'and without the promotion set it is correctly treated as unreachable',
+  );
+});
