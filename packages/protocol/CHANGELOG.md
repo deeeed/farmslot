@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat(run): `failedRunCancelEffects` — the single filter every human-facing cancel caller uses to detect a partially applied cancel.
 - feat(git): worktree-target branch-diff files carry a `committed` flag — committed-vs-purely-local is knowable per file.
 
 - feat(git): `target: 'worktree'` on `git.diff` / `git.branchDiff` — diff the merge-base against the working tree (every branch change, committed or not).

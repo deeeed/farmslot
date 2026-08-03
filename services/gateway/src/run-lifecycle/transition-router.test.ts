@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import { failedRunCancelEffects, type Run } from '@farmslot/protocol';
 
 import {
   type CancelCollaborators,
@@ -401,4 +401,28 @@ test('cancel surfaces a failed advisory effect to its caller', async () => {
     ['backlog-settle'],
   );
   assert.match(failed[0].detail!, /disk full/);
+});
+
+test('a partially applied cancel is visible to human-facing callers', async () => {
+  // Codex round-10 P1: the chat tool and confirmed-action paths destructured only
+  // `run` and reported `cancelled: true`, so an operator could be told the stop
+  // landed while the slot was still claimed. Every human-facing caller filters the
+  // returned effects through this helper.
+  const h = harness(run({ workGraphId: 'wg_1' }), {
+    releaseSlot: async () => {
+      throw new Error('tmux session gone');
+    },
+  });
+
+  const result = await routeRunTransition(cancelRequest, h.deps);
+  const failed = failedRunCancelEffects(result.effects);
+
+  assert.equal(result.run.status, 'cancelled', 'the run is terminal');
+  assert.equal(failed.length, 1, 'but the cancel was only partially applied');
+  assert.equal(failed[0].name, 'slot-release');
+  assert.match(failed[0].detail ?? '', /tmux session gone/);
+
+  // A fully applied cancel reports nothing, so callers stay quiet in the happy path.
+  const clean = await routeRunTransition(cancelRequest, harness(run({ workGraphId: 'wg_1' })).deps);
+  assert.deepEqual(failedRunCancelEffects(clean.effects), []);
 });

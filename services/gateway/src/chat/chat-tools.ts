@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 
-import { type FlowType, parseGitHubRef } from '@farmslot/protocol';
+import { failedRunCancelEffects, type FlowType, parseGitHubRef } from '@farmslot/protocol';
 
 import { farmslotRoot, getCachedFleet } from '../fleet/state.js';
 import { decisionList } from '../methods/decisions.js';
@@ -483,11 +483,25 @@ export async function executeTool(
         const id = String(args.run_id ?? '');
         const run = getRun(id) ?? listRuns({ limit: 200 }).runs.find((r) => r.id.startsWith(id));
         if (!run) throw new Error(`Run not found: ${id}`);
-        const { run: cancelled } = await runCancel({
+        const { run: cancelled, effects } = await runCancel({
           runId: run.id,
           reason: String(args.reason ?? 'Cancelled via co-pilot'),
         });
-        result = { cancelled: true, runId: cancelled.id.slice(0, 8), status: cancelled.status };
+        // The run reaching `cancelled` is not the whole story: an advisory effect can
+        // fail, leaving a slot claimed or the backlog unsettled. Reporting only
+        // `cancelled: true` would tell the operator the stop fully landed.
+        const failed = failedRunCancelEffects(effects);
+        result = {
+          cancelled: true,
+          runId: cancelled.id.slice(0, 8),
+          status: cancelled.status,
+          ...(failed.length
+            ? {
+                partiallyApplied: true,
+                failedEffects: failed.map((effect) => `${effect.name}: ${effect.detail ?? 'failed'}`),
+              }
+            : {}),
+        };
         break;
       }
       case 'resolve_decision': {

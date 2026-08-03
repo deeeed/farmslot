@@ -193,6 +193,13 @@ export class RoadmapPanel extends LitElement {
    * into one pass plus a single trailing re-run.
    */
   private _deliveryGeneration = 0;
+  /**
+   * Separate from `_deliveryGeneration` on purpose. A delivery-only reload writes
+   * summaries but never `_allItems`, so it must not be able to invalidate a full
+   * refresh's item list — sharing one counter made a run update silently discard a
+   * filter/search change that was already in flight.
+   */
+  private _listGeneration = 0;
   private _deliveryReloadInFlight = false;
   private _deliveryReloadQueued = false;
   /**
@@ -1220,11 +1227,12 @@ export class RoadmapPanel extends LitElement {
     }
     this._busy = 'refresh';
     this._error = '';
-    // Same generation stamp as `_reloadDelivery`: an explicit refresh is the newest
-    // read, so it claims the generation and invalidates any reload still in flight —
-    // and, because two refreshes can overlap (double-click, or a filter change during
-    // an in-flight read), it must also drop its own result if a newer one claimed it.
-    const generation = ++this._deliveryGeneration;
+    // Two independent claims. The list generation orders refreshes against each other
+    // (double-click, or a filter change during an in-flight read). The delivery
+    // generation orders summary writes against `_reloadDelivery`, which carries fresher
+    // summaries but no items — so it may win the summaries without discarding the list.
+    const listGeneration = ++this._listGeneration;
+    const deliveryGeneration = ++this._deliveryGeneration;
     try {
       const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
         ...(this._filterProject !== 'all' ? { project: this._filterProject } : {}),
@@ -1233,9 +1241,13 @@ export class RoadmapPanel extends LitElement {
         ...(this._filterSearch.trim() ? { search: this._filterSearch.trim() } : {}),
         includeArchived: this._includeArchived,
       });
-      if (generation !== this._deliveryGeneration) return;
+      if (listGeneration !== this._listGeneration) return;
       this._allItems = result.items;
-      this._deliverySummaries = result.delivery ?? [];
+      // A delivery reload that landed while this refresh was in flight holds newer
+      // summaries; keep them rather than reverting to this response's snapshot.
+      if (deliveryGeneration === this._deliveryGeneration) {
+        this._deliverySummaries = result.delivery ?? [];
+      }
       // Promoting or shipping changes lineage without changing the selection, so
       // an explicit refresh must re-fetch the detail projection rather than reuse
       // the cached one for the same item id.
@@ -1246,7 +1258,7 @@ export class RoadmapPanel extends LitElement {
       this._writeUrlState();
     } catch (err) {
       // A superseded refresh's failure must not report over the newer one's data.
-      if (generation === this._deliveryGeneration) this._error = (err as Error).message;
+      if (listGeneration === this._listGeneration) this._error = (err as Error).message;
     } finally {
       this._busy = '';
     }

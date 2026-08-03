@@ -258,6 +258,15 @@ export interface RunCancelResult {
   effects?: RunCancelEffect[];
 }
 
+/**
+ * The effects that actually failed. Every human-facing caller must report these —
+ * a cancel whose slot release or backlog settle failed is terminal but only
+ * partially applied, and saying "cancelled" alone hides a still-claimed slot.
+ */
+export function failedRunCancelEffects(effects?: RunCancelEffect[]): RunCancelEffect[] {
+  return (effects ?? []).filter((effect) => effect.status === 'failed');
+}
+
 export interface RunForceCompleteParams {
   runId: string;
 }

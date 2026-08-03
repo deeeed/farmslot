@@ -2,16 +2,17 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type {
-  ChatActionRejectReason,
-  ChatConfirmActionParams,
-  ChatConfirmActionResult,
-  ChatListActionsResult,
-  ChatSuggestedAction,
-  Run,
-  RunCreateParams,
-  RunStep,
-  SlotStatus,
+import {
+  type ChatActionRejectReason,
+  type ChatConfirmActionParams,
+  type ChatConfirmActionResult,
+  type ChatListActionsResult,
+  type ChatSuggestedAction,
+  failedRunCancelEffects,
+  type Run,
+  type RunCreateParams,
+  type RunStep,
+  type SlotStatus,
 } from '@farmslot/protocol';
 
 import { getCachedFleet } from '../fleet/state.js';
@@ -685,11 +686,22 @@ async function executeStoredAction(
   }
 
   if (action.type === 'run.cancel') {
-    await runCancel({
+    const { effects } = await runCancel({
       runId: String(action.params.runId),
       ...(stringParam(action.params, 'reason') ? { reason: String(action.params.reason) } : {}),
     });
-    return { runId: String(action.params.runId) };
+    // Confirmed-action results are shown to the operator; a partially applied cancel
+    // must say so rather than read as a clean stop.
+    const failed = failedRunCancelEffects(effects);
+    return {
+      runId: String(action.params.runId),
+      ...(failed.length
+        ? {
+            partiallyApplied: true,
+            failedEffects: failed.map((effect) => `${effect.name}: ${effect.detail ?? 'failed'}`),
+          }
+        : {}),
+    };
   }
 
   if (action.type === 'run.delete') {

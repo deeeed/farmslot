@@ -168,6 +168,8 @@ export interface DeliveryRevisionRun {
   updatedAt: string;
   status: string;
   prNumber?: number | null;
+  /** Only backlog-linked runs reach a roadmap projection. */
+  backlogItemId?: string;
 }
 
 /** The backlog fields roadmap delivery is derived from. */
@@ -192,13 +194,22 @@ export function deliveryInputRevision(
   // both, and two edits inside the same millisecond keep the timestamp. Fold each row's
   // identity *and* the fields the projection actually derives from, so a second
   // transition in the same millisecond still moves the key.
+  // Only rows that can reach a roadmap projection count. A run with no backlog link is
+  // skipped by buildRunIndexByBacklogItem, and a backlog item with no roadmap link is
+  // not in any item's lineage — folding them in made every unrelated run-monitor tick
+  // re-derive the whole store for a badge that cannot change.
   const foldRuns = (rows: ReadonlyArray<DeliveryRevisionRun>): string =>
     rows
-      .map((row) => `${row.id}:${row.updatedAt}:${row.status}:${row.prNumber ?? ''}`)
+      .filter((row) => row.backlogItemId)
+      .map(
+        (row) =>
+          `${row.id}:${row.updatedAt}:${row.status}:${row.prNumber ?? ''}:${row.backlogItemId}`,
+      )
       .sort()
       .join(',');
   const foldBacklog = (rows: ReadonlyArray<DeliveryRevisionBacklogItem>): string =>
     rows
+      .filter((row) => row.roadmapItemId)
       .map(
         (row) =>
           `${row.id}:${row.updatedAt}:${row.status}:${row.roadmapItemId ?? ''}:${row.shipped?.prRef ?? ''}`,
