@@ -40,6 +40,17 @@ test('parseMergeTreeConflictPaths reads CONFLICT lines and name-only paths; igno
   // Docs that say "CONFLICT" must not flip path extraction.
   const docsOnly = 'See the CONFLICT section of the guide for details.\n';
   assert.deepEqual(parseMergeTreeConflictPaths(docsOnly), []);
+
+  // modify/delete lines end with "in origin/main" — that is a ref, not a path.
+  // Real path comes from name-only lines (x.ts).
+  const modifyDelete = [
+    'x.ts',
+    'CONFLICT (modify/delete): x.ts deleted in HEAD and modified in origin/main',
+    '',
+  ].join('\n');
+  const mdPaths = parseMergeTreeConflictPaths(modifyDelete);
+  assert.ok(mdPaths.includes('x.ts'));
+  assert.ok(!mdPaths.includes('origin/main'));
 });
 
 test('formatBranchFreshnessHint prefers merge during open review loops', () => {

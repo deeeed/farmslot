@@ -65,13 +65,14 @@ export function parseMergeTreeConflictPaths(mergeTreeOutput: string): string[] {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    const conflict = trimmed.match(/^CONFLICT \([^)]+\):\s*(.+)$/i);
-    if (conflict) {
-      const rest = conflict[1];
-      const inPath = rest.match(/\bin\s+(\S+)\s*$/i);
-      if (inPath) paths.add(inPath[1].replace(/[.,;:]+$/, ''));
+    // Only the "Merge conflict in <path>" form — trailing "in origin/main" on
+    // modify/delete lines is a ref, not a conflicted path (name-only lines carry those).
+    const mergeIn = trimmed.match(/^CONFLICT \([^)]+\):\s*Merge conflict in (\S+)/i);
+    if (mergeIn) {
+      paths.add(mergeIn[1].replace(/[.,;:]+$/, ''));
       continue;
     }
+    if (/^CONFLICT \(/i.test(trimmed)) continue;
 
     // Skip tree OIDs, auto-merge chatter, and classic marker noise.
     if (/^[0-9a-f]{40}$/i.test(trimmed)) continue;

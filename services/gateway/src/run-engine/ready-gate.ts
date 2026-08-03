@@ -21,6 +21,7 @@ import {
 } from '@farmslot/protocol';
 
 import { getProjectField, loadSlotVars } from '../core/config.js';
+import { execOnSlot } from '../core/exec.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import {
   invalidateArtifactTextCache,
@@ -634,7 +635,9 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const defaultBranch =
     (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || 'main';
 
-  // One slot exec: HEAD, behind/ahead, merge-tree --write-tree (soft fields + zero-ahead).
+  // Soft branch-freshness probe (fetch + behind/ahead + merge-tree). headSha is
+  // taken from the probe when present; fall back to a cheap local rev-parse so a
+  // failed/incomplete probe (timeout, missing markers) does not lose drift tracking.
   let headSha: string | undefined;
   let branchFreshness: BranchFreshnessSummary | null = null;
   if (current.slotId) {
@@ -643,6 +646,15 @@ export async function executeReadyGate(runId: string): Promise<string> {
       const strategy = resolveBranchUpdateStrategy(pv?.projectJson);
       branchFreshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
       if (branchFreshness?.headSha) headSha = branchFreshness.headSha;
+      if (!headSha) {
+        const r = await execOnSlot(
+          vars,
+          `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`,
+          { timeout: 10_000 },
+        );
+        const sha = r.stdout.trim();
+        if (sha && /^[0-9a-f]{7,40}$/i.test(sha)) headSha = sha;
+      }
       // Fail closed: only promote close-as-shipped when ahead count is a known 0.
       // Unknown/missing ahead (ref not resolved) must not look like zero-ahead.
       if (

@@ -101,11 +101,16 @@ Long fix/review loops leave the feature branch behind `origin/main`. Surface tha
   # Non-destructive conflict probe (does not update the index or working tree).
   # git merge-tree --write-tree: exit 0 = clean, exit 1 = conflicts; --name-only lists paths.
   # Classic merge-tree $(merge-base) form prints +<<<<<<< markers and is NOT reliable with ^-anchored greps.
-  set +e
-  mt_out=$(git merge-tree --write-tree --name-only HEAD origin/main 2>&1)
-  mt_rc=$?
-  set -e
-  if [ "$mt_rc" -eq 1 ]; then mergeConflicts=true; else mergeConflicts=false; fi
+  # Subshell keeps set +e from enabling errexit in a persistent pane shell.
+  mt_rc=0
+  mt_out=$(
+    set +e
+    git merge-tree --write-tree --name-only HEAD origin/main 2>&1
+    echo "__MT_RC:$?"
+  )
+  mt_rc=$(printf '%s\n' "$mt_out" | sed -n 's/^__MT_RC://p' | tail -1)
+  mt_out=$(printf '%s\n' "$mt_out" | sed '/^__MT_RC:/d')
+  if [ "$mt_rc" = "1" ]; then mergeConflicts=true; else mergeConflicts=false; fi
   echo "mergeConflicts=$mergeConflicts"
   echo "$mt_out" | sed -n 's/^CONFLICT ([^)]*): Merge conflict in //p'
   ```
