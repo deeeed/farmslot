@@ -42,7 +42,7 @@ Adopt **event-driven runner observability** as the primary signal path, with pan
 
 **Common stdin payload** every event receives: `session_id`, `transcript_path`, `cwd`, `permission_mode` (`default`/`plan`/`acceptEdits`/`auto`/`dontAsk`/`bypassPermissions`), `hook_event_name`, `effort.level`.
 
-**Settings scope.** Farmslot generates `{{runtime_dir}}/.observability/claude-settings.json` and passes it explicitly with Claude's `--settings` flag. Observability is therefore runtime-owned: it neither commits nor modifies `.claude/settings.json` or `.claude/settings.local.json` in the worker repository. Claude still loads the operator's normal settings sources alongside this additional file.
+**Settings scope.** Farmslot generates `{{runtime_dir}}/.observability/claude-settings.json` and passes it explicitly with Claude's `--settings` flag. Observability is therefore runtime-owned: it neither commits nor modifies `.claude/settings.json` or `.claude/settings.local.json` in the worker repository. On install, Farmslot removes only its own hook/statusline entries left by older releases and preserves unrelated project settings. Claude still loads the operator's normal settings sources alongside this additional file.
 
 **Hook script body** (slot fixture writes this; receives event JSON on stdin):
 

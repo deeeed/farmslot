@@ -1771,13 +1771,13 @@ describe('buildRunnerSessionReloadCommand', () => {
     const vars = makeVars({ dispatchCmd: '', claudePath: '/opt/bin/claude' });
     const cmd = buildRunnerSessionReloadCommand(vars, 'claude', 'sonnet', 'session-123', {
       safetyTier: 'dangerous',
-      runtimeDir: '.agent',
+      runtimeDir: 'temp/recipe/runtime',
       initialPrompt: 'Read and execute TASK.md',
     });
     assert.match(cmd, /install-runner-observability\.mjs/);
     assert.match(
       cmd,
-      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
+      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
     );
   });
 

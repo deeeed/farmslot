@@ -10,7 +10,7 @@ const REMOTE_AGENT_DIR = '~/farmslot-node';
 const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs';
 const localHostname = os.hostname().replace(/\.local$/, '');
 
-export function claudeObservabilitySettingsPath(repo: string, runtimeDir = '.agent'): string {
+export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string): string {
   return path.posix.join(repo, runtimeDir, '.observability', 'claude-settings.json');
 }
 

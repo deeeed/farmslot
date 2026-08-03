@@ -522,7 +522,8 @@ function backupOnce(settingsPath, markerPath) {
 
 function removeFarmslotHooks(settings) {
   const hooks = settings.hooks;
-  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return;
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return false;
+  let removed = false;
   for (const [eventName, entries] of Object.entries(hooks)) {
     if (!Array.isArray(entries)) continue;
     const cleanedEntries = [];
@@ -540,12 +541,41 @@ function removeFarmslotHooks(settings) {
             hook.command.includes(FARMSLOT_HOOK_MARKER)
           ),
       );
+      if (keptHooks.length !== entry.hooks.length) removed = true;
       if (keptHooks.length > 0) cleanedEntries.push({ ...entry, hooks: keptHooks });
     }
     if (cleanedEntries.length > 0) hooks[eventName] = cleanedEntries;
     else delete hooks[eventName];
   }
   if (Object.keys(hooks).length === 0) delete settings.hooks;
+  return removed;
+}
+
+function cleanupLegacyClaudeSettings(repoPath, obsDir) {
+  const settingsDir = path.join(repoPath, '.claude');
+  const settingsPath = path.join(settingsDir, 'settings.local.json');
+  if (!fs.existsSync(settingsPath)) return;
+
+  const settings = readJsonObject(settingsPath);
+  const removedHooks = removeFarmslotHooks(settings);
+  const statusCommand =
+    settings.statusLine && typeof settings.statusLine === 'object'
+      ? String(settings.statusLine.command ?? '')
+      : '';
+  const removedStatusLine = statusCommand.includes('farmslot-statusline.mjs');
+  if (removedStatusLine) delete settings.statusLine;
+  if (!removedHooks && !removedStatusLine) return;
+
+  if (Object.keys(settings).length === 0) fs.unlinkSync(settingsPath);
+  else fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+
+  const backupPath = `${settingsPath}.farmslot-backup`;
+  if (fs.existsSync(backupPath)) {
+    fs.renameSync(backupPath, path.join(obsDir, 'legacy-claude-settings.farmslot-backup'));
+  }
+  if (fs.existsSync(settingsDir) && fs.readdirSync(settingsDir).length === 0) {
+    fs.rmdirSync(settingsDir);
+  }
 }
 
 function mergeClaudeSettings(settingsPath, markerPath, hookCommand, statusCommand) {
@@ -718,6 +748,7 @@ function installClaude({ repo, runtimeDir = '.agent', slotId }) {
     hookCommand,
     statusCommand,
   );
+  cleanupLegacyClaudeSettings(repoPath, obsDir);
   fs.writeFileSync(markerPath, 'farmslot\n');
   writeObservabilityInstallManifest(obsDir, {
     runner: 'claude',

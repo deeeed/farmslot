@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const INSTALLER = path.join(ROOT, 'scripts', 'install-runner-observability.mjs');
 
-function installToTempDir(runner = 'claude') {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-'));
+function installToTempDir(runner = 'claude', existingRepo) {
+  const repo = existingRepo ?? fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-'));
   execFileSync(
     process.execPath,
     [
@@ -62,6 +62,67 @@ test('claude install registers hooks in Farmslot runtime without modifying repos
     'UserPromptSubmit',
   ]);
   assert.equal(fs.existsSync(path.join(repo, '.claude')), false);
+});
+
+test('claude install removes legacy Farmslot-only repository settings', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-legacy-only-'));
+  const settingsDir = path.join(repo, '.claude');
+  fs.mkdirSync(settingsDir);
+  fs.writeFileSync(
+    path.join(settingsDir, 'settings.local.json'),
+    JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: "FARMSLOT_OBS_DIR='/old' node '/old/farmslot-observability-hook.mjs'",
+              },
+            ],
+          },
+        ],
+      },
+      statusLine: { type: 'command', command: "node '/old/farmslot-statusline.mjs'" },
+    }),
+  );
+
+  installToTempDir('claude', repo);
+
+  assert.equal(fs.existsSync(settingsDir), false);
+});
+
+test('claude install preserves non-Farmslot repository settings while removing legacy entries', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-legacy-mixed-'));
+  const settingsDir = path.join(repo, '.claude');
+  const settingsPath = path.join(settingsDir, 'settings.local.json');
+  fs.mkdirSync(settingsDir);
+  fs.writeFileSync(
+    settingsPath,
+    JSON.stringify({
+      theme: 'dark',
+      hooks: {
+        UserPromptSubmit: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: "FARMSLOT_OBS_DIR='/old' node '/old/farmslot-observability-hook.mjs'",
+              },
+              { type: 'command', command: 'node user-hook.mjs' },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+
+  installToTempDir('claude', repo);
+
+  const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  assert.equal(settings.theme, 'dark');
+  assert.equal(settings.hooks.UserPromptSubmit[0].hooks.length, 1);
+  assert.equal(settings.hooks.UserPromptSubmit[0].hooks[0].command, 'node user-hook.mjs');
 });
 
 test('claude install replaces a stale compatibility symlink and remains idempotent', () => {

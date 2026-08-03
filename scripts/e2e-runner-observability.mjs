@@ -345,10 +345,13 @@ process.exit(ok && sentinelExists ? 0 : 1);
   };
 }
 
-function ensureInteractiveClaude(target, paneId) {
+function ensureInteractiveClaude(target, paneId, settingsPath) {
   const pane = tmux(['capture-pane', '-p', '-t', paneId, '-S', '-20']);
   if (pane.includes('bypass permissions on') || pane.includes('Claude Code')) return pane;
-  runInTmuxPane(paneId, 'claude --dangerously-skip-permissions');
+  runInTmuxPane(
+    paneId,
+    `claude --dangerously-skip-permissions --settings ${shQuote(settingsPath)}`,
+  );
   return waitForTmuxMarker(paneId, 'bypass permissions on', 45000);
 }
 
@@ -397,7 +400,11 @@ async function main() {
     checks.agreementLog = runAgreementLogCheck(agreementDir);
 
     if (!args.skipGateway && !args.skipClaude) {
-      ensureInteractiveClaude(claude.target, claude.paneId);
+      ensureInteractiveClaude(
+        claude.target,
+        claude.paneId,
+        path.join(obsDir, 'claude-settings.json'),
+      );
       const gatewayMessage = `OBS_GATEWAY_E2E_${args.slotId}: reply with exactly GATEWAY_OK`;
       checks.gatewaySend = runGatewaySendCheck(
         args.slotId,

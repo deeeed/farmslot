@@ -61,10 +61,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       (row) => (row.hook_event_name || row.event) === 'SessionStart',
     );
     report.permissionMode = sessionStart?.permission_mode ?? null;
-    const launchCommand =
-      runner === 'claude' || runner === 'codex'
-        ? runnerAdapter.buildLaunchCommand(repo, runtimeDir, DEFAULT_PROMPT)
-        : runnerAdapter.buildLaunchCommand(DEFAULT_PROMPT);
+    const launchCommand = runnerAdapter.buildLaunchCommand(repo, runtimeDir, DEFAULT_PROMPT);
     const launchUsesBypass = launchCommand.includes('dangerously-skip-permissions');
     const sawSubmit = newRows.some(
       (row) => (row.hook_event_name || row.event) === 'UserPromptSubmit',

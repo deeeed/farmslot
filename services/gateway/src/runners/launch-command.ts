@@ -208,7 +208,7 @@ export function buildRunnerSessionReloadCommand(
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const claudePath = vars.claudePath || 'claude';
     const settingsFlag = ` --settings ${shellExpressionForRemotePath(
-      claudeObservabilitySettingsPath(repo, opts.runtimeDir),
+      claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
     )}`;
     return withTaskRecipeTrustEnvironment(
       withRunnerObservabilityInstall(
@@ -521,7 +521,7 @@ export function buildLaunchCommand(
       opts.runtimeDir,
     );
     const settingsFlag = ` --settings ${shellExpressionForRemotePath(
-      claudeObservabilitySettingsPath(repo, opts.runtimeDir),
+      claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
     )}`;
     if (opts.claudeUsesDispatchCmd) {
       if (!hasDispatchCmd) {

@@ -35,7 +35,12 @@ export function assertBinary() {
 }
 
 /** Headless single-turn — reliable for tmux shell smoke. */
-export function buildLaunchCommand(prompt = DEFAULT_PROMPT, model = DEFAULT_MODEL) {
+export function buildLaunchCommand(
+  _repo,
+  _runtimeDir,
+  prompt = DEFAULT_PROMPT,
+  model = DEFAULT_MODEL,
+) {
   assertBinary();
   const bin = resolveBinary();
   return `${shSingleQuote(bin)} -p ${shSingleQuote(prompt)} --model ${model}`;
