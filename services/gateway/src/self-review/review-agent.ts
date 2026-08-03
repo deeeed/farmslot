@@ -357,6 +357,20 @@ async function recoverRunningReviewAgent(params: {
   debugSelfReviewLog(
     `[self-review] run ${params.runId.slice(0, 8)} — reclaiming active reviewer ${context.id} after restart`,
   );
+  const recoveredLoopNumber = context.reviewLoopNumber ?? params.loopNumber;
+  const recoveredArtifactScope = context.artifactScope ?? params.artifactScope;
+  const reviewSnapshot = await readPersistedReviewSnapshot(
+    params.vars,
+    params.taskDir,
+    recoveredLoopNumber,
+    recoveredArtifactScope,
+  );
+  if (!reviewSnapshot) {
+    console.warn(
+      `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} has no valid launch snapshot; starting a fresh review`,
+    );
+    return abandonRecoveredReviewer('snapshot-less recovered reviewer cleanup');
+  }
   try {
     const delivery = await resumeReviewAgentPromptDelivery(params.vars, params.runId, context);
     if (delivery !== 'delivered') {
@@ -375,18 +389,6 @@ async function recoverRunningReviewAgent(params: {
   const reviewWindow = context.target.window;
   const signalBasename = path.posix.basename(context.signalFile);
   const feedbackRelPath = reviewerFeedbackRelPath(context.id);
-  const reviewSnapshot = await readPersistedReviewSnapshot(
-    params.vars,
-    params.taskDir,
-    context.reviewLoopNumber ?? params.loopNumber,
-    params.artifactScope,
-  );
-  if (!reviewSnapshot) {
-    console.warn(
-      `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} has no valid launch snapshot; starting a fresh review`,
-    );
-    return abandonRecoveredReviewer('snapshot-less recovered reviewer cleanup');
-  }
   const watcher = startProgressWatcher(params.vars, context.taskFile, params.runId, 'Review', {
     contextId: context.id,
     role: 'self-review',
@@ -405,7 +407,7 @@ async function recoverRunningReviewAgent(params: {
       signalBasename,
       feedbackRelPath,
     );
-    if (!completed) return null;
+    if (!completed) return abandonRecoveredReviewer('recovered reviewer timeout');
     const feedback = await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath);
     await waitForSessionTranscriptToSettle(params.vars, context.runnerSessionPath ?? null);
     const usage = context.runnerSessionPath
@@ -428,7 +430,7 @@ async function recoverRunningReviewAgent(params: {
       taskMdPath: context.taskFile,
       signalBasename,
       feedbackRelPath,
-      artifactDir: reviewArtifactDir(params.loopNumber, params.artifactScope),
+      artifactDir: reviewArtifactDir(recoveredLoopNumber, recoveredArtifactScope),
       feedbackIncomplete: feedback.incomplete ?? false,
     });
     const startedAt = context.attemptStartedAt ?? context.startedAt ?? new Date().toISOString();
@@ -443,8 +445,8 @@ async function recoverRunningReviewAgent(params: {
       taskProgressArtifactPath: persisted.taskProgressArtifactPath,
       timeline: [
         {
-          kind: params.loopNumber > 1 ? 're-review' : 'review',
-          loopNumber: params.loopNumber,
+          kind: recoveredLoopNumber > 1 ? 're-review' : 'review',
+          loopNumber: recoveredLoopNumber,
           runner: params.runner,
           model: params.model,
           startedAt,

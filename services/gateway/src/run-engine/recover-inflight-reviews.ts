@@ -79,6 +79,17 @@ function isFailedReviewPlaceholder(
   );
 }
 
+function hasLaterSettledReview(reviews: RecoverableReviewRecord[], recordedIndex: number): boolean {
+  return reviews
+    .slice(recordedIndex + 1)
+    .some(
+      (review) =>
+        review.source !== 'self-review' &&
+        review.verdict !== undefined &&
+        review.unresolvedCount !== undefined,
+    );
+}
+
 type RecoverableReviewRecord = Pick<IndependentReviewStatus, 'id'> &
   Partial<
     Pick<
@@ -103,13 +114,15 @@ export function reviewerContextNeedsRecovery(
   // from normally ingested reviews. In-flight contexts remain recoverable via
   // the existing fallback id path.
   if (!artifactScope) return ctx.status !== 'complete';
-  const recorded = reviews.find((review) => review.id === artifactScope);
-  if (!recorded) return true;
+  const recordedIndex = reviews.findIndex((review) => review.id === artifactScope);
+  if (recordedIndex < 0) return true;
+  const recorded = reviews[recordedIndex];
   if (
     ctx.status !== 'failed' &&
     recorded.source !== undefined &&
     recorded.verdict !== undefined &&
     recorded.unresolvedCount !== undefined &&
+    !hasLaterSettledReview(reviews, recordedIndex) &&
     independentReviewNeedsContinuation({
       source: recorded.source,
       verdict: recorded.verdict,
@@ -151,17 +164,7 @@ export function reviewerContextIsSettled(
   const recordedIndex = reviews.findIndex((review) => review.id === artifactScope);
   if (recordedIndex < 0) return false;
   if (!reviewerContextNeedsRecovery(ctx, reviews)) return true;
-  return reviews.slice(recordedIndex + 1).some(
-    (review) =>
-      review.verdict !== undefined &&
-      review.unresolvedCount !== undefined &&
-      !isFailedReviewPlaceholder({
-        verdict: review.verdict,
-        unresolvedCount: review.unresolvedCount,
-        feedbackSent: review.feedbackSent,
-        recoveryContinuationPending: review.recoveryContinuationPending,
-      }),
-  );
+  return hasLaterSettledReview(reviews, recordedIndex);
 }
 
 /**
@@ -393,23 +396,25 @@ export async function recoverInflightPublicationReviews(
   const settledContexts = (run.agentContexts ?? []).filter((ctx) =>
     reviewerContextIsSettled(ctx, reviews),
   );
-  let vars = settledContexts.length > 0 ? await loadSlotVars(slotId) : null;
-  for (const ctx of settledContexts) {
-    if (ctx.target?.session && ctx.target.window) {
-      try {
-        await killSelfReviewWindow(
-          vars!,
-          ctx.target.session,
-          'superseded reviewer cleanup',
-          ctx.target.window,
-        );
-      } catch (error) {
-        console.warn(
-          `[run-engine] run ${runId.slice(0, 8)} — failed to clean superseded reviewer ${ctx.id}: ${(error as Error).message}`,
-        );
+  if (settledContexts.length > 0) {
+    const vars = await loadSlotVars(slotId);
+    for (const ctx of settledContexts) {
+      if (ctx.target?.session && ctx.target.window) {
+        try {
+          await killSelfReviewWindow(
+            vars,
+            ctx.target.session,
+            'superseded reviewer cleanup',
+            ctx.target.window,
+          );
+        } catch (error) {
+          console.warn(
+            `[run-engine] run ${runId.slice(0, 8)} — failed to clean superseded reviewer ${ctx.id}: ${(error as Error).message}`,
+          );
+        }
       }
+      await markAgentContextStatus(runId, 'self-review', 'complete', { id: ctx.id });
     }
-    await markAgentContextStatus(runId, 'self-review', 'complete', { id: ctx.id });
   }
   if (settledContexts.length > 0) {
     console.log(
@@ -423,7 +428,7 @@ export async function recoverInflightPublicationReviews(
     reviewerContextNeedsRecovery(ctx, reviews, { includeFailed: true }),
   );
   if (candidates.length === 0) return [];
-  vars ??= await loadSlotVars(slotId);
+  const vars = await loadSlotVars(slotId);
 
   const selfReviewConfig = await getSelfReviewConfig(run.project);
   const recoveryContinuationPending = Math.max(0, selfReviewConfig.max_retries ?? 1) > 0;
@@ -479,6 +484,11 @@ async function ingestRecoveredReviewer(
   if (!signal && (ctx.status === 'working' || ctx.status === 'launching')) {
     const promptRecovery = await resumeReviewAgentPromptDelivery(vars, runId, ctx);
     if (promptRecovery === 'inactive') {
+      await markAgentContextStatus(runId, 'self-review', 'failed', { id: ctx.id });
+    } else if (promptRecovery === 'unsupported') {
+      console.warn(
+        `[run-engine] run ${runId.slice(0, 8)} — reviewer ${ctx.id} cannot resume prompt delivery; marking it failed`,
+      );
       await markAgentContextStatus(runId, 'self-review', 'failed', { id: ctx.id });
     }
     return null;

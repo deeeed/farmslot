@@ -101,6 +101,54 @@ test('hasPendingPublicationReviewContinuation requires the explicit recovery mar
   assert.equal(hasPendingPublicationReviewContinuation(run), false);
 });
 
+test('a later passing review supersedes an older pending continuation', () => {
+  const run = minimalActiveRun({
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-3',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 3,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+            recoveryContinuationPending: true,
+          },
+          {
+            id: 'independent-review-4',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 4,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(hasPendingPublicationReviewContinuation(run), false);
+  assert.equal(
+    hasRecoverablePublicationReviewer({
+      ...run,
+      agentContexts: [
+        {
+          id: 'rev-old',
+          role: 'self-review',
+          label: 'Reviewer',
+          status: 'complete',
+          slotId: 'slot-1',
+          runId: run.id,
+          artifactScope: 'independent-review-3',
+        },
+      ],
+    }),
+    false,
+  );
+});
+
 test('recoverActiveRuns re-presents a blocked gate after its completed review was ingested', async () => {
   const run = minimalActiveRun({
     ticketOrPr: 'RECOVERY-INGESTED-REVIEW',

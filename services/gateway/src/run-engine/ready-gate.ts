@@ -62,8 +62,8 @@ import {
   CLOSE_AS_SHIPPED_ACTION,
   countStalePublicationReviews,
   hasValidPrNumber,
-  independentReviewNeedsContinuation,
   isPublishApprovalAction,
+  pendingIndependentReviewContinuation,
   restampStaleApprovingReviewsForEvidenceRefresh,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
@@ -93,17 +93,16 @@ function interruptedPublicationReview(run: Run): IndependentReviewStatus | undef
   const activeFix = run.agentContexts?.some(
     (context) => context.role === 'self-review-fix' && context.status === 'working',
   );
-  return [...(run.engineState?.publishGate?.independentReviews ?? [])]
-    .reverse()
-    .find(
-      (review) =>
-        independentReviewNeedsContinuation(review) ||
-        (activeFix === true &&
-          review.source !== 'self-review' &&
-          review.verdict === 'issues' &&
-          review.unresolvedCount > 0 &&
-          (review.issues?.length ?? 0) > 0),
-    );
+  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const pending = pendingIndependentReviewContinuation(reviews);
+  if (pending) return pending;
+  if (!activeFix) return undefined;
+  const latest = [...reviews].reverse().find((review) => review.source !== 'self-review');
+  return latest?.verdict === 'issues' &&
+    latest.unresolvedCount > 0 &&
+    (latest.issues?.length ?? 0) > 0
+    ? latest
+    : undefined;
 }
 
 function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus): SelfReviewResult {

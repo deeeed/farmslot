@@ -121,6 +121,27 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
     reviewerContextNeedsRecovery(reviewerContext({ status: 'working', artifactScope: null }), []),
     true,
   );
+  assert.equal(
+    reviewerContextNeedsRecovery(complete, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+        issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+      },
+      {
+        id: 'independent-review-8',
+        source: 'dispatch',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+    ]),
+    false,
+    'a later terminal review supersedes an older continuation marker',
+  );
 });
 
 test('reviewerContextIsSettled terminalizes persisted and superseded reviewer ghosts', () => {

@@ -20,7 +20,7 @@ import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
-import { independentReviewNeedsContinuation } from './gate-policy.js';
+import { pendingIndependentReviewContinuation } from './gate-policy.js';
 import { reviewerContextNeedsRecovery } from './recover-inflight-reviews.js';
 import { recoveryReviewPlanForActiveFix } from './review-plan.js';
 
@@ -176,8 +176,9 @@ export function hasRecoverablePublicationReviewer(run: Run): boolean {
 }
 
 export function hasPendingPublicationReviewContinuation(run: Run): boolean {
-  return (run.engineState?.publishGate?.independentReviews ?? []).some((review) =>
-    independentReviewNeedsContinuation(review),
+  return (
+    pendingIndependentReviewContinuation(run.engineState?.publishGate?.independentReviews ?? []) !==
+    undefined
   );
 }
 

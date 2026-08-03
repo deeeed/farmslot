@@ -77,6 +77,14 @@ export function independentReviewNeedsContinuation(
   );
 }
 
+/** Return the newest continuation that no later terminal review superseded. */
+export function pendingIndependentReviewContinuation(
+  reviews: readonly IndependentReviewStatus[],
+): IndependentReviewStatus | undefined {
+  const latest = [...reviews].reverse().find((review) => review.source !== 'self-review');
+  return latest && independentReviewNeedsContinuation(latest) ? latest : undefined;
+}
+
 export function isOwnPrApprovalError(err: unknown): boolean {
   const maybeRecord = err as { message?: unknown; stdout?: unknown; stderr?: unknown };
   const text = [maybeRecord?.message, maybeRecord?.stdout, maybeRecord?.stderr]
