@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Fix publication gate summaries so snapshot-less findings from superseded review rounds are not presented as current after an exact-HEAD review passes.
+
 - fix(run-engine): reclaim the exact surviving reviewer after a gateway restart, resume its fix/re-review continuation without failing the run when delivery is temporarily unavailable, and deduplicate terminal verdict recovery.
 - fix(run-engine): clear completed reviewer progress when the publication gate is waiting for its operator decision.
 - fix(run-engine): settle superseded reviewer contexts, close their retained tmux windows, and only replace failed review records explicitly marked for late recovery.

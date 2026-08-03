@@ -144,6 +144,55 @@ test('buildReviewSummary excludes findings from an older reviewed head', () => {
   assert.equal(summary.totalUnresolved, 0);
 });
 
+test('buildReviewSummary excludes snapshot-less findings restamped to the current head', () => {
+  const run = makeRun({
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-restamped-issues',
+            source: 'human-gate',
+            crossRunner: false,
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 4,
+            reviewedHeadSha: 'current-head',
+          },
+          {
+            id: 'independent-review-current',
+            source: 'human-gate',
+            crossRunner: false,
+            loopNumber: 2,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            reviewSnapshot: {
+              source: 'local-git',
+              baseRef: 'main',
+              baseSha: 'base',
+              headRef: 'feature',
+              headSha: 'current-head',
+              diffPath: 'artifacts/current.diff',
+              diffHash: 'current-diff',
+              diffStat: { files: 1, additions: 2, deletions: 0 },
+              capturedAt: '2026-08-03T22:00:00.000Z',
+            },
+            reviewedHeadSha: 'current-head',
+          },
+        ],
+      },
+    },
+  });
+
+  const summary = buildReviewSummary(run);
+
+  assert.deepEqual(
+    summary.independentReviews.map((review) => review.id),
+    ['independent-review-current'],
+  );
+  assert.equal(summary.passingReviews, 1);
+  assert.equal(summary.totalUnresolved, 0);
+});
+
 test('buildReviewSummary surfaces self-review skip reason from the pipeline step', () => {
   const run = makeRun({
     steps: [
