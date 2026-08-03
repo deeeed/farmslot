@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fix(run): independent review state records when restart recovery explicitly owes a worker fix/re-review continuation, instead of inferring it from an issues verdict.
+
 ## 0.18.0 - 2026-08-03
 
 - feat(run): `failedRunCancelEffects` — the single filter every human-facing cancel caller uses to detect a partially applied cancel.

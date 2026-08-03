@@ -2709,13 +2709,14 @@ export async function sendRunnerPostLaunchPrompt(
     // so waiting for idle here would time out before the retry could send the
     // promised submit-only key. Preserve the buffered pane and let the guarded
     // submit path below consume it without retyping.
-    const preSendPane = runnerPaneShouldSubmitExistingInstruction(
+    const bufferedRetry = runnerPaneShouldSubmitExistingInstruction(
       immediatePane,
       message,
       marker,
       runner,
       { allowMarkerOnly: attempt > 1 },
-    )
+    );
+    const preSendPane = bufferedRetry
       ? immediatePane
       : await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
           deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),

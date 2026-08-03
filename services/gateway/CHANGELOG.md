@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(run-engine): reclaim the exact surviving reviewer and resume its fix/re-review continuation after a gateway restart, reject tmux prefix matches to dead review windows, and deduplicate concurrent recovery of the same terminal verdict.
 - fix(runs): cancellation now sets a write-ahead backlog repair marker before publication, blocks archive/delete until the durable settle clears it, retries archive scans invalidated mid-read, and retains a live run when source-file unlink fails.
 - fix(run): `run.cancel` returns the transitioned snapshot instead of re-reading the live map. The router publishes `cancelled` before teardown finishes, so another client can archive or delete the run while effects are still running — the re-read could return undefined and the `backlogReconcilePending` write could throw, losing the repair marker.
 - fix(run): an interactive-dev abort reports incomplete teardown through the result's existing `reason` field. Spreading the cancel result leaked `effects` outside the declared union, so the UI saw a bare `ok: true` and ignored a partially applied abort.

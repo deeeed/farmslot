@@ -56,6 +56,27 @@ export function isPublishApprovalAction(actionId: string | null | undefined): bo
   return PUBLISH_APPROVAL_ACTIONS.has(actionId ?? '');
 }
 
+export function independentReviewNeedsContinuation(
+  review: Pick<
+    IndependentReviewStatus,
+    | 'source'
+    | 'verdict'
+    | 'feedbackSent'
+    | 'recoveryContinuationPending'
+    | 'unresolvedCount'
+    | 'issues'
+  >,
+): boolean {
+  return (
+    review.source !== 'self-review' &&
+    review.verdict === 'issues' &&
+    review.feedbackSent !== true &&
+    review.recoveryContinuationPending === true &&
+    review.unresolvedCount > 0 &&
+    (review.issues?.length ?? 0) > 0
+  );
+}
+
 export function isOwnPrApprovalError(err: unknown): boolean {
   const maybeRecord = err as { message?: unknown; stdout?: unknown; stderr?: unknown };
   const text = [maybeRecord?.message, maybeRecord?.stdout, maybeRecord?.stderr]

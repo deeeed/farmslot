@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Run, RunStep, SubStepRecord } from '@farmslot/protocol';
 
 import {
+  hasPendingPublicationReviewContinuation,
   hasRecoverablePublicationReviewer,
   prepareSubstepsShowCompletion,
   recoverActiveRuns,
@@ -74,6 +75,30 @@ test('hasRecoverablePublicationReviewer ignores an already-ingested completed co
     }),
     false,
   );
+});
+
+test('hasPendingPublicationReviewContinuation requires the explicit recovery marker', () => {
+  const run = minimalActiveRun({
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-1',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+            recoveryContinuationPending: true,
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(hasPendingPublicationReviewContinuation(run), true);
+  run.engineState!.publishGate!.independentReviews![0]!.recoveryContinuationPending = false;
+  assert.equal(hasPendingPublicationReviewContinuation(run), false);
 });
 
 test('recoverActiveRuns re-presents a blocked gate after its completed review was ingested', async () => {
@@ -490,6 +515,40 @@ test('recovery holds a blocked human gate while its reviewer is still in flight'
   assert.equal(calls.reconciled, 0);
   assert.equal(calls.broadcasted, 0);
   assert.deepEqual(calls.replayed, []);
+});
+
+test('recovery immediately replays a persisted review continuation', async () => {
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-REVIEW-CONTINUATION',
+    familyRootTicketOrPr: 'RECOVERY-REVIEW-CONTINUATION',
+    taskFile: '/tmp/farmslot-recovery-review-continuation/TASK.md',
+    status: 'blocked',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [humanGateDecision('gate-review-continuation')],
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-1',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+            recoveryContinuationPending: true,
+          },
+        ],
+      },
+    },
+  });
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(calls.replayed, [run.id]);
+  assert.deepEqual(calls.rearmed, []);
+  assert.equal(calls.reconciled, 0);
 });
 
 test('recovery holds a human-gating run while its reviewer is still in flight', async () => {

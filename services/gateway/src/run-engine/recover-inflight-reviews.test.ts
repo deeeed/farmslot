@@ -6,9 +6,27 @@ import type { AgentContext, WorkerSignal } from '@farmslot/protocol';
 import {
   buildRecoveredReview,
   isRecoverableReviewerContext,
+  recoveredReviewAlreadyIngested,
   recoveredReviewArtifactScope,
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
+
+test('recovery ignores the same terminal reviewer signal but accepts a later continuation', () => {
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      { completedAt: '2026-08-03T16:00:00.000Z' },
+      { completedAt: '2026-08-03T16:00:00.000Z' },
+    ),
+    true,
+  );
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      { completedAt: '2026-08-03T16:00:00.000Z' },
+      { completedAt: '2026-08-03T16:05:00.000Z' },
+    ),
+    false,
+  );
+});
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
 
 function reviewerContext(overrides: Partial<AgentContext> = {}): AgentContext {
@@ -65,6 +83,35 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
   });
   assert.equal(reviewerContextNeedsRecovery(complete, []), true);
   assert.equal(reviewerContextNeedsRecovery(complete, [{ id: 'independent-review-7' }]), false);
+  assert.equal(
+    reviewerContextNeedsRecovery(complete, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+        issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+      },
+    ]),
+    true,
+    'a completed reviewer may contain a newer fix-pass artifact for the same review id',
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(complete, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+        issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+      },
+    ]),
+    false,
+    'a terminal issues verdict without an explicit recovery continuation stays terminal',
+  );
   assert.equal(
     reviewerContextNeedsRecovery(reviewerContext({ status: 'complete', artifactScope: null }), []),
     false,

@@ -34,10 +34,14 @@ import { EXTRA_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { readReviewFeedback } from '../self-review/feedback.js';
 import type { SelfReviewResult } from '../self-review/orchestrator.js';
-import { reviewerFeedbackRelPath } from '../self-review/review-agent.js';
+import {
+  resumeReviewAgentPromptDelivery,
+  reviewerFeedbackRelPath,
+} from '../self-review/review-agent.js';
+import { getSelfReviewConfig } from '../self-review/templates.js';
 import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
-import { buildPublishGateReviewStatus } from './gate-policy.js';
+import { buildPublishGateReviewStatus, independentReviewNeedsContinuation } from './gate-policy.js';
 import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
 
 /**
@@ -72,7 +76,17 @@ export function reviewerContextNeedsRecovery(
   ctx: Pick<AgentContext, 'role' | 'status' | 'artifactScope'>,
   reviews: Array<
     Pick<IndependentReviewStatus, 'id'> &
-      Partial<Pick<IndependentReviewStatus, 'verdict' | 'unresolvedCount' | 'feedbackSent'>>
+      Partial<
+        Pick<
+          IndependentReviewStatus,
+          | 'source'
+          | 'verdict'
+          | 'unresolvedCount'
+          | 'feedbackSent'
+          | 'recoveryContinuationPending'
+          | 'issues'
+        >
+      >
   >,
   options: { includeFailed?: boolean } = {},
 ): boolean {
@@ -84,6 +98,22 @@ export function reviewerContextNeedsRecovery(
   if (!artifactScope) return ctx.status !== 'complete';
   const recorded = reviews.find((review) => review.id === artifactScope);
   if (!recorded) return true;
+  if (
+    ctx.status !== 'failed' &&
+    recorded.source !== undefined &&
+    recorded.verdict !== undefined &&
+    recorded.unresolvedCount !== undefined &&
+    independentReviewNeedsContinuation({
+      source: recorded.source,
+      verdict: recorded.verdict,
+      feedbackSent: recorded.feedbackSent,
+      recoveryContinuationPending: recorded.recoveryContinuationPending,
+      unresolvedCount: recorded.unresolvedCount,
+      issues: recorded.issues,
+    })
+  ) {
+    return true;
+  }
   return (
     recorded.verdict !== undefined &&
     recorded.unresolvedCount !== undefined &&
@@ -121,6 +151,7 @@ export function buildRecoveredReview(params: {
   >;
   reviewSnapshot?: ReviewDiffSnapshot;
   reviewedPackage: ReadyGatePrPackage | undefined;
+  recoveryContinuationPending?: boolean;
 }): IndependentReviewStatus | null {
   const { run, ctx, signal, feedback, reviewSnapshot, reviewedPackage } = params;
   // Freshness anchors on the CURRENT attempt's launch time. startedAt is too
@@ -158,7 +189,7 @@ export function buildRecoveredReview(params: {
     retryCount: 0,
     reviewSnapshot,
   };
-  return buildPublishGateReviewStatus({
+  const recovered = buildPublishGateReviewStatus({
     source:
       run.engineState?.publishGate?.reviewDepth?.requestedBy === 'dispatch'
         ? 'dispatch'
@@ -171,6 +202,13 @@ export function buildRecoveredReview(params: {
     reviewId,
     reviewedPackage: reviewedPackage ?? null,
   });
+  return {
+    ...recovered,
+    recoveryContinuationPending:
+      feedback.verdict === 'issues' && params.recoveryContinuationPending === true,
+    startedAt: ctx.attemptStartedAt ?? ctx.startedAt ?? recovered.startedAt,
+    completedAt: freshSignal?.timestamp ?? ctx.completedAt ?? recovered.completedAt,
+  };
 }
 
 function isOptionalStringOrNull(value: object, key: string): boolean {
@@ -319,6 +357,8 @@ export async function recoverInflightPublicationReviews(
   if (candidates.length === 0) return [];
 
   const vars = await loadSlotVars(slotId);
+  const selfReviewConfig = await getSelfReviewConfig(run.project);
+  const recoveryContinuationPending = Math.max(0, selfReviewConfig.max_retries ?? 1) > 0;
   const reviewedPackage = await readPreparedPackage(run);
   // Stamp recovered reviews against the prepared package only when the slot HEAD
   // still matches it — a lost review certifies the HEAD it saw, and at the human
@@ -334,7 +374,13 @@ export async function recoverInflightPublicationReviews(
   const recoveredIds: string[] = [];
   for (const ctx of candidates) {
     try {
-      const recovered = await ingestRecoveredReviewer(runId, vars, ctx, stampablePackage);
+      const recovered = await ingestRecoveredReviewer(
+        runId,
+        vars,
+        ctx,
+        stampablePackage,
+        recoveryContinuationPending,
+      );
       if (recovered) recoveredIds.push(recovered);
     } catch (err) {
       // One unreadable reviewer (corrupt signal/feedback file, transient slot
@@ -359,8 +405,16 @@ async function ingestRecoveredReviewer(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   ctx: AgentContext,
   stampablePackage: ReadyGatePrPackage | undefined,
+  recoveryContinuationPending: boolean,
 ): Promise<string | null> {
   const signal = await readReviewerTerminalSignal(vars, ctx);
+  if (!signal && (ctx.status === 'working' || ctx.status === 'launching')) {
+    const promptRecovery = await resumeReviewAgentPromptDelivery(vars, runId, ctx);
+    if (promptRecovery === 'inactive') {
+      await markAgentContextStatus(runId, 'self-review', 'failed', { id: ctx.id });
+    }
+    return null;
+  }
   // The reviewer's task dir is encoded in its stored task file path; feedback
   // is scoped to the reviewer's context id alongside it.
   const taskDir = ctx.taskFile ? path.posix.dirname(ctx.taskFile) : null;
@@ -384,14 +438,39 @@ async function ingestRecoveredReviewer(
     feedback,
     reviewSnapshot,
     reviewedPackage: stampablePackage,
+    recoveryContinuationPending,
   });
   if (!review) return null;
 
-  const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [review]);
+  const existingReview = priorReviews.find((candidate) => candidate.id === review.id);
+  if (existingReview && recoveredReviewAlreadyIngested(existingReview, review)) return null;
+  if (
+    existingReview &&
+    !isFailedReviewPlaceholder(existingReview) &&
+    !independentReviewNeedsContinuation(existingReview)
+  ) {
+    return null;
+  }
+  const reviewToPersist = existingReview
+    ? appendRecoveredContinuationAttempt(existingReview, review)
+    : review;
+  const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [reviewToPersist]);
   const finalRun = getRun(runId)!;
   const finalReviews = finalRun.engineState?.publishGate?.independentReviews ?? [];
   const existingIndex = finalReviews.findIndex((candidate) => candidate.id === persisted.id);
-  if (existingIndex >= 0 && !isFailedReviewPlaceholder(finalReviews[existingIndex]!)) return null;
+  if (
+    existingIndex >= 0 &&
+    recoveredReviewAlreadyIngested(finalReviews[existingIndex]!, persisted)
+  ) {
+    return null;
+  }
+  if (
+    existingIndex >= 0 &&
+    !isFailedReviewPlaceholder(finalReviews[existingIndex]!) &&
+    !independentReviewNeedsContinuation(finalReviews[existingIndex]!)
+  ) {
+    return null;
+  }
   const nextReviews = [...finalReviews];
   if (existingIndex >= 0) nextReviews[existingIndex] = persisted;
   else nextReviews.push(persisted);
@@ -412,4 +491,37 @@ async function ingestRecoveredReviewer(
     `[run-engine] run ${runId.slice(0, 8)} — recovered in-flight publication review ${persisted.id} (verdict ${persisted.verdict}) from reviewer context ${ctx.id}`,
   );
   return persisted.id;
+}
+
+export function recoveredReviewAlreadyIngested(
+  existing: Pick<IndependentReviewStatus, 'completedAt'>,
+  recovered: Pick<IndependentReviewStatus, 'completedAt'>,
+): boolean {
+  const existingAt = Date.parse(existing.completedAt ?? '');
+  const recoveredAt = Date.parse(recovered.completedAt ?? '');
+  return Number.isFinite(existingAt) && Number.isFinite(recoveredAt) && recoveredAt <= existingAt;
+}
+
+function appendRecoveredContinuationAttempt(
+  existing: IndependentReviewStatus,
+  recovered: IndependentReviewStatus,
+): IndependentReviewStatus {
+  if (!independentReviewNeedsContinuation(existing)) return recovered;
+  const priorAttempts = existing.attempts ?? [];
+  const recoveredAttempt = recovered.attempts?.at(-1);
+  if (!recoveredAttempt) return recovered;
+  const attempts = [
+    ...priorAttempts,
+    { ...recoveredAttempt, loopNumber: priorAttempts.length + 1 },
+  ];
+  return {
+    ...recovered,
+    loopNumber: existing.loopNumber,
+    attempts,
+    artifactPaths: [
+      ...new Set([...(existing.artifactPaths ?? []), ...(recovered.artifactPaths ?? [])]),
+    ],
+    timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
+    startedAt: existing.startedAt ?? recovered.startedAt,
+  };
 }
