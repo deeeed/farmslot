@@ -41,11 +41,11 @@ function terminalSignal(overrides: Partial<WorkerSignal> = {}): WorkerSignal {
   };
 }
 
-test('isRecoverableReviewerContext accepts in-flight and completed self-review contexts', () => {
+test('isRecoverableReviewerContext accepts in-flight, completed, and delivery-failed reviewers', () => {
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'working' }), true);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'launching' }), true);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'complete' }), true);
-  assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'failed' }), false);
+  assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'failed' }), true);
   // Other roles never produce a publish-gate independent review.
   assert.equal(isRecoverableReviewerContext({ role: 'primary', status: 'working' }), false);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review-fix', status: 'working' }), false);
@@ -66,6 +66,60 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
     reviewerContextNeedsRecovery(reviewerContext({ status: 'working', artifactScope: null }), []),
     true,
   );
+});
+
+test('reviewerContextNeedsRecovery retries a failed placeholder when its reviewer later completes', () => {
+  const failed = reviewerContext({
+    status: 'failed',
+    artifactScope: 'independent-review-7',
+  });
+  assert.equal(
+    reviewerContextNeedsRecovery(failed, [
+      {
+        id: 'independent-review-7',
+        verdict: 'failed',
+        unresolvedCount: 0,
+        feedbackSent: false,
+      },
+    ]),
+    true,
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(failed, [
+      {
+        id: 'independent-review-7',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+      },
+    ]),
+    false,
+  );
+});
+
+test('delivery-failed reviewer can recover from a later fresh complete signal', () => {
+  const review = buildRecoveredReview({
+    run: makeRun({ engineState: { publishGate: { independentReviews: [] } } }),
+    ctx: reviewerContext({
+      status: 'failed',
+      artifactScope: 'independent-review-7',
+      attemptStartedAt: '2026-07-16T10:00:00.000Z',
+    }),
+    signal: terminalSignal({
+      status: 'complete',
+      timestamp: '2026-07-16T10:40:00.000Z',
+    }),
+    feedback: {
+      verdict: 'issues',
+      issues: [{ file: 'artifacts/pr-description.md', description: 'Fix stale ADR number' }],
+    },
+    reviewedPackage: undefined,
+  });
+
+  assert.ok(review);
+  assert.equal(review.id, 'independent-review-7');
+  assert.equal(review.verdict, 'issues');
+  assert.equal(review.unresolvedCount, 1);
 });
 
 test('restart recovery uses the reviewer-owned artifact scope instead of review-array length', () => {

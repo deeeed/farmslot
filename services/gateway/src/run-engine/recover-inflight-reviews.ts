@@ -41,21 +41,36 @@ import { buildPublishGateReviewStatus } from './gate-policy.js';
 import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './ready-gate.js';
 
 /**
- * A reviewer context can need recovery while in-flight or after its runner was
- * reconciled to `complete`. The latter happens when the runner exits after
- * writing feedback but before the awaiting publish-gate call persists the
- * verdict. Recorded artifact scopes provide the dedup key for complete contexts.
+ * A reviewer context can need recovery while in-flight, after its runner was
+ * reconciled to `complete`, or after prompt verification marked it `failed`
+ * while the already-started reviewer continued. Recorded artifact scopes
+ * provide the dedup key; only an infrastructure-failed zero-finding placeholder
+ * may be replaced by a later clean terminal signal and parseable feedback.
  */
 export function isRecoverableReviewerContext(ctx: Pick<AgentContext, 'role' | 'status'>): boolean {
   return (
     ctx.role === 'self-review' &&
-    (ctx.status === 'working' || ctx.status === 'launching' || ctx.status === 'complete')
+    (ctx.status === 'working' ||
+      ctx.status === 'launching' ||
+      ctx.status === 'complete' ||
+      ctx.status === 'failed')
+  );
+}
+
+function isFailedReviewPlaceholder(
+  review: Pick<IndependentReviewStatus, 'verdict' | 'unresolvedCount' | 'feedbackSent'>,
+): boolean {
+  return (
+    review.verdict === 'failed' && review.unresolvedCount === 0 && review.feedbackSent !== true
   );
 }
 
 export function reviewerContextNeedsRecovery(
   ctx: Pick<AgentContext, 'role' | 'status' | 'artifactScope'>,
-  reviews: Pick<IndependentReviewStatus, 'id'>[],
+  reviews: Array<
+    Pick<IndependentReviewStatus, 'id'> &
+      Partial<Pick<IndependentReviewStatus, 'verdict' | 'unresolvedCount' | 'feedbackSent'>>
+  >,
 ): boolean {
   if (!isRecoverableReviewerContext(ctx)) return false;
   const artifactScope = ctx.artifactScope?.trim();
@@ -63,7 +78,17 @@ export function reviewerContextNeedsRecovery(
   // from normally ingested reviews. In-flight contexts remain recoverable via
   // the existing fallback id path.
   if (!artifactScope) return ctx.status !== 'complete';
-  return !reviews.some((review) => review.id === artifactScope);
+  const recorded = reviews.find((review) => review.id === artifactScope);
+  if (!recorded) return true;
+  return (
+    recorded.verdict !== undefined &&
+    recorded.unresolvedCount !== undefined &&
+    isFailedReviewPlaceholder({
+      verdict: recorded.verdict,
+      unresolvedCount: recorded.unresolvedCount,
+      feedbackSent: recorded.feedbackSent,
+    })
+  );
 }
 
 /**
@@ -361,13 +386,17 @@ async function ingestRecoveredReviewer(
   const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [review]);
   const finalRun = getRun(runId)!;
   const finalReviews = finalRun.engineState?.publishGate?.independentReviews ?? [];
-  if (finalReviews.some((candidate) => candidate.id === persisted.id)) return null;
+  const existingIndex = finalReviews.findIndex((candidate) => candidate.id === persisted.id);
+  if (existingIndex >= 0 && !isFailedReviewPlaceholder(finalReviews[existingIndex]!)) return null;
+  const nextReviews = [...finalReviews];
+  if (existingIndex >= 0) nextReviews[existingIndex] = persisted;
+  else nextReviews.push(persisted);
   updateRun(runId, {
     engineState: {
       ...finalRun.engineState,
       publishGate: {
         ...finalRun.engineState?.publishGate,
-        independentReviews: [...finalReviews, persisted],
+        independentReviews: nextReviews,
       },
     },
   });

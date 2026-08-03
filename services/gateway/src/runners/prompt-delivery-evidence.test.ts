@@ -161,7 +161,7 @@ test('launch acknowledgement snapshot degrades to null when the evidence probe c
   assert.equal(snapshot, null);
 });
 
-test('task-scoped signal cannot replace exact prompt evidence when a digest is required', async () => {
+test('fresh task-scoped signal is accepted when native exact prompt evidence is unavailable', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'farmslot-launch-ack-probe-'));
   const signalPath = join(dir, 'SIGNAL.json');
   try {
@@ -183,7 +183,8 @@ test('task-scoped signal cannot replace exact prompt evidence when a digest is r
       preferHooks: false,
       requirePromptDigest: true,
     });
-    assert.equal(digestRequired.accepted, false);
+    assert.equal(digestRequired.accepted, true);
+    assert.equal(digestRequired.source, 'launch-signal');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -91,6 +91,35 @@ test('validatePackageApprovalSelection rejects package id, hash, and HEAD mismat
     /selected evidence differs/i,
   );
 });
+
+test('validatePackageApprovalSelection does not demand re-review when review depth is zero', () => {
+  const pkg = makeReadyGatePackage({
+    selectedEvidenceKeys: ['artifacts/a.png'],
+    reviewDepth: {
+      minimumIndependentReviews: 0,
+      requireCrossRunner: false,
+      extraLoopsRequested: 0,
+      requestedBy: 'dispatch',
+    },
+  });
+
+  assert.throws(
+    () =>
+      validatePackageApprovalSelection(pkg, {
+        selectionData: {
+          packageId: pkg.id,
+          packageHash: pkg.packageHash,
+          packageHeadSha: pkg.headSha,
+          selectedEvidenceKeys: [],
+        },
+      } as any),
+    (error: Error) => {
+      assert.match(error.message, /refresh package before publishing/);
+      assert.doesNotMatch(error.message, /re-review/);
+      return true;
+    },
+  );
+});
 test('publication review policy rejects stale and unavailable review snapshots', () => {
   const pkg = makeReadyGatePackage({ headSha: 'head-good' });
   const validRun = makeRun({

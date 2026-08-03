@@ -10,6 +10,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - fix(tasks): `checklistNumberingMismatches` reports suffixed labels such as `17a.` instead of skipping them. Matching digits only meant an inserted sub-step was invisible and the drift surfaced a row later, at the first purely numeric label — which is exactly how a checklist silently desynchronises from the positions `mark N` targets.
 - fix(chat): the co-pilot `cancel_run` tool and the confirmed-action path report `partiallyApplied` with the failed effects instead of an unqualified success, so an operator is never told a cancel landed while a slot is still claimed.
 - fix(runs): `archiveRun` evicts from the live map only after the archive copy is durable; a failed write previously dropped the run from memory until the next restart re-read it from the still-present source file.
+- fix(ready-gate): make stale publish-package errors respect zero-review policy instead of incorrectly demanding another review.
+
 - feat(git): worktree branch diffs flag each file's committed state via an extra merge-base..HEAD listing.
 - fix(decisions): project stored run decisions into the full websocket decision contract before broadcasting new or updated events, so Companion no longer reloads the entire decision inbox after every event and surfaces false request-timeout warnings.
 
@@ -45,14 +47,14 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - fix(run-engine): keep operator-cancelled graph runs stopped until an explicit retry, preserve cancelled state when an in-flight step fails late, and retain graph linkage across collision redirects.
 - fix(run-completion): avoid reposting dev/fix-bug PR descriptions as worker comments, identify other comments by run so finalize replays are idempotent, and publish evidence through disposable blobless sparse checkouts instead of a shared full-history artifact-repo clone.
 - fix(backlog): markdown-backed specs are allowed on jira/github items — tracker identity and live ticket data stay authoritative while spec context and acceptance criteria are merged into the worker task inputs.
-- fix(self-review): resume retained workers through structured runner handoff, keep managed Codex hooks enabled, continue interactive feedback from existing findings, write remote review artifacts through node RPC, never treat an identical prompt from an older Grok transcript as acceptance of a new fix-pass generation, and accept a fresh task signal after a delayed prompt acknowledgement.
+- fix(self-review): resume retained workers through structured runner handoff, keep managed Codex hooks enabled, continue interactive feedback from existing findings, write remote review artifacts through node RPC, never treat an identical prompt from an older Grok transcript as acceptance of a new fix-pass generation, and recover a later clean completion over an infrastructure-failed review placeholder.
 - fix(work-graph): reclaim `waiting` nodes when the backlog item is ready and the run/queue are gone, and retry stale completed-enqueue ledger entries for `waiting` as well as `ready`, so fail+delete no longer leaves Dispatch stuck reporting upstream wait with an empty `waitingOn`.
 - fix(ready-gate): restore finalize-step decision helper wiring and type-check review-plan decision fixtures after the dual-fix merge.
 - fix(ready-gate): honor the latest request-extra-review loop runner (e.g. codex after claude) instead of a stale pending plan or approval-only decision lookup that could re-launch the previous reviewer.
 - feat(backlog): agent-assisted backlog refinement sessions via shared tmux launch/attach primitive with roadmap refinement; prompt includes item/spec/dispatch/linkage context and the fs-backlog-spec contract without lifecycle mutation.
 
 - fix(dispatch): prepare profile is explicit-only — queue dispatch, FIND_SLOT, resource eligibility, and branch-affinity nudge no longer apply `detectProfileFit` suggestions; `dispatch.preview` may still attach a non-binding `profileFit` UI hint; empty prepare resolves to `project.prepare.default` (MANUAL-000088).
-- fix(runners): treat a task-scoped worker signal change as runner-agnostic prompt-delivery evidence, including self-review and terminal signals, while rejecting unchanged signals left by an earlier attempt.
+- fix(runners): treat a task-scoped worker signal change as runner-agnostic prompt-delivery evidence, including publication-review and terminal signals, while rejecting unchanged signals left by an earlier attempt.
 - fix(runners): consume Grok's pane-bound structured session events for activity and exact prompt acceptance instead of retrying a task that Grok already accepted, using a provider-clock baseline across nodes and the generic pane fallback only when native activity is unknown.
 - fix(resources): let dry-run cleanup and pressure previews skip fleet rows whose slot config was removed or gated after the fleet snapshot, while live cleanup still fails closed.
 - feat(recipe): validate structured run summaries and failure attribution when packaging recipe evidence.
