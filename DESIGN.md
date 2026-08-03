@@ -3,9 +3,9 @@
 ## Source of truth
 
 - Status: Draft
-- Last refreshed: 2026-07-30
-- Primary product surfaces: Command Center operator UI, especially dispatch, backlog, roadmap, runs, and work graph views.
-- Evidence reviewed: `CLAUDE.md`, `apps/command-center/CLAUDE.md`, `apps/command-center/ui/src/styles/theme-tokens.ts`, `apps/command-center/ui/src/components/app-shell.ts`, `apps/command-center/ui/src/components/dispatch/dispatch-wizard-view-renderer.ts`, `apps/command-center/ui/src/components/shared/whats-new-modal.ts`, `apps/command-center/ui/src/components/recipe-graph/recipe-graph.ts`, `apps/command-center/ui/src/components/work-graph/work-graph-panel.ts`, `packages/protocol/src/contracts/execution-templates.ts`, `packages/protocol/src/contracts/work-graph.ts`.
+- Last refreshed: 2026-08-03
+- Primary product surfaces: Command Center operator UI and recipe-derived visual review boards.
+- Evidence reviewed: `CLAUDE.md`, `apps/command-center/CLAUDE.md`, `apps/command-center/ui/src/styles/theme-tokens.ts`, `apps/command-center/ui/src/components/app-shell.ts`, `apps/command-center/ui/src/components/dispatch/dispatch-wizard-view-renderer.ts`, `apps/command-center/ui/src/components/shared/whats-new-modal.ts`, `apps/command-center/ui/src/components/recipe-graph/recipe-graph.ts`, `apps/command-center/ui/src/components/work-graph/work-graph-panel.ts`, `packages/protocol/src/contracts/execution-templates.ts`, `packages/protocol/src/contracts/work-graph.ts`, `apps/companion/DESIGN.md`, and `docs/adr/052-recipe-derived-visual-review-boards.md`.
 
 ## Brand
 
@@ -15,7 +15,7 @@
 
 ## Product goals
 
-- Goals: help Arthur move from roadmap/backlog planning to dispatchable autonomous work; make dependencies, gates, and the exact selected execution template visible before runs start; keep project labels/tags consistent across planning and execution.
+- Goals: help Arthur move from roadmap/backlog planning to dispatchable autonomous work; make dependencies, gates, and the exact selected execution template visible before runs start; keep project labels/tags consistent across planning and execution; turn recipe-owned visual evidence into portable, annotatable feedback without project-specific tooling.
 - Non-goals: replacing markdown specs/ADRs as authoring source of truth; building Jira-scale project management; hiding raw files from power users.
 - Success signals: users can identify what is ready, blocked, running, failed, and what will unlock next without reading JSON.
 
@@ -50,8 +50,8 @@
 ## Components
 
 - Existing components to reuse: app shell route patterns, recipe graph SVG patterns, shared theme tokens.
-- New/changed components: compact inventory tables on Roadmap, Backlog, and Runs; `work-graph-panel` and `work-graph-layout` for dependency visualization; `execution-template-preview-modal` for exact, read-only dispatch template inspection.
-- Variants and states: empty graph list, project filter, graph status badges, selected node, waiting/gated/running/succeeded/failed/skipped nodes, pending/satisfied/failed/waived edges; execution-template preview loading, content, stale-source error, and closed states.
+- New/changed components: compact inventory tables on Roadmap, Backlog, and Runs; `work-graph-panel` and `work-graph-layout` for dependency visualization; `execution-template-preview-modal` for exact, read-only dispatch template inspection; a lightweight recipe-derived visual review board for screen hierarchy and normalized point/area feedback.
+- Variants and states: empty graph list, project filter, graph status badges, selected node, waiting/gated/running/succeeded/failed/skipped nodes, pending/satisfied/failed/waived edges; execution-template preview loading, content, stale-source error, and closed states; visual-review boards default to one remembered capture platform with an explicit Compare mode that groups platform variants under one surface, and navigation maps start at the top level with independently expandable branches.
 - Token/component ownership: Command Center owns UI tokens; protocol owns graph and execution-template data shapes.
 
 ## Accessibility
@@ -89,6 +89,9 @@
 - Design-token constraints: import from `ui/src/styles/theme-tokens.ts`; avoid inventing a second theme layer.
 - Performance constraints: client-side SVG layout should handle modest DAGs without new dependencies.
 - Compatibility constraints: keep gateway/protocol APIs unchanged for UI-only visualization work.
+- Visual-review constraints: keep interactive discovery in the device provider, deterministic proof
+  in Recipe v1/harness, domain navigation in project harnesses, and rendering independent of
+  gateway or project runtime state.
 - Test/screenshot expectations: run `yarn --cwd apps/command-center typecheck`, targeted UI model tests, format check, and CDP browser validation for every UI change.
 
 ## Open questions

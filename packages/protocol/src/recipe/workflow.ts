@@ -12,6 +12,8 @@ import {
 } from './common.js';
 
 const NODE_ID_PATTERN = /^[A-Za-z0-9_-]+$/u;
+const VISUAL_REVIEW_CAPTURE_ACTIONS = new Set(['ui.capture_surface', 'ui.screenshot']);
+const VISUAL_REVIEW_TRANSITIONS = new Set(['tab', 'push', 'in-place', 'modal', 'replace']);
 
 export interface WorkflowGraph {
   entry: string;
@@ -26,7 +28,15 @@ export interface WorkflowActionEntry {
   path: string;
 }
 
-const CORE_NODE_FIELDS = new Set(['action', 'intent', 'next', 'cases', 'default', 'proves']);
+const CORE_NODE_FIELDS = new Set([
+  'action',
+  'intent',
+  'next',
+  'cases',
+  'default',
+  'proves',
+  'visual_review',
+]);
 const CALL_NODE_FIELDS = new Set(['action', 'intent', 'ref', 'params', 'proves', 'next']);
 
 const GENERIC_INTENTS = new Set([
@@ -250,6 +260,89 @@ function validateProves(
   }
 }
 
+function validateVisualReviewMetadata(
+  ctx: MutableValidationContext,
+  node: Record<string, unknown>,
+  path: string,
+): void {
+  if (!hasOwn(node, 'visual_review')) return;
+  if (!VISUAL_REVIEW_CAPTURE_ACTIONS.has(String(node.action))) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.visual_review_requires_surface_capture',
+      `${path}.visual_review`,
+      'visual_review metadata is only supported on visual capture nodes.',
+    );
+    return;
+  }
+  if (!isRecord(node.visual_review)) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_visual_review',
+      `${path}.visual_review`,
+      'visual_review must be an object.',
+    );
+    return;
+  }
+  for (const field of Object.keys(node.visual_review)) {
+    if (field !== 'parent' && field !== 'navigation' && field !== 'related') {
+      addFinding(
+        ctx,
+        'error',
+        'workflow.unsupported_visual_review_field',
+        `${path}.visual_review.${field}`,
+        `visual_review does not support ${field}.`,
+      );
+    }
+  }
+  if (hasOwn(node.visual_review, 'parent') && !isNonEmptyString(node.visual_review.parent)) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_visual_review_parent',
+      `${path}.visual_review.parent`,
+      'visual_review.parent must be a non-empty capture node id.',
+    );
+  }
+  const navigation = node.visual_review.navigation;
+  if (
+    hasOwn(node.visual_review, 'navigation') &&
+    (!Array.isArray(navigation) ||
+      navigation.some(
+        (edge) =>
+          !isRecord(edge) ||
+          Object.keys(edge).some((field) => field !== 'from' && field !== 'kind') ||
+          !isNonEmptyString(edge.from) ||
+          !isNonEmptyString(edge.kind) ||
+          !VISUAL_REVIEW_TRANSITIONS.has(edge.kind),
+      ))
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_visual_review_navigation',
+      `${path}.visual_review.navigation`,
+      'visual_review.navigation must contain only { from, kind } edges using tab, push, in-place, modal, or replace.',
+    );
+  }
+  if (
+    hasOwn(node.visual_review, 'related') &&
+    (!Array.isArray(node.visual_review.related) ||
+      node.visual_review.related.some((target) => !isNonEmptyString(target)) ||
+      new Set(node.visual_review.related).size !== node.visual_review.related.length)
+  ) {
+    addFinding(
+      ctx,
+      'error',
+      'workflow.invalid_visual_review_related',
+      `${path}.visual_review.related`,
+      'visual_review.related must be an array of unique non-empty capture node ids.',
+    );
+  }
+}
+
 function collectTargets(
   ctx: MutableValidationContext,
   node: Record<string, unknown>,
@@ -355,6 +448,7 @@ function validateNodeShape(
 
   validateNodeIntent(ctx, nodeId, node, path);
   validateProves(ctx, node, path);
+  validateVisualReviewMetadata(ctx, node, path);
   const hasNext = hasOwn(node, 'next');
   const hasCases = hasOwn(node, 'cases');
   const hasDefault = hasOwn(node, 'default');
@@ -535,6 +629,8 @@ export function validateWorkflowGraph(
     }
   }
 
+  validateVisualReviewGraph(ctx, workflow.nodes);
+
   const main = hasOwn(workflow.nodes, workflow.entry)
     ? walkSubgraph(ctx, workflow, workflow.entry, 'entry')
     : new Set<string>();
@@ -563,6 +659,55 @@ export function validateWorkflowGraph(
         `workflow.nodes.${nodeId}`,
         `Node ${nodeId} is unreachable from workflow.entry or workflow.teardown.`,
       );
+    }
+  }
+}
+
+function validateVisualReviewGraph(
+  ctx: MutableValidationContext,
+  nodes: Record<string, Record<string, unknown>>,
+): void {
+  const parents = new Map<string, string>();
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    if (!VISUAL_REVIEW_CAPTURE_ACTIONS.has(String(node.action)) || !isRecord(node.visual_review))
+      continue;
+    const targets = [
+      node.visual_review.parent,
+      ...(Array.isArray(node.visual_review.related) ? node.visual_review.related : []),
+      ...(Array.isArray(node.visual_review.navigation)
+        ? node.visual_review.navigation.filter(isRecord).map((edge) => edge.from)
+        : []),
+    ].filter(isNonEmptyString);
+    for (const target of targets) {
+      if (!VISUAL_REVIEW_CAPTURE_ACTIONS.has(String(nodes[target]?.action))) {
+        addFinding(
+          ctx,
+          'error',
+          'workflow.missing_visual_review_surface',
+          `workflow.nodes.${nodeId}.visual_review`,
+          `Visual review surface ${target} must reference a visual capture node in the same recipe.`,
+        );
+      }
+    }
+    if (isNonEmptyString(node.visual_review.parent)) parents.set(nodeId, node.visual_review.parent);
+  }
+
+  for (const nodeId of parents.keys()) {
+    const seen = new Set<string>();
+    let current: string | undefined = nodeId;
+    while (current) {
+      if (seen.has(current)) {
+        addFinding(
+          ctx,
+          'error',
+          'workflow.cyclic_visual_review_parent',
+          `workflow.nodes.${nodeId}.visual_review.parent`,
+          'Visual review parent relationships must not contain a cycle.',
+        );
+        break;
+      }
+      seen.add(current);
+      current = parents.get(current);
     }
   }
 }

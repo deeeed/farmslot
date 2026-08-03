@@ -48,6 +48,7 @@ export const runDiffStyles = StyleSheet.create({
     padding: spacing.xl,
     paddingBottom: spacing.xxxl,
   },
+  captureEndMarker: { height: 1 },
   progressPanel: {
     marginBottom: spacing.lg,
   },

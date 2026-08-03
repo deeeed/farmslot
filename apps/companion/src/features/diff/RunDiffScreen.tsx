@@ -178,7 +178,9 @@ export default function DiffViewerScreen() {
         if (isGatewayBackgroundPauseError(err)) {
           // Route screenshot transitions can background the gateway briefly; the
           // loaded diff remains the primary review surface.
-          console.warn(`Recipe diff context unavailable after ${reason}: ${(err as Error).message}`);
+          console.warn(
+            `Recipe diff context unavailable after ${reason}: ${(err as Error).message}`,
+          );
           return;
         }
         setError(
@@ -460,7 +462,12 @@ export default function DiffViewerScreen() {
           ) : null}
         </View>
       </View>
-      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+      <ScrollView
+        testID="companion-screen-run-diff"
+        collapsable={false}
+        style={styles.body}
+        contentContainerStyle={styles.bodyContent}
+      >
         <RunWorkspaceNav
           dense
           current="diff"
@@ -525,9 +532,7 @@ export default function DiffViewerScreen() {
           <View style={styles.evidenceBridgeRail}>
             <View style={styles.evidenceBridgeMetric}>
               <Text style={styles.evidenceBridgeMetricLabel}>Visual pairs</Text>
-              <Text style={styles.evidenceBridgeMetricValue}>
-                {priorityVisualPairs.length}
-              </Text>
+              <Text style={styles.evidenceBridgeMetricValue}>{priorityVisualPairs.length}</Text>
             </View>
             <View style={styles.evidenceBridgeMetric}>
               <Text style={styles.evidenceBridgeMetricLabel}>Diff source</Text>
@@ -604,6 +609,13 @@ export default function DiffViewerScreen() {
             {selectedRecipeRun ? 'this recipe run.' : 'this run.'}
           </Text>
         )}
+        <View
+          testID="companion-screen-run-diff-end"
+          accessible
+          collapsable={false}
+          accessibilityLabel="End of Run diff"
+          style={styles.captureEndMarker}
+        />
       </ScrollView>
     </SafeAreaView>
   );

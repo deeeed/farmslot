@@ -14,6 +14,7 @@ import {
 
 import { getRun, listRuns, updateRun } from '../runs/store.js';
 
+import { pendingDecisionForRun } from './decision-projection.js';
 import {
   canReplayCollisionDecision,
   findLatestResolvedDecision,
@@ -319,7 +320,11 @@ export async function createEngineDecision(
 
   run.decisions.push(decision);
   updateRun(runId, { status: 'blocked', decisions: run.decisions });
-  broadcastFn(Events.RUN_DECISION_NEW, { runId, decision, slotId: run.slotId });
+  broadcastFn(Events.RUN_DECISION_NEW, {
+    runId,
+    decision: pendingDecisionForRun(run, decision),
+    slotId: run.slotId,
+  });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 
   const autoAction = autoResolveEngineDecision(run, reason, actions);

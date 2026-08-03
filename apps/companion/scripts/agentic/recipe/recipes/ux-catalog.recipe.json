@@ -66,6 +66,9 @@
         "surface_test_id": "companion-screen-terminals",
         "until_test_id": "companion-screen-terminals-end",
         "max_scrolls": 12,
+        "visual_review": {
+          "navigation": [{ "from": "capture-review", "kind": "tab" }]
+        },
         "intent": "Preserve the visible Terminals workspace so its operational layout can be assessed.",
         "next": "open-advanced"
       },
@@ -87,8 +90,11 @@
         "path": "{{params.platform}}/03_advanced.png",
         "label": "Advanced",
         "surface_test_id": "companion-screen-advanced",
-        "until_test_id": "companion-screen-advanced-end",
+        "until_test_id": "companion-advanced-copilot",
         "max_scrolls": 12,
+        "visual_review": {
+          "navigation": [{ "from": "capture-review", "kind": "tab" }]
+        },
         "intent": "Preserve the visible Advanced hub so its navigation choices can be assessed.",
         "next": "open-settings"
       },
@@ -112,6 +118,9 @@
         "surface_test_id": "companion-screen-settings",
         "until_test_id": "companion-screen-settings-end",
         "max_scrolls": 12,
+        "visual_review": {
+          "navigation": [{ "from": "capture-review", "kind": "tab" }]
+        },
         "intent": "Preserve the visible Settings screen so its connection controls can be assessed.",
         "next": "return-advanced-for-fleet"
       },
@@ -146,6 +155,10 @@
         "surface_test_id": "companion-screen-fleet",
         "until_test_id": "companion-screen-fleet-end",
         "max_scrolls": 12,
+        "visual_review": {
+          "parent": "capture-advanced",
+          "navigation": [{ "from": "capture-advanced", "kind": "push" }]
+        },
         "intent": "Preserve the visible Fleet workspace so its slot overview can be assessed.",
         "next": "return-advanced-for-prs"
       },
@@ -180,6 +193,10 @@
         "surface_test_id": "companion-screen-prs",
         "until_test_id": "companion-screen-prs-end",
         "max_scrolls": 12,
+        "visual_review": {
+          "parent": "capture-advanced",
+          "navigation": [{ "from": "capture-advanced", "kind": "push" }]
+        },
         "intent": "Preserve the visible PR dashboard so its review status presentation can be assessed.",
         "next": "return-advanced-for-inbox"
       },
@@ -214,12 +231,16 @@
         "surface_test_id": "companion-screen-inbox",
         "until_test_id": "companion-screen-inbox-end",
         "max_scrolls": 12,
+        "visual_review": {
+          "parent": "capture-advanced",
+          "navigation": [{ "from": "capture-advanced", "kind": "push" }]
+        },
         "intent": "Preserve the visible decision inbox so its gate presentation can be assessed.",
         "next": "build-catalog"
       },
       "build-catalog": {
         "action": "command",
-        "cmd": "node scripts/screenshots/build-native-ux-catalog.mjs \"$FARMSLOT_RECIPE_ARTIFACTS_DIR\" .agent/ux-catalog-current \"{{params.platform}}\"",
+        "cmd": "node scripts/screenshots/build-recipe-ux-catalog.mjs \"$FARMSLOT_RECIPE_ARTIFACTS_DIR\" .agent/ux-catalog-current \"{{params.platform}}\" scripts/agentic/recipe/recipes/ux-catalog.recipe.json",
         "timeout_ms": 20000,
         "intent": "Build the offline HTML feedback catalog from the proven native screenshots.",
         "next": "index-catalog"
@@ -236,7 +257,12 @@
           {
             "path": ".agent/ux-catalog-current/manifest.json",
             "type": "json",
-            "label": "Companion UX route manifest"
+            "label": "Companion UX capture manifest"
+          },
+          {
+            "path": ".agent/ux-catalog-current/visual-review-source.json",
+            "type": "json",
+            "label": "Portable visual review source"
           },
           {
             "path": ".agent/ux-catalog-current/{{params.platform}}/01_review.png",

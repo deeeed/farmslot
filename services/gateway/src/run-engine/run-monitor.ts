@@ -60,6 +60,8 @@ import {
 } from '../tasks/worker-signals.js';
 import { loadTerminalContractForRun } from '../tasks/worker-terminal-contract.js';
 
+import { pendingDecisionForRun } from './decision-projection.js';
+
 type BroadcastFn = (event: string, payload: unknown) => void;
 
 let broadcastFn: BroadcastFn = () => {};
@@ -1606,7 +1608,11 @@ async function createBlockedDecision(
 
   run.decisions.push(decision);
   updateRun(runId, { status: 'blocked', decisions: run.decisions });
-  broadcastFn(Events.RUN_DECISION_NEW, { runId, decision, slotId: run.slotId });
+  broadcastFn(Events.RUN_DECISION_NEW, {
+    runId,
+    decision: pendingDecisionForRun(run, decision),
+    slotId: run.slotId,
+  });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 
   // Wait for resolution. Interactive handoffs also auto-resolve when a fresh

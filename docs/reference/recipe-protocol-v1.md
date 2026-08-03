@@ -131,6 +131,38 @@ Proof targets make claims explicit without changing execution:
 
 Every declared target must be covered by at least one node. Every `proves` id must be declared.
 
+## Visual review surfaces
+
+`ui.capture_surface` nodes and explicitly annotated `ui.screenshot` nodes may declare optional
+recipe-owned review relationships without changing adapter parameters:
+
+```json
+{
+  "action": "ui.capture_surface",
+  "path": "screens/run-detail.png",
+  "intent": "Preserve the complete run detail for visual feedback.",
+  "visual_review": {
+    "parent": "capture-run-list",
+    "navigation": [{ "from": "capture-run-list", "kind": "push" }],
+    "related": ["capture-evidence"]
+  },
+  "next": "done"
+}
+```
+
+`parent` controls hierarchy; `navigation` records one or more observed incoming paths with
+`tab | push | in-place | modal | replace`; and `related` records non-navigation context. All ids
+reference visual capture nodes in the same recipe, and parent relationships must be acyclic. Review
+renderers use these explicit relationships; they do not infer information architecture from
+workflow order. See
+[ADR-052](../adr/052-recipe-derived-visual-review-boards.md).
+
+These relationships describe reviewable evidence, not device automation internals. Interactive
+accessibility refs, selector discovery, settled UI diffs, alerts, logs, network capture, and
+performance diagnostics remain provider/authoring capabilities. A Recipe records only stable
+selectors and actions needed to reproduce the proof. Domain harnesses may add semantic navigation
+and setup actions, but project routes and screen names are not part of Recipe v1.
+
 ## Actions and manifests
 
 The protocol owns graph execution, validation, trace, and evidence contracts. Runners own action implementations and platform behavior.

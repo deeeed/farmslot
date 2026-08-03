@@ -758,7 +758,11 @@ async function captureSurface(
     });
     reachedEnd = await surfaceEndIsVisible(client, session, selection, surfaceTestId, untilTestId);
 
-    for (let index = 1; index <= maxScrolls && !reachedEnd; index += 1) {
+    let captureAttempt = 0;
+    let movedScrolls = 0;
+    let consecutiveDroppedMoves = 0;
+    while (movedScrolls < maxScrolls && !reachedEnd) {
+      captureAttempt += 1;
       const requestedPoints = await moveSurface(
         client,
         session,
@@ -766,7 +770,10 @@ async function captureSurface(
         surfaceRect,
         'toward-bottom',
       );
-      const pagePath = path.join(temporaryDir, `page-${String(index).padStart(2, '0')}.png`);
+      const pagePath = path.join(
+        temporaryDir,
+        `page-${String(captureAttempt).padStart(2, '0')}.png`,
+      );
       const screenshot = await client.capture.screenshot({
         session,
         path: pagePath,
@@ -793,14 +800,18 @@ async function captureSurface(
       if (revealedRows === 0) {
         reachedEnd =
           untilTestId === undefined ||
-          (await surfaceEndIsVisible(client, session, selection, surfaceTestId, untilTestId));
+          (await surfaceEndIsVisible(client, session, selection, surfaceTestId, untilTestId, true));
         if (!reachedEnd) {
+          consecutiveDroppedMoves += 1;
+          if (consecutiveDroppedMoves <= 2) continue;
           throw new Error(
             `ui.capture_surface stopped moving before reaching until_test_id=${untilTestId}.`,
           );
         }
         break;
       }
+      movedScrolls += 1;
+      consecutiveDroppedMoves = 0;
       pages.push({
         path: pagePath,
         surface: currentSurface,
@@ -886,17 +897,20 @@ async function resolveSurfaceRect(
   if (surfaceTestId && !requestedSurface?.rect) {
     throw new Error(`ui.capture_surface could not resolve surface_test_id=${surfaceTestId}.`);
   }
-  const scrollSurface = snapshot.nodes
-    .filter(
-      (candidate) =>
-        candidate.type === 'ScrollView' &&
-        candidate.rect !== undefined &&
-        (!requestedSurface?.rect || rectsIntersect(candidate.rect, requestedSurface.rect)),
-    )
-    .sort(
-      (left, right) =>
-        right.rect!.width * right.rect!.height - left.rect!.width * left.rect!.height,
-    )[0];
+  const scrollSurface =
+    requestedSurface?.type === 'ScrollView'
+      ? requestedSurface
+      : snapshot.nodes
+          .filter(
+            (candidate) =>
+              candidate.type === 'ScrollView' &&
+              candidate.rect !== undefined &&
+              (!requestedSurface?.rect || rectsIntersect(candidate.rect, requestedSurface.rect)),
+          )
+          .sort(
+            (left, right) =>
+              right.rect!.width * right.rect!.height - left.rect!.width * left.rect!.height,
+          )[0];
   const surface =
     scrollSurface ??
     requestedSurface ??
@@ -957,13 +971,15 @@ async function moveSurface(
   const upperY = surfaceRect.y + surfaceRect.height * 0.2;
   const lowerY = surfaceRect.y + surfaceRect.height * 0.8;
   const pixels = Math.max(1, Math.round(lowerY - upperY));
-  const x = surfaceRect.x + surfaceRect.width * 0.1;
+  // Stay near the edge to avoid nested scroll views, but outside iOS's
+  // system back-gesture zone where a vertical swipe can be dropped.
+  const x = surfaceRect.x + Math.min(32, surfaceRect.width * 0.1);
   if (direction === 'toward-bottom') {
-    await client.interactions.scroll({
+    await client.interactions.swipe({
       ...selection,
       session,
-      direction: 'down',
-      pixels,
+      from: { x, y: lowerY },
+      to: { x, y: upperY },
       durationMs: 250,
       responseLevel: 'digest',
     });
@@ -986,6 +1002,7 @@ async function surfaceEndIsVisible(
   selection: AgentDeviceSelection,
   surfaceTestId: string | undefined,
   untilTestId: string | undefined,
+  stoppedMoving = false,
 ): Promise<boolean> {
   if (!untilTestId) return false;
   const snapshot = await client.capture.snapshot({
@@ -1008,7 +1025,7 @@ async function surfaceEndIsVisible(
           candidate.hiddenContentBelow === true &&
           (!viewport || !candidate.rect || rectsIntersect(candidate.rect, viewport)),
       );
-  if (hasHiddenContentBelow) return false;
+  if (hasHiddenContentBelow && !stoppedMoving) return false;
   return snapshot.nodes.some((candidate) => {
     if (candidate.identifier !== untilTestId || !candidate.rect || !isVisibleNode(candidate)) {
       return false;

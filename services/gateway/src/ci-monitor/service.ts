@@ -43,6 +43,7 @@ export {
 } from './state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { computePRRecommendation, prStatus } from '../methods/pr.js';
+import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -904,7 +905,11 @@ async function createCIDecision(
 
   run.decisions.push(decision);
   updateRun(runId, { status: 'blocked', decisions: run.decisions });
-  broadcastFn(Events.RUN_DECISION_NEW, { runId, decision, slotId: run.slotId });
+  broadcastFn(Events.RUN_DECISION_NEW, {
+    runId,
+    decision: pendingDecisionForRun(run, decision),
+    slotId: run.slotId,
+  });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
 
   const autoAction = (() => {

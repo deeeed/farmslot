@@ -17,6 +17,7 @@ import {
 import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { getFamilyRuns } from '../family-observability/context.js';
+import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { buildGateSummary } from '../run-engine/gate-summary.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
 
@@ -469,7 +470,11 @@ export async function createRetrospective(run: Run, report: string | null): Prom
     broadcastFn(Events.DECISION_RESOLVED, { id: supersedeRetroId });
     broadcastFn(Events.RUN_UPDATED, { run: getRun(supersedeRunStored.id) });
   }
-  broadcastFn(Events.RUN_DECISION_NEW, { runId: run.id, decision, slotId: run.slotId });
+  broadcastFn(Events.RUN_DECISION_NEW, {
+    runId: run.id,
+    decision: pendingDecisionForRun(current, decision),
+    slotId: run.slotId,
+  });
   broadcastFn(Events.RUN_UPDATED, { run: getRun(run.id) });
 }
 

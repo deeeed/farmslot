@@ -515,6 +515,90 @@ test('enforces strict action schemas while allowing typed runtime references', (
   );
 });
 
+test('keeps visual review relationships out of adapter params and validates their graph', async () => {
+  const actionManifest = manifest('ui.capture_surface', {
+    type: 'object',
+    properties: { path: { type: 'string' } },
+    required: ['path'],
+    additionalProperties: false,
+  });
+  const screenshotManifest = manifest('ui.screenshot', {
+    type: 'object',
+    properties: { path: { type: 'string' } },
+    required: ['path'],
+    additionalProperties: false,
+  });
+  Object.assign(
+    actionManifest.actions as Record<string, unknown>,
+    screenshotManifest.actions as Record<string, unknown>,
+  );
+  const document = recipe({
+    overview: {
+      action: 'ui.capture_surface',
+      intent: 'Preserve the complete overview for visual feedback.',
+      path: 'overview.png',
+      next: 'detail',
+    },
+    detail: {
+      action: 'ui.screenshot',
+      intent: 'Preserve the complete detail workspace for visual feedback.',
+      path: 'detail.png',
+      visual_review: {
+        parent: 'overview',
+        navigation: [{ from: 'overview', kind: 'push' }],
+        related: ['overview'],
+      },
+      next: 'done',
+    },
+    done: { action: 'end', status: 'pass' },
+  });
+
+  assert.equal(validateRecipeWithManifest(document, actionManifest).status, 'valid');
+  const publicSchema = (await readJson(
+    'packages/protocol/schemas/recipe-v1.schema.json',
+  )) as Record<string, unknown>;
+  const validatePublicSchema = new Ajv2020({ allErrors: true, strict: false }).compile(
+    publicSchema,
+  );
+  assert.equal(validatePublicSchema(document), true, JSON.stringify(validatePublicSchema.errors));
+
+  const invalidNavigation = structuredClone(document);
+  const invalidNavigationNodes = (
+    invalidNavigation.workflow as { nodes: Record<string, Record<string, unknown>> }
+  ).nodes;
+  invalidNavigationNodes.detail.visual_review = {
+    parent: 'overview',
+    navigation: [{ from: 'overview', kind: 'drawer' }],
+  };
+  assert.ok(
+    validateRecipeWithManifest(invalidNavigation, actionManifest).findings.some(
+      (finding) => finding.code === 'workflow.invalid_visual_review_navigation',
+    ),
+  );
+
+  const cyclic = structuredClone(document);
+  const nodes = (cyclic.workflow as { nodes: Record<string, Record<string, unknown>> }).nodes;
+  nodes.overview.visual_review = { parent: 'detail' };
+  assert.ok(
+    validateRecipeWithManifest(cyclic, actionManifest).findings.some(
+      (finding) => finding.code === 'workflow.cyclic_visual_review_parent',
+    ),
+  );
+
+  const missing = structuredClone(document);
+  const missingNodes = (
+    missing.workflow as {
+      nodes: Record<string, Record<string, unknown>>;
+    }
+  ).nodes;
+  missingNodes.detail.visual_review = { parent: 'missing-capture' };
+  assert.ok(
+    validateRecipeWithManifest(missing, actionManifest).findings.some(
+      (finding) => finding.code === 'workflow.missing_visual_review_surface',
+    ),
+  );
+});
+
 test('allows manifest-defined action parameters that share call and terminal field names', () => {
   const document = recipe({
     read: {

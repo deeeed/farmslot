@@ -4,6 +4,10 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- fix(sync): avoid redundant full decision reconciliation for complete run-decision events whose optional payload is absent.
+- fix(ux-catalog): model Review, Terminals, Advanced, and Settings as sibling bottom-tab roots in the generated navigation map.
+
+- feat(companion): generate recipe-derived, optionally focused UX review boards with a typed navigation map, hierarchical Ready Gate subscreens, overall notes, and normalized point or area annotations.
 - feat(companion): add a LAN-proven backlog capture sheet plus an offline iOS/Android UX catalog for the main workspaces, run packages, and decision gates.
 - feat(companion): add a resettable dev-only continuous-gesture proof surface and one target-parameterized recipe with repeatable before/after evidence.
 - fix(workflows): reuse shared decision actions and surface active independent-review/fix work in run details instead of a premature publication gate.
