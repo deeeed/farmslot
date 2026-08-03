@@ -1394,10 +1394,12 @@ export class RoadmapPanel extends LitElement {
   }
 
   private async _deleteSelected() {
-    // Snapshot the target before the confirm dialog yields. `_selected` falls back to
-    // `_items[0]`, so a filter or run update arriving while the dialog is open can move
-    // it — and `_editHash` moves with it, so the hash guard does not catch the swap.
-    // Without this the operator confirms deleting one item and a different one goes.
+    // Snapshot the target rather than re-reading `_selected`, which falls back to
+    // `_items[0]` and so can resolve to a different item than the one named in the
+    // prompt. This is defence in depth, not a live bug: `window.confirm` blocks the JS
+    // thread, so no state update can land between the prompt and the reads below. It
+    // becomes a real swap the moment this is replaced with an async dialog — and
+    // `_editHash` moves with the selection, so the hash guard would not catch it.
     const target = this._selected;
     const expectedHash = this._editHash;
     if (!target) return;
