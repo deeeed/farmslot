@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.14.0 - 2026-08-03
+
 - feat(visual-review): start navigation maps at the top level with independently collapsible branches and expand/collapse-all controls.
 - feat(visual-review): label multi-platform captures as variants of one surface and expose an explicit Compare mode.
 - feat(visual-review): provide a lightweight project-agnostic review-board builder, recipe-artifact converter, and dynamic-port server with self-contained route/capture feedback plus color-coded, movable point and drag-area annotations.

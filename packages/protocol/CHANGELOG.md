@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.18.0 - 2026-08-03
+
 - feat(run): `failedRunCancelEffects` — the single filter every human-facing cancel caller uses to detect a partially applied cancel.
 - feat(git): worktree-target branch-diff files carry a `committed` flag — committed-vs-purely-local is knowable per file.
 
