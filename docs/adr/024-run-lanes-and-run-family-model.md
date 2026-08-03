@@ -601,9 +601,9 @@ resume CI/finalization". The five flow types are now: `fix-bug`, `review-pr`,
 - `services/gateway/src/task-writer.ts`
 - `services/gateway/src/methods/run.ts`
 
-## Amendment: Superseded in part by ADR-052 (2026-08-02)
+## Amendment: Superseded in part by ADR-053 (2026-08-02)
 
-[ADR-052](052-run-lifecycle-transition-routing.md) makes run lifecycle transitions an explicit
+[ADR-053](053-run-lifecycle-transition-routing.md) makes run lifecycle transitions an explicit
 routed call instead of a side effect of emitting `RUN_UPDATED`.
 
 Terminal-status writes for lane and family members now declare intent (`kind`, `actor`) through

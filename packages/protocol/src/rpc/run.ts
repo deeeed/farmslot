@@ -241,7 +241,7 @@ export interface RunCancelParams {
 }
 
 /**
- * Per-effect result of a cancel's cross-aggregate fan-out (ADR-052). A cancel can
+ * Per-effect result of a cancel's cross-aggregate fan-out (ADR-053). A cancel can
  * reach its terminal state while an advisory effect — settling the backlog,
  * ticking the work graph, releasing the slot — fails. Callers that only read
  * `run` would report unqualified success for a partially-applied cancel.

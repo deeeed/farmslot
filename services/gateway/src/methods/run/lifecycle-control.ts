@@ -30,7 +30,7 @@ import { getRun, updateRun } from '../../runs/store.js';
 type Emit = (event: string, payload: unknown) => void;
 
 /**
- * Takes no emitter: ADR-052 makes the transition own both store propagation and
+ * Takes no emitter: ADR-053 makes the transition own both store propagation and
  * global publication. Passing one in is what made a cancel's reach depend on
  * which caller invoked it.
  */

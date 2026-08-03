@@ -2169,7 +2169,7 @@ test('closeShipped refuses items whose queue row is mid-dispatch', async () => {
 
 test('a failed backlog write rejects the settle instead of reporting a settled cancel', async (t) => {
   // Codex round-8 P2: the settle resolved after merely *scheduling* the persist, and
-  // `schedulePersist` drops the write's rejection. ADR-052's `backlog-settle` effect
+  // `schedulePersist` drops the write's rejection. ADR-053's `backlog-settle` effect
   // would report `ok`, tick the scheduler, and skip `backlogReconcilePending` while
   // the durable file still held pre-cancel state.
   const { backlog } = await freshStores();

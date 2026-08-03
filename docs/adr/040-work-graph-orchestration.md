@@ -803,12 +803,12 @@ Only genuinely unresolved (architecture calls are made above):
 
 ---
 
-## Amendment: Superseded in part by ADR-052 (2026-08-02)
+## Amendment: Superseded in part by ADR-053 (2026-08-02)
 
-[ADR-052](052-run-lifecycle-transition-routing.md) makes run lifecycle transitions an explicit
+[ADR-053](053-run-lifecycle-transition-routing.md) makes run lifecycle transitions an explicit
 routed call instead of a side effect of emitting `RUN_UPDATED`.
 
 The scheduler currently infers operator cancellation while polling `getAllRuns()`
-(`status === 'cancelled' && !redirectedToRunId`, added by #466). Under ADR-052 the graph is told
+(`status === 'cancelled' && !redirectedToRunId`, added by #466). Under ADR-053 the graph is told
 with intent instead, and that inference becomes a backstop rather than the only signal. Scheduler
 authority over active-graph edges is unchanged.

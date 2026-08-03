@@ -1,4 +1,4 @@
-// cancel-transition.ts — the `cancel` plan for ADR-052's transition router.
+// cancel-transition.ts — the `cancel` plan for ADR-053's transition router.
 //
 // This is the first transition migrated off implicit event-bus propagation. Before
 // it, `run.cancel` held the per-request `emit` (one socket), so the backlog item kept

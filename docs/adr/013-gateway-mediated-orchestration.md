@@ -169,11 +169,11 @@ M11 solution: orchestrator is a TypeScript state machine.
 
 **Migration:** Coexistence during rollout. Skills and gateway state machine operate on different slots simultaneously. No big-bang cutover. Skills become `farmslot run fix <ticket>` CLI commands (M10.6 CLI convergence) that call gateway methods.
 
-## Amendment: Superseded in part by ADR-052 (2026-08-02)
+## Amendment: Superseded in part by ADR-053 (2026-08-02)
 
-[ADR-052](052-run-lifecycle-transition-routing.md) makes run lifecycle transitions an explicit
+[ADR-053](053-run-lifecycle-transition-routing.md) makes run lifecycle transitions an explicit
 routed call instead of a side effect of emitting `RUN_UPDATED`.
 
-This ADR established that the gateway owns the orchestration workflow; ADR-052 narrows _how_ a
+This ADR established that the gateway owns the orchestration workflow; ADR-053 narrows _how_ a
 lifecycle transition reaches the other aggregates the workflow owns (backlog, dispatch queue,
 work graph, slot). Migration is per-transition, starting with `cancel`.

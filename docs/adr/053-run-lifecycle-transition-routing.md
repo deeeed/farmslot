@@ -1,4 +1,4 @@
-# ADR-052: Run Lifecycle Transition Routing
+# ADR-053: Run Lifecycle Transition Routing
 
 **Status:** Accepted
 **Date:** 2026-08-02

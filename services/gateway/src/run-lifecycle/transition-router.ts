@@ -1,4 +1,4 @@
-// transition-router.ts — explicit routing for run lifecycle transitions (ADR-052).
+// transition-router.ts — explicit routing for run lifecycle transitions (ADR-053).
 //
 // Before this module, a terminal run status only reached the backlog and the work
 // graph if the caller happened to hold `observedBroadcast` (the interceptor built in

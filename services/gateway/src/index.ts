@@ -225,7 +225,7 @@ async function main(): Promise<void> {
       const run = (payload as { run?: import('@farmslot/protocol').Run }).run;
       if (run) {
         // Fire-and-forget backstop lane: markBacklogRunObserved now propagates its
-        // rejection so ADR-052's transition router can report a failed settle, so
+        // rejection so ADR-053's transition router can report a failed settle, so
         // this caller owns its own failure handling.
         markBacklogRunObserved(run).catch((err) => {
           console.error(`[backlog] failed to observe run: ${(err as Error).message}`);

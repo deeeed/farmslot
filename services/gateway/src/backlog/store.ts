@@ -2266,14 +2266,14 @@ export async function reconcileBacklogRun(
 }
 
 /**
- * Returns the settle promise so ADR-052's transition router can await it before
+ * Returns the settle promise so ADR-053's transition router can await it before
  * ticking the work graph, and **propagates failure** — a router that cannot tell a
  * failed settle from a successful one would tick the scheduler against stale
  * backlog state while reporting `ok`. Fire-and-forget callers must attach their own
  * `.catch`.
  *
  * ⚠ Do not add a trailing `.catch` here. Swallowing the rejection would make
- * ADR-052's `backlog-settle` effect report success on failure, and the work-graph
+ * ADR-053's `backlog-settle` effect report success on failure, and the work-graph
  * tick would then schedule against a backlog that never settled.
  */
 export function markBacklogRunObserved(run: Run): Promise<void> {
@@ -2305,7 +2305,7 @@ export function markBacklogRunObserved(run: Run): Promise<void> {
     if (!shouldApplyLinkedRunObservation(item, run)) return;
     if (applyRunObservation(item, run)) {
       // Awaited, not scheduled: `schedulePersist` drops the write's rejection, so a
-      // failed backlog write would still resolve this promise and ADR-052's
+      // failed backlog write would still resolve this promise and ADR-053's
       // `backlog-settle` effect would report `ok` — ticking the scheduler and skipping
       // `backlogReconcilePending` while the durable file still holds pre-cancel state.
       await persistNow('run-observed');

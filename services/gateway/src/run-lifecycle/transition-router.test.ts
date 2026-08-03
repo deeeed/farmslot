@@ -96,7 +96,7 @@ const cancelRequest: RunTransitionRequest = {
 };
 
 test('operator cancel settles the backlog and ticks the work graph', async () => {
-  // Regression for the gap ADR-052 documents: run.cancel holds the per-request
+  // Regression for the gap ADR-053 documents: run.cancel holds the per-request
   // emit, so the index.ts event interceptor never saw it and neither store moved.
   const h = harness(run({ workGraphId: 'wg_1', workNodeId: 'node_1' }));
 
