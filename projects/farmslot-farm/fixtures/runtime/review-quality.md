@@ -40,6 +40,7 @@ to end? Reject:
 | "Gateway-only, no recipe possible" | **must_fix** — CLI/RPC/logs reach it |
 | `#dev/*` fixture used to prove gateway *derivation* | **must_fix** — read back from the gateway |
 | Review fixes landed with no new/updated recipe node | **must_fix** — the fix is unproven; extend and re-run |
+| Fix applied to one call site while siblings share the defect | **must_fix** — enumerate the blast radius, fix the class |
 | Only mocked unit tests defend the change | **must_fix** — proves the function, not the system |
 | Asserts the call returned; claim is a side effect on another store | **must_fix** — assert that store |
 | Screenshot for a state claim, or a log for a rendering claim | suggestion — wrong level |

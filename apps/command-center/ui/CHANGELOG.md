@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(runs): the run pipeline's cancel button and the dispatch wizard's conflicting-run cancel report a partially applied cancel instead of ignoring the result — the wizard would otherwise clear the conflict and dispatch into a slot that may still be claimed.
 - fix(roadmap): full refreshes and delivery-only reloads use independent generations, so a run update can no longer discard an in-flight filter/search change; the delivery revision now ignores runs with no backlog link and backlog items with no roadmap link, ending continuous full-store reloads during unrelated run activity.
 - fix(roadmap): an explicit refresh drops its own result (and its error) when a newer refresh has claimed the panel, completing the stale-response guard across every read that writes shared roadmap state.
 - feat(slot-view): IDE-style per-file state chips (C committed / S staged / M unstaged / U untracked) in the unified diff list and changes activity, with one shared git-status palette across the source panel, changes activity, and file tree (untracked is now green everywhere, VSCode-style, instead of gray in the source panel).

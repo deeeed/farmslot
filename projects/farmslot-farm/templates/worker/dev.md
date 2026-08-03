@@ -162,6 +162,9 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
 ### Phase 6: Report + package
 
 - [ ] **17. Self-review** — read the diff against `{{review_quality_path}}` antipatterns; no inline protocol duplication or comment noise.
+- [ ] **17b. Blast radius** — for each thing you changed, list every caller, other reader/writer of the
+  same state, schema/doc describing it, and its tests; verify each. If one site had the bug, fix its
+  siblings in the same pass rather than waiting for review to find them.
 - [ ] **17a. Extend + re-run the recipe for anything you changed since Phase 2** — every review or self-review fix
   needs a node proving its claim, then a full re-run. Act on the result: failing node means fix the code, or fix an
   assertion that over-claims. Prove each new node can fail before trusting it. Unit tests do not cover wiring.

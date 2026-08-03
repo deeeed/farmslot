@@ -9,8 +9,9 @@ import type {
   ReviewRunnerId,
   ReviewValidationDepth,
   Run,
+  RunCancelResult,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import './execution-template-preview-modal.js';
 
@@ -766,8 +767,19 @@ export class DispatchWizard extends DispatchWizardState {
   private async _cancelConflictingRun(): Promise<void> {
     if (!this._activeRunConflict) return;
     try {
-      await gateway.request(Methods.RUN_CANCEL, { runId: this._activeRunConflict.id });
+      const result = await gateway.request<RunCancelResult>(Methods.RUN_CANCEL, {
+        runId: this._activeRunConflict.id,
+      });
       this._activeRunConflict = null;
+      // The conflict is genuinely resolved — the run is terminal — but a failed slot
+      // release means the slot may still be claimed, and this wizard is about to
+      // dispatch into it. Say so instead of proceeding silently.
+      const failed = failedRunCancelEffects(result.effects);
+      if (failed.length) {
+        this._error = `Run cancelled, but teardown was incomplete (${failed
+          .map((effect) => effect.name)
+          .join(', ')}) — the slot may still be claimed.`;
+      }
     } catch (err) {
       this._error = err instanceof Error ? err.message : 'Cancel failed';
     }

@@ -59,6 +59,12 @@ See `apps/command-center/CLAUDE.md` for the full protocol. If CDP is unreachable
 
 **Before patching, decide: bandage or real fix?** State the diagnosis in one sentence, then pick the long-term fix by default. A bandage is only acceptable when Arthur explicitly asks for one or the real fix is out of scope for the current task — and when you ship a bandage, call it out as a bandage and note the follow-up needed. Signs you are bandaging: adding a null-check where the null is the bug, wrapping flaky code in try/catch, special-casing one caller, duplicating logic instead of fixing the shared helper, adding a flag to skip the broken path. **Do not ship regressions while "fixing" bugs.** If a fix changes behavior for other callers, trace them and verify before declaring done.
 
+**List the blast radius before you commit, and verify each entry.** Enumerate everything that
+references what you touched — callers, other readers/writers of shared state, the schema or docs that
+describe it, and its tests — then check each one. Fix the whole class, not the instance in front of
+you: if one call site had the bug, name its siblings and confirm them. A green typecheck is not this
+check; it cannot see a contract you failed to update or a second consumer of a counter you added.
+
 ### Runner Capability First — HARD RULE
 
 **Runner-related behavior belongs in the runner capability/protocol layer.** For launch, resume, retained handoff, prompt delivery, busy/idle state, model selection, permissions, or recovery, first extend `RunnerDefinition`, `RunnerObservability`, or the shared runner command/delivery adapter. Workflow and client code may provide policy and session context, but must not select behavior with runner-name branches, parse runner TUI glyphs/messages, or duplicate runner mechanics. Runner-specific CLI syntax is allowed only inside the shared runner adapter. Prefer structured hooks and native runner session APIs; if a capability is absent, fail closed or declare it unsupported. Rendered TUI text is never positive evidence that a prompt was accepted, a turn started/completed, dispatch succeeded, or work finished. Pane inspection is limited to a `pane-only` capability or fail-closed transport safety while a structured signal is unknown. Runner-contract changes must pass the matching live scenario in `scripts/runner-validation/` through the production gateway path; unit fixtures validate structured schemas, not rendered TUI copy.
