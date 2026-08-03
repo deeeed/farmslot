@@ -8,6 +8,22 @@ export type WorkGraphStatus =
   | 'failed'
   | 'archived';
 
+/**
+ * Graph statuses the scheduler actually acts on. A `waiting` graph is still live —
+ * its required edges gate execution exactly as an `active` graph's do — so anything
+ * describing scheduler authority must treat both alike. Single definition because
+ * the scheduler and the planning-context projection disagreeing produced briefs
+ * that told agents a real dependency was "context only".
+ */
+export const SCHEDULER_AUTHORITATIVE_GRAPH_STATUSES: ReadonlySet<WorkGraphStatus> = new Set([
+  'active',
+  'waiting',
+]);
+
+export function isSchedulerAuthoritativeGraph(status: WorkGraphStatus): boolean {
+  return SCHEDULER_AUTHORITATIVE_GRAPH_STATUSES.has(status);
+}
+
 export type WorkNodeStatus =
   | 'planned'
   | 'waiting'

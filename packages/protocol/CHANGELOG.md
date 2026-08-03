@@ -6,6 +6,8 @@
 
 - feat(git): `target: 'worktree'` on `git.diff` / `git.branchDiff` — diff the merge-base against the working tree (every branch change, committed or not).
 
+- feat(work-graph): `isSchedulerAuthoritativeGraph` / `SCHEDULER_AUTHORITATIVE_GRAPH_STATUSES` — one definition of which graph statuses the scheduler acts on (`active` and `waiting`), shared by the scheduler and the planning-context projection so a `waiting` graph's required edges are never described as advisory.
+- feat(roadmap): `RoadmapDeliveryRunRef.archivedOnly` marks families whose runs are all archived, so clients render historical evidence without offering navigation that dead-ends.
 - feat(recipe): add the opt-in `ui.capture_surface` action for full-page and full-scroll-surface evidence while keeping `ui.screenshot` viewport-only.
 - feat(visual-review): define portable source and self-contained feedback documents for hierarchical full-surface or explicit viewport captures, typed multi-path navigation edges, and normalized color-coded point and area annotations.
 

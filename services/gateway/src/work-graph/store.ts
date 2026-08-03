@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import {
   Events,
+  isSchedulerAuthoritativeGraph,
   isTerminalRunStatus,
   normalizeRunTags,
   type Run,
@@ -1192,7 +1193,7 @@ export async function schedulerTick(
       // that reached it could otherwise never be reprocessed — not even once the
       // condition that flagged it cleared — leaving no way back except activate.
       if (params.graphId) return snapshot.graph.id === params.graphId;
-      return snapshot.graph.status === 'active' || snapshot.graph.status === 'waiting';
+      return isSchedulerAuthoritativeGraph(snapshot.graph.status);
     });
     const updated: WorkGraphProjection[] = [];
     for (const snapshot of targets) {

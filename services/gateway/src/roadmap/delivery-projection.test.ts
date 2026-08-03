@@ -406,6 +406,46 @@ test('planning context labels WorkGraph relations and marks scheduler authority'
   assert.equal(context.snapshotHash.length, 16);
 });
 
+test('waiting WorkGraph edges keep scheduler authority', () => {
+  // Codex round-5 P2: schedulerTick processes `active` *and* `waiting` graphs, so a
+  // required edge on a waiting graph really does gate execution. Labelling it
+  // "context only" told worker and reviewer briefs that a real dependency was
+  // advisory.
+  const target = backlogItem('bk_target', { workGraphId: 'wg_test', workNodeId: 'node_target' });
+  const upstream = backlogItem('bk_upstream');
+  const graph: WorkGraphSnapshot = {
+    graph: {
+      id: 'wg_test',
+      version: 1,
+      project: 'farmslot-farm',
+      title: 'Waiting graph',
+      source: { kind: 'manual' },
+      status: 'waiting',
+      defaultFailurePolicy: 'halt',
+      scheduler: {},
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+    nodes: [
+      workNode('node_upstream', { backlogItemId: 'bk_upstream' }),
+      workNode('node_target', { backlogItemId: 'bk_target' }),
+    ],
+    edges: [workEdge('edge_dep', 'node_upstream', 'node_target')],
+    gates: [],
+    ledger: [],
+  };
+
+  const context = buildPlanningContextProjection({
+    backlogItem: target,
+    backlogItems: [upstream, target],
+    graph,
+    generatedAt: NOW,
+  });
+
+  assert.equal(context.relations.length, 1);
+  assert.equal(context.relations[0].schedulerAuthority, true);
+});
+
 test('paused WorkGraph edges are context only and never claim scheduler authority', () => {
   const target = backlogItem('bk_target', { workGraphId: 'wg_test', workNodeId: 'node_target' });
   const upstream = backlogItem('bk_upstream');

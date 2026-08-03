@@ -9,6 +9,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - feat(git): worktree-target branch diffs — `git.branchDiff` can list every change vs base including uncommitted and untracked files (deduped per file); `git.diff` gains the same target for per-file content.
 
+- fix(roadmap): planning-context snapshots index live _and_ archived runs, matching `roadmap.get`, so a frozen snapshot's delivery counts and hash agree with the shared projection.
 - fix(tasks): checklist step enumeration moved to the shared protocol helper, and manual backlog specs no longer duplicate their Acceptance Criteria into the task description (checkbox markers are stripped from extracted ACs); jira/github spec context gets the same AC-section dedup, and dispatch warns when template label numbering diverges from step positions.
 - feat(roadmap): derive delivery lineage from the complete backlog and run stores — canonical `BacklogItem.roadmapItemId` links unioned with `RoadmapItem.promotion` provenance, deduplicated run families and PR refs (`Run.links`, `Run.prNumber`, `BacklogItem.shipped`), and consistency findings instead of failed reads.
 - feat(roadmap): read-only planning-context projection over roadmap promotion and WorkGraph nodes/edges; only edges of an active graph are marked as carrying scheduler authority (ADR-040).

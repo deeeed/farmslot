@@ -45,6 +45,15 @@ interface RequestPromotionOptions {
   roadmapRoute?: string;
 }
 
+/** Only a missing item may fall back to the list; transport/auth/server errors must surface. */
+function isRoadmapItemNotFound(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    /not found|Roadmap item not found/i.test(message) ||
+    ((err as { code?: string }).code === 'METHOD_ERROR' && /not found/i.test(message))
+  );
+}
+
 /**
  * Accepts a full id or a unique id prefix (same refs Command Center routes use).
  * Returns the whole gateway envelope so callers that need delivery lineage read
@@ -68,11 +77,7 @@ export async function resolveRoadmapGetResult(
   } catch (err) {
     // Only fall through for missing-item errors. Transport/auth/server failures
     // must not be hidden by a list fallback (cross-review P2).
-    const message = err instanceof Error ? err.message : String(err);
-    const notFound =
-      /not found|Roadmap item not found/i.test(message) ||
-      ((err as { code?: string }).code === 'METHOD_ERROR' && /not found/i.test(message));
-    if (!notFound) throw err;
+    if (!isRoadmapItemNotFound(err)) throw err;
   }
 
   const { items } = await ctx.client.call<RoadmapListResult>('roadmap.list', {
@@ -88,9 +93,11 @@ export async function resolveRoadmapGetResult(
   if (prefixed.length === 1) {
     try {
       return await ctx.client.call<RoadmapGetResult>('roadmap.get', { itemId: prefixed[0].id });
-    } catch {
-      // A gateway that cannot answer by full id either has nothing more to give;
-      // the list row is still a correct, if thinner, answer.
+    } catch (err) {
+      // Same rule as the exact lookup above: only a missing item falls back. A
+      // transport, auth, or server failure must surface — masking it would return a
+      // successful-looking result that silently dropped delivery and planning context.
+      if (!isRoadmapItemNotFound(err)) throw err;
       return { item: prefixed[0] };
     }
   }

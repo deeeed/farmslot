@@ -10,6 +10,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 - fix(slot-view): branch-diff file list self-heals — the git-status poll reloads it after a transient failure or when the commit count changes, and failures render as "Branch diff unavailable" instead of a false "No changes".
 
+- fix(roadmap): delivery badges refresh when runs or backlog items change while the panel is mounted; backlog backlinks pin the item's status so delivered lineage is not filtered out; archived-only run families render without a dead link.
 - fix(progress): markdown-fallback step parsing uses the shared protocol enumerator, so informational checkboxes (ACs, pre-merge sections) no longer inflate step counts.
 
 - feat(roadmap): roadmap list and detail render the gateway delivery badge plus clickable backlog, run-family, and PR backlinks from the shared projection. The panel no longer joins the loaded run page, so historical runs stay visible.

@@ -225,7 +225,10 @@ test('roadmap detail renders clickable backlog, run, and PR backlinks from the p
 
   const backlog = links.find((link) => link.kind === 'backlog')!;
   assert.equal(backlog.label, 'MANUAL-000059');
-  assert.equal(backlog.href, '#backlog?item=bk_manual_000059');
+  // Delivered lineage is `done`/`archived`, which the Backlog panel's default
+  // live-status filter excludes; without the pinned status the deep link lands and
+  // then clears its own selection.
+  assert.equal(backlog.href, '#backlog?item=bk_manual_000059&backlogStatus=done');
   assert.equal(backlog.external, false);
 
   const run = links.find((link) => link.kind === 'run')!;
@@ -274,4 +277,20 @@ test('list badges fall back to roadmap.list summaries when no full projection is
   assert.equal(deliveryBadgeLabel(summary), 'Delivery: partial');
   assert.equal(deliveryBadgeTone(summary.status), 'active');
   assert.equal(deliverySummaryFor('ri_missing', summaries, []), null);
+});
+
+test('an archived-only run family is shown without a dead navigation link', () => {
+  // `#runs` reads the live run map; archived runs are loaded only for this
+  // projection, so linking there would promise navigation that dead-ends.
+  const archived: RoadmapDeliveryProjection = {
+    ...DELIVERED_PROJECTION,
+    runFamilies: [{ ...DELIVERED_PROJECTION.runFamilies[0], archivedOnly: true }],
+  };
+  const run = roadmapDeliveryBacklinks(archived).find((link) => link.kind === 'run')!;
+  assert.equal(run.href, '', 'no link rather than a link to nothing');
+  assert.match(run.detail, /archived, not in the live run list/);
+
+  // A live family keeps its link.
+  const live = roadmapDeliveryBacklinks(DELIVERED_PROJECTION).find((l) => l.kind === 'run')!;
+  assert.equal(live.href, '#runs?family=2e357072-36f3-4586-91c4-8e5b6bf362fe');
 });

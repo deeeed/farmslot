@@ -173,17 +173,28 @@ export function roadmapDeliveryBacklinks(
       detail: entry.resolved
         ? `${entry.title ?? 'untitled'} · ${entry.status ?? 'unknown'}${entry.archived ? ' · archived' : ''}`
         : 'missing backlog item (stale promotion entry)',
-      href: `#backlog?item=${encodeURIComponent(entry.backlogItemId)}`,
+      // Delivered lineage is normally `done` or `archived`, which the Backlog
+      // panel's default live-status filter excludes — the deep link would land and
+      // then clear its own selection. Pin the status so the item is filtered in.
+      href: `#backlog?item=${encodeURIComponent(entry.backlogItemId)}${
+        entry.status ? `&backlogStatus=${encodeURIComponent(entry.status)}` : ''
+      }`,
       external: false,
       testId: 'roadmap-delivery-backlog-link',
     });
   }
   for (const family of projection.runFamilies) {
+    // An archived-only family is not reachable through `#runs`, which reads the live
+    // run map. Rendering a link there would promise navigation that dead-ends, so
+    // archived evidence is shown without one.
+    const reachable = !family.archivedOnly;
     links.push({
       kind: 'run',
       label: family.latestRunId.slice(0, 8),
-      detail: `${family.latestStatus} · ${family.runIds.length} run${family.runIds.length === 1 ? '' : 's'} in family`,
-      href: `#runs?family=${encodeURIComponent(family.familyId)}`,
+      detail: `${family.latestStatus} · ${family.runIds.length} run${family.runIds.length === 1 ? '' : 's'} in family${
+        reachable ? '' : ' · archived, not in the live run list'
+      }`,
+      href: reachable ? `#runs?family=${encodeURIComponent(family.familyId)}` : '',
       external: false,
       testId: 'roadmap-delivery-run-link',
     });

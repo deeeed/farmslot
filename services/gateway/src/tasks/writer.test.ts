@@ -875,6 +875,8 @@ test('checklistNumberingMismatches flags labels that diverge from step positions
     '- [ ] **3. Matches its position**',
   ].join('\n');
   assert.deepEqual(checklistNumberingMismatches(aligned), []);
+});
+
 test('graph-linked backlog run renders a bounded Related planning context section', () => {
   const projection: PlanningContextProjection = {
     backlogItemId: 'bk_target',

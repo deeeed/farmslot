@@ -112,6 +112,12 @@ export interface RoadmapDeliveryRunRef {
   latestRunId: string;
   latestStatus: RunStatus;
   latestUpdatedAt: string;
+  /**
+   * Every run in this family has been archived. Archived runs are readable for
+   * lineage but absent from `run.list`/`run.get`, so clients must not offer
+   * navigation that would dead-end.
+   */
+  archivedOnly?: boolean;
 }
 
 export interface RoadmapDeliveryBacklogRef {

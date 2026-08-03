@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import {
   type BacklogItem,
   githubPullUrl,
+  isSchedulerAuthoritativeGraph,
   parseGitHubPullUrl,
   parseGitHubRef,
   type PlanningContextProjection,
@@ -91,12 +92,16 @@ function runFamiliesFor(runs: readonly Run[]): RoadmapDeliveryRunRef[] {
     .map(([familyId, familyRuns]) => {
       const ordered = [...familyRuns].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       const latest = ordered[0];
+      // Archived runs are lineage-readable but absent from run.list/run.get, so
+      // flag families clients cannot navigate to.
+      const archivedOnly = ordered.every((run) => Boolean(run.archivedAt));
       return {
         familyId,
         runIds: ordered.map((run) => run.id),
         latestRunId: latest.id,
         latestStatus: latest.status,
         latestUpdatedAt: latest.updatedAt,
+        ...(archivedOnly ? { archivedOnly: true } : {}),
       };
     })
     .sort((a, b) => b.latestUpdatedAt.localeCompare(a.latestUpdatedAt));
@@ -109,16 +114,13 @@ interface RawPrRef {
 }
 
 /**
- * Merge raw references into one entry per PR. A run that only persisted
- * `prNumber` yields a repo-less `#421`; it is folded into the qualified
- * `owner/repo#421` from `Run.links` rather than shown twice.
- */
-/**
- * `foldBareNumbers` is only safe within a single backlog item's own evidence,
- * where a repo-less `Run.prNumber` and a qualified `Run.links` entry plausibly
- * describe the same pull request. Across backlog items they do not: backlog A's
- * bare `#421` and backlog B's `acme/repo#421` are different evidence, and folding
- * them attributes A's delivery to B's repository and undercounts multi-PR work.
+ * Merge raw references into one entry per PR.
+ *
+ * `foldBareNumbers` is only safe within a single backlog item's own evidence, where
+ * a repo-less `Run.prNumber` and a qualified `Run.links` entry plausibly describe
+ * the same pull request. Across backlog items they do not: backlog A's bare `#421`
+ * and backlog B's `acme/repo#421` are different evidence, and folding them
+ * attributes A's delivery to B's repository and undercounts multi-PR work.
  */
 function dedupePrRefs(
   raw: readonly RawPrRef[],
@@ -367,6 +369,8 @@ function dedupeRunFamilies(refs: readonly RoadmapDeliveryBacklogRef[]): RoadmapD
         existing.latestStatus = family.latestStatus;
         existing.latestUpdatedAt = family.latestUpdatedAt;
       }
+      // Reachable if any contributing view had a live run.
+      if (!family.archivedOnly) delete existing.archivedOnly;
     }
   }
   return [...byFamily.values()].sort((a, b) => b.latestUpdatedAt.localeCompare(a.latestUpdatedAt));
@@ -515,7 +519,7 @@ export function buildPlanningContextProjection(
   );
   if (graph && node) {
     const nodeById = new Map(graph.nodes.map((entry) => [entry.id, entry]));
-    const schedulerActive = graph.graph.status === 'active';
+    const schedulerActive = isSchedulerAuthoritativeGraph(graph.graph.status);
     for (const edge of graph.edges) {
       const direction =
         edge.toNodeId === node.id ? 'upstream' : edge.fromNodeId === node.id ? 'downstream' : null;

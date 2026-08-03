@@ -183,6 +183,8 @@ export class RoadmapPanel extends LitElement {
   /** Harness/injection hook: full gateway projections keyed by roadmap item id. */
   @property({ attribute: false }) delivery: RoadmapDeliveryProjection[] | null = null;
   @state() private _deliverySummaries: RoadmapDeliverySummary[] = [];
+  /** Cheap change detector for the gateway-derived projection's inputs. */
+  private _deliveryRevision = -1;
   @state() private _deliveryDetail: RoadmapDeliveryProjection | null = null;
   @state() private _allItems: RoadmapItem[] = [];
   @state() private _slots: SlotStatus[] = [];
@@ -863,6 +865,13 @@ export class RoadmapPanel extends LitElement {
   private _syncState(state: AppState) {
     const previousProjects = this._globalFilters.projects.join('\0');
     this._slots = this.slots ?? state.fleet?.slots ?? [];
+    // Delivery is derived by the gateway, so the panel cannot recompute it locally —
+    // but it must still notice that the inputs moved. Runs and backlog items
+    // changing while this panel is mounted means the projection is stale, so drop it
+    // and re-read rather than showing a badge that no longer reflects reality.
+    const deliveryInputsChanged =
+      this._deliveryRevision !== state.runs.length + state.backlogItems.length;
+    this._deliveryRevision = state.runs.length + state.backlogItems.length;
     this._backlogItems = state.backlogItems;
     this._workGraphs = state.workGraphs;
     this._globalFilters = state.globalFilters;
@@ -875,6 +884,12 @@ export class RoadmapPanel extends LitElement {
         this._syncEditor(selected);
         this._writeUrlState();
       }
+    }
+    // Injected projections (dev harness) are authoritative; only the connected
+    // path needs to re-read from the gateway.
+    if (deliveryInputsChanged && !this.items && !this.delivery && this._selectedId) {
+      this._deliveryDetail = null;
+      void this._loadDeliveryDetail(this._selectedId);
     }
     if (previousProjects !== this._globalFilters.projects.join('\0')) {
       const globalProjects = concretePlanningProjects(state.globalFilters.projects);

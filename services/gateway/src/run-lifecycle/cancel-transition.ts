@@ -15,6 +15,7 @@ import { schedulerTick } from '../work-graph/store.js';
 
 import {
   effectFailed,
+  type RunTransitionActor,
   type RunTransitionDeps,
   type RunTransitionEffect,
   type RunTransitionPlan,
@@ -30,6 +31,13 @@ export interface CancelCollaborators {
   releaseSlot(run: Run): Promise<void>;
   emit(event: string, payload: unknown): void;
 }
+
+/** An engine- or recovery-driven cancel must not claim an operator did it. */
+const DEFAULT_CANCEL_REASON: Record<RunTransitionActor, string> = {
+  operator: 'Cancelled by user',
+  engine: 'Cancelled by the run engine',
+  recovery: 'Cancelled during recovery',
+};
 
 function cancelEffects(collaborators: CancelCollaborators): {
   before: RunTransitionSyncEffect[];
@@ -111,7 +119,7 @@ export function cancelPlan(
       return {
         status: 'cancelled',
         completedAt,
-        error: request.reason ?? 'Cancelled by user',
+        error: request.reason ?? DEFAULT_CANCEL_REASON[request.actor],
         steps: run.steps.map((step) =>
           step.status === 'running' || step.status === 'pending'
             ? { ...step, status: 'skipped' as const, completedAt }

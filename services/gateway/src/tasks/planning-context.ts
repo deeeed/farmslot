@@ -23,7 +23,7 @@ import {
   buildRunIndexByBacklogItem,
 } from '../roadmap/delivery-projection.js';
 import { findRoadmapItemById, loadWorkGraphSnapshot } from '../roadmap/store.js';
-import { getAllRuns } from '../runs/store.js';
+import { getAllRuns, getArchivedRuns } from '../runs/store.js';
 
 export const PLANNING_CONTEXT_INPUT = 'inputs/planning-context.json';
 
@@ -152,7 +152,13 @@ export async function resolveRunPlanningContext(
         buildRoadmapDeliveryProjection({
           item: roadmapItem,
           backlogItems,
-          runsByBacklogItemId: buildRunIndexByBacklogItem(getAllRuns()),
+          // Live plus archived, matching the roadmap store: a frozen snapshot that
+          // omitted archived attempts would report different delivery counts — and a
+          // different hash — than the projection it is supposed to mirror.
+          runsByBacklogItemId: buildRunIndexByBacklogItem([
+            ...getAllRuns(),
+            ...(await getArchivedRuns()),
+          ]),
           generatedAt: new Date().toISOString(),
         }),
       )
