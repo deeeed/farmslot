@@ -6,11 +6,13 @@ import type { AgentContext } from '@farmslot/protocol';
 import { targetForChecklistBasename } from '../tasks/checklist-target.js';
 
 import {
+  resumeReviewAgentPromptDelivery,
   reviewerChecklistBasename,
   reviewerFeedbackRelPath,
   scopeReviewFeedbackPath,
   selectRecoverableReviewContext,
   selfReviewChecklistMarkPrompt,
+  waitForRecoveredReviewerOrCleanup,
 } from './review-agent.js';
 
 test('restart recovery reclaims only the newest matching in-flight reviewer', () => {
@@ -103,4 +105,53 @@ test('review agent does not rewrite a similarly named artifact directory', () =>
     scoped,
     'Keep my-artifacts/review-feedback.md; write artifacts/review-feedback.rev-codex.md, now.',
   );
+});
+
+test('review prompt recovery reuses the exact live reviewer pane', async () => {
+  const vars = {
+    projectName: 'farmslot-farm',
+  } as Parameters<typeof resumeReviewAgentPromptDelivery>[0];
+  let sentPane = '';
+  let sentPrompt = '';
+
+  const outcome = await resumeReviewAgentPromptDelivery(
+    vars,
+    'missing-run',
+    {
+      id: 'rev-claude',
+      runner: 'claude',
+      taskFile: 'tasks/run-1/SELF-REVIEW.rev-claude.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW.rev-claude-SIGNAL.json',
+      target: { session: 'ff-1', window: 'rev-claude', pane: null, target: 'ff-1:rev-claude' },
+      attemptStartedAt: '2026-08-03T16:00:00.000Z',
+    },
+    {
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%22', panePid: '2002' }),
+      isRunnerAliveUnderPane: async () => true,
+      resolveWorkerDispatchPrompt: async () => 'Review the prepared package.',
+      resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
+      sendRunnerPostLaunchPrompt: async (_vars, paneId, _runner, prompt) => {
+        sentPane = paneId;
+        sentPrompt = prompt;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'delivered');
+  assert.equal(sentPane, '%22');
+  assert.match(sentPrompt, /SELF-REVIEW\.rev-claude\.md/);
+  assert.match(sentPrompt, /review-feedback\.rev-claude\.md/);
+});
+
+test('review recovery timeout performs cleanup before allowing a fresh reviewer', async () => {
+  const cleanupReasons: string[] = [];
+  const completed = await waitForRecoveredReviewerOrCleanup(
+    async () => false,
+    async (reason) => {
+      cleanupReasons.push(reason);
+    },
+  );
+
+  assert.equal(completed, false);
+  assert.deepEqual(cleanupReasons, ['recovered reviewer timeout']);
 });

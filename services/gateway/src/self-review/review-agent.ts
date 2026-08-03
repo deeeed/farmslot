@@ -149,6 +149,22 @@ export function selectRecoverableReviewContext(
   );
 }
 
+interface ReviewPromptRecoveryDependencies {
+  resolveExactTmuxWindowPane: typeof resolveExactTmuxWindowPane;
+  isRunnerAliveUnderPane: typeof isRunnerAliveUnderPane;
+  resolveWorkerDispatchPrompt: typeof resolveWorkerDispatchPrompt;
+  resolveProjectRuntimeDir: typeof resolveProjectRuntimeDir;
+  sendRunnerPostLaunchPrompt: typeof sendRunnerPostLaunchPrompt;
+}
+
+const defaultReviewPromptRecoveryDependencies: ReviewPromptRecoveryDependencies = {
+  resolveExactTmuxWindowPane,
+  isRunnerAliveUnderPane,
+  resolveWorkerDispatchPrompt,
+  resolveProjectRuntimeDir,
+  sendRunnerPostLaunchPrompt,
+};
+
 /**
  * Re-assert the exact checklist prompt for a reviewer that survived a gateway
  * restart. The shared delivery adapter proves accepted/running/buffered state,
@@ -162,16 +178,23 @@ export async function resumeReviewAgentPromptDelivery(
     AgentContext,
     'id' | 'runner' | 'taskFile' | 'signalFile' | 'target' | 'attemptStartedAt' | 'startedAt'
   >,
+  dependencyOverrides: Partial<ReviewPromptRecoveryDependencies> = {},
 ): Promise<'delivered' | 'inactive' | 'unsupported'> {
+  const dependencies = {
+    ...defaultReviewPromptRecoveryDependencies,
+    ...dependencyOverrides,
+  };
   const target = context.target?.target;
   const taskMdPath = context.taskFile;
   const runner = context.runner;
   if (!target || !taskMdPath || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
     return 'unsupported';
   }
-  const pane = await resolveExactTmuxWindowPane(vars, target);
+  const pane = await dependencies.resolveExactTmuxWindowPane(vars, target);
   if (!pane) return 'inactive';
-  if (!(await isRunnerAliveUnderPane(vars, pane.panePid, runner, { timeout: 10_000 }))) {
+  if (
+    !(await dependencies.isRunnerAliveUnderPane(vars, pane.panePid, runner, { timeout: 10_000 }))
+  ) {
     return 'inactive';
   }
 
@@ -179,14 +202,17 @@ export async function resumeReviewAgentPromptDelivery(
   const reviewTarget = targetForChecklistBasename(path.posix.basename(taskMdPath));
   const feedbackRelPath = reviewerFeedbackRelPath(context.id);
   const parentRun = getRun(runId);
-  const prompt = `${await resolveWorkerDispatchPrompt(parentRun?.project ?? vars.projectName, {
-    taskFile: taskMdPath,
-    taskDir,
-  })}\n\n${selfReviewChecklistMarkPrompt(taskDir, taskMdPath, reviewTarget, feedbackRelPath)}`;
+  const prompt = `${await dependencies.resolveWorkerDispatchPrompt(
+    parentRun?.project ?? vars.projectName,
+    {
+      taskFile: taskMdPath,
+      taskDir,
+    },
+  )}\n\n${selfReviewChecklistMarkPrompt(taskDir, taskMdPath, reviewTarget, feedbackRelPath)}`;
   const attemptStartedAtMs = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
   const baselineMs = Number.isFinite(attemptStartedAtMs) ? attemptStartedAtMs : Date.now();
-  const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
-  await sendRunnerPostLaunchPrompt(
+  const runtimeDir = await dependencies.resolveProjectRuntimeDir(parentRun?.project);
+  await dependencies.sendRunnerPostLaunchPrompt(
     vars,
     pane.paneId,
     runner,
@@ -208,6 +234,15 @@ export async function resumeReviewAgentPromptDelivery(
     },
   );
   return 'delivered';
+}
+
+export async function waitForRecoveredReviewerOrCleanup(
+  waitForCompletion: () => Promise<boolean>,
+  abandonRecoveredReviewer: (reason: string) => Promise<unknown>,
+): Promise<boolean> {
+  if (await waitForCompletion()) return true;
+  await abandonRecoveredReviewer('recovered reviewer timeout');
+  return false;
 }
 
 export function scopeReviewFeedbackPath(template: string, feedbackRelPath: string): string {
@@ -395,19 +430,23 @@ async function recoverRunningReviewAgent(params: {
   });
   let completedSuccessfully = false;
   try {
-    const completed = await waitForReviewCompletion(
-      params.vars,
-      params.session,
-      params.taskDir,
-      params.reviewTimeoutMs,
-      params.runId,
-      params.runner,
-      reviewWindow,
-      context.id,
-      signalBasename,
-      feedbackRelPath,
+    const completed = await waitForRecoveredReviewerOrCleanup(
+      () =>
+        waitForReviewCompletion(
+          params.vars,
+          params.session,
+          params.taskDir,
+          params.reviewTimeoutMs,
+          params.runId,
+          params.runner,
+          reviewWindow,
+          context.id,
+          signalBasename,
+          feedbackRelPath,
+        ),
+      abandonRecoveredReviewer,
     );
-    if (!completed) return abandonRecoveredReviewer('recovered reviewer timeout');
+    if (!completed) return null;
     const feedback = await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath);
     await waitForSessionTranscriptToSettle(params.vars, context.runnerSessionPath ?? null);
     const usage = context.runnerSessionPath

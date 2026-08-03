@@ -15,15 +15,39 @@ import {
 test('recovery ignores the same terminal reviewer signal but accepts a later continuation', () => {
   assert.equal(
     recoveredReviewAlreadyIngested(
-      { completedAt: '2026-08-03T16:00:00.000Z' },
+      {
+        completedAt: '2026-08-03T16:00:00.000Z',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
       { completedAt: '2026-08-03T16:00:00.000Z' },
     ),
     true,
   );
   assert.equal(
     recoveredReviewAlreadyIngested(
-      { completedAt: '2026-08-03T16:00:00.000Z' },
+      {
+        completedAt: '2026-08-03T16:00:00.000Z',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
       { completedAt: '2026-08-03T16:05:00.000Z' },
+    ),
+    false,
+  );
+});
+
+test('recovery replaces a later failed delivery placeholder with the reviewer verdict', () => {
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      {
+        completedAt: '2026-08-03T16:05:00.000Z',
+        verdict: 'failed',
+        unresolvedCount: 0,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+      },
+      { completedAt: '2026-08-03T16:00:00.000Z' },
     ),
     false,
   );

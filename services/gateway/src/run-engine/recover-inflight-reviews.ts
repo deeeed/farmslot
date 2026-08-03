@@ -572,9 +572,16 @@ async function ingestRecoveredReviewer(
 }
 
 export function recoveredReviewAlreadyIngested(
-  existing: Pick<IndependentReviewStatus, 'completedAt'>,
+  existing: Pick<
+    IndependentReviewStatus,
+    'completedAt' | 'verdict' | 'unresolvedCount' | 'feedbackSent' | 'recoveryContinuationPending'
+  >,
   recovered: Pick<IndependentReviewStatus, 'completedAt'>,
 ): boolean {
+  // A delivery placeholder records the time the orchestration failed, which
+  // can be later than the reviewer's already-written terminal signal. It is
+  // not an ingested verdict and must never suppress that recovered result.
+  if (isFailedReviewPlaceholder(existing)) return false;
   const existingAt = Date.parse(existing.completedAt ?? '');
   const recoveredAt = Date.parse(recovered.completedAt ?? '');
   return Number.isFinite(existingAt) && Number.isFinite(recoveredAt) && recoveredAt <= existingAt;

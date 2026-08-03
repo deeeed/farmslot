@@ -178,6 +178,21 @@ export async function resolveTmuxPaneId(
   return paneId || null;
 }
 
+export function selectExactTmuxWindowPane(
+  output: string,
+  session: string,
+  windowName: string,
+): { paneId: string; panePid: string } | null {
+  for (const line of output.split('\n')) {
+    const [candidateSession, candidateWindow, paneId, panePid] = line.split('\t');
+    if (candidateSession !== session || candidateWindow !== windowName) continue;
+    return paneId && panePid && /^%\d+$/.test(paneId) && /^\d+$/.test(panePid)
+      ? { paneId, panePid }
+      : null;
+  }
+  return null;
+}
+
 /**
  * Resolve a persisted `session:window-name` without tmux's prefix matching.
  * A missing `rev-claude` must not silently bind to `rev2-claude` during
@@ -194,17 +209,12 @@ export async function resolveExactTmuxWindowPane(
   const result = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `list-panes -a -F '#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_pid}' 2>/dev/null | ` +
-        `awk -F '\t' -v session=${shellQuote(session)} -v window=${shellQuote(windowName)} ` +
-        `'\$1 == session && \$2 == window { print \$3 "\\t" \$4; exit }'`,
+      `list-panes -a -F '#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_pid}' 2>/dev/null`,
     ),
     { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
   );
   if (result.exitCode !== 0) return null;
-  const [paneId, panePid] = result.stdout.trim().split('\t');
-  return paneId && panePid && /^%\d+$/.test(paneId) && /^\d+$/.test(panePid)
-    ? { paneId, panePid }
-    : null;
+  return selectExactTmuxWindowPane(result.stdout, session, windowName);
 }
 
 /**

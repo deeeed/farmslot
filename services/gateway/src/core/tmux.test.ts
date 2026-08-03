@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import {
   parseTmuxKeys,
+  selectExactTmuxWindowPane,
   selectResolvedTmuxSession,
   shellQuote,
   tmuxSendTextCommand,
@@ -47,5 +48,21 @@ describe('selectResolvedTmuxSession', () => {
 
   it('falls back to the configured session when pane-path matches are ambiguous', () => {
     assert.equal(selectResolvedTmuxSession('mm-1', ['example-mobile-1', 'shadow-session']), 'mm-1');
+  });
+});
+
+describe('selectExactTmuxWindowPane', () => {
+  it('does not bind a missing reviewer window to a prefixed sibling', () => {
+    const panes = [
+      'ff-1\trev2-claude\t%21\t2001',
+      'ff-1\trev-claude\t%22\t2002',
+      'ff-2\trev-claude\t%23\t2003',
+    ].join('\n');
+
+    assert.deepEqual(selectExactTmuxWindowPane(panes, 'ff-1', 'rev-claude'), {
+      paneId: '%22',
+      panePid: '2002',
+    });
+    assert.equal(selectExactTmuxWindowPane(panes, 'ff-1', 'rev1-claude'), null);
   });
 });
