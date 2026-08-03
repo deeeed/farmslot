@@ -217,7 +217,13 @@ export async function gitDiscard(params: GitDiscardParams): Promise<OkResult> {
   return { ok: true };
 }
 
-function numstatNewPath(raw: string): string {
+/**
+ * Normalize a `--numstat` rename path ("old => new" or "pre/{old => new}/post")
+ * to the new path. Git quotes pathological names (tabs, braces) in C-style
+ * quoting, which never matches these patterns — such rows pass through raw,
+ * matching the pre-rename behavior.
+ */
+export function numstatNewPath(raw: string): string {
   const braced = raw.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
   if (braced) return `${braced[1]}${braced[3]}${braced[4]}`;
   const plain = raw.match(/^(.*) => (.*)$/);
@@ -260,7 +266,7 @@ export async function gitBranchDiff(
   const worktree = params.target === 'worktree';
   const diffRange = worktree ? mergeBase : `${mergeBase}..HEAD`;
 
-  const [nameStatusResult, numstatResult, untrackedResult] = await Promise.all([
+  const [nameStatusResult, numstatResult, untrackedResult, committedResult] = await Promise.all([
     gitExec(
       params.slotId,
       ['diff', '--name-status', diffRange],
@@ -272,6 +278,17 @@ export async function gitBranchDiff(
       ? gitExec(
           params.slotId,
           ['ls-files', '--others', '--exclude-standard'],
+          { maxBuffer: 10 * 1024 * 1024 },
+          deps,
+        )
+      : Promise.resolve({ stdout: '', stderr: '' }),
+    // Worktree mode also lists the committed-only set so each file can carry
+    // a committed flag (committed vs purely-local is invisible in a
+    // merge-base→worktree diff alone).
+    worktree
+      ? gitExec(
+          params.slotId,
+          ['diff', '--name-status', `${mergeBase}..HEAD`],
           { maxBuffer: 10 * 1024 * 1024 },
           deps,
         )
@@ -338,6 +355,23 @@ export async function gitBranchDiff(
   for (const path of untrackedResult.stdout.split('\n')) {
     if (!path || seen.has(path)) continue;
     files.push({ path, status: 'A', additions: 0, deletions: 0 });
+  }
+
+  if (worktree) {
+    const committedPaths = new Set<string>();
+    for (const line of committedResult.stdout.split('\n')) {
+      if (!line) continue;
+      const parts = line.split('\t');
+      // "STATUS\tpath" or "R###\told\tnew" — the new path is the identity.
+      if (parts.length >= 2) committedPaths.add(parts[parts.length - 1]);
+    }
+    for (const file of files) {
+      // A worktree rename lists the file under its new path while the
+      // committed set may know it by the old one — either match counts.
+      file.committed =
+        committedPaths.has(file.path) ||
+        (file.oldPath !== undefined && committedPaths.has(file.oldPath));
+    }
   }
 
   return { base, head, files, totalAdditions, totalDeletions };

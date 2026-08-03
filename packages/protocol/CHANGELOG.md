@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat(git): worktree-target branch-diff files carry a `committed` flag — committed-vs-purely-local is knowable per file.
+
 - feat(git): `target: 'worktree'` on `git.diff` / `git.branchDiff` — diff the merge-base against the working tree (every branch change, committed or not).
 
 - feat(recipe): add the opt-in `ui.capture_surface` action for full-page and full-scroll-surface evidence while keeping `ui.screenshot` viewport-only.

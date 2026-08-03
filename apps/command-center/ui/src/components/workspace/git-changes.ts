@@ -1,6 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { gitStateChips, gitStatusColor, stateChipStyles } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 // Local types (protocol types not imported in isolated phase)
@@ -19,6 +20,8 @@ interface BranchDiffFile {
   oldPath?: string;
   additions: number;
   deletions: number;
+  /** Worktree scope: file also has committed changes vs base. */
+  committed?: boolean;
 }
 
 type FileListViewMode = 'tree' | 'list';
@@ -35,20 +38,7 @@ interface ChangeTreeNode {
   committedFile?: BranchDiffFile;
 }
 
-function statusColor(status: GitChangeStatus): string {
-  switch (status) {
-    case 'M':
-      return '#6366f1';
-    case 'A':
-      return '#00ff88';
-    case 'D':
-      return '#ff4444';
-    case '?':
-      return '#888';
-    case 'R':
-      return '#ffcc00';
-  }
-}
+const statusColor = gitStatusColor;
 
 function basename(path: string): string {
   const parts = path.split('/');
@@ -169,276 +159,294 @@ export class GitChanges extends LitElement {
   @state() private _viewMode: FileListViewMode = 'tree';
   @state() private _collapsedTreePaths = new Set<string>();
 
-  static styles = css`
-    :host {
-      display: block;
-      background: transparent;
-      font-family: ${unsafeCSS(fonts.mono)};
-      font-size: 13px;
-      color: #e0e0e0;
+  /** Per-path working-tree entries — rebuilt on demand, avoids O(rows x changes) filters. */
+  private get _wtByPath(): Map<string, GitChange[]> {
+    if (this._wtByPathCache?.source !== this.changes) {
+      const map = new Map<string, GitChange[]>();
+      for (const change of this.changes) {
+        const list = map.get(change.path);
+        if (list) list.push(change);
+        else map.set(change.path, [change]);
+      }
+      this._wtByPathCache = { source: this.changes, map };
     }
+    return this._wtByPathCache.map;
+  }
+  private _wtByPathCache: { source: GitChange[]; map: Map<string, GitChange[]> } | null = null;
 
-    .header {
-      display: flex;
-      align-items: center;
-      gap: ${unsafeCSS(spacing.lg)};
-      padding: ${unsafeCSS(spacing.lg)} ${unsafeCSS(spacing.xl)};
-      background: ${unsafeCSS(colors.bgSurface)};
-      border-bottom: 1px solid #1e1e36;
-    }
+  static styles = [
+    stateChipStyles,
+    css`
+      :host {
+        display: block;
+        background: transparent;
+        font-family: ${unsafeCSS(fonts.mono)};
+        font-size: 13px;
+        color: #e0e0e0;
+      }
 
-    .branch {
-      font-weight: 600;
-      color: ${unsafeCSS(colors.accent)};
-      font-size: ${unsafeCSS(fonts.sizeSm)};
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
+      .header {
+        display: flex;
+        align-items: center;
+        gap: ${unsafeCSS(spacing.lg)};
+        padding: ${unsafeCSS(spacing.lg)} ${unsafeCSS(spacing.xl)};
+        background: ${unsafeCSS(colors.bgSurface)};
+        border-bottom: 1px solid #1e1e36;
+      }
 
-    .sync-info {
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      color: ${unsafeCSS(colors.textMuted)};
-      display: flex;
-      gap: ${unsafeCSS(spacing.md)};
-    }
+      .branch {
+        font-weight: 600;
+        color: ${unsafeCSS(colors.accent)};
+        font-size: ${unsafeCSS(fonts.sizeSm)};
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
 
-    .ahead {
-      color: ${unsafeCSS(colors.statusOk)};
-    }
-    .behind {
-      color: ${unsafeCSS(colors.statusWarn)};
-    }
+      .sync-info {
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        color: ${unsafeCSS(colors.textMuted)};
+        display: flex;
+        gap: ${unsafeCSS(spacing.md)};
+      }
 
-    .file-count {
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      color: ${unsafeCSS(colors.textMuted)};
-      margin-left: auto;
-      white-space: nowrap;
-    }
+      .ahead {
+        color: ${unsafeCSS(colors.statusOk)};
+      }
+      .behind {
+        color: ${unsafeCSS(colors.statusWarn)};
+      }
 
-    .file-list {
-      overflow-y: auto;
-    }
+      .file-count {
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        color: ${unsafeCSS(colors.textMuted)};
+        margin-left: auto;
+        white-space: nowrap;
+      }
 
-    .file-list::-webkit-scrollbar {
-      width: 6px;
-    }
-    .file-list::-webkit-scrollbar-thumb {
-      background: ${unsafeCSS(colors.textMuted)};
-      border-radius: 3px;
-    }
+      .file-list {
+        overflow-y: auto;
+      }
 
-    .group-header {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px ${unsafeCSS(spacing.xl)};
-      cursor: pointer;
-      user-select: none;
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      color: ${unsafeCSS(colors.textMuted)};
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
+      .file-list::-webkit-scrollbar {
+        width: 6px;
+      }
+      .file-list::-webkit-scrollbar-thumb {
+        background: ${unsafeCSS(colors.textMuted)};
+        border-radius: 3px;
+      }
 
-    .group-header:hover {
-      color: ${unsafeCSS(colors.textSecondary)};
-      background: rgba(99, 102, 241, 0.05);
-    }
+      .group-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px ${unsafeCSS(spacing.xl)};
+        cursor: pointer;
+        user-select: none;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        color: ${unsafeCSS(colors.textMuted)};
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
 
-    .group-arrow {
-      font-size: 10px;
-      width: 12px;
-      text-align: center;
-    }
+      .group-header:hover {
+        color: ${unsafeCSS(colors.textSecondary)};
+        background: rgba(99, 102, 241, 0.05);
+      }
 
-    .group-badge {
-      margin-left: auto;
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      color: ${unsafeCSS(colors.textMuted)};
-    }
+      .group-arrow {
+        font-size: 10px;
+        width: 12px;
+        text-align: center;
+      }
 
-    .file-row {
-      display: flex;
-      align-items: center;
-      gap: ${unsafeCSS(spacing.md)};
-      padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.xl)};
-      padding-left: 28px;
-      cursor: pointer;
-      transition: background 0.1s;
-      position: relative;
-    }
+      .group-badge {
+        margin-left: auto;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        color: ${unsafeCSS(colors.textMuted)};
+      }
 
-    .file-row:hover {
-      background: rgba(99, 102, 241, 0.1);
-    }
+      .file-row {
+        display: flex;
+        align-items: center;
+        gap: ${unsafeCSS(spacing.md)};
+        padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.xl)};
+        padding-left: 28px;
+        cursor: pointer;
+        transition: background 0.1s;
+        position: relative;
+      }
 
-    .file-row.selected {
-      background: rgba(99, 102, 241, 0.18);
-    }
+      .file-row:hover {
+        background: rgba(99, 102, 241, 0.1);
+      }
 
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 18px;
-      height: 18px;
-      border-radius: ${unsafeCSS(radii.sm)};
-      font-size: 11px;
-      font-weight: 700;
-      flex-shrink: 0;
-    }
+      .file-row.selected {
+        background: rgba(99, 102, 241, 0.18);
+      }
 
-    .file-path {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 13px;
-      flex: 1;
-    }
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: ${unsafeCSS(radii.sm)};
+        font-size: 11px;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
 
-    .file-basename {
-      font-weight: 600;
-      color: ${unsafeCSS(colors.textPrimary)};
-    }
+      .file-path {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+        flex: 1;
+      }
 
-    .file-dir {
-      color: ${unsafeCSS(colors.textMuted)};
-    }
+      .file-basename {
+        font-weight: 600;
+        color: ${unsafeCSS(colors.textPrimary)};
+      }
 
-    .old-path {
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      color: ${unsafeCSS(colors.textMuted)};
-      margin-left: 46px;
-      padding: 0 ${unsafeCSS(spacing.xl)} ${unsafeCSS(spacing.sm)};
-    }
+      .file-dir {
+        color: ${unsafeCSS(colors.textMuted)};
+      }
 
-    .file-actions {
-      display: flex;
-      gap: 2px;
-      opacity: 0;
-      flex-shrink: 0;
-      transition: opacity 0.1s;
-    }
+      .old-path {
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        color: ${unsafeCSS(colors.textMuted)};
+        margin-left: 46px;
+        padding: 0 ${unsafeCSS(spacing.xl)} ${unsafeCSS(spacing.sm)};
+      }
 
-    .file-row:hover .file-actions {
-      opacity: 1;
-    }
+      .file-actions {
+        display: flex;
+        gap: 2px;
+        opacity: 0;
+        flex-shrink: 0;
+        transition: opacity 0.1s;
+      }
 
-    .file-action-btn {
-      width: 20px;
-      height: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border: none;
-      background: transparent;
-      color: ${unsafeCSS(colors.textMuted)};
-      font-size: 13px;
-      cursor: pointer;
-      border-radius: 3px;
-      font-family: ${unsafeCSS(fonts.mono)};
-    }
+      .file-row:hover .file-actions {
+        opacity: 1;
+      }
 
-    .file-action-btn:hover {
-      background: rgba(99, 102, 241, 0.15);
-      color: ${unsafeCSS(colors.textPrimary)};
-    }
+      .file-action-btn {
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        background: transparent;
+        color: ${unsafeCSS(colors.textMuted)};
+        font-size: 13px;
+        cursor: pointer;
+        border-radius: 3px;
+        font-family: ${unsafeCSS(fonts.mono)};
+      }
 
-    .file-action-btn.danger:hover {
-      background: rgba(255, 68, 68, 0.15);
-      color: ${unsafeCSS(colors.statusFail)};
-    }
+      .file-action-btn:hover {
+        background: rgba(99, 102, 241, 0.15);
+        color: ${unsafeCSS(colors.textPrimary)};
+      }
 
-    .file-action-btn.confirming {
-      background: rgba(255, 204, 0, 0.2);
-      color: ${unsafeCSS(colors.statusWarn)};
-      opacity: 1;
-    }
+      .file-action-btn.danger:hover {
+        background: rgba(255, 68, 68, 0.15);
+        color: ${unsafeCSS(colors.statusFail)};
+      }
 
-    .empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: ${unsafeCSS(spacing.md)};
-      padding: ${unsafeCSS(spacing.xxl)};
-      color: ${unsafeCSS(colors.textMuted)};
-      font-size: ${unsafeCSS(fonts.sizeSm)};
-      text-align: center;
-    }
+      .file-action-btn.confirming {
+        background: rgba(255, 204, 0, 0.2);
+        color: ${unsafeCSS(colors.statusWarn)};
+        opacity: 1;
+      }
 
-    .file-stats {
-      display: flex;
-      gap: 6px;
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      flex-shrink: 0;
-    }
+      .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: ${unsafeCSS(spacing.md)};
+        padding: ${unsafeCSS(spacing.xxl)};
+        color: ${unsafeCSS(colors.textMuted)};
+        font-size: ${unsafeCSS(fonts.sizeSm)};
+        text-align: center;
+      }
 
-    .view-toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 2px;
-      margin-left: auto;
-      padding: 2px;
-      border: 1px solid rgba(99, 102, 241, 0.25);
-      border-radius: ${unsafeCSS(radii.sm)};
-      background: rgba(99, 102, 241, 0.08);
-    }
+      .file-stats {
+        display: flex;
+        gap: 6px;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        flex-shrink: 0;
+      }
 
-    .view-toggle-btn {
-      border: 0;
-      border-radius: 3px;
-      background: transparent;
-      color: ${unsafeCSS(colors.textMuted)};
-      cursor: pointer;
-      font-family: ${unsafeCSS(fonts.mono)};
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      padding: 2px 6px;
-    }
+      .view-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        margin-left: auto;
+        padding: 2px;
+        border: 1px solid rgba(99, 102, 241, 0.25);
+        border-radius: ${unsafeCSS(radii.sm)};
+        background: rgba(99, 102, 241, 0.08);
+      }
 
-    .view-toggle-btn.active {
-      background: rgba(99, 102, 241, 0.24);
-      color: ${unsafeCSS(colors.accent)};
-    }
+      .view-toggle-btn {
+        border: 0;
+        border-radius: 3px;
+        background: transparent;
+        color: ${unsafeCSS(colors.textMuted)};
+        cursor: pointer;
+        font-family: ${unsafeCSS(fonts.mono)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        padding: 2px 6px;
+      }
 
-    .tree-dir-row {
-      display: flex;
-      align-items: center;
-      gap: ${unsafeCSS(spacing.sm)};
-      padding: 3px ${unsafeCSS(spacing.xl)};
-      cursor: pointer;
-      user-select: none;
-    }
+      .view-toggle-btn.active {
+        background: rgba(99, 102, 241, 0.24);
+        color: ${unsafeCSS(colors.accent)};
+      }
 
-    .tree-dir-row:hover {
-      background: rgba(99, 102, 241, 0.05);
-    }
+      .tree-dir-row {
+        display: flex;
+        align-items: center;
+        gap: ${unsafeCSS(spacing.sm)};
+        padding: 3px ${unsafeCSS(spacing.xl)};
+        cursor: pointer;
+        user-select: none;
+      }
 
-    .tree-arrow {
-      width: 12px;
-      text-align: center;
-      color: ${unsafeCSS(colors.textMuted)};
-      font-size: 10px;
-    }
+      .tree-dir-row:hover {
+        background: rgba(99, 102, 241, 0.05);
+      }
 
-    .tree-dir-name {
-      color: ${unsafeCSS(colors.textSecondary)};
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
+      .tree-arrow {
+        width: 12px;
+        text-align: center;
+        color: ${unsafeCSS(colors.textMuted)};
+        font-size: 10px;
+      }
 
-    .tree-dir-meta {
-      display: flex;
-      gap: 6px;
-      margin-left: auto;
-      color: ${unsafeCSS(colors.textMuted)};
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      white-space: nowrap;
-    }
-  `;
+      .tree-dir-name {
+        color: ${unsafeCSS(colors.textSecondary)};
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tree-dir-meta {
+        display: flex;
+        gap: 6px;
+        margin-left: auto;
+        color: ${unsafeCSS(colors.textMuted)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        white-space: nowrap;
+      }
+    `,
+  ];
 
   private _select(change: GitChange) {
     this.selectedPath = change.path;
@@ -590,8 +598,7 @@ export class GitChanges extends LitElement {
     // working-tree actions for files with local modifications. A file can
     // appear twice in changes (staged AND unstaged) — collect all entries so
     // neither action set is lost.
-    const wtEntries =
-      this.committedScope === 'worktree' ? this.changes.filter((c) => c.path === f.path) : [];
+    const wtEntries = this.committedScope === 'worktree' ? (this._wtByPath.get(f.path) ?? []) : [];
     const wtStaged = wtEntries.some((c) => c.staged);
     const wtUnstaged = wtEntries.some((c) => !c.staged);
     const wt = wtEntries.length > 0 ? wtEntries[0] : undefined;
@@ -611,10 +618,16 @@ export class GitChanges extends LitElement {
             : nothing}
         </span>
         <span class="file-stats">
-          ${wt
-            ? html`<span title="Has uncommitted ${wt.staged ? 'staged' : 'local'} changes"
-                >&#9679;</span
-              >`
+          ${this.committedScope === 'worktree'
+            ? gitStateChips({ committed: f.committed, worktreeEntries: wtEntries }).map(
+                (chip) =>
+                  html`<span
+                    class="state-chip"
+                    style="background: ${chip.color}22; color: ${chip.color};"
+                    title=${chip.title}
+                    >${chip.label}</span
+                  >`,
+              )
             : nothing}
           ${f.additions > 0
             ? html`<span style="color: ${statusColor('A')}">+${f.additions}</span>`

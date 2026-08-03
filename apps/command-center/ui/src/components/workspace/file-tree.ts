@@ -1,6 +1,7 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import { gitStatusColor as sharedGitStatusColor } from '../../styles/git-status.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 export interface FileEntry {
@@ -14,20 +15,7 @@ export interface FileEntry {
 
 type GitChangeStatus = 'M' | 'A' | 'D' | '?' | 'R';
 
-function gitStatusColor(status: GitChangeStatus): string {
-  switch (status) {
-    case 'M':
-      return '#6366f1'; // modified — accent
-    case 'A':
-      return '#00ff88'; // added — green
-    case 'D':
-      return '#ff4444'; // deleted — red
-    case '?':
-      return '#00ff88'; // untracked — green (same as added in VS Code)
-    case 'R':
-      return '#ffcc00'; // renamed — yellow
-  }
-}
+const gitStatusColor = sharedGitStatusColor;
 
 @customElement('file-tree')
 export class FileTree extends LitElement {

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(git): worktree branch diffs flag each file's committed state via an extra merge-base..HEAD listing.
+
 - feat(git): worktree-target branch diffs — `git.branchDiff` can list every change vs base including uncommitted and untracked files (deduped per file); `git.diff` gains the same target for per-file content.
 
 - fix(tasks): checklist step enumeration moved to the shared protocol helper, and manual backlog specs no longer duplicate their Acceptance Criteria into the task description (checkbox markers are stripped from extracted ACs); jira/github spec context gets the same AC-section dedup, and dispatch warns when template label numbering diverges from step positions.
