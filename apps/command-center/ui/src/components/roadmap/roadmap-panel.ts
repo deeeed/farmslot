@@ -84,6 +84,7 @@ import {
   defaultSpecBody,
   deliveryBadgeLabel,
   deliveryBadgeTone,
+  deliveryInputRevision,
   deliverySummaryFor,
   filterRoadmapItemsByGlobalProjects,
   parsePromotionDraftAttachment,
@@ -183,8 +184,8 @@ export class RoadmapPanel extends LitElement {
   /** Harness/injection hook: full gateway projections keyed by roadmap item id. */
   @property({ attribute: false }) delivery: RoadmapDeliveryProjection[] | null = null;
   @state() private _deliverySummaries: RoadmapDeliverySummary[] = [];
-  /** Cheap change detector for the gateway-derived projection's inputs. */
-  private _deliveryRevision = -1;
+  /** Content revision of the gateway-derived projection's inputs. */
+  private _deliveryRevision = '';
   @state() private _deliveryDetail: RoadmapDeliveryProjection | null = null;
   @state() private _allItems: RoadmapItem[] = [];
   @state() private _slots: SlotStatus[] = [];
@@ -570,6 +571,11 @@ export class RoadmapPanel extends LitElement {
         font-size: ${unsafeCSS(fonts.sizeXs)};
         text-decoration: none;
       }
+      .delivery-link-inert {
+        border-style: dashed;
+        color: ${unsafeCSS(colors.textMuted)};
+        cursor: default;
+      }
       .delivery-link:hover {
         background: ${unsafeCSS(colors.accent)}14;
       }
@@ -866,12 +872,12 @@ export class RoadmapPanel extends LitElement {
     const previousProjects = this._globalFilters.projects.join('\0');
     this._slots = this.slots ?? state.fleet?.slots ?? [];
     // Delivery is derived by the gateway, so the panel cannot recompute it locally —
-    // but it must still notice that the inputs moved. Runs and backlog items
-    // changing while this panel is mounted means the projection is stale, so drop it
-    // and re-read rather than showing a badge that no longer reflects reality.
-    const deliveryInputsChanged =
-      this._deliveryRevision !== state.runs.length + state.backlogItems.length;
-    this._deliveryRevision = state.runs.length + state.backlogItems.length;
+    // but it must still notice that the inputs moved. Counting entries is not enough:
+    // the transitions that matter most (a run reaching done, a backlog item shipping)
+    // leave both lengths unchanged, so the revision tracks content freshness too.
+    const revision = deliveryInputRevision(state.runs, state.backlogItems);
+    const deliveryInputsChanged = this._deliveryRevision !== revision;
+    this._deliveryRevision = revision;
     this._backlogItems = state.backlogItems;
     this._workGraphs = state.workGraphs;
     this._globalFilters = state.globalFilters;
@@ -887,9 +893,9 @@ export class RoadmapPanel extends LitElement {
     }
     // Injected projections (dev harness) are authoritative; only the connected
     // path needs to re-read from the gateway.
-    if (deliveryInputsChanged && !this.items && !this.delivery && this._selectedId) {
-      this._deliveryDetail = null;
-      void this._loadDeliveryDetail(this._selectedId);
+    // Refresh both surfaces: reloading only the detail left every list badge stale.
+    if (deliveryInputsChanged && !this.items && !this.delivery) {
+      void this._reloadDelivery();
     }
     if (previousProjects !== this._globalFilters.projects.join('\0')) {
       const globalProjects = concretePlanningProjects(state.globalFilters.projects);
@@ -1530,6 +1536,24 @@ export class RoadmapPanel extends LitElement {
     if (this._deliveryDetail?.roadmapItemId === itemId) return;
     this._deliveryDetail = null;
     void this._loadDeliveryDetail(itemId);
+  }
+
+  /** Re-reads list summaries and the open item's lineage after its inputs changed. */
+  private async _reloadDelivery() {
+    try {
+      const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
+        ...(this._filterProject !== 'all' ? { project: this._filterProject } : {}),
+        ...(this._filterStage !== 'all' ? { stage: this._filterStage } : {}),
+        includeArchived: this._includeArchived,
+      });
+      this._deliverySummaries = result.delivery ?? [];
+    } catch (err) {
+      this._error = `Delivery badges unavailable: ${(err as Error).message}`;
+    }
+    if (this._selectedId) {
+      this._deliveryDetail = null;
+      await this._loadDeliveryDetail(this._selectedId);
+    }
   }
 
   private async _loadDeliveryDetail(itemId: string) {
@@ -2379,18 +2403,27 @@ export class RoadmapPanel extends LitElement {
       </div>
       ${links.length
         ? html`<div class="delivery-links">
-            ${links.map(
-              (link) =>
-                html`<a
-                  class="delivery-link"
-                  data-testid=${link.testId}
-                  href=${link.href}
-                  title=${link.detail}
-                  ?hidden=${!link.href}
-                  target=${link.external ? '_blank' : '_self'}
-                  rel=${link.external ? 'noopener noreferrer' : ''}
-                  ><span class="delivery-link-kind">${link.kind}</span>${link.label}</a
-                >`,
+            ${links.map((link) =>
+              // Evidence without a reachable destination — an archived-only run
+              // family, a PR with no URL, a deleted backlog item — is still evidence.
+              // Hiding it erased exactly the historical lineage this panel exists to
+              // surface, so it renders as a non-navigable chip instead.
+              link.href
+                ? html`<a
+                    class="delivery-link"
+                    data-testid=${link.testId}
+                    href=${link.href}
+                    title=${link.detail}
+                    target=${link.external ? '_blank' : '_self'}
+                    rel=${link.external ? 'noopener noreferrer' : ''}
+                    ><span class="delivery-link-kind">${link.kind}</span>${link.label}</a
+                  >`
+                : html`<span
+                    class="delivery-link delivery-link-inert"
+                    data-testid=${link.testId}
+                    title=${link.detail}
+                    ><span class="delivery-link-kind">${link.kind}</span>${link.label}</span
+                  >`,
             )}
           </div>`
         : html`<p class="muted">No backlog, run, or PR evidence linked to this item yet.</p>`}

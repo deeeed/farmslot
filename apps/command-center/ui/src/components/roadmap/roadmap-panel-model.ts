@@ -162,6 +162,23 @@ export interface RoadmapDeliveryBacklink {
  * run family, and merged PR. No run-page cache lookup, so historical runs stay
  * reachable.
  */
+/**
+ * Content revision of the projection's gateway-side inputs. Lengths alone miss the
+ * transitions that matter most — a run reaching `done`, a backlog item shipping —
+ * so identity plus `updatedAt` is folded in.
+ */
+export function deliveryInputRevision(
+  runs: ReadonlyArray<{ id: string; updatedAt: string }>,
+  backlogItems: ReadonlyArray<{ id: string; updatedAt: string }>,
+): string {
+  const fold = (rows: ReadonlyArray<{ id: string; updatedAt: string }>): string => {
+    let latest = '';
+    for (const row of rows) if (row.updatedAt > latest) latest = row.updatedAt;
+    return `${rows.length}@${latest}`;
+  };
+  return `${fold(runs)}|${fold(backlogItems)}`;
+}
+
 export function roadmapDeliveryBacklinks(
   projection: RoadmapDeliveryProjection,
 ): RoadmapDeliveryBacklink[] {
@@ -176,9 +193,14 @@ export function roadmapDeliveryBacklinks(
       // Delivered lineage is normally `done` or `archived`, which the Backlog
       // panel's default live-status filter excludes — the deep link would land and
       // then clear its own selection. Pin the status so the item is filtered in.
-      href: `#backlog?item=${encodeURIComponent(entry.backlogItemId)}${
-        entry.status ? `&backlogStatus=${encodeURIComponent(entry.status)}` : ''
-      }`,
+      // A promotion entry pointing at a deleted backlog item has nowhere to go;
+      // keep it as evidence of stale provenance rather than a link that clears the
+      // destination's selection.
+      href: entry.resolved
+        ? `#backlog?item=${encodeURIComponent(entry.backlogItemId)}${
+            entry.status ? `&backlogStatus=${encodeURIComponent(entry.status)}` : ''
+          }`
+        : '',
       external: false,
       testId: 'roadmap-delivery-backlog-link',
     });

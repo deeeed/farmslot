@@ -183,6 +183,10 @@ export function defaultCancelCollaborators(): CancelCollaborators {
       await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
       console.log(`[run-lifecycle] released slot ${run.slotId} on cancel`);
     },
+    // Deliberately fire-and-forget: this is the `onMutated` path, where the point is
+    // that the UI sees the terminal state without waiting on the broadcast. A failure
+    // is logged and, for the transition itself, recorded as a `publish` effect
+    // outcome by the router — it is surfaced, not swallowed.
     emit: (event, payload) => {
       void broadcastTransitionEvent(event, payload).catch((err) => {
         console.warn(

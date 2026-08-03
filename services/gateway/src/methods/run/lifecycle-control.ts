@@ -62,7 +62,9 @@ export async function runCancel(params: RunCancelParams): Promise<RunCancelResul
     );
   }
 
-  return { run: getRun(run.id) ?? run, effects };
+  // Re-read so a `backlogReconcilePending` marker set just above travels with the
+  // result. `updateRun` already wrote this id, so the run is always present.
+  return { run: getRun(run.id)!, effects };
 }
 
 export async function runForceComplete(

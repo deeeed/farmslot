@@ -17,6 +17,7 @@ import {
 import {
   deliveryBadgeLabel,
   deliveryBadgeTone,
+  deliveryInputRevision,
   deliverySummaryFor,
   roadmapDeliveryBacklinks,
   sortRoadmapItems,
@@ -293,4 +294,49 @@ test('an archived-only run family is shown without a dead navigation link', () =
   // A live family keeps its link.
   const live = roadmapDeliveryBacklinks(DELIVERED_PROJECTION).find((l) => l.kind === 'run')!;
   assert.equal(live.href, '#runs?family=2e357072-36f3-4586-91c4-8e5b6bf362fe');
+});
+
+test('delivery revision changes when a run transitions without changing counts', () => {
+  // Codex round-6 P2: the detector compared array lengths, so monitoring -> done —
+  // the transition that actually changes delivery — never triggered a refresh.
+  const runsBefore = [{ id: 'r1', updatedAt: '2026-08-01T00:00:00.000Z' }];
+  const runsAfter = [{ id: 'r1', updatedAt: '2026-08-01T01:00:00.000Z' }];
+  const backlog = [{ id: 'b1', updatedAt: '2026-08-01T00:00:00.000Z' }];
+
+  assert.notEqual(
+    deliveryInputRevision(runsBefore, backlog),
+    deliveryInputRevision(runsAfter, backlog),
+    'a status change moves updatedAt even though the count is identical',
+  );
+  assert.equal(
+    deliveryInputRevision(runsBefore, backlog),
+    deliveryInputRevision(runsBefore, backlog),
+  );
+
+  // A backlog item shipping is caught for the same reason.
+  assert.notEqual(
+    deliveryInputRevision(runsBefore, backlog),
+    deliveryInputRevision(runsBefore, [{ id: 'b1', updatedAt: '2026-08-02T00:00:00.000Z' }]),
+  );
+});
+
+test('unresolved backlog provenance is evidence, not a link', () => {
+  // A promotion entry pointing at a deleted backlog item has nowhere to navigate.
+  const dangling: RoadmapDeliveryProjection = {
+    ...DELIVERED_PROJECTION,
+    backlogItems: [
+      {
+        backlogItemId: 'bk_gone',
+        archived: false,
+        delivered: false,
+        resolved: false,
+        linkSource: 'promotion',
+        runFamilies: [],
+        prs: [],
+      },
+    ],
+  };
+  const link = roadmapDeliveryBacklinks(dangling).find((entry) => entry.kind === 'backlog')!;
+  assert.equal(link.href, '', 'no link to an item that cannot exist');
+  assert.match(link.detail, /missing backlog item/);
 });

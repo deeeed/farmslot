@@ -374,6 +374,111 @@ function isRunStoreLeak(run: Run): boolean {
   return isSyntheticLeak(run) || isLeakedGatewayTestRun(run);
 }
 
+/**
+ * Migrations applied to any run read from disk. Extracted so archived records get
+ * the same treatment as live ones — an archived run loaded without these keeps a
+ * missing `familyId`, which groups unrelated backlog items under one undefined
+ * family and corrupts delivery lineage.
+ */
+export function normalizePersistedRun(run: Run): boolean {
+  let changed = false;
+  // Normalize legacy flow-type names at load so the UI never surfaces a
+  // pre-rename value ('feature' → 'dev', 'merge-main' → 'update-branch').
+  const normalizedFlow = normalizeFlowType((run as { flowType?: string }).flowType);
+  if (run.flowType !== normalizedFlow) {
+    run.flowType = normalizedFlow;
+    changed = true;
+  }
+  // Normalize pre-rename CI-watch decision action ids (resolved + pending
+  // buttons) so downstream replay/recovery consumers and the UI only ever
+  // see the current id/label.
+  for (const decision of run.decisions ?? []) {
+    if (decision.resolvedAction) {
+      const normalizedAction = normalizeCiActionId(decision.resolvedAction);
+      if (decision.resolvedAction !== normalizedAction) {
+        decision.resolvedAction = normalizedAction;
+        changed = true;
+      }
+    }
+    for (const action of decision.actions ?? []) {
+      const normalizedId = normalizeCiActionId(action.id);
+      if (action.id !== normalizedId) {
+        action.id = normalizedId;
+        changed = true;
+      }
+      if (action.label.includes('merge-main')) {
+        action.label = action.label.replace(/merge-main/g, 'update-branch');
+        changed = true;
+      }
+    }
+  }
+  // Normalize a persisted worker-template filename that still points at the
+  // pre-rename template. The 'merge-main.md' template was renamed to
+  // 'update-branch.md' in this rename; a legacy run resuming with the old
+  // basename would otherwise wedge at write-task against a deleted file.
+  if (run.taskTemplate?.fileName?.startsWith('merge-main')) {
+    run.taskTemplate.fileName = run.taskTemplate.fileName.replace(/^merge-main/, 'update-branch');
+    changed = true;
+  }
+  if (run.project === 'farmslot') {
+    run.project = 'farmslot-farm';
+    changed = true;
+  }
+  if (!run.familyId) {
+    run.familyId = run.id;
+    changed = true;
+  }
+  if (run.parentRunId === undefined) {
+    run.parentRunId = null;
+    changed = true;
+  }
+  if (!run.familyRootTicketOrPr) {
+    run.familyRootTicketOrPr = run.ticketOrPr;
+    changed = true;
+  }
+  if (!(run as any).lane) {
+    (run as Run).lane = run.mode === 'validation' ? 'validation' : 'production';
+    changed = true;
+  }
+  if ((run as any).variant === undefined) {
+    (run as Run).variant = null;
+    changed = true;
+  }
+  for (const decision of run.decisions ?? []) {
+    if (decision.type !== 'retrospective') continue;
+    let decisionChanged = false;
+    decision.actions = decision.actions.map((action) => {
+      if (action.id === 'accept' && action.label !== 'Accept for Learning') {
+        decisionChanged = true;
+        return { ...action, label: 'Accept for Learning' };
+      }
+      if (action.id === 'rework' && action.label !== 'Reject Learning') {
+        decisionChanged = true;
+        return { ...action, label: 'Reject Learning' };
+      }
+      return action;
+    });
+    if (decisionChanged) changed = true;
+  }
+  const legacyTier = backfillLegacySafetyTier(run);
+  if (legacyTier !== null) {
+    run.safetyTier = legacyTier;
+    changed = true;
+  }
+  if (!run.startedAt && ACTIVE_STATUSES.has(run.status)) {
+    run.startedAt = inferredRunStartedAt(run);
+    changed = true;
+  }
+  if (run.agentContexts === undefined && ACTIVE_STATUSES.has(run.status)) {
+    const agentContexts = initialAgentContextsForRun(run);
+    if (agentContexts) {
+      run.agentContexts = agentContexts;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 export async function loadAllRuns(): Promise<void> {
   await ensureDir();
   let files: string[];
@@ -404,104 +509,7 @@ export async function loadAllRuns(): Promise<void> {
         }
         skippedSynthetic++;
       }
-      let changed = false;
-      // Normalize legacy flow-type names at load so the UI never surfaces a
-      // pre-rename value ('feature' → 'dev', 'merge-main' → 'update-branch').
-      const normalizedFlow = normalizeFlowType((run as { flowType?: string }).flowType);
-      if (run.flowType !== normalizedFlow) {
-        run.flowType = normalizedFlow;
-        changed = true;
-      }
-      // Normalize pre-rename CI-watch decision action ids (resolved + pending
-      // buttons) so downstream replay/recovery consumers and the UI only ever
-      // see the current id/label.
-      for (const decision of run.decisions ?? []) {
-        if (decision.resolvedAction) {
-          const normalizedAction = normalizeCiActionId(decision.resolvedAction);
-          if (decision.resolvedAction !== normalizedAction) {
-            decision.resolvedAction = normalizedAction;
-            changed = true;
-          }
-        }
-        for (const action of decision.actions ?? []) {
-          const normalizedId = normalizeCiActionId(action.id);
-          if (action.id !== normalizedId) {
-            action.id = normalizedId;
-            changed = true;
-          }
-          if (action.label.includes('merge-main')) {
-            action.label = action.label.replace(/merge-main/g, 'update-branch');
-            changed = true;
-          }
-        }
-      }
-      // Normalize a persisted worker-template filename that still points at the
-      // pre-rename template. The 'merge-main.md' template was renamed to
-      // 'update-branch.md' in this rename; a legacy run resuming with the old
-      // basename would otherwise wedge at write-task against a deleted file.
-      if (run.taskTemplate?.fileName?.startsWith('merge-main')) {
-        run.taskTemplate.fileName = run.taskTemplate.fileName.replace(
-          /^merge-main/,
-          'update-branch',
-        );
-        changed = true;
-      }
-      if (run.project === 'farmslot') {
-        run.project = 'farmslot-farm';
-        changed = true;
-      }
-      if (!run.familyId) {
-        run.familyId = run.id;
-        changed = true;
-      }
-      if (run.parentRunId === undefined) {
-        run.parentRunId = null;
-        changed = true;
-      }
-      if (!run.familyRootTicketOrPr) {
-        run.familyRootTicketOrPr = run.ticketOrPr;
-        changed = true;
-      }
-      if (!(run as any).lane) {
-        (run as Run).lane = run.mode === 'validation' ? 'validation' : 'production';
-        changed = true;
-      }
-      if ((run as any).variant === undefined) {
-        (run as Run).variant = null;
-        changed = true;
-      }
-      for (const decision of run.decisions ?? []) {
-        if (decision.type !== 'retrospective') continue;
-        let decisionChanged = false;
-        decision.actions = decision.actions.map((action) => {
-          if (action.id === 'accept' && action.label !== 'Accept for Learning') {
-            decisionChanged = true;
-            return { ...action, label: 'Accept for Learning' };
-          }
-          if (action.id === 'rework' && action.label !== 'Reject Learning') {
-            decisionChanged = true;
-            return { ...action, label: 'Reject Learning' };
-          }
-          return action;
-        });
-        if (decisionChanged) changed = true;
-      }
-      const legacyTier = backfillLegacySafetyTier(run);
-      if (legacyTier !== null) {
-        run.safetyTier = legacyTier;
-        changed = true;
-      }
-      if (!run.startedAt && ACTIVE_STATUSES.has(run.status)) {
-        run.startedAt = inferredRunStartedAt(run);
-        changed = true;
-      }
-      if (run.agentContexts === undefined && ACTIVE_STATUSES.has(run.status)) {
-        const agentContexts = initialAgentContextsForRun(run);
-        if (agentContexts) {
-          run.agentContexts = agentContexts;
-          changed = true;
-        }
-      }
+      const changed = normalizePersistedRun(run);
       runs.set(run.id, run);
       if (changed) {
         persistRunBackground(run, 'load migration');
@@ -991,7 +999,12 @@ export async function getArchivedRuns(): Promise<Run[]> {
     if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
     const filePath = path.join(ARCHIVE_DIR, file);
     try {
-      loaded.push(JSON.parse(await readFile(filePath, 'utf-8')) as Run);
+      const archived = JSON.parse(await readFile(filePath, 'utf-8')) as Run;
+      // Same migrations as the live load. Without them a pre-backfill archive keeps
+      // a missing familyId and every such run groups under one undefined family,
+      // merging lineage across unrelated backlog items.
+      normalizePersistedRun(archived);
+      loaded.push(archived);
     } catch (err) {
       // One unreadable archive record must not blind every lineage read. Skipping
       // it is explicit recovery: the file stays on disk for inspection.

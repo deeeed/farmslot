@@ -243,11 +243,11 @@ export function buildRoadmapDeliveryProjection(
   const byId = input.backlogById ?? new Map(backlogItems.map((entry) => [entry.id, entry]));
   const findings: RoadmapDeliveryFinding[] = [];
 
-  const promotionIds: string[] = [];
+  const promotionIdSet = new Set<string>();
   for (const entry of item.promotion ?? []) {
-    if (!entry.backlogItemId) continue;
-    if (!promotionIds.includes(entry.backlogItemId)) promotionIds.push(entry.backlogItemId);
+    if (entry.backlogItemId) promotionIdSet.add(entry.backlogItemId);
   }
+  const promotionIds = [...promotionIdSet];
   const canonicalIds = (backlogByRoadmapItemId.get(item.id) ?? []).map(
     (backlogItem) => backlogItem.id,
   );
@@ -281,7 +281,7 @@ export function buildRoadmapDeliveryProjection(
     }
   }
   for (const id of canonicalIds) {
-    if (promotionIds.includes(id)) continue;
+    if (promotionIdSet.has(id)) continue;
     findings.push({
       code: 'backlog-link-not-in-promotion',
       backlogItemId: id,
