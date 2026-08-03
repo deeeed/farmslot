@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(slot-view): the source-control panel shows every change vs the base branch — committed or not — as one deduped list ("All changes vs main"), with per-file diffs computed against the working tree.
+
 - fix(slot-view): branch-diff file list self-heals — the git-status poll reloads it after a transient failure or when the commit count changes, and failures render as "Branch diff unavailable" instead of a false "No changes".
 
 - fix(progress): markdown-fallback step parsing uses the shared protocol enumerator, so informational checkboxes (ACs, pre-merge sections) no longer inflate step counts.

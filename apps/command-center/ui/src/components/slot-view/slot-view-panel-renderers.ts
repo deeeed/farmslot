@@ -136,6 +136,7 @@ export function renderSlotViewSidebarSource(view: SlotView) {
     .changes=${git.changes}
     .committedFiles=${view._branchDiffFiles}
     .committedError=${view._branchDiffError}
+    .committedScope=${'worktree'}
     .branch=${git.branch}
     .ahead=${git.ahead}
     .behind=${git.behind}

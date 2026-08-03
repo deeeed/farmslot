@@ -153,6 +153,12 @@ export class GitChanges extends LitElement {
   @property() branchDiffBase = '';
   /** Last branch-diff load failure — distinguishes "empty" from "unavailable". */
   @property() committedError: string | null = null;
+  /**
+   * Semantics of committedFiles: 'head' lists committed-only changes vs base;
+   * 'worktree' lists every change vs base (committed + uncommitted, deduped),
+   * so the header total is that union rather than a double-count.
+   */
+  @property() committedScope: 'head' | 'worktree' = 'head';
 
   @property() selectedPath = '';
   @state() private _stagedOpen = true;
@@ -510,7 +516,11 @@ export class GitChanges extends LitElement {
         }}
       >
         <span class="group-arrow">${open ? '▾' : '▸'}</span>
-        <span>Committed${this.branchDiffBase ? ` vs ${this.branchDiffBase}` : ''}</span>
+        <span
+          >${this.committedScope === 'worktree' ? 'All changes' : 'Committed'}${this.branchDiffBase
+            ? ` vs ${this.branchDiffBase}`
+            : ''}</span
+        >
         <span class="group-badge">${this.committedFiles.length}</span>
       </div>
       ${open
@@ -703,7 +713,10 @@ export class GitChanges extends LitElement {
     const untracked = this.changes.filter((c) => !c.staged && c.status === '?');
     const uncommitted = this.changes.length;
     const committed = this.committedFiles.length;
-    const total = uncommitted + committed;
+    // Worktree scope already includes uncommitted changes — summing would
+    // double-count files that are both committed-ahead and locally modified.
+    const total =
+      this.committedScope === 'worktree' && committed > 0 ? committed : uncommitted + committed;
 
     return html`
       <div class="header">

@@ -41,15 +41,17 @@ async function resolveRepoPath(slotId: string): Promise<string> {
 /**
  * Run a git command for a slot — locally via execFile, or remotely via agent exec.
  */
+export interface GitExecDeps {
+  resolveRepo?: typeof resolveRepoPath;
+  loadVars?: typeof loadSlotVars;
+  runOnSlot?: typeof execArgvOnSlot;
+}
+
 export async function gitExec(
   slotId: string,
   args: string[],
   opts?: { maxBuffer?: number },
-  deps: {
-    resolveRepo?: typeof resolveRepoPath;
-    loadVars?: typeof loadSlotVars;
-    runOnSlot?: typeof execArgvOnSlot;
-  } = {},
+  deps: GitExecDeps = {},
 ): Promise<CommandOutput> {
   const repoPath = await (deps.resolveRepo ?? resolveRepoPath)(slotId);
   const slotVars = await (deps.loadVars ?? loadSlotVars)(slotId);
@@ -151,7 +153,9 @@ export async function gitDiff(params: GitDiffParams): Promise<GitDiffResult> {
     }
 
     const { stdout: mergeBase } = await gitExec(params.slotId, ['merge-base', baseRef, 'HEAD']);
-    args.push(`${mergeBase.trim()}..HEAD`);
+    // 'worktree' diffs merge-base against the working tree (committed +
+    // uncommitted); default diffs committed history only.
+    args.push(params.target === 'worktree' ? mergeBase.trim() : `${mergeBase.trim()}..HEAD`);
   }
 
   if (params.path) args.push('--', params.path);
@@ -216,29 +220,49 @@ function toBranchDiffStatus(char: string): BranchDiffStatus {
     : 'M';
 }
 
-export async function gitBranchDiff(params: GitBranchDiffParams): Promise<GitBranchDiffResult> {
+export async function gitBranchDiff(
+  params: GitBranchDiffParams,
+  deps: GitExecDeps = {},
+): Promise<GitBranchDiffResult> {
   const base = params.base || 'main';
 
   let baseRef = base;
   try {
-    await gitExec(params.slotId, ['rev-parse', '--verify', `origin/${base}`]);
+    await gitExec(params.slotId, ['rev-parse', '--verify', `origin/${base}`], undefined, deps);
     baseRef = `origin/${base}`;
   } catch {
     /* use local ref */
   }
 
   const [mergeBaseResult, branchResult] = await Promise.all([
-    gitExec(params.slotId, ['merge-base', baseRef, 'HEAD']),
-    gitExec(params.slotId, ['branch', '--show-current']),
+    gitExec(params.slotId, ['merge-base', baseRef, 'HEAD'], undefined, deps),
+    gitExec(params.slotId, ['branch', '--show-current'], undefined, deps),
   ]);
 
   const mergeBase = mergeBaseResult.stdout.trim();
   const head = branchResult.stdout.trim();
-  const diffRange = `${mergeBase}..HEAD`;
+  // 'worktree' diffs the merge-base against the working tree — every change
+  // on the branch (committed + uncommitted), deduped per file by git itself.
+  // Default compares committed history only (what a PR would contain).
+  const worktree = params.target === 'worktree';
+  const diffRange = worktree ? mergeBase : `${mergeBase}..HEAD`;
 
-  const [nameStatusResult, numstatResult] = await Promise.all([
-    gitExec(params.slotId, ['diff', '--name-status', diffRange], { maxBuffer: 10 * 1024 * 1024 }),
-    gitExec(params.slotId, ['diff', '--numstat', diffRange], { maxBuffer: 10 * 1024 * 1024 }),
+  const [nameStatusResult, numstatResult, untrackedResult] = await Promise.all([
+    gitExec(
+      params.slotId,
+      ['diff', '--name-status', diffRange],
+      { maxBuffer: 10 * 1024 * 1024 },
+      deps,
+    ),
+    gitExec(params.slotId, ['diff', '--numstat', diffRange], { maxBuffer: 10 * 1024 * 1024 }, deps),
+    worktree
+      ? gitExec(
+          params.slotId,
+          ['ls-files', '--others', '--exclude-standard'],
+          { maxBuffer: 10 * 1024 * 1024 },
+          deps,
+        )
+      : Promise.resolve({ stdout: '', stderr: '' }),
   ]);
 
   // Parse --numstat: "additions\tdeletions\tpath"
@@ -291,6 +315,15 @@ export async function gitBranchDiff(params: GitBranchDiffParams): Promise<GitBra
         deletions: stats.deletions,
       });
     }
+  }
+
+  // Untracked files are invisible to `git diff` but are part of "every change
+  // vs base" in worktree mode. Counts stay 0 — reading each file to count
+  // lines is not worth the exec fan-out.
+  const seen = new Set(files.map((f) => f.path));
+  for (const path of untrackedResult.stdout.split('\n')) {
+    if (!path || seen.has(path)) continue;
+    files.push({ path, status: 'A', additions: 0, deletions: 0 });
   }
 
   return { base, head, files, totalAdditions, totalDeletions };

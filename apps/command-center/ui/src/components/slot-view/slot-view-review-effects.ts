@@ -93,6 +93,10 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
       slotId: view.slotId,
       base: view._branchDiffBase,
+      // Every change on the branch vs base — committed or not — deduped per
+      // file. Publish flows (ready/review workspaces) keep the committed-only
+      // default.
+      target: 'worktree',
     });
     if (!isCurrent()) return;
     view._branchDiffFiles = result.files;
@@ -175,6 +179,7 @@ export async function handleSlotViewBranchDiffSelect(view: SlotView, path: strin
   const cacheKey = `branch:${view._branchDiffBase}:${path}`;
   const loaded = await loadSlotViewDiffContent(view, cacheKey, {
     diffBase: view._branchDiffBase,
+    diffTarget: 'worktree',
     errorFallback: 'Failed to load diff',
     requestPath: path,
   });

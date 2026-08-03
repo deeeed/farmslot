@@ -24,6 +24,8 @@ import { updateSlotViewTreeChildren } from './slot-view-tree-model.js';
 
 type LoadContentOptions = {
   diffBase?: string;
+  /** With diffBase: 'worktree' diffs merge-base→working tree (default committed only). */
+  diffTarget?: 'head' | 'worktree';
   errorFallback?: string | null;
   requestPath?: string;
   skipMedia?: boolean;
@@ -228,6 +230,7 @@ export async function loadSlotViewDiffContent(
       slotId: view.slotId,
       path: options.requestPath ?? path,
       ...(options.diffBase ? { base: options.diffBase } : {}),
+      ...(options.diffBase && options.diffTarget ? { target: options.diffTarget } : {}),
     });
     if (!isCurrentLiveResult(view, epoch)) return false;
     const next = new Map(view._liveDiffContents);

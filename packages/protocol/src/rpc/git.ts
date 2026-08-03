@@ -12,6 +12,12 @@ export interface GitDiffParams {
   slotId: string;
   path?: string;
   base?: string; // three-dot diff against merge-base when set
+  /**
+   * With a base: 'head' (default) diffs merge-base..HEAD (committed only);
+   * 'worktree' diffs merge-base against the working tree — every change on
+   * the branch, committed or not.
+   */
+  target?: 'head' | 'worktree';
 }
 
 export interface GitLogParams {
@@ -113,6 +119,12 @@ export interface GitShowResult {
 export interface GitBranchDiffParams {
   slotId: string;
   base?: string; // defaults to 'main'
+  /**
+   * 'head' (default) lists committed changes (merge-base..HEAD) — what a PR
+   * would contain right now. 'worktree' lists every change vs the merge-base
+   * including uncommitted and untracked files, deduped per file.
+   */
+  target?: 'head' | 'worktree';
 }
 
 export interface GitBranchDiffResult {
