@@ -205,8 +205,16 @@ export async function executeTool(
         // Shared parser rather than a local lastIndexOf split, which mis-handled
         // refs like `foo/bar/baz#123` and silently produced an undefined repo.
         const parsedRef = parseGitHubRef(prRef);
-        const repoSlug = parsedRef?.repo ?? 'example-org/example-mobile';
-        const number = parsedRef ? String(parsedRef.number) : prRef;
+        if (!parsedRef) {
+          // Previously fell back to a placeholder `example-org/example-mobile`, so a
+          // bare `123` queried a repo that does not exist and surfaced an opaque gh
+          // error. Name the real problem instead: the ref carries no repo.
+          throw new Error(
+            `check_pr needs an owner/repo-qualified PR ref (e.g. owner/repo#123), got: ${prRef || '(empty)'}`,
+          );
+        }
+        const repoSlug = parsedRef.repo;
+        const number = String(parsedRef.number);
         const { ghRequest } = await import('../integrations/github-client.js');
         const pr = await ghRequest([
           'pr',

@@ -29,7 +29,8 @@ export interface CancelCollaborators {
   settleBacklog(run: Run): Promise<void>;
   tickWorkGraph(graphId: string): Promise<unknown>;
   releaseSlot(run: Run): Promise<void>;
-  emit(event: string, payload: unknown): void;
+  /** Awaited by the router via `onMutated`, so a broadcast failure is reportable. */
+  emit(event: string, payload: unknown): void | Promise<void>;
 }
 
 /** An engine- or recovery-driven cancel must not claim an operator did it. */
@@ -183,16 +184,10 @@ export function defaultCancelCollaborators(): CancelCollaborators {
       await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
       console.log(`[run-lifecycle] released slot ${run.slotId} on cancel`);
     },
-    // Deliberately fire-and-forget: this is the `onMutated` path, where the point is
-    // that the UI sees the terminal state without waiting on the broadcast. A failure
-    // is logged and, for the transition itself, recorded as a `publish` effect
-    // outcome by the router — it is surfaced, not swallowed.
-    emit: (event, payload) => {
-      void broadcastTransitionEvent(event, payload).catch((err) => {
-        console.warn(
-          `[run-lifecycle] broadcast of ${event} failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
-    },
+    // Returned, not fire-and-forget: the router awaits `onMutated`, so a failed
+    // dynamic import or broadcast surfaces as a failed `publish` effect on the cancel
+    // result. Swallowing it here would leave other clients stale while the caller was
+    // told the transition published cleanly.
+    emit: (event, payload) => broadcastTransitionEvent(event, payload),
   };
 }

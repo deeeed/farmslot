@@ -112,8 +112,12 @@ export interface RunTransitionDeps {
    * Called with the mutated run before the after-effects. Callers publish the
    * terminal state here so the UI reflects it immediately, without waiting on
    * slow teardown further down the effect list.
+   *
+   * May return a promise: the router awaits it so an asynchronous broadcast failure
+   * is recorded as a failed `publish` effect rather than lost to an unobserved
+   * rejection. Publication still precedes the slow after-effects.
    */
-  onMutated?(run: Run): void;
+  onMutated?(run: Run): void | Promise<void>;
 }
 
 function runSyncEffects(
@@ -240,7 +244,7 @@ export async function routeRunTransition(
     // record it as a visible outcome instead of throwing or swallowing.
     if (deps.onMutated) {
       try {
-        deps.onMutated(run);
+        await deps.onMutated(run);
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
         effects.push({ name: 'publish', status: 'failed', detail });

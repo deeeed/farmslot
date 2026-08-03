@@ -9,6 +9,12 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - feat(git): worktree-target branch diffs — `git.branchDiff` can list every change vs base including uncommitted and untracked files (deduped per file); `git.diff` gains the same target for per-file content.
 
+- fix(runs): `getAllRunsWithArchived()` dedupes the live and archived views by run id — a background persist racing `archiveRun` can leave the same id in both directories, which double-counted run families and cleared `archivedOnly`.
+- fix(runs): the archived-run cache is generation-guarded, so a scan that started before an `archiveRun` can no longer publish its pre-archive snapshot and hide the run that was just archived.
+- fix(roadmap): a terminal run family no longer reports delivery as `active` — a cancelled or failed attempt kept the badge reading "in progress" after the operator moved the item back to `ready`.
+- fix(roadmap): the `supersedes` planning relation is emitted from the retried node's own `supersededFamilyIds` (ADR-040 keeps a retry on the same node), where the previous sibling search could never match and silently dropped retry evidence from every brief.
+- fix(run-lifecycle): `onMutated` is awaited, so an asynchronous broadcast failure surfaces as a failed `publish` effect instead of an unobserved rejection that reported a clean cancel while other clients went stale.
+- fix(chat): `check_pr` rejects a PR ref with no owner/repo instead of querying a placeholder repository and surfacing an opaque `gh` error.
 - fix(runs): archived records are normalized through the same `normalizePersistedRun` migrations as live ones; a pre-backfill archive previously kept a missing `familyId` and grouped unrelated backlog items under one undefined family.
 - fix(roadmap): planning-context snapshots index live _and_ archived runs, matching `roadmap.get`, so a frozen snapshot's delivery counts and hash agree with the shared projection.
 - fix(tasks): checklist step enumeration moved to the shared protocol helper, and manual backlog specs no longer duplicate their Acceptance Criteria into the task description (checkbox markers are stripped from extracted ACs); jira/github spec context gets the same AC-section dedup, and dispatch warns when template label numbering diverges from step positions.

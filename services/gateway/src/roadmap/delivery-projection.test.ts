@@ -647,3 +647,82 @@ test('planning context keeps every relation so the frozen artifact is complete',
   });
   assert.notEqual(context.snapshotHash, extended.snapshotHash);
 });
+
+test('a terminal run family stops claiming delivery is active once the item returns to ready', () => {
+  // Codex round-7 P2: `runFamilies.length > 0` treated a cancelled attempt as work in
+  // flight, so the badge read "Delivery: in progress" with nothing running.
+  const linked = backlogItem('bk_cancelled', { roadmapItemId: 'ri_active', status: 'ready' });
+  const projection = buildRoadmapDeliveryProjection({
+    item: roadmapItem({ id: 'ri_active' }),
+    backlogItems: [linked],
+    runsByBacklogItemId: buildRunIndexByBacklogItem([
+      run('run_cancelled', {
+        backlogItemId: 'bk_cancelled',
+        familyId: 'fam_cancelled',
+        status: 'cancelled',
+      }),
+    ]),
+    generatedAt: NOW,
+  });
+  assert.equal(projection.status, 'unstarted');
+
+  const stillRunning = buildRoadmapDeliveryProjection({
+    item: roadmapItem({ id: 'ri_active' }),
+    backlogItems: [linked],
+    runsByBacklogItemId: buildRunIndexByBacklogItem([
+      run('run_live', { backlogItemId: 'bk_cancelled', familyId: 'fam_live', status: 'monitoring' }),
+    ]),
+    generatedAt: NOW,
+  });
+  assert.equal(stillRunning.status, 'active', 'a non-terminal family is still real work');
+});
+
+test('a retried node surfaces its own superseded run family', () => {
+  // ADR-040 keeps a retry on the SAME node and moves the old currentFamilyId into that
+  // node's supersededFamilyIds, so no sibling ever holds it as current. Searching
+  // siblings made this relation unreachable and the retry evidence never reached a brief.
+  const target = backlogItem('bk_retry', {
+    sourceRef: 'MANUAL-000020',
+    specPath: '.backlog/specs/manual-000020.md',
+    workGraphId: 'wg_test',
+    workNodeId: 'node_retry',
+  });
+  const graph: WorkGraphSnapshot = {
+    graph: {
+      id: 'wg_test',
+      version: 1,
+      project: 'farmslot-farm',
+      title: 'Retry graph',
+      source: { kind: 'manual' },
+      status: 'active',
+      defaultFailurePolicy: 'halt',
+      scheduler: {},
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+    nodes: [
+      workNode('node_retry', {
+        backlogItemId: 'bk_retry',
+        status: 'running',
+        currentFamilyId: 'fam_new',
+        supersededFamilyIds: ['fam_old'],
+      }),
+    ],
+    edges: [],
+    gates: [],
+    ledger: [],
+  };
+
+  const context = buildPlanningContextProjection({
+    backlogItem: target,
+    backlogItems: [target],
+    graph,
+    generatedAt: NOW,
+  });
+
+  const superseded = context.relations.find((relation) => relation.label === 'supersedes');
+  assert.ok(superseded, 'retry history must reach the planning brief');
+  assert.match(superseded.reason, /fam_old/, 'the superseded family id is the pointer to evidence');
+  assert.equal(superseded.targetRef, 'MANUAL-000020');
+  assert.equal(superseded.schedulerAuthority, false);
+});

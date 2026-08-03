@@ -186,6 +186,15 @@ export class RoadmapPanel extends LitElement {
   @state() private _deliverySummaries: RoadmapDeliverySummary[] = [];
   /** Content revision of the gateway-derived projection's inputs. */
   private _deliveryRevision = '';
+  /**
+   * Every `RUN_UPDATED` can trigger a delivery reload while runs execute, and `_load`
+   * writes the same summaries. Stamping each fetch lets a slow earlier response be
+   * dropped instead of overwriting newer data; the in-flight flag collapses a burst
+   * into one pass plus a single trailing re-run.
+   */
+  private _deliveryGeneration = 0;
+  private _deliveryReloadInFlight = false;
+  private _deliveryReloadQueued = false;
   @state() private _deliveryDetail: RoadmapDeliveryProjection | null = null;
   @state() private _allItems: RoadmapItem[] = [];
   @state() private _slots: SlotStatus[] = [];
@@ -1212,6 +1221,9 @@ export class RoadmapPanel extends LitElement {
         includeArchived: this._includeArchived,
       });
       this._allItems = result.items;
+      // Same generation stamp as `_reloadDelivery`: an explicit refresh is the newest
+      // read, so it claims the generation and invalidates any reload still in flight.
+      this._deliveryGeneration++;
       this._deliverySummaries = result.delivery ?? [];
       // Promoting or shipping changes lineage without changing the selection, so
       // an explicit refresh must re-fetch the detail projection rather than reuse
@@ -1540,19 +1552,31 @@ export class RoadmapPanel extends LitElement {
 
   /** Re-reads list summaries and the open item's lineage after its inputs changed. */
   private async _reloadDelivery() {
+    if (this._deliveryReloadInFlight) {
+      this._deliveryReloadQueued = true;
+      return;
+    }
+    this._deliveryReloadInFlight = true;
+    const generation = ++this._deliveryGeneration;
     try {
       const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
         ...(this._filterProject !== 'all' ? { project: this._filterProject } : {}),
         ...(this._filterStage !== 'all' ? { stage: this._filterStage } : {}),
         includeArchived: this._includeArchived,
       });
-      this._deliverySummaries = result.delivery ?? [];
+      if (generation === this._deliveryGeneration) this._deliverySummaries = result.delivery ?? [];
     } catch (err) {
       this._error = `Delivery badges unavailable: ${(err as Error).message}`;
     }
-    if (this._selectedId) {
+    if (this._selectedId && generation === this._deliveryGeneration) {
       this._deliveryDetail = null;
       await this._loadDeliveryDetail(this._selectedId);
+    }
+    this._deliveryReloadInFlight = false;
+    // One trailing pass covers every update that arrived while this one ran.
+    if (this._deliveryReloadQueued) {
+      this._deliveryReloadQueued = false;
+      void this._reloadDelivery();
     }
   }
 

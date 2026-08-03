@@ -320,6 +320,42 @@ test('delivery revision changes when a run transitions without changing counts',
   );
 });
 
+test('delivery revision changes when one row is swapped for another', () => {
+  // Codex round-7 P2: folding only count + max updatedAt meant substituting a row, or
+  // two edits inside the same millisecond, produced an identical key and the panel
+  // skipped the reload, leaving badges stale until some later update.
+  const stamp = '2026-08-01T00:00:00.000Z';
+  const backlog = [{ id: 'b1', updatedAt: stamp }];
+
+  assert.notEqual(
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp }], backlog),
+    deliveryInputRevision([{ id: 'r2', updatedAt: stamp }], backlog),
+    'a different run at the same timestamp is different delivery input',
+  );
+  assert.notEqual(
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp }], backlog),
+    deliveryInputRevision([{ id: 'r1', updatedAt: stamp }], [{ id: 'b2', updatedAt: stamp }]),
+    'the same holds for a swapped backlog item',
+  );
+  // Order must not matter: the store can return the same rows in a different order.
+  assert.equal(
+    deliveryInputRevision(
+      [
+        { id: 'r1', updatedAt: stamp },
+        { id: 'r2', updatedAt: stamp },
+      ],
+      backlog,
+    ),
+    deliveryInputRevision(
+      [
+        { id: 'r2', updatedAt: stamp },
+        { id: 'r1', updatedAt: stamp },
+      ],
+      backlog,
+    ),
+  );
+});
+
 test('unresolved backlog provenance is evidence, not a link', () => {
   // A promotion entry pointing at a deleted backlog item has nowhere to navigate.
   const dangling: RoadmapDeliveryProjection = {

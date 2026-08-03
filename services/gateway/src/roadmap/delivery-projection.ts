@@ -12,6 +12,7 @@ import {
   type BacklogItem,
   githubPullUrl,
   isSchedulerAuthoritativeGraph,
+  isTerminalRunStatus,
   parseGitHubPullUrl,
   parseGitHubRef,
   type PlanningContextProjection,
@@ -361,8 +362,11 @@ function dedupeRunFamilies(refs: readonly RoadmapDeliveryBacklogRef[]): RoadmapD
         byFamily.set(family.familyId, { ...family, runIds: [...family.runIds] });
         continue;
       }
+      const seenRunIds = new Set(existing.runIds);
       for (const runId of family.runIds) {
-        if (!existing.runIds.includes(runId)) existing.runIds.push(runId);
+        if (seenRunIds.has(runId)) continue;
+        seenRunIds.add(runId);
+        existing.runIds.push(runId);
       }
       if (family.latestUpdatedAt > existing.latestUpdatedAt) {
         existing.latestRunId = family.latestRunId;
@@ -402,7 +406,10 @@ function deriveDeliveryStatus(
   if (deliveredCount > 0 || archivedDelivered) return 'partial';
 
   const active = considered.some((entry) => {
-    if (entry.runFamilies.length > 0) return true;
+    // A family whose latest run is terminal is history, not work in flight: a
+    // cancelled or failed attempt must not keep reporting "Delivery: in progress"
+    // after the operator moves the item back to `ready`.
+    if (entry.runFamilies.some((family) => !isTerminalRunStatus(family.latestStatus))) return true;
     const backlogItem = byId.get(entry.backlogItemId);
     return backlogItem ? IN_FLIGHT_BACKLOG_STATUSES.has(backlogItem.status) : false;
   });
@@ -535,18 +542,18 @@ export function buildPlanningContextProjection(
         reason: `WorkGraph edge ${edge.id} (${edge.condition.kind}, blocks ${edge.blocks ?? 'start'}, status ${edge.status}).`,
       });
     }
+    // ADR-040: a retry that mints a fresh family stays attached to the SAME node and
+    // moves the old `currentFamilyId` into this node's `supersededFamilyIds`. The
+    // superseded family is therefore this node's own history — searching siblings for
+    // a node that still holds it as current can never match.
     for (const familyId of node.supersededFamilyIds ?? []) {
-      const superseded = graph.nodes.find(
-        (candidate) => candidate.id !== node.id && candidate.currentFamilyId === familyId,
-      );
-      if (!superseded) continue;
       relations.push({
         label: 'supersedes',
         direction: 'sibling',
-        ...nodeRelationTarget(superseded, backlogById),
+        ...nodeRelationTarget(node, backlogById),
         source: 'work-graph-edge',
         schedulerAuthority: false,
-        reason: `Supersedes run family ${familyId}.`,
+        reason: `WorkGraph node ${node.id} retried into a fresh family; run family ${familyId} holds the earlier attempt's evidence.`,
       });
     }
   }
@@ -593,5 +600,8 @@ export function planningContextSnapshotHash(
   projection: Omit<PlanningContextProjection, 'snapshotHash'> & { snapshotHash?: string },
 ): string {
   const { generatedAt: _generatedAt, snapshotHash: _snapshotHash, ...content } = projection;
+  // 16 hex chars (64 bits) — this identifies content for "did the brief change?"
+  // comparisons and is never a security or uniqueness boundary, so the shorter,
+  // quotable digest is worth more than the extra collision margin.
   return createHash('sha256').update(JSON.stringify(content)).digest('hex').slice(0, 16);
 }

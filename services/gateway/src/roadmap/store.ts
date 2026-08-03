@@ -70,7 +70,7 @@ import {
   tmuxSessionExists,
 } from '../refinement/session.js';
 import { runnerDefaultModel } from '../runners/registry.js';
-import { getAllRuns, getArchivedRuns } from '../runs/store.js';
+import { getAllRunsWithArchived } from '../runs/store.js';
 import { listWorkGraphs } from '../work-graph/store.js';
 
 import {
@@ -511,10 +511,7 @@ async function deliveryProjectionFor(
 ): Promise<RoadmapDeliveryProjection[]> {
   // Archived runs leave the live map but remain durable evidence. Omitting them
   // would drop exactly the historical lineage this projection promises.
-  const runsByBacklogItemId = buildRunIndexByBacklogItem([
-    ...getAllRuns(),
-    ...(await getArchivedRuns()),
-  ]);
+  const runsByBacklogItemId = buildRunIndexByBacklogItem(await getAllRunsWithArchived());
   const backlogByRoadmapItemId = buildBacklogIndexByRoadmapItem(backlogItems);
   const backlogById = new Map(backlogItems.map((entry) => [entry.id, entry]));
   const generatedAt = new Date().toISOString();

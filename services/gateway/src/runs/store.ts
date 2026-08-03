@@ -379,6 +379,9 @@ function isRunStoreLeak(run: Run): boolean {
  * the same treatment as live ones — an archived run loaded without these keeps a
  * missing `familyId`, which groups unrelated backlog items under one undefined
  * family and corrupts delivery lineage.
+ *
+ * Mutates `run` in place and returns whether anything changed, so callers can decide
+ * whether the record needs re-persisting.
  */
 export function normalizePersistedRun(run: Run): boolean {
   let changed = false;
@@ -974,23 +977,37 @@ const ARCHIVE_DIR = path.join(RUNS_DIR, 'archive');
  * Archived runs leave the live map but stay durable on disk, so any projection
  * that claims historical lineage must read them too — archiving is exactly the
  * "outside the current page" case. Cached because roadmap delivery reads this per
- * request; `archiveRun`/`deleteRun` invalidate it.
+ * request; only `archiveRun` invalidates it, since `deleteRun` unlinks from
+ * `RUNS_DIR` and never touches the archive directory.
  */
 let archivedRunsCache: Run[] | null = null;
+/**
+ * Bumped on every invalidation so a scan that started before an `archiveRun` cannot
+ * publish its pre-archive snapshot as the cache. Without this, a cold scan racing an
+ * archive write would omit the newly archived run until the next archive or restart.
+ */
+let archivedRunsGeneration = 0;
 
 function invalidateArchivedRunsCache(): void {
   archivedRunsCache = null;
+  archivedRunsGeneration++;
 }
 
+/**
+ * Cold call reads and parses every file in the archive directory; subsequent calls are
+ * served from the cache until the next archive. Callers on a request path should expect
+ * the first read after startup (or after an archive) to scale with archive size.
+ */
 export async function getArchivedRuns(): Promise<Run[]> {
   if (archivedRunsCache) return archivedRunsCache;
+  const generation = archivedRunsGeneration;
   let files: string[];
   try {
     files = await readdir(ARCHIVE_DIR);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      archivedRunsCache = [];
-      return archivedRunsCache;
+      if (generation === archivedRunsGeneration) archivedRunsCache = [];
+      return [];
     }
     throw err;
   }
@@ -1013,8 +1030,23 @@ export async function getArchivedRuns(): Promise<Run[]> {
       );
     }
   }
-  archivedRunsCache = loaded;
+  // Only publish this scan if no archive landed while it ran; a stale snapshot would
+  // hide the run that was just archived.
+  if (generation === archivedRunsGeneration) archivedRunsCache = loaded;
   return loaded;
+}
+
+/**
+ * Live runs unioned with archived ones, deduped by id with the live record winning.
+ * A background persist racing `archiveRun` can recreate `runs/<id>.json` after the
+ * archive copy is written, so after a restart the same id loads from both directories.
+ * Concatenating without dedup double-counts run families and clears `archivedOnly`.
+ */
+export async function getAllRunsWithArchived(): Promise<Run[]> {
+  const byId = new Map<string, Run>();
+  for (const run of await getArchivedRuns()) byId.set(run.id, run);
+  for (const run of getAllRuns()) byId.set(run.id, run);
+  return [...byId.values()];
 }
 
 export async function archiveRun(id: string): Promise<boolean> {

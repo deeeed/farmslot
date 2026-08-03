@@ -171,11 +171,14 @@ export function deliveryInputRevision(
   runs: ReadonlyArray<{ id: string; updatedAt: string }>,
   backlogItems: ReadonlyArray<{ id: string; updatedAt: string }>,
 ): string {
-  const fold = (rows: ReadonlyArray<{ id: string; updatedAt: string }>): string => {
-    let latest = '';
-    for (const row of rows) if (row.updatedAt > latest) latest = row.updatedAt;
-    return `${rows.length}@${latest}`;
-  };
+  // Count plus max timestamp is not enough: swapping one linked row for another keeps
+  // both, and two edits inside the same millisecond keep the timestamp. Fold every
+  // row's identity so any substitution changes the key.
+  const fold = (rows: ReadonlyArray<{ id: string; updatedAt: string }>): string =>
+    rows
+      .map((row) => `${row.id}:${row.updatedAt}`)
+      .sort()
+      .join(',');
   return `${fold(runs)}|${fold(backlogItems)}`;
 }
 

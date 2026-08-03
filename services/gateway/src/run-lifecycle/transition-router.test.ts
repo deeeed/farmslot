@@ -331,6 +331,28 @@ test('a publish failure is recorded but never aborts store settlement', async ()
   assert.ok(h.calls.includes('tickWorkGraph'));
 });
 
+test('an asynchronous publish failure is recorded, not lost to an unobserved rejection', async () => {
+  // Codex round-7 P2: the cancel collaborator broadcasts via a dynamic import, so the
+  // failure arrives as a rejected promise. A fire-and-forget `onMutated` returned
+  // before that rejection and reported a clean publish while other clients went stale.
+  const h = harness(run({ workGraphId: 'wg_1' }));
+  const deps = {
+    ...h.deps,
+    onMutated: async () => {
+      await Promise.resolve();
+      throw new Error('broadcast import failed');
+    },
+  };
+
+  const result = await routeRunTransition(cancelRequest, deps);
+
+  const publish = result.effects.find((effect) => effect.name === 'publish')!;
+  assert.equal(publish.status, 'failed');
+  assert.match(publish.detail!, /broadcast import failed/);
+  assert.ok(h.calls.includes('settleBacklog'));
+  assert.ok(h.calls.includes('tickWorkGraph'));
+});
+
 test('nothing yields between the terminal guard and the mutation', async () => {
   // Codex round-3 blocker: awaiting the pre-effects yielded the event loop, and
   // the run engine writes through updateRun without taking the transition lock.

@@ -14,6 +14,7 @@ import {
   cleanupRuns,
   createRun,
   deleteRun,
+  getAllRunsWithArchived,
   getRun,
   isSyntheticLeak,
   listRuns,
@@ -765,4 +766,49 @@ test('loadAllRuns migrates a persisted merge-main.md worker template to update-b
   const disk = JSON.parse(await readFile(path.join(tmp, `${runId}.json`), 'utf8'));
   assert.equal(disk.flowType, 'update-branch');
   assert.equal(disk.taskTemplate.fileName, 'update-branch.md');
+});
+
+test('getAllRunsWithArchived dedupes a run present in both the live map and the archive', async (t) => {
+  // Codex round-7 P2: a background persist racing archiveRun can recreate runs/<id>.json
+  // after the archive copy is written, so after a restart the same id loads from both
+  // directories. Concatenating double-counted the family and cleared `archivedOnly`.
+  const live = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-dedupe-live`,
+  });
+  t.after(() => cleanupRun(live.id));
+
+  // Archiving a throwaway run invalidates the archive cache, so the manual file below
+  // is picked up by the next scan rather than hidden behind a warm cache.
+  const throwaway = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-dedupe-throwaway`,
+  });
+  updateRun(throwaway.id, { status: 'done', completedAt: new Date().toISOString() });
+  assert.equal(await archiveRun(throwaway.id), true);
+
+  const archiveDir = path.join(os.tmpdir(), `farmslot-test-runs-${process.pid}`, 'archive');
+  const staleArchivePath = path.join(archiveDir, `${live.id}.json`);
+  const throwawayPath = path.join(archiveDir, `${throwaway.id}.json`);
+  t.after(() => Promise.all([staleArchivePath, throwawayPath].map((file) => unlink(file).catch(() => {
+    // Best-effort cleanup; absence just means the file was already removed.
+  }))));
+
+  // The stale duplicate carries a different status so "live record wins" is provable.
+  await writeFile(
+    staleArchivePath,
+    JSON.stringify({ ...live, status: 'cancelled', archivedAt: new Date().toISOString() }, null, 2),
+    'utf-8',
+  );
+
+  const all = await getAllRunsWithArchived();
+  const matches = all.filter((candidate) => candidate.id === live.id);
+  assert.equal(matches.length, 1, 'a run in both directories must appear once');
+  assert.equal(matches[0].status, live.status, 'the live record wins over the archived copy');
+  assert.ok(
+    all.some((candidate) => candidate.id === throwaway.id),
+    'genuinely archived runs are still returned',
+  );
 });
