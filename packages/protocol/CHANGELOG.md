@@ -2,15 +2,22 @@
 
 ## Unreleased
 
+- feat(run): `failedRunCancelEffects` — the single filter every human-facing cancel caller uses to detect a partially applied cancel.
 - feat(git): worktree-target branch-diff files carry a `committed` flag — committed-vs-purely-local is knowable per file.
 
 - feat(git): `target: 'worktree'` on `git.diff` / `git.branchDiff` — diff the merge-base against the working tree (every branch change, committed or not).
 
+- feat(work-graph): `isSchedulerAuthoritativeGraph` / `SCHEDULER_AUTHORITATIVE_GRAPH_STATUSES` — one definition of which graph statuses the scheduler acts on (`active` and `waiting`), shared by the scheduler and the planning-context projection so a `waiting` graph's required edges are never described as advisory.
+- feat(roadmap): `RoadmapDeliveryRunRef.archivedOnly` marks families whose runs are all archived, so clients render historical evidence without offering navigation that dead-ends.
 - feat(recipe): add the opt-in `ui.capture_surface` action for full-page and full-scroll-surface evidence while keeping `ui.screenshot` viewport-only.
 - feat(visual-review): define portable source and self-contained feedback documents for hierarchical full-surface or explicit viewport captures, typed multi-path navigation edges, and normalized color-coded point and area annotations.
 
 ## 0.17.0 - 2026-08-03
 
+- feat(roadmap): shared `RoadmapDeliveryProjection` contract (`unstarted|active|partial|delivered|inconsistent`) with per-backlog lineage, run-family and PR evidence, consistency findings, and a `summarizeRoadmapDelivery` aggregate for list badges.
+- feat(roadmap): `PlanningContextProjection` with typed relation labels (`depends-on`, `blocks`, `supersedes`, `absorbs`, `composes-with`, `follow-up`, `parent-roadmap`, `promoted-sibling`), scheduler-authority flags, and a content snapshot hash.
+- feat(roadmap): optional additive `delivery` on `roadmap.list` and `delivery`/`planningContext` on `roadmap.get`.
+- feat(github): `parseGitHubPullUrl` — the single PR-URL parser, so clients render `repo#number` without re-parsing persisted run links.
 - feat(backlog): typed `backlog.refine` / `backlog.refinementSession.get` RPC contracts and default refinement runner/model constants.
 - feat(checklist): shared `enumerateChecklistCheckboxes` + `CHECKLIST_SKIP_SECTIONS` — the single definition of which markdown checkboxes are checklist steps.
 

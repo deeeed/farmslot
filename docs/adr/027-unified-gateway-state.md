@@ -214,3 +214,13 @@ Net effect: the module-level `Map<string, ...>` instances that were **actually**
 1. Add a lint rule (or code review checklist entry) forbidding new module-level `Map<string, …>` state keyed by `runId` or `slotId` in `services/gateway/src/`. Anything so keyed should live on the corresponding canonical object.
 2. Revisit ADR-005 Option D (event log) once per-run history grows organically from grouped state fields.
 3. If `SlotStatus` gains a durable `updateSlot → persist` path in the future, revisit Phase 6 to move `failureCounts` onto `SlotStatus.recycleState`.
+
+## Amendment: Superseded in part by ADR-053 (2026-08-02)
+
+[ADR-053](053-run-lifecycle-transition-routing.md) makes run lifecycle transitions an explicit
+routed call instead of a side effect of emitting `RUN_UPDATED`.
+
+ADR-027 made per-run state durable across restart. ADR-053 addresses the complementary gap: state
+that is durable but _not propagated_ at write time, so it is only reconciled on the next restart.
+The `Run.backlogReconcilePending` write-ahead marker exists because of that gap and is expected to
+be removable once every transition is routed.

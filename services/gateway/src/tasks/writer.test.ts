@@ -7,7 +7,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import {
+  PLANNING_CONTEXT_MAX_RELATIONS,
+  type PlanningContextProjection,
+  type Run,
+} from '@farmslot/protocol';
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
@@ -16,6 +20,7 @@ import { farmslotRoot } from '../projects/repo-root.js';
 process.env.FARMSLOT_DEMO_POOL = '1';
 
 import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
+import { buildPlanningContextSection } from './planning-context.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import {
   applyArtifactOnlyTaskPolicy,
@@ -860,7 +865,13 @@ test('checklistNumberingMismatches flags labels that diverge from step positions
     '- [ ] **1a. Sub-step without its own number**',
     '- [ ] **2. Now sits at position 3**',
   ].join('\n');
-  assert.deepEqual(checklistNumberingMismatches(skewed), ['position 3 is labeled "2"']);
+  // The suffixed label is itself reported, not just the drift it causes one row later.
+  // `mark N` targets positions, so `1a` at position 2 is already the divergence; leaving
+  // it unflagged is how an inserted step silently desynchronises a whole checklist.
+  assert.deepEqual(checklistNumberingMismatches(skewed), [
+    'position 2 is labeled "1a"',
+    'position 3 is labeled "2"',
+  ]);
 
   const aligned = [
     '## Checklist',
@@ -870,4 +881,138 @@ test('checklistNumberingMismatches flags labels that diverge from step positions
     '- [ ] **3. Matches its position**',
   ].join('\n');
   assert.deepEqual(checklistNumberingMismatches(aligned), []);
+});
+
+test('graph-linked backlog run renders a bounded Related planning context section', () => {
+  const projection: PlanningContextProjection = {
+    backlogItemId: 'bk_target',
+    roadmapItemId: 'ri_ctx',
+    roadmapTitle: 'Roadmap delivery lineage',
+    roadmapSpecPath: '.roadmap/inbox/items/delivery-lineage.md',
+    roadmapStage: 'promoted',
+    workGraphId: 'wg_delivery',
+    workNodeId: 'node_target',
+    delivery: {
+      roadmapItemId: 'ri_ctx',
+      status: 'partial',
+      backlogItemCount: 2,
+      deliveredBacklogItemCount: 1,
+      runFamilyCount: 1,
+      prCount: 1,
+      findingCount: 0,
+    },
+    relations: [
+      {
+        label: 'depends-on',
+        direction: 'upstream',
+        targetKind: 'backlog',
+        targetId: 'bk_upstream',
+        targetRef: 'MANUAL-000010',
+        targetTitle: 'Protocol contract',
+        targetStatus: 'done',
+        specPath: '.backlog/specs/manual-000010.md',
+        source: 'work-graph-edge',
+        schedulerAuthority: true,
+        reason: 'WorkGraph edge edge_dep (merged, blocks start, status satisfied).',
+      },
+      {
+        label: 'blocks',
+        direction: 'downstream',
+        targetKind: 'backlog',
+        targetId: 'bk_downstream',
+        targetRef: 'MANUAL-000013',
+        targetStatus: 'ready',
+        specPath: '.backlog/specs/manual-000013.md',
+        source: 'work-graph-edge',
+        schedulerAuthority: true,
+        reason: 'WorkGraph edge edge_next (family-done, blocks start, status pending).',
+      },
+      {
+        label: 'promoted-sibling',
+        direction: 'sibling',
+        targetKind: 'backlog',
+        targetId: 'bk_sibling',
+        targetRef: 'MANUAL-000012',
+        targetStatus: 'running',
+        specPath: '.backlog/specs/manual-000012.md',
+        source: 'roadmap-promotion',
+        schedulerAuthority: false,
+        reason: 'Shares roadmap parent ri_ctx.',
+      },
+    ],
+    generatedAt: '2026-08-02T10:00:00.000Z',
+    snapshotHash: 'abc123def4567890',
+  };
+
+  const section = buildPlanningContextSection('tasks/dev/manual-000072', projection);
+
+  assert.match(section, /^## Related planning context$/m);
+  assert.match(section, /Snapshot hash: abc123def4567890/);
+  assert.match(section, /tasks\/dev\/manual-000072\/inputs\/planning-context\.json/);
+  assert.match(section, /Roadmap parent: ri_ctx — Roadmap delivery lineage \(stage promoted/);
+  assert.match(section, /WorkGraph: wg_delivery node node_target/);
+  assert.match(section, /Roadmap delivery: partial \(1\/2 backlog items delivered/);
+
+  const upstream = section.split('### Upstream')[1].split('###')[0];
+  assert.match(upstream, /`depends-on` MANUAL-000010/);
+  assert.match(upstream, /spec \.backlog\/specs\/manual-000010\.md/);
+  assert.match(upstream, /· scheduler authority ·/);
+
+  const downstream = section.split('### Downstream')[1].split('###')[0];
+  assert.match(downstream, /`blocks` MANUAL-000013/);
+
+  const siblings = section.split('### Siblings')[1];
+  assert.match(siblings, /`promoted-sibling` MANUAL-000012/);
+  assert.match(siblings, /context only \(no scheduler authority\)/);
+
+  // Bounded: refs and spec paths only, never the related spec bodies.
+  assert.equal(section.includes('## Acceptance Criteria'), false);
+  assert.ok(section.length < 4000, 'related context must stay a bounded summary');
+});
+
+test('standalone backlog run renders an explicit empty planning-context state', () => {
+  const projection: PlanningContextProjection = {
+    backlogItemId: 'bk_standalone',
+    relations: [],
+    generatedAt: '2026-08-02T10:00:00.000Z',
+    snapshotHash: 'deadbeefdeadbeef',
+  };
+
+  const section = buildPlanningContextSection('tasks/dev/manual-000073', projection);
+
+  assert.match(section, /^## Related planning context$/m);
+  assert.match(section, /Roadmap parent: none/);
+  assert.match(section, /WorkGraph: not graph-linked/);
+  assert.match(section, /None: this backlog item has no roadmap or WorkGraph relations\./);
+  assert.equal(section.includes('### Upstream'), false);
+});
+
+test('run without a backlog item states why planning context is empty', () => {
+  const section = buildPlanningContextSection('tasks/dev/manual-000074', null);
+  assert.match(section, /No related planning context: this run is not linked to a backlog item\./);
+});
+
+test('the rendered brief is capped while the snapshot keeps everything', () => {
+  const relations = Array.from({ length: 40 }, (_, index) => ({
+    label: 'promoted-sibling' as const,
+    direction: 'sibling' as const,
+    targetKind: 'backlog' as const,
+    targetId: `bk_${index}`,
+    targetRef: `MANUAL-${String(index).padStart(6, '0')}`,
+    source: 'roadmap-promotion' as const,
+    schedulerAuthority: false,
+    reason: 'Shares roadmap parent ri_x.',
+  }));
+  const projection: PlanningContextProjection = {
+    backlogItemId: 'bk_target',
+    relations,
+    generatedAt: '2026-08-02T10:00:00.000Z',
+    snapshotHash: 'cafebabecafebabe',
+  };
+
+  const section = buildPlanningContextSection('tasks/dev/x', projection);
+  const rendered = section.match(/`promoted-sibling`/g) ?? [];
+  assert.equal(rendered.length, PLANNING_CONTEXT_MAX_RELATIONS, 'brief stays bounded');
+  assert.match(section, /16 of 40 relations omitted here/);
+  assert.match(section, /snapshot artifact above holds all 40/);
 });

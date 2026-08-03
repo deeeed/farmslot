@@ -1,8 +1,14 @@
 import { html, LitElement, nothing, type PropertyValues, svg } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import type { Run, RunStep, RunStepStatus, TaskProgressStructured } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import type {
+  Run,
+  RunCancelResult,
+  RunStep,
+  RunStepStatus,
+  TaskProgressStructured,
+} from '@farmslot/protocol';
+import { failedRunCancelEffects, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 
@@ -240,7 +246,19 @@ export class RunPipeline extends LitElement {
     if (this.cancelPending) return;
     this.cancelPending = true;
     try {
-      await gateway.request(Methods.RUN_CANCEL, { runId: this.run.id });
+      const result = await gateway.request<RunCancelResult>(Methods.RUN_CANCEL, {
+        runId: this.run.id,
+      });
+      // The run reaching `cancelled` does not mean teardown finished. Silence here
+      // would tell the operator the stop fully landed while a slot stays claimed.
+      const failed = failedRunCancelEffects(result.effects);
+      if (failed.length) {
+        alert(
+          `Run cancelled, but part of the teardown failed:\n${failed
+            .map((effect) => `${effect.name}: ${effect.detail ?? 'failed'}`)
+            .join('\n')}`,
+        );
+      }
     } catch (err) {
       this.cancelPending = false;
       console.error('Failed to cancel run:', err);

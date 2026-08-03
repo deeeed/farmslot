@@ -4,6 +4,9 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
   BacklogItem,
+  RoadmapDeliveryProjection,
+  RoadmapDeliverySummary,
+  RoadmapGetResult,
   RoadmapItem,
   RoadmapItemStage,
   RoadmapListResult,
@@ -15,7 +18,6 @@ import type {
   RoadmapRefinementSessionGetResult,
   RoadmapRefineResult,
   RoadmapSaveResult,
-  Run,
   SafetyTier,
   SlotStatus,
   WorkGraphProjection,
@@ -31,7 +33,6 @@ import {
 } from '@farmslot/protocol';
 
 import './roadmap-graph-composer.js';
-import '../shared/linked-run-summary.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
@@ -44,7 +45,6 @@ import {
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
-import { linkedRunForBacklogItem } from '../shared/linked-run-model.js';
 import {
   planningBadgeStyles,
   renderPlanningBadge,
@@ -82,6 +82,9 @@ import { encodeWorkerRouteParam } from '../terminal/split-view-model.js';
 
 import {
   defaultSpecBody,
+  deliveryBadgeLabel,
+  deliveryBadgeTone,
+  deliverySummaryFor,
   filterRoadmapItemsByGlobalProjects,
   parsePromotionDraftAttachment,
   parsePromotionDraftsFromRoadmapBody,
@@ -89,6 +92,8 @@ import {
   type PromotionDraftAttachment,
   promotionDraftAttachment,
   promotionDraftsFromRoadmapItem,
+  roadmapDeliveryBacklinks,
+  roadmapDeliveryRefreshRevision,
   type RoadmapSortDirection,
   type RoadmapSortKey,
   sortRoadmapItems,
@@ -176,11 +181,39 @@ function isRoadmapRoute(route: string): boolean {
 export class RoadmapPanel extends LitElement {
   @property({ attribute: false }) items: RoadmapItem[] | null = null;
   @property({ attribute: false }) slots: SlotStatus[] | null = null;
-  @property({ attribute: false }) demoRuns: Run[] | null = null;
+  /** Harness/injection hook: full gateway projections keyed by roadmap item id. */
+  @property({ attribute: false }) delivery: RoadmapDeliveryProjection[] | null = null;
+  @state() private _deliverySummaries: RoadmapDeliverySummary[] = [];
+  /** Content revision of the gateway-derived projection's inputs. */
+  private _deliveryRevision = '';
+  /**
+   * Every `RUN_UPDATED` can trigger a delivery reload while runs execute, and `_load`
+   * writes the same summaries. Stamping each fetch lets a slow earlier response be
+   * dropped instead of overwriting newer data; the in-flight flag collapses a burst
+   * into one pass plus a single trailing re-run.
+   */
+  private _deliveryGeneration = 0;
+  /**
+   * Separate from `_deliveryGeneration` on purpose. A delivery-only reload writes
+   * summaries but never `_allItems`, so it must not be able to invalidate a full
+   * refresh's item list — sharing one counter made a run update silently discard a
+   * filter/search change that was already in flight.
+   */
+  private _listGeneration = 0;
+  private _deliveryReloadInFlight = false;
+  private _deliveryReloadQueued = false;
+  /**
+   * Detail requests need their own stamp: the item id alone does not order two
+   * overlapping `roadmap.get` calls for the *same* selected item, so the older
+   * response could land last and restore stale lineage.
+   */
+  private _deliveryDetailGeneration = 0;
+  /** Distinguishes "lineage still loading" from "no lineage" so the panel never blanks silently. */
+  @state() private _deliveryDetailLoading = false;
+  @state() private _deliveryDetail: RoadmapDeliveryProjection | null = null;
   @state() private _allItems: RoadmapItem[] = [];
   @state() private _slots: SlotStatus[] = [];
   @state() private _backlogItems: BacklogItem[] = [];
-  @state() private _runs: Run[] = [];
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _selectedId = '';
@@ -540,6 +573,49 @@ export class RoadmapPanel extends LitElement {
         gap: ${unsafeCSS(spacing.sm)};
         padding: ${unsafeCSS(spacing.sm)};
       }
+      .backlog-cell {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        align-items: center;
+      }
+      .delivery-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: ${unsafeCSS(spacing.xs)};
+      }
+      .delivery-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid ${unsafeCSS(colors.accent)}55;
+        border-radius: ${unsafeCSS(radii.sm)};
+        padding: 2px 8px;
+        color: ${unsafeCSS(colors.accent)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        text-decoration: none;
+      }
+      .delivery-link-inert {
+        border-style: dashed;
+        color: ${unsafeCSS(colors.textMuted)};
+        cursor: default;
+      }
+      .delivery-link:hover {
+        background: ${unsafeCSS(colors.accent)}14;
+      }
+      .delivery-link-kind {
+        color: ${unsafeCSS(colors.textMuted)};
+        text-transform: uppercase;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+      }
+      .delivery-findings {
+        margin: 0;
+        padding-left: ${unsafeCSS(spacing.md)};
+        color: ${unsafeCSS(colors.statusWarn)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        display: grid;
+        gap: 4px;
+      }
       .attachment-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -757,7 +833,7 @@ export class RoadmapPanel extends LitElement {
   }
 
   protected updated(changed: Map<string, unknown>) {
-    if (changed.has('items') || changed.has('slots') || changed.has('demoRuns')) {
+    if (changed.has('items') || changed.has('slots') || changed.has('delivery')) {
       this._syncState(getState());
     }
   }
@@ -819,8 +895,28 @@ export class RoadmapPanel extends LitElement {
   private _syncState(state: AppState) {
     const previousProjects = this._globalFilters.projects.join('\0');
     this._slots = this.slots ?? state.fleet?.slots ?? [];
+    // Delivery is derived by the gateway, so the panel cannot recompute it locally —
+    // but it must still notice that the inputs moved. Counting entries is not enough:
+    // the transitions that matter most (a run reaching done, a backlog item shipping)
+    // leave both lengths unchanged, so the revision tracks content freshness too.
+    // Promotion provenance is a supported lineage path with no `roadmapItemId` on the
+    // backlog row, so those ids have to be named explicitly or their updates go unseen.
+    const promotionBacklogIds = new Set(
+      (this.items ?? this._allItems).flatMap((item) =>
+        (item.promotion ?? []).flatMap((entry) =>
+          entry.backlogItemId ? [entry.backlogItemId] : [],
+        ),
+      ),
+    );
+    const revision = roadmapDeliveryRefreshRevision(
+      state.runDeletionsRevision,
+      state.runs,
+      state.backlogItems,
+      promotionBacklogIds,
+    );
+    const deliveryInputsChanged = this._deliveryRevision !== revision;
+    this._deliveryRevision = revision;
     this._backlogItems = state.backlogItems;
-    this._runs = this.demoRuns ?? state.runs;
     this._workGraphs = state.workGraphs;
     this._globalFilters = state.globalFilters;
     if (this.items) {
@@ -832,6 +928,12 @@ export class RoadmapPanel extends LitElement {
         this._syncEditor(selected);
         this._writeUrlState();
       }
+    }
+    // Injected projections (dev harness) are authoritative; only the connected
+    // path needs to re-read from the gateway.
+    // Refresh both surfaces: reloading only the detail left every list badge stale.
+    if (deliveryInputsChanged && !this.items && !this.delivery) {
+      void this._reloadDelivery();
     }
     if (previousProjects !== this._globalFilters.projects.join('\0')) {
       const globalProjects = concretePlanningProjects(state.globalFilters.projects);
@@ -1013,6 +1115,7 @@ export class RoadmapPanel extends LitElement {
   private _syncEditor(item: RoadmapItem | null) {
     if (!item) {
       this._selectedId = '';
+      this._deliveryDetail = null;
       this._editorMode = 'view';
       this._editTitle = '';
       this._editProject = '';
@@ -1036,6 +1139,7 @@ export class RoadmapPanel extends LitElement {
       return;
     }
     this._selectedId = item.id;
+    this._syncDeliveryDetail(item.id);
     this._editTitle = item.title;
     this._editProject = item.project;
     this._editTargetProjects = item.targetProjects ?? [];
@@ -1137,6 +1241,12 @@ export class RoadmapPanel extends LitElement {
     }
     this._busy = 'refresh';
     this._error = '';
+    // Two independent claims. The list generation orders refreshes against each other
+    // (double-click, or a filter change during an in-flight read). The delivery
+    // generation orders summary writes against `_reloadDelivery`, which carries fresher
+    // summaries but no items — so it may win the summaries without discarding the list.
+    const listGeneration = ++this._listGeneration;
+    const deliveryGeneration = ++this._deliveryGeneration;
     try {
       const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
         ...(this._filterProject !== 'all' ? { project: this._filterProject } : {}),
@@ -1145,13 +1255,24 @@ export class RoadmapPanel extends LitElement {
         ...(this._filterSearch.trim() ? { search: this._filterSearch.trim() } : {}),
         includeArchived: this._includeArchived,
       });
+      if (listGeneration !== this._listGeneration) return;
       this._allItems = result.items;
+      // A delivery reload that landed while this refresh was in flight holds newer
+      // summaries; keep them rather than reverting to this response's snapshot.
+      if (deliveryGeneration === this._deliveryGeneration) {
+        this._deliverySummaries = result.delivery ?? [];
+      }
+      // Promoting or shipping changes lineage without changing the selection, so
+      // an explicit refresh must re-fetch the detail projection rather than reuse
+      // the cached one for the same item id.
+      this._deliveryDetail = null;
       const visibleItems = this._items;
       const selected = visibleItems.find((item) => item.id === selectId) ?? visibleItems[0] ?? null;
       this._syncEditor(selected);
       this._writeUrlState();
     } catch (err) {
-      this._error = (err as Error).message;
+      // A superseded refresh's failure must not report over the newer one's data.
+      if (listGeneration === this._listGeneration) this._error = (err as Error).message;
     } finally {
       this._busy = '';
     }
@@ -1287,9 +1408,17 @@ export class RoadmapPanel extends LitElement {
   }
 
   private async _deleteSelected() {
-    if (!this._selected) return;
+    // Snapshot the target rather than re-reading `_selected`, which falls back to
+    // `_items[0]` and so can resolve to a different item than the one named in the
+    // prompt. This is defence in depth, not a live bug: `window.confirm` blocks the JS
+    // thread, so no state update can land between the prompt and the reads below. It
+    // becomes a real swap the moment this is replaced with an async dialog — and
+    // `_editHash` moves with the selection, so the hash guard would not catch it.
+    const target = this._selected;
+    const expectedHash = this._editHash;
+    if (!target) return;
     const ok = window.confirm(
-      `Delete roadmap item "${this._selected.title}"? This removes its markdown file.`,
+      `Delete roadmap item "${target.title}"? This removes its markdown file.`,
     );
     if (!ok) return;
     this._busy = 'delete';
@@ -1297,8 +1426,8 @@ export class RoadmapPanel extends LitElement {
     this._message = '';
     try {
       await gateway.request(Methods.ROADMAP_DELETE, {
-        itemId: this._selected.id,
-        expectedHash: this._editHash,
+        itemId: target.id,
+        expectedHash,
       });
       this._message = 'Roadmap item deleted';
       await this._refresh('');
@@ -1445,6 +1574,102 @@ export class RoadmapPanel extends LitElement {
     } finally {
       this._busy = '';
     }
+  }
+
+  /**
+   * Detail lineage always comes from the gateway projection: `roadmap.get` when
+   * connected, the injected `delivery` property in the dev harness. The loaded
+   * run page is never consulted — a historical run outside it must stay visible.
+   */
+  private _syncDeliveryDetail(itemId: string) {
+    const injected = (this.delivery ?? []).find((entry) => entry.roadmapItemId === itemId);
+    if (injected) {
+      this._deliveryDetail = injected;
+      return;
+    }
+    if (this.delivery) {
+      this._deliveryDetail = null;
+      return;
+    }
+    if (this._deliveryDetail?.roadmapItemId === itemId) return;
+    this._deliveryDetail = null;
+    void this._loadDeliveryDetail(itemId);
+  }
+
+  /** Re-reads list summaries and the open item's lineage after its inputs changed. */
+  private async _reloadDelivery() {
+    if (this._deliveryReloadInFlight) {
+      this._deliveryReloadQueued = true;
+      return;
+    }
+    this._deliveryReloadInFlight = true;
+    const generation = ++this._deliveryGeneration;
+    try {
+      const result = await gateway.request<RoadmapListResult>(Methods.ROADMAP_LIST, {
+        ...(this._filterProject !== 'all' ? { project: this._filterProject } : {}),
+        ...(this._filterStage !== 'all' ? { stage: this._filterStage } : {}),
+        includeArchived: this._includeArchived,
+      });
+      if (generation === this._deliveryGeneration) this._deliverySummaries = result.delivery ?? [];
+    } catch (err) {
+      // Same generation guard as the success path. A superseded request failing after
+      // a newer `_refresh` already succeeded would otherwise report "unavailable" over
+      // data that is in fact loaded and current.
+      if (generation === this._deliveryGeneration) {
+        this._error = `Delivery badges unavailable: ${(err as Error).message}`;
+      }
+    }
+    if (this._selectedId && generation === this._deliveryGeneration) {
+      this._deliveryDetail = null;
+      await this._loadDeliveryDetail(this._selectedId);
+    }
+    this._deliveryReloadInFlight = false;
+    // One trailing pass covers every update that arrived while this one ran.
+    if (this._deliveryReloadQueued) {
+      this._deliveryReloadQueued = false;
+      void this._reloadDelivery();
+    }
+  }
+
+  private async _loadDeliveryDetail(itemId: string) {
+    const generation = ++this._deliveryDetailGeneration;
+    const superseded = () =>
+      this._selectedId !== itemId || generation !== this._deliveryDetailGeneration;
+    this._deliveryDetailLoading = true;
+    try {
+      const result = await gateway.request<RoadmapGetResult>(Methods.ROADMAP_GET, { itemId });
+      if (superseded()) return;
+      this._deliveryDetail = result.delivery ?? null;
+    } catch (err) {
+      // Lineage is supplementary to the editor; surface the failure instead of
+      // rendering a silently empty delivery panel. A superseded request's error is
+      // dropped deliberately: a newer request owns the panel, and reporting the stale
+      // one would show an error for lineage the user is no longer looking at.
+      if (superseded()) return;
+      this._error = `Delivery lineage unavailable: ${(err as Error).message}`;
+    } finally {
+      // Only the newest request owns the flag; a superseded one clearing it would
+      // hide the placeholder while its replacement is still in flight.
+      if (generation === this._deliveryDetailGeneration) this._deliveryDetailLoading = false;
+    }
+  }
+
+  private _deliverySummaryFor(itemId: string): RoadmapDeliverySummary | null {
+    return deliverySummaryFor(itemId, this._deliverySummaries, this.delivery ?? []);
+  }
+
+  /** `testId` separates the per-row list badge from the selected item's detail badge. */
+  private _renderDeliveryBadge(itemId: string, testId: string) {
+    const summary = this._deliverySummaryFor(itemId);
+    if (!summary) return nothing;
+    const tone = deliveryBadgeTone(summary.status);
+    return html`<span
+      class="badge ${tone === 'default' ? '' : tone}"
+      data-testid=${testId}
+      data-delivery-status=${summary.status}
+      title="Delivery evidence is derived by the gateway from backlog links, runs, and PRs. It is separate from the planning stage."
+      >${deliveryBadgeLabel(summary)}</span
+    >`;
   }
 
   private _selectItem(item: RoadmapItem, mode: RoadmapEditorMode = 'view') {
@@ -2098,12 +2323,12 @@ export class RoadmapPanel extends LitElement {
         html`<span data-testid="roadmap-project">${renderPlanningBadge(item.project)}</span>`,
         html`<span class="item-ref" title=${item.id}>${item.id}</span>`,
         html`<div class="title" title=${item.title}>${item.title}</div>`,
-        item.promotion?.length
-          ? renderPlanningBadge(
-              `${item.promotion.length} backlog link${item.promotion.length === 1 ? '' : 's'}`,
-              'positive',
-            )
-          : html`<span class="muted">—</span>`,
+        html`<div class="backlog-cell">
+          ${item.promotion?.length
+            ? renderPlanningBadge(`${item.promotion.length} promoted`, 'positive')
+            : nothing}
+          ${this._renderDeliveryBadge(item.id, 'roadmap-delivery-row-badge')}
+        </div>`,
         html`<span class="updated-cell" title=${item.updatedAt}
           >${item.updatedAt.slice(0, 10)}</span
         >`,
@@ -2247,39 +2472,64 @@ export class RoadmapPanel extends LitElement {
       : nothing;
   }
 
-  private _runsForRoadmapItem(item: RoadmapItem): Run[] {
-    const seen = new Set<string>();
-    const runs: Run[] = [];
-    for (const entry of item.promotion ?? []) {
-      const backlogItem = this._backlogItems.find(
-        (candidate) => candidate.id === entry.backlogItemId,
-      );
-      if (!backlogItem) continue;
-      const run = linkedRunForBacklogItem(this._runs, backlogItem);
-      if (!run || seen.has(run.id)) continue;
-      seen.add(run.id);
-      runs.push(run);
+  private _renderDeliveryLineage(item: RoadmapItem) {
+    const projection =
+      this._deliveryDetail?.roadmapItemId === item.id ? this._deliveryDetail : null;
+    if (!projection) {
+      // A blank panel reads as "nothing shipped". Say which one it is.
+      return this._deliveryDetailLoading
+        ? html`<div class="path-panel">
+            <p class="muted" data-testid="delivery-lineage-loading">Loading delivery lineage…</p>
+          </div>`
+        : nothing;
     }
-    return runs;
-  }
-
-  private _renderLinkedRuns(item: RoadmapItem) {
-    const runs = this._runsForRoadmapItem(item);
-    if (!runs.length) return nothing;
+    const links = roadmapDeliveryBacklinks(projection);
     return html`<div class="path-panel">
       <div class="editor-head">
         <div>
-          <h3>Linked runs</h3>
-          <p class="muted">Promoted backlog items with active or recent execution.</p>
+          <h3>Delivery lineage</h3>
+          <p class="muted">
+            Backlog items, run families, and PRs the gateway derived for this roadmap item. Delivery
+            is separate from the planning stage.
+          </p>
         </div>
       </div>
-      <div class="attachment-grid">
-        ${runs.map(
-          (run) =>
-            html`<linked-run-summary .run=${run} label="Backlog run" compact>
-            </linked-run-summary>`,
-        )}
-      </div>
+      ${links.length
+        ? html`<div class="delivery-links">
+            ${links.map((link) =>
+              // Evidence without a reachable destination — an archived-only run
+              // family, a PR with no URL, a deleted backlog item — is still evidence.
+              // Hiding it erased exactly the historical lineage this panel exists to
+              // surface, so it renders as a non-navigable chip instead.
+              link.href
+                ? html`<a
+                    class="delivery-link"
+                    data-testid=${link.testId}
+                    href=${link.href}
+                    title=${link.detail}
+                    target=${link.external ? '_blank' : '_self'}
+                    rel=${link.external ? 'noopener noreferrer' : ''}
+                    ><span class="delivery-link-kind">${link.kind}</span>${link.label}</a
+                  >`
+                : html`<span
+                    class="delivery-link delivery-link-inert"
+                    data-testid=${link.testId}
+                    title=${link.detail}
+                    ><span class="delivery-link-kind">${link.kind}</span>${link.label}</span
+                  >`,
+            )}
+          </div>`
+        : html`<p class="muted">No backlog, run, or PR evidence linked to this item yet.</p>`}
+      ${projection.findings.length
+        ? html`<ul class="delivery-findings">
+            ${projection.findings.map(
+              (finding) =>
+                html`<li data-testid="roadmap-delivery-finding" data-finding-code=${finding.code}>
+                  <code>${finding.code}</code> — ${finding.detail} ${finding.remediation}
+                </li>`,
+            )}
+          </ul>`
+        : nothing}
     </div>`;
   }
 
@@ -2323,6 +2573,7 @@ export class RoadmapPanel extends LitElement {
             item.stage,
             item.stage === 'refined' || item.stage === 'promoted' ? 'positive' : 'default',
           )}
+          ${this._renderDeliveryBadge(item.id, 'roadmap-delivery-badge')}
           ${renderPlanningBadge(item.project)}
           ${(item.targetProjects ?? []).map((project) => renderPlanningBadge(project, 'positive'))}
           ${renderTagChips(item.tags)}
@@ -2339,7 +2590,7 @@ export class RoadmapPanel extends LitElement {
               )
             : nothing}
         </div>
-        ${this._renderLinkedRuns(item)} ${this._renderRefinementPromptPath(item)}
+        ${this._renderDeliveryLineage(item)} ${this._renderRefinementPromptPath(item)}
         ${this._renderDraftAttachmentSummary(item)}
         <pre class="body-view">${item.body || 'No roadmap body.'}</pre>
       </div>

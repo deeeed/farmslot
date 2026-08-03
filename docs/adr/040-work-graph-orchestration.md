@@ -802,3 +802,13 @@ Only genuinely unresolved (architecture calls are made above):
    you want stack topology as a first-class edge attribute from the start?
 
 ---
+
+## Amendment: Superseded in part by ADR-053 (2026-08-02)
+
+[ADR-053](053-run-lifecycle-transition-routing.md) makes run lifecycle transitions an explicit
+routed call instead of a side effect of emitting `RUN_UPDATED`.
+
+The scheduler currently infers operator cancellation while polling `getAllRuns()`
+(`status === 'cancelled' && !redirectedToRunId`, added by #466). Under ADR-053 the graph is told
+with intent instead, and that inference becomes a backstop rather than the only signal. Scheduler
+authority over active-graph edges is unchanged.

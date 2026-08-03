@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 
-import type { FlowType } from '@farmslot/protocol';
+import { failedRunCancelEffects, type FlowType, parseGitHubRef } from '@farmslot/protocol';
 
 import { farmslotRoot, getCachedFleet } from '../fleet/state.js';
 import { decisionList } from '../methods/decisions.js';
@@ -202,25 +202,26 @@ export async function executeTool(
       }
       case 'check_pr': {
         const prRef = String(args.pr_ref ?? '');
-        let owner = 'example-org',
-          repo = 'example-mobile',
-          number: string;
-        if (prRef.includes('#')) {
-          const hashIdx = prRef.lastIndexOf('#');
-          const repoFull = prRef.slice(0, hashIdx).split('/');
-          owner = repoFull[0];
-          repo = repoFull[1];
-          number = prRef.slice(hashIdx + 1);
-        } else {
-          number = prRef;
+        // Shared parser rather than a local lastIndexOf split, which mis-handled
+        // refs like `foo/bar/baz#123` and silently produced an undefined repo.
+        const parsedRef = parseGitHubRef(prRef);
+        if (!parsedRef) {
+          // Previously fell back to a placeholder `example-org/example-mobile`, so a
+          // bare `123` queried a repo that does not exist and surfaced an opaque gh
+          // error. Name the real problem instead: the ref carries no repo.
+          throw new Error(
+            `check_pr needs an owner/repo-qualified PR ref (e.g. owner/repo#123), got: ${prRef || '(empty)'}`,
+          );
         }
+        const repoSlug = parsedRef.repo;
+        const number = String(parsedRef.number);
         const { ghRequest } = await import('../integrations/github-client.js');
         const pr = await ghRequest([
           'pr',
           'view',
           String(number),
           '--repo',
-          `${owner}/${repo}`,
+          repoSlug,
           '--json',
           'state,title,url,mergeable,headRefName,reviews',
         ]);
@@ -478,15 +479,29 @@ export async function executeTool(
       }
       case 'cancel_run': {
         const { runCancel } = await import('../methods/run/lifecycle-control.js');
-        const emit = await broadcast();
+        // No emitter: the transition broadcasts globally itself (ADR-053).
         const id = String(args.run_id ?? '');
         const run = getRun(id) ?? listRuns({ limit: 200 }).runs.find((r) => r.id.startsWith(id));
         if (!run) throw new Error(`Run not found: ${id}`);
-        const { run: cancelled } = await runCancel(
-          { runId: run.id, reason: String(args.reason ?? 'Cancelled via co-pilot') },
-          emit,
-        );
-        result = { cancelled: true, runId: cancelled.id.slice(0, 8), status: cancelled.status };
+        const { run: cancelled, effects } = await runCancel({
+          runId: run.id,
+          reason: String(args.reason ?? 'Cancelled via co-pilot'),
+        });
+        // The run reaching `cancelled` is not the whole story: an advisory effect can
+        // fail, leaving a slot claimed or the backlog unsettled. Reporting only
+        // `cancelled: true` would tell the operator the stop fully landed.
+        const failed = failedRunCancelEffects(effects);
+        result = {
+          cancelled: true,
+          runId: cancelled.id.slice(0, 8),
+          status: cancelled.status,
+          ...(failed.length
+            ? {
+                partiallyApplied: true,
+                failedEffects: failed.map((effect) => `${effect.name}: ${effect.detail ?? 'failed'}`),
+              }
+            : {}),
+        };
         break;
       }
       case 'resolve_decision': {

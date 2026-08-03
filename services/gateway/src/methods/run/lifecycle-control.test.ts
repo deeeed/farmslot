@@ -26,14 +26,16 @@ test('runCancel marks non-terminal runs cancelled without slot release side effe
   });
   t.after(() => cleanupRun(run.id));
 
-  const events: string[] = [];
-  const result = await runCancel({ runId: run.id, reason: 'operator cleanup' }, (event) => {
-    events.push(event);
-  });
+  const result = await runCancel({ runId: run.id, reason: 'operator cleanup' });
 
   assert.equal(result.run.status, 'cancelled');
   assert.equal(result.run.error, 'operator cleanup');
   assert.equal(result.run.metrics.outcome, 'cancelled');
+  assert.equal(
+    result.run.backlogReconcilePending,
+    undefined,
+    'a successful backlog settle clears the write-ahead repair marker',
+  );
   assert.deepEqual(
     result.run.steps.map((step) => [step.name, step.status]),
     [
@@ -42,7 +44,6 @@ test('runCancel marks non-terminal runs cancelled without slot release side effe
       ['complete', 'skipped'],
     ],
   );
-  assert.deepEqual(events, ['run.updated']);
 });
 
 test('runCancel rejects terminal runs', async (t) => {
@@ -54,7 +55,7 @@ test('runCancel rejects terminal runs', async (t) => {
   updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
   t.after(() => cleanupRun(run.id));
 
-  await assert.rejects(() => runCancel({ runId: run.id }, () => {}), /already in terminal state/);
+  await assert.rejects(() => runCancel({ runId: run.id }), /already in terminal state/);
 });
 
 test('runPause pauses monitoring runs and rejects non-pausable statuses', async (t) => {

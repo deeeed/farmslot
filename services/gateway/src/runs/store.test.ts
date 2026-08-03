@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
@@ -14,10 +15,12 @@ import {
   cleanupRuns,
   createRun,
   deleteRun,
+  getAllRunsWithArchived,
   getRun,
   isSyntheticLeak,
   listRuns,
   normalizeRunClassification,
+  persistRunNow,
   shouldUseIsolatedRunsDir,
   updateRun,
 } from './store.js';
@@ -765,4 +768,192 @@ test('loadAllRuns migrates a persisted merge-main.md worker template to update-b
   const disk = JSON.parse(await readFile(path.join(tmp, `${runId}.json`), 'utf8'));
   assert.equal(disk.flowType, 'update-branch');
   assert.equal(disk.taskTemplate.fileName, 'update-branch.md');
+});
+
+test('getAllRunsWithArchived dedupes a run present in both the live map and the archive', async (t) => {
+  // Codex round-7 P2: a background persist racing archiveRun can recreate runs/<id>.json
+  // after the archive copy is written, so after a restart the same id loads from both
+  // directories. Concatenating double-counted the family and cleared `archivedOnly`.
+  const live = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-dedupe-live`,
+  });
+  t.after(() => cleanupRun(live.id));
+
+  // Archiving a throwaway run invalidates the archive cache, so the manual file below
+  // is picked up by the next scan rather than hidden behind a warm cache.
+  const throwaway = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-dedupe-throwaway`,
+  });
+  updateRun(throwaway.id, { status: 'done', completedAt: new Date().toISOString() });
+  assert.equal(await archiveRun(throwaway.id), true);
+
+  const archiveDir = path.join(os.tmpdir(), `farmslot-test-runs-${process.pid}`, 'archive');
+  const staleArchivePath = path.join(archiveDir, `${live.id}.json`);
+  const throwawayPath = path.join(archiveDir, `${throwaway.id}.json`);
+  t.after(() => Promise.all([staleArchivePath, throwawayPath].map((file) => unlink(file).catch(() => {
+    // Best-effort cleanup; absence just means the file was already removed.
+  }))));
+
+  // The stale duplicate carries a different status so "live record wins" is provable.
+  await writeFile(
+    staleArchivePath,
+    JSON.stringify({ ...live, status: 'cancelled', archivedAt: new Date().toISOString() }, null, 2),
+    'utf-8',
+  );
+
+  const all = await getAllRunsWithArchived();
+  const matches = all.filter((candidate) => candidate.id === live.id);
+  assert.equal(matches.length, 1, 'a run in both directories must appear once');
+  assert.equal(matches[0].status, live.status, 'the live record wins over the archived copy');
+  assert.ok(
+    all.some((candidate) => candidate.id === throwaway.id),
+    'genuinely archived runs are still returned',
+  );
+});
+
+test('getAllRunsWithArchived retries when an archive lands during a cold scan', async (t) => {
+  const archiveDir = path.join(os.tmpdir(), `farmslot-test-runs-${process.pid}`, 'archive');
+  await mkdir(archiveDir, { recursive: true });
+
+  // First invalidate any warm cache left by an earlier test. The fixture fan-out then
+  // keeps the cold read open long enough for the target archive to land mid-scan.
+  const invalidator = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-archive-scan-invalidator`,
+  });
+  updateRun(invalidator.id, { status: 'done', completedAt: new Date().toISOString() });
+  assert.equal(await archiveRun(invalidator.id), true);
+
+  const prefix = `race-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const fixturePaths = Array.from({ length: 2_000 }, (_, index) =>
+    path.join(archiveDir, `${prefix}-${index}.json`),
+  );
+  const archivedFixture = {
+    ...invalidator,
+    status: 'done' as const,
+    completedAt: new Date().toISOString(),
+    archivedAt: new Date().toISOString(),
+    summary: 'x'.repeat(2_000),
+  };
+  await Promise.all(
+    fixturePaths.map((file, index) =>
+      writeFile(
+        file,
+        JSON.stringify({
+          ...archivedFixture,
+          id: `${prefix}-${index}`,
+          familyId: `${prefix}-${index}`,
+        }),
+        'utf-8',
+      ),
+    ),
+  );
+
+  const target = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-archive-scan-target`,
+  });
+  updateRun(target.id, { status: 'done', completedAt: new Date().toISOString() });
+  await persistRunNow(target, 'archive-scan-race-test');
+
+  const targetArchivePath = path.join(archiveDir, `${target.id}.json`);
+  const invalidatorArchivePath = path.join(archiveDir, `${invalidator.id}.json`);
+  t.after(() =>
+    Promise.all(
+      [...fixturePaths, targetArchivePath, invalidatorArchivePath].map((file) =>
+        unlink(file).catch(() => {
+          // Best-effort cleanup; absence means the tested operation already removed it.
+        }),
+      ),
+    ),
+  );
+
+  const pendingRead = getAllRunsWithArchived();
+  await delay(10);
+  assert.equal(await archiveRun(target.id), true);
+  const all = await pendingRead;
+
+  assert.ok(
+    all.some((candidate) => candidate.id === target.id),
+    'a request racing archive must see the run in either its archive scan or live snapshot',
+  );
+});
+
+test('a failed archive write keeps the run in memory instead of evicting it', async (t) => {
+  // Claude round-10: the run was deleted from the live map before the archive copy
+  // was durable, so a failed write dropped it from memory until the next restart
+  // re-read it from the still-present source file.
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-archive-durability`,
+  });
+  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+
+  const archiveDir = path.join(os.tmpdir(), `farmslot-test-runs-${process.pid}`, 'archive');
+  await mkdir(archiveDir, { recursive: true });
+  await chmod(archiveDir, 0o500);
+  t.after(async () => {
+    await chmod(archiveDir, 0o700);
+    await cleanupRun(run.id);
+  });
+
+  await assert.rejects(() => archiveRun(run.id), 'the archive write failure must surface');
+  assert.ok(getRun(run.id), 'the run stays live when its archive copy was never written');
+});
+
+test('a failed live-file unlink keeps the run in memory for a truthful retry', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-archive-unlink`,
+  });
+  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+  await persistRunNow(run, 'archive-unlink-test');
+
+  const runsDir = path.join(os.tmpdir(), `farmslot-test-runs-${process.pid}`);
+  const archivePath = path.join(runsDir, 'archive', `${run.id}.json`);
+  await mkdir(path.dirname(archivePath), { recursive: true });
+  t.after(async () => {
+    await chmod(runsDir, 0o700);
+    await cleanupRun(run.id);
+    await unlink(archivePath).catch(() => {
+      // Best-effort cleanup; absence means a later retry already removed it.
+    });
+  });
+
+  await chmod(runsDir, 0o500);
+  try {
+    await assert.rejects(() => archiveRun(run.id), /permission denied/i);
+    assert.ok(getRun(run.id), 'a reported archive failure must leave the run live');
+  } finally {
+    await chmod(runsDir, 0o700);
+  }
+});
+
+test('pending backlog reconciliation blocks archive and delete eviction', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-pending-reconcile`,
+  });
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    backlogReconcilePending: true,
+  });
+  t.after(async () => {
+    updateRun(run.id, { backlogReconcilePending: undefined });
+    await cleanupRun(run.id);
+  });
+
+  await assert.rejects(() => archiveRun(run.id), /backlog reconciliation is pending/);
+  await assert.rejects(() => deleteRun(run.id), /backlog reconciliation is pending/);
+  assert.ok(getRun(run.id), 'reconciliation evidence must remain live until it settles');
 });

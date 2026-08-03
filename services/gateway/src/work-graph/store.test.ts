@@ -940,8 +940,7 @@ test('scheduler retries enqueue when completed ledger is stale after backlog res
   await backlog.markBacklogRunStarted(queued, run);
   queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
   runs.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-  backlog.markBacklogRunObserved({ ...run, status: 'failed' } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...run, status: 'failed' } as never);
   await runs.deleteRun(run.id);
   await backlog.markBacklogRunReleased(run.id);
 
@@ -1029,7 +1028,14 @@ test('operator cancellation holds graph work until an explicit retry', async () 
     workGraphId: graphId,
     workNodeId: nodeId,
   });
-  runs.updateRun(prior.id, { status: 'failed', completedAt: new Date().toISOString() });
+  // Pin the earlier attempt strictly older. `nodeRuns` sorts on createdAt then
+  // updatedAt at millisecond resolution and falls back to comparing run ids, so
+  // two runs created inside the same millisecond order non-deterministically.
+  runs.updateRun(prior.id, {
+    status: 'failed',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    completedAt: '2026-01-01T00:00:01.000Z',
+  });
   const run = runs.createRun({
     flowType: 'dev',
     project: 'farmslot-farm',
@@ -1044,8 +1050,7 @@ test('operator cancellation holds graph work until an explicit retry', async () 
     status: 'cancelled',
     completedAt: new Date().toISOString(),
   });
-  backlog.markBacklogRunObserved(cancelled);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved(cancelled);
 
   const held = await workGraph.schedulerTick({ graphId });
   const heldNode = held.graphs[0]?.nodes.find((node) => node.id === nodeId);
@@ -1104,8 +1109,7 @@ test('collision redirect keeps the successor authoritative for the graph node', 
     redirectedToRunId: successor.id,
   });
   const runningSuccessor = runs.updateRun(successor.id, { status: 'monitoring' });
-  backlog.markBacklogRunObserved(runningSuccessor);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved(runningSuccessor);
 
   const projected = await workGraph.schedulerTick({ graphId });
   const node = projected.graphs[0]?.nodes.find((candidate) => candidate.id === nodeId);
@@ -1532,8 +1536,7 @@ test('waiting node after fail+delete reclaims and re-enqueues despite completed 
   await backlog.markBacklogRunStarted(queued, run);
   queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
   runs.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
-  backlog.markBacklogRunObserved({ ...run, status: 'failed' } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...run, status: 'failed' } as never);
   await runs.deleteRun(run.id);
   await backlog.markBacklogRunReleased(run.id);
   await backlog.markBacklogItemReady({ itemId: created.item.id });

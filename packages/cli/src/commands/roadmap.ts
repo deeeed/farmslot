@@ -8,8 +8,10 @@ import type { Command } from 'commander';
 
 import {
   parsePromotionDraftAttachment,
+  type PlanningContextProjection,
   ROADMAP_ITEM_STAGES,
   type RoadmapDeleteResult,
+  type RoadmapDeliveryProjection,
   type RoadmapGetResult,
   type RoadmapItem,
   type RoadmapItemSaveInput,
@@ -43,8 +45,24 @@ interface RequestPromotionOptions {
   roadmapRoute?: string;
 }
 
-/** Accepts a full id or a unique id prefix (same refs Command Center routes use). */
-export async function resolveRoadmapItem(ctx: CommandContext, ref: string): Promise<RoadmapItem> {
+/** Only a missing item may fall back to the list; transport/auth/server errors must surface. */
+function isRoadmapItemNotFound(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    /not found|Roadmap item not found/i.test(message) ||
+    ((err as { code?: string }).code === 'METHOD_ERROR' && /not found/i.test(message))
+  );
+}
+
+/**
+ * Accepts a full id or a unique id prefix (same refs Command Center routes use).
+ * Returns the whole gateway envelope so callers that need delivery lineage read
+ * the shared projection instead of re-deriving it from backlog/run listings.
+ */
+export async function resolveRoadmapGetResult(
+  ctx: CommandContext,
+  ref: string,
+): Promise<RoadmapGetResult> {
   const needle = ref.trim();
   if (!needle) {
     throw Object.assign(new Error('Roadmap item ref is required.'), {
@@ -55,25 +73,34 @@ export async function resolveRoadmapItem(ctx: CommandContext, ref: string): Prom
 
   // Prefer exact get — matches Command Center's itemId route param.
   try {
-    const { item } = await ctx.client.call<RoadmapGetResult>('roadmap.get', { itemId: needle });
-    return item;
+    return await ctx.client.call<RoadmapGetResult>('roadmap.get', { itemId: needle });
   } catch (err) {
     // Only fall through for missing-item errors. Transport/auth/server failures
     // must not be hidden by a list fallback (cross-review P2).
-    const message = err instanceof Error ? err.message : String(err);
-    const notFound =
-      /not found|Roadmap item not found/i.test(message) ||
-      ((err as { code?: string }).code === 'METHOD_ERROR' && /not found/i.test(message));
-    if (!notFound) throw err;
+    if (!isRoadmapItemNotFound(err)) throw err;
   }
 
   const { items } = await ctx.client.call<RoadmapListResult>('roadmap.list', {
     includeArchived: true,
   });
   const exact = items.find((item) => item.id === needle);
-  if (exact) return exact;
+  if (exact) return { item: exact };
   const prefixed = items.filter((item) => item.id.startsWith(needle));
-  if (prefixed.length === 1) return prefixed[0];
+  // Re-fetch by the resolved id. The exact `roadmap.get` above failed only because
+  // a prefix is not an id — the gateway can answer perfectly well once we know the
+  // full one. Returning the bare list row here made `roadmap get <prefix>` silently
+  // omit delivery and planning context that the same item shows by full id.
+  if (prefixed.length === 1) {
+    try {
+      return await ctx.client.call<RoadmapGetResult>('roadmap.get', { itemId: prefixed[0].id });
+    } catch (err) {
+      // Same rule as the exact lookup above: only a missing item falls back. A
+      // transport, auth, or server failure must surface — masking it would return a
+      // successful-looking result that silently dropped delivery and planning context.
+      if (!isRoadmapItemNotFound(err)) throw err;
+      return { item: prefixed[0] };
+    }
+  }
   if (prefixed.length > 1) {
     throw Object.assign(
       new Error(
@@ -91,6 +118,10 @@ export async function resolveRoadmapItem(ctx: CommandContext, ref: string): Prom
     code: 'ROADMAP_ITEM_NOT_FOUND',
     userAction: 'List items with `farmslot roadmap list` and pass a full id or unique prefix.',
   });
+}
+
+export async function resolveRoadmapItem(ctx: CommandContext, ref: string): Promise<RoadmapItem> {
+  return (await resolveRoadmapGetResult(ctx, ref)).item;
 }
 
 function renderItems(items: RoadmapItem[]): string {
@@ -111,6 +142,58 @@ function renderItems(items: RoadmapItem[]): string {
     ]);
   }
   return table.render();
+}
+
+/**
+ * Human rendering of the shared delivery projection. Planning stage and delivery
+ * status are printed as separate axes on purpose — `promoted` never means shipped.
+ */
+export function renderDeliveryLineage(delivery: RoadmapDeliveryProjection | undefined): string {
+  if (!delivery) return '';
+  const lines = [
+    '',
+    bold('Delivery'),
+    `  status: ${delivery.status}`,
+    `  backlog: ${delivery.backlogItems.length} linked (${delivery.backlogItems.filter((entry) => entry.delivered).length} delivered)`,
+  ];
+  for (const entry of delivery.backlogItems) {
+    const label = entry.ref ?? entry.backlogItemId;
+    lines.push(
+      `    - ${cyan(label)} ${entry.resolved ? (entry.status ?? 'unknown') : 'MISSING'} [${entry.linkSource}]${entry.specPath ? ` ${dim(entry.specPath)}` : ''}`,
+    );
+  }
+  if (delivery.runFamilies.length) {
+    lines.push(`  runs:`);
+    for (const family of delivery.runFamilies) {
+      lines.push(
+        `    - ${cyan(family.latestRunId)} ${family.latestStatus} (family ${family.familyId}, ${family.runIds.length} run${family.runIds.length === 1 ? '' : 's'})`,
+      );
+    }
+  }
+  if (delivery.prs.length) {
+    lines.push(`  prs:`);
+    for (const pr of delivery.prs) {
+      lines.push(
+        `    - ${green(pr.ref)}${pr.url ? ` ${dim(pr.url)}` : ''} [${pr.sources.join(', ')}]`,
+      );
+    }
+  }
+  for (const finding of delivery.findings) {
+    lines.push(`  ${yellow(`! ${finding.code}`)} ${finding.detail} ${finding.remediation}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+export function renderPlanningContext(context: PlanningContextProjection | undefined): string {
+  if (!context?.relations.length) return '';
+  const lines = ['', bold(`Related planning context`), `  snapshot: ${context.snapshotHash}`];
+  for (const relation of context.relations) {
+    const authority = relation.schedulerAuthority ? 'scheduler authority' : 'context only';
+    lines.push(
+      `    - ${cyan(relation.label)} ${relation.direction} ${relation.targetRef ?? relation.targetId}${relation.targetStatus ? ` (${relation.targetStatus})` : ''} [${authority}]${relation.specPath ? ` ${dim(relation.specPath)}` : ''}`,
+    );
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 function parseCsv(value: string | undefined): string[] | undefined {
@@ -321,23 +404,33 @@ export function registerRoadmapCommand(program: Command): void {
 
   roadmap
     .command('get <id>')
-    .description('Show one roadmap item by id or unique id prefix')
+    .description('Show one roadmap item with its delivery lineage')
     .action(async (id: string, _opts: unknown, cmd: Command) => {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
-        const item = await withProgress(
+        const result = await withProgress(
           `Loading ${id}`,
-          () => resolveRoadmapItem(ctx, id),
+          () => resolveRoadmapGetResult(ctx, id),
           !emit.machine,
         );
-        if (emit.machine) emit.ok({ item: { ...item, status: item.stage } });
-        else {
+        const item = result.item;
+        if (emit.machine) {
+          // The gateway projection is passed through unchanged: no client-side
+          // re-derivation, so machine consumers and the UI read one shape.
+          emit.ok({
+            item: { ...item, status: item.stage },
+            ...(result.delivery ? { delivery: result.delivery } : {}),
+            ...(result.planningContext ? { planningContext: result.planningContext } : {}),
+          });
+        } else {
           ctx.output.write(`${bold(item.id)}  ${item.stage}\n`);
           ctx.output.write(`${item.title}\n`);
           ctx.output.write(`${dim(`project: ${item.project}`)}\n`);
           if (item.tags?.length) ctx.output.write(`${dim(`tags: ${item.tags.join(', ')}`)}\n`);
           ctx.output.write(`${dim(`file: ${item.filePath}`)}\n`);
+          ctx.output.write(renderDeliveryLineage(result.delivery));
+          ctx.output.write(renderPlanningContext(result.planningContext));
           if (item.body) ctx.output.write(`\n${item.body}\n`);
         }
       } catch (err) {

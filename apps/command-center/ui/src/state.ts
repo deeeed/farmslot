@@ -103,6 +103,8 @@ export interface AppState {
   prs: PRStatus[];
   decisions: PendingDecision[];
   runs: Run[];
+  /** Moves for every RUN_DELETED event, including ids outside the paginated run list. */
+  runDeletionsRevision: number;
   runSummaryMeta: RunListSummaryMeta | null;
   runFamilySummaries: RunFamilyReadinessSummary[];
   runProjectAnalytics: RunProjectAnalyticsSummary[];
@@ -129,6 +131,7 @@ export type AppStateSliceSnapshot = Pick<
   | 'fleet'
   | 'prs'
   | 'runs'
+  | 'runDeletionsRevision'
   | 'runSummaryMeta'
   | 'runFamilySummaries'
   | 'runProjectAnalytics'
@@ -180,6 +183,7 @@ const state: AppState = {
   prs: [],
   decisions: [],
   runs: [],
+  runDeletionsRevision: 0,
   runSummaryMeta: null,
   runFamilySummaries: [],
   runProjectAnalytics: [],
@@ -362,6 +366,7 @@ export function captureStateSlices(): AppStateSliceSnapshot {
     fleet: state.fleet,
     prs: state.prs,
     runs: state.runs,
+    runDeletionsRevision: state.runDeletionsRevision,
     runSummaryMeta: state.runSummaryMeta,
     runFamilySummaries: state.runFamilySummaries,
     runProjectAnalytics: state.runProjectAnalytics,
@@ -376,6 +381,7 @@ export function restoreStateSlices(snapshot: AppStateSliceSnapshot): void {
   state.fleet = snapshot.fleet;
   state.prs = snapshot.prs;
   state.runs = snapshot.runs;
+  state.runDeletionsRevision = snapshot.runDeletionsRevision;
   state.runSummaryMeta = snapshot.runSummaryMeta;
   state.runFamilySummaries = snapshot.runFamilySummaries;
   state.runProjectAnalytics = snapshot.runProjectAnalytics;
@@ -565,6 +571,10 @@ export function upsertRun(run: Run): void {
 }
 
 export function removeRun(runId: string): void {
+  // RUN_DELETED doubles as archive notification. The id may be outside the
+  // paginated state.runs snapshot, but gateway-derived projections still include
+  // it and must invalidate even when this local array stays byte-for-byte equal.
+  state.runDeletionsRevision++;
   const before = state.runs.length;
   state.runs = state.runs.filter((r) => r.id !== runId);
   if (state.runs.length !== before && state.runSummaryMeta) {

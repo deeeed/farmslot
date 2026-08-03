@@ -47,6 +47,11 @@ import {
   projectUsesExecutionTemplateCatalog,
   resolveConfiguredExecutionTemplateForSlot,
 } from './execution-template-catalog.js';
+import {
+  buildPlanningContextSection,
+  resolveRunPlanningContext,
+  writePlanningContextInput,
+} from './planning-context.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 import {
@@ -676,6 +681,9 @@ export async function writeTaskFile(
   emit('substep', { name: 'inherited-context', detail: 'Resolving family-inherited context' });
   const inheritedContext = await materializeInheritedContext(run, taskAbsDir);
 
+  emit('substep', { name: 'planning-context', detail: 'Resolving related planning context' });
+  const planningContext = await resolveRunPlanningContext(run);
+
   // Build branch name
   const branch =
     run.branch || buildSmartBranch(run.flowType, run.ticketOrPr, undefined, undefined, run.variant);
@@ -973,7 +981,11 @@ export async function writeTaskFile(
     run.flowType === 'pr-complete' && run.mode === 'interactive'
       ? `${withInheritedContext.trimEnd()}\n${buildInteractivePrCompleteHandoffSection(vars.TASK_DIR)}\n`
       : withInheritedContext;
-  const finalContent = applyArtifactOnlyTaskPolicy(withInteractivePrCompleteHandoff, run);
+  // Related planning context is frozen into inputs/ before it is rendered, so the
+  // independent-review brief can quote the same snapshot hash the worker saw.
+  if (planningContext) await writePlanningContextInput(taskAbsDir, planningContext);
+  const withPlanningContext = `${withInteractivePrCompleteHandoff.trimEnd()}\n${buildPlanningContextSection(vars.TASK_DIR, planningContext)}\n`;
+  const finalContent = applyArtifactOnlyTaskPolicy(withPlanningContext, run);
   if (shouldApplyArtifactOnlyTaskPolicy(run)) {
     assertArtifactOnlyTaskGuard(finalContent);
   }
@@ -1112,8 +1124,11 @@ async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: stri
 export function checklistNumberingMismatches(content: string): string[] {
   const mismatches: string[] = [];
   for (const item of enumerateChecklistCheckboxes(content)) {
-    const labeled = item.rawLabel.match(/^\*{0,2}(\d+)[.)]/);
-    if (labeled && Number(labeled[1]) !== item.stepNumber) {
+    // Capture an optional letter suffix: a label like `17a.` is exactly how an inserted
+    // step silently desynchronises numbering, and matching digits only skipped it —
+    // the drift was reported one row later, at the first purely numeric label.
+    const labeled = item.rawLabel.match(/^\*{0,2}(\d+[a-z]?)[.)]/i);
+    if (labeled && labeled[1] !== String(item.stepNumber)) {
       mismatches.push(`position ${item.stepNumber} is labeled "${labeled[1]}"`);
     }
   }

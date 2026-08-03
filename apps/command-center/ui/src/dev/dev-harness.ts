@@ -15,6 +15,7 @@ import type {
   PRStatus,
   QueueItem,
   ResultPackageManifest,
+  RoadmapDeliveryProjection,
   RoadmapItem,
   Run,
   SlotHealth,
@@ -3151,16 +3152,6 @@ All checks passed.`;
         updatedAt: now,
       },
     ];
-    const linkedRun: Run = {
-      ...mockPipelineRuns()[0],
-      id: 'run-roadmap-extension-current',
-      familyId: 'run-roadmap-extension-current',
-      project: backlogItems[0].project,
-      ticketOrPr: backlogItems[0].sourceRef,
-      backlogItemId: backlogItems[0].id,
-      updatedAt: now,
-    };
-    const demoRuns = [...mockPipelineRuns(), linkedRun];
     const item: RoadmapItem = {
       id: 'ri_dev_refined',
       kind: 'roadmap-item',
@@ -3248,11 +3239,138 @@ All checks passed.`;
       slots: mockFleetSlots(),
       checkedAt: now,
     });
+    // Regression fixture for the reported drift (MANUAL-000072): roadmap item
+    // ri_790ea3508ba4 was manually backlinked from MANUAL-000059, run 2e357072
+    // completed and deeeed/farmslot#421 merged, yet the item still read as rough
+    // with no promotion entry. It must render as delivered with a reconcile
+    // finding. `ri_dev_unstarted` is the contrasting no-evidence state.
+    const deliveredItem: RoadmapItem = {
+      ...item,
+      id: 'ri_790ea3508ba4',
+      title: 'Roadmap delivery lineage: link backlog, runs, and PRs',
+      stage: 'rough',
+      targetProjects: [],
+      promotion: undefined,
+      body: 'Manually backlinked roadmap item that shipped without promotion provenance.',
+      filePath: '.roadmap/inbox/items/roadmap-delivery-lineage.md',
+      fileHash: 'dev-delivered-hash',
+    };
+    const unstartedItem: RoadmapItem = {
+      ...item,
+      id: 'ri_dev_unstarted',
+      title: 'Rough idea with no implementation yet',
+      stage: 'rough',
+      targetProjects: [],
+      promotion: undefined,
+      body: 'No backlog item, run, or PR is linked to this roadmap item.',
+      filePath: '.roadmap/inbox/items/rough-idea.md',
+      fileHash: 'dev-unstarted-hash',
+    };
+    const delivery: RoadmapDeliveryProjection[] = [
+      {
+        roadmapItemId: 'ri_790ea3508ba4',
+        status: 'delivered',
+        backlogItems: [
+          {
+            backlogItemId: 'roadmap-backlog-manual-000059',
+            ref: 'MANUAL-000059',
+            title: 'Roadmap delivery lineage',
+            project: 'farmslot-farm',
+            status: 'done',
+            specPath: '.backlog/specs/manual-000059.md',
+            archived: false,
+            delivered: true,
+            resolved: true,
+            linkSource: 'backlog',
+            runFamilies: [
+              {
+                familyId: '2e357072-36f3-4586-91c4-8e5b6bf362fe',
+                runIds: ['2e357072-36f3-4586-91c4-8e5b6bf362fe'],
+                latestRunId: '2e357072-36f3-4586-91c4-8e5b6bf362fe',
+                latestStatus: 'done',
+                latestUpdatedAt: now,
+              },
+            ],
+            prs: [
+              {
+                ref: 'deeeed/farmslot#421',
+                url: 'https://github.com/deeeed/farmslot/pull/421',
+                sources: ['run-link', 'run-pr-number'],
+              },
+            ],
+          },
+        ],
+        runFamilies: [
+          {
+            familyId: '2e357072-36f3-4586-91c4-8e5b6bf362fe',
+            runIds: ['2e357072-36f3-4586-91c4-8e5b6bf362fe'],
+            latestRunId: '2e357072-36f3-4586-91c4-8e5b6bf362fe',
+            latestStatus: 'done',
+            latestUpdatedAt: now,
+          },
+        ],
+        prs: [
+          {
+            ref: 'deeeed/farmslot#421',
+            url: 'https://github.com/deeeed/farmslot/pull/421',
+            sources: ['run-link', 'run-pr-number'],
+          },
+        ],
+        findings: [
+          {
+            code: 'backlog-link-not-in-promotion',
+            backlogItemId: 'roadmap-backlog-manual-000059',
+            detail:
+              'Backlog item roadmap-backlog-manual-000059 links to ri_790ea3508ba4 through roadmapItemId with no matching promotion provenance.',
+            remediation:
+              'Treat the backlog link as canonical; add a promotion entry only if the provenance record matters.',
+          },
+          {
+            code: 'planning-stage-behind-delivery',
+            detail: "Delivery is complete but the authored planning stage is still 'rough'.",
+            remediation:
+              "Edit ri_790ea3508ba4 to stage 'promoted' or 'archived' once the outcome is reviewed; the gateway does not rewrite roadmap markdown.",
+          },
+        ],
+        generatedAt: now,
+      },
+      {
+        roadmapItemId: 'ri_dev_unstarted',
+        status: 'unstarted',
+        backlogItems: [],
+        runFamilies: [],
+        prs: [],
+        findings: [],
+        generatedAt: now,
+      },
+      {
+        roadmapItemId: 'ri_dev_refined',
+        status: 'active',
+        backlogItems: backlogItems.map((backlogItem) => ({
+          backlogItemId: backlogItem.id,
+          ref: backlogItem.sourceRef,
+          title: backlogItem.title,
+          project: backlogItem.project,
+          status: backlogItem.status,
+          specPath: backlogItem.specPath,
+          archived: false,
+          delivered: false,
+          resolved: true,
+          linkSource: 'both' as const,
+          runFamilies: [],
+          prs: [],
+        })),
+        runFamilies: [],
+        prs: [],
+        findings: [],
+        generatedAt: now,
+      },
+    ];
     updateBacklogItems(backlogItems);
     return html`<roadmap-panel
-      .items=${[item]}
+      .items=${[item, deliveredItem, unstartedItem]}
       .slots=${mockFleetSlots()}
-      .demoRuns=${demoRuns}
+      .delivery=${delivery}
     ></roadmap-panel>`;
   }
 

@@ -25,6 +25,20 @@ export function githubPullUrl(ref: Pick<GitHubRef, 'repo' | 'number'>): string {
   return `https://github.com/${ref.repo}/pull/${ref.number}`;
 }
 
+const GITHUB_PULL_URL_PATTERN =
+  /^https?:\/\/(?:www\.)?github\.com\/([a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+)\/pull\/(\d+)(?:[/?#].*)?$/;
+
+/**
+ * Inverse of {@link githubPullUrl}. The only PR-URL parser in the codebase:
+ * gateway projections normalize persisted `Run.links` URLs into refs here so
+ * clients render `repo#number` without re-parsing URLs themselves.
+ */
+export function parseGitHubPullUrl(url: string | null | undefined): GitHubRef | null {
+  const match = url?.trim().match(GITHUB_PULL_URL_PATTERN);
+  if (!match) return null;
+  return parseGitHubRef(`${match[1]}#${match[2]}`);
+}
+
 export const PR_BOUND_FLOW_TYPES: ReadonlySet<FlowType> = new Set([
   'review-pr',
   'pr-complete',

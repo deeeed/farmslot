@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -724,12 +724,11 @@ test('run observation heals needs-attention when linked run completes', async ()
   created.item.runId = 'blocked-then-done';
   created.item.lastObservedRunStatus = 'blocked';
 
-  backlog.markBacklogRunObserved({
+  await backlog.markBacklogRunObserved({
     id: 'blocked-then-done',
     status: 'done',
     backlogItemId: created.item.id,
   } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
 
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'done');
@@ -749,12 +748,11 @@ test('multi-PR item returns to ready on run done instead of auto-closing', async
   created.item.status = 'running';
   created.item.runId = 'slice-1-run';
 
-  backlog.markBacklogRunObserved({
+  await backlog.markBacklogRunObserved({
     id: 'slice-1-run',
     status: 'done',
     backlogItemId: created.item.id,
   } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
 
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'ready'); // next slice dispatchable, not closed
@@ -776,12 +774,11 @@ test('multi-PR item returns to ready on run done instead of auto-closing', async
   delete queuedItem.queuedQueueItemId;
   queuedItem.status = 'running';
   queuedItem.runId = 'slice-2-run';
-  backlog.markBacklogRunObserved({
+  await backlog.markBacklogRunObserved({
     id: 'slice-2-run',
     status: 'failed',
     backlogItemId: created.item.id,
   } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'failed');
 });
 
@@ -804,8 +801,7 @@ test('late completion echo from a previous slice cannot clobber the next slice',
   runStore.updateRun(sliceOne.id, { status: 'done' });
   created.item.status = 'running';
   created.item.runId = sliceOne.id;
-  backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
   assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'ready');
 
   // Slice 2 queued: a late RUN_UPDATED echo from slice 1 must not clear the queue link.
@@ -819,8 +815,7 @@ test('late completion echo from a previous slice cannot clobber the next slice',
   });
   created.item.status = 'queued';
   created.item.queuedQueueItemId = queueItem.id;
-  backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
   let item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'queued');
   assert.equal(item?.queuedQueueItemId, queueItem.id);
@@ -836,15 +831,13 @@ test('late completion echo from a previous slice cannot clobber the next slice',
   delete created.item.queuedQueueItemId;
   created.item.status = 'running';
   created.item.runId = sliceTwo.id;
-  backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
   item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'running');
   assert.equal(item?.runId, sliceTwo.id);
 
   // Slice 2 finishing still applies normally.
-  backlog.markBacklogRunObserved({ ...sliceTwo, status: 'done' } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...sliceTwo, status: 'done' } as never);
   item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'ready');
   assert.equal(item?.runId, undefined);
@@ -881,8 +874,7 @@ test('a late prior-slice done echo does not resurrect a failed multi-PR slice', 
 
   // A late slice-1 done echo must NOT reset the failed item to ready or clear
   // slice 2's link, even though slice 2's run is terminal.
-  backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...sliceOne, status: 'done' } as never);
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'failed');
   assert.equal(item?.runId, sliceTwo.id);
@@ -959,20 +951,18 @@ test('launch-plan observation from a foreign plan is ignored', async () => {
     launchCandidateId: 'baseline',
   });
   runStore.updateRun(baselineRun.id, { status: 'monitoring' });
-  backlog.markBacklogRunObserved({ ...baselineRun, status: 'monitoring' } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...baselineRun, status: 'monitoring' } as never);
   assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.runId, baselineRun.id);
 
   // Observation tagged with a DIFFERENT plan id (and a candidate id not in this
   // plan) must neither inject a projection nor steal the baseline link.
-  backlog.markBacklogRunObserved({
+  await backlog.markBacklogRunObserved({
     id: 'foreign-run',
     status: 'done',
     backlogItemId: created.item.id,
     launchPlanId: 'lp_other',
     launchCandidateId: 'baseline',
   } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.runId, baselineRun.id);
   assert.equal(item?.launchPlanState?.candidates.length ?? 0, 1);
@@ -1021,13 +1011,11 @@ test('a stale candidate echo cannot overwrite the projection owned by a newer-at
     return runStore.updateRun(run.id, { status } as never);
   };
   // Live baseline keeps the item non-terminal so candidate events reach the guard.
-  backlog.markBacklogRunObserved({ ...mkRun('baseline', 1, 'monitoring') } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...mkRun('baseline', 1, 'monitoring') } as never);
 
   // Newer-attempt sonnet run owns the projection (attempt 2).
   const newerSonnet = mkRun('sonnet', 2, 'done');
-  backlog.markBacklogRunObserved({ ...newerSonnet } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...newerSonnet } as never);
   const sonnetProjection = () =>
     backlog
       .listBacklogItems({ includeArchived: true })
@@ -1036,8 +1024,7 @@ test('a stale candidate echo cannot overwrite the projection owned by a newer-at
   assert.equal(sonnetProjection()?.attempt, 2);
 
   // An older-attempt sonnet run re-emits a late echo — dropped as stale (attempt 1 < 2).
-  backlog.markBacklogRunObserved({ ...mkRun('sonnet', 1, 'failed') } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...mkRun('sonnet', 1, 'failed') } as never);
   assert.equal(sonnetProjection()?.runId, newerSonnet.id);
   assert.equal(sonnetProjection()?.status, 'succeeded');
 });
@@ -1078,8 +1065,7 @@ test('a newer-attempt re-enqueued run takes over from an older running owner', a
   };
   // First baseline run (attempt 1) is live and owns the item link.
   const firstBaseline = mkRun(1, 'monitoring');
-  backlog.markBacklogRunObserved({ ...firstBaseline } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...firstBaseline } as never);
   assert.equal(
     backlog.listBacklogItems({ includeArchived: true }).items[0]?.runId,
     firstBaseline.id,
@@ -1089,8 +1075,7 @@ test('a newer-attempt re-enqueued run takes over from an older running owner', a
   // markBacklogRunStarted ownership transfer — it must take over, not be stranded
   // (the strict identity rule stranded this; wall-clock recency could tie on it).
   const retryBaseline = mkRun(2, 'monitoring');
-  backlog.markBacklogRunObserved({ ...retryBaseline } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...retryBaseline } as never);
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.runId, retryBaseline.id);
   assert.equal(item?.launchPlanState?.baselineRunId, retryBaseline.id);
@@ -1135,8 +1120,7 @@ test('a foreign baseline echo cannot steal the item run link from a live baselin
     return runStore.updateRun(run.id, { status } as never);
   };
   const liveBaseline = mkRun(2, 'monitoring');
-  backlog.markBacklogRunObserved({ ...liveBaseline } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...liveBaseline } as never);
   assert.equal(
     backlog.listBacklogItems({ includeArchived: true }).items[0]?.runId,
     liveBaseline.id,
@@ -1145,8 +1129,7 @@ test('a foreign baseline echo cannot steal the item run link from a live baselin
   // An older-attempt run reusing the baseline candidate id must not reassign
   // item.runId while the newer live baseline owns it.
   const foreignBaseline = mkRun(1, 'done');
-  backlog.markBacklogRunObserved({ ...foreignBaseline } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...foreignBaseline } as never);
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.runId, liveBaseline.id);
   assert.equal(item?.launchPlanState?.baselineRunId, liveBaseline.id);
@@ -1184,8 +1167,7 @@ test('candidate attempt survives persistence and reload', async () => {
     launchAttempt: 3,
   } as never);
   runStore.updateRun(run.id, { status: 'monitoring' } as never);
-  backlog.markBacklogRunObserved({ ...run } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...run } as never);
   const attemptBefore = () =>
     backlog
       .listBacklogItems({ includeArchived: true })
@@ -1398,11 +1380,9 @@ test('a comparison-candidate replay is observed while the plan is terminal', asy
     } as never);
     return runStore.updateRun(run.id, { status } as never);
   };
-  backlog.markBacklogRunObserved({ ...mkRun('baseline', 1, 'monitoring') } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...mkRun('baseline', 1, 'monitoring') } as never);
   const sonnetRun = mkRun('sonnet', 1, 'failed');
-  backlog.markBacklogRunObserved({ ...sonnetRun } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...sonnetRun } as never);
   const item = () => backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item()?.status, 'failed'); // rollUp: any failed candidate fails the plan
 
@@ -1410,8 +1390,7 @@ test('a comparison-candidate replay is observed while the plan is terminal', asy
   // candidate-aware gate this observation was dropped because item.runId tracks
   // the baseline, leaving the plan terminally failed while the replay ran.
   runStore.updateRun(sonnetRun.id, { status: 'monitoring' } as never);
-  backlog.markBacklogRunObserved({ ...sonnetRun, status: 'monitoring' } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...sonnetRun, status: 'monitoring' } as never);
   const sonnetProjection = item()?.launchPlanState?.candidates.find(
     (c) => c.candidateId === 'sonnet',
   );
@@ -1478,12 +1457,11 @@ test('close-shipped finalizes a multi-PR item after its last slice', async () =>
   });
   created.item.status = 'running';
   created.item.runId = 'final-slice-run';
-  backlog.markBacklogRunObserved({
+  await backlog.markBacklogRunObserved({
     id: 'final-slice-run',
     status: 'done',
     backlogItemId: created.item.id,
   } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
 
   const closed = await backlog.closeShippedBacklogItem({
     itemId: created.item.id,
@@ -1520,11 +1498,10 @@ test('run observation does not overwrite terminal backlog status', async () => {
   created.item.status = 'done';
   created.item.runId = 'run-terminal';
 
-  backlog.markBacklogRunObserved({
+  await backlog.markBacklogRunObserved({
     id: 'run-terminal',
     status: 'failed',
   } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
 
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'done');
@@ -1546,12 +1523,11 @@ test('run observation reactivates a failed item when its own run is replayed', a
 
   // Replaying the item's own run moves it back to a non-terminal status; the
   // backlog item must follow instead of staying stuck at failed.
-  backlog.markBacklogRunObserved({
+  await backlog.markBacklogRunObserved({
     id: 'run-replayed',
     status: 'preparing',
     backlogItemId: created.item.id,
   } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
 
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'running');
@@ -1570,18 +1546,16 @@ test('run observation can follow successor run by backlogItemId after parent can
   created.item.status = 'running';
   created.item.runId = 'parent-run';
 
-  backlog.markBacklogRunObserved({
+  await backlog.markBacklogRunObserved({
     id: 'parent-run',
     status: 'cancelled',
     backlogItemId: created.item.id,
   } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
-  backlog.markBacklogRunObserved({
+  await backlog.markBacklogRunObserved({
     id: 'successor-run',
     status: 'done',
     backlogItemId: created.item.id,
   } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
 
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'done');
@@ -1944,8 +1918,7 @@ test('backlog.dequeue clears stale baseline run linkage on launch-plan re-enqueu
   } as never);
   await backlog.markBacklogRunStarted(enqueued.queueItem, baselineRun);
   runStore.updateRun(baselineRun.id, { status: 'done' });
-  backlog.markBacklogRunObserved({ ...baselineRun, status: 'done' } as never);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await backlog.markBacklogRunObserved({ ...baselineRun, status: 'done' } as never);
 
   const queuedItem = backlog
     .listBacklogItems({ includeArchived: true })
@@ -2191,5 +2164,39 @@ test('closeShipped refuses items whose queue row is mid-dispatch', async () => {
       assert.match(rich.userAction ?? '', /run cancel/u);
       return true;
     },
+  );
+});
+
+test('a failed backlog write rejects the settle instead of reporting a settled cancel', async (t) => {
+  // Codex round-8 P2: the settle resolved after merely *scheduling* the persist, and
+  // `schedulePersist` drops the write's rejection. ADR-053's `backlog-settle` effect
+  // would report `ok`, tick the scheduler, and skip `backlogReconcilePending` while
+  // the durable file still held pre-cancel state.
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Settle must fail loudly',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  created.item.status = 'needs-attention';
+  created.item.runId = 'settle-persist-failure';
+  created.item.lastObservedRunStatus = 'blocked';
+
+  // Make the backlog file undeletable/unwritable by removing write permission on its
+  // directory, so `persist()` fails on the temp-file write.
+  const backlogDir = path.dirname(process.env.FARMSLOT_BACKLOG_FILE!);
+  await chmod(backlogDir, 0o500);
+  t.after(() => chmod(backlogDir, 0o700));
+
+  await assert.rejects(
+    () =>
+      backlog.markBacklogRunObserved({
+        id: 'settle-persist-failure',
+        status: 'done',
+        backlogItemId: created.item.id,
+      } as never),
+    'a backlog write failure must reach the transition router',
   );
 });

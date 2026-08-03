@@ -2265,8 +2265,19 @@ export async function reconcileBacklogRun(
   });
 }
 
-export function markBacklogRunObserved(run: Run): void {
-  withBacklogMutation(async () => {
+/**
+ * Returns the settle promise so ADR-053's transition router can await it before
+ * ticking the work graph, and **propagates failure** — a router that cannot tell a
+ * failed settle from a successful one would tick the scheduler against stale
+ * backlog state while reporting `ok`. Fire-and-forget callers must attach their own
+ * `.catch`.
+ *
+ * ⚠ Do not add a trailing `.catch` here. Swallowing the rejection would make
+ * ADR-053's `backlog-settle` effect report success on failure, and the work-graph
+ * tick would then schedule against a backlog that never settled.
+ */
+export async function markBacklogRunObserved(run: Run): Promise<void> {
+  await withBacklogMutation(async () => {
     const item =
       items.find((candidate) => candidate.runId === run.id) ??
       (run.backlogItemId
@@ -2293,12 +2304,23 @@ export function markBacklogRunObserved(run: Run): void {
     }
     if (!shouldApplyLinkedRunObservation(item, run)) return;
     if (applyRunObservation(item, run)) {
-      schedulePersist('run-observed');
+      // Awaited, not scheduled: `schedulePersist` drops the write's rejection, so a
+      // failed backlog write would still resolve this promise and ADR-053's
+      // `backlog-settle` effect would report `ok` — ticking the scheduler and skipping
+      // `backlogReconcilePending` while the durable file still holds pre-cancel state.
+      await persistNow('run-observed');
       broadcastBacklog();
     }
-  }).catch((err) => {
-    console.error(`[backlog] failed to observe run: ${(err as Error).message}`);
   });
+
+  // A cancel publishes its terminal run before this awaited settle. Clear the
+  // write-ahead marker only after the backlog mutation above is durable; eviction
+  // rejects marked runs, so a failed settle cannot discard the only repair source.
+  const storedRun = getRun(run.id);
+  if (storedRun?.backlogReconcilePending) {
+    const settledRun = updateRun(run.id, { backlogReconcilePending: undefined });
+    await persistRunNow(settledRun, 'backlog-run-observed-settled');
+  }
 }
 
 export async function markBacklogRunReleased(runId: string): Promise<string[]> {

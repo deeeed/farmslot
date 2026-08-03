@@ -1,4 +1,10 @@
-import type { PromotionDraft, RoadmapItem } from '@farmslot/protocol';
+import type {
+  PromotionDraft,
+  RoadmapDeliveryProjection,
+  RoadmapDeliveryStatus,
+  RoadmapDeliverySummary,
+  RoadmapItem,
+} from '@farmslot/protocol';
 import {
   isConcreteRoadmapProject,
   isUnscopedGlobalRoadmapItem,
@@ -6,6 +12,7 @@ import {
   parsePromotionDraftsFromRoadmapBody,
   promotionDraftAttachment,
   ROADMAP_ITEM_STAGES,
+  summarizeRoadmapDelivery,
 } from '@farmslot/protocol';
 
 export type RoadmapSortKey = 'stage' | 'project' | 'id' | 'title' | 'promotion' | 'updated';
@@ -101,4 +108,192 @@ export function promotionDraftsFromRoadmapItem(item: RoadmapItem): PromotionDraf
     title: item.title,
     body: defaultSpecBody(item),
   }));
+}
+
+// ─── Delivery lineage (gateway-derived) ───
+//
+// Every value below comes from the shared `RoadmapDeliveryProjection` the gateway
+// builds from the full backlog and run stores. The panel must not re-join the
+// loaded run page: a run outside that page would silently disappear.
+
+const DELIVERY_STATUS_COPY: Record<RoadmapDeliveryStatus, string> = {
+  unstarted: 'not started',
+  active: 'in progress',
+  partial: 'partial',
+  delivered: 'delivered',
+  inconsistent: 'inconsistent',
+};
+
+/** Wording keeps the delivery axis distinct from the planning stage badge. */
+export function deliveryBadgeLabel(summary: RoadmapDeliverySummary): string {
+  return `Delivery: ${DELIVERY_STATUS_COPY[summary.status]}`;
+}
+
+export function deliveryBadgeTone(
+  status: RoadmapDeliveryStatus,
+): 'default' | 'positive' | 'danger' | 'active' {
+  if (status === 'inconsistent') return 'danger';
+  if (status === 'delivered') return 'positive';
+  if (status === 'active' || status === 'partial') return 'active';
+  return 'default';
+}
+
+export function deliverySummaryFor(
+  itemId: string,
+  summaries: readonly RoadmapDeliverySummary[],
+  projections: readonly RoadmapDeliveryProjection[],
+): RoadmapDeliverySummary | null {
+  const projection = projections.find((entry) => entry.roadmapItemId === itemId);
+  if (projection) return summarizeRoadmapDelivery(projection);
+  return summaries.find((entry) => entry.roadmapItemId === itemId) ?? null;
+}
+
+export interface RoadmapDeliveryBacklink {
+  kind: 'backlog' | 'run' | 'pr';
+  label: string;
+  detail: string;
+  href: string;
+  external: boolean;
+  testId: string;
+}
+
+/**
+ * Clickable lineage targets derived entirely from the projection: backlog item,
+ * run family, and merged PR. No run-page cache lookup, so historical runs stay
+ * reachable.
+ */
+/** The run fields roadmap delivery is derived from. */
+export interface DeliveryRevisionRun {
+  id: string;
+  updatedAt: string;
+  status: string;
+  prNumber?: number | null;
+  /** Only backlog-linked runs reach a roadmap projection. */
+  backlogItemId?: string;
+}
+
+/** The backlog fields roadmap delivery is derived from. */
+export interface DeliveryRevisionBacklogItem {
+  id: string;
+  updatedAt: string;
+  status: string;
+  roadmapItemId?: string;
+  shipped?: { prRef?: string };
+}
+
+/**
+ * Content revision of the projection's gateway-side inputs. Lengths alone miss the
+ * transitions that matter most — a run reaching `done`, a backlog item shipping —
+ * so identity plus `updatedAt` is folded in.
+ */
+export function deliveryInputRevision(
+  runs: ReadonlyArray<DeliveryRevisionRun>,
+  backlogItems: ReadonlyArray<DeliveryRevisionBacklogItem>,
+  /**
+   * Backlog ids reachable only through `RoadmapItem.promotion`. The projection unions
+   * promotion provenance with canonical `roadmapItemId` links, so filtering on the
+   * canonical link alone would drop a supported lineage case and leave it stale.
+   */
+  promotionBacklogIds: ReadonlySet<string> = new Set(),
+): string {
+  // Count plus max timestamp is not enough: swapping one linked row for another keeps
+  // both, and two edits inside the same millisecond keep the timestamp. Fold each row's
+  // identity *and* the fields the projection actually derives from, so a second
+  // transition in the same millisecond still moves the key.
+  // Only rows that can reach a roadmap projection count. A run with no backlog link is
+  // skipped by buildRunIndexByBacklogItem, and a backlog item with no roadmap link is
+  // not in any item's lineage — folding them in made every unrelated run-monitor tick
+  // re-derive the whole store for a badge that cannot change.
+  const foldRuns = (rows: ReadonlyArray<DeliveryRevisionRun>): string =>
+    rows
+      .filter((row) => row.backlogItemId)
+      .map(
+        (row) =>
+          `${row.id}:${row.updatedAt}:${row.status}:${row.prNumber ?? ''}:${row.backlogItemId}`,
+      )
+      .sort()
+      .join(',');
+  const foldBacklog = (rows: ReadonlyArray<DeliveryRevisionBacklogItem>): string =>
+    rows
+      .filter((row) => row.roadmapItemId || promotionBacklogIds.has(row.id))
+      .map(
+        (row) =>
+          `${row.id}:${row.updatedAt}:${row.status}:${row.roadmapItemId ?? ''}:${row.shipped?.prRef ?? ''}`,
+      )
+      .sort()
+      .join(',');
+  return `${foldRuns(runs)}|${foldBacklog(backlogItems)}`;
+}
+
+/**
+ * Adds the unconditional RUN_DELETED/archive signal to the content-derived key.
+ * The deleted id can be outside the paginated run rows, so row folding alone cannot
+ * observe every gateway-side delivery projection change.
+ */
+export function roadmapDeliveryRefreshRevision(
+  runDeletionsRevision: number,
+  runs: ReadonlyArray<DeliveryRevisionRun>,
+  backlogItems: ReadonlyArray<DeliveryRevisionBacklogItem>,
+  promotionBacklogIds: ReadonlySet<string> = new Set(),
+): string {
+  return `${runDeletionsRevision}:${deliveryInputRevision(
+    runs,
+    backlogItems,
+    promotionBacklogIds,
+  )}`;
+}
+
+export function roadmapDeliveryBacklinks(
+  projection: RoadmapDeliveryProjection,
+): RoadmapDeliveryBacklink[] {
+  const links: RoadmapDeliveryBacklink[] = [];
+  for (const entry of projection.backlogItems) {
+    links.push({
+      kind: 'backlog',
+      label: entry.ref ?? entry.backlogItemId,
+      detail: entry.resolved
+        ? `${entry.title ?? 'untitled'} · ${entry.status ?? 'unknown'}${entry.archived ? ' · archived' : ''}`
+        : 'missing backlog item (stale promotion entry)',
+      // Delivered lineage is normally `done` or `archived`, which the Backlog
+      // panel's default live-status filter excludes — the deep link would land and
+      // then clear its own selection. Pin the status so the item is filtered in.
+      // A promotion entry pointing at a deleted backlog item has nowhere to go;
+      // keep it as evidence of stale provenance rather than a link that clears the
+      // destination's selection.
+      href: entry.resolved
+        ? `#backlog?item=${encodeURIComponent(entry.backlogItemId)}${
+            entry.status ? `&backlogStatus=${encodeURIComponent(entry.status)}` : ''
+          }`
+        : '',
+      external: false,
+      testId: 'roadmap-delivery-backlog-link',
+    });
+  }
+  for (const family of projection.runFamilies) {
+    // An archived-only family is not reachable through `#runs`, which reads the live
+    // run map. Rendering a link there would promise navigation that dead-ends, so
+    // archived evidence is shown without one.
+    const reachable = !family.archivedOnly;
+    links.push({
+      kind: 'run',
+      label: family.latestRunId.slice(0, 8),
+      detail: `${family.latestStatus} · ${family.runIds.length} run${family.runIds.length === 1 ? '' : 's'} in family${
+        reachable ? '' : ' · archived, not in the live run list'
+      }`,
+      href: reachable ? `#runs?family=${encodeURIComponent(family.familyId)}` : '',
+      external: false,
+      testId: 'roadmap-delivery-run-link',
+    });
+  }
+  for (const pr of projection.prs) {
+    links.push({
+      kind: 'pr',
+      label: pr.ref,
+      detail: pr.sources.join(', '),
+      href: pr.url ?? '',
+      external: true,
+      testId: 'roadmap-delivery-pr-link',
+    });
+  }
+  return links;
 }

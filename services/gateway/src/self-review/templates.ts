@@ -18,6 +18,7 @@ import {
   expandTemplate,
   knownTemplatePlaceholders,
 } from '../core/hooks.js';
+import { buildIndependentReviewPlanningBrief } from '../run-engine/review-artifacts.js';
 import { getRun } from '../runs/store.js';
 
 import { parseReviewSessionPolicy, type ReviewSessionPolicy } from './session-policy.js';
@@ -121,7 +122,10 @@ export async function expandSelfReviewTemplate(
   // Second pass: slot resources, project.json vars, reference repos — same
   // coverage as CI-fix task rendering, so templates can use {{recipe_*}} etc.
   expanded = expandTemplate(expanded, vars, pv ?? undefined);
-  return expanded;
+  // Reviewers get the worker's frozen related-context snapshot, not a fresh
+  // derivation: a prerequisite that moved since dispatch must be detectable.
+  const planningBrief = await buildIndependentReviewPlanningBrief(run?.taskFile ?? null, taskDir);
+  return `${expanded.trimEnd()}\n${planningBrief}\n`;
 }
 
 export async function getSelfReviewConfig(project: string): Promise<SelfReviewConfig> {

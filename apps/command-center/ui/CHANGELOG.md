@@ -4,14 +4,29 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(roadmap): run deletion/archive events invalidate delivery even when the affected run is outside the paginated client run list, preventing stale badges and lineage detail.
+- fix(roadmap): the delivery revision tracks backlog rows reachable only through `RoadmapItem.promotion`, which carry no `roadmapItemId`; filtering on the canonical link alone dropped a supported lineage case and left its badges stale.
+- fix(roadmap): the delete confirm snapshots its target instead of re-reading `_selected`, which falls back to the first row and can name one item in the prompt while deleting another. Defence in depth rather than a live bug — `window.confirm` blocks the JS thread — but it becomes a real swap if the prompt ever becomes async, and `_editHash` moves with the selection so the hash guard would not catch it.
+- fix(runs): the run pipeline's cancel button and the dispatch wizard's conflicting-run cancel report a partially applied cancel instead of ignoring the result — the wizard would otherwise clear the conflict and dispatch into a slot that may still be claimed.
+- fix(roadmap): full refreshes and delivery-only reloads use independent generations, so a run update can no longer discard an in-flight filter/search change; the delivery revision now ignores runs with no backlog link and backlog items with no roadmap link, ending continuous full-store reloads during unrelated run activity.
+- fix(roadmap): an explicit refresh drops its own result (and its error) when a newer refresh has claimed the panel, completing the stale-response guard across every read that writes shared roadmap state.
 - feat(slot-view): IDE-style per-file state chips (C committed / S staged / M unstaged / U untracked) in the unified diff list and changes activity, with one shared git-status palette across the source panel, changes activity, and file tree (untracked is now green everywhere, VSCode-style, instead of gray in the source panel).
 
+- fix(roadmap): the delivery revision folds the fields the projection derives from (run status/PR number, backlog status/roadmap link/shipped ref), so two transitions inside the same millisecond still trigger a refresh instead of leaving badges stale.
+- fix(roadmap): a superseded delivery reload's failure no longer overwrites the error banner after a newer refresh already succeeded.
+- fix(roadmap): the delivery lineage panel shows an explicit loading placeholder instead of rendering nothing, so a slow projection read no longer looks identical to "nothing shipped".
+- fix(roadmap): delivery _detail_ requests are generation-stamped too, so two overlapping `roadmap.get` calls for the same selected item cannot land out of order and restore stale lineage, and a superseded request's error no longer surfaces after the selection moved on.
 - feat(slot-view): the source-control panel shows every change vs the base branch — committed or not — as one deduped list ("All changes vs main"), with per-file diffs computed against the working tree.
 
 - fix(slot-view): branch-diff file list self-heals — the git-status poll reloads it after a transient failure or when the commit count changes, and failures render as "Branch diff unavailable" instead of a false "No changes".
 
+- fix(roadmap): delivery reloads trigged by run updates are coalesced and generation-stamped, so a burst of `RUN_UPDATED` events cannot stack overlapping full projections or let a slow earlier response overwrite newer badges.
+- fix(roadmap): the delivery revision folds every row's identity, not just the count and newest timestamp, so swapping one linked row for another (or two edits in the same millisecond) no longer leaves badges stale.
+- fix(roadmap): delivery refresh tracks content, not row counts, so a run reaching `done` updates both list badges and the open item; unreachable evidence (archived-only families, URL-less PRs, deleted backlog items) renders as an inert chip instead of disappearing or linking nowhere.
+- fix(roadmap): delivery badges refresh when runs or backlog items change while the panel is mounted; backlog backlinks pin the item's status so delivered lineage is not filtered out; archived-only run families render without a dead link.
 - fix(progress): markdown-fallback step parsing uses the shared protocol enumerator, so informational checkboxes (ACs, pre-merge sections) no longer inflate step counts.
 
+- feat(roadmap): roadmap list and detail render the gateway delivery badge plus clickable backlog, run-family, and PR backlinks from the shared projection. The panel no longer joins the loaded run page, so historical runs stay visible.
 - feat(backlog): **Refine with runner** picker on backlog detail with launch/resume (Continue existing) parity to roadmap refinement.
 
 - feat(inventory): extract a domain-neutral shared work-inventory table shell and migrate Backlog, Roadmap, Work Graph, and Runs onto it with shared sort/selection/ARIA/overflow tokens (MANUAL-000074).

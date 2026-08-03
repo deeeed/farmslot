@@ -4,11 +4,13 @@ import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/pro
 import path from 'node:path';
 
 import {
+  type BacklogItem,
   DEFAULT_ROADMAP_REFINEMENT_MODEL,
   DEFAULT_ROADMAP_REFINEMENT_RUNNER,
   isConcreteRoadmapProject,
   isUnscopedGlobalRoadmapItem,
   normalizeRunTags,
+  type PlanningContextProjection,
   type PoolConfig,
   ROADMAP_GLOBAL_PROJECT,
   ROADMAP_ITEM_STAGES,
@@ -16,6 +18,7 @@ import {
   ROADMAP_UNASSIGNED_PROJECT,
   type RoadmapDeleteParams,
   type RoadmapDeleteResult,
+  type RoadmapDeliveryProjection,
   type RoadmapGetParams,
   type RoadmapGetResult,
   type RoadmapItem,
@@ -43,12 +46,15 @@ import {
   type RoadmapSaveResult,
   type RoadmapSource,
   type SafetyTier,
+  summarizeRoadmapDelivery,
+  type WorkGraphSnapshot,
 } from '@farmslot/protocol';
 
 import {
   createBacklogItem,
   deleteBacklogItem,
   extractBacklogAcceptanceCriteria,
+  listBacklogItems,
   markBacklogItemReady,
   updateBacklogItem,
 } from '../backlog/store.js';
@@ -64,6 +70,15 @@ import {
   tmuxSessionExists,
 } from '../refinement/session.js';
 import { runnerDefaultModel } from '../runners/registry.js';
+import { getAllRunsWithArchived } from '../runs/store.js';
+import { listWorkGraphs } from '../work-graph/store.js';
+
+import {
+  buildBacklogIndexByRoadmapItem,
+  buildPlanningContextProjection,
+  buildRoadmapDeliveryProjection,
+  buildRunIndexByBacklogItem,
+} from './delivery-projection.js';
 
 const VALID_STAGES = new Set<RoadmapItemStage>(ROADMAP_ITEM_STAGES);
 const VALID_SOURCE_KINDS = new Set<string>(ROADMAP_SOURCE_KINDS);
@@ -471,7 +486,8 @@ async function loadAllItems(): Promise<RoadmapItem[]> {
   );
 }
 
-async function findItemById(itemId: string): Promise<RoadmapItem | null> {
+/** Non-throwing lookup for callers that treat a stale roadmap link as "no parent". */
+export async function findRoadmapItemById(itemId: string): Promise<RoadmapItem | null> {
   const items = await loadAllItems();
   return items.find((item) => item.id === itemId) ?? null;
 }
@@ -482,6 +498,65 @@ function itemMatchesSearch(item: RoadmapItem, search: string | undefined): boole
   return `${item.title}\n${item.body}\n${item.tags?.join(' ') ?? ''}`
     .toLowerCase()
     .includes(needle);
+}
+
+/**
+ * Delivery lineage is derived from the complete backlog and run stores, never
+ * from a caller-supplied page. `listBacklogItems({ includeArchived: true })` is
+ * required so an archived-but-shipped link stays visible as provenance.
+ */
+async function deliveryProjectionFor(
+  items: readonly RoadmapItem[],
+  backlogItems: readonly BacklogItem[] = listBacklogItems({ includeArchived: true }).items,
+): Promise<RoadmapDeliveryProjection[]> {
+  // Archived runs leave the live map but remain durable evidence. Omitting them
+  // would drop exactly the historical lineage this projection promises.
+  const runsByBacklogItemId = buildRunIndexByBacklogItem(await getAllRunsWithArchived());
+  const backlogByRoadmapItemId = buildBacklogIndexByRoadmapItem(backlogItems);
+  const backlogById = new Map(backlogItems.map((entry) => [entry.id, entry]));
+  const generatedAt = new Date().toISOString();
+  return items.map((item) =>
+    buildRoadmapDeliveryProjection({
+      item,
+      backlogItems,
+      runsByBacklogItemId,
+      backlogByRoadmapItemId,
+      backlogById,
+      generatedAt,
+    }),
+  );
+}
+
+function planningContextFor(
+  item: RoadmapItem,
+  delivery: RoadmapDeliveryProjection,
+  backlogItems: readonly BacklogItem[],
+): PlanningContextProjection {
+  // The roadmap item's own planning context is anchored on its first canonical
+  // backlog link, which is where WorkGraph relations (if any) live.
+  const backlogItem = backlogItems.find((entry) => entry.roadmapItemId === item.id);
+  const graph = backlogItem?.workGraphId
+    ? loadWorkGraphSnapshot(backlogItem.workGraphId)
+    : undefined;
+  return buildPlanningContextProjection({
+    ...(backlogItem ? { backlogItem } : {}),
+    roadmapItem: item,
+    backlogItems,
+    ...(graph ? { graph } : {}),
+    delivery: summarizeRoadmapDelivery(delivery),
+    generatedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * A backlog row can name a graph that was deleted; planning context is
+ * supplementary, so an unknown graph id degrades to "no graph relations"
+ * instead of failing the whole roadmap read.
+ */
+export function loadWorkGraphSnapshot(graphId: string): WorkGraphSnapshot | undefined {
+  return listWorkGraphs({ includeArchived: true }).graphs.find(
+    (entry) => entry.graph.id === graphId,
+  );
 }
 
 export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<RoadmapListResult> {
@@ -505,14 +580,21 @@ export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<
     }
     return true;
   });
-  return { items };
+  return {
+    items,
+    delivery: (await deliveryProjectionFor(items)).map(summarizeRoadmapDelivery),
+  };
 }
 
 export async function getRoadmapItem(params: RoadmapGetParams): Promise<RoadmapGetResult> {
   if (!params.itemId?.trim()) throw new Error('roadmap.get requires itemId');
-  const item = await findItemById(params.itemId.trim());
+  const item = await findRoadmapItemById(params.itemId.trim());
   if (!item) throw new Error(`Roadmap item not found: ${params.itemId}`);
-  return { item };
+  // One backlog snapshot feeds both projections: they must agree, and a second
+  // scan could observe a concurrent backlog mutation between them.
+  const backlogItems = listBacklogItems({ includeArchived: true }).items;
+  const delivery = (await deliveryProjectionFor([item], backlogItems))[0];
+  return { item, delivery, planningContext: planningContextFor(item, delivery, backlogItems) };
 }
 
 export async function getRoadmapPrompt(
@@ -1151,7 +1233,7 @@ export async function getRoadmapRefinementSession(
 
 async function saveRoadmapItemUnlocked(params: RoadmapSaveParams): Promise<RoadmapSaveResult> {
   const input = params.item;
-  const existing = input.id ? await findItemById(input.id) : null;
+  const existing = input.id ? await findRoadmapItemById(input.id) : null;
   const project = normalizeProject(input.project);
   const currentPath = existing
     ? resolveRoadmapPath(existing.filePath)

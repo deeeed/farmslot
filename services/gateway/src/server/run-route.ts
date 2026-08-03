@@ -166,7 +166,9 @@ export async function routeRunMethod(
     case Methods.RUN_SLOT_HISTORY:
       return handled(runSlotHistory(p as SlotRunHistoryParams));
     case Methods.RUN_CANCEL:
-      return handled(runCancel(p as RunCancelParams, emit));
+      // No emitter: the transition broadcasts globally itself (ADR-053), so every
+      // cancel entry point reaches every client identically.
+      return handled(runCancel(p as RunCancelParams));
     case Methods.RUN_FORCE_COMPLETE:
       return handled(runForceComplete(p as RunForceCompleteParams, emit));
     case Methods.RUN_PAUSE:

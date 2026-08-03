@@ -40,13 +40,49 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
 - Gateway replay uses the same hook via `hooks.recipe_run` in `projects/farmslot-farm/project.json`. The hook routes `cli`/web runs to Command Center and `ios`/`android` runs to Companion, but both routes must emit the same Recipe v1 package under `--artifacts-dir`: `summary.json`, `trace.json`, and `artifact-manifest.json`; copy the resolved `recipe.json` when practical.
 - If you need to inspect the package directly, run `cd {{REPO}} && yarn --cwd apps/command-center farmslot recipe artifacts validate {{TASK_DIR}}/artifacts/recipe-run` (append `--recipe {{TASK_DIR}}/artifacts/recipe-run/recipe.json` only when that file was copied).
 
+## What a recipe proves
+
+A recipe proves a **protocol action** works in the running system, driven through a **real client
+endpoint**. Not a UI tool — "does this have a screen?" is the wrong question.
+
+| Endpoint | Recipe surface | Assert with |
+|----------|----------------|-------------|
+| Command Center | `ui.navigate` / `ui.press` / `ui.wait_for` / `ui.screenshot` | viewport-visible + screenshot |
+| CLI | `command` → `yarn --cwd apps/command-center farmslot <cmd>` | `assert_output` / `assert_json` |
+| Gateway RPC | `command` → `node apps/command-center/scripts/cdp.mjs gateway <method> '<params>'` | `assert_output` |
+| Runtime logs | `watch_logs` | `contains` on the emitted line |
+| Companion | `ios`/`android` route | device screenshot |
+
+Assert at the level that proves the claim: screenshots prove rendering; log/RPC reads prove state and
+cross-store effects. If the claim is "cancelling settles the backlog", read the backlog back — do not
+screenshot a button.
+
+Never proof:
+
+- "Backend-only, so no recipe" — CLI, gateway RPC, and logs all reach it.
+- Unit tests with mocked collaborators — they prove the function, not the wired system.
+- A `#dev/*` harness fixture when the claim is that the gateway *derives* the value.
+- Asserting a call returned when the claim is its side effect on another aggregate.
+
 ## Proof rules
 
 1. Cover every acceptance criterion in `recipe-coverage.md` with `state`, `visual`, or `mixed` proof mode.
-2. UI changes require real navigation via `ui.navigate` / `ui.wait_for` / `ui.screenshot` — never inject store/DOM state.
-3. Visual ACs need **viewport-visible** assertions (`expected: "visible"` or absent/hidden negatives) before screenshots.
-4. Screenshot filenames should encode proof: `before-<claim>.png`, `after-<claim>.png`.
-5. Assert the actual feature: if you remove the code, the recipe must fail.
+2. Identify the protocol action(s) the change touches, then the client endpoint(s) that reach them.
+   Drive at least one end to end.
+3. UI changes require real navigation via `ui.navigate` / `ui.wait_for` / `ui.screenshot` — never inject store/DOM state.
+4. Visual ACs need **viewport-visible** assertions (`expected: "visible"` or absent/hidden negatives) before screenshots.
+5. Screenshot filenames should encode proof: `before-<claim>.png`, `after-<claim>.png`.
+6. Assert the actual feature: if you remove the code, the recipe must fail. This is the test of whether
+   the recipe proves anything — run the baseline with your change stashed.
+7. State-mode proof still runs against the **running gateway**, not a test harness. `command` +
+   `assert_output` against the live CLI/RPC is a first-class recipe, not a fallback.
+8. **Revalidate and extend on every change.** The recipe is living proof, not a one-time gate. Any
+   behaviour change — including fixes made during review rounds — needs a node covering the new claim
+   and a re-run. Then act on the result: a failing node means fix the code, or fix an assertion that
+   over-claims. A review fix with no recipe node is unproven.
+9. **Unit tests are not a substitute for wiring.** A pure helper can be fully unit-tested while the
+   code that calls it is dead. If the claim is "the panel refreshes" or "the effect fires", the recipe
+   must exercise the wiring in the running app.
 
 ## PR evidence package (gateway embeds this in created PRs)
 

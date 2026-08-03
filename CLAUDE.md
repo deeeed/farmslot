@@ -25,6 +25,21 @@ farmslot/
 
 **STOP and ask before building anything not already in a PRD or roadmap.** Canonical roadmaps: [docs/ROADMAP.md](docs/ROADMAP.md) (whole-product) and [docs/ROADMAP-next.md](docs/ROADMAP-next.md) (near-term). If a task doesn't map to an existing milestone: (1) do NOT start coding, (2) capture it and propose where it belongs (new PRD entry, sub-item of existing milestone, or deferred), (3) get explicit approval before writing code. Bug fixes for code you just wrote are fine. New features, components, or protocol changes are not — unless already on a canonical roadmap.
 
+### Recipes Prove Protocol Actions, Not Just UI — HARD RULE
+
+**A recipe proves a protocol action through a real client endpoint** — Command Center, CLI, gateway
+RPC (`cdp.mjs gateway …`), runtime logs (`watch_logs`), or Companion. Not UI-only. Assert at the level
+that proves the claim: screenshots for rendering, log/RPC reads for state and cross-store effects.
+
+Never proof: "backend-only, so no recipe"; mocked unit tests; a `#dev/*` fixture when the claim is
+gateway _derivation_; asserting a call returned when the claim is its side effect.
+
+**The recipe is living proof, not a one-time gate.** Every time you change behaviour — including
+fixes made during review rounds — extend the recipe to cover the new claim and re-run it, then
+adjust the code or the assertion based on what it shows. A review fix with no recipe node is
+unproven. Prove each new node can fail (break the code path, watch that node fail, restore).
+Details: `projects/<project>/fixtures/runtime/recipe-quality.md`.
+
 ### Validate UI Via CDP — HARD RULE
 
 **Every UI change must be validated in the browser via CDP, not just TypeScript compilation.** Use the committed helpers — do NOT write throwaway `cdp-*.mjs` scripts:
@@ -43,6 +58,12 @@ See `apps/command-center/CLAUDE.md` for the full protocol. If CDP is unreachable
 ### Fix Root Cause, Not Symptoms — HARD RULE
 
 **Before patching, decide: bandage or real fix?** State the diagnosis in one sentence, then pick the long-term fix by default. A bandage is only acceptable when Arthur explicitly asks for one or the real fix is out of scope for the current task — and when you ship a bandage, call it out as a bandage and note the follow-up needed. Signs you are bandaging: adding a null-check where the null is the bug, wrapping flaky code in try/catch, special-casing one caller, duplicating logic instead of fixing the shared helper, adding a flag to skip the broken path. **Do not ship regressions while "fixing" bugs.** If a fix changes behavior for other callers, trace them and verify before declaring done.
+
+**List the blast radius before you commit, and verify each entry.** Enumerate everything that
+references what you touched — callers, other readers/writers of shared state, the schema or docs that
+describe it, and its tests — then check each one. Fix the whole class, not the instance in front of
+you: if one call site had the bug, name its siblings and confirm them. A green typecheck is not this
+check; it cannot see a contract you failed to update or a second consumer of a counter you added.
 
 ### Runner Capability First — HARD RULE
 

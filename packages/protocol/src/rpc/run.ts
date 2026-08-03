@@ -240,8 +240,31 @@ export interface RunCancelParams {
   reason?: string;
 }
 
+/**
+ * Per-effect result of a cancel's cross-aggregate fan-out (ADR-053). A cancel can
+ * reach its terminal state while an advisory effect — settling the backlog,
+ * ticking the work graph, releasing the slot — fails. Callers that only read
+ * `run` would report unqualified success for a partially-applied cancel.
+ */
+export interface RunCancelEffect {
+  name: string;
+  status: 'ok' | 'skipped' | 'failed';
+  detail?: string;
+}
+
 export interface RunCancelResult {
   run: Run;
+  /** Additive: omitted by older gateways. Non-`ok` entries mean partial application. */
+  effects?: RunCancelEffect[];
+}
+
+/**
+ * The effects that actually failed. Every human-facing caller must report these —
+ * a cancel whose slot release or backlog settle failed is terminal but only
+ * partially applied, and saying "cancelled" alone hides a still-claimed slot.
+ */
+export function failedRunCancelEffects(effects?: RunCancelEffect[]): RunCancelEffect[] {
+  return (effects ?? []).filter((effect) => effect.status === 'failed');
 }
 
 export interface RunForceCompleteParams {

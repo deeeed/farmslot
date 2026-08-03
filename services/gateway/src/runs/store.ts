@@ -374,6 +374,114 @@ function isRunStoreLeak(run: Run): boolean {
   return isSyntheticLeak(run) || isLeakedGatewayTestRun(run);
 }
 
+/**
+ * Migrations applied to any run read from disk. Extracted so archived records get
+ * the same treatment as live ones — an archived run loaded without these keeps a
+ * missing `familyId`, which groups unrelated backlog items under one undefined
+ * family and corrupts delivery lineage.
+ *
+ * Mutates `run` in place and returns whether anything changed, so callers can decide
+ * whether the record needs re-persisting.
+ */
+export function normalizePersistedRun(run: Run): boolean {
+  let changed = false;
+  // Normalize legacy flow-type names at load so the UI never surfaces a
+  // pre-rename value ('feature' → 'dev', 'merge-main' → 'update-branch').
+  const normalizedFlow = normalizeFlowType((run as { flowType?: string }).flowType);
+  if (run.flowType !== normalizedFlow) {
+    run.flowType = normalizedFlow;
+    changed = true;
+  }
+  // Normalize pre-rename CI-watch decision action ids (resolved + pending
+  // buttons) so downstream replay/recovery consumers and the UI only ever
+  // see the current id/label.
+  for (const decision of run.decisions ?? []) {
+    if (decision.resolvedAction) {
+      const normalizedAction = normalizeCiActionId(decision.resolvedAction);
+      if (decision.resolvedAction !== normalizedAction) {
+        decision.resolvedAction = normalizedAction;
+        changed = true;
+      }
+    }
+    for (const action of decision.actions ?? []) {
+      const normalizedId = normalizeCiActionId(action.id);
+      if (action.id !== normalizedId) {
+        action.id = normalizedId;
+        changed = true;
+      }
+      if (action.label.includes('merge-main')) {
+        action.label = action.label.replace(/merge-main/g, 'update-branch');
+        changed = true;
+      }
+    }
+  }
+  // Normalize a persisted worker-template filename that still points at the
+  // pre-rename template. The 'merge-main.md' template was renamed to
+  // 'update-branch.md' in this rename; a legacy run resuming with the old
+  // basename would otherwise wedge at write-task against a deleted file.
+  if (run.taskTemplate?.fileName?.startsWith('merge-main')) {
+    run.taskTemplate.fileName = run.taskTemplate.fileName.replace(/^merge-main/, 'update-branch');
+    changed = true;
+  }
+  if (run.project === 'farmslot') {
+    run.project = 'farmslot-farm';
+    changed = true;
+  }
+  if (!run.familyId) {
+    run.familyId = run.id;
+    changed = true;
+  }
+  if (run.parentRunId === undefined) {
+    run.parentRunId = null;
+    changed = true;
+  }
+  if (!run.familyRootTicketOrPr) {
+    run.familyRootTicketOrPr = run.ticketOrPr;
+    changed = true;
+  }
+  if (!(run as any).lane) {
+    (run as Run).lane = run.mode === 'validation' ? 'validation' : 'production';
+    changed = true;
+  }
+  if ((run as any).variant === undefined) {
+    (run as Run).variant = null;
+    changed = true;
+  }
+  for (const decision of run.decisions ?? []) {
+    if (decision.type !== 'retrospective') continue;
+    let decisionChanged = false;
+    decision.actions = decision.actions.map((action) => {
+      if (action.id === 'accept' && action.label !== 'Accept for Learning') {
+        decisionChanged = true;
+        return { ...action, label: 'Accept for Learning' };
+      }
+      if (action.id === 'rework' && action.label !== 'Reject Learning') {
+        decisionChanged = true;
+        return { ...action, label: 'Reject Learning' };
+      }
+      return action;
+    });
+    if (decisionChanged) changed = true;
+  }
+  const legacyTier = backfillLegacySafetyTier(run);
+  if (legacyTier !== null) {
+    run.safetyTier = legacyTier;
+    changed = true;
+  }
+  if (!run.startedAt && ACTIVE_STATUSES.has(run.status)) {
+    run.startedAt = inferredRunStartedAt(run);
+    changed = true;
+  }
+  if (run.agentContexts === undefined && ACTIVE_STATUSES.has(run.status)) {
+    const agentContexts = initialAgentContextsForRun(run);
+    if (agentContexts) {
+      run.agentContexts = agentContexts;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 export async function loadAllRuns(): Promise<void> {
   await ensureDir();
   let files: string[];
@@ -404,104 +512,7 @@ export async function loadAllRuns(): Promise<void> {
         }
         skippedSynthetic++;
       }
-      let changed = false;
-      // Normalize legacy flow-type names at load so the UI never surfaces a
-      // pre-rename value ('feature' → 'dev', 'merge-main' → 'update-branch').
-      const normalizedFlow = normalizeFlowType((run as { flowType?: string }).flowType);
-      if (run.flowType !== normalizedFlow) {
-        run.flowType = normalizedFlow;
-        changed = true;
-      }
-      // Normalize pre-rename CI-watch decision action ids (resolved + pending
-      // buttons) so downstream replay/recovery consumers and the UI only ever
-      // see the current id/label.
-      for (const decision of run.decisions ?? []) {
-        if (decision.resolvedAction) {
-          const normalizedAction = normalizeCiActionId(decision.resolvedAction);
-          if (decision.resolvedAction !== normalizedAction) {
-            decision.resolvedAction = normalizedAction;
-            changed = true;
-          }
-        }
-        for (const action of decision.actions ?? []) {
-          const normalizedId = normalizeCiActionId(action.id);
-          if (action.id !== normalizedId) {
-            action.id = normalizedId;
-            changed = true;
-          }
-          if (action.label.includes('merge-main')) {
-            action.label = action.label.replace(/merge-main/g, 'update-branch');
-            changed = true;
-          }
-        }
-      }
-      // Normalize a persisted worker-template filename that still points at the
-      // pre-rename template. The 'merge-main.md' template was renamed to
-      // 'update-branch.md' in this rename; a legacy run resuming with the old
-      // basename would otherwise wedge at write-task against a deleted file.
-      if (run.taskTemplate?.fileName?.startsWith('merge-main')) {
-        run.taskTemplate.fileName = run.taskTemplate.fileName.replace(
-          /^merge-main/,
-          'update-branch',
-        );
-        changed = true;
-      }
-      if (run.project === 'farmslot') {
-        run.project = 'farmslot-farm';
-        changed = true;
-      }
-      if (!run.familyId) {
-        run.familyId = run.id;
-        changed = true;
-      }
-      if (run.parentRunId === undefined) {
-        run.parentRunId = null;
-        changed = true;
-      }
-      if (!run.familyRootTicketOrPr) {
-        run.familyRootTicketOrPr = run.ticketOrPr;
-        changed = true;
-      }
-      if (!(run as any).lane) {
-        (run as Run).lane = run.mode === 'validation' ? 'validation' : 'production';
-        changed = true;
-      }
-      if ((run as any).variant === undefined) {
-        (run as Run).variant = null;
-        changed = true;
-      }
-      for (const decision of run.decisions ?? []) {
-        if (decision.type !== 'retrospective') continue;
-        let decisionChanged = false;
-        decision.actions = decision.actions.map((action) => {
-          if (action.id === 'accept' && action.label !== 'Accept for Learning') {
-            decisionChanged = true;
-            return { ...action, label: 'Accept for Learning' };
-          }
-          if (action.id === 'rework' && action.label !== 'Reject Learning') {
-            decisionChanged = true;
-            return { ...action, label: 'Reject Learning' };
-          }
-          return action;
-        });
-        if (decisionChanged) changed = true;
-      }
-      const legacyTier = backfillLegacySafetyTier(run);
-      if (legacyTier !== null) {
-        run.safetyTier = legacyTier;
-        changed = true;
-      }
-      if (!run.startedAt && ACTIVE_STATUSES.has(run.status)) {
-        run.startedAt = inferredRunStartedAt(run);
-        changed = true;
-      }
-      if (run.agentContexts === undefined && ACTIVE_STATUSES.has(run.status)) {
-        const agentContexts = initialAgentContextsForRun(run);
-        if (agentContexts) {
-          run.agentContexts = agentContexts;
-          changed = true;
-        }
-      }
+      const changed = normalizePersistedRun(run);
       runs.set(run.id, run);
       if (changed) {
         persistRunBackground(run, 'load migration');
@@ -933,6 +944,9 @@ export async function deleteRun(id: string): Promise<boolean> {
   if (ACTIVE_STATUSES.has(run.status)) {
     throw new Error(`Cannot delete active run ${id} (status=${run.status})`);
   }
+  if (run.backlogReconcilePending) {
+    throw new Error(`Cannot delete run ${id} while backlog reconciliation is pending`);
+  }
   if (run.decisions?.some((d) => d.type === 'improvement' && !d.resolvedAt)) {
     console.warn(`[run-store] deleting run ${id} with unresolved improvement decision(s)`);
   }
@@ -962,11 +976,95 @@ export async function deleteRun(id: string): Promise<boolean> {
 
 const ARCHIVE_DIR = path.join(RUNS_DIR, 'archive');
 
+/**
+ * Archived runs leave the live map but stay durable on disk, so any projection
+ * that claims historical lineage must read them too — archiving is exactly the
+ * "outside the current page" case. Cached because roadmap delivery reads this per
+ * request; only `archiveRun` invalidates it, since `deleteRun` unlinks from
+ * `RUNS_DIR` and never touches the archive directory.
+ */
+let archivedRunsCache: Run[] | null = null;
+/**
+ * Bumped on every invalidation so a scan that started before an `archiveRun` cannot
+ * publish its pre-archive snapshot as the cache. Without this, a cold scan racing an
+ * archive write would omit the newly archived run until the next archive or restart.
+ */
+let archivedRunsGeneration = 0;
+
+function invalidateArchivedRunsCache(): void {
+  archivedRunsCache = null;
+  archivedRunsGeneration++;
+}
+
+/**
+ * Cold call reads and parses every file in the archive directory; subsequent calls are
+ * served from the cache until the next archive. Callers on a request path should expect
+ * the first read after startup (or after an archive) to scale with archive size.
+ */
+export async function getArchivedRuns(): Promise<Run[]> {
+  while (true) {
+    if (archivedRunsCache) return archivedRunsCache;
+    const generation = archivedRunsGeneration;
+    let files: string[];
+    try {
+      files = await readdir(ARCHIVE_DIR);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (generation !== archivedRunsGeneration) continue;
+        archivedRunsCache = [];
+        return archivedRunsCache;
+      }
+      throw err;
+    }
+    const loaded: Run[] = [];
+    for (const file of files) {
+      if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
+      const filePath = path.join(ARCHIVE_DIR, file);
+      try {
+        const archived = JSON.parse(await readFile(filePath, 'utf-8')) as Run;
+        // Same migrations as the live load. Without them a pre-backfill archive keeps
+        // a missing familyId and every such run groups under one undefined family,
+        // merging lineage across unrelated backlog items.
+        normalizePersistedRun(archived);
+        loaded.push(archived);
+      } catch (err) {
+        // One unreadable archive record must not blind every lineage read. Skipping
+        // it is explicit recovery: the file stays on disk for inspection.
+        console.warn(
+          `[run-store] skipping unreadable archived run ${file}: ${(err as Error).message.slice(0, 200)}`,
+        );
+      }
+    }
+    // An archive invalidated this scan after its directory listing was captured.
+    // Retry before returning: callers read the live map only after this resolves,
+    // and the moved run would otherwise be absent from both halves of the union.
+    if (generation !== archivedRunsGeneration) continue;
+    archivedRunsCache = loaded;
+    return archivedRunsCache;
+  }
+}
+
+/**
+ * Live runs unioned with archived ones, deduped by id with the live record winning.
+ * A background persist racing `archiveRun` can recreate `runs/<id>.json` after the
+ * archive copy is written, so after a restart the same id loads from both directories.
+ * Concatenating without dedup double-counts run families and clears `archivedOnly`.
+ */
+export async function getAllRunsWithArchived(): Promise<Run[]> {
+  const byId = new Map<string, Run>();
+  for (const run of await getArchivedRuns()) byId.set(run.id, run);
+  for (const run of getAllRuns()) byId.set(run.id, run);
+  return [...byId.values()];
+}
+
 export async function archiveRun(id: string): Promise<boolean> {
   const run = runs.get(id);
   if (!run) return false;
   if (ACTIVE_STATUSES.has(run.status)) {
     throw new Error(`Cannot archive active run ${id} (status=${run.status})`);
+  }
+  if (run.backlogReconcilePending) {
+    throw new Error(`Cannot archive run ${id} while backlog reconciliation is pending`);
   }
   const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
   // Catch-all: write the analytics record before the run is evicted. Await it and DON'T archive
@@ -984,7 +1082,6 @@ export async function archiveRun(id: string): Promise<boolean> {
       return false;
     }
   }
-  runs.delete(id);
   await mkdir(ARCHIVE_DIR, { recursive: true });
   const src = path.join(RUNS_DIR, `${id}.json`);
   const dst = path.join(ARCHIVE_DIR, `${id}.json`);
@@ -993,6 +1090,10 @@ export async function archiveRun(id: string): Promise<boolean> {
   // racing on src; renaming src could move that stale pre-archive JSON and lose
   // archivedAt. Direct dst write makes the archived record authoritative.
   await writeFile(dst, JSON.stringify(archivedRun, null, 2), 'utf-8');
+  // Evict only after both the archive copy and live-file removal succeed. Reporting
+  // an unlink failure after eviction tells callers the archive failed while leaving
+  // no live run to retry; the temporary duplicate is harmless because combined reads
+  // dedupe with the live record winning.
   try {
     await unlink(src);
   } catch (err) {
@@ -1000,14 +1101,24 @@ export async function archiveRun(id: string): Promise<boolean> {
     // Source absence is expected when the run file was already removed or never
     // persisted before archive; dst above is the durable archived copy.
   }
+  runs.delete(id);
+  invalidateArchivedRunsCache();
   return true;
 }
 
 export async function bulkDeleteRuns(ids: string[]): Promise<number> {
   let deleted = 0;
   for (const id of ids) {
-    const ok = await deleteRun(id);
-    if (ok) deleted++;
+    try {
+      const ok = await deleteRun(id);
+      if (ok) deleted++;
+    } catch (err) {
+      // Same reason as the cleanup sweep: a pending-reconciliation run refuses deletion,
+      // and one such id must not strand the rest of the batch.
+      console.warn(
+        `[run-store] bulk delete skipped ${id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
   return deleted;
 }
@@ -1039,10 +1150,20 @@ export async function cleanupRuns(
     if (run.status !== 'failed' && run.status !== 'cancelled') continue;
     const age = now - new Date(run.updatedAt).getTime();
     if (age < CLEANUP_AGE_MS) continue;
-    runsArchived.push(id);
     if (!dryRun) {
-      await archiveRun(id);
+      try {
+        await archiveRun(id);
+      } catch (err) {
+        // Explicit recovery: a run still carrying `backlogReconcilePending` refuses to
+        // archive by design. Skip it so one unsettled run cannot abort the sweep for
+        // every later run; the next pass takes it once reconciliation clears the marker.
+        console.warn(
+          `[run-store] cleanup skipped ${id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        continue;
+      }
     }
+    runsArchived.push(id);
   }
 
   // Scan task dirs for orphaned tasks from failed/cancelled runs

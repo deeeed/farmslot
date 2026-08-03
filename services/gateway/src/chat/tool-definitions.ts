@@ -223,11 +223,11 @@ export const FLEET_TOOLS: Tool[] = [
   {
     name: 'check_pr',
     description:
-      'Get GitHub PR status (state, title, url, mergeable, branch). Pass pr_ref as "owner/repo#number" or just number if repo is known from context.',
+      'Get GitHub PR status (state, title, url, mergeable, branch). Pass pr_ref as "owner/repo#number" — the repository must be explicit.',
     parameters: Type.Object({
       pr_ref: Type.String({
         description:
-          'PR reference: "example-org/example-mobile#27906" or just "27906" (defaults to example-org/example-mobile)',
+          'Owner/repo-qualified PR reference, e.g. "deeeed/farmslot#421". A bare number is rejected: there is no default repository to resolve it against.',
       }),
     }),
   },

@@ -1,6 +1,5 @@
 import {
   Events,
-  isTerminalRunStatus,
   type RunCancelParams,
   type RunCancelResult,
   type RunForceCompleteParams,
@@ -15,6 +14,11 @@ import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { bumpRunGeneration, cancelRunEngine, startRun } from '../../run-engine/orchestrator.js';
 import {
+  cancelTransitionDeps,
+  defaultCancelCollaborators,
+} from '../../run-lifecycle/cancel-transition.js';
+import { routeRunTransition } from '../../run-lifecycle/transition-router.js';
+import {
   isRunnerPaneRetired,
   normalizeRunner,
   runnerContinueCommand,
@@ -22,64 +26,51 @@ import {
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
 import { getRun, updateRun } from '../../runs/store.js';
-import { invalidateWarmReviewerSessions } from '../../self-review/session-policy.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
-export async function runCancel(params: RunCancelParams, emit: Emit): Promise<RunCancelResult> {
-  const existing = getRun(params.runId);
-  if (!existing) throw new Error(`Run not found: ${params.runId}`);
+/**
+ * Takes no emitter: ADR-053 makes the transition own both store propagation and
+ * global publication. Passing one in is what made a cancel's reach depend on
+ * which caller invoked it.
+ */
+export async function runCancel(params: RunCancelParams): Promise<RunCancelResult> {
+  const { run, effects } = await routeRunTransition(
+    {
+      kind: 'cancel',
+      runId: params.runId,
+      actor: 'operator',
+      ...(params.reason ? { reason: params.reason } : {}),
+    },
+    cancelTransitionDeps(defaultCancelCollaborators()),
+  );
 
-  if (isTerminalRunStatus(existing.status)) {
-    throw new Error(`Run ${params.runId} already in terminal state: ${existing.status}`);
-  }
-
-  cancelRunEngine(params.runId);
-  // A cancelled run's warm reviewer sessions must never be resumable.
-  invalidateWarmReviewerSessions(params.runId);
-
-  const completedAt = new Date().toISOString();
-  const run = updateRun(params.runId, {
-    status: 'cancelled',
-    completedAt,
-    error: params.reason ?? 'Cancelled by user',
-    steps: existing.steps.map((step) =>
-      step.status === 'running' || step.status === 'pending'
-        ? { ...step, status: 'skipped', completedAt }
-        : step,
-    ),
-    metrics: { ...existing.metrics, outcome: 'cancelled' },
-    agentContexts: [],
-  });
-  emit(Events.RUN_UPDATED, { run });
-
-  // Release any claimed slot on cancel. Runs can be cancelled from human-gate /
-  // blocked review-gate states long after dispatch, and keeping the slot busy
-  // strands live validation until someone manually resets it. Do this after
-  // publishing the terminal run state so Command Center responds immediately
-  // even when tmux/window cleanup is slow.
-  if (existing.slotId) {
-    try {
-      const { loadSlotVars, resetSlot } = await import('../../core/index.js');
-      const { killAgentInSession, killAllAgentWindows } = await import('../slot.js');
-      const { loadFleetStatus } = await import('../../fleet/state.js');
-      const vars = await loadSlotVars(existing.slotId);
-      await killAllAgentWindows(vars);
-      // After role-scoped windows are gone, clean the base pane as a legacy
-      // fallback. Do not infer a role from the flow here: cancelled legacy runs
-      // can have stale/null flow metadata while their worker lives elsewhere.
-      await killAgentInSession(vars, existing.metrics.runner ?? undefined);
-      await resetSlot(existing.slotId, true);
-      emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
-      console.log(`[run] released slot ${existing.slotId} on cancel`);
-    } catch (err) {
-      console.warn(
-        `[run] failed to release slot ${existing.slotId} on cancel: ${(err as Error).message}`,
-      );
+  // A cancel can reach its terminal state while an advisory effect failed. Returning
+  // only `run` reported unqualified success for a partially-applied cancel; the
+  // outcomes travel with the result so callers and operators can see the gap.
+  const failed = effects.filter((effect) => effect.status === 'failed');
+  // The router publishes `cancelled` before the after-effects finish. The mutation's
+  // write-ahead marker blocks archive/delete until backlog settlement clears it, so
+  // a failed settle always leaves a live repair source.
+  let settled = run;
+  if (failed.length > 0) {
+    // The backlog projection is repaired from this durable marker on next load,
+    // so a failed settle self-heals instead of waiting for someone to notice.
+    if (failed.some((effect) => effect.name === 'backlog-settle')) {
+      // A marker-clear write can itself fail after the backlog write succeeds. Re-set
+      // it on any reported settle failure so restart reconciliation remains conservative.
+      settled = getRun(run.id)
+        ? updateRun(run.id, { backlogReconcilePending: true })
+        : { ...run, backlogReconcilePending: true };
     }
+    console.warn(
+      `[run] cancel ${run.id.slice(0, 8)} applied with ${failed.length} failed effect(s): ${failed
+        .map((effect) => `${effect.name} (${effect.detail ?? 'no detail'})`)
+        .join('; ')}`,
+    );
   }
 
-  return { run };
+  return { run: settled, effects };
 }
 
 export async function runForceComplete(

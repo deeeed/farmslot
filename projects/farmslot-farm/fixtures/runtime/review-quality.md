@@ -29,6 +29,24 @@ A green recipe status does **not** prove visible UI. Before marking an AC PROVEN
 Verdict per AC: `PROVEN` | `WEAK` | `UNTESTABLE` | `MISSING`.  
 `WEAK` or `MISSING` without reclassification → `REQUEST_CHANGES` or explicit human escalation.
 
+## Recipe scope
+
+Recipes prove a **protocol action** through a **real client endpoint** (Command Center, CLI, gateway
+RPC, `watch_logs`, Companion) — not UI only. Ask: which protocol actions changed, is each driven end
+to end? Reject:
+
+| Pattern | Verdict |
+|---------|---------|
+| "Gateway-only, no recipe possible" | **must_fix** — CLI/RPC/logs reach it |
+| `#dev/*` fixture used to prove gateway *derivation* | **must_fix** — read back from the gateway |
+| Review fixes landed with no new/updated recipe node | **must_fix** — the fix is unproven; extend and re-run |
+| Fix applied to one call site while siblings share the defect | **must_fix** — enumerate the blast radius, fix the class |
+| Only mocked unit tests defend the change | **must_fix** — proves the function, not the system |
+| Asserts the call returned; claim is a side effect on another store | **must_fix** — assert that store |
+| Screenshot for a state claim, or a log for a rendering claim | suggestion — wrong level |
+
+Log and RPC assertions are first-class; do not demand a screenshot for a non-visual claim.
+
 ## Recipe quality gates
 
 When the PR includes `recipe.json` or a **Validation Recipe** section:
