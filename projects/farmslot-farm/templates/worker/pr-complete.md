@@ -41,22 +41,28 @@ STATUS: pending
 - [ ] **9. Behind-main + merge-tree conflict probe** — before signaling re-review /
   completion ready (after must-fix commits):
   ```bash
-  git fetch origin main
-  behindMain=$(git rev-list --count HEAD..origin/main)
-  echo "behindMain=$behindMain"
-  # Non-destructive: --write-tree exit 1 = conflicts (classic merge-tree markers are +<<<<<<<).
-  # Subshell keeps set +e from enabling errexit in a persistent pane shell.
-  mt_rc=0
-  mt_out=$(
-    set +e
-    git merge-tree --write-tree --name-only HEAD origin/main 2>&1
-    echo "__MT_RC:$?"
-  )
-  mt_rc=$(printf '%s\n' "$mt_out" | sed -n 's/^__MT_RC://p' | tail -1)
-  mt_out=$(printf '%s\n' "$mt_out" | sed '/^__MT_RC:/d')
-  if [ "$mt_rc" = "1" ]; then mergeConflicts=true; else mergeConflicts=false; fi
-  echo "mergeConflicts=$mergeConflicts"
-  echo "$mt_out" | sed -n 's/^CONFLICT ([^)]*): Merge conflict in //p'
+  # Fail closed on fetch: do not trust a stale origin/main tracking ref.
+  if ! git fetch origin main; then
+    echo "WARN: git fetch origin main failed — behindMain/mergeConflicts below are unknown (not zero/clean)."
+    behindMain=unknown
+    mergeConflicts=unknown
+  else
+    behindMain=$(git rev-list --count HEAD..origin/main)
+    echo "behindMain=$behindMain"
+    # Non-destructive: --write-tree exit 1 = conflicts (classic merge-tree markers are +<<<<<<<).
+    # Subshell keeps set +e from enabling errexit in a persistent pane shell.
+    mt_rc=0
+    mt_out=$(
+      set +e
+      git merge-tree --write-tree --name-only HEAD origin/main 2>&1
+      echo "__MT_RC:$?"
+    )
+    mt_rc=$(printf '%s\n' "$mt_out" | sed -n 's/^__MT_RC://p' | tail -1)
+    mt_out=$(printf '%s\n' "$mt_out" | sed '/^__MT_RC:/d')
+    if [ "$mt_rc" = "1" ]; then mergeConflicts=true; else mergeConflicts=false; fi
+    echo "mergeConflicts=$mergeConflicts"
+    echo "$mt_out" | sed -n 's/^CONFLICT ([^)]*): Merge conflict in //p'
+  fi
   ```
   **Failure path:** if `mergeConflicts=true` or `behindMain` is material, update
   the branch first — **prefer** `git merge origin/main` during open review loops;

@@ -37,8 +37,14 @@ export interface BranchFreshnessSummary {
   defaultBranch: string;
   /** Slot HEAD SHA when the probe ran (optional). */
   headSha?: string;
-  /** True when origin/<defaultBranch> resolved after fetch. */
+  /**
+   * True only when `git fetch origin <branch>` succeeded **and** origin/<branch>
+   * verifies. A successful local rev-parse after a failed fetch is not enough
+   * (that would report stale tracking-ref counts as fresh).
+   */
   remoteRefOk: boolean;
+  /** True when the probe's git fetch exited 0. False when fetch failed or was not run. */
+  fetchOk: boolean;
   /**
    * Operator-facing next command / status. Prefer merge during open review loops;
    * rebase only when the project already standardizes on it.
@@ -103,9 +109,18 @@ export function formatBranchFreshnessHint(params: {
   defaultBranch: string;
   strategy?: MergeMainStrategy;
   remoteRefOk?: boolean;
+  fetchOk?: boolean;
 }): string {
   const branch = params.defaultBranch || 'main';
   const strategy: MergeMainStrategy = params.strategy === 'rebase' ? 'rebase' : 'merge';
+
+  if (params.fetchOk === false) {
+    return (
+      `Branch freshness unknown: git fetch origin ${branch} failed — counts from a ` +
+      `stale origin/${branch} tracking ref are not trusted (not treated as zero-ahead or clean). ` +
+      `Re-run after a successful fetch.`
+    );
+  }
 
   if (params.remoteRefOk === false) {
     return (
@@ -156,30 +171,34 @@ export function buildBranchFreshnessProbeScript(
   const repo = shellQuote(repoPath);
   return [
     'set +e',
+    // Capture fetch rc: a failed fetch must not fall through to a stale tracking ref.
     `git -C ${repo} fetch origin ${branch} --quiet 2>/dev/null`,
+    'fetch_rc=$?',
     `head=$(git -C ${repo} rev-parse HEAD 2>/dev/null)`,
-    // Fail closed: only treat origin/<branch> as mergeable after rev-parse --verify.
-    `git -C ${repo} rev-parse --verify --quiet "origin/${branch}^{commit}" >/dev/null 2>&1`,
-    'ref_rc=$?',
-    'if [ "$ref_rc" -eq 0 ]; then',
-    '  ref_ok=1',
-    `  behind=$(git -C ${repo} rev-list --count "HEAD..origin/${branch}" 2>/dev/null)`,
-    '  behind_rc=$?',
-    `  ahead=$(git -C ${repo} rev-list --count "origin/${branch}..HEAD" 2>/dev/null)`,
-    '  ahead_rc=$?',
-    // --write-tree: exit 0 clean, exit 1 conflicts (only when ref exists).
-    `  mt_out=$(git -C ${repo} merge-tree --write-tree --name-only HEAD "origin/${branch}" 2>&1)`,
-    '  mt_rc=$?',
-    'else',
-    '  ref_ok=0',
-    '  behind=""',
-    '  behind_rc=1',
-    '  ahead=""',
-    '  ahead_rc=1',
-    '  mt_out=""',
-    '  mt_rc=""',
+    'behind=""',
+    'behind_rc=1',
+    'ahead=""',
+    'ahead_rc=1',
+    'mt_out=""',
+    'mt_rc=""',
+    'ref_ok=0',
+    // Fail closed: only trust origin/<branch> when fetch succeeded AND the ref verifies.
+    'if [ "$fetch_rc" -eq 0 ]; then',
+    `  git -C ${repo} rev-parse --verify --quiet "origin/${branch}^{commit}" >/dev/null 2>&1`,
+    '  ref_rc=$?',
+    '  if [ "$ref_rc" -eq 0 ]; then',
+    '    ref_ok=1',
+    `    behind=$(git -C ${repo} rev-list --count "HEAD..origin/${branch}" 2>/dev/null)`,
+    '    behind_rc=$?',
+    `    ahead=$(git -C ${repo} rev-list --count "origin/${branch}..HEAD" 2>/dev/null)`,
+    '    ahead_rc=$?',
+    // --write-tree: exit 0 clean, exit 1 conflicts (only when fetch+ref ok).
+    `    mt_out=$(git -C ${repo} merge-tree --write-tree --name-only HEAD "origin/${branch}" 2>&1)`,
+    '    mt_rc=$?',
+    '  fi',
     'fi',
     'printf "HEAD:%s\\n" "${head:-}"',
+    'if [ "$fetch_rc" -eq 0 ]; then printf "FETCH_OK:1\\n"; else printf "FETCH_OK:0\\n"; fi',
     'printf "REF_OK:%s\\n" "${ref_ok}"',
     'if [ "$behind_rc" -eq 0 ] && [ -n "$behind" ]; then printf "BEHIND:%s\\n" "$behind"; else printf "BEHIND:unknown\\n"; fi',
     'if [ "$ahead_rc" -eq 0 ] && [ -n "$ahead" ]; then printf "AHEAD:%s\\n" "$ahead"; else printf "AHEAD:unknown\\n"; fi',
@@ -216,13 +235,16 @@ export function parseBranchFreshnessProbeOutput(
   const branch = sanitizeDefaultBranch(defaultBranch);
   const text = String(stdout ?? '');
   const headMatch = text.match(/^HEAD:([0-9a-f]{7,40})?\s*$/im);
+  const fetchOkMatch = text.match(/^FETCH_OK:([01])\s*$/m);
   const refOkMatch = text.match(/^REF_OK:([01])\s*$/m);
   const conflictExitMatch = text.match(/^CONFLICT_EXIT:(\d+|unknown)\s*$/m);
-  const remoteRefOk = refOkMatch ? refOkMatch[1] === '1' : false;
-  const behindMain = parseCountMarker(text, 'BEHIND');
-  const aheadMain = parseCountMarker(text, 'AHEAD');
+  const fetchOk = fetchOkMatch ? fetchOkMatch[1] === '1' : false;
+  // Never trust a local tracking ref when fetch failed (stale origin/*).
+  const remoteRefOk = fetchOk && refOkMatch ? refOkMatch[1] === '1' : false;
+  const behindMain = remoteRefOk ? parseCountMarker(text, 'BEHIND') : undefined;
+  const aheadMain = remoteRefOk ? parseCountMarker(text, 'AHEAD') : undefined;
 
-  // mergeConflicts only when ref verified and merge-tree reported a numeric exit.
+  // mergeConflicts only when fetch+ref verified and merge-tree reported a numeric exit.
   // Missing / unknown → omit (fail closed). Never treat "ref missing" exit 1 as conflict.
   let mergeConflicts: boolean | undefined;
   if (remoteRefOk && conflictExitMatch && conflictExitMatch[1] !== 'unknown') {
@@ -251,6 +273,7 @@ export function parseBranchFreshnessProbeOutput(
     defaultBranch: branch,
     strategy,
     remoteRefOk,
+    fetchOk,
   });
   return {
     ...(behindMain !== undefined ? { behindMain } : {}),
@@ -259,6 +282,7 @@ export function parseBranchFreshnessProbeOutput(
     mergeConflictPaths,
     defaultBranch: branch,
     remoteRefOk,
+    fetchOk,
     ...(headSha ? { headSha } : {}),
     hint,
   };

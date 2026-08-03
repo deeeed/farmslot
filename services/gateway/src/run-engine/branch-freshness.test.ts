@@ -80,14 +80,26 @@ test('formatBranchFreshnessHint prefers merge during open review loops', () => {
   const missingRef = formatBranchFreshnessHint({
     defaultBranch: 'main',
     remoteRefOk: false,
+    fetchOk: true,
   });
   assert.match(missingRef, /not available after fetch/);
   assert.doesNotMatch(missingRef, /git merge origin\/main/);
+
+  const fetchFailed = formatBranchFreshnessHint({
+    defaultBranch: 'main',
+    remoteRefOk: false,
+    fetchOk: false,
+  });
+  assert.match(fetchFailed, /fetch origin main failed/);
+  assert.match(fetchFailed, /stale/);
+  assert.doesNotMatch(fetchFailed, /up to date/);
 });
 
 test('buildBranchFreshnessProbeScript verifies remote ref and is non-destructive', () => {
   const script = buildBranchFreshnessProbeScript('/tmp/slot-repo', 'main');
   assert.match(script, /git -C .* fetch origin main/);
+  assert.match(script, /fetch_rc=\$\?/);
+  assert.match(script, /FETCH_OK:/);
   assert.match(script, /rev-parse --verify --quiet "origin\/main\^\{commit\}"/);
   assert.match(script, /rev-list --count "HEAD\.\.origin\/main"/);
   assert.match(script, /merge-tree --write-tree --name-only HEAD "origin\/main"/);
@@ -100,9 +112,10 @@ test('buildBranchFreshnessProbeScript verifies remote ref and is non-destructive
   assert.equal(script.includes('--force'), false);
 });
 
-test('parseBranchFreshnessProbeOutput fails closed when ref missing or counts unknown', () => {
+test('parseBranchFreshnessProbeOutput fails closed when ref missing, fetch failed, or counts unknown', () => {
   const withConflict = [
     'HEAD:abc1234',
+    'FETCH_OK:1',
     'REF_OK:1',
     'BEHIND:21',
     'AHEAD:2',
@@ -121,10 +134,12 @@ test('parseBranchFreshnessProbeOutput fails closed when ref missing or counts un
   assert.ok(summary.mergeConflictPaths.some((p) => p.includes('x.ts')));
   assert.equal(summary.headSha, 'abc1234');
   assert.equal(summary.remoteRefOk, true);
+  assert.equal(summary.fetchOk, true);
 
   // Missing remote ref: do NOT claim conflicts or zero-ahead.
   const missingRef = [
     'HEAD:abc1234',
+    'FETCH_OK:1',
     'REF_OK:0',
     'BEHIND:unknown',
     'AHEAD:unknown',
@@ -136,6 +151,7 @@ test('parseBranchFreshnessProbeOutput fails closed when ref missing or counts un
   ].join('\n');
   const unknown = parseBranchFreshnessProbeOutput(missingRef, 'main', 'merge');
   assert.equal(unknown.remoteRefOk, false);
+  assert.equal(unknown.fetchOk, true);
   assert.equal(unknown.behindMain, undefined);
   assert.equal(unknown.aheadMain, undefined);
   assert.equal(unknown.mergeConflicts, undefined);
@@ -143,9 +159,31 @@ test('parseBranchFreshnessProbeOutput fails closed when ref missing or counts un
   // Must not look like zero-ahead for close-as-shipped.
   assert.notEqual(unknown.aheadMain, 0);
 
+  // Failed fetch with stale local tracking counts present in stdout — must omit.
+  const staleAfterFetchFail = [
+    'HEAD:abc1234',
+    'FETCH_OK:0',
+    'REF_OK:0',
+    'BEHIND:0',
+    'AHEAD:1',
+    'CONFLICT_EXIT:0',
+    'TREE_BEGIN',
+    'TREE_END',
+    '',
+  ].join('\n');
+  const stale = parseBranchFreshnessProbeOutput(staleAfterFetchFail, 'main', 'merge');
+  assert.equal(stale.fetchOk, false);
+  assert.equal(stale.remoteRefOk, false);
+  assert.equal(stale.behindMain, undefined);
+  assert.equal(stale.aheadMain, undefined);
+  assert.equal(stale.mergeConflicts, undefined);
+  assert.match(stale.hint, /fetch origin main failed/);
+  assert.doesNotMatch(stale.hint, /up to date/);
+
   // Free-text "CONFLICT" with clean exit must NOT report conflicts.
   const cleanWithDocs = [
     'HEAD:abc1234',
+    'FETCH_OK:1',
     'REF_OK:1',
     'BEHIND:0',
     'AHEAD:1',
@@ -163,6 +201,7 @@ test('parseBranchFreshnessProbeOutput fails closed when ref missing or counts un
   // Missing CONFLICT_EXIT marker → fail closed (unknown), not false.
   const missingExit = [
     'HEAD:abc1234',
+    'FETCH_OK:1',
     'REF_OK:1',
     'BEHIND:0',
     'AHEAD:1',
@@ -173,7 +212,6 @@ test('parseBranchFreshnessProbeOutput fails closed when ref missing or counts un
   const incomplete = parseBranchFreshnessProbeOutput(missingExit, 'main', 'merge');
   assert.equal(incomplete.mergeConflicts, undefined);
 });
-
 test('sanitizeDefaultBranch and resolveBranchUpdateStrategy fail closed to safe defaults', () => {
   assert.equal(sanitizeDefaultBranch('main'), 'main');
   assert.equal(sanitizeDefaultBranch('release/1.2'), 'release/1.2');
@@ -205,6 +243,7 @@ test('applyBranchFreshnessToReadyGatePayload clears stale keys (package-refresh 
     mergeConflictPaths: [],
     defaultBranch: 'main',
     remoteRefOk: true,
+    fetchOk: true,
     hint: 'Branch is up to date with origin/main (behindMain: 0, mergeConflicts: false).',
   });
   assert.equal(cleaned.mergeConflicts, false);
@@ -295,4 +334,18 @@ test('real git: write-tree probe reports conflicts only when origin ref exists',
   assert.equal(missing.mergeConflicts, undefined);
   assert.equal(missing.aheadMain, undefined);
   assert.equal(missing.behindMain, undefined);
+
+  // Failed fetch: point origin at a nonexistent path so fetch exits non-zero while a
+  // stale origin/main tracking ref may still exist — must not report behindMain:0 clean.
+  git(['remote', 'set-url', 'origin', path.join(root, 'gone.git')]);
+  const failFetchOut = execFileSync('bash', ['-lc', buildBranchFreshnessProbeScript(work, 'main')], {
+    encoding: 'utf8',
+  });
+  const failFetch = parseBranchFreshnessProbeOutput(failFetchOut, 'main', 'merge');
+  assert.equal(failFetch.fetchOk, false, `probe out:\n${failFetchOut}`);
+  assert.equal(failFetch.remoteRefOk, false);
+  assert.equal(failFetch.behindMain, undefined);
+  assert.equal(failFetch.mergeConflicts, undefined);
+  assert.match(failFetch.hint, /fetch origin main failed/);
+  assert.doesNotMatch(failFetch.hint, /up to date/);
 });
