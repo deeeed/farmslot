@@ -9,6 +9,7 @@ import {
   DEFAULT_EXPO_RECIPE_MANIFEST_PATH,
   DEFAULT_EXPO_RECIPE_PATH,
   installExpoRecipeScaffold,
+  NATIVE_UI_ACTIONS,
   resolveExpoRecordingTarget,
   runExpoRecipeCli,
   runExpoRecipeDoctor,
@@ -16,6 +17,21 @@ import {
   validateExpoRecipeDocument,
 } from './index.js';
 import { closeUiTransportQuietly } from './runner.js';
+
+test('publishes the native action set through the package root', () => {
+  assert.deepEqual(NATIVE_UI_ACTIONS, [
+    'ui.press',
+    'ui.set_input',
+    'ui.scroll',
+    'ui.swipe',
+    'ui.pan',
+    'ui.drag',
+    'ui.long_press',
+    'ui.wait_for',
+    'ui.screenshot',
+    'ui.capture_surface',
+  ]);
+});
 
 test('production Expo validation rejects gestures unsupported by the active adapter', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-adapter-'));
