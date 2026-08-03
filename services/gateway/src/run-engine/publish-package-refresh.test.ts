@@ -233,6 +233,11 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
       reviewDepth,
       publicationTarget: 'ready',
       publicationStatus: 'not_published',
+      // Stale soft-chip fields from a prior probe — refresh must replace, not partial-spread.
+      behindMain: 21,
+      mergeConflicts: true,
+      mergeConflictPaths: ['f.ts'],
+      branchFreshnessHint: 'behindMain: 21, mergeConflicts: true. Next: git merge origin/main',
     } as ReadyGatePayload,
   };
   const run = createRun({
@@ -308,6 +313,17 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   const refreshedDecision = getRun(run.id)!.decisions[0];
   const refreshedPayload = refreshedDecision.payload as ReadyGatePayload;
   assert.equal(refreshedPayload.publicationTarget, 'draft');
+  // Wiring: soft fields are re-probed on the live slot repo (clean main) and must
+  // not keep stale mergeConflictPaths / hints from the prior payload.
+  assert.notEqual(refreshedPayload.mergeConflicts, true);
+  assert.ok(
+    !refreshedPayload.mergeConflictPaths?.includes('f.ts'),
+    'stale conflict path sample must not survive package refresh',
+  );
+  assert.ok(
+    !refreshedPayload.branchFreshnessHint?.includes('behindMain: 21'),
+    'stale branchFreshnessHint must not survive package refresh',
+  );
   assert.equal(
     refreshedPayload.prPackage?.selectedEvidenceKeys?.includes('artifacts/keep.png'),
     true,
@@ -394,6 +410,25 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   );
 
   updateRun(run.id, { slotId: null });
+  // Re-seed stale fields while slot is released — null probe must clear them.
+  const beforeRelease = getRun(run.id)!;
+  const beforeReleaseDecision = beforeRelease.decisions[0];
+  updateRun(run.id, {
+    decisions: beforeRelease.decisions.map((entry) =>
+      entry.id === beforeReleaseDecision.id
+        ? {
+            ...entry,
+            payload: {
+              ...(entry.payload as ReadyGatePayload),
+              behindMain: 99,
+              mergeConflicts: true,
+              mergeConflictPaths: ['stale.ts'],
+              branchFreshnessHint: 'stale hint',
+            },
+          }
+        : entry,
+    ),
+  });
   const releasedPayload = getRun(run.id)!.decisions[0].payload as ReadyGatePayload;
   const released = await refreshPublishPackage({
     runId: run.id,
@@ -403,6 +438,11 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   });
   assert.equal(released.packageHeadSha, headSha);
   assert.deepEqual(released.droppedEvidenceKeys, []);
+  const afterRelease = getRun(run.id)!.decisions[0].payload as ReadyGatePayload;
+  assert.equal(afterRelease.behindMain, undefined);
+  assert.equal(afterRelease.mergeConflicts, undefined);
+  assert.equal(afterRelease.mergeConflictPaths, undefined);
+  assert.equal(afterRelease.branchFreshnessHint, undefined);
 });
 test('refreshPublishPackage fails closed when worker artifacts cannot be mirrored', async (t) => {
   const testId = `refresh-package-fail-${process.pid}-${Date.now()}`;
