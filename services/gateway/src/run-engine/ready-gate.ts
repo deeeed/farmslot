@@ -800,6 +800,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
       : {}),
   };
 
+  updateRunStep(runId, S.HUMAN_GATE, { detail: 'Waiting for operator decision' });
   const actionId = await createEngineDecision(runId, 'human_gate', desc, actions, readyPayload);
 
   const afterDecisionRun = getRun(runId)!;

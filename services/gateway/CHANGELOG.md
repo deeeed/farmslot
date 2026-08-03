@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - fix(run-engine): reclaim the exact surviving reviewer after a gateway restart, resume its fix/re-review continuation without failing the run when delivery is temporarily unavailable, and deduplicate terminal verdict recovery.
+- fix(run-engine): clear completed reviewer progress when the publication gate is waiting for its operator decision.
 - fix(run-engine): settle superseded reviewer contexts, close their retained tmux windows, and only replace failed review records explicitly marked for late recovery.
 - fix(runners): require exact runner or task-scoped acknowledgement for review prompts, accepting an unchanged task signal only during explicit restart recovery.
 - fix(runs): cancellation now sets a write-ahead backlog repair marker before publication, blocks archive/delete until the durable settle clears it, retries archive scans invalidated mid-read, and retains a live run when source-file unlink fails.
