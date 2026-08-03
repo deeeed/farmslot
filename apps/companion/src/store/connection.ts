@@ -73,6 +73,7 @@ const DECISION_LIST_TIMEOUT_MS = 30_000;
 
 let livenessController: ConnectionLivenessController | null = null;
 let appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null;
+let requestDecisionRefresh: (() => Promise<void>) | null = null;
 const probeAttemptTracker = new ConnectionProbeAttemptTracker();
 
 export type { ConnectionProbeResult } from '../lib/connection-probe';
@@ -197,6 +198,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       });
 
       let decisionRefreshInFlight: Promise<void> | null = null;
+      let decisionRefreshQueued = false;
       const clearDecisionSyncError = () => {
         set((state) => ({
           lastSyncError: state.lastSyncError?.startsWith('Failed to refresh decisions')
@@ -204,8 +206,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             : state.lastSyncError,
         }));
       };
-      const refreshDecisions = (reason: string) => {
-        if (decisionRefreshInFlight) return;
+      const refreshDecisions = (reason: string): Promise<void> => {
+        if (decisionRefreshInFlight) {
+          decisionRefreshQueued = true;
+          return decisionRefreshInFlight;
+        }
         decisionRefreshInFlight = client
           .request<DecisionListResult>(Methods.DECISION_LIST, undefined, DECISION_LIST_TIMEOUT_MS)
           .then((result) => {
@@ -217,8 +222,14 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           })
           .finally(() => {
             decisionRefreshInFlight = null;
+            if (decisionRefreshQueued) {
+              decisionRefreshQueued = false;
+              void refreshDecisions('queued event');
+            }
           });
+        return decisionRefreshInFlight;
       };
+      requestDecisionRefresh = () => refreshDecisions('manual retry');
 
       // Decision events + notifications
       client.subscribe(Events.DECISION_NEW, (payload) => {
@@ -758,23 +769,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   },
 
   retryDecisionSync: async () => {
-    const { client, status } = get();
-    if (!client || status !== 'connected') return;
-    try {
-      const result = await client.request<DecisionListResult>(
-        Methods.DECISION_LIST,
-        undefined,
-        DECISION_LIST_TIMEOUT_MS,
-      );
-      useDecisionStore.getState().setDecisions(result.decisions);
-      set((state) => ({
-        lastSyncError: state.lastSyncError?.startsWith('Failed to refresh decisions')
-          ? null
-          : state.lastSyncError,
-      }));
-    } catch (err) {
-      set({ lastSyncError: `Failed to refresh decisions: ${(err as Error).message}` });
-    }
+    if (get().status !== 'connected') return;
+    await requestDecisionRefresh?.();
   },
 
   syncRunHistory: async () => {
