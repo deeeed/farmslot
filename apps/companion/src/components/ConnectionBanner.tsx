@@ -66,7 +66,7 @@ function resolveBannerContent(
   if (lastSyncError) {
     return {
       title: lastSyncError,
-      detail: 'Gateway is connected — data sync failed. Tap for settings.',
+      detail: 'Gateway is connected — data sync failed. Retry this sync.',
       tone: 'syncError',
     };
   }
@@ -91,6 +91,7 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   const lastProbeError = useConnectionStore((s) => s.lastProbeError);
   const probeInProgress = useConnectionStore((s) => s.probeInProgress);
   const retryConnection = useConnectionStore((s) => s.retryConnection);
+  const retryDecisionSync = useConnectionStore((s) => s.retryDecisionSync);
   const lastSyncError = useConnectionStore((s) => s.lastSyncError);
   const gatewayCompatibilityHint = useConnectionStore((s) => s.gatewayCompatibilityHint);
   const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
@@ -125,6 +126,9 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
     healthStatus,
     transportStatus,
     gatewayCompatibilityHint !== null,
+  );
+  const canRetryDecisionSync = Boolean(
+    healthStatus === 'healthy' && lastSyncError?.startsWith('Failed to refresh decisions'),
   );
 
   const openProfiles = () => {
@@ -168,6 +172,11 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
           )}
         </View>
         <View style={styles.actions}>
+          {canRetryDecisionSync ? (
+            <Pressable style={styles.actionButton} onPress={() => void retryDecisionSync()}>
+              <Text style={styles.actionText}>Retry</Text>
+            </Pressable>
+          ) : null}
           {canRetry ? (
             <Pressable
               style={styles.actionButton}
@@ -177,9 +186,11 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
               <Text style={styles.actionText}>{probeInProgress ? 'Testing…' : 'Retry'}</Text>
             </Pressable>
           ) : null}
-          <Pressable style={styles.actionButton} onPress={openProfiles}>
-            <Text style={styles.actionText}>{compact ? 'Profiles' : 'Switch profile'}</Text>
-          </Pressable>
+          {!canRetryDecisionSync ? (
+            <Pressable style={styles.actionButton} onPress={openProfiles}>
+              <Text style={styles.actionText}>{compact ? 'Profiles' : 'Switch profile'}</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
     </View>

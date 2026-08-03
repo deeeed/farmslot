@@ -4,7 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
-- fix(sync): avoid redundant full decision reconciliation for complete run-decision events whose optional payload is absent.
+- fix(sync): trust complete run-decision projections, coalesce fallback reconciliation for malformed or incomplete retrospective events, and offer an explicit retry for decision sync timeouts.
 - fix(ux-catalog): model Review, Terminals, Advanced, and Settings as sibling bottom-tab roots in the generated navigation map.
 
 - feat(companion): generate recipe-derived, optionally focused UX review boards with a typed navigation map, hierarchical Ready Gate subscreens, overall notes, and normalized point or area annotations.
