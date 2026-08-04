@@ -21,15 +21,36 @@ test('global filters parse and update existing hash params without dropping view
 });
 
 test('runs hash state only applies on runs routes and preserves unrelated params', () => {
-  assert.deepEqual(parseRunsHashState('#runs?tab=history&status=failed&projects=cc'), {
-    tab: 'history',
-    status: 'failed',
-  });
+  assert.deepEqual(
+    parseRunsHashState('#runs?run=run-1&runsTab=history&tab=pr-preview&status=failed&projects=cc'),
+    {
+      run: 'run-1',
+      tab: 'history',
+      status: 'failed',
+    },
+  );
   assert.deepEqual(parseRunsHashState('#slot/demo?tab=history'), {});
 
   assert.equal(
-    runsHashWithState({ tab: 'all', status: '', family: 'fam-2' }, '#runs?projects=cc&status=done'),
-    '#runs?projects=cc&tab=all&family=fam-2',
+    runsHashWithState(
+      { run: 'run-1', tab: 'all', status: '', family: 'fam-2' },
+      '#runs?projects=cc&status=done',
+    ),
+    '#runs?projects=cc&run=run-1&family=fam-2&runsTab=all',
   );
   assert.equal(runsHashWithState({ tab: 'all' }, '#slot/demo'), null);
+});
+
+test('changing the selected run clears detail-only step and artifact state', () => {
+  assert.equal(
+    runsHashWithState(
+      { run: '', tab: 'all' },
+      '#runs?run=run-1&runsTab=all&tab=pr-preview&file=report.md&step=ci-pass&artifactRun=run-1&artifact=report.md&projects=cc',
+    ),
+    '#runs?runsTab=all&projects=cc',
+  );
+  assert.equal(
+    runsHashWithState({ run: 'run-2' }, '#runs?run=run-1&step=monitor&projects=cc'),
+    '#runs?run=run-2&projects=cc',
+  );
 });

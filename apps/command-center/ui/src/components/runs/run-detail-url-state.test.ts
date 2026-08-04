@@ -6,7 +6,9 @@ import {
   isRunDetailHashForRun,
   runDetailEvidenceArtifactHash,
   runDetailStepHash,
+  runInventoryHashFromDetail,
   selectedStepNameFromRunDetailHash,
+  standaloneRunDetailHash,
 } from './run-detail-url-state.js';
 
 test('run detail helpers read selected step and artifact modal state', () => {
@@ -20,6 +22,11 @@ test('run detail helpers read selected step and artifact modal state', () => {
     artifactRun: 'run-1',
     artifact: 'captures/after.png',
   });
+});
+
+test('run detail recognizes its embedded runs-inventory route', () => {
+  assert.equal(isRunDetailHashForRun('run-1', '#runs?run=run-1&runsTab=history'), true);
+  assert.equal(isRunDetailHashForRun('run-2', '#runs?run=run-1&runsTab=history'), false);
 });
 
 test('step hash updates preserve unrelated params and evidence modal params', () => {
@@ -45,5 +52,44 @@ test('artifact modal hash updates preserve step and unrelated params', () => {
   assert.equal(
     runDetailEvidenceArtifactHash('run-1', null, hash),
     '#run/run-1?view=summary&step=review+with+spaces',
+  );
+});
+
+test('embedded run detail updates keep the runs inventory route and filters', () => {
+  const hash = '#runs?projects=farmslot-farm&runsTab=all&run=run-1';
+
+  assert.equal(
+    runDetailStepHash('run-1', 'ci-pass', hash),
+    '#runs?projects=farmslot-farm&runsTab=all&run=run-1&step=ci-pass',
+  );
+  assert.equal(
+    runDetailEvidenceArtifactHash('run-1', { path: 'captures/after.png' }, hash),
+    '#runs?projects=farmslot-farm&runsTab=all&run=run-1&artifactRun=run-1&artifact=captures%2Fafter.png',
+  );
+});
+
+test('standalone run detail drops a stale inventory selection param', () => {
+  assert.equal(
+    runDetailStepHash('run-1', 'monitor', '#run/run-1?run=old&projects=farmslot-farm'),
+    '#run/run-1?projects=farmslot-farm&step=monitor',
+  );
+});
+
+test('full-view navigation preserves filters and selected detail state', () => {
+  assert.equal(
+    standaloneRunDetailHash(
+      'run-1',
+      '#runs?projects=farmslot-farm&runsTab=all&run=run-1&tab=pr-preview&step=ci-pass',
+    ),
+    '#run/run-1?projects=farmslot-farm&runsTab=all&tab=pr-preview&step=ci-pass',
+  );
+});
+
+test('back to inventory preserves its filters and removes detail-only state', () => {
+  assert.equal(
+    runInventoryHashFromDetail(
+      '#run/run-1?projects=farmslot-farm&runsTab=history&status=done&tab=pr-preview&file=report.md&step=ci-pass',
+    ),
+    '#runs?projects=farmslot-farm&runsTab=history&status=done',
   );
 });

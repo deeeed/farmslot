@@ -113,6 +113,8 @@ export abstract class RunListState extends LitElement {
   @state() searchQuery = '';
   @state() globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() selectedIds = new Set<string>();
+  @state() selectedRunId = '';
+  @state() narrowViewport = false;
   @state() cleanupPreview: RunCleanupResult | null = null;
   @state() actionInProgress = false;
   @state() hydrating = false;
@@ -145,20 +147,25 @@ export abstract class RunListState extends LitElement {
       ? (parsed.sort as SortOption)
       : 'newest';
     this.searchQuery = parsed.q ?? '';
+    this.selectedRunId = parsed.run ?? '';
     if (familyChanged) void this.refreshFamilyFilter();
     if (tagChanged) void this.refreshTagFilter();
   };
 
-  _persistHashState() {
-    writeRunsHashState({
-      tab: this.tab !== 'active' ? this.tab : '',
-      status: this.statusFilter !== 'all' ? this.statusFilter : '',
-      flow: this.flowFilter || '',
-      lane: this.laneFilter || '',
-      sort: this.sortBy !== 'newest' ? this.sortBy : '',
-      q: this.searchQuery || '',
-      tag: this.tagFilter || '',
-      family: this.familyFilter || '',
-    });
+  _persistHashState(historyMode: 'replace' | 'push' = 'replace') {
+    writeRunsHashState(
+      {
+        run: this.selectedRunId || '',
+        tab: this.tab !== 'active' ? this.tab : '',
+        status: this.statusFilter !== 'all' ? this.statusFilter : '',
+        flow: this.flowFilter || '',
+        lane: this.laneFilter || '',
+        sort: this.sortBy !== 'newest' ? this.sortBy : '',
+        q: this.searchQuery || '',
+        tag: this.tagFilter || '',
+        family: this.familyFilter || '',
+      },
+      historyMode,
+    );
   }
 }

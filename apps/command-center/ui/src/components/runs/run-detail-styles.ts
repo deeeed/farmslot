@@ -35,8 +35,9 @@ export const runDetailStyles = css`
     color: ${unsafeCSS(colors.textPrimary)};
   }
   .header-summary {
-    color: ${unsafeCSS(colors.textSecondary)};
-    font-size: 12px;
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-size: 13px;
+    font-weight: 600;
     margin-bottom: ${unsafeCSS(spacing.sm)};
   }
   .status-badge {
@@ -249,7 +250,7 @@ export const runDetailStyles = css`
   .gate-description {
     font-size: 13px;
     line-height: 1.6;
-    color: ${unsafeCSS(colors.textSecondary)};
+    color: ${unsafeCSS(colors.textPrimary)};
     max-height: 400px;
     overflow-y: auto;
     margin-bottom: ${unsafeCSS(spacing.lg)};

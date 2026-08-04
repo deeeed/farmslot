@@ -307,6 +307,16 @@ export const runListStyles = css`
     gap: 2px;
     min-width: 0;
   }
+  .run-title {
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1.3;
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
   .pipeline-label {
     color: ${unsafeCSS(colors.textMuted)};
     font-size: 10px;
@@ -321,9 +331,8 @@ export const runListStyles = css`
     gap: 4px 6px;
     min-width: 0;
   }
-  .run-row-affordances .summary,
   .run-row-affordances .step-detail {
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
     font-size: 10px;
     max-width: 100%;
     overflow: hidden;
@@ -359,6 +368,27 @@ export const runListStyles = css`
   }
   .run-card.manage-mode {
     cursor: default;
+  }
+  .work-inventory-layout.split {
+    grid-template-columns: minmax(420px, 0.9fr) minmax(0, 1.1fr);
+  }
+  .run-list-detail {
+    display: block;
+    min-width: 0;
+  }
+  .run-detail-actions {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+  }
+  .run-detail-full-link {
+    color: ${unsafeCSS(colors.accent)};
+    font-size: 11px;
+    text-decoration: none;
+  }
+  .run-detail-full-link:hover {
+    text-decoration: underline;
   }
   .run-flow-cell {
     align-items: center;

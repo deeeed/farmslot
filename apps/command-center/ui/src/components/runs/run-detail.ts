@@ -684,6 +684,7 @@ export class RunDetail extends RunDetailState {
 
   render() {
     return renderRunDetailView({
+      embedded: this.embedded,
       run: this.run,
       prStatus: this.prStatus,
       siblings: this.siblings,

@@ -6,6 +6,7 @@ export interface GlobalFilters {
 }
 
 export interface RunsHashState {
+  run?: string;
   tab?: string;
   status?: string;
   flow?: string;
@@ -16,8 +17,8 @@ export interface RunsHashState {
   family?: string;
 }
 
-const RUNS_HASH_KEYS: (keyof RunsHashState)[] = [
-  'tab',
+const RUNS_HASH_KEYS: Exclude<keyof RunsHashState, 'tab'>[] = [
+  'run',
   'status',
   'flow',
   'lane',
@@ -26,6 +27,19 @@ const RUNS_HASH_KEYS: (keyof RunsHashState)[] = [
   'tag',
   'family',
 ];
+const RUNS_TAB_PARAM = 'runsTab';
+const RUN_DETAIL_PARAMS = [
+  'tab',
+  'file',
+  'modal',
+  'diffArtifact',
+  'lightboxIndex',
+  'lightboxRecipeRunId',
+  'evidencePreview',
+  'step',
+  'artifactRun',
+  'artifact',
+] as const;
 
 function splitCsv(raw: string | null): string[] {
   if (!raw) return [];
@@ -70,6 +84,8 @@ export function parseRunsHashState(hash: string = location.hash): RunsHashState 
   const { route, params } = parseHashRoute(hash);
   if (!route.startsWith('runs')) return {};
   const out: RunsHashState = {};
+  const tab = params.get(RUNS_TAB_PARAM);
+  if (tab) out.tab = tab;
   for (const key of RUNS_HASH_KEYS) {
     const value = params.get(key);
     if (value !== null && value !== '') out[key] = value;
@@ -83,22 +99,28 @@ export function runsHashWithState(
 ): string | null {
   const { route, params } = parseHashRoute(hash);
   if (!route.startsWith('runs')) return null;
+  if ((next.run ?? '') !== (params.get('run') ?? '')) {
+    for (const key of RUN_DETAIL_PARAMS) params.delete(key);
+  }
   for (const key of RUNS_HASH_KEYS) {
     const value = next[key];
     if (value && value !== '') params.set(key, value);
     else params.delete(key);
   }
+  if (next.tab) params.set(RUNS_TAB_PARAM, next.tab);
+  else params.delete(RUNS_TAB_PARAM);
   return buildHash(route, params);
 }
 
-export function writeRunsHashState(next: RunsHashState): void {
+export function writeRunsHashState(
+  next: RunsHashState,
+  historyMode: 'replace' | 'push' = 'replace',
+): void {
   if (typeof location === 'undefined') return;
   const nextHash = runsHashWithState(next);
   if (!nextHash) return;
   if (location.hash === nextHash) return;
-  // replaceState avoids both flooding browser history with one entry per
-  // keystroke (when the search box persists on every input event) and the
-  // hashchange listener re-applying our own write back into state — replaceState
-  // does not fire `hashchange`.
-  history.replaceState(null, '', nextHash);
+  // Filters replace to avoid one history entry per keystroke. Explicit row
+  // selection may push so browser Back returns to the inventory.
+  history[historyMode === 'push' ? 'pushState' : 'replaceState'](null, '', nextHash);
 }
