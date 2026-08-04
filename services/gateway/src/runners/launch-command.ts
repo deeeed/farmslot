@@ -535,9 +535,29 @@ export function buildLaunchCommand(
       if (!hasDispatchCmd) {
         throw new Error(`No dispatch_cmd in pool config for ${vars.machine}`);
       }
+      if (
+        !vars.dispatchCmd.includes('{runner_path}') &&
+        !vars.dispatchCmd.includes('{claude_path}')
+      ) {
+        throw new Error(
+          `Claude dispatch_cmd on ${vars.machine} must include {runner_path} or {claude_path} so runtime arguments target the runner executable`,
+        );
+      }
+      const runnerArgs = [cmdHasModelPlaceholder ? '' : modelFlag.trim(), settingsFlag.trim()]
+        .filter(Boolean)
+        .join(' ');
+      const claudeDispatchCommand = expandDispatchCmd(vars, {
+        runner,
+        model: model ?? undefined,
+        taskFile: opts.taskFile,
+        taskPrompt: launchPrompt,
+        effort: resolvedEffort,
+        safetyFlags: safetyFlagsString,
+        runnerArgs,
+      });
       return withRecipeTrust(
         withRunnerObservabilityInstall(
-          `unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}${settingsFlag}`,
+          `unset CLAUDECODE && ${claudeDispatchCommand}`,
           installCommand,
           settingsFallback,
         ),

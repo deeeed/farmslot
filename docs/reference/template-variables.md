@@ -26,7 +26,7 @@ Headings=phases; checkboxes=steps; pre-heading checkboxes=Checklist phase; skip 
 
 ## Pool dispatch_cmd (single-brace var)
 
-- **dispatch_cmd / recycle:** `repo, runner, runner_path, claude_path, codex_path, opencode_path, model, task_file, task_prompt, effort, adb_serial` (Keep the runner invocation last: Farmslot may append runtime flags after expanding the template.)
+- **dispatch_cmd / recycle:** `repo, runner, runner_path, claude_path, codex_path, opencode_path, model, task_file, task_prompt, effort, adb_serial` (Runner launch templates must use runner_path or the matching runner-specific path placeholder so Farmslot can attach runtime-owned arguments to the executable.)
 
 ## Secondary in-run templates (double-brace VAR)
 

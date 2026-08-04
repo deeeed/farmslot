@@ -369,24 +369,38 @@ export interface DispatchCommandContext {
    * templates with hardcoded flags keep working unchanged.
    */
   safetyFlags?: string;
+  /**
+   * Runtime-owned arguments that must follow the selected runner executable.
+   * These are attached while expanding `{runner_path}` or the selected
+   * runner-specific path placeholder, so trailing shell commands cannot
+   * accidentally consume them.
+   */
+  runnerArgs?: string;
 }
 
-function resolveRunnerPath(slotVars: SlotVars, runner?: string): string {
+function resolveRunnerPath(slotVars: SlotVars, runner?: string, runnerArgs?: string): string {
   const normalized = normalizeRunner(runner);
+  let runnerPath = '';
   switch (normalized) {
     case 'codex':
-      return slotVars.codexPath || '';
+      runnerPath = slotVars.codexPath || '';
+      break;
     case 'opencode':
-      return slotVars.opencodePath || slotVars.codexPath || '';
+      runnerPath = slotVars.opencodePath || slotVars.codexPath || '';
+      break;
     case 'cursor':
-      return slotVars.cursorPath || '';
+      runnerPath = slotVars.cursorPath || '';
+      break;
     case 'grok':
-      return slotVars.grokPath || '';
+      runnerPath = slotVars.grokPath || '';
+      break;
     case 'claude':
-      return slotVars.claudePath;
+      runnerPath = slotVars.claudePath;
+      break;
     default:
       return '';
   }
+  return runnerPath && runnerArgs?.trim() ? `${runnerPath} ${runnerArgs.trim()}` : runnerPath;
 }
 
 // ─── expandDispatchCmd ───
@@ -408,7 +422,7 @@ export function expandDispatchCmd(
   if (!template) return '';
   let cmd = template;
   const runner = normalizeRunner(context.runner);
-  const runnerPath = resolveRunnerPath(slotVars, runner);
+  const runnerPath = resolveRunnerPath(slotVars, runner, context.runnerArgs);
   cmd = cmd.replaceAll('{repo}', slotVars.remoteRepo);
   cmd = cmd.replaceAll('{runner}', runner);
   cmd = cmd.replaceAll('{runner_path}', runnerPath);
@@ -422,11 +436,14 @@ export function expandDispatchCmd(
   }
   cmd = cmd.replaceAll('{effort}', context.effort ?? '');
   cmd = cmd.replaceAll('{safety_flags}', context.safetyFlags ?? '');
-  cmd = cmd.replaceAll('{claude_path}', slotVars.claudePath);
-  cmd = cmd.replaceAll('{codex_path}', slotVars.codexPath);
-  cmd = cmd.replaceAll('{opencode_path}', slotVars.opencodePath);
-  cmd = cmd.replaceAll('{cursor_path}', slotVars.cursorPath);
-  cmd = cmd.replaceAll('{grok_path}', slotVars.grokPath);
+  cmd = cmd.replaceAll('{claude_path}', runner === 'claude' ? runnerPath : slotVars.claudePath);
+  cmd = cmd.replaceAll('{codex_path}', runner === 'codex' ? runnerPath : slotVars.codexPath);
+  cmd = cmd.replaceAll(
+    '{opencode_path}',
+    runner === 'opencode' ? runnerPath : slotVars.opencodePath,
+  );
+  cmd = cmd.replaceAll('{cursor_path}', runner === 'cursor' ? runnerPath : slotVars.cursorPath);
+  cmd = cmd.replaceAll('{grok_path}', runner === 'grok' ? runnerPath : slotVars.grokPath);
   cmd = cmd.replaceAll('{adb_serial}', slotVars.resourceVars.adb_serial ?? '');
 
   // Empty placeholders (e.g. `{safety_flags}` for runners with no extra flags)

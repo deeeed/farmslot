@@ -17,10 +17,7 @@ export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string
 export function buildClaudeObservabilityFallbackCommand(settingsPath: string): string {
   const settingsDir = path.posix.dirname(settingsPath);
   const settingsFile = shellExpressionForRemotePath(settingsPath);
-  return (
-    `test -f ${settingsFile} || ` +
-    `{ mkdir -p ${shellExpressionForRemotePath(settingsDir)} && printf '{}\\n' > ${settingsFile}; }`
-  );
+  return `mkdir -p ${shellExpressionForRemotePath(settingsDir)} && printf '{}\\n' > ${settingsFile}`;
 }
 
 function farmslotDirForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): string {

@@ -75,7 +75,7 @@ export const DISPATCH_CMD = {
     {
       scope: 'dispatch_cmd / recycle',
       vars: 'repo, runner, runner_path, claude_path, codex_path, opencode_path, model, task_file, task_prompt, effort, adb_serial',
-      note: 'Keep the runner invocation last: Farmslot may append runtime flags after expanding the template.',
+      note: 'Runner launch templates must use runner_path or the matching runner-specific path placeholder so Farmslot can attach runtime-owned arguments to the executable.',
     },
   ],
 };

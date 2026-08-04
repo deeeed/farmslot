@@ -1367,10 +1367,7 @@ describe('buildLaunchCommand', () => {
         /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
       );
       assert.match(cmd, /install failed; continuing without hooks/);
-      assert.match(
-        cmd,
-        /test -f '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json' \|\| \{ mkdir -p '\/tmp\/repo\/\.agent\/\.observability'/,
-      );
+      assert.match(cmd, /mkdir -p '\/tmp\/repo\/\.agent\/\.observability'/);
       assert.match(
         cmd,
         /printf '\{\}\\n' > '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'/,
@@ -1388,7 +1385,34 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/claude --model opus \.task\/fix\/abc\/TASK\.md/,
+        /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
+      );
+    });
+
+    it('attaches runtime arguments to Claude before trailing shell commands', () => {
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {claude_path} --model {model}; echo ready',
+      });
+      const cmd = buildLaunchCommand(vars, 'claude', 'opus', PROMPT, {
+        taskFile: TASK_FILE,
+        claudeUsesDispatchCmd: true,
+      });
+      assert.match(
+        cmd,
+        /\/usr\/local\/bin\/claude --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus; echo ready$/,
+      );
+      assert.doesNotMatch(cmd, /echo ready --settings/);
+    });
+
+    it('rejects dispatch templates with no structural runner path', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && claude; echo ready' });
+      assert.throws(
+        () =>
+          buildLaunchCommand(vars, 'claude', 'opus', PROMPT, {
+            taskFile: TASK_FILE,
+            claudeUsesDispatchCmd: true,
+          }),
+        /must include \{runner_path\} or \{claude_path\}/,
       );
     });
 
@@ -1430,7 +1454,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        / --model sonnet --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
+        /\/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
       );
     });
 
@@ -1790,7 +1814,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     );
     assert.match(
       cmd,
-      /test -f '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' \|\| \{ mkdir -p '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability'/,
+      /mkdir -p '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability' && printf '\{\}\\n' > '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
     );
   });
 
