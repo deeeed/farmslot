@@ -307,6 +307,15 @@ export const runListStyles = css`
     gap: 2px;
     min-width: 0;
   }
+  .run-title {
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .pipeline-label {
     color: ${unsafeCSS(colors.textMuted)};
     font-size: 10px;
@@ -321,9 +330,8 @@ export const runListStyles = css`
     gap: 4px 6px;
     min-width: 0;
   }
-  .run-row-affordances .summary,
   .run-row-affordances .step-detail {
-    color: ${unsafeCSS(colors.textMuted)};
+    color: ${unsafeCSS(colors.textSecondary)};
     font-size: 10px;
     max-width: 100%;
     overflow: hidden;
@@ -359,6 +367,13 @@ export const runListStyles = css`
   }
   .run-card.manage-mode {
     cursor: default;
+  }
+  .work-inventory-layout.split {
+    grid-template-columns: minmax(420px, 0.9fr) minmax(0, 1.1fr);
+  }
+  .run-list-detail {
+    display: block;
+    min-width: 0;
   }
   .run-flow-cell {
     align-items: center;

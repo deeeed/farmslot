@@ -113,6 +113,9 @@ export abstract class RunListState extends LitElement {
   @state() searchQuery = '';
   @state() globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() selectedIds = new Set<string>();
+  @state() selectedRunId = '';
+  @state() narrowViewport = false;
+  @state() forceInventoryList = false;
   @state() cleanupPreview: RunCleanupResult | null = null;
   @state() actionInProgress = false;
   @state() hydrating = false;
@@ -145,12 +148,15 @@ export abstract class RunListState extends LitElement {
       ? (parsed.sort as SortOption)
       : 'newest';
     this.searchQuery = parsed.q ?? '';
+    this.selectedRunId = parsed.run ?? '';
+    if (!this.selectedRunId) this.forceInventoryList = false;
     if (familyChanged) void this.refreshFamilyFilter();
     if (tagChanged) void this.refreshTagFilter();
   };
 
   _persistHashState() {
     writeRunsHashState({
+      run: this.selectedRunId || '',
       tab: this.tab !== 'active' ? this.tab : '',
       status: this.statusFilter !== 'all' ? this.statusFilter : '',
       flow: this.flowFilter || '',

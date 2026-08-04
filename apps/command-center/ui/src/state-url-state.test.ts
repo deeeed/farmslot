@@ -21,15 +21,19 @@ test('global filters parse and update existing hash params without dropping view
 });
 
 test('runs hash state only applies on runs routes and preserves unrelated params', () => {
-  assert.deepEqual(parseRunsHashState('#runs?tab=history&status=failed&projects=cc'), {
+  assert.deepEqual(parseRunsHashState('#runs?run=run-1&tab=history&status=failed&projects=cc'), {
+    run: 'run-1',
     tab: 'history',
     status: 'failed',
   });
   assert.deepEqual(parseRunsHashState('#slot/demo?tab=history'), {});
 
   assert.equal(
-    runsHashWithState({ tab: 'all', status: '', family: 'fam-2' }, '#runs?projects=cc&status=done'),
-    '#runs?projects=cc&tab=all&family=fam-2',
+    runsHashWithState(
+      { run: 'run-1', tab: 'all', status: '', family: 'fam-2' },
+      '#runs?projects=cc&status=done',
+    ),
+    '#runs?projects=cc&run=run-1&tab=all&family=fam-2',
   );
   assert.equal(runsHashWithState({ tab: 'all' }, '#slot/demo'), null);
 });

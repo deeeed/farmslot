@@ -20,6 +20,7 @@ import {
 } from '@farmslot/protocol';
 
 import './run-pipeline-mini.js';
+import './run-detail.js';
 import './run-tag-editor.js';
 import '../shared/hydrating-placeholder.js';
 import '../queue/dispatch-queue-panel.js';
@@ -29,6 +30,11 @@ import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../stat
 import { colors } from '../../styles/theme-tokens.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import {
+  inventoryShowsBackAffordance,
+  inventoryShowsDetail,
+  inventoryShowsList,
+  renderWorkInventoryBackButton,
+  renderWorkInventoryLayout,
   renderWorkInventoryRow,
   renderWorkInventoryTable,
   renderWorkInventoryTableHead,
@@ -73,7 +79,6 @@ import {
   groupRunsByFamily,
   pickFamilyComparePair,
   resolveRunEngine,
-  routeForRun,
   runDisplayColor,
   runDisplayLabel,
   runDisplayTitle,
@@ -145,6 +150,12 @@ function sortOptionDirection(sort: SortOption): 'asc' | 'desc' {
 export class RunList extends RunListState {
   static styles = [runListStyles, flowBadgeStyles, workInventoryTableStyles];
 
+  private narrowMedia?: MediaQueryList;
+  private readonly onNarrowChange = () => {
+    this.narrowViewport = this.narrowMedia?.matches ?? false;
+    if (!this.narrowViewport) this.forceInventoryList = false;
+  };
+
   connectedCallback() {
     super.connectedCallback();
     const s = getState();
@@ -169,12 +180,18 @@ export class RunList extends RunListState {
       this.bootstrapFailed = s.bootstrapFailed.runs;
     });
     window.addEventListener('hashchange', this._onHashChange);
+    if (typeof window.matchMedia === 'function') {
+      this.narrowMedia = window.matchMedia('(max-width: 860px)');
+      this.narrowViewport = this.narrowMedia.matches;
+      this.narrowMedia.addEventListener('change', this.onNarrowChange);
+    }
     this._onHashChange();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.unsub?.();
+    this.narrowMedia?.removeEventListener('change', this.onNarrowChange);
     window.removeEventListener('hashchange', this._onHashChange);
   }
 
@@ -251,6 +268,20 @@ export class RunList extends RunListState {
   private setManageMode(next: boolean) {
     this.manageMode = next;
     if (!next) this.selectedIds = new Set();
+  }
+
+  private selectRun(run: Run) {
+    this.selectedRunId = run.id;
+    this.forceInventoryList = false;
+    this._persistHashState();
+  }
+
+  private backToRunList() {
+    this.forceInventoryList = true;
+  }
+
+  private get selectedRun(): Run | null {
+    return this.runs.find((run) => run.id === this.selectedRunId) ?? null;
   }
 
   private clearSelection() {
@@ -417,6 +448,7 @@ export class RunList extends RunListState {
     ).length;
     const compareAllowed =
       selectedRuns.length === 2 && canCompareRuns(selectedRuns[0], selectedRuns[1]);
+    const selectedRun = this.selectedRun;
 
     return html`
       ${renderRunListToolbar({
@@ -530,8 +562,8 @@ export class RunList extends RunListState {
         ? html`<div class="empty">Run refresh failed — no cached runs available</div>`
         : this.hydrating && this.runs.length === 0
           ? html`<farm-hydrating message="Loading runs…"></farm-hydrating>`
-          : html`
-              ${this.queueItems.length > 0
+          : (() => {
+              const list = html`${this.queueItems.length > 0
                 ? html`<div class="queue-preview">
                     <dispatch-queue-panel
                       .items=${this.queueItems}
@@ -558,8 +590,28 @@ export class RunList extends RunListState {
                     testId: 'work-inventory-table',
                     minWidth: '1100px',
                     leadingTracks: showCheckboxes ? ['30px'] : [],
-                  })}
-            `}
+                  })}`;
+              const layout = {
+                hasSelection: Boolean(selectedRun),
+                narrowViewport: this.narrowViewport,
+                forceList: this.forceInventoryList,
+              };
+              const detail = html`${inventoryShowsBackAffordance(layout)
+                ? renderWorkInventoryBackButton({
+                    testId: 'runs-back-to-list',
+                    onBack: () => this.backToRunList(),
+                  })
+                : nothing}${selectedRun
+                ? html`<run-detail class="run-list-detail" .runId=${selectedRun.id}></run-detail>`
+                : nothing}`;
+              return renderWorkInventoryLayout({
+                list,
+                detail,
+                showList: inventoryShowsList(layout),
+                showDetail: inventoryShowsDetail(layout),
+                testId: 'runs-inventory-layout',
+              });
+            })()}
     `;
   }
 
@@ -617,7 +669,9 @@ export class RunList extends RunListState {
   private renderCard(run: Run, showCheckbox: boolean) {
     const fc = runDisplayColor(run);
     const sc = runStatusColor(run.status);
-    const isSelected = this.selectedIds.has(run.id);
+    const isSelected = this.manageMode
+      ? this.selectedIds.has(run.id)
+      : this.selectedRunId === run.id;
     const isTerminal = TERMINAL_STATUSES.has(run.status);
     const engine = resolveRunEngine(run);
     const slotId = resolveRunSlotId(run);
@@ -679,6 +733,9 @@ export class RunList extends RunListState {
         >${run.updatedAt.slice(0, 10)}</span
       >`,
       html`<div class="run-pipeline-cell" data-testid="runs-pipeline" title=${pipelineLabel}>
+        ${run.summary
+          ? html`<span class="run-title" title=${run.summary}>${run.summary}</span>`
+          : nothing}
         <run-pipeline-mini
           .run=${run}
           .steps=${run.steps}
@@ -727,9 +784,6 @@ export class RunList extends RunListState {
               </button>`
             : nothing}
           ${runningDetail ? html`<span class="step-detail">${runningDetail}</span>` : nothing}
-          ${run.summary
-            ? html`<span class="summary" title=${run.summary}>${run.summary}</span>`
-            : nothing}
         </div>
       </div>`,
     ];
@@ -740,7 +794,7 @@ export class RunList extends RunListState {
         className: `run-card ${this.manageMode ? 'manage-mode' : ''}`,
         testId: `runs-row-${run.id}`,
         onActivate: () => {
-          this.manageMode ? this.toggleSelectId(run.id) : (location.hash = routeForRun(run));
+          this.manageMode ? this.toggleSelectId(run.id) : this.selectRun(run);
         },
       },
       cells,

@@ -6,6 +6,7 @@ export interface GlobalFilters {
 }
 
 export interface RunsHashState {
+  run?: string;
   tab?: string;
   status?: string;
   flow?: string;
@@ -17,6 +18,7 @@ export interface RunsHashState {
 }
 
 const RUNS_HASH_KEYS: (keyof RunsHashState)[] = [
+  'run',
   'tab',
   'status',
   'flow',

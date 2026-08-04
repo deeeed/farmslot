@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat(runs): selecting a Runs inventory row opens the existing full run detail beside the list, with URL-persisted selection, pipeline and slot access; run and publication descriptions use readable foreground contrast.
 - fix(runs): label a retained publication-review launch refusal as **review launch paused** instead of implying that an independent reviewer is running.
 - fix(roadmap): run deletion/archive events invalidate delivery even when the affected run is outside the paginated client run list, preventing stale badges and lineage detail.
 - fix(roadmap): the delivery revision tracks backlog rows reachable only through `RoadmapItem.promotion`, which carry no `roadmapItemId`; filtering on the canonical link alone dropped a supported lineage case and left its badges stale.
