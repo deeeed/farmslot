@@ -48,6 +48,7 @@ import { findActiveGateHeldRunForSlot } from '../../run-engine/gate-held-lifecyc
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
+import { terminalAttachmentCleanup } from '../terminal-attachment.js';
 
 import { slotPrepare } from './prepare.js';
 import { closeDevServerLogTailWindow } from './prepare-devserver-log.js';
@@ -262,6 +263,18 @@ async function slotReleaseImpl(
     await killAllAgentWindows(vars);
     await killAgentInSession(vars);
     step('agent', 'Agent killed');
+    // The staged terminal attachments belong to the session that just died. Delete them
+    // here rather than waiting for the bounded stale sweep so the slot goes back to idle
+    // without operator images sitting in its runtime dir.
+    try {
+      const cleaned = await terminalAttachmentCleanup({ slotId: params.slotId, scope: 'all' });
+      step('attachments', `Removed ${cleaned.removed.length} staged terminal attachment(s)`);
+    } catch (err) {
+      // Recovery is explicit: staged attachments are already age-bounded by the stale
+      // sweep on the next upload, so a failed delete must not strand the slot in
+      // `releasing` — every later teardown step still needs to run.
+      step('attachments', `Attachment cleanup skipped: ${(err as Error).message}`);
+    }
   } else {
     step('agent', 'Preserving agent windows for human gate');
   }

@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(terminal): stage pasted/dropped terminal images under Farmslot-managed temporary storage (`terminal.attachment.upload`), deliver them through a runner attachment provider as a separate protocol action (`terminal.attachment.deliver`), and reclaim staged files on slot release plus a bounded stale sweep (`terminal.attachment.cleanup`).
+
 - fix(run-completion): reconcile merged and already-ready PRs without replaying `gh pr ready`, and report closed-unmerged PRs explicitly.
 - fix(runners): keep Codex observability hooks in the isolated slot runtime, enable them at launch despite project overrides, and safely clean legacy backed-up repository `.codex` changes, so new observability installs no longer dirty worker trees or silently lose their event contract.
 - fix(run-engine): project publication review counts against the current prepared package, so an older passing review is shown as stale instead of contradicting the publish cockpit.

@@ -11,6 +11,7 @@ import {
   readdir,
   readFile,
   realpath,
+  rm,
   writeFile as fsWriteFile,
 } from 'node:fs/promises';
 import path from 'node:path';
@@ -186,6 +187,46 @@ export async function slotWriteFiles(
     relPath: '.',
     files,
   });
+}
+
+// ─── slotMkdir / slotDeletePath / slotStat ───
+
+export async function slotMkdir(ctx: SlotLocality, dirPath: string): Promise<void> {
+  if (local(ctx)) {
+    await mkdir(dirPath, { recursive: true });
+    return;
+  }
+  await sendNodeRequest(requireNode(ctx.machine), 'fs.mkdir', { ...nodePathParams(dirPath) });
+}
+
+export async function slotDeletePath(ctx: SlotLocality, targetPath: string): Promise<void> {
+  if (local(ctx)) {
+    await rm(targetPath, { recursive: true, force: true });
+    return;
+  }
+  await sendNodeRequest(requireNode(ctx.machine), 'fs.delete', { ...nodePathParams(targetPath) });
+}
+
+export interface SlotStatResult {
+  size: number;
+  isFile: boolean;
+  isDirectory: boolean;
+  mtimeMs: number;
+}
+
+export async function slotStat(ctx: SlotLocality, targetPath: string): Promise<SlotStatResult> {
+  if (local(ctx)) {
+    const info = await lstat(targetPath);
+    return {
+      size: info.size,
+      isFile: info.isFile(),
+      isDirectory: info.isDirectory(),
+      mtimeMs: info.mtimeMs,
+    };
+  }
+  return (await sendNodeRequest(requireNode(ctx.machine), 'fs.stat', {
+    ...nodePathParams(targetPath),
+  })) as SlotStatResult;
 }
 
 // ─── slotCopyFile ───

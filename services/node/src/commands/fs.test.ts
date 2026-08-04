@@ -51,16 +51,18 @@ test('fsStat probes unreadable files without following final symlinks', async (t
   await chmod(filePath, 0o000);
   t.after(() => rm(root, { recursive: true, force: true }));
 
-  assert.deepEqual(await fsStat({ root, relPath: 'unreadable.txt' }), {
-    size: 7,
-    isFile: true,
-    isDirectory: false,
-  });
-  assert.deepEqual(await fsStat({ root, relPath: 'link.txt' }), {
-    size: Buffer.byteLength(filePath),
-    isFile: false,
-    isDirectory: false,
-  });
+  const fileStat = await fsStat({ root, relPath: 'unreadable.txt' });
+  assert.deepEqual(
+    { size: fileStat.size, isFile: fileStat.isFile, isDirectory: fileStat.isDirectory },
+    { size: 7, isFile: true, isDirectory: false },
+  );
+  // mtimeMs backs the gateway's bounded stale-attachment sweep.
+  assert.ok(fileStat.mtimeMs > 0);
+  const linkStat = await fsStat({ root, relPath: 'link.txt' });
+  assert.deepEqual(
+    { size: linkStat.size, isFile: linkStat.isFile, isDirectory: linkStat.isDirectory },
+    { size: Buffer.byteLength(filePath), isFile: false, isDirectory: false },
+  );
 });
 
 test('fsExists preserves probe semantics but propagates confinement denials', async (t) => {
