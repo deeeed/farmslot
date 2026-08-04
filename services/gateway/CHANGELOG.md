@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(terminal): resolve the attachment runner from the selected agent context instead of the slot, bind each upload and delivery to the target it started against, clear buffered chunks of interrupted uploads on lifecycle cleanup under an explicit byte ceiling, and reject unknown cleanup scopes before deleting anything.
 - feat(terminal): stage pasted/dropped terminal images under Farmslot-managed temporary storage (`terminal.attachment.upload`), deliver them through a runner attachment provider as a separate protocol action (`terminal.attachment.deliver`), and reclaim staged files on slot release plus a bounded stale sweep (`terminal.attachment.cleanup`).
 
 - fix(run-completion): reconcile merged and already-ready PRs without replaying `gh pr ready`, and report closed-unmerged PRs explicitly.

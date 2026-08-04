@@ -102,8 +102,30 @@ export function imageCandidatesFromDrop(data: DataTransfer | null): ImageCandida
     .filter((candidate): candidate is ImageCandidate => candidate !== null);
 }
 
+/** Files the browser would otherwise open by navigating away from Command Center. */
+export function dropCarriesFiles(data: DataTransfer | null): boolean {
+  if (!data) return false;
+  return Array.from(data.types ?? []).includes('Files') || (data.files?.length ?? 0) > 0;
+}
+
+/** Names of dropped/pasted files this terminal cannot attach, for an operator-facing message. */
+export function unsupportedDropFilenames(data: DataTransfer | null): string[] {
+  if (!data) return [];
+  return Array.from(data.files ?? [])
+    .filter((file) => candidateFromFile(file) === null)
+    .map((file) => file.name || file.type || 'unnamed file');
+}
+
+/**
+ * Terminal identity an attachment is bound to. Captured once when the image is added and
+ * replayed on every later request, so switching run/role/context mid-flight can never route a
+ * chunk or a delivery to a pane the operator did not attach to.
+ */
+export type TerminalAttachmentTarget = Record<string, unknown>;
+
 export interface TerminalAttachmentTransport {
   uploadChunk(params: {
+    target: TerminalAttachmentTarget;
     attachmentId: string;
     filename: string;
     mimeType: string;
@@ -113,6 +135,7 @@ export interface TerminalAttachmentTransport {
     contentBase64: string;
   }): Promise<TerminalAttachmentUploadResult>;
   deliver(params: {
+    target: TerminalAttachmentTarget;
     attachmentId: string;
     storedPath: string;
     filename: string;
@@ -131,6 +154,8 @@ export class TerminalAttachmentQueue {
   private readonly items: TerminalAttachment[] = [];
   /** Source blobs kept until removal so a failed attachment can be retried without re-pasting. */
   private readonly files = new Map<string, File>();
+  /** Terminal identity captured when each attachment was added; never re-read from the view. */
+  private readonly targets = new Map<string, TerminalAttachmentTarget>();
 
   constructor(
     private readonly transport: TerminalAttachmentTransport,
@@ -145,8 +170,32 @@ export class TerminalAttachmentQueue {
     return this.items.find((item) => item.id === id);
   }
 
+  /**
+   * Record a dropped/pasted payload this terminal cannot attach. Kept as a normal card so the
+   * operator gets the same remove affordance instead of silent nothing-happened.
+   */
+  rejectUnsupported(filenames: string[]): void {
+    for (const filename of filenames) {
+      this.items.push({
+        id: this.transport.newId(),
+        filename,
+        mimeType: '',
+        byteLength: 0,
+        previewUrl: '',
+        phase: 'failed',
+        uploadPercent: 0,
+        detail: 'Only PNG, JPEG, GIF, and WebP images can be attached',
+      });
+    }
+    if (filenames.length > 0) this.onChange();
+  }
+
   /** Add a pasted/dropped image and immediately run the upload → delivery sequence. */
-  async add(candidate: ImageCandidate, previewUrl: string): Promise<TerminalAttachment | null> {
+  async add(
+    candidate: ImageCandidate,
+    previewUrl: string,
+    target: TerminalAttachmentTarget,
+  ): Promise<TerminalAttachment | null> {
     if (candidate.file.size > TERMINAL_ATTACHMENT_MAX_BYTES) {
       const rejected: TerminalAttachment = {
         id: this.transport.newId(),
@@ -174,8 +223,9 @@ export class TerminalAttachmentQueue {
     };
     this.items.push(attachment);
     this.files.set(attachment.id, candidate.file);
+    this.targets.set(attachment.id, target);
     this.onChange();
-    await this.run(attachment, candidate.file);
+    await this.run(attachment, candidate.file, target);
     return attachment;
   }
 
@@ -187,34 +237,45 @@ export class TerminalAttachmentQueue {
   async send(id: string): Promise<void> {
     const attachment = this.get(id);
     const file = this.files.get(id);
-    if (!attachment || !file || !isTerminalAttachmentRetryable(attachment)) return;
+    const target = this.targets.get(id);
+    if (!attachment || !file || !target || !isTerminalAttachmentRetryable(attachment)) return;
     attachment.phase = 'uploading';
     attachment.uploadPercent = 0;
     attachment.detail = '';
     this.onChange();
-    await this.run(attachment, file);
+    // Retry replays the captured target, not wherever the terminal is pointing now.
+    await this.run(attachment, file, target);
   }
 
   remove(id: string): void {
     const index = this.items.findIndex((item) => item.id === id);
     if (index === -1) return;
-    this.transport.revokePreview(this.items[index]!.previewUrl);
+    const previewUrl = this.items[index]!.previewUrl;
+    if (previewUrl) this.transport.revokePreview(previewUrl);
     this.items.splice(index, 1);
     this.files.delete(id);
+    this.targets.delete(id);
     this.onChange();
   }
 
   clear(): void {
-    for (const item of this.items) this.transport.revokePreview(item.previewUrl);
+    for (const item of this.items) {
+      if (item.previewUrl) this.transport.revokePreview(item.previewUrl);
+    }
     this.items.length = 0;
     this.files.clear();
+    this.targets.clear();
     this.onChange();
   }
 
-  private async run(attachment: TerminalAttachment, file: File): Promise<void> {
+  private async run(
+    attachment: TerminalAttachment,
+    file: File,
+    target: TerminalAttachmentTarget,
+  ): Promise<void> {
     let uploaded: TerminalAttachmentUploadResult;
     try {
-      uploaded = await this.upload(attachment, file);
+      uploaded = await this.upload(attachment, file, target);
     } catch (err) {
       this.fail(attachment, err);
       return;
@@ -230,6 +291,7 @@ export class TerminalAttachmentQueue {
     this.onChange();
     try {
       const delivered = await this.transport.deliver({
+        target,
         attachmentId: attachment.id,
         storedPath: uploaded.storedPath!,
         filename: attachment.filename,
@@ -255,6 +317,7 @@ export class TerminalAttachmentQueue {
   private async upload(
     attachment: TerminalAttachment,
     file: File,
+    target: TerminalAttachmentTarget,
   ): Promise<TerminalAttachmentUploadResult> {
     const chunkCount = terminalAttachmentChunkCount(attachment.byteLength);
     let last: TerminalAttachmentUploadResult | null = null;
@@ -263,6 +326,7 @@ export class TerminalAttachmentQueue {
       const end = Math.min(start + TERMINAL_ATTACHMENT_CHUNK_BYTES, attachment.byteLength);
       const contentBase64 = await this.transport.readChunkBase64(file, start, end);
       last = await this.transport.uploadChunk({
+        target,
         attachmentId: attachment.id,
         filename: attachment.filename,
         mimeType: attachment.mimeType,

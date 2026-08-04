@@ -77,12 +77,17 @@ export interface TerminalAttachmentUploadResult {
   storedPath?: string;
   storedName?: string;
   sha256?: string;
-  /** Runner resolved from the slot/run target, or null when no runner is bound. */
+  /**
+   * Runner resolved from the selected agent context (falling back to the slot), or null when no
+   * runner is bound.
+   */
   runner?: string | null;
   /** Whether a registered attachment provider exists for that runner. */
   deliverySupported?: boolean;
   /** True when the completed upload overwrote an already-staged attachment id. */
   reused?: boolean;
+  /** tmux target the bytes were staged for; delivery must resolve to this same target. */
+  target?: string;
 }
 
 export interface TerminalAttachmentDeliverParams extends SlotAgentTargetParams {
@@ -99,7 +104,15 @@ export interface TerminalAttachmentDeliverResult {
   detail: string;
 }
 
-export type TerminalAttachmentCleanupScope = 'all' | 'stale';
+export const TERMINAL_ATTACHMENT_CLEANUP_SCOPES = ['all', 'stale'] as const;
+
+export type TerminalAttachmentCleanupScope = (typeof TERMINAL_ATTACHMENT_CLEANUP_SCOPES)[number];
+
+export function isTerminalAttachmentCleanupScope(
+  scope: unknown,
+): scope is TerminalAttachmentCleanupScope {
+  return (TERMINAL_ATTACHMENT_CLEANUP_SCOPES as readonly unknown[]).includes(scope);
+}
 
 export interface TerminalAttachmentCleanupParams {
   slotId: string;
@@ -111,4 +124,6 @@ export interface TerminalAttachmentCleanupResult {
   slotId: string;
   scope: TerminalAttachmentCleanupScope;
   removed: string[];
+  /** In-memory partial uploads discarded for this slot — interrupted chunks never reach disk. */
+  pendingCleared: number;
 }

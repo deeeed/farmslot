@@ -41,7 +41,13 @@ function renderAttachmentCard(attachment: TerminalAttachment, ctx: TerminalAttac
       data-testid="terminal-attachment-card"
       data-attachment-phase=${attachment.phase}
     >
-      <img class="attachment-thumb" src=${attachment.previewUrl} alt=${attachment.filename} />
+      ${attachment.previewUrl
+        ? html`<img
+            class="attachment-thumb"
+            src=${attachment.previewUrl}
+            alt=${attachment.filename}
+          />`
+        : html`<div class="attachment-thumb attachment-thumb-empty" aria-hidden="true">?</div>`}
       <div class="attachment-body">
         <div class="attachment-line">
           <span class="attachment-name" title=${attachment.filename}>${attachment.filename}</span>
@@ -100,6 +106,9 @@ export const terminalAttachmentStyles = css`
     background: ${unsafeCSS(colors.bgCard)};
     border-top: 1px solid #1e1e36;
     flex-shrink: 0;
+    /* Several attachments must not push the terminal itself off screen. */
+    max-height: 180px;
+    overflow-y: auto;
   }
 
   .attachment-card {
@@ -123,6 +132,15 @@ export const terminalAttachmentStyles = css`
 
   .attachment-card.phase-unsupported {
     border-left-color: ${unsafeCSS(colors.statusWarn)};
+  }
+
+  .attachment-thumb-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: ${unsafeCSS(fonts.mono)};
+    font-size: ${unsafeCSS(fonts.sizeMd)};
+    color: ${unsafeCSS(colors.textMuted)};
   }
 
   .attachment-thumb {

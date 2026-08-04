@@ -6,6 +6,8 @@
 // upload never implies the runner received the image.
 
 import {
+  isTerminalAttachmentCleanupScope,
+  TERMINAL_ATTACHMENT_CLEANUP_SCOPES,
   type TerminalAttachmentCleanupParams,
   type TerminalAttachmentCleanupResult,
   type TerminalAttachmentCleanupScope,
@@ -51,11 +53,22 @@ type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
  */
 async function resolveAttachmentTarget(
   params: TerminalAttachmentUploadParams | TerminalAttachmentDeliverParams,
-): Promise<{ vars: SlotVars; target: string; dir: string }> {
+): Promise<{ vars: SlotVars; target: string; dir: string; runner: string | null }> {
   const vars = await loadSlotVars(params.slotId);
   const resolved = await resolveAgentTarget(params.slotId, params);
   const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
-  return { vars, target: resolved.target, dir: terminalAttachmentDir(vars.remoteRepo, runtimeDir) };
+  return {
+    vars,
+    target: resolved.target,
+    dir: terminalAttachmentDir(vars.remoteRepo, runtimeDir),
+    // The selected agent context owns the runner: a Codex reviewer context can sit beside a
+    // Claude primary on one slot, so the slot-level field is only a fallback for bare-session
+    // terminals with no resolved context. Choosing the wrong one would run one runner's
+    // delivery interaction against another runner's pane.
+    runner: resolved.runner
+      ? normalizeRunner(resolved.runner)
+      : await resolveSlotRunner(params.slotId),
+  };
 }
 
 async function resolveSlotRunner(slotId: string): Promise<string | null> {
@@ -65,11 +78,14 @@ async function resolveSlotRunner(slotId: string): Promise<string | null> {
 }
 
 /**
- * Chunks accepted so far for an in-flight upload. An interrupted upload leaves an entry
- * here and never reaches the filesystem — `PENDING_UPLOAD_TTL_MS` bounds how long that
- * partial buffer survives, and the client retries from chunk 0.
+ * Chunks accepted so far for an in-flight upload. An interrupted upload leaves an entry here
+ * and never reaches the filesystem, so this map is bounded three ways: an age sweep, a total
+ * byte ceiling with oldest-first eviction, and slot-scoped clearing on lifecycle cleanup.
  */
 interface PendingUpload {
+  slotId: string;
+  /** tmux target resolved when this upload started; later chunks must resolve to the same one. */
+  target: string;
   mimeType: string;
   byteLength: number;
   chunks: Array<Buffer | undefined>;
@@ -77,6 +93,8 @@ interface PendingUpload {
 }
 
 const PENDING_UPLOAD_TTL_MS = 10 * 60 * 1000;
+/** Ceiling across all in-flight uploads; oldest partial buffers are evicted first. */
+const PENDING_UPLOAD_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const pendingUploads = new Map<string, PendingUpload>();
 
 function pendingKey(slotId: string, attachmentId: string): string {
@@ -89,6 +107,35 @@ function sweepPendingUploads(now = Date.now()): void {
   }
 }
 
+/**
+ * Age alone does not bound memory: enough concurrent uploads inside the TTL window would still
+ * grow without limit. Evict oldest-first until the retained buffers fit the ceiling.
+ */
+function enforcePendingUploadByteCeiling(): void {
+  let total = 0;
+  for (const pending of pendingUploads.values()) total += receivedBytesOf(pending);
+  if (total <= PENDING_UPLOAD_MAX_TOTAL_BYTES) return;
+  const oldestFirst = [...pendingUploads.entries()].sort(
+    ([, a], [, b]) => a.updatedAt - b.updatedAt,
+  );
+  for (const [key, pending] of oldestFirst) {
+    if (total <= PENDING_UPLOAD_MAX_TOTAL_BYTES) break;
+    total -= receivedBytesOf(pending);
+    pendingUploads.delete(key);
+    console.warn(`[terminal-attachment] evicted partial upload ${key} to stay under the ceiling`);
+  }
+}
+
+function clearPendingUploadsForSlot(slotId: string): number {
+  let cleared = 0;
+  for (const [key, pending] of pendingUploads) {
+    if (pending.slotId !== slotId) continue;
+    pendingUploads.delete(key);
+    cleared++;
+  }
+  return cleared;
+}
+
 function receivedBytesOf(pending: PendingUpload): number {
   return pending.chunks.reduce((total, chunk) => total + (chunk?.byteLength ?? 0), 0);
 }
@@ -99,11 +146,21 @@ export async function terminalAttachmentUpload(
   const validated = validateTerminalAttachmentChunk(params);
   // Target ownership is checked on every chunk, not only the first, so a mid-upload
   // retarget cannot smuggle bytes onto a slot the caller never resolved.
-  const { vars, dir } = await resolveAttachmentTarget(params);
+  const { vars, dir, target, runner } = await resolveAttachmentTarget(params);
 
   sweepPendingUploads();
   const key = pendingKey(params.slotId, validated.attachmentId);
   const existing = pendingUploads.get(key);
+  // Later chunks must land on the pane the upload started against. Switching run/role/context
+  // mid-upload would otherwise stitch one image out of bytes destined for two different panes.
+  if (existing && existing.target !== target) {
+    pendingUploads.delete(key);
+    throw new GatewayMethodError(
+      'ATTACHMENT_TARGET_CHANGED',
+      `Attachment ${validated.attachmentId} started against ${existing.target} but this chunk resolved to ${target}`,
+      { userAction: 'Re-attach the image on the terminal you want it delivered to.' },
+    );
+  }
   // A restarted upload for the same id (retry after interruption) must not merge with the
   // stale partial buffer of a different image.
   const pending =
@@ -112,6 +169,8 @@ export async function terminalAttachmentUpload(
     existing.mimeType === validated.mimeType
       ? existing
       : {
+          slotId: params.slotId,
+          target,
           mimeType: validated.mimeType,
           byteLength: validated.byteLength,
           chunks: [],
@@ -121,6 +180,7 @@ export async function terminalAttachmentUpload(
   pending.chunks[validated.chunkIndex] = validated.chunk;
   pending.updatedAt = Date.now();
   pendingUploads.set(key, pending);
+  enforcePendingUploadByteCeiling();
 
   const receivedBytes = receivedBytesOf(pending);
   if (receivedBytes < validated.byteLength) {
@@ -155,10 +215,10 @@ export async function terminalAttachmentUpload(
     { path: storedName, content: bytes.toString('base64'), mode: 0o600 },
   ]);
 
-  const runner = await resolveSlotRunner(params.slotId);
   const sha256 = sha256Hex(bytes);
+  stagedTargets.set(storedPath, { slotId: params.slotId, target });
   console.log(
-    `[terminal-attachment] staged slot=${params.slotId} id=${validated.attachmentId} bytes=${bytes.byteLength} sha256=${sha256} path=${storedPath} reused=${reused}`,
+    `[terminal-attachment] staged slot=${params.slotId} id=${validated.attachmentId} target=${target} runner=${runner ?? 'none'} bytes=${bytes.byteLength} sha256=${sha256} path=${storedPath} reused=${reused}`,
   );
   return {
     attachmentId: validated.attachmentId,
@@ -172,13 +232,21 @@ export async function terminalAttachmentUpload(
     runner,
     deliverySupported: getRunnerAttachmentProvider(runner) !== null,
     reused,
+    target,
   };
 }
+
+/**
+ * Target each staged file was uploaded for. Delivery re-resolves the caller's selector and must
+ * land on the same pane, so a target switch between upload and submit cannot deliver an image to
+ * a terminal the operator never attached it to.
+ */
+const stagedTargets = new Map<string, { slotId: string; target: string }>();
 
 export async function terminalAttachmentDeliver(
   params: TerminalAttachmentDeliverParams,
 ): Promise<TerminalAttachmentDeliverResult> {
-  const { vars, target, dir } = await resolveAttachmentTarget(params);
+  const { vars, target, dir, runner } = await resolveAttachmentTarget(params);
   // The browser sends back the path it was given; re-derive and re-contain it so a tampered
   // client cannot point delivery at an arbitrary file.
   const expectedPath = resolveTerminalAttachmentPath(dir, basenameOf(params.storedPath));
@@ -195,8 +263,17 @@ export async function terminalAttachmentDeliver(
       { userAction: 'Re-attach the image; the staged copy was cleaned up.' },
     );
   }
+  // Bound at upload time. A record missing after a gateway restart is not evidence of a switch,
+  // so only a recorded-and-different target refuses delivery.
+  const staged = stagedTargets.get(expectedPath);
+  if (staged && (staged.slotId !== params.slotId || staged.target !== target)) {
+    throw new GatewayMethodError(
+      'ATTACHMENT_TARGET_CHANGED',
+      `Attachment ${params.attachmentId} was staged for ${staged.slotId}/${staged.target} but delivery resolved to ${params.slotId}/${target}`,
+      { userAction: 'Re-attach the image on the terminal you want it delivered to.' },
+    );
+  }
 
-  const runner = await resolveSlotRunner(params.slotId);
   const provider = getRunnerAttachmentProvider(runner);
   if (!provider) {
     console.log(
@@ -251,6 +328,7 @@ async function sweepStaleAttachments(
     // end of the owning session.
     if (!isStaleTerminalAttachment(stat.mtimeMs, now)) continue;
     await slotDeletePath(vars, filePath);
+    stagedTargets.delete(filePath);
     removed.push(name);
   }
   if (removed.length) {
@@ -272,20 +350,40 @@ async function listAttachmentNames(vars: SlotVars, dir: string): Promise<string[
 export async function terminalAttachmentCleanup(
   params: TerminalAttachmentCleanupParams,
 ): Promise<TerminalAttachmentCleanupResult> {
-  const scope: TerminalAttachmentCleanupScope = params.scope ?? 'all';
+  // `scope` arrives untyped from the wire. Anything unrecognised must be refused rather than
+  // falling through to the destructive delete-everything branch.
+  const requested = params.scope ?? 'all';
+  if (!isTerminalAttachmentCleanupScope(requested)) {
+    throw new GatewayMethodError(
+      'ATTACHMENT_INVALID_SCOPE',
+      `Unknown cleanup scope ${JSON.stringify(requested)}; expected one of ${TERMINAL_ATTACHMENT_CLEANUP_SCOPES.join(', ')}`,
+    );
+  }
+  const scope: TerminalAttachmentCleanupScope = requested;
   const vars = await loadSlotVars(params.slotId);
   const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
   const dir = terminalAttachmentDir(vars.remoteRepo, runtimeDir);
+  // Interrupted uploads live only in memory, so lifecycle cleanup has to drop them too —
+  // otherwise a partial buffer outlives the session that owned it and waits for an unrelated
+  // upload to trigger the age sweep.
+  const pendingCleared = clearPendingUploadsForSlot(params.slotId);
   if (scope === 'stale') {
-    return { slotId: params.slotId, scope, removed: await sweepStaleAttachments(vars, dir) };
+    return {
+      slotId: params.slotId,
+      scope,
+      removed: await sweepStaleAttachments(vars, dir),
+      pendingCleared,
+    };
   }
   const removed: string[] = [];
   for (const name of await listAttachmentNames(vars, dir)) {
-    await slotDeletePath(vars, `${dir}/${name}`);
+    const filePath = `${dir}/${name}`;
+    await slotDeletePath(vars, filePath);
+    stagedTargets.delete(filePath);
     removed.push(name);
   }
   console.log(
-    `[terminal-attachment] cleanup slot=${params.slotId} scope=${scope} removed=${removed.length}`,
+    `[terminal-attachment] cleanup slot=${params.slotId} scope=${scope} removed=${removed.length} pendingCleared=${pendingCleared}`,
   );
-  return { slotId: params.slotId, scope, removed };
+  return { slotId: params.slotId, scope, removed, pendingCleared };
 }

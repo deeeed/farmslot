@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
 import {
+  isTerminalAttachmentCleanupScope,
   TERMINAL_ATTACHMENT_CHUNK_BYTES,
   TERMINAL_ATTACHMENT_MAX_BYTES,
   type TerminalAttachmentUploadParams,
@@ -153,5 +154,19 @@ test('the stale sweep is bounded and fails closed on an unusable timestamp', () 
   // A node build predating the mtimeMs field must not make every staged file look ancient.
   for (const unusable of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
     assert.equal(isStaleTerminalAttachment(unusable, now), false);
+  }
+});
+
+test('cleanup scopes are validated before anything is deleted', () => {
+  for (const scope of ['all', 'stale']) {
+    assert.equal(isTerminalAttachmentCleanupScope(scope), true);
+  }
+  // Anything unrecognised must be refused rather than falling through to delete-everything.
+  for (const scope of ['ALL', 'everything', '', null, undefined, 0, {}]) {
+    assert.equal(
+      isTerminalAttachmentCleanupScope(scope),
+      false,
+      `${String(scope)} must be refused`,
+    );
   }
 });

@@ -585,6 +585,9 @@ test('upsertAgentContext keeps multiple reviewer contexts independently selectab
   assert.equal(selectAgentContext(updated, { contextId: 'rev-claude' })?.runner, 'claude');
   assert.equal(selectAgentContext(updated, { role: 'self-review' })?.id, 'rev-claude');
 
+  // The resolved target carries the context's own runner: callers that act on the runner (e.g.
+  // terminal image-attachment delivery) must not fall back to the slot-level field, which would
+  // pick the primary's runner for this Codex reviewer pane.
   assert.deepEqual(
     await resolveAgentTarget('runner-browser-1', {
       runId: run.id,
@@ -596,6 +599,21 @@ test('upsertAgentContext keeps multiple reviewer contexts independently selectab
       session: 'mme-1',
       role: 'self-review',
       contextId: 'rev-codex',
+      runner: 'codex',
+    },
+  );
+  assert.deepEqual(
+    await resolveAgentTarget('runner-browser-1', {
+      runId: run.id,
+      contextId: 'rev-claude',
+      role: 'self-review',
+    }),
+    {
+      target: 'mme-1:rev-claude',
+      session: 'mme-1',
+      role: 'self-review',
+      contextId: 'rev-claude',
+      runner: 'claude',
     },
   );
 });

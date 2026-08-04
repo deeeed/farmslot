@@ -189,7 +189,18 @@ function assertSelectorTargetMatchesRole(selector: AgentContextSelector): void {
 export async function resolveAgentTarget(
   slotId: string,
   selector?: AgentContextSelector & { runId?: string | null },
-): Promise<{ target: string; session: string; role?: AgentRole; contextId?: string }> {
+): Promise<{
+  target: string;
+  session: string;
+  role?: AgentRole;
+  contextId?: string;
+  /**
+   * Runner bound to the selected agent context, when one resolved. Contexts on the same slot
+   * can run different runners (a Codex reviewer beside a Claude primary), so callers that act
+   * on the runner must prefer this over the slot-level `runner` field.
+   */
+  runner?: string;
+}> {
   if (selector) assertSelectorTargetMatchesRole(selector);
   if (selector?.target?.trim()) {
     const target = selector.target.trim();
@@ -244,6 +255,7 @@ export async function resolveAgentTarget(
       session: ctx.target.session,
       role: ctx.role,
       contextId: ctx.id,
+      ...(ctx.runner ? { runner: ctx.runner } : {}),
     };
   }
 
@@ -262,6 +274,7 @@ export async function resolveAgentTarget(
     session,
     role,
     contextId,
+    ...(ctx?.runner ? { runner: ctx.runner } : {}),
   };
 }
 

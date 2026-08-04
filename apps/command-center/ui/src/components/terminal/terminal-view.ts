@@ -14,10 +14,12 @@ import '../progress-tracker/progress-tracker.js';
 import { gateway } from '../../gateway-client.js';
 
 import {
+  dropCarriesFiles,
   type ImageCandidate,
   imageCandidatesFromClipboard,
   imageCandidatesFromDrop,
   TerminalAttachmentQueue,
+  unsupportedDropFilenames,
 } from './terminal-attachment-model.js';
 import {
   renderTerminalAttachmentTray,
@@ -145,6 +147,9 @@ export class TerminalView extends TerminalViewState {
       priorPostmortem,
     );
     this._teardownStreams(true, teardownTarget, teardownPostmortem);
+    // Cards describe work bound to the pane we are leaving; keeping them on screen would
+    // suggest the new target has attachments it never received.
+    this._attachmentQueue?.clear();
     this._terminal.clear();
     this._taskMarkdown = '';
     this._mode = 'none';
@@ -158,20 +163,23 @@ export class TerminalView extends TerminalViewState {
 
   // --- Image attachments (paste + drag/drop) ---
 
+  /**
+   * Attachments are slot-scoped: the upload/delivery protocol resolves a slot plus an agent
+   * context, and a `tmux.worker` terminal has neither. Offering the affordance there would
+   * advertise a feature whose every request must fail, so the whole surface is disabled.
+   */
+  private _attachmentsSupported(): boolean {
+    return !this._workerRef() && Boolean(this.slotId);
+  }
+
   private _initAttachmentQueue() {
     if (this._attachmentQueue) return;
     this._attachmentQueue = new TerminalAttachmentQueue(
       {
-        uploadChunk: (params) =>
-          gateway.request(Methods.TERMINAL_ATTACHMENT_UPLOAD, {
-            ...this._targetParams(),
-            ...params,
-          }),
-        deliver: (params) =>
-          gateway.request(Methods.TERMINAL_ATTACHMENT_DELIVER, {
-            ...this._targetParams(),
-            ...params,
-          }),
+        uploadChunk: ({ target, ...params }) =>
+          gateway.request(Methods.TERMINAL_ATTACHMENT_UPLOAD, { ...target, ...params }),
+        deliver: ({ target, ...params }) =>
+          gateway.request(Methods.TERMINAL_ATTACHMENT_DELIVER, { ...target, ...params }),
         readChunkBase64: (file, start, end) => readBlobBase64(file.slice(start, end)),
         newId: () => crypto.randomUUID(),
         revokePreview: (url) => URL.revokeObjectURL(url),
@@ -184,9 +192,12 @@ export class TerminalView extends TerminalViewState {
 
   private async _enqueueAttachments(candidates: ImageCandidate[]) {
     this._initAttachmentQueue();
+    // Snapshot the terminal identity once. Every chunk and the delivery replay this exact
+    // target, so switching run/role/context mid-upload cannot retarget an in-flight image.
+    const target = this._targetParams();
     for (const candidate of candidates) {
       this._log('attachment', `${candidate.filename} ${candidate.file.size}B`);
-      await this._attachmentQueue!.add(candidate, URL.createObjectURL(candidate.file));
+      await this._attachmentQueue!.add(candidate, URL.createObjectURL(candidate.file), target);
     }
   }
 
@@ -211,6 +222,7 @@ export class TerminalView extends TerminalViewState {
    * text paste keeps flowing through xterm's existing paste path.
    */
   private _handlePaste(event: ClipboardEvent) {
+    if (!this._attachmentsSupported()) return;
     const candidates = imageCandidatesFromClipboard(event.clipboardData);
     if (candidates.length === 0) return;
     event.preventDefault();
@@ -220,7 +232,7 @@ export class TerminalView extends TerminalViewState {
 
   /** Cmd+V path: the keydown handler consumes the event, so read the clipboard directly. */
   private async _handleCommandPaste() {
-    const images = await this._readClipboardImagesOrWarn();
+    const images = this._attachmentsSupported() ? await this._readClipboardImagesOrWarn() : [];
     if (images.length > 0) {
       await this._enqueueAttachments(images);
       return;
@@ -244,13 +256,13 @@ export class TerminalView extends TerminalViewState {
   }
 
   private _handleDragOver(event: DragEvent) {
-    if (!dragCarriesFiles(event.dataTransfer)) return;
+    if (!this._attachmentsSupported() || !dropCarriesFiles(event.dataTransfer)) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
   }
 
   private _handleDragEnter(event: DragEvent) {
-    if (!dragCarriesFiles(event.dataTransfer)) return;
+    if (!this._attachmentsSupported() || !dropCarriesFiles(event.dataTransfer)) return;
     event.preventDefault();
     this._dragDepth++;
     this._dragActive = true;
@@ -262,11 +274,19 @@ export class TerminalView extends TerminalViewState {
   }
 
   private _handleDrop(event: DragEvent) {
-    const candidates = imageCandidatesFromDrop(event.dataTransfer);
     this._dragDepth = 0;
     this._dragActive = false;
-    if (candidates.length === 0) return;
+    if (!this._attachmentsSupported() || !dropCarriesFiles(event.dataTransfer)) return;
+    // Any file payload must be consumed here. Returning early on an unsupported type lets the
+    // browser's default handler open the file and navigate away from Command Center — after we
+    // already showed a drop target inviting the drop.
     event.preventDefault();
+    const candidates = imageCandidatesFromDrop(event.dataTransfer);
+    if (candidates.length === 0) {
+      this._initAttachmentQueue();
+      this._attachmentQueue!.rejectUnsupported(unsupportedDropFilenames(event.dataTransfer));
+      return;
+    }
     void this._enqueueAttachments(candidates);
   }
 
@@ -1174,7 +1194,7 @@ export class TerminalView extends TerminalViewState {
       onReconnect: () => this._handleReconnect(),
       onInputKeydown: (event) => this._handleKeydown(event),
       onSend: () => this._handleSend(),
-      dropOverlay: renderTerminalDropOverlay(this._dragActive),
+      dropOverlay: renderTerminalDropOverlay(this._dragActive && this._attachmentsSupported()),
       attachmentTray: renderTerminalAttachmentTray({
         attachments: this._attachments,
         dragActive: this._dragActive,
@@ -1189,10 +1209,6 @@ export class TerminalView extends TerminalViewState {
       onDrop: (event) => this._handleDrop(event),
     });
   }
-}
-
-function dragCarriesFiles(data: DataTransfer | null): boolean {
-  return Array.from(data?.types ?? []).includes('Files');
 }
 
 async function readBlobBase64(blob: Blob): Promise<string> {
