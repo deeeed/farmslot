@@ -12,6 +12,7 @@ import {
 } from '@farmslot/protocol';
 
 import { invalidateProjectVarsCache, projectsDir } from '../core/config.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { computeReadyGatePackageHash } from '../run-completion/ready-gate-package.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
@@ -48,6 +49,202 @@ test('assertExpectedExecutionTemplate rejects a changed queued snapshot', () => 
     () => assertExpectedExecutionTemplate(undefined, expected),
     /no configured execution template/,
   );
+});
+
+test('runResolveDecision keeps a review request unresolved when launch validation refuses it', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-DECISION-REFUSAL',
+    runner: 'claude',
+    slotId: 'test-review-decision-slot',
+  });
+  const decision: RunDecision = {
+    id: 'review-decision-refusal',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Request another independent review',
+    actions: [
+      {
+        id: 'request-extra-review',
+        label: 'Request Independent Review',
+        style: 'secondary',
+      },
+    ],
+    createdAt: '2026-08-03T00:00:00.000Z',
+  };
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed' });
+    await deleteRun(run.id);
+  });
+
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'request-extra-review',
+      },
+      () => {},
+      {
+        assertReviewLaunchAllowed: async () => {
+          throw new GatewayMethodError(
+            'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+            'Independent review launch refused: test worktree is dirty.',
+            { userAction: 'Commit the validated fixes, then request re-review.' },
+          );
+        },
+      },
+    ),
+    (error: unknown) => {
+      const structured = error as GatewayMethodError;
+      assert.equal(structured.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
+      assert.equal(structured.userAction, 'Commit the validated fixes, then request re-review.');
+      return true;
+    },
+  );
+
+  const persistedDecision = getRun(run.id)?.decisions.find(
+    (candidate) => candidate.id === decision.id,
+  );
+  assert.equal(persistedDecision?.resolvedAt, undefined);
+  assert.equal(persistedDecision?.resolvedAction, undefined);
+});
+
+test('runResolveDecision reports a recoverable action when a review run has no assigned slot', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-NO-SLOT',
+    runner: 'claude',
+  });
+  const decision: RunDecision = {
+    id: 'review-decision-no-slot',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Request another independent review',
+    actions: [
+      {
+        id: 'request-extra-review',
+        label: 'Request Independent Review',
+        style: 'secondary',
+      },
+    ],
+    createdAt: '2026-08-04T00:00:00.000Z',
+  };
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  t.after(async () => {
+    updateRun(run.id, { status: 'failed' });
+    await deleteRun(run.id);
+  });
+
+  await assert.rejects(
+    runResolveDecision(
+      {
+        runId: run.id,
+        decisionId: decision.id,
+        actionId: 'request-extra-review',
+      },
+      () => {},
+    ),
+    (error: unknown) => {
+      const structured = error as GatewayMethodError;
+      assert.equal(structured.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
+      assert.match(structured.userAction ?? '', /restore or assign.*slot/iu);
+      return true;
+    },
+  );
+
+  assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
+});
+
+test('runResolveDecision clears a prior launch rejection after successful gate resolution', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-DECISION-SUCCESS',
+    runner: 'claude',
+    slotId: 'test-review-decision-slot',
+    engineState: {
+      publishGate: {
+        reviewLaunchRejection: {
+          code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+          message: 'A prior review request was refused.',
+          userAction: 'Commit the validated fixes, then request re-review.',
+          rejectedAt: '2026-08-03T00:00:00.000Z',
+        },
+      },
+    },
+  });
+  const decision: RunDecision = {
+    id: 'review-decision-success',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Request another independent review',
+    actions: [
+      {
+        id: 'request-extra-review',
+        label: 'Request Independent Review',
+        style: 'secondary',
+      },
+    ],
+    createdAt: '2026-08-03T00:00:00.000Z',
+  };
+  updateRun(run.id, { status: 'done', decisions: [decision] });
+  t.after(async () => {
+    await deleteRun(run.id);
+  });
+
+  await runResolveDecision(
+    {
+      runId: run.id,
+      decisionId: decision.id,
+      actionId: 'request-extra-review',
+    },
+    () => {},
+    { assertReviewLaunchAllowed: async () => {} },
+  );
+
+  const persisted = getRun(run.id)!;
+  assert.equal(persisted.engineState?.publishGate?.reviewLaunchRejection, undefined);
+  assert.equal(persisted.decisions[0]?.resolvedAction, 'request-extra-review');
+  assert.ok(persisted.decisions[0]?.resolvedAt);
+});
+
+test('runResolveDecision retains a launch rejection for non-review gate actions', async (t) => {
+  const rejection = {
+    code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED' as const,
+    message: 'A prior review request was refused.',
+    userAction: 'Commit the validated fixes, then request re-review.',
+    rejectedAt: '2026-08-03T00:00:00.000Z',
+  };
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-HOLD-REJECTION',
+    runner: 'claude',
+    slotId: 'test-review-decision-slot',
+    engineState: { publishGate: { reviewLaunchRejection: rejection } },
+  });
+  const decision: RunDecision = {
+    id: 'review-decision-hold',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Hold publication',
+    actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+    createdAt: '2026-08-03T00:00:00.000Z',
+  };
+  updateRun(run.id, { status: 'done', decisions: [decision] });
+  t.after(async () => deleteRun(run.id));
+
+  await runResolveDecision({ runId: run.id, decisionId: decision.id, actionId: 'hold' }, () => {});
+
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, rejection);
 });
 
 function makeReadyGatePackage(overrides: Partial<ReadyGatePrPackage> = {}): ReadyGatePrPackage {

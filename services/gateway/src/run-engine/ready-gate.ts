@@ -9,6 +9,7 @@ import {
   GATE_SUMMARY_KINDS,
   type IndependentReviewStatus,
   PipelineSteps,
+  type PublicationReviewLaunchRejection,
   type ReadyGateInputSnapshot,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
@@ -73,6 +74,10 @@ import {
   publicationReviewPolicyForRun,
   requiresPublicationApproval,
 } from './publication-policy.js';
+import {
+  assertIndependentReviewLaunchStateForSlot,
+  publicationReviewLaunchRejectionFromError,
+} from './review-launch-gate.js';
 import {
   effectiveReviewRunner,
   humanGateReviewDepth,
@@ -202,17 +207,106 @@ async function resumeInterruptedPublicationReviewOnce(
   return { reviewId: interrupted.id, verdict: result.verdict };
 }
 
+export interface PublishGateReviewPlanResult {
+  reviewIds: string[];
+  rejection?: PublicationReviewLaunchRejection;
+}
+
+export interface PublishGateReviewPlanDependencies {
+  assertLaunchAllowed?: (
+    reviews: readonly IndependentReviewStatus[],
+    slotId: string,
+  ) => Promise<void>;
+  executeReview?: typeof executeSelfReview;
+}
+
+function clearPublicationReviewLaunchRejection(runId: string, rejectedAt?: string): Run {
+  const latest = getRun(runId)!;
+  const rejection = latest.engineState?.publishGate?.reviewLaunchRejection;
+  if (!rejection || (rejectedAt && rejection.rejectedAt !== rejectedAt)) return latest;
+  return updateRun(runId, {
+    engineState: {
+      ...latest.engineState,
+      publishGate: {
+        ...latest.engineState?.publishGate,
+        reviewLaunchRejection: undefined,
+      },
+    },
+  });
+}
+
+export function reconcileReviewLaunchRejectionForCurrentHead(
+  runId: string,
+  headSha: string | undefined,
+): PublicationReviewLaunchRejection | undefined {
+  const rejection = getRun(runId)?.engineState?.publishGate?.reviewLaunchRejection;
+  const rejectedHeadSha =
+    rejection?.details &&
+    typeof rejection.details === 'object' &&
+    'currentHeadSha' in rejection.details &&
+    typeof rejection.details.currentHeadSha === 'string'
+      ? rejection.details.currentHeadSha
+      : undefined;
+  if (!rejection || !headSha) return rejection;
+  if (
+    rejection.code === 'PUBLICATION_REVIEW_LAUNCH_REJECTED' &&
+    (!rejectedHeadSha || rejectedHeadSha === headSha)
+  ) {
+    return rejection;
+  }
+  if (rejection.code === 'PUBLICATION_REVIEW_GIT_PROBE_FAILED' && rejectedHeadSha === headSha) {
+    return rejection;
+  }
+  clearPublicationReviewLaunchRejection(runId, rejection.rejectedAt);
+  return undefined;
+}
+
 export async function executePublishGateReviewPlan(
   runId: string,
   slotId: string,
   plan: ReviewLoopRequest[],
   source: 'dispatch' | 'human-gate',
-): Promise<string[]> {
+  dependencies: PublishGateReviewPlanDependencies = {},
+): Promise<PublishGateReviewPlanResult> {
   const boundedPlan = plan.slice(0, MAX_PUBLISH_GATE_REVIEW_LOOPS);
-  if (boundedPlan.length === 0) return [];
+  if (boundedPlan.length === 0) {
+    clearPublicationReviewLaunchRejection(runId);
+    return { reviewIds: [] };
+  }
+  const assertLaunchAllowed =
+    dependencies.assertLaunchAllowed ?? assertIndependentReviewLaunchStateForSlot;
+  const executeReview = dependencies.executeReview ?? executeSelfReview;
   const reviewIds: string[] = [];
   for (const planStep of boundedPlan) {
-    const latestBeforeReview = getRun(runId)!;
+    const launchSnapshot = getRun(runId)!;
+    try {
+      await assertLaunchAllowed(
+        launchSnapshot.engineState?.publishGate?.independentReviews ?? [],
+        slotId,
+      );
+    } catch (error) {
+      const rejection = publicationReviewLaunchRejectionFromError(error);
+      if (!rejection) throw error;
+      const latestAfterGuard = getRun(runId)!;
+      updateRun(runId, {
+        engineState: {
+          ...latestAfterGuard.engineState,
+          publishGate: {
+            ...latestAfterGuard.engineState?.publishGate,
+            reviewLaunchRejection: rejection,
+          },
+        },
+      });
+      updateRunStep(runId, S.HUMAN_GATE, {
+        detail: `${rejection.message} ${rejection.userAction}`,
+        outputs: {
+          ...latestAfterGuard.steps.find((step) => step.name === S.HUMAN_GATE)?.outputs,
+          reviewLaunchRejection: rejection,
+        },
+      });
+      return { reviewIds, rejection };
+    }
+    const latestBeforeReview = clearPublicationReviewLaunchRejection(runId);
     const reviewedPackage =
       source === 'human-gate' ? await readPreparedPackage(latestBeforeReview) : undefined;
     // ID + artifact paths flow through EXTRA_REVIEW_SOURCE so this stream stays
@@ -232,7 +326,7 @@ export async function executePublishGateReviewPlan(
     let reviewResult: SelfReviewResult;
     let reviewRecoveryPending = false;
     try {
-      reviewResult = await executeSelfReview(runId, slotId, {
+      reviewResult = await executeReview(runId, slotId, {
         reviewRunner: requestedRunner,
         model: planStep.model ?? null,
         validationDepth,
@@ -293,7 +387,7 @@ export async function executePublishGateReviewPlan(
     });
     if (reviewResult.verdict !== 'pass') break;
   }
-  return reviewIds;
+  return { reviewIds };
 }
 export async function persistIndependentReviewArtifactsForRun(
   run: Run,
@@ -552,7 +646,26 @@ export async function executeReadyGate(runId: string): Promise<string> {
     }
   }
 
-  const desc =
+  // Snapshot the slot's HEAD SHA at gate-creation time so post-hoc viewers
+  // can tell when the workspace's live diff has drifted from what was
+  // reviewed. Non-fatal — legacy gates without this field fall back to
+  // the "live diff" warning banner in ready-workspace.
+  let headSha: string | undefined;
+  if (current.slotId) {
+    try {
+      const vars = await loadSlotVars(current.slotId);
+      const r = await execOnSlot(vars, `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`);
+      const sha = r.stdout.trim();
+      if (sha && /^[0-9a-f]{7,40}$/i.test(sha)) headSha = sha;
+    } catch (err) {
+      console.warn(
+        `[run-engine] ready-gate headSha capture failed for ${runId.slice(0, 8)}: ${(err as Error).message}`,
+      );
+    }
+  }
+  const reviewLaunchRejection = reconcileReviewLaunchRejectionForCurrentHead(runId, headSha);
+
+  const baseDescription =
     publicationApprovalGate && preparedPackage
       ? [
           `**Package:** ${preparedPackage.id}`,
@@ -577,6 +690,14 @@ export async function executeReadyGate(runId: string): Promise<string> {
       : report
         ? `**Branch:** ${current.branch ?? 'unknown'}\n**Files:** ${diffStat.files} (+${diffStat.additions} -${diffStat.deletions})\n\n${report.slice(0, 300)}`
         : `Worker finished. Branch: ${current.branch ?? 'unknown'}`;
+  const desc = reviewLaunchRejection
+    ? [
+        baseDescription,
+        '',
+        `**Review launch paused:** ${reviewLaunchRejection.message}`,
+        `**Next:** ${reviewLaunchRejection.userAction}`,
+      ].join('\n')
+    : baseDescription;
 
   const reviewDepth =
     preparedPackage?.reviewDepth ??
@@ -737,23 +858,6 @@ export async function executeReadyGate(runId: string): Promise<string> {
     : undefined;
   const inputSnapshot = await buildReadyGateInputSnapshot(current);
 
-  // Snapshot the slot's HEAD SHA at gate-creation time so post-hoc viewers
-  // can tell when the workspace's live diff has drifted from what was
-  // reviewed. Non-fatal — legacy gates without this field fall back to
-  // the "live diff" warning banner in ready-workspace.
-  let headSha: string | undefined;
-  if (current.slotId) {
-    try {
-      const vars = await loadSlotVars(current.slotId);
-      const r = await execOnSlot(vars, `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`);
-      const sha = r.stdout.trim();
-      if (sha && /^[0-9a-f]{7,40}$/i.test(sha)) headSha = sha;
-    } catch (err) {
-      console.warn(
-        `[run-engine] ready-gate headSha capture failed for ${runId.slice(0, 8)}: ${(err as Error).message}`,
-      );
-    }
-  }
   // Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost).
   const gateSummary = buildGateSummary(current, GATE_SUMMARY_KINDS.publication, {
     gatePolicy: preparedPackage?.gatePolicy,
@@ -782,6 +886,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
     selfReviewVerdict,
     selfReviewSummary,
     workerLearnings,
+    reviewLaunchRejection,
     ciChecks,
     acceptanceCriteria,
     inputSnapshot,

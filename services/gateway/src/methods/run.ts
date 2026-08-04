@@ -7,11 +7,13 @@ import {
   type ExecutionTemplateReference,
   failedRunCancelEffects,
   FLOW_STEPS,
+  type IndependentReviewStatus,
   isInteractiveDevRun,
   isTerminalRunStatus,
   parseGitHubRef,
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   type Run,
@@ -36,6 +38,7 @@ import {
 import { resolveCIDecision } from '../ci-monitor/service.js';
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
 import { buildFollowUpLineage, isFollowUpFlow } from '../family-observability/context.js';
 import { findFollowUpParentRun } from '../family-observability/state.js';
@@ -54,6 +57,7 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 import { buildCIWatchChainedRunParams } from '../run-engine/ci-watch-chain.js';
+import { isHumanGateReviewRequestAction } from '../run-engine/decision-replay.js';
 import { resolveEngineDecision } from '../run-engine/engine-decisions.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
@@ -70,6 +74,7 @@ import {
   startRun,
 } from '../run-engine/orchestrator.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
+import { assertIndependentReviewLaunchStateForSlot } from '../run-engine/review-launch-gate.js';
 import {
   probeWorkerSignalForRun,
   readFreshTerminalSignalForRun,
@@ -1129,9 +1134,17 @@ export function assertDecisionStillUnresolved(runId: string, decisionId: string)
   if (!fresh || fresh.resolvedAt) throw new Error(`Decision already resolved`);
 }
 
+export interface RunResolveDecisionDependencies {
+  assertReviewLaunchAllowed?: (
+    reviews: readonly IndependentReviewStatus[],
+    slotId: string,
+  ) => Promise<void>;
+}
+
 export async function runResolveDecision(
   params: RunResolveDecisionParams,
   emit: Emit,
+  dependencies: RunResolveDecisionDependencies = {},
 ): Promise<RunResolveDecisionResult> {
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
@@ -1150,11 +1163,45 @@ export async function runResolveDecision(
       );
     }
   }
+  if (
+    decision.type === 'engine_human_gate' &&
+    isHumanGateReviewRequestAction(params.actionId) &&
+    requiresPublicationApproval(existing)
+  ) {
+    if (!existing.slotId) {
+      throw new GatewayMethodError(
+        PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,
+        'Publication review launch requires an assigned slot',
+        {
+          userAction:
+            'Restore or assign the run slot before requesting another independent review.',
+        },
+      );
+    }
+    await (dependencies.assertReviewLaunchAllowed ?? assertIndependentReviewLaunchStateForSlot)(
+      existing.engineState?.publishGate?.independentReviews ?? [],
+      existing.slotId,
+    );
+  }
   await assertReadyPublishResolveIsFresh(existing, decision, params);
   // The probes above await; a concurrent resolver (operator abort vs re-armed
   // auto-recovery) may have resolved this decision during that window. Re-read
   // from the store so the first resolution wins instead of being overwritten.
   assertDecisionStillUnresolved(params.runId, params.decisionId);
+  if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
+    const fresh = getRun(params.runId)!;
+    if (fresh.engineState?.publishGate?.reviewLaunchRejection) {
+      updateRun(params.runId, {
+        engineState: {
+          ...fresh.engineState,
+          publishGate: {
+            ...fresh.engineState.publishGate,
+            reviewLaunchRejection: undefined,
+          },
+        },
+      });
+    }
+  }
 
   // Store selectionData on decision so engine steps can use it
   if (params.selectionData) {

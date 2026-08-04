@@ -337,6 +337,23 @@ export interface IndependentReviewStatus {
   completedAt?: string;
 }
 
+export const PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES = {
+  launchRejected: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+  gitProbeFailed: 'PUBLICATION_REVIEW_GIT_PROBE_FAILED',
+} as const;
+
+export type PublicationReviewLaunchRejectionCode =
+  (typeof PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES)[keyof typeof PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES];
+
+/** Recoverable refusal captured when a publication reviewer cannot safely launch. */
+export interface PublicationReviewLaunchRejection {
+  code: PublicationReviewLaunchRejectionCode;
+  message: string;
+  userAction: string;
+  details?: unknown;
+  rejectedAt: string;
+}
+
 export interface GatePolicy {
   owner: 'human' | 'agent';
   dispatchMode?: 'interactive' | 'autonomous' | 'validation';
@@ -578,6 +595,7 @@ export interface ReadyGatePayload {
   prPackage?: ReadyGatePrPackage;
   reviewDepth?: ReviewDepthPolicy;
   independentReviews?: IndependentReviewStatus[];
+  reviewLaunchRejection?: PublicationReviewLaunchRejection;
   gatePolicy?: GatePolicy;
   /** Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost). */
   gateSummary?: GateSummary;
@@ -1436,6 +1454,8 @@ export interface RunEngineState {
     /** Creation time for the current pending plan, used to ignore reviews from earlier work orders. */
     pendingReviewPlanRequestedAt?: string;
     independentReviews?: IndependentReviewStatus[];
+    /** Latest recoverable refusal to launch a publication reviewer. */
+    reviewLaunchRejection?: PublicationReviewLaunchRejection;
     supersededPackageIds?: string[];
     feedbackArtifactPath?: string;
     /** Bounded restart watcher state for an in-flight publication reviewer. */

@@ -56,7 +56,10 @@ import {
   shouldPrepareLocalFirstPackage,
 } from './publication-policy.js';
 import { verifyWorkerPushedBranch } from './push-verification.js';
-import { resumeInterruptedPublicationReview } from './ready-gate.js';
+import {
+  type PublishGateReviewPlanResult,
+  resumeInterruptedPublicationReview,
+} from './ready-gate.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import {
   automaticPublicationReviewPlan,
@@ -99,7 +102,7 @@ export interface PostDispatchStepContext {
     slotId: string,
     plan: ReviewLoopRequest[],
     trigger: 'dispatch' | 'human-gate',
-  ) => Promise<string[]>;
+  ) => Promise<PublishGateReviewPlanResult>;
   executeReadyGate: (runId: string) => Promise<string>;
   executeReviewGate: (runId: string) => Promise<void>;
   getDiffStat: (run: Run) => Promise<DiffStat>;
@@ -110,6 +113,7 @@ export interface PostDispatchStepContext {
     mode: Run['mode'],
   ) => Promise<boolean>;
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
+  prepareCompletionPackageForRun?: typeof prepareCompletionPackage;
   executeSelfReviewForRun?: typeof executeSelfReview;
   resumeInterruptedPublicationReviewForRun?: typeof resumeInterruptedPublicationReview;
   probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
@@ -164,6 +168,54 @@ function stampFreshReviewsForPreparedPackage(
       },
     },
   });
+}
+
+async function reconcilePublishGateReviewPlanResult(
+  runId: string,
+  plan: ReviewLoopRequest[],
+  result: PublishGateReviewPlanResult,
+  context: Pick<PostDispatchStepContext, 'getDiffStat' | 'prepareCompletionPackageForRun'>,
+  options: {
+    reviewedPackage?: ReadyGatePrPackage;
+    stampFreshReviews?: boolean;
+  } = {},
+): Promise<number> {
+  const completedReviewCount = result.rejection
+    ? Math.min(result.reviewIds.length, plan.length)
+    : plan.length;
+  const remainingPlan = result.rejection ? plan.slice(completedReviewCount) : [];
+  const afterReviewPlan = getRun(runId)!;
+  updateRun(runId, {
+    engineState: {
+      ...afterReviewPlan.engineState,
+      publishGate: {
+        ...afterReviewPlan.engineState?.publishGate,
+        pendingReviewPlan: remainingPlan,
+        pendingReviewPlanRequestedAt: remainingPlan.length ? new Date().toISOString() : undefined,
+      },
+    },
+  });
+  const diffStat = await context.getDiffStat(getRun(runId)!);
+  const prepared = await (context.prepareCompletionPackageForRun ?? prepareCompletionPackage)(
+    runId,
+    {
+      diffStat,
+      reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
+      publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
+      ...(options.stampFreshReviews
+        ? {
+            selectedEvidenceKeys: options.reviewedPackage?.selectedEvidenceKeys,
+            priorEvidenceManifest: options.reviewedPackage?.evidenceManifest,
+            stampReviews: false,
+          }
+        : {}),
+      requireArtifactMirror: true,
+    },
+  );
+  if (options.stampFreshReviews) {
+    stampFreshReviewsForPreparedPackage(runId, result.reviewIds, prepared.prPackage);
+  }
+  return completedReviewCount;
 }
 
 async function evalReviewAxisSkip(run: Run): Promise<{
@@ -853,25 +905,13 @@ export async function executeHumanGateStep(
           getRun(runId)?.engineState?.publishGate?.reviewDepth?.requestedBy === 'human-gate'
             ? 'human-gate'
             : 'dispatch';
-        await executePublishGateReviewPlan(runId, dispatchReviewSlotId, dispatchPlan, reviewSource);
-        const afterDispatchReviews = getRun(runId)!;
-        updateRun(runId, {
-          engineState: {
-            ...afterDispatchReviews.engineState,
-            publishGate: {
-              ...afterDispatchReviews.engineState?.publishGate,
-              pendingReviewPlan: [],
-              pendingReviewPlanRequestedAt: undefined,
-            },
-          },
-        });
-        const diffStat = await getDiffStat(getRun(runId)!);
-        await prepareCompletionPackage(runId, {
-          diffStat,
-          reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
-          publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
-          requireArtifactMirror: true,
-        });
+        const reviewPlanResult = await executePublishGateReviewPlan(
+          runId,
+          dispatchReviewSlotId,
+          dispatchPlan,
+          reviewSource,
+        );
+        await reconcilePublishGateReviewPlanResult(runId, dispatchPlan, reviewPlanResult, context);
       } else if (recoveredReviewIds.length > 0 || resumedInterruptedReview) {
         const beforeRefresh = await readReadyGatePreparedPackage(getRun(runId)!);
         const diffStat = await getDiffStat(getRun(runId)!);
@@ -936,35 +976,19 @@ export async function executeHumanGateStep(
             'Publication gate requested an independent review but no slot is assigned',
             gateAction,
           );
-        reviewRequestLoops += boundedPlan.length;
-        const newReviewIds = await executePublishGateReviewPlan(
+        const reviewPlanResult = await executePublishGateReviewPlan(
           runId,
           reviewSlotId,
           boundedPlan,
           'human-gate',
         );
-        const afterReviewPlan = getRun(runId)!;
-        updateRun(runId, {
-          engineState: {
-            ...afterReviewPlan.engineState,
-            publishGate: {
-              ...afterReviewPlan.engineState?.publishGate,
-              pendingReviewPlan: [],
-              pendingReviewPlanRequestedAt: undefined,
-            },
-          },
-        });
-        const diffStat = await getDiffStat(getRun(runId)!);
-        const prepared = await prepareCompletionPackage(runId, {
-          diffStat,
-          reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
-          publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
-          selectedEvidenceKeys: reviewedPackage?.selectedEvidenceKeys,
-          priorEvidenceManifest: reviewedPackage?.evidenceManifest,
-          stampReviews: false,
-          requireArtifactMirror: true,
-        });
-        stampFreshReviewsForPreparedPackage(runId, newReviewIds, prepared.prPackage);
+        reviewRequestLoops += await reconcilePublishGateReviewPlanResult(
+          runId,
+          boundedPlan,
+          reviewPlanResult,
+          context,
+          { reviewedPackage, stampFreshReviews: true },
+        );
         gateAction = await executeReadyGate(runId);
         continue;
       }

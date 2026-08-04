@@ -258,6 +258,25 @@ test('compact human-gate labels prioritize the active independent review loop', 
     }),
     'independent review',
   );
+
+  assert.equal(
+    compactHumanGateLabel({
+      agentContexts: [],
+      decisions: [],
+      engineState: {
+        publishGate: {
+          pendingReviewPlan: [{ order: 1, runner: 'codex', validationDepth: 'static-code' }],
+          reviewLaunchRejection: {
+            code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+            message: 'The slot worktree is dirty.',
+            userAction: 'Commit the validated fixes, then request review again.',
+            rejectedAt: '2026-08-04T00:00:00.000Z',
+          },
+        },
+      },
+    }),
+    'review launch paused',
+  );
 });
 
 test('compact human-gate labels distinguish publish-ready from review-blocked', () => {
