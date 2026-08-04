@@ -144,6 +144,55 @@ test('buildReviewSummary excludes findings from an older reviewed head', () => {
   assert.equal(summary.totalUnresolved, 0);
 });
 
+test('buildGateSummary does not count a pass from an older prepared package', () => {
+  const run = makeRun({
+    engineState: {
+      publishGate: {
+        reviewDepth: {
+          minimumIndependentReviews: 1,
+          requireCrossRunner: false,
+          extraLoopsRequested: 0,
+          requestedBy: 'human-gate',
+        },
+        independentReviews: [
+          {
+            id: 'independent-review-pass',
+            source: 'human-gate',
+            crossRunner: false,
+            loopNumber: 3,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            reviewedHeadSha: 'reviewed-head',
+            reviewedReviewSubjectHash: 'reviewed-subject',
+            reviewSnapshot: {
+              source: 'local-git',
+              baseRef: 'main',
+              baseSha: 'base',
+              headRef: 'feature',
+              headSha: 'reviewed-head',
+              diffPath: 'artifacts/reviewed.diff',
+              diffHash: 'reviewed-diff',
+              diffStat: { files: 5, additions: 347, deletions: 0 },
+              capturedAt: '2026-08-04T00:00:00.000Z',
+            },
+          },
+        ],
+      },
+    },
+  });
+
+  const summary = buildGateSummary(run, 'publication', {
+    preparedPackage: {
+      headSha: 'current-head',
+      reviewSubjectHash: 'current-subject',
+    },
+  });
+
+  assert.equal(summary.review.passingReviews, 0);
+  assert.equal(summary.review.independentReviews[0]?.stale, true);
+  assert.match(summary.headline ?? '', /0\/1 independent reviews passing/);
+});
+
 test('buildReviewSummary keeps a newer snapshot-less review failure visible', () => {
   const run = makeRun({
     engineState: {
@@ -333,7 +382,7 @@ test('aggregateFamilyChainedLoops rolls up pr-complete/update-branch loops only'
   assert.equal(aggregateFamilyChainedLoops(root, [root, unrelatedReview]), undefined);
 });
 
-test('enrichDecisionsWithGateSummary lazily backfills a ready gate decision without mutating the original', () => {
+test('enrichDecisionsWithGateSummary projects a ready gate decision without mutating the original', () => {
   const run = makeRun({
     metrics: metrics({ sessionTotalTokens: 1000, sessionTurns: 10 }),
     decisions: [
@@ -365,6 +414,22 @@ test('enrichDecisionsWithGateSummary lazily backfills a ready gate decision with
   const original = run.decisions[0].payload;
   assert.ok(original?.kind === 'ready');
   assert.equal(original.gateSummary, undefined);
+
+  const frozen = {
+    ...enriched,
+    decisions: [
+      {
+        ...enriched.decisions[0],
+        payload: {
+          ...payload,
+          gateSummary: { ...payload.gateSummary, headline: 'stale snapshot' },
+        },
+      },
+    ],
+  };
+  const refreshedPayload = enrichDecisionsWithGateSummary(frozen).decisions[0].payload;
+  assert.ok(refreshedPayload?.kind === 'ready');
+  assert.notEqual(refreshedPayload.gateSummary?.headline, 'stale snapshot');
 });
 
 test('enrichDecisionsWithGateSummary backfills a retrospective decision with the review kind', () => {

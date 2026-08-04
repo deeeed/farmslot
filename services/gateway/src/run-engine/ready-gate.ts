@@ -871,6 +871,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // (not mirrored into the untyped gate-summary extras bag).
   const gateSummary = buildGateSummary(current, GATE_SUMMARY_KINDS.publication, {
     gatePolicy: preparedPackage?.gatePolicy,
+    preparedPackage,
   });
 
   // Soft freshness fields go through the same clear-then-set helper as package-refresh

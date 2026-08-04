@@ -659,6 +659,7 @@ async function buildRunSummary(
           ...payload,
           gateSummary: buildGateSummary(run, GATE_SUMMARY_KINDS.publication, {
             gatePolicy: payload.prPackage?.gatePolicy ?? payload.gatePolicy,
+            preparedPackage: payload.prPackage,
           }),
         };
       } else if (payload?.kind === 'retrospective') {
