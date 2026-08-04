@@ -3,15 +3,12 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type { SlotStatus } from '@farmslot/protocol';
 
+import './slot-choice-list.js';
+
 import type { GlobalFilters } from '../../state.js';
-import {
-  colors,
-  fonts,
-  lifecycleColor,
-  radii,
-  shadows,
-  spacing,
-} from '../../styles/theme-tokens.js';
+import { colors, fonts, radii, shadows, spacing } from '../../styles/theme-tokens.js';
+
+import type { SlotChoiceChangeDetail } from './slot-choice-list.js';
 
 export interface SlotSelectorChangeDetail {
   selected: string[];
@@ -144,65 +141,8 @@ export class SlotSelectorModal extends LitElement {
       display: grid;
       gap: ${unsafeCSS(spacing.md)};
     }
-    .group {
-      display: grid;
-      gap: ${unsafeCSS(spacing.sm)};
-    }
-    .group-title {
-      color: ${unsafeCSS(colors.textSecondary)};
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: ${unsafeCSS(spacing.sm)};
-    }
-    .slot {
-      text-align: left;
-      border: 1px solid rgba(85, 85, 112, 0.45);
-      border-left: 4px solid var(--slot-color);
-      border-radius: ${unsafeCSS(radii.md)};
-      background: ${unsafeCSS(colors.bgCard)};
-      color: ${unsafeCSS(colors.textPrimary)};
-      padding: ${unsafeCSS(spacing.md)};
-      cursor: pointer;
-      display: grid;
-      gap: 6px;
-      font: inherit;
-    }
-    .slot:hover {
-      background: ${unsafeCSS(colors.bgCardHover)};
-    }
-    .slot.selected {
-      border-color: ${unsafeCSS(colors.accentHover)};
-      box-shadow: 0 0 0 1px ${unsafeCSS(colors.accentHover)};
-    }
-    .slot.disabled {
-      opacity: 0.55;
-    }
-    .slot-head {
-      display: flex;
-      justify-content: space-between;
-      gap: ${unsafeCSS(spacing.sm)};
-      align-items: center;
-    }
-    .slot-id {
-      font-weight: 700;
-      overflow-wrap: anywhere;
-    }
-    .pill {
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.07);
-      color: ${unsafeCSS(colors.textMuted)};
-      padding: 2px 7px;
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-    }
-    .meta {
-      color: ${unsafeCSS(colors.textMuted)};
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      line-height: 1.45;
+    slot-choice-list {
+      --slot-choice-list-max-height: 100%;
     }
     .empty {
       color: ${unsafeCSS(colors.textMuted)};
@@ -253,31 +193,14 @@ export class SlotSelectorModal extends LitElement {
       .sort(byMachineProjectSlot);
   }
 
-  private _groups(): Array<{ key: string; slots: SlotStatus[] }> {
-    const groups = new Map<string, SlotStatus[]>();
-    for (const slot of this._visibleSlots) {
-      const key = `${slot.machine} / ${slot.project}`;
-      groups.set(key, [...(groups.get(key) ?? []), slot]);
-    }
-    return [...groups.entries()].map(([key, slots]) => ({ key, slots }));
-  }
-
   private _setOpen(open: boolean): void {
     this.open = open;
     if (!open)
       this.dispatchEvent(new CustomEvent('slot-selector-close', { bubbles: true, composed: true }));
   }
 
-  private _toggleSlot(slotId: string): void {
-    const current = new Set(this.selected);
-    if (this.multiple) {
-      if (current.has(slotId)) current.delete(slotId);
-      else current.add(slotId);
-    } else {
-      current.clear();
-      current.add(slotId);
-    }
-    const selected = [...current].sort();
+  private _applyChoice(event: CustomEvent<SlotChoiceChangeDetail>): void {
+    const selected = event.detail.allowedSlots ?? [];
     this.dispatchEvent(
       new CustomEvent<SlotSelectorChangeDetail>('slot-selector-change', {
         bubbles: true,
@@ -310,8 +233,7 @@ export class SlotSelectorModal extends LitElement {
 
   render() {
     if (!this.open) return nothing;
-    const selectedSet = new Set(this.selected);
-    const groups = this._groups();
+    const slots = this._visibleSlots;
     return html`
       <div
         class="backdrop"
@@ -333,46 +255,19 @@ export class SlotSelectorModal extends LitElement {
             <div class="chips">${this._renderFilterChips()}</div>
           </div>
           <div class="body">
-            ${groups.length === 0
+            ${slots.length === 0
               ? html`<div class="empty">
                   No slots match the current project and global filters.
                 </div>`
-              : groups.map(
-                  (group) => html`
-                    <section class="group">
-                      <div class="group-title">${group.key}</div>
-                      <div class="grid">
-                        ${group.slots.map((slot) => {
-                          const selected = selectedSet.has(slot.slot);
-                          const color = lifecycleColor(slot.lifecycle);
-                          return html`
-                            <button
-                              type="button"
-                              class="slot ${selected ? 'selected' : ''} ${!slot.dispatchable ||
-                              !slot.enabled
-                                ? 'disabled'
-                                : ''}"
-                              style=${`--slot-color: ${color}`}
-                              @click=${() => this._toggleSlot(slot.slot)}
-                            >
-                              <span class="slot-head">
-                                <span class="slot-id">${slot.slot}</span>
-                                <span class="pill">${selected ? 'selected' : slot.lifecycle}</span>
-                              </span>
-                              <span class="meta"
-                                >${slot.machine} · ${slot.platform} · ${slot.agent}</span
-                              >
-                              <span class="meta"
-                                >${slot.runner ?? 'no runner'} / ${slot.model ?? 'no model'}</span
-                              >
-                              <span class="meta">${slot.branch || 'no branch'}</span>
-                            </button>
-                          `;
-                        })}
-                      </div>
-                    </section>
-                  `,
-                )}
+              : html`<slot-choice-list
+                  .slots=${slots}
+                  .selectedSlots=${this.selected}
+                  .project=${this.project}
+                  .showAnyEligible=${false}
+                  .grouped=${true}
+                  selectionMode=${this.multiple ? 'multiple' : 'single'}
+                  @slot-choice-change=${this._applyChoice}
+                ></slot-choice-list>`}
           </div>
           <footer>
             <span class="muted">${this.selected.length} selected</span>
