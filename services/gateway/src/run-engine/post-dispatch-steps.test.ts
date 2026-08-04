@@ -611,8 +611,41 @@ test('human-gate partial review refusal retains only unconsumed work and rebuild
 
   const persistedGate = getRun(run.id)?.engineState?.publishGate;
   assert.deepEqual(persistedGate?.pendingReviewPlan, [plan[1]]);
-  assert.equal(persistedGate?.pendingReviewPlanRequestedAt, requestedAt);
+  assert.notEqual(persistedGate?.pendingReviewPlanRequestedAt, requestedAt);
   assert.equal(packageRebuilds, 1);
+
+  const afterFirstPass = getRun(run.id)!;
+  updateRun(run.id, {
+    engineState: {
+      ...afterFirstPass.engineState,
+      publishGate: {
+        ...afterFirstPass.engineState?.publishGate,
+        independentReviews: [
+          ...(afterFirstPass.engineState?.publishGate?.independentReviews ?? []),
+          {
+            id: 'r1',
+            source: 'human-gate',
+            runner: 'codex',
+            crossRunner: true,
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            completedAt: '2026-08-03T00:02:00.000Z',
+          },
+        ],
+      },
+    },
+  });
+  let replayedPlan: ReviewLoopRequest[] = [];
+  await executeHumanGateStep(run.id, {
+    ...restartReplayContext(),
+    executePublishGateReviewPlan: async (_runId, _slotId, actualPlan) => {
+      replayedPlan = actualPlan;
+      return { reviewIds: [] };
+    },
+    prepareCompletionPackageForRun: async () => preparedResult,
+  });
+  assert.deepEqual(replayedPlan, [plan[1]], 'restart must retain the net remaining reviewer');
 });
 
 test('review-pr always presents its publication gate in autonomous mode', async (t) => {

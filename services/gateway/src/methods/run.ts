@@ -1179,7 +1179,7 @@ export async function runResolveDecision(
   // auto-recovery) may have resolved this decision during that window. Re-read
   // from the store so the first resolution wins instead of being overwritten.
   assertDecisionStillUnresolved(params.runId, params.decisionId);
-  if (decision.type === 'engine_human_gate') {
+  if (decision.type === 'engine_human_gate' && isHumanGateReviewRequestAction(params.actionId)) {
     const fresh = getRun(params.runId)!;
     if (fresh.engineState?.publishGate?.reviewLaunchRejection) {
       updateRun(params.runId, {

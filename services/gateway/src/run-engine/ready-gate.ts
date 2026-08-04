@@ -235,7 +235,7 @@ function clearPublicationReviewLaunchRejection(runId: string, rejectedAt?: strin
   });
 }
 
-export function reviewLaunchRejectionForHead(
+export function reconcileReviewLaunchRejectionForCurrentHead(
   runId: string,
   headSha: string | undefined,
 ): PublicationReviewLaunchRejection | undefined {
@@ -247,7 +247,16 @@ export function reviewLaunchRejectionForHead(
     typeof rejection.details.currentHeadSha === 'string'
       ? rejection.details.currentHeadSha
       : undefined;
-  if (!rejection || !rejectedHeadSha || !headSha || rejectedHeadSha === headSha) return rejection;
+  if (!rejection || !headSha) return rejection;
+  if (
+    rejection.code === 'PUBLICATION_REVIEW_LAUNCH_REJECTED' &&
+    (!rejectedHeadSha || rejectedHeadSha === headSha)
+  ) {
+    return rejection;
+  }
+  if (rejection.code === 'PUBLICATION_REVIEW_GIT_PROBE_FAILED' && rejectedHeadSha === headSha) {
+    return rejection;
+  }
   clearPublicationReviewLaunchRejection(runId, rejection.rejectedAt);
   return undefined;
 }
@@ -654,7 +663,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
       );
     }
   }
-  const reviewLaunchRejection = reviewLaunchRejectionForHead(runId, headSha);
+  const reviewLaunchRejection = reconcileReviewLaunchRejectionForCurrentHead(runId, headSha);
 
   const baseDescription =
     publicationApprovalGate && preparedPackage

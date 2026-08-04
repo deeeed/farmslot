@@ -13,8 +13,8 @@ import { createRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 import {
   executePublishGateReviewPlan,
   localVideoProofWarning,
+  reconcileReviewLaunchRejectionForCurrentHead,
   resumeInterruptedPublicationReview,
-  reviewLaunchRejectionForHead,
 } from './ready-gate.js';
 import {
   assertIndependentReviewLaunchState,
@@ -201,12 +201,16 @@ test('independent publication review refuses a dirty slot with a commit action',
         code?: string;
         message?: string;
         userAction?: string;
-        details?: { dirtyPathCount?: number };
+        details?: { dirtyPathCount?: number; dirtyPaths?: string[] };
       };
       assert.equal(envelope.code, 'PUBLICATION_REVIEW_LAUNCH_REJECTED');
       assert.match(envelope.message ?? '', /dirty tree.*2 uncommitted path/iu);
       assert.match(envelope.userAction ?? '', /git status.*git commit/iu);
       assert.equal(envelope.details?.dirtyPathCount, 2);
+      assert.deepEqual(envelope.details?.dirtyPaths, [
+        ' M services/gateway/src/run-engine/ready-gate.ts',
+        '?? scratch.txt',
+      ]);
       return true;
     },
   );
@@ -234,16 +238,27 @@ test('independent publication re-review refuses the same HEAD after issues', asy
 });
 
 test('independent publication re-review allows a clean advanced HEAD', async () => {
-  assert.deepEqual(
-    await assertIndependentReviewLaunchState([issuesReview('abc123')], gitExecutor('', 'def456')),
-    { dirtyPathCount: 0, headSha: 'def456' },
+  await assert.doesNotReject(
+    assertIndependentReviewLaunchState([issuesReview('abc123')], gitExecutor('', 'def456')),
+  );
+});
+
+test('independent publication re-review trusts the immutable snapshot over a restamped compatibility HEAD', async () => {
+  const review = issuesReview('def456');
+  review.reviewSnapshot = {
+    source: 'local-git',
+    headSha: 'abc123',
+    capturedAt: '2026-08-03T00:00:00.000Z',
+  };
+  await assert.doesNotReject(
+    assertIndependentReviewLaunchState([review], gitExecutor('', 'def456')),
   );
 });
 
 test('independent publication review surfaces a recoverable non-zero git probe failure', async () => {
   await assert.rejects(
     assertIndependentReviewLaunchState([], async (command) => ({
-      stdout: '',
+      stdout: command.includes('rev-parse HEAD') ? 'abc123\n' : '',
       stderr: command.includes('status --porcelain') ? 'not a git worktree' : '',
       exitCode: command.includes('status --porcelain') ? 128 : 0,
     })),
@@ -252,6 +267,26 @@ test('independent publication review surfaces a recoverable non-zero git probe f
       assert.equal(rejection?.code, 'PUBLICATION_REVIEW_GIT_PROBE_FAILED');
       assert.match(rejection?.message ?? '', /git status failed \(exit 128\)/u);
       assert.match(rejection?.userAction ?? '', /git status.*git rev-parse HEAD/iu);
+      assert.equal(
+        (rejection?.details as { currentHeadSha?: string } | undefined)?.currentHeadSha,
+        'abc123',
+      );
+      return true;
+    },
+  );
+});
+
+test('independent publication review surfaces a recoverable thrown git transport failure', async () => {
+  await assert.rejects(
+    assertIndependentReviewLaunchState([], async () => {
+      throw new Error(`node disconnected ${'x'.repeat(2_000)}`);
+    }),
+    (error: unknown) => {
+      const rejection = publicationReviewLaunchRejectionFromError(error);
+      assert.equal(rejection?.code, 'PUBLICATION_REVIEW_GIT_PROBE_FAILED');
+      assert.match(rejection?.message ?? '', /could not run/u);
+      const details = rejection?.details as { cause?: string } | undefined;
+      assert.match(details?.cause ?? '', /truncated/u);
       return true;
     },
   );
@@ -321,13 +356,66 @@ test('ready-gate rejection is retained at the same HEAD and cleared after HEAD d
     await deleteTestRunIfPresent(run.id);
   });
 
-  const sameHeadPayloadRejection = reviewLaunchRejectionForHead(run.id, 'aaaaaaaa');
+  const sameHeadPayloadRejection = reconcileReviewLaunchRejectionForCurrentHead(run.id, 'aaaaaaaa');
   assert.deepEqual(sameHeadPayloadRejection, rejection);
   assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, rejection);
 
-  const advancedHeadPayloadRejection = reviewLaunchRejectionForHead(run.id, 'bbbbbbbb');
+  const advancedHeadPayloadRejection = reconcileReviewLaunchRejectionForCurrentHead(
+    run.id,
+    'bbbbbbbb',
+  );
   assert.equal(advancedHeadPayloadRejection, undefined);
   assert.equal(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, undefined);
+});
+
+test('ready-gate clears a recovered git-probe rejection after a successful HEAD capture', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-PROBE-RECOVERED',
+    runner: 'claude',
+    engineState: {
+      publishGate: {
+        reviewLaunchRejection: {
+          code: 'PUBLICATION_REVIEW_GIT_PROBE_FAILED',
+          message: 'The node was disconnected.',
+          userAction: 'Restore the node connection.',
+          rejectedAt: '2026-08-03T00:00:00.000Z',
+        },
+      },
+    },
+  });
+  t.after(async () => deleteTestRunIfPresent(run.id));
+
+  assert.equal(
+    reconcileReviewLaunchRejectionForCurrentHead(run.id, undefined)?.code,
+    'PUBLICATION_REVIEW_GIT_PROBE_FAILED',
+  );
+  assert.equal(reconcileReviewLaunchRejectionForCurrentHead(run.id, 'bbbbbbbb'), undefined);
+  assert.equal(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, undefined);
+});
+
+test('ready-gate retains a git-probe rejection at its captured HEAD and clears it after drift', async (t) => {
+  const rejection: PublicationReviewLaunchRejection = {
+    code: 'PUBLICATION_REVIEW_GIT_PROBE_FAILED',
+    message: 'Git status failed.',
+    userAction: 'Repair the worktree.',
+    details: { currentHeadSha: 'aaaaaaaa' },
+    rejectedAt: '2026-08-03T00:00:00.000Z',
+  };
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-PROBE-HEAD-DRIFT',
+    runner: 'claude',
+    engineState: { publishGate: { reviewLaunchRejection: rejection } },
+  });
+  t.after(async () => deleteTestRunIfPresent(run.id));
+
+  assert.deepEqual(reconcileReviewLaunchRejectionForCurrentHead(run.id, 'aaaaaaaa'), rejection);
+  assert.equal(reconcileReviewLaunchRejectionForCurrentHead(run.id, 'bbbbbbbb'), undefined);
 });
 
 test('publish-gate review orchestration preserves a recoverable gate and launches no reviewer when refused', async (t) => {

@@ -191,33 +191,29 @@ async function reconcilePublishGateReviewPlanResult(
       publishGate: {
         ...afterReviewPlan.engineState?.publishGate,
         pendingReviewPlan: remainingPlan,
-        pendingReviewPlanRequestedAt: remainingPlan.length
-          ? afterReviewPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt
-          : undefined,
+        pendingReviewPlanRequestedAt: remainingPlan.length ? new Date().toISOString() : undefined,
       },
     },
   });
-  if (!result.rejection || result.reviewIds.length > 0) {
-    const diffStat = await context.getDiffStat(getRun(runId)!);
-    const prepared = await (context.prepareCompletionPackageForRun ?? prepareCompletionPackage)(
-      runId,
-      {
-        diffStat,
-        reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
-        publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
-        ...(options.stampFreshReviews
-          ? {
-              selectedEvidenceKeys: options.reviewedPackage?.selectedEvidenceKeys,
-              priorEvidenceManifest: options.reviewedPackage?.evidenceManifest,
-              stampReviews: false,
-            }
-          : {}),
-        requireArtifactMirror: true,
-      },
-    );
-    if (options.stampFreshReviews) {
-      stampFreshReviewsForPreparedPackage(runId, result.reviewIds, prepared.prPackage);
-    }
+  const diffStat = await context.getDiffStat(getRun(runId)!);
+  const prepared = await (context.prepareCompletionPackageForRun ?? prepareCompletionPackage)(
+    runId,
+    {
+      diffStat,
+      reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
+      publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
+      ...(options.stampFreshReviews
+        ? {
+            selectedEvidenceKeys: options.reviewedPackage?.selectedEvidenceKeys,
+            priorEvidenceManifest: options.reviewedPackage?.evidenceManifest,
+            stampReviews: false,
+          }
+        : {}),
+      requireArtifactMirror: true,
+    },
+  );
+  if (options.stampFreshReviews) {
+    stampFreshReviewsForPreparedPackage(runId, result.reviewIds, prepared.prPackage);
   }
   return completedReviewCount;
 }

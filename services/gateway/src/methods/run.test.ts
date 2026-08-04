@@ -167,6 +167,38 @@ test('runResolveDecision clears a prior launch rejection after successful gate r
   assert.ok(persisted.decisions[0]?.resolvedAt);
 });
 
+test('runResolveDecision retains a launch rejection for non-review gate actions', async (t) => {
+  const rejection = {
+    code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED' as const,
+    message: 'A prior review request was refused.',
+    userAction: 'Commit the validated fixes, then request re-review.',
+    rejectedAt: '2026-08-03T00:00:00.000Z',
+  };
+  const run = createRun({
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-REVIEW-HOLD-REJECTION',
+    runner: 'claude',
+    slotId: 'test-review-decision-slot',
+    engineState: { publishGate: { reviewLaunchRejection: rejection } },
+  });
+  const decision: RunDecision = {
+    id: 'review-decision-hold',
+    type: 'engine_human_gate',
+    title: 'Publication gate',
+    description: 'Hold publication',
+    actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+    createdAt: '2026-08-03T00:00:00.000Z',
+  };
+  updateRun(run.id, { status: 'done', decisions: [decision] });
+  t.after(async () => deleteRun(run.id));
+
+  await runResolveDecision({ runId: run.id, decisionId: decision.id, actionId: 'hold' }, () => {});
+
+  assert.deepEqual(getRun(run.id)?.engineState?.publishGate?.reviewLaunchRejection, rejection);
+});
+
 function makeReadyGatePackage(overrides: Partial<ReadyGatePrPackage> = {}): ReadyGatePrPackage {
   const packageWithoutHash: Omit<ReadyGatePrPackage, 'packageHash'> = {
     id: overrides.id ?? 'pkg-test',
