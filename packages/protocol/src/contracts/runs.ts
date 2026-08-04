@@ -321,6 +321,8 @@ export interface IndependentReviewStatus {
   validationDepth?: ReviewValidationDepth;
   usage?: RunnerSessionUsage;
   feedbackSent?: boolean;
+  /** Restart recovery explicitly owes this review a worker fix/re-review continuation. */
+  recoveryContinuationPending?: boolean;
   attempts?: IndependentReviewAttempt[];
   artifactPaths?: string[];
   taskProgressArtifactPath?: string;

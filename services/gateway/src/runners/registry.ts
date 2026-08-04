@@ -1463,6 +1463,7 @@ export async function runnerHasDurablePromptHandoff(
     launchAckSignalPath?: string | null;
     launchAckBaseline?: LaunchAckSignalSnapshot | null;
     requirePromptDigest?: boolean;
+    acceptExistingLaunchAck?: boolean;
     promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
@@ -1474,6 +1475,7 @@ export async function runnerHasDurablePromptHandoff(
     launchAckSignalPath: opts.launchAckSignalPath,
     launchAckBaseline: opts.launchAckBaseline,
     requirePromptDigest: opts.requirePromptDigest,
+    acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
     preferHooks: !usesNativePromptAcceptance,
   });
   if (handoff.accepted) {
@@ -1536,14 +1538,20 @@ async function runnerShowsPromptDeliveryAccepted(
     launchAckSignalPath?: string | null;
     launchAckBaseline?: LaunchAckSignalSnapshot | null;
     requirePromptDigest?: boolean;
+    acceptExistingLaunchAck?: boolean;
     promptAcceptanceBaselineMs?: number | null;
   } = {},
 ): Promise<boolean> {
-  if (
-    (await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, opts)).accepted
-  ) {
+  const handoff = await runnerHasDurablePromptHandoff(vars, target, runner, message, sinceMs, opts);
+  if (handoff.accepted) {
     return true;
   }
+  // Digest-required callers (review/fix delivery) explicitly opted into the
+  // runner capability contract. Cosmetic pane output is not acceptance: an
+  // unsubmitted Claude composer can contain both the full prompt and a later
+  // `❯` status line. Keep pane fallback only for callers that did not request
+  // exact runner acknowledgement.
+  if (opts.requirePromptDigest) return false;
   return runnerPaneShowsPromptAccepted(postPane, previousPane, message, marker, runner);
 }
 
@@ -2225,6 +2233,7 @@ export async function sendRunnerPostLaunchPrompt(
     launchAckBaseline?: LaunchAckSignalSnapshot | null;
     promptAcceptanceBaselineMs?: number | null;
     requirePromptDigest?: boolean;
+    acceptExistingLaunchAck?: boolean;
     softAcceptOnHandoffAck?: boolean;
     handoffAckSinceMs?: number;
     /** Bound provider subscription label for typed usage-limit errors. */
@@ -2683,6 +2692,7 @@ export async function sendRunnerPostLaunchPrompt(
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
+        acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
         promptAcceptanceBaselineMs,
       },
     );
@@ -2718,6 +2728,7 @@ export async function sendRunnerPostLaunchPrompt(
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
+        acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
         promptAcceptanceBaselineMs,
       },
     );
@@ -2792,6 +2803,7 @@ export async function sendRunnerPostLaunchPrompt(
           launchAckSignalPath: opts.launchAckSignalPath,
           launchAckBaseline,
           requirePromptDigest,
+          acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
           promptAcceptanceBaselineMs,
         },
       )
@@ -2854,6 +2866,7 @@ export async function sendRunnerPostLaunchPrompt(
         launchAckSignalPath: opts.launchAckSignalPath,
         launchAckBaseline,
         requirePromptDigest,
+        acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
         promptAcceptanceBaselineMs,
       },
     );

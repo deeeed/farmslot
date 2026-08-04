@@ -37,6 +37,8 @@ export interface AgentContext {
   signalFile?: string | null;
   /** Artifact directory scope owned by this reviewer attempt (for restart recovery). */
   artifactScope?: string | null;
+  /** Review loop that owns the persisted launch snapshot. */
+  reviewLoopNumber?: number | null;
   runner?: string | null;
   model?: string | null;
   target?: AgentContextTarget | null;

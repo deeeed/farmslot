@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Run, RunStep, SubStepRecord } from '@farmslot/protocol';
 
 import {
+  hasPendingPublicationReviewContinuation,
   hasRecoverablePublicationReviewer,
   prepareSubstepsShowCompletion,
   recoverActiveRuns,
@@ -53,6 +54,98 @@ test('hasRecoverablePublicationReviewer ignores an already-ingested completed co
       engineState: { publishGate: { independentReviews: [] } },
     }),
     true,
+  );
+
+  assert.equal(
+    hasRecoverablePublicationReviewer({
+      ...run,
+      agentContexts: [{ ...context, status: 'failed' }],
+      engineState: {
+        publishGate: {
+          independentReviews: [
+            {
+              ...run.engineState!.publishGate!.independentReviews![0]!,
+              verdict: 'failed',
+              unresolvedCount: 0,
+              feedbackSent: false,
+            },
+          ],
+        },
+      },
+    }),
+    false,
+  );
+});
+
+test('hasPendingPublicationReviewContinuation requires the explicit recovery marker', () => {
+  const run = minimalActiveRun({
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-1',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+            recoveryContinuationPending: true,
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(hasPendingPublicationReviewContinuation(run), true);
+  run.engineState!.publishGate!.independentReviews![0]!.recoveryContinuationPending = false;
+  assert.equal(hasPendingPublicationReviewContinuation(run), false);
+});
+
+test('a later passing review supersedes an older pending continuation', () => {
+  const run = minimalActiveRun({
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-3',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 3,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+            recoveryContinuationPending: true,
+          },
+          {
+            id: 'independent-review-4',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 4,
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(hasPendingPublicationReviewContinuation(run), false);
+  assert.equal(
+    hasRecoverablePublicationReviewer({
+      ...run,
+      agentContexts: [
+        {
+          id: 'rev-old',
+          role: 'self-review',
+          label: 'Reviewer',
+          status: 'complete',
+          slotId: 'slot-1',
+          runId: run.id,
+          artifactScope: 'independent-review-3',
+        },
+      ],
+    }),
+    false,
   );
 });
 
@@ -470,6 +563,40 @@ test('recovery holds a blocked human gate while its reviewer is still in flight'
   assert.equal(calls.reconciled, 0);
   assert.equal(calls.broadcasted, 0);
   assert.deepEqual(calls.replayed, []);
+});
+
+test('recovery immediately replays a persisted review continuation', async () => {
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-REVIEW-CONTINUATION',
+    familyRootTicketOrPr: 'RECOVERY-REVIEW-CONTINUATION',
+    taskFile: '/tmp/farmslot-recovery-review-continuation/TASK.md',
+    status: 'blocked',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [humanGateDecision('gate-review-continuation')],
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-1',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 1,
+            verdict: 'issues',
+            unresolvedCount: 1,
+            issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+            recoveryContinuationPending: true,
+          },
+        ],
+      },
+    },
+  });
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(calls.replayed, [run.id]);
+  assert.deepEqual(calls.rearmed, []);
+  assert.equal(calls.reconciled, 0);
 });
 
 test('recovery holds a human-gating run while its reviewer is still in flight', async () => {

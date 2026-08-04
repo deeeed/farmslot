@@ -3,6 +3,7 @@
 import path from 'node:path';
 
 import {
+  type AgentContext,
   allocateReviewerContext,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
@@ -17,6 +18,7 @@ import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
   ensureTmuxWindowMinimumSize,
+  resolveExactTmuxWindowPane,
   resolveTmuxSession,
   respawnTmuxWindowWithCommand,
   shellQuote,
@@ -77,6 +79,7 @@ import {
   debugSelfReviewLog,
   durationBetween,
   killSelfReviewWindow,
+  readPersistedReviewSnapshot,
   removeSlotFiles,
   reviewArtifactDir,
   type ReviewSessionMeta,
@@ -125,6 +128,123 @@ export function reviewerFeedbackRelPath(contextId: string): string {
   return `artifacts/review-feedback.${contextId}.md`;
 }
 
+export function selectRecoverableReviewContext(
+  contexts: readonly AgentContext[],
+  params: { taskDir: string; runner: string; artifactScope?: string | null },
+): AgentContext | null {
+  const expectedScope = params.artifactScope?.trim() || null;
+  return (
+    [...contexts].reverse().find((context) => {
+      const contextScope = context.artifactScope?.trim() || null;
+      return (
+        context.role === 'self-review' &&
+        (context.status === 'working' || context.status === 'launching') &&
+        context.runner === params.runner &&
+        contextScope === expectedScope &&
+        !!context.taskFile &&
+        path.posix.dirname(context.taskFile) === params.taskDir &&
+        !!context.target?.target
+      );
+    }) ?? null
+  );
+}
+
+interface ReviewPromptRecoveryDependencies {
+  resolveExactTmuxWindowPane: typeof resolveExactTmuxWindowPane;
+  isRunnerAliveUnderPane: typeof isRunnerAliveUnderPane;
+  resolveWorkerDispatchPrompt: typeof resolveWorkerDispatchPrompt;
+  resolveProjectRuntimeDir: typeof resolveProjectRuntimeDir;
+  sendRunnerPostLaunchPrompt: typeof sendRunnerPostLaunchPrompt;
+}
+
+const defaultReviewPromptRecoveryDependencies: ReviewPromptRecoveryDependencies = {
+  resolveExactTmuxWindowPane,
+  isRunnerAliveUnderPane,
+  resolveWorkerDispatchPrompt,
+  resolveProjectRuntimeDir,
+  sendRunnerPostLaunchPrompt,
+};
+
+/**
+ * Re-assert the exact checklist prompt for a reviewer that survived a gateway
+ * restart. The shared delivery adapter proves accepted/running/buffered state,
+ * so this submits a buffered prompt or no-ops on accepted work without opening
+ * another reviewer window.
+ */
+export async function resumeReviewAgentPromptDelivery(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runId: string,
+  context: Pick<
+    AgentContext,
+    'id' | 'runner' | 'taskFile' | 'signalFile' | 'target' | 'attemptStartedAt' | 'startedAt'
+  >,
+  dependencyOverrides: Partial<ReviewPromptRecoveryDependencies> = {},
+): Promise<'delivered' | 'inactive' | 'unsupported'> {
+  const dependencies = {
+    ...defaultReviewPromptRecoveryDependencies,
+    ...dependencyOverrides,
+  };
+  const target = context.target?.target;
+  const taskMdPath = context.taskFile;
+  const runner = context.runner;
+  if (!target || !taskMdPath || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
+    return 'unsupported';
+  }
+  const pane = await dependencies.resolveExactTmuxWindowPane(vars, target);
+  if (!pane) return 'inactive';
+  if (
+    !(await dependencies.isRunnerAliveUnderPane(vars, pane.panePid, runner, { timeout: 10_000 }))
+  ) {
+    return 'inactive';
+  }
+
+  const taskDir = path.posix.dirname(taskMdPath);
+  const reviewTarget = targetForChecklistBasename(path.posix.basename(taskMdPath));
+  const feedbackRelPath = reviewerFeedbackRelPath(context.id);
+  const parentRun = getRun(runId);
+  const prompt = `${await dependencies.resolveWorkerDispatchPrompt(
+    parentRun?.project ?? vars.projectName,
+    {
+      taskFile: taskMdPath,
+      taskDir,
+    },
+  )}\n\n${selfReviewChecklistMarkPrompt(taskDir, taskMdPath, reviewTarget, feedbackRelPath)}`;
+  const attemptStartedAtMs = Date.parse(context.attemptStartedAt ?? context.startedAt ?? '');
+  const baselineMs = Number.isFinite(attemptStartedAtMs) ? attemptStartedAtMs : Date.now();
+  const runtimeDir = await dependencies.resolveProjectRuntimeDir(parentRun?.project);
+  await dependencies.sendRunnerPostLaunchPrompt(
+    vars,
+    pane.paneId,
+    runner,
+    prompt,
+    reviewTarget.checklist,
+    'self-review-recovery',
+    {
+      readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
+      maxAttempts: 5,
+      blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-recovery.txt`,
+      signalPath: context.signalFile ?? taskDirRelPath(taskDir, reviewTarget.signal),
+      launchAckSignalPath: context.signalFile ?? taskDirRelPath(taskDir, reviewTarget.signal),
+      promptAcceptanceBaselineMs: baselineMs,
+      requirePromptDigest: true,
+      acceptExistingLaunchAck: true,
+      handoffAckSinceMs: baselineMs,
+      softAcceptOnHandoffAck: true,
+      runtimeDir,
+    },
+  );
+  return 'delivered';
+}
+
+export async function waitForRecoveredReviewerOrCleanup(
+  waitForCompletion: () => Promise<boolean>,
+  abandonRecoveredReviewer: (reason: string) => Promise<unknown>,
+): Promise<boolean> {
+  if (await waitForCompletion()) return true;
+  await abandonRecoveredReviewer('recovered reviewer timeout');
+  return false;
+}
+
 export function scopeReviewFeedbackPath(template: string, feedbackRelPath: string): string {
   const scoped = template
     .replace(
@@ -156,6 +276,256 @@ export interface ReviewAgentResult {
   incomplete?: boolean; // true when feedback file was never written (agent didn't finish)
 }
 
+async function persistReviewOutputArtifacts(params: {
+  vars: Awaited<ReturnType<typeof loadSlotVars>>;
+  taskDir: string;
+  taskMdPath: string;
+  signalBasename: string;
+  feedbackRelPath: string;
+  artifactDir: string;
+  feedbackIncomplete: boolean;
+}): Promise<{ artifactPaths: string[]; taskProgressArtifactPath: string }> {
+  const {
+    vars,
+    taskDir,
+    taskMdPath,
+    signalBasename,
+    feedbackRelPath,
+    artifactDir,
+    feedbackIncomplete,
+  } = params;
+  const persistedArtifacts: string[] = [];
+  const taskProgressRel = `${artifactDir}/self-review.md`;
+  const taskProgressDest = `${vars.remoteRepo}/${taskDir}/${taskProgressRel}`;
+  const taskProgressCopy = await execOnSlot(
+    vars,
+    `mkdir -p ${shellQuote(path.posix.dirname(taskProgressDest))} && cp ${shellQuote(`${vars.remoteRepo}/${taskMdPath}`)} ${shellQuote(taskProgressDest)}`,
+    { timeout: 10_000 },
+  );
+  if (taskProgressCopy.exitCode !== 0) {
+    throw new Error(
+      `Failed to persist self-review progress artifact: ${taskProgressCopy.stderr || taskProgressCopy.stdout || `exit ${taskProgressCopy.exitCode}`}`,
+    );
+  }
+  persistedArtifacts.push(taskProgressRel);
+
+  const signalRel = `${artifactDir}/self-review-signal.json`;
+  const liveSignalPath = slotTaskRelPath(vars, taskDir, signalBasename);
+  const signalCopy = await execOnSlot(
+    vars,
+    `if [ -f ${shellQuote(liveSignalPath)} ]; then cp ${shellQuote(liveSignalPath)} ${shellQuote(`${vars.remoteRepo}/${taskDir}/${signalRel}`)} && echo copied; fi`,
+    { timeout: 10_000 },
+  );
+  if (signalCopy.exitCode !== 0) {
+    throw new Error(
+      `Failed to persist self-review signal artifact: ${signalCopy.stderr || signalCopy.stdout || `exit ${signalCopy.exitCode}`}`,
+    );
+  }
+  if (signalCopy.stdout.trim() === 'copied') persistedArtifacts.push(signalRel);
+
+  if (!feedbackIncomplete) {
+    const feedbackRel = `${artifactDir}/review-feedback.md`;
+    const feedbackSrc = `${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`;
+    const feedbackDest = `${vars.remoteRepo}/${taskDir}/${feedbackRel}`;
+    const feedbackCopy = await execOnSlot(
+      vars,
+      `mkdir -p ${shellQuote(path.posix.dirname(feedbackDest))} && cp ${shellQuote(feedbackSrc)} ${shellQuote(feedbackDest)}`,
+      { timeout: 10_000 },
+    );
+    if (feedbackCopy.exitCode !== 0) {
+      throw new Error(
+        `Failed to persist self-review feedback artifact: ${feedbackCopy.stderr || feedbackCopy.stdout || `exit ${feedbackCopy.exitCode}`}`,
+      );
+    }
+    persistedArtifacts.push(feedbackRel);
+  }
+
+  return {
+    artifactPaths: persistedArtifacts,
+    taskProgressArtifactPath: `${taskDir}/${taskProgressRel}`,
+  };
+}
+
+async function recoverRunningReviewAgent(params: {
+  vars: Awaited<ReturnType<typeof loadSlotVars>>;
+  runner: string;
+  model: string;
+  taskDir: string;
+  slotId: string;
+  runId: string;
+  session: string;
+  reviewTimeoutMs: number;
+  loopNumber: number;
+  validationDepth: ReviewValidationDepth;
+  artifactScope?: string | null;
+}): Promise<ReviewAgentResult | null> {
+  const run = getRun(params.runId);
+  const context = selectRecoverableReviewContext(run?.agentContexts ?? [], params);
+  if (
+    !context?.target?.target ||
+    !context.target.window ||
+    !context.taskFile ||
+    !context.signalFile
+  )
+    return null;
+
+  const abandonRecoveredReviewer = async (reason: string): Promise<null> => {
+    await markAgentContextStatus(params.runId, 'self-review', 'failed', { id: context.id });
+    try {
+      await killSelfReviewWindow(params.vars, params.session, reason, context.target?.window);
+    } catch (error) {
+      console.warn(
+        `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} cleanup failed: ${(error as Error).message}`,
+      );
+    }
+    return null;
+  };
+
+  const pane = await resolveExactTmuxWindowPane(params.vars, context.target.target);
+  if (
+    !pane ||
+    !(await isRunnerAliveUnderPane(params.vars, pane.panePid, params.runner, { timeout: 10_000 }))
+  ) {
+    return abandonRecoveredReviewer('inactive recovered reviewer cleanup');
+  }
+
+  debugSelfReviewLog(
+    `[self-review] run ${params.runId.slice(0, 8)} — reclaiming active reviewer ${context.id} after restart`,
+  );
+  const recoveredLoopNumber = context.reviewLoopNumber ?? params.loopNumber;
+  const recoveredArtifactScope = context.artifactScope ?? params.artifactScope;
+  const reviewSnapshot = await readPersistedReviewSnapshot(
+    params.vars,
+    params.taskDir,
+    recoveredLoopNumber,
+    recoveredArtifactScope,
+  );
+  if (!reviewSnapshot) {
+    console.warn(
+      `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} has no valid launch snapshot; starting a fresh review`,
+    );
+    return abandonRecoveredReviewer('snapshot-less recovered reviewer cleanup');
+  }
+  try {
+    const delivery = await resumeReviewAgentPromptDelivery(params.vars, params.runId, context);
+    if (delivery !== 'delivered') {
+      console.warn(
+        `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} is ${delivery}; starting a fresh review`,
+      );
+      return abandonRecoveredReviewer('unsupported recovered reviewer cleanup');
+    }
+  } catch (error) {
+    console.warn(
+      `[self-review] run ${params.runId.slice(0, 8)} — recovered reviewer ${context.id} prompt recovery failed: ${(error as Error).message}`,
+    );
+    return abandonRecoveredReviewer('failed recovered reviewer prompt cleanup');
+  }
+  updateRun(params.runId, { activeTaskFile: context.taskFile });
+  const reviewWindow = context.target.window;
+  const signalBasename = path.posix.basename(context.signalFile);
+  const feedbackRelPath = reviewerFeedbackRelPath(context.id);
+  const watcher = startProgressWatcher(params.vars, context.taskFile, params.runId, 'Review', {
+    contextId: context.id,
+    role: 'self-review',
+  });
+  let completedSuccessfully = false;
+  try {
+    const completed = await waitForRecoveredReviewerOrCleanup(
+      () =>
+        waitForReviewCompletion(
+          params.vars,
+          params.session,
+          params.taskDir,
+          params.reviewTimeoutMs,
+          params.runId,
+          params.runner,
+          reviewWindow,
+          context.id,
+          signalBasename,
+          feedbackRelPath,
+        ),
+      abandonRecoveredReviewer,
+    );
+    if (!completed) return null;
+    const feedback = await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath);
+    await waitForSessionTranscriptToSettle(params.vars, context.runnerSessionPath ?? null);
+    const usage = context.runnerSessionPath
+      ? await extractRunnerSessionUsage({
+          slotId: params.slotId,
+          vars: params.vars,
+          runner: params.runner,
+          runnerSessionId: context.runnerSessionId ?? null,
+          runnerSessionPath: context.runnerSessionPath,
+        })
+      : unavailableRunnerSessionUsage({
+          runner: params.runner,
+          runnerSessionId: context.runnerSessionId ?? null,
+          runnerSessionPath: context.runnerSessionPath ?? null,
+          error: 'Recovered reviewer has no persisted runner session path.',
+        });
+    const persisted = await persistReviewOutputArtifacts({
+      vars: params.vars,
+      taskDir: params.taskDir,
+      taskMdPath: context.taskFile,
+      signalBasename,
+      feedbackRelPath,
+      artifactDir: reviewArtifactDir(recoveredLoopNumber, recoveredArtifactScope),
+      feedbackIncomplete: feedback.incomplete ?? false,
+    });
+    const startedAt = context.attemptStartedAt ?? context.startedAt ?? new Date().toISOString();
+    const completedAt = new Date().toISOString();
+    completedSuccessfully = true;
+    return {
+      ...feedback,
+      validationDepth: params.validationDepth,
+      usage,
+      reviewSnapshot: reviewSnapshot.snapshot,
+      artifactPaths: [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths],
+      taskProgressArtifactPath: persisted.taskProgressArtifactPath,
+      timeline: [
+        {
+          kind: recoveredLoopNumber > 1 ? 're-review' : 'review',
+          loopNumber: recoveredLoopNumber,
+          runner: params.runner,
+          model: params.model,
+          startedAt,
+          completedAt,
+          durationMs: durationBetween(startedAt, completedAt),
+          verdict: feedback.verdict === 'pass' ? 'pass' : 'issues',
+          unresolvedCount: feedback.verdict === 'pass' ? 0 : feedback.issues.length,
+          artifactPaths: [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths],
+        },
+      ],
+      startedAt,
+      completedAt,
+    };
+  } finally {
+    watcher.stop();
+    await unwatchContext(params.slotId, context.id);
+    updateRun(params.runId, { activeTaskFile: undefined });
+    const latest = getRun(params.runId);
+    await restoreWorkerChecklistTargetFromSlot(
+      params.vars,
+      params.taskDir,
+      latest ? { flowType: latest.flowType, mode: latest.mode ?? undefined } : undefined,
+    );
+    if (completedSuccessfully) {
+      try {
+        await killSelfReviewWindow(
+          params.vars,
+          params.session,
+          'post-recovery cleanup',
+          reviewWindow,
+        );
+      } catch (cleanupErr) {
+        console.warn(
+          `[self-review] recovered reviewer cleanup failed: ${(cleanupErr as Error).message}`,
+        );
+      }
+    }
+  }
+}
+
 export async function runReviewAgent(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
@@ -170,6 +540,20 @@ export async function runReviewAgent(
   sessionPolicy: ReviewSessionPolicy = DEFAULT_REVIEW_SESSION_POLICY,
 ): Promise<ReviewAgentResult> {
   const session = await resolveTmuxSession(vars.slotId, vars);
+  const recovered = await recoverRunningReviewAgent({
+    vars,
+    runner,
+    model,
+    taskDir,
+    slotId: _slotId,
+    runId: _runId,
+    session,
+    reviewTimeoutMs,
+    loopNumber,
+    validationDepth,
+    artifactScope,
+  });
+  if (recovered) return recovered;
   const startedAt = new Date().toISOString();
   const reviewSnapshot = await captureReviewSnapshot(vars, taskDir, loopNumber, artifactScope);
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
@@ -222,6 +606,7 @@ export async function runReviewAgent(
     taskFile: taskDirRelPath(taskDir, reviewChecklistTarget.checklist),
     signalFile: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
     artifactScope: artifactScope ?? null,
+    reviewLoopNumber: loopNumber,
     runner,
     model,
     target: null,
@@ -420,6 +805,7 @@ export async function runReviewAgent(
               maxAttempts: 5,
               blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
               signalPath,
+              launchAckSignalPath: signalPath,
               promptAcceptanceBaselineMs,
               requirePromptDigest: true,
               handoffAckSinceMs,
@@ -550,58 +936,23 @@ export async function runReviewAgent(
         });
       }
     }
-    const persistedArtifacts: string[] = [];
-    const taskProgressRel = `${artifactDir}/self-review.md`;
-    const taskProgressCopy = await execOnSlot(
+    const persisted = await persistReviewOutputArtifacts({
       vars,
-      `mkdir -p ${shellQuote(path.posix.dirname(`${vars.remoteRepo}/${taskDir}/${taskProgressRel}`))} && cp ${shellQuote(`${vars.remoteRepo}/${taskMdPath}`)} ${shellQuote(`${vars.remoteRepo}/${taskDir}/${taskProgressRel}`)}`,
-      { timeout: 10_000 },
-    );
-    if (taskProgressCopy.exitCode !== 0) {
-      throw new Error(
-        `Failed to persist self-review progress artifact: ${taskProgressCopy.stderr || taskProgressCopy.stdout || `exit ${taskProgressCopy.exitCode}`}`,
-      );
-    }
-    persistedArtifacts.push(taskProgressRel);
-
-    const signalRel = `${artifactDir}/self-review-signal.json`;
-    const liveSignalPath = slotTaskRelPath(vars, taskDir, reviewChecklistTarget.signal);
-    const signalCopy = await execOnSlot(
-      vars,
-      `if [ -f ${shellQuote(liveSignalPath)} ]; then cp ${shellQuote(liveSignalPath)} ${shellQuote(`${vars.remoteRepo}/${taskDir}/${signalRel}`)} && echo copied; fi`,
-      { timeout: 10_000 },
-    );
-    if (signalCopy.exitCode !== 0) {
-      throw new Error(
-        `Failed to persist self-review signal artifact: ${signalCopy.stderr || signalCopy.stdout || `exit ${signalCopy.exitCode}`}`,
-      );
-    }
-    if (signalCopy.stdout.trim() === 'copied') persistedArtifacts.push(signalRel);
-
-    if (!feedback.incomplete) {
-      const feedbackRel = `${artifactDir}/review-feedback.md`;
-      const feedbackSrc = `${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`;
-      const feedbackDest = `${vars.remoteRepo}/${taskDir}/${feedbackRel}`;
-      const feedbackCopy = await execOnSlot(
-        vars,
-        `mkdir -p ${shellQuote(path.posix.dirname(feedbackDest))} && cp ${shellQuote(feedbackSrc)} ${shellQuote(feedbackDest)}`,
-        { timeout: 10_000 },
-      );
-      if (feedbackCopy.exitCode !== 0) {
-        throw new Error(
-          `Failed to persist self-review feedback artifact: ${feedbackCopy.stderr || feedbackCopy.stdout || `exit ${feedbackCopy.exitCode}`}`,
-        );
-      }
-      persistedArtifacts.push(feedbackRel);
-    }
+      taskDir,
+      taskMdPath,
+      signalBasename: reviewChecklistTarget.signal,
+      feedbackRelPath,
+      artifactDir,
+      feedbackIncomplete: feedback.incomplete ?? false,
+    });
     const completedAt = new Date().toISOString();
     return {
       ...feedback,
       validationDepth,
       usage,
       reviewSnapshot: reviewSnapshot.snapshot,
-      artifactPaths: [...reviewSnapshot.artifactPaths, ...persistedArtifacts],
-      taskProgressArtifactPath: `${taskDir}/${taskProgressRel}`,
+      artifactPaths: [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths],
+      taskProgressArtifactPath: persisted.taskProgressArtifactPath,
       timeline: [
         {
           kind: loopNumber > 1 ? 're-review' : 'review',
@@ -613,7 +964,7 @@ export async function runReviewAgent(
           durationMs: durationBetween(startedAt, completedAt),
           verdict: feedback.verdict === 'pass' ? 'pass' : 'issues',
           unresolvedCount: feedback.verdict === 'pass' ? 0 : feedback.issues.length,
-          artifactPaths: [...reviewSnapshot.artifactPaths, ...persistedArtifacts],
+          artifactPaths: [...reviewSnapshot.artifactPaths, ...persisted.artifactPaths],
         },
       ],
       startedAt,

@@ -4,12 +4,19 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Fix publication gate restart recovery so a later passing review supersedes older continuation markers, recovered reviewer timeouts are terminated instead of duplicated, and gate summaries keep new snapshot-less failures without reviving historical findings.
+
+- fix(run-engine): reclaim the exact surviving reviewer after a gateway restart, resume its fix/re-review continuation without failing the run when delivery is temporarily unavailable, and deduplicate terminal verdict recovery.
+- fix(run-engine): clear completed reviewer progress when the publication gate is waiting for its operator decision.
+- fix(run-engine): settle superseded reviewer contexts, close their retained tmux windows, and only replace failed review records explicitly marked for late recovery.
+- fix(runners): require exact runner or task-scoped acknowledgement for review prompts, accepting an unchanged task signal only during explicit restart recovery.
 - fix(runs): cancellation now sets a write-ahead backlog repair marker before publication, blocks archive/delete until the durable settle clears it, retries archive scans invalidated mid-read, and retains a live run when source-file unlink fails.
 - fix(run): `run.cancel` returns the transitioned snapshot instead of re-reading the live map. The router publishes `cancelled` before teardown finishes, so another client can archive or delete the run while effects are still running — the re-read could return undefined and the `backlogReconcilePending` write could throw, losing the repair marker.
 - fix(run): an interactive-dev abort reports incomplete teardown through the result's existing `reason` field. Spreading the cancel result leaked `effects` outside the declared union, so the UI saw a bare `ok: true` and ignored a partially applied abort.
 - fix(tasks): `checklistNumberingMismatches` reports suffixed labels such as `17a.` instead of skipping them. Matching digits only meant an inserted sub-step was invisible and the drift surfaced a row later, at the first purely numeric label — which is exactly how a checklist silently desynchronises from the positions `mark N` targets.
 - fix(chat): the co-pilot `cancel_run` tool and the confirmed-action path report `partiallyApplied` with the failed effects instead of an unqualified success, so an operator is never told a cancel landed while a slot is still claimed.
 - fix(runs): `archiveRun` evicts from the live map only after the archive copy is durable; a failed write previously dropped the run from memory until the next restart re-read it from the still-present source file.
+- fix(ready-gate): make stale publish-package errors respect zero-review policy instead of incorrectly demanding another review.
 - feat(git): worktree branch diffs flag each file's committed state via an extra merge-base..HEAD listing.
 - fix(decisions): project stored run decisions into the full websocket decision contract before broadcasting new or updated events, so Companion no longer reloads the entire decision inbox after every event and surfaces false request-timeout warnings.
 

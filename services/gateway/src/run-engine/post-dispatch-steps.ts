@@ -56,6 +56,7 @@ import {
   shouldPrepareLocalFirstPackage,
 } from './publication-policy.js';
 import { verifyWorkerPushedBranch } from './push-verification.js';
+import { resumeInterruptedPublicationReview } from './ready-gate.js';
 import { recoverInflightPublicationReviews } from './recover-inflight-reviews.js';
 import {
   automaticPublicationReviewPlan,
@@ -110,6 +111,7 @@ export interface PostDispatchStepContext {
   ) => Promise<boolean>;
   monitorTerminalError: (args: MonitorTerminalErrorArgs) => Error;
   executeSelfReviewForRun?: typeof executeSelfReview;
+  resumeInterruptedPublicationReviewForRun?: typeof resumeInterruptedPublicationReview;
   probeWorkerSignalForRun?: typeof probeWorkerSignalForRun;
   refreshRunLinks: (runId: string) => Promise<void>;
   stepPartialIO: Map<string, StepIO>;
@@ -712,14 +714,20 @@ export async function executeHumanGateStep(
       // review's await abandons the completed reviewer's result. Re-entering the
       // human gate, ingest any finished-but-lost reviews before re-presenting so
       // a completed review is never silently discarded.
+      let recoveredReviewIds: string[] = [];
       if (current.slotId) {
-        const recovered = await recoverInflightPublicationReviews(runId, current.slotId);
-        if (recovered.length) {
+        recoveredReviewIds = await recoverInflightPublicationReviews(runId, current.slotId);
+        if (recoveredReviewIds.length) {
           console.log(
-            `[run-engine] run ${runId.slice(0, 8)} — recovered ${recovered.length} in-flight publication review(s) after restart`,
+            `[run-engine] run ${runId.slice(0, 8)} — recovered ${recoveredReviewIds.length} in-flight publication review(s) after restart`,
           );
         }
       }
+      const resumedInterruptedReview = current.slotId
+        ? await (
+            context.resumeInterruptedPublicationReviewForRun ?? resumeInterruptedPublicationReview
+          )(runId, current.slotId)
+        : null;
       const beforeInitialPlan = getRun(runId)!;
       const explicitInitialPlan =
         beforeInitialPlan.engineState?.publishGate?.pendingReviewPlan ?? [];
@@ -763,26 +771,31 @@ export async function executeHumanGateStep(
       // the durable pending plan was cleared. Execute only the still-missing
       // portion; otherwise every restart launches another already-satisfied
       // reviewer (and a two-loop plan can replay loop one twice).
-      const initialPlan = unconsumedReviewDecision
-        ? remainingExplicitReviewPlan(fromUnconsumed, reviewsForInitial, {
-            requestedAt: unconsumedReviewDecision?.resolvedAt,
-            source: 'human-gate',
-          })
-        : explicitInitialPlan.length
-          ? remainingExplicitReviewPlan(explicitInitialPlan, reviewsForInitial, {
-              requestedAt: beforeInitialPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt,
-              source:
-                beforeInitialPlan.engineState?.publishGate?.reviewDepth?.requestedBy ===
-                'human-gate'
-                  ? 'human-gate'
-                  : 'dispatch',
-            })
-          : automaticPublicationReviewPlan(
-              beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
-                publicationReviewPolicyForRun(beforeInitialPlan),
-              reviewsForInitial,
-              beforeInitialPlan.metrics.runner,
-            );
+      const initialPlan =
+        resumedInterruptedReview?.verdict !== undefined &&
+        resumedInterruptedReview.verdict !== 'pass'
+          ? []
+          : unconsumedReviewDecision
+            ? remainingExplicitReviewPlan(fromUnconsumed, reviewsForInitial, {
+                requestedAt: unconsumedReviewDecision?.resolvedAt,
+                source: 'human-gate',
+              })
+            : explicitInitialPlan.length
+              ? remainingExplicitReviewPlan(explicitInitialPlan, reviewsForInitial, {
+                  requestedAt:
+                    beforeInitialPlan.engineState?.publishGate?.pendingReviewPlanRequestedAt,
+                  source:
+                    beforeInitialPlan.engineState?.publishGate?.reviewDepth?.requestedBy ===
+                    'human-gate'
+                      ? 'human-gate'
+                      : 'dispatch',
+                })
+              : automaticPublicationReviewPlan(
+                  beforeInitialPlan.engineState?.publishGate?.reviewDepth ??
+                    publicationReviewPolicyForRun(beforeInitialPlan),
+                  reviewsForInitial,
+                  beforeInitialPlan.metrics.runner,
+                );
       const recoveredReviewDepth = unconsumedReviewDecision
         ? humanGateReviewDepth(
             replayBaseReviewDepth,
@@ -859,6 +872,26 @@ export async function executeHumanGateStep(
           publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
           requireArtifactMirror: true,
         });
+      } else if (recoveredReviewIds.length > 0 || resumedInterruptedReview) {
+        const beforeRefresh = await readReadyGatePreparedPackage(getRun(runId)!);
+        const diffStat = await getDiffStat(getRun(runId)!);
+        const prepared = await prepareCompletionPackage(runId, {
+          diffStat,
+          reviewDepth: getRun(runId)?.engineState?.publishGate?.reviewDepth,
+          publicationTarget: getRun(runId)?.engineState?.publishGate?.publicationTarget,
+          selectedEvidenceKeys: beforeRefresh?.selectedEvidenceKeys,
+          priorEvidenceManifest: beforeRefresh?.evidenceManifest,
+          stampReviews: false,
+          requireArtifactMirror: true,
+        });
+        stampFreshReviewsForPreparedPackage(
+          runId,
+          [
+            ...recoveredReviewIds,
+            ...(resumedInterruptedReview ? [resumedInterruptedReview.reviewId] : []),
+          ],
+          prepared.prPackage,
+        );
       }
     }
     let gateAction = await executeReadyGate(runId);

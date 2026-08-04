@@ -1,14 +1,57 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import type { AgentContext } from '@farmslot/protocol';
+
 import { targetForChecklistBasename } from '../tasks/checklist-target.js';
 
 import {
+  resumeReviewAgentPromptDelivery,
   reviewerChecklistBasename,
   reviewerFeedbackRelPath,
   scopeReviewFeedbackPath,
+  selectRecoverableReviewContext,
   selfReviewChecklistMarkPrompt,
+  waitForRecoveredReviewerOrCleanup,
 } from './review-agent.js';
+
+test('restart recovery reclaims only the newest matching in-flight reviewer', () => {
+  const context = (id: string, status: AgentContext['status'], scope: string | null) =>
+    ({
+      id,
+      role: 'self-review',
+      label: id,
+      status,
+      slotId: 'slot-1',
+      runId: 'run-1',
+      runner: 'claude',
+      taskFile: `tasks/run-1/SELF-REVIEW.${id}.md`,
+      signalFile: `tasks/run-1/SELF-REVIEW.${id}-SIGNAL.json`,
+      artifactScope: scope,
+      target: { session: 'ff-1', window: id, pane: null, target: `ff-1:${id}` },
+    }) satisfies AgentContext;
+  const contexts = [
+    context('rev-claude', 'working', 'independent-review-2'),
+    context('rev1-claude', 'complete', 'independent-review-2'),
+    { ...context('rev2-claude', 'working', 'independent-review-2'), reviewLoopNumber: 4 },
+  ];
+
+  const recovered = selectRecoverableReviewContext(contexts, {
+    taskDir: 'tasks/run-1',
+    runner: 'claude',
+    artifactScope: 'independent-review-2',
+  });
+  assert.equal(recovered?.id, 'rev2-claude');
+  assert.equal(recovered?.reviewLoopNumber, 4);
+  assert.equal(
+    selectRecoverableReviewContext(contexts, {
+      taskDir: 'tasks/run-1',
+      runner: 'claude',
+      artifactScope: null,
+    }),
+    null,
+  );
+});
 
 test('review agent instructions use context-scoped checklist, signal, and feedback files', () => {
   const checklist = reviewerChecklistBasename('rev-codex-2');
@@ -62,4 +105,53 @@ test('review agent does not rewrite a similarly named artifact directory', () =>
     scoped,
     'Keep my-artifacts/review-feedback.md; write artifacts/review-feedback.rev-codex.md, now.',
   );
+});
+
+test('review prompt recovery reuses the exact live reviewer pane', async () => {
+  const vars = {
+    projectName: 'farmslot-farm',
+  } as Parameters<typeof resumeReviewAgentPromptDelivery>[0];
+  let sentPane = '';
+  let sentPrompt = '';
+
+  const outcome = await resumeReviewAgentPromptDelivery(
+    vars,
+    'missing-run',
+    {
+      id: 'rev-claude',
+      runner: 'claude',
+      taskFile: 'tasks/run-1/SELF-REVIEW.rev-claude.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW.rev-claude-SIGNAL.json',
+      target: { session: 'ff-1', window: 'rev-claude', pane: null, target: 'ff-1:rev-claude' },
+      attemptStartedAt: '2026-08-03T16:00:00.000Z',
+    },
+    {
+      resolveExactTmuxWindowPane: async () => ({ paneId: '%22', panePid: '2002' }),
+      isRunnerAliveUnderPane: async () => true,
+      resolveWorkerDispatchPrompt: async () => 'Review the prepared package.',
+      resolveProjectRuntimeDir: async () => 'temp/recipe/runtime',
+      sendRunnerPostLaunchPrompt: async (_vars, paneId, _runner, prompt) => {
+        sentPane = paneId;
+        sentPrompt = prompt;
+      },
+    },
+  );
+
+  assert.equal(outcome, 'delivered');
+  assert.equal(sentPane, '%22');
+  assert.match(sentPrompt, /SELF-REVIEW\.rev-claude\.md/);
+  assert.match(sentPrompt, /review-feedback\.rev-claude\.md/);
+});
+
+test('review recovery timeout performs cleanup before allowing a fresh reviewer', async () => {
+  const cleanupReasons: string[] = [];
+  const completed = await waitForRecoveredReviewerOrCleanup(
+    async () => false,
+    async (reason) => {
+      cleanupReasons.push(reason);
+    },
+  );
+
+  assert.equal(completed, false);
+  assert.deepEqual(cleanupReasons, ['recovered reviewer timeout']);
 });

@@ -161,7 +161,7 @@ test('launch acknowledgement snapshot degrades to null when the evidence probe c
   assert.equal(snapshot, null);
 });
 
-test('task-scoped signal cannot replace exact prompt evidence when a digest is required', async () => {
+test('task-scoped signal must advance unless restart recovery accepts existing evidence', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'farmslot-launch-ack-probe-'));
   const signalPath = join(dir, 'SIGNAL.json');
   try {
@@ -183,7 +183,26 @@ test('task-scoped signal cannot replace exact prompt evidence when a digest is r
       preferHooks: false,
       requirePromptDigest: true,
     });
-    assert.equal(digestRequired.accepted, false);
+    assert.equal(digestRequired.accepted, true);
+    assert.equal(digestRequired.source, 'launch-signal');
+
+    const recovered = await probeRunnerHandoffAck(vars, 'unused', 'review prompt', NOW, {
+      launchAckSignalPath: signalPath,
+      launchAckBaseline: await readLaunchAckSignalSnapshot(vars, signalPath),
+      preferHooks: false,
+      requirePromptDigest: true,
+    });
+    assert.equal(recovered.accepted, false);
+
+    const restartRecovery = await probeRunnerHandoffAck(vars, 'unused', 'review prompt', NOW, {
+      launchAckSignalPath: signalPath,
+      launchAckBaseline: await readLaunchAckSignalSnapshot(vars, signalPath),
+      preferHooks: false,
+      requirePromptDigest: true,
+      acceptExistingLaunchAck: true,
+    });
+    assert.equal(restartRecovery.accepted, true);
+    assert.equal(restartRecovery.source, 'launch-signal');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

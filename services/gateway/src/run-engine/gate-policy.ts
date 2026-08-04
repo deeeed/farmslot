@@ -56,6 +56,35 @@ export function isPublishApprovalAction(actionId: string | null | undefined): bo
   return PUBLISH_APPROVAL_ACTIONS.has(actionId ?? '');
 }
 
+export function independentReviewNeedsContinuation(
+  review: Pick<
+    IndependentReviewStatus,
+    | 'source'
+    | 'verdict'
+    | 'feedbackSent'
+    | 'recoveryContinuationPending'
+    | 'unresolvedCount'
+    | 'issues'
+  >,
+): boolean {
+  return (
+    review.source !== 'self-review' &&
+    review.verdict === 'issues' &&
+    review.feedbackSent !== true &&
+    review.recoveryContinuationPending === true &&
+    review.unresolvedCount > 0 &&
+    (review.issues?.length ?? 0) > 0
+  );
+}
+
+/** Return the newest continuation that no later terminal review superseded. */
+export function pendingIndependentReviewContinuation(
+  reviews: readonly IndependentReviewStatus[],
+): IndependentReviewStatus | undefined {
+  const latest = [...reviews].reverse().find((review) => review.source !== 'self-review');
+  return latest && independentReviewNeedsContinuation(latest) ? latest : undefined;
+}
+
 export function isOwnPrApprovalError(err: unknown): boolean {
   const maybeRecord = err as { message?: unknown; stdout?: unknown; stderr?: unknown };
   const text = [maybeRecord?.message, maybeRecord?.stdout, maybeRecord?.stderr]
@@ -283,29 +312,33 @@ export function validatePackageApprovalSelection(
   preparedPackage: ReadyGatePrPackage,
   decision: RunDecision | undefined,
 ): void {
+  const refreshGuidance =
+    preparedPackage.reviewDepth && effectiveRequiredReviewCount(preparedPackage.reviewDepth) === 0
+      ? 'refresh package before publishing'
+      : 'refresh package and re-review before publishing';
+  const packageChanged = (detail: string): Error =>
+    new Error(`Package changed; ${refreshGuidance} (${detail})`);
   const selection = decision?.selectionData ?? {};
   const packageId = typeof selection.packageId === 'string' ? selection.packageId : '';
   const packageHash = typeof selection.packageHash === 'string' ? selection.packageHash : '';
   const packageHeadSha =
     typeof selection.packageHeadSha === 'string' ? selection.packageHeadSha : '';
   if (packageId !== preparedPackage.id) {
-    throw new Error(
-      `Package changed; refresh package and re-review before publishing (approved package ${packageId || 'missing'} but current package is ${preparedPackage.id})`,
+    throw packageChanged(
+      `approved package ${packageId || 'missing'} but current package is ${preparedPackage.id}`,
     );
   }
   if (packageHash !== preparedPackage.packageHash) {
-    throw new Error(
-      `Package changed; refresh package and re-review before publishing (approved package hash ${packageHash || 'missing'} but current package is ${preparedPackage.packageHash})`,
+    throw packageChanged(
+      `approved package hash ${packageHash || 'missing'} but current package is ${preparedPackage.packageHash}`,
     );
   }
   if (!preparedPackage.headSha) {
-    throw new Error(
-      'Package changed; refresh package and re-review before publishing (package HEAD SHA missing)',
-    );
+    throw packageChanged('package HEAD SHA missing');
   }
   if (packageHeadSha !== preparedPackage.headSha) {
-    throw new Error(
-      `Package changed; refresh package and re-review before publishing (approved HEAD ${packageHeadSha || 'missing'} but current package is ${preparedPackage.headSha})`,
+    throw packageChanged(
+      `approved HEAD ${packageHeadSha || 'missing'} but current package is ${preparedPackage.headSha}`,
     );
   }
   const selectedEvidenceKeys = selection.selectedEvidenceKeys;
@@ -313,9 +346,7 @@ export function validatePackageApprovalSelection(
     Array.isArray(selectedEvidenceKeys) &&
     !selectedEvidenceKeysMatchPackageSelection(preparedPackage, selectedEvidenceKeys)
   ) {
-    throw new Error(
-      'Package changed; refresh package and re-review before publishing (selected evidence differs from the prepared package)',
-    );
+    throw packageChanged('selected evidence differs from the prepared package');
   }
 }
 

@@ -108,6 +108,28 @@ function effectiveReviewedHead(review: IndependentReviewStatus): string | null {
 function reviewsForLatestReviewedHead(
   reviews: readonly IndependentReviewStatus[],
 ): IndependentReviewStatus[] {
+  // Prefer immutable snapshots when any review has one. Package refresh may
+  // restamp the compatibility `reviewedHeadSha` on older snapshot-less entries;
+  // letting those entries join the current snapshot makes resolved findings
+  // look unresolved again after a fresh exact-HEAD pass.
+  let latestSnapshotIndex = -1;
+  for (let index = reviews.length - 1; index >= 0; index -= 1) {
+    if (reviews[index].reviewSnapshot?.headSha?.trim()) {
+      latestSnapshotIndex = index;
+      break;
+    }
+  }
+  const latestSnapshotHead = reviews[latestSnapshotIndex]?.reviewSnapshot?.headSha?.trim();
+  if (latestSnapshotHead) {
+    return reviews.filter((review, index) => {
+      const snapshotHead = review.reviewSnapshot?.headSha?.trim();
+      if (snapshotHead) return snapshotHead === latestSnapshotHead;
+      // A newer launch failure can legitimately have no snapshot. Keep it in
+      // the operator summary, while excluding older snapshot-less findings
+      // whose compatibility head was restamped during package refresh.
+      return index > latestSnapshotIndex && effectiveReviewedHead(review) === latestSnapshotHead;
+    });
+  }
   const latestHead = [...reviews].reverse().map(effectiveReviewedHead).find(Boolean);
   if (!latestHead) return [...reviews];
   return reviews.filter((review) => effectiveReviewedHead(review) === latestHead);

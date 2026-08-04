@@ -178,6 +178,45 @@ export async function resolveTmuxPaneId(
   return paneId || null;
 }
 
+export function selectExactTmuxWindowPane(
+  output: string,
+  session: string,
+  windowName: string,
+): { paneId: string; panePid: string } | null {
+  for (const line of output.split('\n')) {
+    const [candidateSession, candidateWindow, paneId, panePid] = line.split('\t');
+    if (candidateSession !== session || candidateWindow !== windowName) continue;
+    return paneId && panePid && /^%\d+$/.test(paneId) && /^\d+$/.test(panePid)
+      ? { paneId, panePid }
+      : null;
+  }
+  return null;
+}
+
+/**
+ * Resolve a persisted `session:window-name` without tmux's prefix matching.
+ * A missing `rev-claude` must not silently bind to `rev2-claude` during
+ * restart recovery.
+ */
+export async function resolveExactTmuxWindowPane(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+): Promise<{ paneId: string; panePid: string } | null> {
+  const separator = target.indexOf(':');
+  if (separator <= 0 || separator === target.length - 1) return null;
+  const session = target.slice(0, separator);
+  const windowName = target.slice(separator + 1);
+  const result = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `list-panes -a -F '#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_pid}' 2>/dev/null`,
+    ),
+    { timeout: TMUX_DISCOVERY_TIMEOUT_MS },
+  );
+  if (result.exitCode !== 0) return null;
+  return selectExactTmuxWindowPane(result.stdout, session, windowName);
+}
+
 /**
  * Role windows (dev, self-review, ci-fix) need enough lines for capture-pane
  * verification and operator forensics. Tiny windows (e.g. 114x5) truncate prompts

@@ -20,6 +20,7 @@ import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
+import { pendingIndependentReviewContinuation } from './gate-policy.js';
 import { reviewerContextNeedsRecovery } from './recover-inflight-reviews.js';
 import { recoveryReviewPlanForActiveFix } from './review-plan.js';
 
@@ -174,6 +175,13 @@ export function hasRecoverablePublicationReviewer(run: Run): boolean {
   );
 }
 
+export function hasPendingPublicationReviewContinuation(run: Run): boolean {
+  return (
+    pendingIndependentReviewContinuation(run.engineState?.publishGate?.independentReviews ?? []) !==
+    undefined
+  );
+}
+
 /**
  * Whether a prepare step's recorded sub-steps show prepare ran to completion.
  *
@@ -266,6 +274,26 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         );
       }
       deps.rearmPublicationReviewRecovery(recoveredRun, { replayPending: true });
+      continue;
+    }
+
+    // The original review verdict may have been persisted before the process
+    // died, while the authorized fix/re-review continuation had not started.
+    // There is no reviewer artifact left to ingest in that state: replay the
+    // gate immediately so it resumes the persisted continuation itself.
+    if (
+      run.slotId &&
+      isPublicationReviewRecoveryHeld(run) &&
+      hasPendingPublicationReviewContinuation(run)
+    ) {
+      try {
+        await deps.replayHumanGate(run.id);
+      } catch (err) {
+        console.warn(
+          `[run-engine] run ${run.id.slice(0, 8)} — pending review continuation replay failed; re-arming: ${(err as Error).message.slice(0, 200)}`,
+        );
+        deps.rearmPublicationReviewRecovery(run, { replayPending: true });
+      }
       continue;
     }
 

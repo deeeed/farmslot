@@ -63,6 +63,7 @@ import {
   countStalePublicationReviews,
   hasValidPrNumber,
   isPublishApprovalAction,
+  pendingIndependentReviewContinuation,
   restampStaleApprovingReviewsForEvidenceRefresh,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
@@ -82,6 +83,124 @@ import {
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
 
 const S = PipelineSteps;
+
+const activePublicationReviewContinuations = new Map<
+  string,
+  Promise<{ reviewId: string; verdict: SelfReviewResult['verdict'] } | null>
+>();
+
+function interruptedPublicationReview(run: Run): IndependentReviewStatus | undefined {
+  const activeFix = run.agentContexts?.some(
+    (context) => context.role === 'self-review-fix' && context.status === 'working',
+  );
+  const reviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const pending = pendingIndependentReviewContinuation(reviews);
+  if (pending) return pending;
+  if (!activeFix) return undefined;
+  const latest = [...reviews].reverse().find((review) => review.source !== 'self-review');
+  return latest?.verdict === 'issues' &&
+    latest.unresolvedCount > 0 &&
+    (latest.issues?.length ?? 0) > 0
+    ? latest
+    : undefined;
+}
+
+function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus): SelfReviewResult {
+  return {
+    verdict: 'issues',
+    issues: review.issues ?? [],
+    reviewSnapshot: review.reviewSnapshot,
+    fixDelta: review.fixDelta,
+    attempts: review.attempts,
+    validationDepth: review.validationDepth,
+    usage: review.usage,
+    taskProgressArtifactPath: review.taskProgressArtifactPath,
+    timeline: review.timeline,
+    runner: review.runner ?? undefined,
+    model: review.model ?? undefined,
+    crossRunner: review.crossRunner,
+    retryCount: Math.max(0, (review.attempts?.length ?? 1) - 1),
+    feedbackSent: review.feedbackSent,
+  };
+}
+
+/**
+ * Resume the fix/re-review continuation lost when the gateway restarted after
+ * persisting an ISSUES verdict but before executeSelfReview could deliver it.
+ * The same review id is replaced so recovery cannot inflate review counts.
+ */
+export async function resumeInterruptedPublicationReview(
+  runId: string,
+  slotId: string,
+  dependencies: { executeReview?: typeof executeSelfReview } = {},
+): Promise<{ reviewId: string; verdict: SelfReviewResult['verdict'] } | null> {
+  const active = activePublicationReviewContinuations.get(runId);
+  if (active) return active;
+  const continuation = resumeInterruptedPublicationReviewOnce(runId, slotId, dependencies);
+  activePublicationReviewContinuations.set(runId, continuation);
+  try {
+    return await continuation;
+  } finally {
+    if (activePublicationReviewContinuations.get(runId) === continuation) {
+      activePublicationReviewContinuations.delete(runId);
+    }
+  }
+}
+
+async function resumeInterruptedPublicationReviewOnce(
+  runId: string,
+  slotId: string,
+  dependencies: { executeReview?: typeof executeSelfReview },
+): Promise<{ reviewId: string; verdict: SelfReviewResult['verdict'] } | null> {
+  const run = getRun(runId);
+  if (!run) return null;
+  const interrupted = interruptedPublicationReview(run);
+  if (!interrupted) return null;
+
+  const executeReview = dependencies.executeReview ?? executeSelfReview;
+  let result: SelfReviewResult;
+  try {
+    result = await executeReview(runId, slotId, {
+      reviewRunner: interrupted.runner ?? null,
+      model: interrupted.model ?? null,
+      validationDepth: interrupted.validationDepth ?? null,
+      artifactScope: interrupted.id,
+      publicationReview: true,
+      resumeFromResult: selfReviewResultFromInterruptedReview(interrupted),
+    });
+  } catch (error) {
+    console.warn(
+      `[ready-gate] run ${runId.slice(0, 8)} — interrupted review continuation remains recoverable: ${(error as Error).message}`,
+    );
+    return null;
+  }
+  const latest = getRun(runId)!;
+  const latestReviews = latest.engineState?.publishGate?.independentReviews ?? [];
+  const reviewStatus = buildPublishGateReviewStatus({
+    source: interrupted.source === 'dispatch' ? 'dispatch' : 'human-gate',
+    priorReviewCount: Math.max(0, latestReviews.length - 1),
+    reviewResult: result,
+    requestedRunner: interrupted.runner ?? null,
+    workerRunner: latest.metrics.runner,
+    model: interrupted.model ?? latest.metrics.actualModel ?? latest.metrics.model ?? null,
+    reviewId: interrupted.id,
+    reviewedPackage: await readPreparedPackage(latest),
+  });
+  const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [reviewStatus]);
+  const nextReviews = latestReviews.map((review) =>
+    review.id === interrupted.id ? persisted : review,
+  );
+  updateRun(runId, {
+    engineState: {
+      ...latest.engineState,
+      publishGate: {
+        ...latest.engineState?.publishGate,
+        independentReviews: nextReviews,
+      },
+    },
+  });
+  return { reviewId: interrupted.id, verdict: result.verdict };
+}
 
 export async function executePublishGateReviewPlan(
   runId: string,
@@ -111,6 +230,7 @@ export async function executePublishGateReviewPlan(
       planStep.validationDepth ??
       reviewValidationDepthForLoop(planStep.order - 1, boundedPlan.length);
     let reviewResult: SelfReviewResult;
+    let reviewRecoveryPending = false;
     try {
       reviewResult = await executeSelfReview(runId, slotId, {
         reviewRunner: requestedRunner,
@@ -123,6 +243,7 @@ export async function executePublishGateReviewPlan(
         // re-reviews before the next configured reviewer starts.
       });
     } catch (err) {
+      reviewRecoveryPending = true;
       const message = err instanceof Error ? err.message : String(err);
       console.warn(
         `[run-engine] run ${runId.slice(0, 8)} — ${source} review ${reviewId} unavailable: ${message}`,
@@ -146,7 +267,7 @@ export async function executePublishGateReviewPlan(
     }
     const latest = getRun(runId)!;
     const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
-    const reviewStatus = buildPublishGateReviewStatus({
+    const builtReviewStatus = buildPublishGateReviewStatus({
       source,
       priorReviewCount: priorReviews.length,
       reviewResult,
@@ -156,6 +277,9 @@ export async function executePublishGateReviewPlan(
       reviewId,
       reviewedPackage,
     });
+    const reviewStatus = reviewRecoveryPending
+      ? { ...builtReviewStatus, recoveryContinuationPending: true }
+      : builtReviewStatus;
     const reviewStatuses = await persistIndependentReviewArtifactsForRun(latest, [reviewStatus]);
     reviewIds.push(...reviewStatuses.map((review) => review.id));
     updateRun(runId, {
@@ -675,6 +799,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
       : {}),
   };
 
+  updateRunStep(runId, S.HUMAN_GATE, { detail: 'Waiting for operator decision' });
   const actionId = await createEngineDecision(runId, 'human_gate', desc, actions, readyPayload);
 
   const afterDecisionRun = getRun(runId)!;

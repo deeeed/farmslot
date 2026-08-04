@@ -6,9 +6,52 @@ import type { AgentContext, WorkerSignal } from '@farmslot/protocol';
 import {
   buildRecoveredReview,
   isRecoverableReviewerContext,
+  recoveredReviewAlreadyIngested,
   recoveredReviewArtifactScope,
+  reviewerContextIsSettled,
   reviewerContextNeedsRecovery,
 } from './recover-inflight-reviews.js';
+
+test('recovery ignores the same terminal reviewer signal but accepts a later continuation', () => {
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      {
+        completedAt: '2026-08-03T16:00:00.000Z',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+      { completedAt: '2026-08-03T16:00:00.000Z' },
+    ),
+    true,
+  );
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      {
+        completedAt: '2026-08-03T16:00:00.000Z',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+      { completedAt: '2026-08-03T16:05:00.000Z' },
+    ),
+    false,
+  );
+});
+
+test('recovery replaces a later failed delivery placeholder with the reviewer verdict', () => {
+  assert.equal(
+    recoveredReviewAlreadyIngested(
+      {
+        completedAt: '2026-08-03T16:05:00.000Z',
+        verdict: 'failed',
+        unresolvedCount: 0,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+      },
+      { completedAt: '2026-08-03T16:00:00.000Z' },
+    ),
+    false,
+  );
+});
 import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
 
 function reviewerContext(overrides: Partial<AgentContext> = {}): AgentContext {
@@ -41,11 +84,18 @@ function terminalSignal(overrides: Partial<WorkerSignal> = {}): WorkerSignal {
   };
 }
 
-test('isRecoverableReviewerContext accepts in-flight and completed self-review contexts', () => {
+test('isRecoverableReviewerContext keeps failed reviewers out of the long-lived watcher', () => {
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'working' }), true);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'launching' }), true);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'complete' }), true);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review', status: 'failed' }), false);
+  assert.equal(
+    isRecoverableReviewerContext(
+      { role: 'self-review', status: 'failed' },
+      { includeFailed: true },
+    ),
+    true,
+  );
   // Other roles never produce a publish-gate independent review.
   assert.equal(isRecoverableReviewerContext({ role: 'primary', status: 'working' }), false);
   assert.equal(isRecoverableReviewerContext({ role: 'self-review-fix', status: 'working' }), false);
@@ -59,6 +109,35 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
   assert.equal(reviewerContextNeedsRecovery(complete, []), true);
   assert.equal(reviewerContextNeedsRecovery(complete, [{ id: 'independent-review-7' }]), false);
   assert.equal(
+    reviewerContextNeedsRecovery(complete, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+        issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+      },
+    ]),
+    true,
+    'a completed reviewer may contain a newer fix-pass artifact for the same review id',
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(complete, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+        issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+      },
+    ]),
+    false,
+    'a terminal issues verdict without an explicit recovery continuation stays terminal',
+  );
+  assert.equal(
     reviewerContextNeedsRecovery(reviewerContext({ status: 'complete', artifactScope: null }), []),
     false,
   );
@@ -66,6 +145,179 @@ test('reviewerContextNeedsRecovery deduplicates completed contexts by artifact s
     reviewerContextNeedsRecovery(reviewerContext({ status: 'working', artifactScope: null }), []),
     true,
   );
+  assert.equal(
+    reviewerContextNeedsRecovery(complete, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+        issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+      },
+      {
+        id: 'independent-review-8',
+        source: 'dispatch',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+    ]),
+    false,
+    'a later terminal review supersedes an older continuation marker',
+  );
+});
+
+test('reviewerContextIsSettled terminalizes persisted and superseded reviewer ghosts', () => {
+  const working = reviewerContext({
+    status: 'working',
+    artifactScope: 'independent-review-7',
+  });
+  assert.equal(
+    reviewerContextIsSettled(working, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+    ]),
+    true,
+    'a persisted terminal verdict settles its lingering reviewer context',
+  );
+  assert.equal(
+    reviewerContextIsSettled(working, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+        issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+      },
+    ]),
+    false,
+    'the current review remains live while its continuation is pending',
+  );
+  assert.equal(
+    reviewerContextIsSettled(working, [
+      {
+        id: 'independent-review-7',
+        source: 'dispatch',
+        verdict: 'issues',
+        unresolvedCount: 1,
+        feedbackSent: false,
+        recoveryContinuationPending: true,
+        issues: [{ file: 'src/example.ts', description: 'Fix this issue' }],
+      },
+      {
+        id: 'independent-review-8',
+        source: 'dispatch',
+        verdict: 'pass',
+        unresolvedCount: 0,
+      },
+    ]),
+    true,
+    'a later persisted review supersedes an older pending continuation',
+  );
+  assert.equal(
+    reviewerContextIsSettled(
+      reviewerContext({ status: 'complete', artifactScope: 'independent-review-7' }),
+      [{ id: 'independent-review-7', verdict: 'pass', unresolvedCount: 0 }],
+    ),
+    false,
+  );
+});
+
+test('a one-shot scan only replaces an explicitly recoverable failed placeholder', () => {
+  const failed = reviewerContext({
+    status: 'failed',
+    artifactScope: 'independent-review-7',
+  });
+  assert.equal(
+    reviewerContextNeedsRecovery(failed, [
+      {
+        id: 'independent-review-7',
+        verdict: 'failed',
+        unresolvedCount: 0,
+        feedbackSent: false,
+      },
+    ]),
+    false,
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(
+      failed,
+      [
+        {
+          id: 'independent-review-7',
+          verdict: 'failed',
+          unresolvedCount: 0,
+          feedbackSent: false,
+          recoveryContinuationPending: true,
+        },
+      ],
+      { includeFailed: true },
+    ),
+    true,
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(
+      failed,
+      [
+        {
+          id: 'independent-review-7',
+          verdict: 'failed',
+          unresolvedCount: 0,
+          feedbackSent: false,
+        },
+      ],
+      { includeFailed: true },
+    ),
+    false,
+    'a genuine terminal failure is not overwritten by unrelated artifacts',
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(
+      failed,
+      [
+        {
+          id: 'independent-review-7',
+          verdict: 'issues',
+          unresolvedCount: 1,
+          feedbackSent: false,
+        },
+      ],
+      { includeFailed: true },
+    ),
+    false,
+  );
+});
+
+test('delivery-failed reviewer can recover from a later fresh complete signal', () => {
+  const review = buildRecoveredReview({
+    run: makeRun({ engineState: { publishGate: { independentReviews: [] } } }),
+    ctx: reviewerContext({
+      status: 'failed',
+      artifactScope: 'independent-review-7',
+      attemptStartedAt: '2026-07-16T10:00:00.000Z',
+    }),
+    signal: terminalSignal({
+      status: 'complete',
+      timestamp: '2026-07-16T10:40:00.000Z',
+    }),
+    feedback: {
+      verdict: 'issues',
+      issues: [{ file: 'artifacts/pr-description.md', description: 'Fix stale ADR number' }],
+    },
+    reviewedPackage: undefined,
+  });
+
+  assert.ok(review);
+  assert.equal(review.id, 'independent-review-7');
+  assert.equal(review.verdict, 'issues');
+  assert.equal(review.unresolvedCount, 1);
 });
 
 test('restart recovery uses the reviewer-owned artifact scope instead of review-array length', () => {

@@ -69,6 +69,52 @@ export function unavailableReviewSnapshot(
   };
 }
 
+export function parseReviewSnapshotArtifact(raw: string): ReviewDiffSnapshot | null {
+  if (!raw.trim()) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== 'object') return null;
+    const snapshot = value as Partial<ReviewDiffSnapshot>;
+    if (
+      (snapshot.source !== 'local-git' &&
+        snapshot.source !== 'github-pr' &&
+        snapshot.source !== 'unavailable') ||
+      typeof snapshot.capturedAt !== 'string'
+    ) {
+      return null;
+    }
+    if (
+      snapshot.source === 'local-git' &&
+      (typeof snapshot.headSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(snapshot.headSha))
+    ) {
+      return null;
+    }
+    return snapshot as ReviewDiffSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+export async function readPersistedReviewSnapshot(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+  loopNumber: number,
+  artifactScope?: string | null,
+): Promise<{ snapshot: ReviewDiffSnapshot; artifactPaths: string[] } | null> {
+  const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
+  const statRel = `${artifactDir}/review-diff-stat.json`;
+  const result = await execOnSlot(vars, `cat ${shellQuote(`${taskDir}/${statRel}`)} 2>/dev/null`, {
+    timeout: 10_000,
+  });
+  if (result.exitCode !== 0) return null;
+  const snapshot = parseReviewSnapshotArtifact(result.stdout);
+  if (!snapshot) return null;
+  return {
+    snapshot,
+    artifactPaths: [...(snapshot.diffPath ? [snapshot.diffPath] : []), statRel],
+  };
+}
+
 async function resolveReviewBaseRef(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
 ): Promise<string> {
