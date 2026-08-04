@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document the pool dispatch-template constraint for runtime-appended runner flags.
 - Publish Recipe v1 visual-review hierarchy, navigation, and related-surface metadata in the hosted schema.
 - Publish the opt-in `ui.capture_surface` Action Manifest schema for full-page and full-scroll-surface evidence.
 - Document canonical adapter-first recipe library directories and temporary legacy suffix compatibility.
