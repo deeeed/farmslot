@@ -42,6 +42,7 @@ export interface RunnerSessionReactivationOptions {
   taskDir?: string;
   launchAckSignalPath?: string | null;
   launchAckBaseline?: LaunchAckSignalSnapshot | null;
+  acceptExistingLaunchAck?: boolean;
   priorPromptSendAttempted?: boolean;
   timeoutMs?: number;
   recovery?: RunnerSendRecoveryContext;
@@ -276,6 +277,13 @@ export async function deliverPromptInPlace(
     const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
     if (delayedAcknowledgement) return delayedAcknowledgement;
     const timeoutMs = options.timeoutMs ?? resolveSafeSendTimeoutMs(runner);
+    const sentAtMs = Date.now();
+    const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
+      options.vars,
+      options.target,
+      runner,
+      sentAtMs,
+    );
     const accepted = await sendRunnerInstructionSafely(
       options.vars,
       options.target,
@@ -288,6 +296,43 @@ export async function deliverPromptInPlace(
         recovery: options.recovery,
       },
     );
+    if (accepted && options.launchAckSignalPath) {
+      const acknowledgementDeadline = Date.now() + Math.min(timeoutMs, 30_000);
+      while (Date.now() < acknowledgementDeadline) {
+        const acknowledgement = await runnerHasDurablePromptHandoff(
+          options.vars,
+          options.target,
+          runner,
+          options.prompt,
+          sentAtMs,
+          {
+            launchAckSignalPath: options.launchAckSignalPath,
+            launchAckBaseline: options.launchAckBaseline,
+            requirePromptDigest: true,
+            acceptExistingLaunchAck: options.acceptExistingLaunchAck,
+            promptAcceptanceBaselineMs,
+          },
+        );
+        if (acknowledgement.accepted) {
+          return { delivered: true, acknowledgement: 'structured' };
+        }
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            Math.max(
+              0,
+              Math.min(RUNNER_SESSION_ACCEPTANCE_POLL_MS, acknowledgementDeadline - Date.now()),
+            ),
+          ),
+        );
+      }
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Live ${runner} retained handoff was sent, but the task signal or exact prompt hook did not acknowledge it`,
+        retryable: true,
+      };
+    }
     if (accepted) return { delivered: true, acknowledgement: 'safe-send' };
     return {
       delivered: false,
@@ -322,6 +367,7 @@ async function probeDelayedPromptAcknowledgement(
     {
       launchAckSignalPath: options.launchAckSignalPath,
       launchAckBaseline: options.launchAckBaseline,
+      acceptExistingLaunchAck: options.acceptExistingLaunchAck,
       preferHooks: false,
     },
   );

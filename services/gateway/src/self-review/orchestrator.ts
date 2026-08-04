@@ -926,6 +926,7 @@ export async function resumeSelfReviewFixPromptDelivery(
     taskDir,
     launchAckSignalPath: signalPath,
     launchAckBaseline,
+    acceptExistingLaunchAck: true,
     priorPromptSendAttempted: true,
     timeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
     recovery: { runId },

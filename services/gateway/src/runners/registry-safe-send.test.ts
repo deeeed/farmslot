@@ -335,6 +335,84 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
   );
 });
 
+test('digest-required prompt delivery rejects text left in the runner queue', async (t) => {
+  t.after(() => {
+    paneTextAfterLiteralSend = null;
+    paneTextAfterBareSend = null;
+    paneClearsAfterSubmit = true;
+  });
+  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  paneText = '❯\nctx:12%\n';
+  paneTextByCapture = null;
+  paneTextAfterLiteralSend = `${reviewMessage}\ntab to queue message\n`;
+  paneTextAfterBareSend = paneTextAfterLiteralSend;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    exactPromptMatch: false,
+  };
+
+  await assert.rejects(
+    sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'SELF-REVIEW.md', '[test]', {
+      readyTimeoutMs: 100,
+      stabilityPolls: 1,
+      pollIntervalMs: 0,
+      verifyWaitMs: 0,
+      maxAttempts: 1,
+      requirePromptDigest: true,
+    }),
+    /Prompt delivery failed/,
+  );
+});
+
+test('digest-required prompt delivery does not accept pane-only task progress', async (t) => {
+  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  paneTextByCapture = null;
+  paneText = `${reviewMessage}\n✻ Working…\n`;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    exactPromptMatch: false,
+  };
+  t.after(() => {
+    paneText = '❯\nctx:12%\n';
+    paneClearsAfterSubmit = true;
+  });
+
+  await assert.rejects(
+    sendRunnerPostLaunchPrompt(vars, target, 'claude', reviewMessage, 'SELF-REVIEW.md', '[test]', {
+      readyTimeoutMs: 20,
+      stabilityPolls: 1,
+      pollIntervalMs: 0,
+      verifyWaitMs: 0,
+      maxAttempts: 1,
+      requirePromptDigest: true,
+    }),
+    /did not reach a stable ready state|Prompt delivery failed/,
+  );
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send').length,
+    0,
+    'pane progress may hold transport, but it must neither prove delivery nor trigger a duplicate send',
+  );
+});
+
 test('sendRunnerPostLaunchPrompt honors an explicit null launch-ack baseline', async () => {
   launchAckSnapshotReads = 0;
   promptAcceptedReading = {
