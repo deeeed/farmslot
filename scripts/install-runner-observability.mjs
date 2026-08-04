@@ -522,7 +522,8 @@ function backupOnce(settingsPath, markerPath) {
 
 function removeFarmslotHooks(settings) {
   const hooks = settings.hooks;
-  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return;
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return false;
+  let removed = false;
   for (const [eventName, entries] of Object.entries(hooks)) {
     if (!Array.isArray(entries)) continue;
     const cleanedEntries = [];
@@ -540,12 +541,64 @@ function removeFarmslotHooks(settings) {
             hook.command.includes(FARMSLOT_HOOK_MARKER)
           ),
       );
+      if (keptHooks.length !== entry.hooks.length) removed = true;
       if (keptHooks.length > 0) cleanedEntries.push({ ...entry, hooks: keptHooks });
     }
     if (cleanedEntries.length > 0) hooks[eventName] = cleanedEntries;
     else delete hooks[eventName];
   }
   if (Object.keys(hooks).length === 0) delete settings.hooks;
+  return removed;
+}
+
+function cleanupLegacyClaudeSettings(repoPath, obsDir) {
+  const settingsDir = path.join(repoPath, '.claude');
+  const settingsPath = path.join(settingsDir, 'settings.local.json');
+  const backupPath = `${settingsPath}.farmslot-backup`;
+  let settingsDirStat = null;
+  try {
+    settingsDirStat = fs.lstatSync(settingsDir);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  // A linked project settings directory is operator-owned. Never traverse it:
+  // cleanup must not mutate files outside the slot checkout.
+  if (settingsDirStat && !settingsDirStat.isDirectory()) return;
+
+  if (fs.existsSync(backupPath)) {
+    fs.mkdirSync(obsDir, { recursive: true });
+    fs.renameSync(backupPath, path.join(obsDir, 'legacy-claude-settings.farmslot-backup'));
+  }
+  if (!fs.existsSync(settingsPath)) {
+    if (fs.existsSync(settingsDir) && fs.readdirSync(settingsDir).length === 0) {
+      fs.rmdirSync(settingsDir);
+    }
+    return;
+  }
+
+  const settingsStat = fs.lstatSync(settingsPath);
+  const settings = readJsonObject(settingsPath);
+  const removedHooks = removeFarmslotHooks(settings);
+  const statusCommand =
+    settings.statusLine && typeof settings.statusLine === 'object'
+      ? String(settings.statusLine.command ?? '')
+      : '';
+  const removedStatusLine = statusCommand.includes('farmslot-statusline.mjs');
+  if (removedStatusLine) delete settings.statusLine;
+  if (!removedHooks && !removedStatusLine) return;
+
+  // Replace a linked settings file inside a real project directory with the
+  // sanitized local document. Unlinking the link never writes to its target.
+  if (settingsStat.isSymbolicLink()) fs.unlinkSync(settingsPath);
+  if (Object.keys(settings).length === 0) {
+    if (!settingsStat.isSymbolicLink()) fs.unlinkSync(settingsPath);
+  } else {
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  }
+
+  if (fs.existsSync(settingsDir) && fs.readdirSync(settingsDir).length === 0) {
+    fs.rmdirSync(settingsDir);
+  }
 }
 
 function mergeClaudeSettings(settingsPath, markerPath, hookCommand, statusCommand) {
@@ -701,7 +754,7 @@ function installClaude({ repo, runtimeDir = '.agent', slotId }) {
     slotId,
     runner: 'claude',
   });
-  const settingsPath = path.join(repoPath, '.claude', 'settings.local.json');
+  const settingsPath = path.join(obsDir, 'claude-settings.json');
   const markerPath = path.join(obsDir, '.farmslot-owned');
   const statuslinePath = path.join(obsDir, 'bin', 'farmslot-statusline.mjs');
   fs.writeFileSync(statuslinePath, STATUSLINE_SCRIPT);
@@ -718,6 +771,7 @@ function installClaude({ repo, runtimeDir = '.agent', slotId }) {
     hookCommand,
     statusCommand,
   );
+  cleanupLegacyClaudeSettings(repoPath, obsDir);
   fs.writeFileSync(markerPath, 'farmslot\n');
   writeObservabilityInstallManifest(obsDir, {
     runner: 'claude',

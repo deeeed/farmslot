@@ -22,7 +22,9 @@ import {
   runnerSessionReloadCapability,
 } from './registry.js';
 import {
+  buildClaudeObservabilityFallbackCommand,
   buildRunnerObservabilityInstallCommand,
+  claudeObservabilitySettingsPath,
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
 
@@ -206,10 +208,17 @@ export function buildRunnerSessionReloadCommand(
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const claudePath = vars.claudePath || 'claude';
+    const settingsFlag = ` --settings ${shellExpressionForRemotePath(
+      claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
+    )}`;
+    const settingsFallback = buildClaudeObservabilityFallbackCommand(
+      claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
+    );
     return withTaskRecipeTrustEnvironment(
       withRunnerObservabilityInstall(
-        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag} --resume ${quotedSessionId}${initialPrompt}`,
+        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
         installCommand,
+        settingsFallback,
       ),
       repo,
       opts.taskDir,
@@ -516,14 +525,41 @@ export function buildLaunchCommand(
       repo,
       opts.runtimeDir,
     );
+    const settingsFlag = ` --settings ${shellExpressionForRemotePath(
+      claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
+    )}`;
+    const settingsFallback = buildClaudeObservabilityFallbackCommand(
+      claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
+    );
     if (opts.claudeUsesDispatchCmd) {
       if (!hasDispatchCmd) {
         throw new Error(`No dispatch_cmd in pool config for ${vars.machine}`);
       }
+      if (
+        !vars.dispatchCmd.includes('{runner_path}') &&
+        !vars.dispatchCmd.includes('{claude_path}')
+      ) {
+        throw new Error(
+          `Claude dispatch_cmd on ${vars.machine} must include {runner_path} or {claude_path} so runtime arguments target the runner executable`,
+        );
+      }
+      const runnerArgs = [cmdHasModelPlaceholder ? '' : modelFlag.trim(), settingsFlag.trim()]
+        .filter(Boolean)
+        .join(' ');
+      const claudeDispatchCommand = expandDispatchCmd(vars, {
+        runner,
+        model: model ?? undefined,
+        taskFile: opts.taskFile,
+        taskPrompt: launchPrompt,
+        effort: resolvedEffort,
+        safetyFlags: safetyFlagsString,
+        runnerArgs,
+      });
       return withRecipeTrust(
         withRunnerObservabilityInstall(
-          `unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}`,
+          `unset CLAUDECODE && ${claudeDispatchCommand}`,
           installCommand,
+          settingsFallback,
         ),
       );
     }
@@ -532,8 +568,9 @@ export function buildLaunchCommand(
     const flags = flagList.join(' ');
     return withRecipeTrust(
       withRunnerObservabilityInstall(
-        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`,
+        `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${settingsFlag}`,
         installCommand,
+        settingsFallback,
       ),
     );
   }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 
 import type { ProjectVars, SlotVars } from './config.js';
@@ -239,6 +240,41 @@ test('expandDispatchCmd leaves Cursor Agent path placeholders empty when cursor_
   };
 
   assert.equal(expandDispatchCmd(slotVars, { runner: 'cursor' }), '');
+});
+
+test('expandDispatchCmd attaches runner arguments before trailing shell commands', () => {
+  const slotVars: SlotVars = {
+    slotId: 'runner-local-1',
+    machine: 'runner-local',
+    platform: 'none',
+    host: 'localhost',
+    sshUser: 'example',
+    osType: 'darwin',
+    claudePath: "printf 'ARG:%s\\n'",
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: "{claude_path}; printf 'TAIL\\n'",
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'runner-local-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/repo',
+    projectName: 'example-farm',
+    resourceVars: {},
+  };
+  const command = expandDispatchCmd(slotVars, {
+    runner: 'claude',
+    runnerArgs: '--settings /runtime/settings.json',
+  });
+
+  assert.equal(
+    execFileSync('/bin/bash', ['-c', command], { encoding: 'utf8' }),
+    'ARG:--settings\nARG:/runtime/settings.json\nTAIL\n',
+  );
 });
 
 test('expandDispatchCmd supports Grok runner path placeholders', () => {

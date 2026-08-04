@@ -1364,7 +1364,13 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet$/,
+        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
+      );
+      assert.match(cmd, /install failed; continuing without hooks/);
+      assert.match(cmd, /mkdir -p '\/tmp\/repo\/\.agent\/\.observability'/);
+      assert.match(
+        cmd,
+        /printf '\{\}\\n' > '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'/,
       );
     });
 
@@ -1379,7 +1385,34 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/claude --model opus \.task\/fix\/abc\/TASK\.md/,
+        /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
+      );
+    });
+
+    it('attaches runtime arguments to Claude before trailing shell commands', () => {
+      const vars = makeVars({
+        dispatchCmd: 'cd {repo} && {claude_path} --model {model}; echo ready',
+      });
+      const cmd = buildLaunchCommand(vars, 'claude', 'opus', PROMPT, {
+        taskFile: TASK_FILE,
+        claudeUsesDispatchCmd: true,
+      });
+      assert.match(
+        cmd,
+        /\/usr\/local\/bin\/claude --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus; echo ready$/,
+      );
+      assert.doesNotMatch(cmd, /echo ready --settings/);
+    });
+
+    it('rejects dispatch templates with no structural runner path', () => {
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && claude; echo ready' });
+      assert.throws(
+        () =>
+          buildLaunchCommand(vars, 'claude', 'opus', PROMPT, {
+            taskFile: TASK_FILE,
+            claudeUsesDispatchCmd: true,
+          }),
+        /must include \{runner_path\} or \{claude_path\}/,
       );
     });
 
@@ -1390,6 +1423,10 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(cmd, /--runtime-dir 'temp\/recipe\/runtime'/);
       assert.doesNotMatch(cmd, /--runtime-dir '\.agent'/);
+      assert.match(
+        cmd,
+        /--settings '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
+      );
     });
 
     it('uses a shell-safe HOME expression for remote observability installs', () => {
@@ -1401,6 +1438,10 @@ describe('buildLaunchCommand', () => {
       );
       assert.match(cmd, /--repo "\$\{HOME\}\/work\/repo"/);
       assert.match(cmd, /cd "\$\{HOME\}\/work\/repo" && unset CLAUDECODE/);
+      assert.match(
+        cmd,
+        /--settings "\$\{HOME\}\/work\/repo\/\.agent\/\.observability\/claude-settings\.json"/,
+      );
     });
 
     it('appends modelFlag when dispatch_cmd lacks {model} placeholder', () => {
@@ -1411,7 +1452,10 @@ describe('buildLaunchCommand', () => {
         taskFile: TASK_FILE,
         claudeUsesDispatchCmd: true,
       });
-      assert.match(cmd, / --model sonnet$/);
+      assert.match(
+        cmd,
+        /\/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
+      );
     });
 
     it('does not append modelFlag when model is null or "unknown"', () => {
@@ -1760,13 +1804,17 @@ describe('buildRunnerSessionReloadCommand', () => {
     const vars = makeVars({ dispatchCmd: '', claudePath: '/opt/bin/claude' });
     const cmd = buildRunnerSessionReloadCommand(vars, 'claude', 'sonnet', 'session-123', {
       safetyTier: 'dangerous',
-      runtimeDir: '.agent',
+      runtimeDir: 'temp/recipe/runtime',
       initialPrompt: 'Read and execute TASK.md',
     });
     assert.match(cmd, /install-runner-observability\.mjs/);
     assert.match(
       cmd,
-      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --resume 'session-123' 'Read and execute TASK.md'$/,
+      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
+    );
+    assert.match(
+      cmd,
+      /mkdir -p '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability' && printf '\{\}\\n' > '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json'/,
     );
   });
 

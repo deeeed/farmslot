@@ -4,6 +4,7 @@ All notable changes to `@farmslot/slot-config` are tracked here.
 
 ## Unreleased
 
+- fix(dispatch): attach runtime-owned runner arguments through the selected runner-path placeholder so trailing shell commands cannot consume them.
 - fix(monitoring): validate per-flow timeout overrides and allow non-Metro slots to omit `metro_port` unless a selected hook actually references it.
 - fix(dispatch): an unset effort drops the whole `--effort {effort}` flag from dispatch templates instead of leaving a bare `--effort` that swallows the next argument.
 - feat(slot-config): expose `metro_port` as a slot resource and fail legacy hook expansion with a named migration hint when it is absent.

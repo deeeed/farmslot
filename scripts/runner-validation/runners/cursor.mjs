@@ -30,7 +30,7 @@ export function prepareRepo() {
 }
 
 /** Print mode — matches gateway steerability without post-launch send-keys. */
-export function buildLaunchCommand(prompt = DEFAULT_PROMPT) {
+export function buildLaunchCommand(_repo, _runtimeDir, prompt = DEFAULT_PROMPT, _model) {
   assertBinary();
   const bin = resolveBinary();
   return `${shSingleQuote(bin)} --print --trust --sandbox enabled --model ${DEFAULT_MODEL} ${shSingleQuote(prompt)}`;

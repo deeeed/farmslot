@@ -249,7 +249,7 @@ describe('buildLaunchCommand — {safety_flags} placeholder on dispatch path', (
       claudeUsesDispatchCmd: true,
       safetyTier: 'full-auto',
     });
-    assert.match(full, /\/usr\/local\/bin\/claude --dangerously-skip-permissions/);
+    assert.match(full, /\/usr\/local\/bin\/claude .*--dangerously-skip-permissions/);
     const sandbox = buildLaunchCommand(vars, 'claude', null, PROMPT, {
       claudeUsesDispatchCmd: true,
       safetyTier: 'sandboxed',
@@ -258,7 +258,7 @@ describe('buildLaunchCommand — {safety_flags} placeholder on dispatch path', (
     assert.match(sandbox, /\/usr\/local\/bin\/claude/);
   });
 
-  it('claudeUsesDispatchCmd=true: legacy template without {safety_flags} expands unchanged (backward-compat)', () => {
+  it('claudeUsesDispatchCmd=true: legacy template keeps its hardcoded flag and receives runtime settings', () => {
     const vars = makeVars({
       dispatchCmd: 'cd {repo} && {claude_path} --dangerously-skip-permissions',
     });
@@ -267,7 +267,8 @@ describe('buildLaunchCommand — {safety_flags} placeholder on dispatch path', (
       safetyTier: 'sandboxed',
     });
     // Hardcoded flag stays put — tier override cannot remove it.
-    assert.match(cmd, /\/usr\/local\/bin\/claude --dangerously-skip-permissions$/);
+    assert.match(cmd, /\/usr\/local\/bin\/claude .*--dangerously-skip-permissions/);
+    assert.match(cmd, /--settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'/);
   });
 
   it('codex runner-aware dispatch_cmd: tier flags substitute into {safety_flags}', () => {

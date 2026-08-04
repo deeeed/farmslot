@@ -22,10 +22,13 @@ export function installHooks(runner, repo, runtimeDir, slotId) {
   );
 }
 
-export function readRegisteredEvents(runner, repo) {
+export function readRegisteredEvents(runner, repo, runtimeDir) {
   if (runner === 'claude') {
     const settings = JSON.parse(
-      fs.readFileSync(path.join(repo, '.claude', 'settings.local.json'), 'utf8'),
+      fs.readFileSync(
+        path.join(repo, runtimeDir, '.observability', 'claude-settings.json'),
+        'utf8',
+      ),
     );
     return Object.keys(settings.hooks).sort();
   }

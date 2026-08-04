@@ -59,7 +59,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
 
     const beforeCount = readHookLines(logPath).length;
     installHooks(runner, repo, runtimeDir, slotId);
-    report.registeredInstalled = readRegisteredEvents(runner, repo);
+    report.registeredInstalled = readRegisteredEvents(runner, repo, runtimeDir);
 
     runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT);
 
@@ -95,7 +95,11 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const registeredMatch =
       JSON.stringify(report.registeredInstalled) ===
       JSON.stringify([...runnerAdapter.REGISTERED_EVENTS].sort());
-    const required = assertRequiredHookEvents(newRows, ['SessionStart', 'UserPromptSubmit', 'Stop']);
+    const required = assertRequiredHookEvents(newRows, [
+      'SessionStart',
+      'UserPromptSubmit',
+      'Stop',
+    ]);
 
     report.pass =
       registeredMatch &&

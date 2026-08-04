@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const INSTALLER = path.join(ROOT, 'scripts', 'install-runner-observability.mjs');
 
-function installToTempDir(runner = 'claude') {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-'));
+function installToTempDir(runner = 'claude', existingRepo) {
+  const repo = existingRepo ?? fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-'));
   execFileSync(
     process.execPath,
     [
@@ -28,7 +28,8 @@ function installToTempDir(runner = 'claude') {
   );
   const obsDir = path.join(repo, '.agent', '.observability');
   const hookPath = path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs');
-  return { repo, obsDir, hookPath };
+  const claudeSettingsPath = path.join(obsDir, 'claude-settings.json');
+  return { repo, obsDir, hookPath, claudeSettingsPath };
 }
 
 function runHook(hookPath, obsDir, payload, runner = 'claude') {
@@ -44,11 +45,9 @@ function runHook(hookPath, obsDir, payload, runner = 'claude') {
   });
 }
 
-test('claude install registers observability hook events validated against Claude Code surface', () => {
-  const { repo } = installToTempDir('claude');
-  const settings = JSON.parse(
-    fs.readFileSync(path.join(repo, '.claude', 'settings.local.json'), 'utf8'),
-  );
+test('claude install registers hooks in Farmslot runtime without modifying repository settings', () => {
+  const { repo, claudeSettingsPath } = installToTempDir('claude');
+  const settings = JSON.parse(fs.readFileSync(claudeSettingsPath, 'utf8'));
   const registered = Object.keys(settings.hooks).sort();
   assert.deepEqual(registered, [
     'Notification',
@@ -62,6 +61,135 @@ test('claude install registers observability hook events validated against Claud
     'SubagentStop',
     'UserPromptSubmit',
   ]);
+  assert.equal(fs.existsSync(path.join(repo, '.claude')), false);
+});
+
+test('claude install removes legacy Farmslot-only repository settings', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-legacy-only-'));
+  const settingsDir = path.join(repo, '.claude');
+  fs.mkdirSync(settingsDir);
+  fs.writeFileSync(
+    path.join(settingsDir, 'settings.local.json'),
+    JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: "FARMSLOT_OBS_DIR='/old' node '/old/farmslot-observability-hook.mjs'",
+              },
+            ],
+          },
+        ],
+      },
+      statusLine: { type: 'command', command: "node '/old/farmslot-statusline.mjs'" },
+    }),
+  );
+
+  installToTempDir('claude', repo);
+
+  assert.equal(fs.existsSync(settingsDir), false);
+});
+
+test('claude install preserves non-Farmslot repository settings while removing legacy entries', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-legacy-mixed-'));
+  const settingsDir = path.join(repo, '.claude');
+  const settingsPath = path.join(settingsDir, 'settings.local.json');
+  fs.mkdirSync(settingsDir);
+  fs.writeFileSync(
+    settingsPath,
+    JSON.stringify({
+      theme: 'dark',
+      hooks: {
+        UserPromptSubmit: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: "FARMSLOT_OBS_DIR='/old' node '/old/farmslot-observability-hook.mjs'",
+              },
+              { type: 'command', command: 'node user-hook.mjs' },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+
+  installToTempDir('claude', repo);
+
+  const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  assert.equal(settings.theme, 'dark');
+  assert.equal(settings.hooks.UserPromptSubmit[0].hooks.length, 1);
+  assert.equal(settings.hooks.UserPromptSubmit[0].hooks[0].command, 'node user-hook.mjs');
+});
+
+test('claude install does not traverse a symlinked repository settings directory', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-linked-dir-'));
+  const externalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-external-'));
+  const externalSettings = path.join(externalDir, 'settings.local.json');
+  const original = JSON.stringify({
+    hooks: {
+      Stop: [
+        {
+          hooks: [{ type: 'command', command: "node '/external/farmslot-observability-hook.mjs'" }],
+        },
+      ],
+    },
+  });
+  fs.writeFileSync(externalSettings, original);
+  fs.symlinkSync(externalDir, path.join(repo, '.claude'), 'dir');
+
+  installToTempDir('claude', repo);
+
+  assert.ok(fs.lstatSync(path.join(repo, '.claude')).isSymbolicLink());
+  assert.equal(fs.readFileSync(externalSettings, 'utf8'), original);
+});
+
+test('claude install sanitizes a linked settings file without mutating its target', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-linked-file-'));
+  const settingsDir = path.join(repo, '.claude');
+  const settingsPath = path.join(settingsDir, 'settings.local.json');
+  const externalSettings = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-external-')),
+    'settings.json',
+  );
+  const original = JSON.stringify({
+    theme: 'dark',
+    hooks: {
+      Stop: [
+        {
+          hooks: [{ type: 'command', command: "node '/external/farmslot-observability-hook.mjs'" }],
+        },
+      ],
+    },
+  });
+  fs.mkdirSync(settingsDir);
+  fs.writeFileSync(externalSettings, original);
+  fs.symlinkSync(externalSettings, settingsPath);
+
+  installToTempDir('claude', repo);
+
+  assert.equal(fs.readFileSync(externalSettings, 'utf8'), original);
+  assert.equal(fs.lstatSync(settingsPath).isSymbolicLink(), false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf8')), { theme: 'dark' });
+});
+
+test('claude install relocates a legacy backup after Farmslot settings were removed', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-legacy-backup-'));
+  const settingsDir = path.join(repo, '.claude');
+  const backupPath = path.join(settingsDir, 'settings.local.json.farmslot-backup');
+  fs.mkdirSync(settingsDir);
+  fs.writeFileSync(backupPath, '{"legacy":true}\n');
+
+  const { obsDir } = installToTempDir('claude', repo);
+
+  assert.equal(fs.existsSync(settingsDir), false);
+  assert.equal(
+    fs.readFileSync(path.join(obsDir, 'legacy-claude-settings.farmslot-backup'), 'utf8'),
+    '{"legacy":true}\n',
+  );
 });
 
 test('claude install replaces a stale compatibility symlink and remains idempotent', () => {
@@ -90,7 +218,7 @@ test('claude install replaces a stale compatibility symlink and remains idempote
   const expected = path.join(repo, 'temp', 'recipe', 'runtime', '.observability');
   assert.equal(path.resolve(repo, fs.readlinkSync(compat)), expected);
   assert.ok(fs.existsSync(path.join(expected, 'bin', 'farmslot-observability-hook.mjs')));
-  const settings = fs.readFileSync(path.join(repo, '.claude', 'settings.local.json'), 'utf8');
+  const settings = fs.readFileSync(path.join(expected, 'claude-settings.json'), 'utf8');
   assert.match(settings, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'u'));
   assert.doesNotMatch(settings, /\.agent\/\.observability/u);
 });

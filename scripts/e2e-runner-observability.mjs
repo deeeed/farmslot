@@ -92,10 +92,20 @@ function killTmuxSession(name) {
 function ensureTmuxShellSession(sessionName, repo, windowName = 'shell') {
   if (!hasTmuxSession(sessionName)) {
     tmux(['new-session', '-d', '-s', sessionName, '-n', windowName, '-c', repo]);
-  } else if (!tmux(['list-windows', '-t', sessionName, '-F', '#{window_name}']).split('\n').includes(windowName)) {
+  } else if (
+    !tmux(['list-windows', '-t', sessionName, '-F', '#{window_name}'])
+      .split('\n')
+      .includes(windowName)
+  ) {
     tmux(['new-window', '-t', sessionName, '-n', windowName, '-c', repo]);
   }
-  const paneId = tmux(['display-message', '-p', '-t', `${sessionName}:${windowName}`, '#{pane_id}']);
+  const paneId = tmux([
+    'display-message',
+    '-p',
+    '-t',
+    `${sessionName}:${windowName}`,
+    '#{pane_id}',
+  ]);
   return { sessionName, windowName, paneId, target: `${sessionName}:${windowName}` };
 }
 
@@ -128,8 +138,8 @@ function obsDirFor(repo, runtimeDir) {
   return path.resolve(repo, runtimeDir, '.observability');
 }
 
-function readObsDirFromSettings(repo) {
-  const settingsPath = path.join(repo, '.claude', 'settings.local.json');
+function readObsDirFromSettings(repo, runtimeDir) {
+  const settingsPath = path.join(repo, runtimeDir, '.observability', 'claude-settings.json');
   if (!fs.existsSync(settingsPath)) return null;
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
   const hooks = settings?.hooks?.UserPromptSubmit;
@@ -152,9 +162,8 @@ async function loadPromptDigestModule() {
   const { register } = await import('tsx/esm/api');
   register();
   const mod = await import(
-    pathToFileURL(
-      path.join(ROOT, 'services/gateway/src/runners/observability-prompt-digest.ts'),
-    ).href,
+    pathToFileURL(path.join(ROOT, 'services/gateway/src/runners/observability-prompt-digest.ts'))
+      .href
   );
   instructionNeedle = mod.instructionNeedle;
   runnerPromptDigest = mod.runnerPromptDigest;
@@ -187,17 +196,21 @@ function readProbeReport(outPath, attempts = 10) {
 function installObservability(repo, runtimeDir, slotId) {
   refreshCompatObservabilityLink(repo, runtimeDir);
   const installer = path.join(ROOT, 'scripts', 'install-runner-observability.mjs');
-  execFileSync(process.execPath, [
-    installer,
-    '--runner',
-    'claude',
-    '--repo',
-    repo,
-    '--runtime-dir',
-    runtimeDir,
-    '--slot-id',
-    slotId,
-  ], { stdio: 'pipe' });
+  execFileSync(
+    process.execPath,
+    [
+      installer,
+      '--runner',
+      'claude',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      runtimeDir,
+      '--slot-id',
+      slotId,
+    ],
+    { stdio: 'pipe' },
+  );
 }
 
 function runProbeInTmux(repo, runtimeDir, slotId, paneId) {
@@ -230,7 +243,10 @@ function testSentinelCorrelation(obsDir, paneId, message) {
   const sentDir = path.join(obsDir, 'sent');
   fs.mkdirSync(sentDir, { recursive: true });
   const sentAt = Date.now();
-  fs.writeFileSync(path.join(sentDir, `${digest}.json`), `${JSON.stringify({ sentAt, digest, prompt: instructionNeedle(message) })}\n`);
+  fs.writeFileSync(
+    path.join(sentDir, `${digest}.json`),
+    `${JSON.stringify({ sentAt, digest, prompt: instructionNeedle(message) })}\n`,
+  );
   const hookPath = path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs');
   const payload = JSON.stringify({
     hook_event_name: 'UserPromptSubmit',
@@ -311,7 +327,10 @@ process.exit(ok && sentinelExists ? 0 : 1);
     env: { ...process.env, FARMSLOT_OBSERVABILITY_AGREEMENT_DIR: agreementDir },
   });
   const stdout = result.stdout?.trim() ?? '';
-  const jsonLine = stdout.split('\n').filter((line) => line.startsWith('{')).pop();
+  const jsonLine = stdout
+    .split('\n')
+    .filter((line) => line.startsWith('{'))
+    .pop();
   if (!jsonLine) {
     return {
       pass: false,
@@ -326,17 +345,20 @@ process.exit(ok && sentinelExists ? 0 : 1);
   };
 }
 
-function ensureInteractiveClaude(target, paneId) {
+function ensureInteractiveClaude(target, paneId, settingsPath) {
   const pane = tmux(['capture-pane', '-p', '-t', paneId, '-S', '-20']);
   if (pane.includes('bypass permissions on') || pane.includes('Claude Code')) return pane;
-  runInTmuxPane(paneId, 'claude --dangerously-skip-permissions');
+  runInTmuxPane(
+    paneId,
+    `claude --dangerously-skip-permissions --settings ${shQuote(settingsPath)}`,
+  );
   return waitForTmuxMarker(paneId, 'bypass permissions on', 45000);
 }
 
 function checkRuntimeAlignment(repo, runtimeDir, projectRuntimeDir) {
   const installObsDir = obsDirFor(repo, runtimeDir);
   const projectObsDir = projectRuntimeDir ? obsDirFor(repo, projectRuntimeDir) : installObsDir;
-  const settingsObsDir = readObsDirFromSettings(repo);
+  const settingsObsDir = readObsDirFromSettings(repo, projectRuntimeDir ?? runtimeDir);
   const aligned =
     path.resolve(installObsDir) === path.resolve(projectObsDir) &&
     (!settingsObsDir || path.resolve(settingsObsDir) === path.resolve(installObsDir));
@@ -378,9 +400,18 @@ async function main() {
     checks.agreementLog = runAgreementLogCheck(agreementDir);
 
     if (!args.skipGateway && !args.skipClaude) {
-      ensureInteractiveClaude(claude.target, claude.paneId);
+      ensureInteractiveClaude(
+        claude.target,
+        claude.paneId,
+        path.join(obsDir, 'claude-settings.json'),
+      );
       const gatewayMessage = `OBS_GATEWAY_E2E_${args.slotId}: reply with exactly GATEWAY_OK`;
-      checks.gatewaySend = runGatewaySendCheck(args.slotId, claude.target, agreementDir, gatewayMessage);
+      checks.gatewaySend = runGatewaySendCheck(
+        args.slotId,
+        claude.target,
+        agreementDir,
+        gatewayMessage,
+      );
       const paneTail = tmux(['capture-pane', '-p', '-t', claude.paneId, '-S', '-20']);
       checks.gatewaySend.paneShowsOk = paneTail.includes('GATEWAY_OK');
       checks.gatewaySend.hookAgreed = (checks.gatewaySend.agreement?.agreed ?? 0) >= 1;
