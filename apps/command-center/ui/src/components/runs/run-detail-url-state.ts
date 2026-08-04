@@ -1,4 +1,4 @@
-import { buildHash, hashRoute, parseHashRoute } from '../../utils/url-state.js';
+import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 export interface RunDetailArtifactSelection {
@@ -11,7 +11,10 @@ const ARTIFACT_RUN_PARAM = 'artifactRun';
 const ARTIFACT_PARAM = 'artifact';
 
 export function isRunDetailHashForRun(runId: string, hash: string = location.hash): boolean {
-  return hashRoute(hash) === runDetailRoute(runId);
+  const { route, params } = parseHashRoute(hash);
+  return (
+    route === runDetailRoute(runId) || (route.startsWith('runs') && params.get('run') === runId)
+  );
 }
 
 export function selectedStepNameFromRunDetailHash(hash: string = location.hash): string | null {
@@ -65,6 +68,26 @@ export function standaloneRunDetailHash(runId: string, hash: string = location.h
   const { params } = parseHashRoute(hash);
   params.delete('run');
   return buildHash(runDetailRoute(runId), params);
+}
+
+export function runInventoryHashFromDetail(hash: string = location.hash): string {
+  const { params } = parseHashRoute(hash);
+  for (const key of [
+    'run',
+    'tab',
+    'file',
+    'modal',
+    'diffArtifact',
+    'lightboxIndex',
+    'lightboxRecipeRunId',
+    'evidencePreview',
+    'step',
+    'artifactRun',
+    'artifact',
+  ]) {
+    params.delete(key);
+  }
+  return buildHash('runs', params);
 }
 
 function runDetailRoute(runId: string): string {

@@ -17,9 +17,8 @@ export interface RunsHashState {
   family?: string;
 }
 
-const RUNS_HASH_KEYS: (keyof RunsHashState)[] = [
+const RUNS_HASH_KEYS: Exclude<keyof RunsHashState, 'tab'>[] = [
   'run',
-  'tab',
   'status',
   'flow',
   'lane',
@@ -28,6 +27,19 @@ const RUNS_HASH_KEYS: (keyof RunsHashState)[] = [
   'tag',
   'family',
 ];
+const RUNS_TAB_PARAM = 'runsTab';
+const RUN_DETAIL_PARAMS = [
+  'tab',
+  'file',
+  'modal',
+  'diffArtifact',
+  'lightboxIndex',
+  'lightboxRecipeRunId',
+  'evidencePreview',
+  'step',
+  'artifactRun',
+  'artifact',
+] as const;
 
 function splitCsv(raw: string | null): string[] {
   if (!raw) return [];
@@ -72,6 +84,8 @@ export function parseRunsHashState(hash: string = location.hash): RunsHashState 
   const { route, params } = parseHashRoute(hash);
   if (!route.startsWith('runs')) return {};
   const out: RunsHashState = {};
+  const tab = params.get(RUNS_TAB_PARAM);
+  if (tab) out.tab = tab;
   for (const key of RUNS_HASH_KEYS) {
     const value = params.get(key);
     if (value !== null && value !== '') out[key] = value;
@@ -86,15 +100,15 @@ export function runsHashWithState(
   const { route, params } = parseHashRoute(hash);
   if (!route.startsWith('runs')) return null;
   if ((next.run ?? '') !== (params.get('run') ?? '')) {
-    params.delete('step');
-    params.delete('artifactRun');
-    params.delete('artifact');
+    for (const key of RUN_DETAIL_PARAMS) params.delete(key);
   }
   for (const key of RUNS_HASH_KEYS) {
     const value = next[key];
     if (value && value !== '') params.set(key, value);
     else params.delete(key);
   }
+  if (next.tab) params.set(RUNS_TAB_PARAM, next.tab);
+  else params.delete(RUNS_TAB_PARAM);
   return buildHash(route, params);
 }
 

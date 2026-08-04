@@ -153,7 +153,6 @@ export class RunList extends RunListState {
   private narrowMedia?: MediaQueryList;
   private readonly onNarrowChange = () => {
     this.narrowViewport = this.narrowMedia?.matches ?? false;
-    if (!this.narrowViewport) this.forceInventoryList = false;
   };
 
   connectedCallback() {
@@ -272,13 +271,11 @@ export class RunList extends RunListState {
 
   private selectRun(run: Run) {
     this.selectedRunId = run.id;
-    this.forceInventoryList = false;
     this._persistHashState('push');
   }
 
   private backToRunList() {
     this.selectedRunId = '';
-    this.forceInventoryList = false;
     this._persistHashState();
   }
 
@@ -592,7 +589,6 @@ export class RunList extends RunListState {
               const layout = {
                 hasSelection: Boolean(selectedRunId),
                 narrowViewport: this.narrowViewport,
-                forceList: this.forceInventoryList,
               };
               const showDetail = inventoryShowsDetail(layout);
               const detail = showDetail
@@ -606,6 +602,12 @@ export class RunList extends RunListState {
                         class="run-detail-full-link"
                         data-testid="runs-open-full-detail"
                         href=${standaloneRunDetailHash(selectedRunId)}
+                        @click=${(event: MouseEvent) => {
+                          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+                            return;
+                          event.preventDefault();
+                          location.hash = standaloneRunDetailHash(selectedRunId);
+                        }}
                         >Open full view ↗</a
                       >
                     </div>

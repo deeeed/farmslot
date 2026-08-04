@@ -115,7 +115,6 @@ export abstract class RunListState extends LitElement {
   @state() selectedIds = new Set<string>();
   @state() selectedRunId = '';
   @state() narrowViewport = false;
-  @state() forceInventoryList = false;
   @state() cleanupPreview: RunCleanupResult | null = null;
   @state() actionInProgress = false;
   @state() hydrating = false;
@@ -149,7 +148,6 @@ export abstract class RunListState extends LitElement {
       : 'newest';
     this.searchQuery = parsed.q ?? '';
     this.selectedRunId = parsed.run ?? '';
-    if (!this.selectedRunId) this.forceInventoryList = false;
     if (familyChanged) void this.refreshFamilyFilter();
     if (tagChanged) void this.refreshTagFilter();
   };

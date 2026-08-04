@@ -30,6 +30,7 @@ import {
   isActiveInteractiveDevRun,
   runEvidenceSummary,
 } from './run-detail-model.js';
+import { runInventoryHashFromDetail } from './run-detail-url-state.js';
 import {
   collectRunEvidenceArtifacts,
   dispositionColor,
@@ -235,7 +236,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     : html`<div
         class="back"
         @click=${() => {
-          location.hash = 'runs';
+          location.hash = runInventoryHashFromDetail();
         }}
       >
         &lt; Back to runs
