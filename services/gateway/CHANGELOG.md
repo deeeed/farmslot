@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(runners): require a task-scoped signal or exact runner hook before cold dispatch or a warm-session handoff starts monitoring, recreate the persisted primary worker target before restart delivery, validate the exact Claude settings artifact even when an older node installer exits successfully, never reuse a pre-replay task signal, and never repair failed dispatch by matching runner prose.
 - feat(run-engine): ready-gate and package-refresh soft-chip probe for behind-main count + non-destructive merge-tree conflicts (`behindMain`, `mergeConflicts`) so operators see staleness before more review loops — never auto-rebases mid-loop.
 - Fix publication gate restart recovery so a later passing review supersedes older continuation markers, recovered reviewer timeouts are terminated instead of duplicated, and gate summaries keep new snapshot-less failures without reviving historical findings.
 
@@ -55,7 +56,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - fix(run-engine): keep operator-cancelled graph runs stopped until an explicit retry, preserve cancelled state when an in-flight step fails late, and retain graph linkage across collision redirects.
 - fix(run-completion): avoid reposting dev/fix-bug PR descriptions as worker comments, identify other comments by run so finalize replays are idempotent, and publish evidence through disposable blobless sparse checkouts instead of a shared full-history artifact-repo clone.
 - fix(backlog): markdown-backed specs are allowed on jira/github items — tracker identity and live ticket data stay authoritative while spec context and acceptance criteria are merged into the worker task inputs.
-- fix(self-review): resume retained workers through structured runner handoff, keep managed Codex hooks enabled, continue interactive feedback from existing findings, write remote review artifacts through node RPC, never treat an identical prompt from an older Grok transcript as acceptance of a new fix-pass generation, and accept a fresh task signal after a delayed prompt acknowledgement.
+- fix(self-review): resume retained workers through structured runner handoff, keep managed Codex hooks enabled, continue interactive feedback from existing findings, write remote review artifacts through node RPC, and never treat an identical prompt from an older Grok transcript as acceptance of a new fix-pass generation.
+- fix(runners): recover retained prompt delivery by attempt-scoped exact digest without cross-node clock comparisons, refuse duplicate sends and concurrent session panes, preserve recovered worker targets, and let delayed acknowledgements use the delivery deadline instead of consuming send attempts.
 - fix(work-graph): reclaim `waiting` nodes when the backlog item is ready and the run/queue are gone, and retry stale completed-enqueue ledger entries for `waiting` as well as `ready`, so fail+delete no longer leaves Dispatch stuck reporting upstream wait with an empty `waitingOn`.
 - fix(ready-gate): restore finalize-step decision helper wiring and type-check review-plan decision fixtures after the dual-fix merge.
 - fix(ready-gate): honor the latest request-extra-review loop runner (e.g. codex after claude) instead of a stale pending plan or approval-only decision lookup that could re-launch the previous reviewer.

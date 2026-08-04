@@ -1270,6 +1270,7 @@ export async function dispatchExecute(
           blockerSnapshotPath: `${workerTaskDir}/artifacts/runner-blockers/dispatch-launch.txt`,
           signalPath: `${workerTaskDir}/SIGNAL.json`,
           launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,
+          requirePromptDigest: true,
           handoffAckSinceMs,
           softAcceptOnHandoffAck: true,
           providerAccountLabel: accountBind?.bind.accountLabel ?? null,

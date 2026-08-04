@@ -9,10 +9,12 @@ const commands: string[] = [];
 let paneCount = 1;
 let sessionPathExists = true;
 let promptAccepted = true;
+let promptAcceptedSequence: boolean[] | null = null;
 let promptAcceptedAt: number | null = null;
-let promptAcceptanceBaselineMs = 1_000;
+let promptAcceptanceBaselineMs: number | null = 1_000;
 let capturedPane = '';
 let trustSendCount = 0;
+let taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
 let sessionState: ObservabilityReading<RunnerSessionDeliveryState> | null = {
   value: 'idle',
   source: 'hook',
@@ -42,7 +44,7 @@ mock.module('../core/exec.js', {
       if (command.includes('SELF-REVIEW-FIX-SIGNAL.json')) {
         return {
           exitCode: 0,
-          stdout: '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n',
+          stdout: taskSignalOutput,
           stderr: '',
         };
       }
@@ -85,9 +87,10 @@ mock.module('./claude-observability.js', {
         return promptAcceptanceBaselineMs;
       },
       async promptAccepted(_vars: SlotVars, _target: string, _digest: string, sinceMs: number) {
+        const accepted = promptAcceptedSequence?.shift() ?? promptAccepted;
         return {
           // Simulate acceptance emitted while respawn-window is still returning.
-          value: promptAccepted && (promptAcceptedAt === null || sinceMs <= promptAcceptedAt),
+          value: accepted && (promptAcceptedAt === null || sinceMs <= promptAcceptedAt),
           source: 'hook',
           confidence: 'high',
           observedAt: Date.now(),
@@ -358,7 +361,83 @@ test('retained fallback accepts delayed acknowledgement before replacing an idle
   );
 });
 
-test('retained fallback does not accept a task signal before the first prompt send', async () => {
+test('retained fallback refuses a stale task signal during explicit recovery', async (t) => {
+  commands.length = 0;
+  paneCount = 1;
+  promptAccepted = false;
+  const existingSignal = {
+    raw: '{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}',
+    status: 'running',
+    mtimeNs: '2000000000',
+  };
+  taskSignalOutput = `${existingSignal.mtimeNs}\n${existingSignal.raw}\n`;
+  sessionState = {
+    value: 'active',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  t.after(() => {
+    promptAccepted = true;
+  });
+
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'grok',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: existingSignal,
+    priorPromptSendAttempted: true,
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.disposition, 'hold');
+    assert.equal(result.retryable, false);
+    assert.match(result.reason, /refusing duplicate delivery/);
+  }
+  assert.equal(
+    commands.some((command) => command.includes('send-keys') || command.includes('respawn-window')),
+    false,
+  );
+});
+
+test('retained recovery accepts the exact prompt digest without comparing node clocks', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  promptAccepted = true;
+  const existingSignal = {
+    raw: '{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}',
+    status: 'running',
+    mtimeNs: '2000000000',
+  };
+  taskSignalOutput = `${existingSignal.mtimeNs}\n${existingSignal.raw}\n`;
+  sessionState = {
+    value: 'active',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: existingSignal,
+    priorPromptSendAttempted: true,
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.equal(
+    commands.some((command) => command.includes('send-keys') || command.includes('respawn-window')),
+    false,
+  );
+});
+
+test('retained fallback requires the task signal to advance after the first prompt send', async () => {
   commands.length = 0;
   paneCount = 1;
   promptAccepted = true;
@@ -378,11 +457,125 @@ test('retained fallback does not accept a task signal before the first prompt se
     launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
   });
 
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+  assert.equal(
+    commands.some((command) => command.includes('SELF-REVIEW-FIX-SIGNAL.json')),
+    true,
+  );
+});
+
+test('retained fallback holds when safe-send leaves the task signal unchanged', async (t) => {
+  commands.length = 0;
+  paneCount = 1;
+  promptAccepted = false;
+  promptAcceptedSequence = [true];
+  const unchangedSignal = {
+    raw: '{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}',
+    status: 'running',
+    mtimeNs: '2000000000',
+  };
+  taskSignalOutput = `${unchangedSignal.mtimeNs}\n${unchangedSignal.raw}\n`;
+  sessionState = {
+    value: 'active',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  t.after(() => {
+    promptAcceptedSequence = null;
+    taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+  });
+
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: unchangedSignal,
+    timeoutMs: 5,
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.disposition, 'hold');
+    assert.equal(result.retryable, false);
+    assert.match(result.reason, /was sent, but .* did not acknowledge it/);
+  }
+});
+
+test('retained fallback uses an exact runner hook when the task signal baseline is unavailable', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  promptAccepted = true;
+  sessionState = {
+    value: 'active',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: null,
+  });
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
+});
+
+test('pane-only retained handoff falls back to safe-send after probing the task signal', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  taskSignalOutput = '0\n\n';
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
+    timeoutMs: 5,
+  });
+  taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+
   assert.deepEqual(result, { delivered: true, acknowledgement: 'safe-send' });
   assert.equal(
     commands.some((command) => command.includes('SELF-REVIEW-FIX-SIGNAL.json')),
-    false,
+    true,
   );
+});
+
+test('retained fallback disables hook proof when the slot-clock baseline is unavailable', async (t) => {
+  commands.length = 0;
+  paneCount = 1;
+  promptAccepted = true;
+  promptAcceptanceBaselineMs = null;
+  sessionState = {
+    value: 'active',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  t.after(() => {
+    promptAcceptanceBaselineMs = 1_000;
+  });
+
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'claude',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: null,
+    timeoutMs: 5,
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) assert.equal(result.disposition, 'hold');
 });
 
 test('retained resume defers to safe-send when the session file is gone', async () => {

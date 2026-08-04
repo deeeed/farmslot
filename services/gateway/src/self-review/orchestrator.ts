@@ -872,6 +872,12 @@ interface FixPromptRecoveryDeps {
   resolvePrompt: typeof resolveWorkerDispatchPrompt;
   resolveRuntimeDir: typeof resolveProjectRuntimeDir;
   readLaunchAck: typeof readLaunchAckSignalSnapshot;
+  ensureTarget: typeof ensureTmuxTargetReadyForRelaunch;
+  persistTarget: (
+    runId: string,
+    run: Pick<NonNullable<ReturnType<typeof getRun>>, 'flowType' | 'agentContexts'>,
+    target: AgentContext['target'],
+  ) => Promise<void>;
   deliver: typeof deliverPromptWithRetainedFallback;
 }
 
@@ -880,6 +886,14 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
   resolvePrompt: resolveWorkerDispatchPrompt,
   resolveRuntimeDir: resolveProjectRuntimeDir,
   readLaunchAck: readLaunchAckSignalSnapshot,
+  ensureTarget: ensureTmuxTargetReadyForRelaunch,
+  persistTarget: async (runId, run, target) => {
+    await upsertAgentContext(runId, 'self-review-fix', { target });
+    const workerRole = primaryRoleForFlow(run.flowType);
+    if (run.agentContexts?.some((candidate) => candidate.role === workerRole)) {
+      await upsertAgentContext(runId, workerRole, { target });
+    }
+  },
   deliver: deliverPromptWithRetainedFallback,
 };
 
@@ -895,17 +909,37 @@ export async function resumeSelfReviewFixPromptDelivery(
   context: FixPromptRecoveryContext,
   deps: FixPromptRecoveryDeps = FIX_PROMPT_RECOVERY_DEPS,
 ): Promise<'delivered' | 'deferred' | 'unsupported'> {
-  const target = context.target?.target;
+  const storedTarget = context.target?.target;
+  const session = context.target?.session;
   const taskFile = context.taskFile;
   const runner = normalizeRunner(context.runner);
-  if (!target || !taskFile || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
+  if (!storedTarget || !session || !taskFile || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
     return 'unsupported';
   }
 
   const run = deps.getRun(runId);
   if (!run) return 'unsupported';
+  const target = await deps.ensureTarget(
+    vars,
+    session,
+    storedTarget,
+    context.target?.window,
+    run.flowType,
+  );
+  const targetSeparator = target.indexOf(':');
+  const targetWindow =
+    targetSeparator === -1 ? null : target.slice(targetSeparator + 1).split('.', 1)[0] || null;
+  await deps.persistTarget(runId, run, {
+    session,
+    window: targetWindow,
+    pane: null,
+    target,
+  });
   const taskDir = path.posix.dirname(taskFile);
-  const prompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
+  const attemptStartedAt = context.attemptStartedAt?.trim();
+  if (!attemptStartedAt) return 'deferred';
+  const basePrompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
+  const prompt = `${basePrompt}\n\nFarmslot fix delivery attempt: ${attemptStartedAt}`;
   const primaryContext = selectAgentContext(run, { role: 'primary' });
   const signalRelPath =
     context.signalFile ?? taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
@@ -926,6 +960,7 @@ export async function resumeSelfReviewFixPromptDelivery(
     taskDir,
     launchAckSignalPath: signalPath,
     launchAckBaseline,
+    acceptExistingLaunchAck: false,
     priorPromptSendAttempted: true,
     timeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
     recovery: { runId },
@@ -1313,8 +1348,10 @@ async function sendFeedbackToWorker(
       workerWindowSep === -1
         ? null
         : workerTarget.slice(workerWindowSep + 1).split('.', 1)[0] || null;
+    const fixAttemptStartedAt = new Date().toISOString();
     const fixContext = await upsertAgentContext(runId, 'self-review-fix', {
       status: 'working',
+      attemptStartedAt: fixAttemptStartedAt,
       taskFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
       signalFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal),
       runner: run?.metrics.runner ?? null,
@@ -1325,10 +1362,11 @@ async function sendFeedbackToWorker(
 
     // Send single-line command to the worker's original pane
     const fixTaskFile = taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
-    const cmd = await resolveWorkerDispatchPrompt(project, {
+    const baseCmd = await resolveWorkerDispatchPrompt(project, {
       taskFile: fixTaskFile,
       taskDir,
     });
+    const cmd = `${baseCmd}\n\nFarmslot fix delivery attempt: ${fixAttemptStartedAt}`;
     const runner = normalizeRunner(run?.metrics.runner);
     let lastRetainedHoldReason: string | null = null;
     let terminalRetainedHoldReason: string | null = null;

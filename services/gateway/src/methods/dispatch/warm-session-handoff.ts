@@ -28,6 +28,7 @@ import {
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
 import { resolveTmuxPaneId, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
+import { readLaunchAckSignalSnapshot } from '../../runners/prompt-delivery-evidence.js';
 import { normalizeRunner, runnerRetainedSessionHandoff } from '../../runners/registry.js';
 import { resolvePersistedRunnerSessionBinding } from '../../runners/session-process.js';
 import {
@@ -90,6 +91,17 @@ export interface WarmWorkerBinding {
   role: AgentRole;
   context: AgentContext | null;
   target: string | null;
+}
+
+export function isWarmHandoffDispatchRecovery(run: Pick<Run, 'recoveryAttempts'>): boolean {
+  return (
+    run.recoveryAttempts?.some(
+      (attempt) =>
+        attempt.stepName === 'dispatch' &&
+        attempt.status === 'started' &&
+        attempt.completedAt == null,
+    ) ?? false
+  );
 }
 
 /**
@@ -327,6 +339,9 @@ export async function warmSessionHandoffDispatch(
     runTier: requestingRun.safetyTier ?? parentRun?.safetyTier,
     projectDefaultRaw: projectJson.default_safety_tier,
   });
+  const launchAckSignalPath = `${workerTaskAbs}/SIGNAL.json`;
+  const launchAckBaseline = await readLaunchAckSignalSnapshot(vars, launchAckSignalPath);
+  const recoveringDispatch = isWarmHandoffDispatchRecovery(requestingRun);
   const deliveryOptions = {
     vars,
     target: workerTarget,
@@ -338,6 +353,13 @@ export async function warmSessionHandoffDispatch(
     effort: requestingRun.effort ?? parentRun?.effort,
     safetyTier,
     taskDir: workerTaskAbs,
+    launchAckSignalPath,
+    launchAckBaseline,
+    priorPromptSendAttempted: recoveringDispatch,
+    // Never compare the gateway replay timestamp with a slot filesystem mtime.
+    // Recovery accepts only the exact prompt digest or a signal that advances
+    // from this slot-local baseline.
+    acceptExistingLaunchAck: false,
     recovery: { runId: params.runId, emit },
   };
   const delivery = await deliverPromptWithRetainedFallback(deliveryOptions);

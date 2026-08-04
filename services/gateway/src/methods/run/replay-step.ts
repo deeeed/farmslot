@@ -159,57 +159,6 @@ function resetPublishGateApprovalForReplay(
   };
 }
 
-function isQueuedPromptDispatchFalseNegative(
-  existing: NonNullable<ReturnType<typeof getRun>>,
-): boolean {
-  const dispatchStep = existing.steps.find((candidate) => candidate.name === PS.DISPATCH);
-  if (dispatchStep?.status !== 'failed') return false;
-  const text = [dispatchStep.detail, existing.error].filter(Boolean).join('\n');
-  const normalized = text.replace(/\s+/g, ' ').toLowerCase();
-  return (
-    normalized.includes('messages to be submitted after next tool call') ||
-    normalized.includes('submitted after next tool call')
-  );
-}
-
-function repairQueuedPromptDispatchFalseNegative(runId: string): void {
-  const current = getRun(runId);
-  if (!current) return;
-  const dispatchStep = current.steps.find((candidate) => candidate.name === PS.DISPATCH);
-  if (!dispatchStep || dispatchStep.status !== 'failed') return;
-
-  const repairedAt = new Date().toISOString();
-  const durationMs = dispatchStep.startedAt
-    ? Date.now() - new Date(dispatchStep.startedAt).getTime()
-    : dispatchStep.durationMs;
-
-  updateRunStep(runId, PS.DISPATCH, {
-    status: 'done',
-    completedAt: dispatchStep.completedAt ?? repairedAt,
-    durationMs,
-    detail: 'Prompt accepted: runner queued the task for submission after the next tool call.',
-    outputs: {
-      ...(dispatchStep.outputs ?? {}),
-      promptDelivery: 'queued-after-next-tool-call',
-      repairedAt,
-    },
-  });
-
-  updateRun(runId, {
-    agentContexts: (current.agentContexts ?? []).map((context) =>
-      context.status === 'failed'
-        ? {
-            ...context,
-            status: 'working',
-            completedAt: undefined,
-            lastSignalAt: repairedAt,
-            updatedAt: repairedAt,
-          }
-        : context,
-    ),
-  });
-}
-
 function normalizeReplayPrerequisites(
   runId: string,
   existing: NonNullable<ReturnType<typeof getRun>>,
@@ -265,7 +214,6 @@ function assertReplayAfterDispatchAllowed(
     );
   }
   if (dispatchStep.status === 'done') return;
-  if (dispatchStep.status === 'failed' && isQueuedPromptDispatchFalseNegative(existing)) return;
   if (dispatchStep.status === 'failed') {
     throw new Error(
       `Cannot replay ${replayStepName}: dispatch failed — replay from dispatch instead`,
@@ -420,9 +368,6 @@ export async function runReplayStep(
     assertCancelledReplayNodeAvailable(existing, params.runId);
   }
 
-  if (replayStepName === PS.MONITOR && isQueuedPromptDispatchFalseNegative(existing)) {
-    repairQueuedPromptDispatchFalseNegative(params.runId);
-  }
   const replaySnapshot = getRun(params.runId) ?? existing;
   assertReplayAfterDispatchAllowed(replaySnapshot, flowSteps, targetIdx, replayStepName);
   normalizeReplayPrerequisites(params.runId, replaySnapshot, flowSteps, targetIdx, replayStepName);

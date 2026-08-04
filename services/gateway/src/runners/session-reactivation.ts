@@ -9,7 +9,7 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from './launch-command.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
-import { type LaunchAckSignalSnapshot, probeRunnerHandoffAck } from './prompt-delivery-evidence.js';
+import type { LaunchAckSignalSnapshot } from './prompt-delivery-evidence.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
   confirmTrustPromptWithFreshEvidence,
@@ -42,6 +42,7 @@ export interface RunnerSessionReactivationOptions {
   taskDir?: string;
   launchAckSignalPath?: string | null;
   launchAckBaseline?: LaunchAckSignalSnapshot | null;
+  acceptExistingLaunchAck?: boolean;
   priorPromptSendAttempted?: boolean;
   timeoutMs?: number;
   recovery?: RunnerSendRecoveryContext;
@@ -275,7 +276,17 @@ export async function deliverPromptInPlace(
   try {
     const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
     if (delayedAcknowledgement) return delayedAcknowledgement;
+    if (options.priorPromptSendAttempted) {
+      return unacknowledgedPriorSendHold(runner);
+    }
     const timeoutMs = options.timeoutMs ?? resolveSafeSendTimeoutMs(runner);
+    const sentAtMs = Date.now();
+    const promptAcceptanceBaselineMs = await captureRunnerPromptAcceptanceBaseline(
+      options.vars,
+      options.target,
+      runner,
+      sentAtMs,
+    );
     const accepted = await sendRunnerInstructionSafely(
       options.vars,
       options.target,
@@ -288,6 +299,65 @@ export async function deliverPromptInPlace(
         recovery: options.recovery,
       },
     );
+    if (accepted && options.launchAckSignalPath) {
+      // Pane-only runners have no exact prompt hook/native acknowledgement.
+      // Probe the generic task signal once, then preserve the runner-specific
+      // safe-send result instead of waiting for a capability they do not expose.
+      if (!getRunnerObservability(runner)) {
+        const acknowledgement = await runnerHasDurablePromptHandoff(
+          options.vars,
+          options.target,
+          runner,
+          options.prompt,
+          sentAtMs,
+          {
+            launchAckSignalPath: options.launchAckSignalPath,
+            launchAckBaseline: options.launchAckBaseline,
+            requirePromptDigest: true,
+            acceptExistingLaunchAck: options.acceptExistingLaunchAck,
+            promptAcceptanceBaselineMs,
+          },
+        );
+        return acknowledgement.accepted
+          ? { delivered: true, acknowledgement: 'structured' }
+          : { delivered: true, acknowledgement: 'safe-send' };
+      }
+      const acknowledgementDeadline = Date.now() + Math.min(timeoutMs, 30_000);
+      while (Date.now() < acknowledgementDeadline) {
+        const acknowledgement = await runnerHasDurablePromptHandoff(
+          options.vars,
+          options.target,
+          runner,
+          options.prompt,
+          sentAtMs,
+          {
+            launchAckSignalPath: options.launchAckSignalPath,
+            launchAckBaseline: options.launchAckBaseline,
+            requirePromptDigest: true,
+            acceptExistingLaunchAck: options.acceptExistingLaunchAck,
+            promptAcceptanceBaselineMs,
+          },
+        );
+        if (acknowledgement.accepted) {
+          return { delivered: true, acknowledgement: 'structured' };
+        }
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            Math.max(
+              0,
+              Math.min(RUNNER_SESSION_ACCEPTANCE_POLL_MS, acknowledgementDeadline - Date.now()),
+            ),
+          ),
+        );
+      }
+      return {
+        delivered: false,
+        disposition: 'hold',
+        reason: `Live ${runner} retained handoff was sent, but the task signal or exact prompt hook did not acknowledge it`,
+        retryable: false,
+      };
+    }
     if (accepted) return { delivered: true, acknowledgement: 'safe-send' };
     return {
       delivered: false,
@@ -307,25 +377,34 @@ export async function deliverPromptInPlace(
 async function probeDelayedPromptAcknowledgement(
   options: RunnerSessionReactivationOptions,
 ): Promise<RetainedSessionDeliveryResult | null> {
-  if (
-    !options.priorPromptSendAttempted ||
-    !options.launchAckSignalPath ||
-    !options.launchAckBaseline
-  ) {
-    return null;
-  }
-  const acknowledgement = await probeRunnerHandoffAck(
+  if (!options.priorPromptSendAttempted) return null;
+  const acknowledgement = await runnerHasDurablePromptHandoff(
     options.vars,
     options.target,
+    normalizeRunner(options.runnerId),
     options.prompt,
-    Date.now(),
+    // The prompt contains the task-scoped path, so its digest is the durable
+    // recovery identity. Unlike gateway timestamps, it is safe across node
+    // clock skew and proves whether the lost in-memory send already happened.
+    0,
     {
       launchAckSignalPath: options.launchAckSignalPath,
       launchAckBaseline: options.launchAckBaseline,
-      preferHooks: false,
+      acceptExistingLaunchAck: false,
+      requirePromptDigest: true,
+      promptAcceptanceBaselineMs: 0,
     },
   );
   return acknowledgement.accepted ? { delivered: true, acknowledgement: 'structured' } : null;
+}
+
+function unacknowledgedPriorSendHold(runner: string): RetainedSessionDeliveryResult {
+  return {
+    delivered: false,
+    disposition: 'hold',
+    reason: `A prior ${runner} retained handoff send was recorded, but no exact prompt acknowledgement is available; refusing duplicate delivery`,
+    retryable: false,
+  };
 }
 
 /** Prefer native retained resume, then use the shared non-destructive in-place contract. */
@@ -335,6 +414,9 @@ export async function deliverPromptWithRetainedFallback(
   try {
     const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
     if (delayedAcknowledgement) return delayedAcknowledgement;
+    if (options.priorPromptSendAttempted) {
+      return unacknowledgedPriorSendHold(normalizeRunner(options.runnerId));
+    }
   } catch (error) {
     return {
       delivered: false,

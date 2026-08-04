@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import {
+  isWarmHandoffDispatchRecovery,
   resolveWarmWorkerBinding,
   warmHandoffFailureFromRetainedDelivery,
 } from './warm-session-handoff.js';
@@ -110,5 +111,55 @@ test('warm handoff holds a live worker when retained delivery permits only in-pl
       disposition: 'hold',
       reason: 'retained session was replaced without acknowledgement',
     },
+  );
+});
+
+test('warm handoff accepts existing task acknowledgement only during a dispatch replay', () => {
+  assert.equal(isWarmHandoffDispatchRecovery({}), false);
+  assert.equal(
+    isWarmHandoffDispatchRecovery({
+      recoveryAttempts: [
+        {
+          id: 'prepare-replay',
+          attempt: 1,
+          stepName: 'prepare',
+          startedAt: '2026-08-04T00:00:00.000Z',
+          status: 'started',
+          triggeredBy: 'operator',
+        },
+      ],
+    }),
+    false,
+  );
+  assert.equal(
+    isWarmHandoffDispatchRecovery({
+      recoveryAttempts: [
+        {
+          id: 'dispatch-replay',
+          attempt: 1,
+          stepName: 'dispatch',
+          startedAt: '2026-08-04T00:00:00.000Z',
+          status: 'started',
+          triggeredBy: 'operator',
+        },
+      ],
+    }),
+    true,
+  );
+  assert.equal(
+    isWarmHandoffDispatchRecovery({
+      recoveryAttempts: [
+        {
+          id: 'completed-dispatch-replay',
+          attempt: 1,
+          stepName: 'dispatch',
+          startedAt: '2026-08-04T00:00:00.000Z',
+          completedAt: '2026-08-04T00:01:00.000Z',
+          status: 'completed',
+          triggeredBy: 'operator',
+        },
+      ],
+    }),
+    false,
   );
 });

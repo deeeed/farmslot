@@ -9,6 +9,7 @@ import {
   filterHooksByPane,
   filterStatuslineByPane,
   hookRecordMatchesRunnerSession,
+  hookRecordMatchesRunnerSessionIdentity,
   lastTurnCompletedFromHooks,
   parseHookJsonl,
   promptAcceptedFromHooks,
@@ -208,6 +209,29 @@ test('hookRecordMatchesRunnerSession binds a snapshot to exact session, path, an
       sessionId: 'wanted',
       sessionPath: '/sessions/wanted.jsonl',
       paneId: '%3',
+    }),
+    false,
+  );
+});
+
+test('hookRecordMatchesRunnerSessionIdentity allows a persisted session to move panes', () => {
+  const record = {
+    hook_event_name: 'Stop',
+    session_id: 'wanted',
+    transcript_path: '/sessions/wanted.jsonl',
+    tmuxPane: '%1',
+  };
+  assert.equal(
+    hookRecordMatchesRunnerSessionIdentity(record, {
+      sessionId: 'wanted',
+      sessionPath: '/sessions/wanted.jsonl',
+    }),
+    true,
+  );
+  assert.equal(
+    hookRecordMatchesRunnerSessionIdentity(record, {
+      sessionId: 'other',
+      sessionPath: '/sessions/wanted.jsonl',
     }),
     false,
   );

@@ -1835,7 +1835,12 @@ async function waitForPaneAfterClassifierAction(
   runner: string,
   message: string,
   marker: string,
-  opts: { timeoutMs: number; pollIntervalMs: number; stabilityPolls: number },
+  opts: {
+    timeoutMs: number;
+    pollIntervalMs: number;
+    stabilityPolls: number;
+    structuredTaskAccepted?: () => Promise<boolean>;
+  },
 ): Promise<ClassifierActionRecovery | null> {
   const deadline = Date.now() + opts.timeoutMs;
   let lastPane = '';
@@ -1843,8 +1848,14 @@ async function waitForPaneAfterClassifierAction(
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, opts.pollIntervalMs));
     const pane = await captureTmuxPane(vars, target, 90);
-    if (runnerPaneShowsTaskAlreadyRunning(pane, message, marker, runner)) {
+    if (opts.structuredTaskAccepted && (await opts.structuredTaskAccepted())) {
       return { kind: 'task-accepted', pane };
+    }
+    if (runnerPaneShowsTaskAlreadyRunning(pane, message, marker, runner)) {
+      if (!opts.structuredTaskAccepted) return { kind: 'task-accepted', pane };
+      stableCount = 0;
+      lastPane = '';
+      continue;
     }
     if (!(await runnerLooksIdleObsFirst(vars, target, runner, pane))) {
       stableCount = 0;
@@ -2261,6 +2272,30 @@ export async function sendRunnerPostLaunchPrompt(
       : opts.launchAckSignalPath
         ? await readLaunchAckSignalSnapshot(vars, opts.launchAckSignalPath)
         : null;
+  const structuredTaskAccepted = requirePromptDigest
+    ? async (): Promise<boolean> => {
+        const handoff = await runnerHasDurablePromptHandoff(
+          vars,
+          target,
+          runner,
+          message,
+          handoffAckSinceMs,
+          {
+            launchAckSignalPath: opts.launchAckSignalPath,
+            launchAckBaseline,
+            requirePromptDigest: true,
+            acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
+            promptAcceptanceBaselineMs,
+          },
+        );
+        if (handoff.accepted) {
+          console.log(
+            `[${logPrefix}] prompt handoff accepted via ${handoff.source}: ${handoff.reason}`,
+          );
+        }
+        return handoff.accepted;
+      }
+    : undefined;
 
   // Tiny windows (e.g. a 5-row pane after a detached-client reflow) truncate the
   // banner lines readiness matching depends on — re-enforce the minimum size
@@ -2452,11 +2487,18 @@ export async function sendRunnerPostLaunchPrompt(
           `Prompt delivery aborted before the ${readyTimeoutMs / 1000}s readiness timeout.`,
       );
     }
-    if (runnerPaneShowsTaskAlreadyRunning(pane, message, marker, runner)) {
+    if (structuredTaskAccepted && (await structuredTaskAccepted())) return;
+    const paneClaimsTaskActive = runnerPaneShowsTaskAlreadyRunning(pane, message, marker, runner);
+    if (!structuredTaskAccepted && paneClaimsTaskActive) {
       console.log(
         `[${logPrefix}] prompt already executing in ${target}; skipping duplicate post-launch send`,
       );
       return;
+    }
+    if (structuredTaskAccepted && paneClaimsTaskActive) {
+      stableCount = 0;
+      lastPane = '';
+      continue;
     }
     if (!(await runnerLooksIdleObsFirst(vars, target, runner, pane))) {
       stableCount = 0;
@@ -2523,6 +2565,7 @@ export async function sendRunnerPostLaunchPrompt(
           timeoutMs: Math.min(30_000, Math.max(readyTimeoutMs, 5_000)),
           pollIntervalMs,
           stabilityPolls,
+          structuredTaskAccepted,
         },
       );
       if (recovered?.kind === 'task-accepted') {
@@ -2597,6 +2640,7 @@ export async function sendRunnerPostLaunchPrompt(
             timeoutMs: Math.min(30_000, Math.max(readyTimeoutMs, 5_000)),
             pollIntervalMs,
             stabilityPolls,
+            structuredTaskAccepted,
           },
         );
         if (recovered?.kind === 'task-accepted') {
@@ -2675,7 +2719,10 @@ export async function sendRunnerPostLaunchPrompt(
     );
   }
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  let attempt = 1;
+  let sentAttempts = 0;
+  const deliveryDeadline = Date.now() + readyTimeoutMs;
+  while (attempt <= maxAttempts && Date.now() < deliveryDeadline) {
     const immediatePane = (
       await execOnSlot(
         vars,
@@ -2702,15 +2749,18 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    if (runnerPaneShowsPreSendDuplicateInstruction(immediatePane, message, runner)) {
+    const immediatePaneClaimsTaskActive =
+      runnerPaneShowsPreSendDuplicateInstruction(immediatePane, message, runner) ||
+      runnerPaneShowsTaskAlreadyRunning(immediatePane, message, marker, runner);
+    if (immediatePaneClaimsTaskActive) {
+      if (requirePromptDigest) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.max(0, Math.min(pollIntervalMs, deliveryDeadline - Date.now()))),
+        );
+        continue;
+      }
       console.log(
-        `[${logPrefix}] prompt already visible with runner progress in ${target}; skipping duplicate send`,
-      );
-      return;
-    }
-    if (runnerPaneShowsTaskAlreadyRunning(immediatePane, message, marker, runner)) {
-      console.log(
-        `[${logPrefix}] task already executing in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
+        `[${logPrefix}] task already visible with runner progress in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
       );
       return;
     }
@@ -2738,19 +2788,21 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    if (runnerPaneShowsPreSendDuplicateInstruction(preSendPane, message, runner)) {
-      console.log(
-        `[${logPrefix}] prompt already visible with runner progress in ${target}; skipping duplicate send`,
-      );
-      return;
-    }
+    const preSendPaneClaimsTaskActive =
+      runnerPaneShowsPreSendDuplicateInstruction(preSendPane, message, runner) ||
+      runnerPaneShowsTaskAlreadyRunning(preSendPane, message, marker, runner);
     // The previous attempt's prompt may have been accepted just after its verify
-    // window closed (e.g. codex only renders "Working" a few seconds after submit).
-    // Re-check before sending again, or we deliver a duplicate prompt that lands as a
-    // queued draft while the runner is already executing the task.
-    if (runnerPaneShowsTaskAlreadyRunning(preSendPane, message, marker, runner)) {
+    // window closed. Pane progress prevents a duplicate transport send, but an
+    // exact-ack caller must keep waiting for structured evidence.
+    if (preSendPaneClaimsTaskActive) {
+      if (requirePromptDigest) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.max(0, Math.min(pollIntervalMs, deliveryDeadline - Date.now()))),
+        );
+        continue;
+      }
       console.log(
-        `[${logPrefix}] task already executing in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
+        `[${logPrefix}] task already visible with runner progress in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
       );
       return;
     }
@@ -2781,6 +2833,7 @@ export async function sendRunnerPostLaunchPrompt(
         `Failed to send prompt to ${target}: ${promptResult.stderr || promptResult.stdout || `exit ${promptResult.exitCode}`}`,
       );
     }
+    sentAttempts += 1;
     await new Promise((r) => setTimeout(r, verifyWaitMs));
     const postPane = (
       await execOnSlot(
@@ -2813,7 +2866,7 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    if (runnerPaneHasQueuedInstruction(postPane, message)) {
+    if (!requirePromptDigest && runnerPaneHasQueuedInstruction(postPane, message)) {
       console.log(`[${logPrefix}] prompt queued in ${target} (attempt ${attempt}/${maxAttempts})`);
       return;
     }
@@ -2822,12 +2875,14 @@ export async function sendRunnerPostLaunchPrompt(
         `[${logPrefix}] prompt appears buffered after attempt ${attempt}/${maxAttempts}; retrying with submit key`,
       );
       lastPane = postPane;
+      attempt += 1;
       continue;
     }
     console.log(
       `[${logPrefix}] prompt not echoed after attempt ${attempt}/${maxAttempts}, retrying`,
     );
     lastPane = postPane;
+    attempt += 1;
   }
 
   const failurePane = (
@@ -2836,13 +2891,13 @@ export async function sendRunnerPostLaunchPrompt(
       tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
     )
   ).stdout;
-  if (runnerPaneHasQueuedInstruction(failurePane, message)) {
+  if (!requirePromptDigest && runnerPaneHasQueuedInstruction(failurePane, message)) {
     console.log(
       `[${logPrefix}] prompt delivery verifier found queued instruction in ${target}; accepting delayed submit`,
     );
     return;
   }
-  if (opts.signalPath) {
+  if (!requirePromptDigest && opts.signalPath) {
     const signalResult = await execOnSlot(
       vars,
       `cat ${shellQuote(opts.signalPath)} 2>/dev/null`,
@@ -2888,7 +2943,7 @@ export async function sendRunnerPostLaunchPrompt(
           `target=${target}`,
           `repo=${vars.remoteRepo}`,
           'kind=prompt-delivery-failed',
-          `summary=Prompt sent ${maxAttempts} times but the pane did not show marker/progress acceptance.`,
+          `summary=Prompt sent ${sentAttempts} time(s) but exact delivery acknowledgement did not arrive.`,
           `capturedAt=${new Date().toISOString()}`,
           '',
           failurePane,
@@ -2900,7 +2955,7 @@ export async function sendRunnerPostLaunchPrompt(
     }
   }
   throw new Error(
-    `Prompt delivery failed after ${maxAttempts} attempts in tmux target ${target}. ` +
+    `Prompt delivery failed after ${sentAttempts} send attempt(s) in tmux target ${target}. ` +
       `The pane did not change, echo "${marker}", or show runner progress, meaning the runner input handler was not live.${snapshotNote}\n` +
       `Last pane content:\n${failurePane}`,
   );
