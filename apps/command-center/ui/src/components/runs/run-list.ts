@@ -41,6 +41,7 @@ import {
 } from '../shared/work-inventory-table.js';
 
 import { familyRunHash } from './family-observability-url-state.js';
+import { standaloneRunDetailHash } from './run-detail-url-state.js';
 import {
   renderRunListManageBar,
   renderRunListSearchRow,
@@ -595,11 +596,20 @@ export class RunList extends RunListState {
               };
               const showDetail = inventoryShowsDetail(layout);
               const detail = showDetail
-                ? html`${renderWorkInventoryBackButton({
-                      label: this.narrowViewport ? '← Back to list' : '× Close details',
-                      testId: 'runs-back-to-list',
-                      onBack: () => this.backToRunList(),
-                    })}<run-detail
+                ? html`<div class="run-detail-actions">
+                      ${renderWorkInventoryBackButton({
+                        label: this.narrowViewport ? '← Back to list' : '× Close details',
+                        testId: 'runs-back-to-list',
+                        onBack: () => this.backToRunList(),
+                      })}
+                      <a
+                        class="run-detail-full-link"
+                        data-testid="runs-open-full-detail"
+                        href=${standaloneRunDetailHash(selectedRunId)}
+                        >Open full view ↗</a
+                      >
+                    </div>
+                    <run-detail
                       class="run-list-detail"
                       .runId=${selectedRunId}
                       embedded

@@ -376,6 +376,20 @@ export const runListStyles = css`
     display: block;
     min-width: 0;
   }
+  .run-detail-actions {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+  }
+  .run-detail-full-link {
+    color: ${unsafeCSS(colors.accent)};
+    font-size: 11px;
+    text-decoration: none;
+  }
+  .run-detail-full-link:hover {
+    text-decoration: underline;
+  }
   .run-flow-cell {
     align-items: center;
     display: flex;

@@ -7,6 +7,7 @@ import {
   runDetailEvidenceArtifactHash,
   runDetailStepHash,
   selectedStepNameFromRunDetailHash,
+  standaloneRunDetailHash,
 } from './run-detail-url-state.js';
 
 test('run detail helpers read selected step and artifact modal state', () => {
@@ -65,5 +66,12 @@ test('standalone run detail drops a stale inventory selection param', () => {
   assert.equal(
     runDetailStepHash('run-1', 'monitor', '#run/run-1?run=old&projects=farmslot-farm'),
     '#run/run-1?projects=farmslot-farm&step=monitor',
+  );
+});
+
+test('full-view navigation preserves filters and selected detail state', () => {
+  assert.equal(
+    standaloneRunDetailHash('run-1', '#runs?projects=farmslot-farm&tab=all&run=run-1&step=ci-pass'),
+    '#run/run-1?projects=farmslot-farm&tab=all&step=ci-pass',
   );
 });

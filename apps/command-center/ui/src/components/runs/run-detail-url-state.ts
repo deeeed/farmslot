@@ -61,6 +61,12 @@ export function runDetailEvidenceArtifactHash(
   return buildHash(route.startsWith('runs') ? route : runDetailRoute(runId), params);
 }
 
+export function standaloneRunDetailHash(runId: string, hash: string = location.hash): string {
+  const { params } = parseHashRoute(hash);
+  params.delete('run');
+  return buildHash(runDetailRoute(runId), params);
+}
+
 function runDetailRoute(runId: string): string {
   return `run/${runId}`;
 }
