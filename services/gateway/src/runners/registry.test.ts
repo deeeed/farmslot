@@ -1788,6 +1788,10 @@ describe('buildRunnerSessionReloadCommand', () => {
       cmd,
       /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
     );
+    assert.match(
+      cmd,
+      /test -f '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' \|\| \{ mkdir -p '\/tmp\/repo\/temp\/recipe\/runtime\/\.observability'/,
+    );
   });
 
   it('builds a Codex resume command inside the isolated CODEX_HOME', () => {
