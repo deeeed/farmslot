@@ -555,6 +555,16 @@ function cleanupLegacyClaudeSettings(repoPath, obsDir) {
   const settingsDir = path.join(repoPath, '.claude');
   const settingsPath = path.join(settingsDir, 'settings.local.json');
   const backupPath = `${settingsPath}.farmslot-backup`;
+  let settingsDirStat = null;
+  try {
+    settingsDirStat = fs.lstatSync(settingsDir);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  // A linked project settings directory is operator-owned. Never traverse it:
+  // cleanup must not mutate files outside the slot checkout.
+  if (settingsDirStat && !settingsDirStat.isDirectory()) return;
+
   if (fs.existsSync(backupPath)) {
     fs.mkdirSync(obsDir, { recursive: true });
     fs.renameSync(backupPath, path.join(obsDir, 'legacy-claude-settings.farmslot-backup'));
@@ -566,6 +576,7 @@ function cleanupLegacyClaudeSettings(repoPath, obsDir) {
     return;
   }
 
+  const settingsStat = fs.lstatSync(settingsPath);
   const settings = readJsonObject(settingsPath);
   const removedHooks = removeFarmslotHooks(settings);
   const statusCommand =
@@ -576,8 +587,14 @@ function cleanupLegacyClaudeSettings(repoPath, obsDir) {
   if (removedStatusLine) delete settings.statusLine;
   if (!removedHooks && !removedStatusLine) return;
 
-  if (Object.keys(settings).length === 0) fs.unlinkSync(settingsPath);
-  else fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  // Replace a linked settings file inside a real project directory with the
+  // sanitized local document. Unlinking the link never writes to its target.
+  if (settingsStat.isSymbolicLink()) fs.unlinkSync(settingsPath);
+  if (Object.keys(settings).length === 0) {
+    if (!settingsStat.isSymbolicLink()) fs.unlinkSync(settingsPath);
+  } else {
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  }
 
   if (fs.existsSync(settingsDir) && fs.readdirSync(settingsDir).length === 0) {
     fs.rmdirSync(settingsDir);

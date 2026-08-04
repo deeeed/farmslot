@@ -125,6 +125,57 @@ test('claude install preserves non-Farmslot repository settings while removing l
   assert.equal(settings.hooks.UserPromptSubmit[0].hooks[0].command, 'node user-hook.mjs');
 });
 
+test('claude install does not traverse a symlinked repository settings directory', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-linked-dir-'));
+  const externalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-external-'));
+  const externalSettings = path.join(externalDir, 'settings.local.json');
+  const original = JSON.stringify({
+    hooks: {
+      Stop: [
+        {
+          hooks: [{ type: 'command', command: "node '/external/farmslot-observability-hook.mjs'" }],
+        },
+      ],
+    },
+  });
+  fs.writeFileSync(externalSettings, original);
+  fs.symlinkSync(externalDir, path.join(repo, '.claude'), 'dir');
+
+  installToTempDir('claude', repo);
+
+  assert.ok(fs.lstatSync(path.join(repo, '.claude')).isSymbolicLink());
+  assert.equal(fs.readFileSync(externalSettings, 'utf8'), original);
+});
+
+test('claude install sanitizes a linked settings file without mutating its target', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-linked-file-'));
+  const settingsDir = path.join(repo, '.claude');
+  const settingsPath = path.join(settingsDir, 'settings.local.json');
+  const externalSettings = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-external-')),
+    'settings.json',
+  );
+  const original = JSON.stringify({
+    theme: 'dark',
+    hooks: {
+      Stop: [
+        {
+          hooks: [{ type: 'command', command: "node '/external/farmslot-observability-hook.mjs'" }],
+        },
+      ],
+    },
+  });
+  fs.mkdirSync(settingsDir);
+  fs.writeFileSync(externalSettings, original);
+  fs.symlinkSync(externalSettings, settingsPath);
+
+  installToTempDir('claude', repo);
+
+  assert.equal(fs.readFileSync(externalSettings, 'utf8'), original);
+  assert.equal(fs.lstatSync(settingsPath).isSymbolicLink(), false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf8')), { theme: 'dark' });
+});
+
 test('claude install relocates a legacy backup after Farmslot settings were removed', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-legacy-backup-'));
   const settingsDir = path.join(repo, '.claude');
