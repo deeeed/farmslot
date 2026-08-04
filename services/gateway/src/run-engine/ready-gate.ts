@@ -49,6 +49,12 @@ import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
 
 import {
+  applyBranchFreshnessToReadyGatePayload,
+  type BranchFreshnessSummary,
+  probeSlotBranchFreshness,
+  resolveBranchUpdateStrategy,
+} from './branch-freshness.js';
+import {
   latestResolvedHumanGateDecision,
   markResolvedHumanGateReviewRequestConsumed,
 } from './decision-replay.js';
@@ -85,12 +91,6 @@ import {
   requestedReviewLoopCount,
   reviewPlanFromSelection,
 } from './review-plan.js';
-import {
-  applyBranchFreshnessToReadyGatePayload,
-  probeSlotBranchFreshness,
-  resolveBranchUpdateStrategy,
-  type BranchFreshnessSummary,
-} from './branch-freshness.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
 
 const S = PipelineSteps;
