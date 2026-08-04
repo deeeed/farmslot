@@ -34,6 +34,8 @@ export function prepareRepo(repo) {
     stdio: 'pipe',
   });
   execFileSync('git', ['config', 'user.name', 'runner-validate'], { cwd: repo, stdio: 'pipe' });
+  fs.mkdirSync(path.join(repo, '.codex'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.codex', 'config.toml'), '[features]\nhooks = false\n');
 }
 
 export function assertBinary() {
@@ -53,6 +55,8 @@ export function buildLaunchCommand(repo, runtimeDir, prompt = DEFAULT_PROMPT, mo
     `CODEX_HOME=${shSingleQuote(codexHome)}`,
     'node',
     shSingleQuote(CODEX_BIN),
+    '--config',
+    'features.hooks=true',
     'exec',
     '--sandbox',
     'workspace-write',

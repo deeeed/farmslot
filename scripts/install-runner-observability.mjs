@@ -349,6 +349,56 @@ function upsertCodexHooksFeature(content) {
     .trimEnd();
 }
 
+function restoreLegacyCodexHooksFeature(currentContent, backupContent) {
+  const generatedContent = `${upsertCodexHooksFeature(backupContent)}\n`;
+  if (generatedContent === backupContent) return currentContent;
+
+  const sectionBounds = (lines) => {
+    const start = lines.findIndex((line) => line.trim() === '[features]');
+    if (start < 0) return null;
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i += 1) {
+      const trimmed = lines[i].trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        end = i;
+        break;
+      }
+    }
+    return { start, end };
+  };
+  const keyLineIndex = (lines, bounds) => {
+    if (!bounds) return -1;
+    for (let i = bounds.start + 1; i < bounds.end; i += 1) {
+      const equals = lines[i].indexOf('=');
+      if (equals >= 0 && lines[i].slice(0, equals).trim() === 'hooks') return i;
+    }
+    return -1;
+  };
+
+  const currentLines = currentContent.split('\n');
+  const backupLines = backupContent.split('\n');
+  const currentBounds = sectionBounds(currentLines);
+  const backupBounds = sectionBounds(backupLines);
+  const currentHookIndex = keyLineIndex(currentLines, currentBounds);
+  const backupHookIndex = keyLineIndex(backupLines, backupBounds);
+  if (currentHookIndex < 0 || currentLines[currentHookIndex].trim() !== 'hooks = true') return null;
+
+  if (backupHookIndex >= 0) {
+    currentLines[currentHookIndex] = backupLines[backupHookIndex];
+  } else {
+    currentLines.splice(currentHookIndex, 1);
+    if (!backupBounds) {
+      const updatedBounds = sectionBounds(currentLines);
+      const hasFeatureContent = currentLines
+        .slice(updatedBounds.start + 1, updatedBounds.end)
+        .some((line) => line.trim());
+      if (!hasFeatureContent)
+        currentLines.splice(updatedBounds.start, updatedBounds.end - updatedBounds.start);
+    }
+  }
+  return currentLines.join('\n');
+}
+
 function canonicalCodexPath(filePath) {
   try {
     return fs.realpathSync(path.resolve(filePath));
@@ -645,7 +695,8 @@ function readCodexHooksDocument(filePath) {
 }
 
 function removeFarmslotCodexHookEntries(hooks) {
-  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return;
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return false;
+  let removed = false;
   for (const [eventName, entries] of Object.entries(hooks)) {
     if (!Array.isArray(entries)) continue;
     const cleanedEntries = [];
@@ -663,11 +714,13 @@ function removeFarmslotCodexHookEntries(hooks) {
             hook.command.includes(FARMSLOT_HOOK_MARKER)
           ),
       );
+      if (keptHooks.length !== entry.hooks.length) removed = true;
       if (keptHooks.length > 0) cleanedEntries.push({ ...entry, hooks: keptHooks });
     }
     if (cleanedEntries.length > 0) hooks[eventName] = cleanedEntries;
     else delete hooks[eventName];
   }
+  return removed;
 }
 
 function mergeCodexHooks(hooksPath, markerPath, hookCommand) {
@@ -684,14 +737,80 @@ function mergeCodexHooks(hooksPath, markerPath, hookCommand) {
   fs.writeFileSync(hooksPath, JSON.stringify(root, null, 2) + '\n');
 }
 
-function ensureCodexHooksFeature(configPath, markerPath) {
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  backupOnce(configPath, markerPath);
-  let content = '';
-  if (fs.existsSync(configPath)) content = fs.readFileSync(configPath, 'utf8');
-  const next = upsertCodexHooksFeature(content);
-  if (next === content.trimEnd()) return;
-  fs.writeFileSync(configPath, `${next}\n`);
+function cleanupLegacyCodexProjectFiles(repoPath, obsDir) {
+  const codexDir = path.join(repoPath, '.codex');
+  let codexDirStat = null;
+  try {
+    codexDirStat = fs.lstatSync(codexDir);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  if (!codexDirStat?.isDirectory()) return;
+
+  const hooksPath = path.join(codexDir, 'hooks.json');
+  const hooksBackupPath = `${hooksPath}.farmslot-backup`;
+  const configPath = path.join(codexDir, 'config.toml');
+  const configBackupPath = `${configPath}.farmslot-backup`;
+
+  const lstatIfPresent = (filePath) => {
+    try {
+      return fs.lstatSync(filePath);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return null;
+      throw error;
+    }
+  };
+  const hooksStat = lstatIfPresent(hooksPath);
+  const hooksBackupContent = fs.existsSync(hooksBackupPath)
+    ? fs.readFileSync(hooksBackupPath, 'utf8')
+    : null;
+  if (hooksStat) {
+    const { root, hooks } = readCodexHooksDocument(hooksPath);
+    const removedHooks = removeFarmslotCodexHookEntries(hooks);
+    if (removedHooks) {
+      const sanitizedRoot = { ...root };
+      if (Object.keys(hooks).length > 0) sanitizedRoot.hooks = hooks;
+      else delete sanitizedRoot.hooks;
+
+      const backupRoot = hooksBackupContent === null ? null : readJsonObject(hooksBackupPath);
+      const matchesBackup =
+        backupRoot !== null &&
+        (JSON.stringify(sanitizedRoot) === JSON.stringify(backupRoot) ||
+          JSON.stringify({ ...sanitizedRoot, hooks }) === JSON.stringify(backupRoot));
+      if (hooksStat.isSymbolicLink()) fs.unlinkSync(hooksPath);
+      if (matchesBackup) fs.writeFileSync(hooksPath, hooksBackupContent);
+      else if (Object.keys(sanitizedRoot).length === 0) {
+        if (!hooksStat.isSymbolicLink()) fs.unlinkSync(hooksPath);
+      } else fs.writeFileSync(hooksPath, JSON.stringify(sanitizedRoot, null, 2) + '\n');
+    }
+  }
+  if (fs.existsSync(hooksBackupPath)) {
+    fs.renameSync(hooksBackupPath, path.join(obsDir, 'legacy-codex-hooks.farmslot-backup'));
+  }
+
+  const configStat = lstatIfPresent(configPath);
+  const hasConfigBackup = fs.existsSync(configBackupPath);
+  let configCleaned = !configStat;
+  if (hasConfigBackup && configStat && !configStat.isSymbolicLink()) {
+    const backupContent = fs.readFileSync(configBackupPath, 'utf8');
+    const generatedContent = `${upsertCodexHooksFeature(backupContent)}\n`;
+    const currentContent = fs.readFileSync(configPath, 'utf8');
+    if (currentContent === generatedContent) {
+      fs.writeFileSync(configPath, backupContent);
+      configCleaned = true;
+    } else {
+      const restored = restoreLegacyCodexHooksFeature(currentContent, backupContent);
+      if (restored !== null) {
+        fs.writeFileSync(configPath, restored);
+        configCleaned = true;
+      }
+    }
+  }
+  if (configCleaned && fs.existsSync(configBackupPath)) {
+    fs.renameSync(configBackupPath, path.join(obsDir, 'legacy-codex-config.farmslot-backup'));
+  }
+
+  if (fs.existsSync(codexDir) && fs.readdirSync(codexDir).length === 0) fs.rmdirSync(codexDir);
 }
 
 function writeObservabilityInstallManifest(obsDir, manifest) {
@@ -792,10 +911,10 @@ async function installCodex({ repo, runtimeDir = '.agent', slotId, authSource, a
     runner: 'codex',
   });
   const markerPath = path.join(obsDir, '.farmslot-owned');
-  const hooksPath = path.join(repoPath, '.codex', 'hooks.json');
-  const projectConfigPath = path.join(repoPath, '.codex', 'config.toml');
+  const hooksPath = path.join(obsDir, 'codex-hooks.json');
+  fs.writeFileSync(hooksPath, '{}\n');
   mergeCodexHooks(hooksPath, markerPath, hookCommand);
-  ensureCodexHooksFeature(projectConfigPath, markerPath);
+  cleanupLegacyCodexProjectFiles(repoPath, obsDir);
   const { codexHomeDir, resolvedAuth } = await bootstrapCodexHome({
     repoPath,
     runtimeDir,

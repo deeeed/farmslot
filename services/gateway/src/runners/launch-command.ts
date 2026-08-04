@@ -293,7 +293,7 @@ export function buildCodexHomeSetup(repo: string, runtimeDir = '.agent'): string
   // write the home here — that keeps the global config clean and avoids a half-built
   // home that codex would reject.
   return (
-    `if [ -e ${shellQuote(`${codexHome}/auth.json`)} ]; then export CODEX_HOME=${shellQuote(codexHome)}; FARMSLOT_CODEX_PLUGIN_HOOK_ARGS=''; ` +
+    `if [ -e ${shellQuote(`${codexHome}/auth.json`)} ]; then export CODEX_HOME=${shellQuote(codexHome)}; FARMSLOT_CODEX_PLUGIN_HOOK_ARGS='--config features.hooks=true'; ` +
     `else unset CODEX_HOME; FARMSLOT_CODEX_PLUGIN_HOOK_ARGS='--disable plugin_hooks'; echo "[farmslot] codex-home not provisioned; using global ~/.codex without observability" >&2; fi`
   );
 }

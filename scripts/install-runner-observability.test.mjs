@@ -289,7 +289,7 @@ test('installed hook writes JSONL records and atomic per-session and per-pane sn
   assert.equal(paneState.tmuxPane, '%1');
 });
 
-test('codex install merges farmslot hook alongside existing codex hooks', () => {
+test('codex install keeps project hooks and config clean while isolating managed hooks', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-'));
   fs.mkdirSync(path.join(repo, '.codex'), { recursive: true });
   fs.writeFileSync(
@@ -308,6 +308,8 @@ test('codex install merges farmslot hook alongside existing codex hooks', () => 
       2,
     )}\n`,
   );
+  fs.writeFileSync(path.join(repo, '.codex', 'config.toml'), '[features]\nhooks = true\n');
+  const projectHooksBefore = fs.readFileSync(path.join(repo, '.codex', 'hooks.json'), 'utf8');
 
   execFileSync(
     process.execPath,
@@ -325,12 +327,23 @@ test('codex install merges farmslot hook alongside existing codex hooks', () => 
     { stdio: 'pipe' },
   );
 
-  const hooksDoc = JSON.parse(fs.readFileSync(path.join(repo, '.codex', 'hooks.json'), 'utf8'));
+  const projectHooksPath = path.join(repo, '.codex', 'hooks.json');
+  const projectHooksDoc = JSON.parse(fs.readFileSync(projectHooksPath, 'utf8'));
+  assert.equal(projectHooksDoc.hooks.Stop.length, 1);
+  assert.match(projectHooksDoc.hooks.Stop[0].hooks[0].command, /omx-codex-native-hook/u);
+  assert.equal(fs.readFileSync(projectHooksPath, 'utf8'), projectHooksBefore);
+  assert.equal(
+    fs.readFileSync(path.join(repo, '.codex', 'config.toml'), 'utf8'),
+    '[features]\nhooks = true\n',
+  );
+
+  const codexHome = path.join(repo, '.agent', 'codex-home');
+  const hooksDoc = JSON.parse(fs.readFileSync(path.join(codexHome, 'hooks.json'), 'utf8'));
   const stopEntries = hooksDoc.hooks.Stop;
   assert.ok(Array.isArray(stopEntries));
-  assert.equal(stopEntries.length, 2);
+  assert.equal(stopEntries.length, 1);
   const commands = stopEntries.flatMap((entry) => entry.hooks.map((hook) => hook.command));
-  assert.ok(commands.some((cmd) => cmd.includes('omx-codex-native-hook.mjs')));
+  assert.ok(!commands.some((cmd) => cmd.includes('omx-codex-native-hook.mjs')));
   assert.ok(commands.some((cmd) => cmd.includes('farmslot-observability-hook.mjs')));
 
   const codexEvents = Object.keys(hooksDoc.hooks).sort();
@@ -347,10 +360,6 @@ test('codex install merges farmslot hook alongside existing codex hooks', () => 
   assert.ok(!codexEvents.includes('StopFailure'));
   assert.ok(!codexEvents.includes('SubagentStop'));
 
-  const config = fs.readFileSync(path.join(repo, '.codex', 'config.toml'), 'utf8');
-  assert.match(config, /hooks\s*=\s*true/);
-
-  const codexHome = path.join(repo, '.agent', 'codex-home');
   assert.ok(fs.existsSync(codexHome));
   const codexHomeConfig = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
   assert.match(codexHomeConfig, /hooks\s*=\s*true/);
@@ -362,6 +371,139 @@ test('codex install merges farmslot hook alongside existing codex hooks', () => 
   runHook(hookPath, obsDir, { hook_event_name: 'UserPromptSubmit', session_id: 'c1' }, 'codex');
   const row = JSON.parse(fs.readFileSync(path.join(obsDir, 'hooks.jsonl'), 'utf8').trim());
   assert.equal(row.runner, 'codex');
+});
+
+test('codex install preserves live project-hook edits during legacy cleanup', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-migrate-'));
+  const codexDir = path.join(repo, '.codex');
+  fs.mkdirSync(codexDir, { recursive: true });
+  const originalHook = { type: 'command', command: 'node /tmp/original.mjs' };
+  const addedHook = { type: 'command', command: 'node /tmp/operator-added.mjs' };
+  fs.writeFileSync(
+    path.join(codexDir, 'hooks.json.farmslot-backup'),
+    `${JSON.stringify({ hooks: { Stop: [{ hooks: [originalHook] }] } })}\n`,
+  );
+  fs.writeFileSync(
+    path.join(codexDir, 'hooks.json'),
+    `${JSON.stringify({
+      hooks: {
+        Stop: [
+          { hooks: [addedHook] },
+          { hooks: [{ type: 'command', command: 'node /tmp/farmslot-observability-hook.mjs' }] },
+        ],
+      },
+    })}\n`,
+  );
+  fs.writeFileSync(
+    path.join(codexDir, 'config.toml.farmslot-backup'),
+    '[features]\nfoo = true\nhooks = true\n',
+  );
+  fs.writeFileSync(
+    path.join(codexDir, 'config.toml'),
+    '[features]\nfoo = true\nhooks = false\n\n[operator]\nadded = true\n',
+  );
+
+  installToTempDir('codex', repo);
+
+  const projectHooks = fs.readFileSync(path.join(codexDir, 'hooks.json'), 'utf8');
+  assert.doesNotMatch(projectHooks, /original\.mjs/u);
+  assert.match(projectHooks, /operator-added\.mjs/u);
+  assert.doesNotMatch(projectHooks, /farmslot-observability/u);
+  const projectConfig = fs.readFileSync(path.join(codexDir, 'config.toml'), 'utf8');
+  assert.match(projectConfig, /foo = true/u);
+  assert.match(projectConfig, /\[operator\]\nadded = true/u);
+  assert.match(projectConfig, /hooks = false/u);
+
+  fs.writeFileSync(
+    path.join(codexDir, 'hooks.json'),
+    `${JSON.stringify({ hooks: { Stop: [{ hooks: [{ ...addedHook, command: 'node /tmp/latest.mjs' }] }] } })}\n`,
+  );
+  installToTempDir('codex', repo);
+  const isolatedHooks = fs.readFileSync(
+    path.join(repo, '.agent', 'codex-home', 'hooks.json'),
+    'utf8',
+  );
+  assert.match(fs.readFileSync(path.join(codexDir, 'hooks.json'), 'utf8'), /latest\.mjs/u);
+  assert.doesNotMatch(isolatedHooks, /latest\.mjs/u);
+  assert.doesNotMatch(isolatedHooks, /original\.mjs/u);
+  assert.doesNotMatch(isolatedHooks, /operator-added\.mjs/u);
+  assert.match(isolatedHooks, /farmslot-observability/u);
+
+  fs.unlinkSync(path.join(codexDir, 'hooks.json'));
+  installToTempDir('codex', repo);
+  const isolatedWithoutProjectHooks = fs.readFileSync(
+    path.join(repo, '.agent', 'codex-home', 'hooks.json'),
+    'utf8',
+  );
+  assert.doesNotMatch(isolatedWithoutProjectHooks, /latest\.mjs/u);
+  assert.match(isolatedWithoutProjectHooks, /farmslot-observability/u);
+});
+
+test('codex legacy cleanup restores owned project files without losing operator edits', () => {
+  const farmslotHook = {
+    hooks: [{ type: 'command', command: 'node farmslot-observability-hook.mjs' }],
+  };
+  const cases = [
+    {
+      files: {
+        'hooks.json.farmslot-backup': '{}\n',
+        'hooks.json': `${JSON.stringify({ hooks: { Stop: [farmslotHook] } })}\n`,
+      },
+      expected: { 'hooks.json': '{}\n' },
+    },
+    {
+      files: {
+        'config.toml.farmslot-backup': '[features]\nhooks = false\n',
+        'config.toml': '[features]\nhooks = true\n\n[operator]\nadded = true\n',
+      },
+      expected: { 'config.toml': '[features]\nhooks = false\n\n[operator]\nadded = true\n' },
+    },
+    {
+      files: {
+        'hooks.json': `${JSON.stringify({ hooks: { Stop: [farmslotHook] } })}\n`,
+        'config.toml': '[features]\nhooks = true\n\n[operator]\nadded = true\n',
+      },
+      expected: { 'config.toml': '[features]\nhooks = true\n\n[operator]\nadded = true\n' },
+      missing: ['hooks.json'],
+    },
+  ];
+
+  for (const { files, expected, missing = [] } of cases) {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-clean-migrate-'));
+    const codexDir = path.join(repo, '.codex');
+    fs.mkdirSync(codexDir, { recursive: true });
+    for (const [name, content] of Object.entries(files)) {
+      fs.writeFileSync(path.join(codexDir, name), content);
+    }
+    installToTempDir('codex', repo);
+    for (const [name, content] of Object.entries(expected)) {
+      assert.equal(fs.readFileSync(path.join(codexDir, name), 'utf8'), content);
+    }
+    for (const name of missing) assert.equal(fs.existsSync(path.join(codexDir, name)), false);
+  }
+});
+
+test('codex legacy cleanup replaces a hook symlink without modifying its target', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-symlink-migrate-'));
+  const codexDir = path.join(repo, '.codex');
+  const target = path.join(repo, 'shared-hooks.json');
+  const content = `${JSON.stringify({
+    hooks: {
+      Stop: [
+        { hooks: [{ type: 'command', command: 'node operator-hook.mjs' }] },
+        { hooks: [{ type: 'command', command: 'node farmslot-observability-hook.mjs' }] },
+      ],
+    },
+  })}\n`;
+  fs.mkdirSync(codexDir, { recursive: true });
+  fs.writeFileSync(target, content);
+  fs.symlinkSync(target, path.join(codexDir, 'hooks.json'));
+
+  installToTempDir('codex', repo);
+
+  assert.equal(fs.readFileSync(target, 'utf8'), content);
+  assert.equal(fs.lstatSync(path.join(codexDir, 'hooks.json')).isSymbolicLink(), false);
+  assert.doesNotMatch(fs.readFileSync(path.join(codexDir, 'hooks.json'), 'utf8'), /farmslot/u);
 });
 
 test('codex install never writes through a stale codex-home config.toml symlink to the global config', () => {

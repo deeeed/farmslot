@@ -11,7 +11,7 @@ describe('codex account binding leaves launch home setup unchanged', () => {
     const b = buildCodexHomeSetup('/tmp/repo', '.agent');
     assert.equal(a, b);
     assert.match(a, /export CODEX_HOME=/);
-    assert.match(a, /FARMSLOT_CODEX_PLUGIN_HOOK_ARGS=''/);
+    assert.match(a, /FARMSLOT_CODEX_PLUGIN_HOOK_ARGS='--config features\.hooks=true'/);
     assert.match(a, /unset CODEX_HOME; FARMSLOT_CODEX_PLUGIN_HOOK_ARGS='--disable plugin_hooks'/);
   });
 
