@@ -265,6 +265,7 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
 test('restart recovery re-delivers the existing fix task without rewriting it', async () => {
   let delivered = false;
   let restored = false;
+  let persistedTarget: string | null = null;
   const run = {
     id: 'run-1',
     project: 'farmslot-farm',
@@ -307,11 +308,20 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
         assert.equal(target, 'ff-1:bugfix');
         assert.equal(window, 'bugfix');
         assert.equal(flowType, 'fix-bug');
-        return 'ff-1:bugfix';
+        return 'ff-1:bugfix-restored';
+      },
+      persistTarget: async (_runId, _run, target) => {
+        persistedTarget = target?.target ?? null;
+        assert.deepEqual(target, {
+          session: 'ff-1',
+          window: 'bugfix-restored',
+          pane: null,
+          target: 'ff-1:bugfix-restored',
+        });
       },
       deliver: async (options) => {
         delivered = true;
-        assert.equal(options.target, 'ff-1:bugfix');
+        assert.equal(options.target, 'ff-1:bugfix-restored');
         assert.equal(options.prompt, 'read tasks/run-1/SELF-REVIEW-FIX.md');
         assert.equal(options.sessionId, 'session-1');
         assert.equal(options.sessionPath, '/sessions/session-1.jsonl');
@@ -324,6 +334,7 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
 
   assert.equal(result, 'delivered');
   assert.equal(restored, true);
+  assert.equal(persistedTarget, 'ff-1:bugfix-restored');
   assert.equal(delivered, true);
 });
 

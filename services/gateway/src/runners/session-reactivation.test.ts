@@ -9,6 +9,7 @@ const commands: string[] = [];
 let paneCount = 1;
 let sessionPathExists = true;
 let promptAccepted = true;
+let promptAcceptedSequence: boolean[] | null = null;
 let promptAcceptedAt: number | null = null;
 let promptAcceptanceBaselineMs: number | null = 1_000;
 let capturedPane = '';
@@ -86,9 +87,10 @@ mock.module('./claude-observability.js', {
         return promptAcceptanceBaselineMs;
       },
       async promptAccepted(_vars: SlotVars, _target: string, _digest: string, sinceMs: number) {
+        const accepted = promptAcceptedSequence?.shift() ?? promptAccepted;
         return {
           // Simulate acceptance emitted while respawn-window is still returning.
-          value: promptAccepted && (promptAcceptedAt === null || sinceMs <= promptAcceptedAt),
+          value: accepted && (promptAcceptedAt === null || sinceMs <= promptAcceptedAt),
           source: 'hook',
           confidence: 'high',
           observedAt: Date.now(),
@@ -359,10 +361,52 @@ test('retained fallback accepts delayed acknowledgement before replacing an idle
   );
 });
 
-test('retained fallback accepts an existing task signal only during explicit recovery', async () => {
+test('retained fallback refuses a stale task signal during explicit recovery', async (t) => {
   commands.length = 0;
   paneCount = 1;
   promptAccepted = false;
+  const existingSignal = {
+    raw: '{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}',
+    status: 'running',
+    mtimeNs: '2000000000',
+  };
+  taskSignalOutput = `${existingSignal.mtimeNs}\n${existingSignal.raw}\n`;
+  sessionState = {
+    value: 'active',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  t.after(() => {
+    promptAccepted = true;
+  });
+
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'grok',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: existingSignal,
+    priorPromptSendAttempted: true,
+  });
+
+  assert.equal(result.delivered, false);
+  if (!result.delivered) {
+    assert.equal(result.disposition, 'hold');
+    assert.equal(result.retryable, false);
+    assert.match(result.reason, /refusing duplicate delivery/);
+  }
+  assert.equal(
+    commands.some((command) => command.includes('send-keys') || command.includes('respawn-window')),
+    false,
+  );
+});
+
+test('retained recovery accepts the exact prompt digest without comparing node clocks', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  promptAccepted = true;
   const existingSignal = {
     raw: '{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}',
     status: 'running',
@@ -379,17 +423,16 @@ test('retained fallback accepts an existing task signal only during explicit rec
   const result = await deliverPromptWithRetainedFallback({
     vars,
     target: 'test-1:dev',
-    runnerId: 'grok',
+    runnerId: 'claude',
     prompt: 'Read and execute SELF-REVIEW-FIX.md',
     launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
     launchAckBaseline: existingSignal,
-    acceptExistingLaunchAck: true,
     priorPromptSendAttempted: true,
   });
 
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
   assert.equal(
-    commands.some((command) => command.includes('capture-pane')),
+    commands.some((command) => command.includes('send-keys') || command.includes('respawn-window')),
     false,
   );
 });
@@ -425,6 +468,7 @@ test('retained fallback holds when safe-send leaves the task signal unchanged', 
   commands.length = 0;
   paneCount = 1;
   promptAccepted = false;
+  promptAcceptedSequence = [true];
   const unchangedSignal = {
     raw: '{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}',
     status: 'running',
@@ -438,6 +482,7 @@ test('retained fallback holds when safe-send leaves the task signal unchanged', 
     observedAt: Date.now(),
   };
   t.after(() => {
+    promptAcceptedSequence = null;
     taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
   });
 
@@ -454,7 +499,8 @@ test('retained fallback holds when safe-send leaves the task signal unchanged', 
   assert.equal(result.delivered, false);
   if (!result.delivered) {
     assert.equal(result.disposition, 'hold');
-    assert.match(result.reason, /retained handoff was not accepted/);
+    assert.equal(result.retryable, false);
+    assert.match(result.reason, /was sent, but .* did not acknowledge it/);
   }
 });
 

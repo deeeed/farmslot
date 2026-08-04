@@ -28,10 +28,7 @@ import {
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
 import { resolveTmuxPaneId, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
-import {
-  type LaunchAckSignalSnapshot,
-  readLaunchAckSignalSnapshot,
-} from '../../runners/prompt-delivery-evidence.js';
+import { readLaunchAckSignalSnapshot } from '../../runners/prompt-delivery-evidence.js';
 import { normalizeRunner, runnerRetainedSessionHandoff } from '../../runners/registry.js';
 import { resolvePersistedRunnerSessionBinding } from '../../runners/session-process.js';
 import {
@@ -105,29 +102,6 @@ export function isWarmHandoffDispatchRecovery(run: Pick<Run, 'recoveryAttempts'>
         attempt.completedAt == null,
     ) ?? false
   );
-}
-
-export function warmHandoffCanAcceptExistingLaunchAck(
-  run: Pick<Run, 'recoveryAttempts'>,
-  launchAck: LaunchAckSignalSnapshot | null,
-): boolean {
-  if (!launchAck?.status || !launchAck.mtimeNs) return false;
-  const attempt = [...(run.recoveryAttempts ?? [])]
-    .reverse()
-    .find(
-      (candidate) =>
-        candidate.stepName === 'dispatch' &&
-        candidate.status === 'started' &&
-        candidate.completedAt == null,
-    );
-  if (!attempt) return false;
-  const startedAtMs = Date.parse(attempt.startedAt);
-  if (!Number.isFinite(startedAtMs)) return false;
-  try {
-    return BigInt(launchAck.mtimeNs) >= BigInt(Math.floor(startedAtMs)) * 1_000_000n;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -368,10 +342,6 @@ export async function warmSessionHandoffDispatch(
   const launchAckSignalPath = `${workerTaskAbs}/SIGNAL.json`;
   const launchAckBaseline = await readLaunchAckSignalSnapshot(vars, launchAckSignalPath);
   const recoveringDispatch = isWarmHandoffDispatchRecovery(requestingRun);
-  const existingLaunchAckBelongsToRecovery = warmHandoffCanAcceptExistingLaunchAck(
-    requestingRun,
-    launchAckBaseline,
-  );
   const deliveryOptions = {
     vars,
     target: workerTarget,
@@ -386,7 +356,10 @@ export async function warmSessionHandoffDispatch(
     launchAckSignalPath,
     launchAckBaseline,
     priorPromptSendAttempted: recoveringDispatch,
-    acceptExistingLaunchAck: existingLaunchAckBelongsToRecovery,
+    // Never compare the gateway replay timestamp with a slot filesystem mtime.
+    // Recovery accepts only the exact prompt digest or a signal that advances
+    // from this slot-local baseline.
+    acceptExistingLaunchAck: false,
     recovery: { runId: params.runId, emit },
   };
   const delivery = await deliverPromptWithRetainedFallback(deliveryOptions);

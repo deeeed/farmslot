@@ -36,6 +36,8 @@ let paneTextAfterLiteralSend: string | null = null;
 let paneTextAfterBareSend: string | null = null;
 let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
 let acceptDigestHandoff = false;
+let acceptDigestHandoffAfterCall = Number.POSITIVE_INFINITY;
+let handoffProbeCalls = 0;
 let launchAckSnapshotReads = 0;
 let grokPromptAcceptedCalls = 0;
 let grokPromptAcceptedAfterCall = Number.POSITIVE_INFINITY;
@@ -188,8 +190,12 @@ mock.module('./prompt-delivery-evidence.js', {
       _sinceMs: number,
       opts: { requirePromptDigest?: boolean } = {},
     ) => {
+      handoffProbeCalls += 1;
       handoffRequirePromptDigestValues.push(opts.requirePromptDigest);
-      if (acceptDigestHandoff && opts.requirePromptDigest) {
+      if (
+        (acceptDigestHandoff || handoffProbeCalls >= acceptDigestHandoffAfterCall) &&
+        opts.requirePromptDigest
+      ) {
         return {
           accepted: true,
           reason: 'mocked exact prompt digest',
@@ -411,6 +417,57 @@ test('digest-required prompt delivery does not accept pane-only task progress', 
     0,
     'pane progress may hold transport, but it must neither prove delivery nor trigger a duplicate send',
   );
+});
+
+test('digest-required delivery waits for a delayed exact acknowledgement without spending send attempts', async (t) => {
+  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  handoffProbeCalls = 0;
+  acceptDigestHandoffAfterCall = 3;
+  paneText = '❯\nctx:12%\n';
+  paneTextByCapture = [
+    '❯\nctx:12%\n',
+    `${reviewMessage}\n✻ Working…\n`,
+    `${reviewMessage}\n✻ Working…\n`,
+  ];
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    exactPromptMatch: false,
+  };
+  t.after(() => {
+    acceptDigestHandoffAfterCall = Number.POSITIVE_INFINITY;
+    handoffProbeCalls = 0;
+    paneTextByCapture = null;
+    paneText = '❯\nctx:12%\n';
+  });
+
+  await sendRunnerPostLaunchPrompt(
+    vars,
+    target,
+    'claude',
+    reviewMessage,
+    'SELF-REVIEW.md',
+    '[test]',
+    {
+      readyTimeoutMs: 100,
+      stabilityPolls: 1,
+      pollIntervalMs: 1,
+      verifyWaitMs: 0,
+      maxAttempts: 1,
+      requirePromptDigest: true,
+    },
+  );
+
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send').length,
+    0,
+    'visible task progress must hold transport while the exact digest arrives',
+  );
+  assert.ok(handoffProbeCalls >= 3, 'the delayed acknowledgement must be observed');
 });
 
 test('sendRunnerPostLaunchPrompt honors an explicit null launch-ack baseline', async () => {

@@ -873,6 +873,11 @@ interface FixPromptRecoveryDeps {
   resolveRuntimeDir: typeof resolveProjectRuntimeDir;
   readLaunchAck: typeof readLaunchAckSignalSnapshot;
   ensureTarget: typeof ensureTmuxTargetReadyForRelaunch;
+  persistTarget: (
+    runId: string,
+    run: Pick<NonNullable<ReturnType<typeof getRun>>, 'flowType' | 'agentContexts'>,
+    target: AgentContext['target'],
+  ) => Promise<void>;
   deliver: typeof deliverPromptWithRetainedFallback;
 }
 
@@ -882,6 +887,13 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
   resolveRuntimeDir: resolveProjectRuntimeDir,
   readLaunchAck: readLaunchAckSignalSnapshot,
   ensureTarget: ensureTmuxTargetReadyForRelaunch,
+  persistTarget: async (runId, run, target) => {
+    await upsertAgentContext(runId, 'self-review-fix', { target });
+    const workerRole = primaryRoleForFlow(run.flowType);
+    if (run.agentContexts?.some((candidate) => candidate.role === workerRole)) {
+      await upsertAgentContext(runId, workerRole, { target });
+    }
+  },
   deliver: deliverPromptWithRetainedFallback,
 };
 
@@ -914,6 +926,15 @@ export async function resumeSelfReviewFixPromptDelivery(
     context.target?.window,
     run.flowType,
   );
+  const targetSeparator = target.indexOf(':');
+  const targetWindow =
+    targetSeparator === -1 ? null : target.slice(targetSeparator + 1).split('.', 1)[0] || null;
+  await deps.persistTarget(runId, run, {
+    session,
+    window: targetWindow,
+    pane: null,
+    target,
+  });
   const taskDir = path.posix.dirname(taskFile);
   const prompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
   const primaryContext = selectAgentContext(run, { role: 'primary' });

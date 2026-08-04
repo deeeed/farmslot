@@ -29,6 +29,16 @@ async function loadObservabilitySnapshot(vars: SlotVars, target: string) {
   return { hooks, statusline };
 }
 
+export async function claudeSessionPaneMoveIsSafe(
+  vars: SlotVars,
+  recordedPane: string | null | undefined,
+  destinationPane: string,
+  resolvePane: typeof resolveTmuxPaneId = resolveTmuxPaneId,
+): Promise<boolean> {
+  if (!recordedPane || recordedPane === destinationPane) return true;
+  return (await resolvePane(vars, recordedPane)) !== recordedPane;
+}
+
 export const claudeHookObservability: RunnerObservability = {
   promptAcceptanceMode: 'hook-digest',
   async getActivity(vars, target) {
@@ -85,9 +95,15 @@ export const claudeHookObservability: RunnerObservability = {
     if (!hookRecordMatchesRunnerSessionIdentity(sessionState, expected)) {
       return null;
     }
+    if (!(await claudeSessionPaneMoveIsSafe(vars, sessionState.tmuxPane, paneId))) {
+      // A pane move is safe only after the pane that last owned the session is
+      // gone. Otherwise resuming the transcript here would create two live
+      // runners writing the same persisted session.
+      return null;
+    }
     // A freshly restored canonical worker window has no pane-scoped record yet.
-    // Reject only a conflicting record; the exact session-level Stop remains
-    // authoritative proof that the persisted session is safe to resume there.
+    // Once the old pane is gone, the exact session-level Stop is authoritative
+    // proof that the persisted session is safe to resume in the new pane.
     if (paneState && !hookRecordMatchesRunnerSession(paneState, expected)) {
       return null;
     }

@@ -2719,7 +2719,9 @@ export async function sendRunnerPostLaunchPrompt(
     );
   }
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  let attempt = 1;
+  const deliveryDeadline = Date.now() + readyTimeoutMs;
+  while (attempt <= maxAttempts && Date.now() < deliveryDeadline) {
     const immediatePane = (
       await execOnSlot(
         vars,
@@ -2751,7 +2753,9 @@ export async function sendRunnerPostLaunchPrompt(
       runnerPaneShowsTaskAlreadyRunning(immediatePane, message, marker, runner);
     if (immediatePaneClaimsTaskActive) {
       if (requirePromptDigest) {
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.max(0, Math.min(pollIntervalMs, deliveryDeadline - Date.now()))),
+        );
         continue;
       }
       console.log(
@@ -2791,7 +2795,9 @@ export async function sendRunnerPostLaunchPrompt(
     // exact-ack caller must keep waiting for structured evidence.
     if (preSendPaneClaimsTaskActive) {
       if (requirePromptDigest) {
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.max(0, Math.min(pollIntervalMs, deliveryDeadline - Date.now()))),
+        );
         continue;
       }
       console.log(
@@ -2867,12 +2873,14 @@ export async function sendRunnerPostLaunchPrompt(
         `[${logPrefix}] prompt appears buffered after attempt ${attempt}/${maxAttempts}; retrying with submit key`,
       );
       lastPane = postPane;
+      attempt += 1;
       continue;
     }
     console.log(
       `[${logPrefix}] prompt not echoed after attempt ${attempt}/${maxAttempts}, retrying`,
     );
     lastPane = postPane;
+    attempt += 1;
   }
 
   const failurePane = (
