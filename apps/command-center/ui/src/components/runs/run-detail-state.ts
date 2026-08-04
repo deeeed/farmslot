@@ -69,6 +69,7 @@ export abstract class RunDetailState extends LitElement {
   _directRun: Run | null = null;
   _directRunRequestSeq = 0;
   _taskProgressRequestSeq = 0;
+  _siblingsRequestSeq = 0;
   _lastTaskProgressFetchAt = 0;
   _liveTimeoutRequestSeq = 0;
   _lastLiveTimeoutFetchAt = 0;

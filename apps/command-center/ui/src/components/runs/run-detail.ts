@@ -169,8 +169,11 @@ export class RunDetail extends RunDetailState {
       this._directRunRefreshing = false;
       this._directRunRequestSeq++;
       this._taskProgressRequestSeq++;
+      this._siblingsRequestSeq++;
       this._lastTaskProgressFetchAt = 0;
       this.taskProgress = null;
+      this.selectedStepProgress = null;
+      this._selectedStepProgressKey = '';
       this.ciStatus = null;
       this.siblings = [];
       this._resetRecipeRuns();
@@ -503,14 +506,17 @@ export class RunDetail extends RunDetailState {
   }
 
   private async fetchSiblings(run: Run) {
+    const requestSeq = ++this._siblingsRequestSeq;
+    const requestStillCurrent = () =>
+      requestSeq === this._siblingsRequestSeq && this.runId === run.id;
     try {
       const res = await gateway.request<RunListResult>(Methods.RUN_LIST, {
         familyId: run.familyId,
       });
-      if (this.runId !== run.id) return;
+      if (!requestStillCurrent()) return;
       this.siblings = sortRunsForFamilyView((res.runs ?? []).filter((r) => r.id !== run.id));
     } catch (err) {
-      if (this.runId !== run.id) return;
+      if (!requestStillCurrent()) return;
       this.siblings = [];
       console.warn(`Failed to load siblings for ${run.id}: ${(err as Error).message}`);
     }
@@ -609,7 +615,7 @@ export class RunDetail extends RunDetailState {
         runId,
       });
       if (!requestStillCurrent()) return;
-      this.taskProgress = res.structured ?? null;
+      if (res.structured) this.taskProgress = res.structured;
     } catch (err) {
       if (!requestStillCurrent()) return;
       // During slot release/replay the slot can briefly have no task file; keep
