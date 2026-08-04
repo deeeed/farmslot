@@ -1366,6 +1366,15 @@ describe('buildLaunchCommand', () => {
         cmd,
         /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
       );
+      assert.match(cmd, /install failed; continuing without hooks/);
+      assert.match(
+        cmd,
+        /test -f '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json' \|\| \{ mkdir -p '\/tmp\/repo\/\.agent\/\.observability'/,
+      );
+      assert.match(
+        cmd,
+        /printf '\{\}\\n' > '\/tmp\/repo\/\.agent\/\.observability\/claude-settings\.json'/,
+      );
     });
 
     it('routes through expandDispatchCmd when claudeUsesDispatchCmd=true', () => {

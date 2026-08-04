@@ -22,6 +22,7 @@ import {
   runnerSessionReloadCapability,
 } from './registry.js';
 import {
+  buildClaudeObservabilityFallbackCommand,
   buildRunnerObservabilityInstallCommand,
   claudeObservabilitySettingsPath,
   withRunnerObservabilityInstall,
@@ -210,10 +211,14 @@ export function buildRunnerSessionReloadCommand(
     const settingsFlag = ` --settings ${shellExpressionForRemotePath(
       claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
     )}`;
+    const settingsFallback = buildClaudeObservabilityFallbackCommand(
+      claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
+    );
     return withTaskRecipeTrustEnvironment(
       withRunnerObservabilityInstall(
         `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag}${settingsFlag} --resume ${quotedSessionId}${initialPrompt}`,
         installCommand,
+        settingsFallback,
       ),
       repo,
       opts.taskDir,
@@ -523,6 +528,9 @@ export function buildLaunchCommand(
     const settingsFlag = ` --settings ${shellExpressionForRemotePath(
       claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
     )}`;
+    const settingsFallback = buildClaudeObservabilityFallbackCommand(
+      claudeObservabilitySettingsPath(repo, opts.runtimeDir ?? '.agent'),
+    );
     if (opts.claudeUsesDispatchCmd) {
       if (!hasDispatchCmd) {
         throw new Error(`No dispatch_cmd in pool config for ${vars.machine}`);
@@ -531,6 +539,7 @@ export function buildLaunchCommand(
         withRunnerObservabilityInstall(
           `unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}${settingsFlag}`,
           installCommand,
+          settingsFallback,
         ),
       );
     }
@@ -541,6 +550,7 @@ export function buildLaunchCommand(
       withRunnerObservabilityInstall(
         `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${settingsFlag}`,
         installCommand,
+        settingsFallback,
       ),
     );
   }

@@ -14,6 +14,15 @@ export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string
   return path.posix.join(repo, runtimeDir, '.observability', 'claude-settings.json');
 }
 
+export function buildClaudeObservabilityFallbackCommand(settingsPath: string): string {
+  const settingsDir = path.posix.dirname(settingsPath);
+  const settingsFile = shellExpressionForRemotePath(settingsPath);
+  return (
+    `test -f ${settingsFile} || ` +
+    `{ mkdir -p ${shellExpressionForRemotePath(settingsDir)} && printf '{}\\n' > ${settingsFile}; }`
+  );
+}
+
 function farmslotDirForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): string {
   const slotHost = vars.host.replace(/\.local$/, '');
   const isLocal =
@@ -54,6 +63,7 @@ export function buildRunnerObservabilityInstallCommand(
 export function withRunnerObservabilityInstall(
   launchCommand: string,
   installCommand: string,
+  fallbackCommand = ':',
 ): string {
-  return `(${installCommand} || echo '[farmslot-observability] install failed; continuing without hooks' >&2) && ${launchCommand}`;
+  return `(${installCommand} || { echo '[farmslot-observability] install failed; continuing without hooks' >&2; ${fallbackCommand}; }) && ${launchCommand}`;
 }

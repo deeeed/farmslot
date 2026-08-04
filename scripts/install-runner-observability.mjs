@@ -554,7 +554,17 @@ function removeFarmslotHooks(settings) {
 function cleanupLegacyClaudeSettings(repoPath, obsDir) {
   const settingsDir = path.join(repoPath, '.claude');
   const settingsPath = path.join(settingsDir, 'settings.local.json');
-  if (!fs.existsSync(settingsPath)) return;
+  const backupPath = `${settingsPath}.farmslot-backup`;
+  if (fs.existsSync(backupPath)) {
+    fs.mkdirSync(obsDir, { recursive: true });
+    fs.renameSync(backupPath, path.join(obsDir, 'legacy-claude-settings.farmslot-backup'));
+  }
+  if (!fs.existsSync(settingsPath)) {
+    if (fs.existsSync(settingsDir) && fs.readdirSync(settingsDir).length === 0) {
+      fs.rmdirSync(settingsDir);
+    }
+    return;
+  }
 
   const settings = readJsonObject(settingsPath);
   const removedHooks = removeFarmslotHooks(settings);
@@ -569,10 +579,6 @@ function cleanupLegacyClaudeSettings(repoPath, obsDir) {
   if (Object.keys(settings).length === 0) fs.unlinkSync(settingsPath);
   else fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
 
-  const backupPath = `${settingsPath}.farmslot-backup`;
-  if (fs.existsSync(backupPath)) {
-    fs.renameSync(backupPath, path.join(obsDir, 'legacy-claude-settings.farmslot-backup'));
-  }
   if (fs.existsSync(settingsDir) && fs.readdirSync(settingsDir).length === 0) {
     fs.rmdirSync(settingsDir);
   }

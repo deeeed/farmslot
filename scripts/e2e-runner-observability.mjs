@@ -358,7 +358,7 @@ function ensureInteractiveClaude(target, paneId, settingsPath) {
 function checkRuntimeAlignment(repo, runtimeDir, projectRuntimeDir) {
   const installObsDir = obsDirFor(repo, runtimeDir);
   const projectObsDir = projectRuntimeDir ? obsDirFor(repo, projectRuntimeDir) : installObsDir;
-  const settingsObsDir = readObsDirFromSettings(repo, runtimeDir);
+  const settingsObsDir = readObsDirFromSettings(repo, projectRuntimeDir ?? runtimeDir);
   const aligned =
     path.resolve(installObsDir) === path.resolve(projectObsDir) &&
     (!settingsObsDir || path.resolve(settingsObsDir) === path.resolve(installObsDir));

@@ -24,7 +24,7 @@ Adopt **event-driven runner observability** as the primary signal path, with pan
 
 ### Hooks Contract
 
-**Architectural correction (important).** Claude Code does NOT natively write `hooks.jsonl` or `statusline.json` for external watchers. The statusline contract is stdin/stdout only — Claude invokes the configured command and renders its stdout. The hook contract is also stdin/exit-code based — Claude invokes the configured command per event and reads stdout/exit. Farmslot's **hook scripts** (declared in the slot-scoped `settings.json`) own the writes to disk. **We own the schema, versioning, multi-pane tagging, rotation policy** — Claude is the trigger, not the producer.
+**Architectural correction (important).** Claude Code does NOT natively write `hooks.jsonl` or `statusline.json` for external watchers. The statusline contract is stdin/stdout only — Claude invokes the configured command and renders its stdout. The hook contract is also stdin/exit-code based — Claude invokes the configured command per event and reads stdout/exit. Farmslot's **hook scripts** (declared in the runtime-owned settings file passed with `--settings`) own the writes to disk. **We own the schema, versioning, multi-pane tagging, rotation policy** — Claude is the trigger, not the producer.
 
 **Hook events Farmslot uses** (from the 29 documented; full surface in doc-specialist report):
 
@@ -318,7 +318,7 @@ Never write to that file — OMC owns it. The read is best-effort; pane fallback
 
 ## Migration Plan
 
-**Phase 1 — Hooks emit; pane is authoritative.** Slot fixture installs a Claude `settings.json` writing `hooks.jsonl` + `statusline.json` under `{{runtime_dir}}/.observability/`. `task-watcher.ts` watches both files. `RunnerObservability` is wired but consulted only for telemetry — `sendRunnerInstructionSafely` keeps pane scraping as the decision input.
+**Phase 1 — Hooks emit; pane is authoritative.** The runner installer writes Claude's additional settings plus `hooks.jsonl` + `statusline.json` under `{{runtime_dir}}/.observability/`. `task-watcher.ts` watches both files. `RunnerObservability` is wired but consulted only for telemetry — `sendRunnerInstructionSafely` keeps pane scraping as the decision input.
 
 Phase 1 prerequisites (do BEFORE shipping the fixture):
 

@@ -125,6 +125,22 @@ test('claude install preserves non-Farmslot repository settings while removing l
   assert.equal(settings.hooks.UserPromptSubmit[0].hooks[0].command, 'node user-hook.mjs');
 });
 
+test('claude install relocates a legacy backup after Farmslot settings were removed', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-legacy-backup-'));
+  const settingsDir = path.join(repo, '.claude');
+  const backupPath = path.join(settingsDir, 'settings.local.json.farmslot-backup');
+  fs.mkdirSync(settingsDir);
+  fs.writeFileSync(backupPath, '{"legacy":true}\n');
+
+  const { obsDir } = installToTempDir('claude', repo);
+
+  assert.equal(fs.existsSync(settingsDir), false);
+  assert.equal(
+    fs.readFileSync(path.join(obsDir, 'legacy-claude-settings.farmslot-backup'), 'utf8'),
+    '{"legacy":true}\n',
+  );
+});
+
 test('claude install replaces a stale compatibility symlink and remains idempotent', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-stale-link-'));
   const compat = path.join(repo, '.observability');
