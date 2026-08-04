@@ -458,7 +458,7 @@ export function enrichDecisionsWithGateSummary(run: Run): Run {
   // type-safe with no casts; both branches' payloads already declare `gateSummary`.
   const decisions = run.decisions.map((decision) => {
     const payload = decision.payload;
-    if (payload?.kind === 'ready') {
+    if (payload?.kind === 'ready' && !decision.resolvedAt) {
       mutated = true;
       const gateSummary = buildGateSummary(run, GATE_SUMMARY_KINDS.publication, {
         gatePolicy: payload.prPackage?.gatePolicy ?? payload.gatePolicy,

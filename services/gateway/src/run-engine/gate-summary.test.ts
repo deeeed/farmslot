@@ -430,6 +430,14 @@ test('enrichDecisionsWithGateSummary projects a ready gate decision without muta
   const refreshedPayload = enrichDecisionsWithGateSummary(frozen).decisions[0].payload;
   assert.ok(refreshedPayload?.kind === 'ready');
   assert.notEqual(refreshedPayload.gateSummary?.headline, 'stale snapshot');
+
+  const resolved = {
+    ...frozen,
+    decisions: [{ ...frozen.decisions[0], resolvedAt: '2026-04-15T01:00:00.000Z' }],
+  };
+  const resolvedPayload = enrichDecisionsWithGateSummary(resolved).decisions[0].payload;
+  assert.ok(resolvedPayload?.kind === 'ready');
+  assert.equal(resolvedPayload.gateSummary?.headline, 'stale snapshot');
 });
 
 test('enrichDecisionsWithGateSummary backfills a retrospective decision with the review kind', () => {
