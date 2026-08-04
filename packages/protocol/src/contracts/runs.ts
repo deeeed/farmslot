@@ -337,9 +337,17 @@ export interface IndependentReviewStatus {
   completedAt?: string;
 }
 
+export const PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES = {
+  launchRejected: 'PUBLICATION_REVIEW_LAUNCH_REJECTED',
+  gitProbeFailed: 'PUBLICATION_REVIEW_GIT_PROBE_FAILED',
+} as const;
+
+export type PublicationReviewLaunchRejectionCode =
+  (typeof PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES)[keyof typeof PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES];
+
 /** Recoverable refusal captured when a publication reviewer cannot safely launch. */
 export interface PublicationReviewLaunchRejection {
-  code: 'PUBLICATION_REVIEW_LAUNCH_REJECTED' | 'PUBLICATION_REVIEW_GIT_PROBE_FAILED';
+  code: PublicationReviewLaunchRejectionCode;
   message: string;
   userAction: string;
   details?: unknown;

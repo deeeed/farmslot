@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(runs): label a retained publication-review launch refusal as **review launch paused** instead of implying that an independent reviewer is running.
 - fix(roadmap): run deletion/archive events invalidate delivery even when the affected run is outside the paginated client run list, preventing stale badges and lineage detail.
 - fix(roadmap): the delivery revision tracks backlog rows reachable only through `RoadmapItem.promotion`, which carry no `roadmapItemId`; filtering on the canonical link alone dropped a supported lineage case and left its badges stale.
 - fix(roadmap): the delete confirm snapshots its target instead of re-reading `_selected`, which falls back to the first row and can name one item in the prompt while deleting another. Defence in depth rather than a live bug — `window.confirm` blocks the JS thread — but it becomes a real swap if the prompt ever becomes async, and `_editHash` moves with the selection so the hash guard would not catch it.

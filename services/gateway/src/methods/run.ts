@@ -13,6 +13,7 @@ import {
   parseGitHubRef,
   PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   type Run,
@@ -37,6 +38,7 @@ import {
 import { resolveCIDecision } from '../ci-monitor/service.js';
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
 import { buildFollowUpLineage, isFollowUpFlow } from '../family-observability/context.js';
 import { findFollowUpParentRun } from '../family-observability/state.js';
@@ -1167,7 +1169,14 @@ export async function runResolveDecision(
     requiresPublicationApproval(existing)
   ) {
     if (!existing.slotId) {
-      throw new Error('Publication review launch requires an assigned slot');
+      throw new GatewayMethodError(
+        PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.launchRejected,
+        'Publication review launch requires an assigned slot',
+        {
+          userAction:
+            'Restore or assign the run slot before requesting another independent review.',
+        },
+      );
     }
     await (dependencies.assertReviewLaunchAllowed ?? assertIndependentReviewLaunchStateForSlot)(
       existing.engineState?.publishGate?.independentReviews ?? [],

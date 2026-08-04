@@ -149,6 +149,9 @@ export function compactHumanGateLabel(
 ): string {
   const activeReview = activePublicationReviewLabel(run);
   if (activeReview) return activeReview.toLowerCase();
+  if (run?.engineState?.publishGate?.reviewLaunchRejection) {
+    return 'review launch paused';
+  }
   if ((run?.engineState?.publishGate?.pendingReviewPlan?.length ?? 0) > 0) {
     return 'independent review';
   }
