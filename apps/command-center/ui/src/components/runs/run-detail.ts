@@ -168,6 +168,11 @@ export class RunDetail extends RunDetailState {
       this._directRun = null;
       this._directRunRefreshing = false;
       this._directRunRequestSeq++;
+      this._taskProgressRequestSeq++;
+      this._lastTaskProgressFetchAt = 0;
+      this.taskProgress = null;
+      this.ciStatus = null;
+      this.siblings = [];
       this._resetRecipeRuns();
       this._handoffSignalCheckBusy = false;
       this._handoffSignalCheckError = null;
@@ -218,6 +223,8 @@ export class RunDetail extends RunDetailState {
     const activeTaskChanged =
       prev?.id === this.run?.id && prev?.activeTaskFile !== this.run?.activeTaskFile;
     if (activeTaskChanged) {
+      this._taskProgressRequestSeq++;
+      this._lastTaskProgressFetchAt = 0;
       this.taskProgress = null;
     }
     const runsForMeta = this.run && !sharedRun ? [this.run, ...s.runs] : s.runs;
@@ -500,9 +507,12 @@ export class RunDetail extends RunDetailState {
       const res = await gateway.request<RunListResult>(Methods.RUN_LIST, {
         familyId: run.familyId,
       });
+      if (this.runId !== run.id) return;
       this.siblings = sortRunsForFamilyView((res.runs ?? []).filter((r) => r.id !== run.id));
-    } catch {
+    } catch (err) {
+      if (this.runId !== run.id) return;
       this.siblings = [];
+      console.warn(`Failed to load siblings for ${run.id}: ${(err as Error).message}`);
     }
   }
 
@@ -586,16 +596,22 @@ export class RunDetail extends RunDetailState {
   }
 
   private async fetchTaskProgress(slotId: string) {
+    const runId = this.runId;
+    const requestSeq = ++this._taskProgressRequestSeq;
+    const requestStillCurrent = () =>
+      requestSeq === this._taskProgressRequestSeq &&
+      this.runId === runId &&
+      this.run?.slotId === slotId;
     this._lastTaskProgressFetchAt = Date.now();
     try {
       const res = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
         slotId,
-        runId: this.runId,
+        runId,
       });
-      if (res.structured) {
-        this.taskProgress = res.structured;
-      }
+      if (!requestStillCurrent()) return;
+      this.taskProgress = res.structured ?? null;
     } catch (err) {
+      if (!requestStillCurrent()) return;
       // During slot release/replay the slot can briefly have no task file; keep
       // the existing UI snapshot instead of failing the whole run detail render.
       console.debug(`Task progress unavailable for ${slotId}: ${(err as Error).message}`);
