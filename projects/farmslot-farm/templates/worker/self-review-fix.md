@@ -115,12 +115,20 @@ Long fix/review loops leave the feature branch behind `origin/main`. Surface tha
     )
     mt_rc=$(printf '%s\n' "$mt_out" | sed -n 's/^__MT_RC://p' | tail -1)
     mt_out=$(printf '%s\n' "$mt_out" | sed '/^__MT_RC:/d')
-    if [ "$mt_rc" = "1" ]; then mergeConflicts=true; else mergeConflicts=false; fi
+    if [ "$mt_rc" = "1" ]; then
+      mergeConflicts=true
+    elif [ "$mt_rc" = "0" ]; then
+      mergeConflicts=false
+    else
+      mergeConflicts=unknown
+    fi
     echo "mergeConflicts=$mergeConflicts"
     echo "$mt_out" | sed -n 's/^CONFLICT ([^)]*): Merge conflict in //p'
   fi
   ```
   **Failure path (must fix before re-review ready):**
+  - If `mergeConflicts=unknown`, stop and fix the probe; do not mark complete or
+    report the branch clean.
   - If `mergeConflicts=true` **or** `behindMain` is above the project threshold
     (default: any behindMain > 0 when continuing a re-review loop):
     - **Prefer merge** into the feature branch during open review loops (avoids

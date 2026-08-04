@@ -59,13 +59,20 @@ STATUS: pending
     )
     mt_rc=$(printf '%s\n' "$mt_out" | sed -n 's/^__MT_RC://p' | tail -1)
     mt_out=$(printf '%s\n' "$mt_out" | sed '/^__MT_RC:/d')
-    if [ "$mt_rc" = "1" ]; then mergeConflicts=true; else mergeConflicts=false; fi
+    if [ "$mt_rc" = "1" ]; then
+      mergeConflicts=true
+    elif [ "$mt_rc" = "0" ]; then
+      mergeConflicts=false
+    else
+      mergeConflicts=unknown
+    fi
     echo "mergeConflicts=$mergeConflicts"
     echo "$mt_out" | sed -n 's/^CONFLICT ([^)]*): Merge conflict in //p'
   fi
   ```
-  **Failure path:** if `mergeConflicts=true` or `behindMain` is material, update
-  the branch first — **prefer** `git merge origin/main` during open review loops;
+  **Failure path:** if `mergeConflicts=unknown`, stop and fix the probe; do not
+  report the branch clean. If `mergeConflicts=true` or `behindMain` is material,
+  update the branch first — **prefer** `git merge origin/main` during open review loops;
   use `git rebase origin/main` + `git push --force-with-lease` only when the
   project already standardizes on rebase. Never auto force-push mid-loop.
   Record `behindMain`, `mergeConflicts`, and the next command used in the report.
