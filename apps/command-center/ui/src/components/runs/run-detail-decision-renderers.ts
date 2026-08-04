@@ -55,12 +55,10 @@ export function decisionActionHelp(
 }
 
 /**
- * Graft the lazy-backfilled `gateSummary` onto the pending READY (publication)
- * gate decision when it arrived via the RUN_UPDATED feed without one. Runs
- * created before gateSummary was persisted carry no summary on `run.decisions`,
- * but the `decision.list` snapshot (`state.decisions`) is enriched on read by
- * the gateway. Match by id and copy the summary across so `<gate-summary-panel>`
- * renders for historical runs too.
+ * Graft the live `gateSummary` projection onto the pending READY (publication)
+ * gate decision. The run-list payload can carry the gate-time snapshot, while
+ * `decision.list` rebuilds it against the current prepared package and reviews.
+ * Match by id and prefer that live projection even when a frozen summary exists.
  *
  * Scoped to `ready` only: that is the sole decision kind whose run-detail branch
  * mounts the panel. Retrospective gate summaries surface in the family /
@@ -72,10 +70,17 @@ function withGraftedGateSummary(
   pendingDecisions: readonly PendingDecision[],
 ): RunDecision {
   const payload = pending.payload;
-  if (payload?.kind !== 'ready' || payload.gateSummary) return pending;
+  if (payload?.kind !== 'ready') return pending;
   const enriched = pendingDecisions.find((d) => d.id === pending.id)?.payload;
-  const gateSummary = enriched?.kind === 'ready' ? enriched.gateSummary : undefined;
-  if (!gateSummary) return pending;
+  if (enriched?.kind !== 'ready' || !enriched.gateSummary) return pending;
+  const gateSummary = enriched.gateSummary;
+  if (payload.prPackage?.id !== enriched.prPackage?.id) return pending;
+  if (
+    payload.gateSummary?.capturedAt &&
+    payload.gateSummary.capturedAt > (gateSummary.capturedAt ?? '')
+  ) {
+    return pending;
+  }
   return { ...pending, payload: { ...payload, gateSummary } };
 }
 

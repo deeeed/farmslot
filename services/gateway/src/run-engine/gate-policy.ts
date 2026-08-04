@@ -423,6 +423,17 @@ function diagnosePublicationReviewStaleness(
   return { stale: headDrift || subjectDrift, headDrift, subjectDrift };
 }
 
+/** True when a review was captured for the exact prepared package subject and HEAD. */
+export function publicationReviewMatchesPreparedPackage(
+  review: IndependentReviewStatus,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSubjectHash'>,
+): boolean {
+  const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
+  if (!packageReviewSubjectHash) return false;
+  return !diagnosePublicationReviewStaleness(review, packageReviewSubjectHash, preparedPackage)
+    .stale;
+}
+
 export function countStalePublicationReviews(
   independentReviews: IndependentReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
@@ -632,13 +643,7 @@ function reviewCertifiesPreparedPackage(
 ): boolean {
   if (!isQualifyingIndependentReview(review)) return false;
   if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
-  const snapshot = review.reviewSnapshot;
-  const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
-  if (!reviewedHeadSha || reviewedHeadSha !== preparedPackage.headSha) return false;
-  if (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable')) return false;
-  const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
-  if (!packageReviewSubjectHash) return false;
-  return review.reviewedReviewSubjectHash === packageReviewSubjectHash;
+  return publicationReviewMatchesPreparedPackage(review, preparedPackage);
 }
 
 export function assertPublicationReviewPolicySatisfied(

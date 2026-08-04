@@ -23,12 +23,15 @@ import {
   type GateTokenSummary,
   type IndependentReviewStatus,
   PipelineSteps,
+  type ReadyGatePrPackage,
   type ReviewSummary,
   type Run,
 } from '@farmslot/protocol';
 
 import { inferReviewSourceKind } from '../quality/review-sources.js';
 import { listRuns } from '../runs/store.js';
+
+import { publicationReviewMatchesPreparedPackage } from './gate-policy.js';
 
 /** Family flows whose token cost rolls up into a root gate's grand total. */
 const FIX_LOOP_FLOWS: ReadonlySet<FlowType> = new Set<FlowType>(['pr-complete', 'update-branch']);
@@ -206,7 +209,10 @@ function buildSelfReview(
 }
 
 /** Build the review-outcomes section (self-review + independent reviews). */
-export function buildReviewSummary(run: Run): ReviewSummary {
+export function buildReviewSummary(
+  run: Run,
+  preparedPackage?: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSubjectHash'>,
+): ReviewSummary {
   const reviews = run.engineState?.publishGate?.independentReviews ?? [];
   const selfEntries = reviews.filter(isSelfReviewEntry);
   const independentEntries = reviewsForLatestReviewedHead(
@@ -227,12 +233,21 @@ export function buildReviewSummary(run: Run): ReviewSummary {
     feedbackSent: r.feedbackSent === true,
     triggeredReWork: triggeredReWork(r, reviews),
     attempts: r.attempts?.length ?? 1,
-    ...(r.stale != null ? { stale: r.stale } : {}),
+    ...(preparedPackage
+      ? { stale: !publicationReviewMatchesPreparedPackage(r, preparedPackage) }
+      : r.stale != null
+        ? { stale: r.stale }
+        : {}),
     ...(r.startedAt ? { startedAt: r.startedAt } : {}),
     ...(r.completedAt ? { completedAt: r.completedAt } : {}),
   }));
 
-  const passingReviews = independentEntries.filter((r) => r.verdict === 'pass').length;
+  const passingReviews = independentEntries.filter(
+    (r) =>
+      r.verdict === 'pass' &&
+      (!preparedPackage ||
+        (r.unresolvedCount === 0 && publicationReviewMatchesPreparedPackage(r, preparedPackage))),
+  ).length;
   const totalUnresolved =
     num(selfReview?.unresolvedCount) +
     independentEntries.reduce((sum, r) => sum + num(r.unresolvedCount), 0);
@@ -395,9 +410,12 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
 export function buildGateSummary(
   run: Run,
   kind: GateSummary['kind'],
-  opts?: { gatePolicy?: GatePolicy },
+  opts?: {
+    gatePolicy?: GatePolicy;
+    preparedPackage?: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSubjectHash'>;
+  },
 ): GateSummary {
-  const review = buildReviewSummary(run);
+  const review = buildReviewSummary(run, opts?.preparedPackage);
   const tokens = buildTokenSummary(run);
   const checklist = buildChecklist(run);
   const worker = {
@@ -424,20 +442,12 @@ function buildHeadline(worker: GateSummary['worker'], review: ReviewSummary): st
 }
 
 /**
- * Lazy back-compat: attach `gateSummary` on-read to gate/retrospective decision
- * payloads created before the field existed. Returns a shallow copy with the
- * enriched decisions when anything changed, otherwise the run unchanged. Gate
- * surfaces (runGet, runForSlot, decisionList) call this so historical runs show
- * the panel without a migration or backfill job.
+ * Project `gateSummary` on read for publication decisions and backfill it for
+ * older retrospective decisions. Publication summaries must be rebuilt because
+ * package refreshes and later reviews can make the gate-time snapshot stale.
  *
- * Deliberate tradeoff — this rebuilds the summary on every read for a run that
- * lacks one, rather than persisting it back to the store. The cost is bounded:
- * `buildGateSummary` is a pure in-memory projection (the only fan-out is
- * `listRuns({ familyId })`, an in-memory filter), and only PRE-feature runs ever
- * hit this path — every run created after this ships persists `gateSummary` at
- * gate time, so the rebuild set shrinks to a fixed, rarely-viewed tail. We avoid
- * persist-on-read on purpose: writing from a read path (especially the
- * multi-run `decisionList`) adds I/O and races for no correctness benefit.
+ * The projection is pure and in-memory; it is intentionally not persisted from
+ * read paths, which would add write races for no correctness benefit.
  */
 export function enrichDecisionsWithGateSummary(run: Run): Run {
   if (!run.decisions?.length) return run;
@@ -448,10 +458,11 @@ export function enrichDecisionsWithGateSummary(run: Run): Run {
   // type-safe with no casts; both branches' payloads already declare `gateSummary`.
   const decisions = run.decisions.map((decision) => {
     const payload = decision.payload;
-    if (payload?.kind === 'ready' && !payload.gateSummary) {
+    if (payload?.kind === 'ready' && !decision.resolvedAt) {
       mutated = true;
       const gateSummary = buildGateSummary(run, GATE_SUMMARY_KINDS.publication, {
         gatePolicy: payload.prPackage?.gatePolicy ?? payload.gatePolicy,
+        preparedPackage: payload.prPackage,
       });
       return { ...decision, payload: { ...payload, gateSummary } };
     }

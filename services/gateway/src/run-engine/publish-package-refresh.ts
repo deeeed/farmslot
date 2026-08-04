@@ -3,6 +3,7 @@
 import {
   type DecisionAction,
   Events,
+  GATE_SUMMARY_KINDS,
   type IndependentReviewStatus,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
@@ -34,6 +35,7 @@ import {
   reviewFinalSnapshotMatchesPreparedPackage,
   stampPublishGateReviewStatusForPackage,
 } from './gate-policy.js';
+import { buildGateSummary } from './gate-summary.js';
 import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
 import { getDiffStat } from './task-artifacts.js';
@@ -242,6 +244,13 @@ export async function refreshPublishPackage(params: {
       style: 'secondary',
     },
   ];
+  const nextEngineState = {
+    ...refreshedRun.engineState,
+    publishGate: {
+      ...refreshedRun.engineState?.publishGate,
+      independentReviews,
+    },
+  };
   // Soft gate chip: re-probe behind-main + merge-tree on package refresh so the
   // operator sees staleness before more review loops. Never auto-rebases.
   // Always replace (not partial-spread) freshness keys so stale mergeConflictPaths
@@ -252,8 +261,7 @@ export async function refreshPublishPackage(params: {
     try {
       const vars = await loadSlotVars(refreshedRun.slotId);
       const projectVars = await loadProjectVars(refreshedRun.project);
-      const defaultBranch =
-        getProjectField(projectVars.projectJson, 'default_branch') || 'main';
+      const defaultBranch = getProjectField(projectVars.projectJson, 'default_branch') || 'main';
       const strategy = resolveBranchUpdateStrategy(projectVars.projectJson);
       freshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
       if (freshness) {
@@ -289,6 +297,11 @@ export async function refreshPublishPackage(params: {
       reviewDepth,
       independentReviews,
       gatePolicy: prPackage.gatePolicy,
+      gateSummary: buildGateSummary(
+        { ...refreshedRun, engineState: nextEngineState },
+        GATE_SUMMARY_KINDS.publication,
+        { gatePolicy: prPackage.gatePolicy, preparedPackage: prPackage },
+      ),
       validationSummary: prPackage.validationSummaryPath ?? undefined,
       publicationTarget: prPackage.publicationTarget,
       publicationStatus: publicationStatusForRun(refreshedRun),
@@ -307,13 +320,7 @@ export async function refreshPublishPackage(params: {
     description: `**Package:** ${prPackage.id}\n**Target:** ${prPackage.publicationTarget}\n**Branch:** ${prPackage.branch || refreshedRun.branch || 'unknown'}\n**Files:** ${prPackage.diffStat.files} (+${prPackage.diffStat.additions} -${prPackage.diffStat.deletions})${freshnessLine}\n\nPackage refreshed. Review the local package before public PR publication.`,
   };
   updateRun(params.runId, {
-    engineState: {
-      ...refreshedRun.engineState,
-      publishGate: {
-        ...refreshedRun.engineState?.publishGate,
-        independentReviews,
-      },
-    },
+    engineState: nextEngineState,
     decisions: refreshedRun.decisions.map((entry) =>
       entry.id === nextDecision.id ? nextDecision : entry,
     ),
