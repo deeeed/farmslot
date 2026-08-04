@@ -32,7 +32,9 @@ export function readRegisteredEvents(runner, repo, runtimeDir) {
     );
     return Object.keys(settings.hooks).sort();
   }
-  const hooksDoc = JSON.parse(fs.readFileSync(path.join(repo, '.codex', 'hooks.json'), 'utf8'));
+  const hooksDoc = JSON.parse(
+    fs.readFileSync(path.join(repo, runtimeDir, 'codex-home', 'hooks.json'), 'utf8'),
+  );
   return Object.keys(hooksDoc.hooks).sort();
 }
 
