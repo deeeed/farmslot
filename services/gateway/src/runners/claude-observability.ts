@@ -9,6 +9,7 @@ import {
   filterHooksByPane,
   filterStatuslineByPane,
   hookRecordMatchesRunnerSession,
+  hookRecordMatchesRunnerSessionIdentity,
   lastTurnCompletedFromHooks,
   parseHookJsonl,
   parseStatuslineJson,
@@ -81,10 +82,13 @@ export const claudeHookObservability: RunnerObservability = {
       readRunnerSessionObservabilityState(vars, sessionId),
       readRunnerPaneObservabilityState(vars, paneId),
     ]);
-    if (
-      !hookRecordMatchesRunnerSession(sessionState, expected) ||
-      !hookRecordMatchesRunnerSession(paneState, expected)
-    ) {
+    if (!hookRecordMatchesRunnerSessionIdentity(sessionState, expected)) {
+      return null;
+    }
+    // A freshly restored canonical worker window has no pane-scoped record yet.
+    // Reject only a conflicting record; the exact session-level Stop remains
+    // authoritative proof that the persisted session is safe to resume there.
+    if (paneState && !hookRecordMatchesRunnerSession(paneState, expected)) {
       return null;
     }
     return deriveRunnerSessionDeliveryState(sessionState, sessionId);

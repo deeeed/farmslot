@@ -335,9 +335,16 @@ export function hookRecordMatchesRunnerSession(
   expected: { sessionId: string; sessionPath: string; paneId: string },
 ): record is HookRecord {
   return (
-    record?.session_id === expected.sessionId &&
-    record.transcript_path === expected.sessionPath &&
-    record.tmuxPane === expected.paneId
+    hookRecordMatchesRunnerSessionIdentity(record, expected) && record.tmuxPane === expected.paneId
+  );
+}
+
+export function hookRecordMatchesRunnerSessionIdentity(
+  record: HookRecord | null,
+  expected: { sessionId: string; sessionPath: string },
+): record is HookRecord {
+  return (
+    record?.session_id === expected.sessionId && record.transcript_path === expected.sessionPath
   );
 }
 

@@ -297,6 +297,28 @@ export async function deliverPromptInPlace(
       },
     );
     if (accepted && options.launchAckSignalPath) {
+      // Pane-only runners have no exact prompt hook/native acknowledgement.
+      // Probe the generic task signal once, then preserve the runner-specific
+      // safe-send result instead of waiting for a capability they do not expose.
+      if (!getRunnerObservability(runner)) {
+        const acknowledgement = await runnerHasDurablePromptHandoff(
+          options.vars,
+          options.target,
+          runner,
+          options.prompt,
+          sentAtMs,
+          {
+            launchAckSignalPath: options.launchAckSignalPath,
+            launchAckBaseline: options.launchAckBaseline,
+            requirePromptDigest: true,
+            acceptExistingLaunchAck: options.acceptExistingLaunchAck,
+            promptAcceptanceBaselineMs,
+          },
+        );
+        return acknowledgement.accepted
+          ? { delivered: true, acknowledgement: 'structured' }
+          : { delivered: true, acknowledgement: 'safe-send' };
+      }
       const acknowledgementDeadline = Date.now() + Math.min(timeoutMs, 30_000);
       while (Date.now() < acknowledgementDeadline) {
         const acknowledgement = await runnerHasDurablePromptHandoff(

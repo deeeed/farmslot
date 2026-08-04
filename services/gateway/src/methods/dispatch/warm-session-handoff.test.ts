@@ -6,6 +6,7 @@ import type { Run } from '@farmslot/protocol';
 import {
   isWarmHandoffDispatchRecovery,
   resolveWarmWorkerBinding,
+  warmHandoffCanAcceptExistingLaunchAck,
   warmHandoffFailureFromRetainedDelivery,
 } from './warm-session-handoff.js';
 
@@ -161,5 +162,36 @@ test('warm handoff accepts existing task acknowledgement only during a dispatch 
       ],
     }),
     false,
+  );
+});
+
+test('warm handoff rejects an acknowledgement older than the dispatch replay', () => {
+  const run = {
+    recoveryAttempts: [
+      {
+        id: 'dispatch-replay',
+        attempt: 1,
+        stepName: 'dispatch',
+        startedAt: '2026-08-04T00:00:00.000Z',
+        status: 'started' as const,
+        triggeredBy: 'operator' as const,
+      },
+    ],
+  };
+  assert.equal(
+    warmHandoffCanAcceptExistingLaunchAck(run, {
+      raw: '{"status":"complete"}',
+      status: 'complete',
+      mtimeNs: String(Date.parse('2026-08-03T23:59:59.000Z') * 1_000_000),
+    }),
+    false,
+  );
+  assert.equal(
+    warmHandoffCanAcceptExistingLaunchAck(run, {
+      raw: '{"status":"running"}',
+      status: 'running',
+      mtimeNs: String(Date.parse('2026-08-04T00:00:01.000Z') * 1_000_000),
+    }),
+    true,
   );
 });

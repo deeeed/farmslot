@@ -17,7 +17,10 @@ export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string
 export function buildClaudeObservabilityFallbackCommand(settingsPath: string): string {
   const settingsDir = path.posix.dirname(settingsPath);
   const settingsFile = shellExpressionForRemotePath(settingsPath);
-  return `mkdir -p ${shellExpressionForRemotePath(settingsDir)} && printf '{}\\n' > ${settingsFile}`;
+  const validate = `node -e ${shellQuote(
+    `JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))`,
+  )} ${settingsFile} >/dev/null 2>&1`;
+  return `${validate} || { mkdir -p ${shellExpressionForRemotePath(settingsDir)} && printf '{}\\n' > ${settingsFile}; }`;
 }
 
 function farmslotDirForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): string {
@@ -62,5 +65,5 @@ export function withRunnerObservabilityInstall(
   installCommand: string,
   fallbackCommand = ':',
 ): string {
-  return `(${installCommand} || { echo '[farmslot-observability] install failed; continuing without hooks' >&2; ${fallbackCommand}; }) && ${launchCommand}`;
+  return `(${installCommand} || echo '[farmslot-observability] install failed; continuing without hooks' >&2) && (${fallbackCommand}) && ${launchCommand}`;
 }

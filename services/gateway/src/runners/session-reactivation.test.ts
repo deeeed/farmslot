@@ -481,6 +481,28 @@ test('retained fallback uses an exact runner hook when the task signal baseline 
   assert.deepEqual(result, { delivered: true, acknowledgement: 'structured' });
 });
 
+test('pane-only retained handoff falls back to safe-send after probing the task signal', async () => {
+  commands.length = 0;
+  paneCount = 1;
+  taskSignalOutput = '0\n\n';
+  const result = await deliverPromptWithRetainedFallback({
+    vars,
+    target: 'test-1:dev',
+    runnerId: 'cursor',
+    prompt: 'Read and execute SELF-REVIEW-FIX.md',
+    launchAckSignalPath: '/tmp/SELF-REVIEW-FIX-SIGNAL.json',
+    launchAckBaseline: { raw: null, status: null, mtimeNs: '0' },
+    timeoutMs: 5,
+  });
+  taskSignalOutput = '2000000000\n{"status":"running","timestamp":"2026-08-02T00:00:00.000Z"}\n';
+
+  assert.deepEqual(result, { delivered: true, acknowledgement: 'safe-send' });
+  assert.equal(
+    commands.some((command) => command.includes('SELF-REVIEW-FIX-SIGNAL.json')),
+    true,
+  );
+});
+
 test('retained fallback disables hook proof when the slot-clock baseline is unavailable', async (t) => {
   commands.length = 0;
   paneCount = 1;

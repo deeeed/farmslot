@@ -264,6 +264,7 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
 
 test('restart recovery re-delivers the existing fix task without rewriting it', async () => {
   let delivered = false;
+  let restored = false;
   const run = {
     id: 'run-1',
     project: 'farmslot-farm',
@@ -300,6 +301,14 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
         assert.equal(signalPath, '/repo/tasks/run-1/SELF-REVIEW-FIX-SIGNAL.json');
         return null;
       },
+      ensureTarget: async (_vars, session, target, window, flowType) => {
+        restored = true;
+        assert.equal(session, 'ff-1');
+        assert.equal(target, 'ff-1:bugfix');
+        assert.equal(window, 'bugfix');
+        assert.equal(flowType, 'fix-bug');
+        return 'ff-1:bugfix';
+      },
       deliver: async (options) => {
         delivered = true;
         assert.equal(options.target, 'ff-1:bugfix');
@@ -314,6 +323,7 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
   );
 
   assert.equal(result, 'delivered');
+  assert.equal(restored, true);
   assert.equal(delivered, true);
 });
 

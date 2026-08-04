@@ -872,6 +872,7 @@ interface FixPromptRecoveryDeps {
   resolvePrompt: typeof resolveWorkerDispatchPrompt;
   resolveRuntimeDir: typeof resolveProjectRuntimeDir;
   readLaunchAck: typeof readLaunchAckSignalSnapshot;
+  ensureTarget: typeof ensureTmuxTargetReadyForRelaunch;
   deliver: typeof deliverPromptWithRetainedFallback;
 }
 
@@ -880,6 +881,7 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
   resolvePrompt: resolveWorkerDispatchPrompt,
   resolveRuntimeDir: resolveProjectRuntimeDir,
   readLaunchAck: readLaunchAckSignalSnapshot,
+  ensureTarget: ensureTmuxTargetReadyForRelaunch,
   deliver: deliverPromptWithRetainedFallback,
 };
 
@@ -895,15 +897,23 @@ export async function resumeSelfReviewFixPromptDelivery(
   context: FixPromptRecoveryContext,
   deps: FixPromptRecoveryDeps = FIX_PROMPT_RECOVERY_DEPS,
 ): Promise<'delivered' | 'deferred' | 'unsupported'> {
-  const target = context.target?.target;
+  const storedTarget = context.target?.target;
+  const session = context.target?.session;
   const taskFile = context.taskFile;
   const runner = normalizeRunner(context.runner);
-  if (!target || !taskFile || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
+  if (!storedTarget || !session || !taskFile || !runner || !runnerNeedsPostLaunchPrompt(runner)) {
     return 'unsupported';
   }
 
   const run = deps.getRun(runId);
   if (!run) return 'unsupported';
+  const target = await deps.ensureTarget(
+    vars,
+    session,
+    storedTarget,
+    context.target?.window,
+    run.flowType,
+  );
   const taskDir = path.posix.dirname(taskFile);
   const prompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
   const primaryContext = selectAgentContext(run, { role: 'primary' });
