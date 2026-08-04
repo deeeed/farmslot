@@ -674,6 +674,7 @@ export async function executeHumanGateStep(
     executePublishGateReviewPlan,
     executeReadyGate,
     executeReviewGate,
+    getDiffStat,
     isHumanGateEnabled,
   } = context;
   const current = getRun(runId)!;
