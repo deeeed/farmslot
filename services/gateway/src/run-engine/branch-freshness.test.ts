@@ -318,17 +318,14 @@ test('real git: write-tree probe reports conflicts only when origin ref exists',
     encoding: 'utf8',
   });
   const cleanSummary = parseBranchFreshnessProbeOutput(cleanOut, 'main', 'merge');
-  assert.equal(
-    cleanSummary.mergeConflicts,
-    false,
-    `expected clean merge; probe out:\n${cleanOut}`,
-  );
+  assert.equal(cleanSummary.mergeConflicts, false, `expected clean merge; probe out:\n${cleanOut}`);
 
   // Missing remote ref: delete origin/main tracking and probe a non-existent branch name.
-  const missingOut = execFileSync('bash', [
-    '-lc',
-    buildBranchFreshnessProbeScript(work, 'does-not-exist-branch'),
-  ], { encoding: 'utf8' });
+  const missingOut = execFileSync(
+    'bash',
+    ['-lc', buildBranchFreshnessProbeScript(work, 'does-not-exist-branch')],
+    { encoding: 'utf8' },
+  );
   const missing = parseBranchFreshnessProbeOutput(missingOut, 'does-not-exist-branch', 'merge');
   assert.equal(missing.remoteRefOk, false, `probe out:\n${missingOut}`);
   assert.equal(missing.mergeConflicts, undefined);
@@ -338,9 +335,13 @@ test('real git: write-tree probe reports conflicts only when origin ref exists',
   // Failed fetch: point origin at a nonexistent path so fetch exits non-zero while a
   // stale origin/main tracking ref may still exist — must not report behindMain:0 clean.
   git(['remote', 'set-url', 'origin', path.join(root, 'gone.git')]);
-  const failFetchOut = execFileSync('bash', ['-lc', buildBranchFreshnessProbeScript(work, 'main')], {
-    encoding: 'utf8',
-  });
+  const failFetchOut = execFileSync(
+    'bash',
+    ['-lc', buildBranchFreshnessProbeScript(work, 'main')],
+    {
+      encoding: 'utf8',
+    },
+  );
   const failFetch = parseBranchFreshnessProbeOutput(failFetchOut, 'main', 'merge');
   assert.equal(failFetch.fetchOk, false, `probe out:\n${failFetchOut}`);
   assert.equal(failFetch.remoteRefOk, false);

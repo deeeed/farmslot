@@ -10,10 +10,7 @@ import type { ReadyGatePayload } from '@farmslot/protocol';
 import type { SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
-import {
-  type MergeMainStrategy,
-  resolveMergeMainStrategy,
-} from '../methods/slot/slot-tracking.js';
+import { type MergeMainStrategy, resolveMergeMainStrategy } from '../methods/slot/slot-tracking.js';
 
 /** Soft-gate fields exposed on ready-gate / package-refresh summaries. */
 export interface BranchFreshnessSummary {
@@ -163,10 +160,7 @@ export function formatBranchFreshnessHint(params: {
  * merge-tree --write-tree --name-only). Unknown markers when the remote ref or
  * a count cannot be resolved. Never rebases or pushes.
  */
-export function buildBranchFreshnessProbeScript(
-  repoPath: string,
-  defaultBranch: string,
-): string {
+export function buildBranchFreshnessProbeScript(repoPath: string, defaultBranch: string): string {
   const branch = sanitizeDefaultBranch(defaultBranch);
   const repo = shellQuote(repoPath);
   return [
@@ -262,10 +256,10 @@ export function parseBranchFreshnessProbeOutput(
   }
 
   // Only surface path samples when we know there are conflicts; otherwise ignore noise.
-  const mergeConflictPaths =
-    mergeConflicts === true ? parseMergeTreeConflictPaths(tree) : [];
+  const mergeConflictPaths = mergeConflicts === true ? parseMergeTreeConflictPaths(tree) : [];
 
-  const headSha = headMatch?.[1] && /^[0-9a-f]{7,40}$/i.test(headMatch[1]) ? headMatch[1] : undefined;
+  const headSha =
+    headMatch?.[1] && /^[0-9a-f]{7,40}$/i.test(headMatch[1]) ? headMatch[1] : undefined;
   const hint = formatBranchFreshnessHint({
     behindMain,
     mergeConflicts,
