@@ -5,8 +5,25 @@ import {
   paginatedPrCommentOutputContainsRun,
   prCommentBelongsToRun,
   prCommentIdentityMarker,
+  resolvePrReadyAction,
   shouldPostWorkerReportComment,
 } from './pr-publication.js';
+
+test('PR ready action is idempotent across lifecycle states', () => {
+  assert.equal(
+    resolvePrReadyAction({ state: 'MERGED', isDraft: false, mergedAt: '2026-08-04T09:37:17Z' }),
+    'merged',
+  );
+  assert.equal(
+    resolvePrReadyAction({ state: 'OPEN', isDraft: false, mergedAt: null }),
+    'already-ready',
+  );
+  assert.equal(
+    resolvePrReadyAction({ state: 'OPEN', isDraft: true, mergedAt: null }),
+    'mark-ready',
+  );
+  assert.equal(resolvePrReadyAction({ state: 'CLOSED', isDraft: false, mergedAt: null }), 'closed');
+});
 
 test('PR comment identity is stable per run and supports legacy comments', () => {
   const runId = 'b26f39be-fb72-407b-ac77-47fdea539fb9';

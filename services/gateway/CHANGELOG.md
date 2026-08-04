@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(run-completion): reconcile merged and already-ready PRs without replaying `gh pr ready`, and report closed-unmerged PRs explicitly.
 - fix(run-engine): project publication review counts against the current prepared package, so an older passing review is shown as stale instead of contradicting the publish cockpit.
 - fix(runners): require a task-scoped signal or exact runner hook before cold dispatch or a warm-session handoff starts monitoring, recreate the persisted primary worker target before restart delivery, validate the exact Claude settings artifact even when an older node installer exits successfully, never reuse a pre-replay task signal, and never repair failed dispatch by matching runner prose.
 - feat(run-engine): ready-gate and package-refresh soft-chip probe for behind-main count + non-destructive merge-tree conflicts (`behindMain`, `mergeConflicts`) so operators see staleness before more review loops — never auto-rebases mid-loop.

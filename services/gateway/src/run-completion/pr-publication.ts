@@ -298,7 +298,43 @@ export async function updatePRTitle(run: Run, ciRepo: string, prNumber: number):
 
 // ─── Mark PR ready for review ───
 
-export async function markPRReady(ciRepo: string, prNumber: number): Promise<void> {
+export type PrReadyResult = 'marked-ready' | 'already-ready' | 'merged';
+
+interface PrLifecycle {
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
+  isDraft: boolean;
+  mergedAt: string | null;
+}
+
+export function resolvePrReadyAction(pr: PrLifecycle): PrReadyResult | 'closed' | 'mark-ready' {
+  if (pr.state === 'MERGED' || pr.mergedAt) return 'merged';
+  if (pr.state === 'CLOSED') return 'closed';
+  return pr.isDraft ? 'mark-ready' : 'already-ready';
+}
+
+export async function markPRReady(ciRepo: string, prNumber: number): Promise<PrReadyResult> {
+  const result = await ghRequest([
+    'pr',
+    'view',
+    String(prNumber),
+    '--repo',
+    ciRepo,
+    '--json',
+    'state,isDraft,mergedAt',
+  ]);
+  const action = resolvePrReadyAction(JSON.parse(result.stdout || '{}') as PrLifecycle);
+  if (action === 'merged') {
+    console.log(`[run-completion] PR #${prNumber} is already merged`);
+    return action;
+  }
+  if (action === 'already-ready') {
+    console.log(`[run-completion] PR #${prNumber} is already ready for review`);
+    return action;
+  }
+  if (action === 'closed') {
+    throw new Error(`PR #${prNumber} is closed without merging; it cannot be published`);
+  }
   await ghRequest(['pr', 'ready', String(prNumber), '--repo', ciRepo], { force: true });
   console.log(`[run-completion] marked PR #${prNumber} as ready for review`);
+  return 'marked-ready';
 }
