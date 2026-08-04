@@ -2720,6 +2720,7 @@ export async function sendRunnerPostLaunchPrompt(
   }
 
   let attempt = 1;
+  let sentAttempts = 0;
   const deliveryDeadline = Date.now() + readyTimeoutMs;
   while (attempt <= maxAttempts && Date.now() < deliveryDeadline) {
     const immediatePane = (
@@ -2832,6 +2833,7 @@ export async function sendRunnerPostLaunchPrompt(
         `Failed to send prompt to ${target}: ${promptResult.stderr || promptResult.stdout || `exit ${promptResult.exitCode}`}`,
       );
     }
+    sentAttempts += 1;
     await new Promise((r) => setTimeout(r, verifyWaitMs));
     const postPane = (
       await execOnSlot(
@@ -2941,7 +2943,7 @@ export async function sendRunnerPostLaunchPrompt(
           `target=${target}`,
           `repo=${vars.remoteRepo}`,
           'kind=prompt-delivery-failed',
-          `summary=Prompt sent ${maxAttempts} times but the pane did not show marker/progress acceptance.`,
+          `summary=Prompt sent ${sentAttempts} time(s) but exact delivery acknowledgement did not arrive.`,
           `capturedAt=${new Date().toISOString()}`,
           '',
           failurePane,
@@ -2953,7 +2955,7 @@ export async function sendRunnerPostLaunchPrompt(
     }
   }
   throw new Error(
-    `Prompt delivery failed after ${maxAttempts} attempts in tmux target ${target}. ` +
+    `Prompt delivery failed after ${sentAttempts} send attempt(s) in tmux target ${target}. ` +
       `The pane did not change, echo "${marker}", or show runner progress, meaning the runner input handler was not live.${snapshotNote}\n` +
       `Last pane content:\n${failurePane}`,
   );

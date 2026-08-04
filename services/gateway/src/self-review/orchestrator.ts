@@ -936,7 +936,10 @@ export async function resumeSelfReviewFixPromptDelivery(
     target,
   });
   const taskDir = path.posix.dirname(taskFile);
-  const prompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
+  const attemptStartedAt = context.attemptStartedAt?.trim();
+  if (!attemptStartedAt) return 'deferred';
+  const basePrompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
+  const prompt = `${basePrompt}\n\nFarmslot fix delivery attempt: ${attemptStartedAt}`;
   const primaryContext = selectAgentContext(run, { role: 'primary' });
   const signalRelPath =
     context.signalFile ?? taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
@@ -957,7 +960,7 @@ export async function resumeSelfReviewFixPromptDelivery(
     taskDir,
     launchAckSignalPath: signalPath,
     launchAckBaseline,
-    acceptExistingLaunchAck: true,
+    acceptExistingLaunchAck: false,
     priorPromptSendAttempted: true,
     timeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
     recovery: { runId },
@@ -1345,8 +1348,10 @@ async function sendFeedbackToWorker(
       workerWindowSep === -1
         ? null
         : workerTarget.slice(workerWindowSep + 1).split('.', 1)[0] || null;
+    const fixAttemptStartedAt = new Date().toISOString();
     const fixContext = await upsertAgentContext(runId, 'self-review-fix', {
       status: 'working',
+      attemptStartedAt: fixAttemptStartedAt,
       taskFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
       signalFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal),
       runner: run?.metrics.runner ?? null,
@@ -1357,10 +1362,11 @@ async function sendFeedbackToWorker(
 
     // Send single-line command to the worker's original pane
     const fixTaskFile = taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
-    const cmd = await resolveWorkerDispatchPrompt(project, {
+    const baseCmd = await resolveWorkerDispatchPrompt(project, {
       taskFile: fixTaskFile,
       taskDir,
     });
+    const cmd = `${baseCmd}\n\nFarmslot fix delivery attempt: ${fixAttemptStartedAt}`;
     const runner = normalizeRunner(run?.metrics.runner);
     let lastRetainedHoldReason: string | null = null;
     let terminalRetainedHoldReason: string | null = null;
