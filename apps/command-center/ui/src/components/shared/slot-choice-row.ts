@@ -1,7 +1,14 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 
-import { colors, fonts } from '../../styles/theme-tokens.js';
+import { colors, fonts, lifecycleColor } from '../../styles/theme-tokens.js';
+
+function agentStateColor(state: string): string {
+  if (state === 'working') return colors.lifecycleBusy;
+  if (state === 'idle') return colors.statusOk;
+  if (state === 'no-tmux') return colors.statusFail;
+  return colors.statusUnknown;
+}
 
 @customElement('slot-choice-row')
 export class SlotChoiceRow extends LitElement {
@@ -24,9 +31,10 @@ export class SlotChoiceRow extends LitElement {
     }
 
     .candidate-row {
-      display: flex;
+      display: grid;
       align-items: center;
       gap: 10px;
+      grid-template-columns: 44px 132px minmax(0, 1fr) var(--slot-choice-meta-width, 200px);
       width: 100%;
       padding: 8px 10px;
       background: ${unsafeCSS(colors.bgCard)};
@@ -73,9 +81,7 @@ export class SlotChoiceRow extends LitElement {
     }
 
     .cand-rank {
-      width: 28px;
       color: ${unsafeCSS(colors.textMuted)};
-      flex: 0 0 auto;
       font-size: 10px;
     }
 
@@ -85,14 +91,19 @@ export class SlotChoiceRow extends LitElement {
     }
 
     .cand-id {
-      width: 132px;
+      align-items: flex-start;
       color: ${unsafeCSS(colors.textPrimary)};
-      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
       overflow-wrap: anywhere;
     }
 
     .badges {
-      display: contents;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
     }
 
     .cand-summary {
@@ -134,29 +145,41 @@ export class SlotChoiceRow extends LitElement {
     }
 
     .cand-meta {
-      display: flex;
+      display: grid;
       flex: 0 0 auto;
       align-self: flex-start;
       align-items: center;
       gap: 8px;
+      grid-template-columns: minmax(66px, auto) minmax(46px, auto) minmax(0, 1fr);
+      justify-self: end;
+      width: 100%;
       padding-top: 1px;
     }
 
     .cand-lifecycle {
-      width: 68px;
-      color: ${unsafeCSS(colors.textMuted)};
+      color: var(--pill-color, ${unsafeCSS(colors.textMuted)});
       font-size: 10px;
     }
 
     .cand-score {
-      width: 22px;
-      color: ${unsafeCSS(colors.textMuted)};
+      color: var(--pill-color, ${unsafeCSS(colors.textMuted)});
       font-size: 10px;
       text-align: right;
+    }
+
+    .state-pill {
+      background: color-mix(in srgb, var(--pill-color) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--pill-color) 45%, transparent);
+      border-radius: 999px;
+      line-height: 1.2;
+      padding: 2px 6px;
+      white-space: nowrap;
     }
   `;
 
   render() {
+    const lifecycle = lifecycleColor(this.lifecycle);
+    const agent = agentStateColor(this.score);
     return html`
       <button
         class="candidate-row ${this.selected ? 'selected' : ''} ${this.warning ? 'warning' : ''}"
@@ -165,18 +188,25 @@ export class SlotChoiceRow extends LitElement {
         part="button"
       >
         <span class="cand-rank">${this.rank}</span>
-        <span class="cand-id">${this.slotId}</span>
-        <span class="badges"><slot name="badges"></slot></span>
+        <span class="cand-id">
+          <span>${this.slotId}</span>
+          <span class="badges"><slot name="badges"></slot></span>
+        </span>
         <span class="cand-summary">
           <span class="cand-branch ${this.stale ? 'stale' : ''}">${this.branch}</span>
           ${this.task ? html`<span class="cand-task">${this.task}</span>` : nothing}
           <span class="summary-extra"><slot name="summary-extra"></slot></span>
         </span>
         <span class="cand-meta">
-          <slot name="meta">
-            <span class="cand-lifecycle">${this.lifecycle}</span>
-            <span class="cand-score">${this.score}</span>
-          </slot>
+          <span class="cand-lifecycle state-pill" style=${`--pill-color:${lifecycle}`}
+            >${this.lifecycle}</span
+          >
+          ${this.score
+            ? html`<span class="cand-score state-pill" style=${`--pill-color:${agent}`}
+                >${this.score}</span
+              >`
+            : nothing}
+          <slot name="actions"></slot>
         </span>
       </button>
     `;

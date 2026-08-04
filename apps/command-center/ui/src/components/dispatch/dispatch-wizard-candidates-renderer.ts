@@ -2,13 +2,18 @@ import { html, nothing } from 'lit';
 
 import { DEFAULT_BRANCH, type DispatchCandidatesResult, type SlotStatus } from '@farmslot/protocol';
 
-import '../shared/slot-choice-row.js';
+import '../shared/slot-choice-list.js';
 
 import { colors } from '../../styles/theme-tokens.js';
+import type {
+  SlotChoiceActionDetail,
+  SlotChoiceBadge,
+  SlotChoiceChangeDetail,
+  SlotChoiceOption,
+} from '../shared/slot-choice-list.js';
 
 type DispatchCandidate = DispatchCandidatesResult['candidates'][number];
 type NudgeIntent = 'nudge' | 'fresh';
-type NudgeMeta = NonNullable<DispatchCandidate['nudgeMeta']>;
 
 export interface DispatchCandidateSelectionRenderContext {
   project: string;
@@ -25,43 +30,119 @@ export interface DispatchCandidateSelectionRenderContext {
   setNudgeIntent: (slotId: string, intent: NudgeIntent) => void;
 }
 
-export function renderNudgeChips(meta: NudgeMeta) {
-  const ctxClass = meta.ctxPct != null && meta.ctxPct >= 80 ? 'chip danger' : 'chip';
-  const uncommittedClass = meta.uncommittedCount > 0 ? 'chip danger' : 'chip';
-  const matchKindLabel = meta.prMatchKind === 'pr-number' ? 'PR# match' : 'branch slug only';
-  return html`
-    <span class="cand-nudge-chips">
-      <span class=${ctxClass} title="Worker context-window utilization"
-        >ctx ${meta.ctxPct != null ? `${meta.ctxPct}%` : '?'}</span
-      >
-      <span
-        class=${uncommittedClass}
-        title="Uncommitted files in worker repo (git status --porcelain)"
-        >files ${meta.uncommittedCount}</span
-      >
-      ${meta.nudgeCount > 0
-        ? html`<span class="chip" title="Nudges sent to this worker so far"
-            >×${meta.nudgeCount}</span
-          >`
-        : nothing}
-      <span class="chip" title="How the slot's branch matched the PR">${matchKindLabel}</span>
-      ${meta.riskFlags.length > 0
-        ? meta.riskFlags.map(
-            (flag) =>
-              html`<span class="chip warn" title="Risk flag from gateway eligibility check"
-                >${flag}</span
-              >`,
-          )
-        : nothing}
-    </span>
-  `;
+function candidateBadges(
+  candidate: DispatchCandidate,
+  hadTask: boolean,
+): SlotChoiceOption['badges'] {
+  if (candidate.ineligibleReason) {
+    return [{ label: 'NOT ELIGIBLE', tone: 'danger', title: candidate.ineligibleReason }];
+  }
+  if (candidate.nudgeEligible) return [{ label: 'REUSE WORKER', tone: 'warning' }];
+  if (candidate.familyAffinity) return [{ label: 'same family', tone: 'positive' }];
+  if (hadTask) return [{ label: 'same task', tone: 'accent' }];
+  return [];
+}
+
+function candidateDetails(candidate: DispatchCandidate): SlotChoiceBadge[] {
+  const meta = candidate.nudgeMeta;
+  if (!meta) return [];
+  return [
+    {
+      label: `ctx ${meta.ctxPct != null ? `${meta.ctxPct}%` : '?'}`,
+      title: 'Worker context-window utilization',
+      tone: meta.ctxPct != null && meta.ctxPct >= 80 ? 'danger' : 'neutral',
+    },
+    {
+      label: `files ${meta.uncommittedCount}`,
+      title: 'Uncommitted files in worker repo (git status --porcelain)',
+      tone: meta.uncommittedCount > 0 ? 'danger' : 'neutral',
+    },
+    ...(meta.nudgeCount > 0
+      ? [{ label: `×${meta.nudgeCount}`, title: 'Nudges sent to this worker so far' }]
+      : []),
+    {
+      label: meta.prMatchKind === 'pr-number' ? 'PR# match' : 'branch slug only',
+      title: "How the slot's branch matched the PR",
+    },
+    ...meta.riskFlags.map((flag) => ({
+      label: flag,
+      title: 'Risk flag from gateway eligibility check',
+      tone: 'warning' as const,
+    })),
+  ];
+}
+
+function candidateOption(
+  ctx: DispatchCandidateSelectionRenderContext,
+  candidate: DispatchCandidate,
+  index: number,
+  selectedSlot: string,
+): SlotChoiceOption {
+  const dispatchable = ctx.candidateDispatchable(candidate);
+  const selected = dispatchable && candidate.slotId === selectedSlot;
+  const hadTask = ctx.sameTaskSlot?.slot === candidate.slotId;
+  const meta = candidate.nudgeMeta;
+  const canNudge = Boolean(meta?.canNudge);
+  const intent = candidate.nudgeEligible
+    ? (ctx.nudgeIntents.get(candidate.slotId) ?? (canNudge ? 'nudge' : 'fresh'))
+    : undefined;
+  const titleSuffix = candidate.nudgeEligible
+    ? canNudge
+      ? " — busy worker on this PR's branch; pick Nudge to reuse session or Fresh to relaunch"
+      : " — busy worker on this PR's branch (runner doesn't support live nudge — Fresh dispatch only)"
+    : '';
+  return {
+    slotId: candidate.slotId,
+    rank: selected ? '#1' : dispatchable ? `#${index + 1}` : '--',
+    branch: candidate.branch || DEFAULT_BRANCH,
+    task: ctx.slotSummaryLabel(candidate.slotId),
+    lifecycle: candidate.lifecycle,
+    state: String(candidate.score),
+    stateSortValue: candidate.score,
+    disabled: !dispatchable,
+    stale: !candidate.onMain,
+    warning: candidate.nudgeEligible,
+    title: dispatchable
+      ? `Select ${candidate.slotId}${titleSuffix}`
+      : candidate.ineligibleReason
+        ? `${candidate.slotId}: ${candidate.ineligibleReason}`
+        : `${candidate.slotId} is ${candidate.lifecycle}; use Queue or choose a free slot`,
+    badges: candidateBadges(candidate, hadTask),
+    details: candidateDetails(candidate),
+    actions:
+      candidate.nudgeEligible && !candidate.ineligibleReason
+        ? [
+            {
+              id: 'nudge',
+              label: 'Nudge',
+              active: intent === 'nudge',
+              disabled: !canNudge,
+              title: canNudge
+                ? 'Reuse the existing tmux session — skip prepare and deliver the new task'
+                : 'Nudge unavailable for this runner/candidate. Use Fresh dispatch.',
+            },
+            {
+              id: 'fresh',
+              label: 'Fresh',
+              active: intent === 'fresh',
+              title: 'Stop the current worker on this slot and dispatch a fresh run',
+            },
+          ]
+        : [],
+  };
 }
 
 export function renderDispatchCandidateSelection(ctx: DispatchCandidateSelectionRenderContext) {
   if (!ctx.project) return nothing;
+  void ctx.nudgeIntentVersion;
   const sameTask = ctx.sameTaskSlot;
   const isWorking =
     sameTask && !ctx.candidates.some((candidate) => candidate.slotId === sameTask.slot);
+  const firstDispatchable = ctx.dispatchableCandidates[0]?.slotId ?? '';
+  const selectedSlot = ctx.slotOverride || firstDispatchable;
+  const options = ctx.candidates.map((candidate, index) =>
+    candidateOption(ctx, candidate, index, selectedSlot),
+  );
 
   return html`
     <div>
@@ -82,124 +163,25 @@ export function renderDispatchCandidateSelection(ctx: DispatchCandidateSelection
             </div>
           `
         : nothing}
-      ${ctx.candidates.length > 0
-        ? renderCandidateRows(ctx)
+      ${options.length > 0
+        ? html`<slot-choice-list
+            .project=${ctx.project}
+            .options=${options}
+            .selectedSlots=${selectedSlot ? [selectedSlot] : []}
+            .showAnyEligible=${false}
+            selectionMode="single"
+            secondaryLabel="Score"
+            @slot-choice-change=${(event: CustomEvent<SlotChoiceChangeDetail>) => {
+              const slotId = event.detail.allowedSlots?.[0];
+              if (slotId) ctx.selectSlot(slotId);
+            }}
+            @slot-choice-action=${(event: CustomEvent<SlotChoiceActionDetail>) => {
+              if (event.detail.actionId === 'nudge' || event.detail.actionId === 'fresh') {
+                ctx.setNudgeIntent(event.detail.slotId, event.detail.actionId);
+              }
+            }}
+          ></slot-choice-list>`
         : html`<span style="font-size:11px; color:${colors.textMuted}">No free slots</span>`}
     </div>
-  `;
-}
-
-function renderCandidateRows(ctx: DispatchCandidateSelectionRenderContext) {
-  // Force re-render when nudge intent changes — nudgeIntentVersion is the observable hook
-  // into the otherwise mutation-only intents Map.
-  void ctx.nudgeIntentVersion;
-  const firstDispatchable = ctx.dispatchableCandidates[0]?.slotId ?? '';
-
-  return html`
-    <div class="candidate-list">
-      ${ctx.candidates.map((candidate, index) =>
-        renderCandidateRow(ctx, candidate, index, firstDispatchable),
-      )}
-    </div>
-  `;
-}
-
-function renderCandidateRow(
-  ctx: DispatchCandidateSelectionRenderContext,
-  candidate: DispatchCandidate,
-  index: number,
-  firstDispatchable: string,
-) {
-  const dispatchable = ctx.candidateDispatchable(candidate);
-  const isSelected =
-    dispatchable &&
-    (ctx.slotOverride
-      ? ctx.slotOverride === candidate.slotId
-      : candidate.slotId === firstDispatchable);
-  const sameTask = ctx.sameTaskSlot;
-  const hadTask = sameTask?.slot === candidate.slotId;
-  const taskLabel = ctx.slotSummaryLabel(candidate.slotId);
-  const meta = candidate.nudgeMeta;
-  const canNudge = Boolean(meta?.canNudge);
-  const intent = candidate.nudgeEligible
-    ? (ctx.nudgeIntents.get(candidate.slotId) ?? (canNudge ? 'nudge' : 'fresh'))
-    : undefined;
-  const titleSuffix = candidate.nudgeEligible
-    ? canNudge
-      ? ` — busy worker on this PR's branch; pick Nudge to reuse session or Fresh to relaunch`
-      : ` — busy worker on this PR's branch (runner doesn't support live nudge — Fresh dispatch only)`
-    : '';
-
-  return html`
-    <slot-choice-row
-      .rank=${isSelected ? '#1' : dispatchable ? `#${index + 1}` : '--'}
-      .slotId=${candidate.slotId}
-      .branch=${candidate.branch || DEFAULT_BRANCH}
-      .task=${taskLabel}
-      .lifecycle=${candidate.lifecycle}
-      .score=${String(candidate.score)}
-      ?selected=${isSelected}
-      ?disabled=${!dispatchable}
-      ?stale=${!candidate.onMain}
-      ?warning=${candidate.nudgeEligible}
-      title=${dispatchable
-        ? `Select ${candidate.slotId}${titleSuffix}`
-        : candidate.ineligibleReason
-          ? `${candidate.slotId}: ${candidate.ineligibleReason}`
-          : `${candidate.slotId} is ${candidate.lifecycle}; use Queue or choose a free slot`}
-      @click=${() => {
-        if (dispatchable) ctx.selectSlot(candidate.slotId);
-      }}
-    >
-      ${candidate.ineligibleReason
-        ? html`<span slot="badges" class="cand-ineligible" title=${candidate.ineligibleReason}
-            >NOT ELIGIBLE</span
-          >`
-        : nothing}
-      ${candidate.nudgeEligible && !candidate.ineligibleReason
-        ? html`<span slot="badges" class="cand-nudge-badge">REUSE WORKER</span>`
-        : nothing}
-      ${candidate.familyAffinity && !candidate.nudgeEligible
-        ? html`<span slot="badges" class="cand-affinity">same family</span>`
-        : nothing}
-      ${hadTask && !candidate.nudgeEligible
-        ? html`<span slot="badges" class="cand-reuse">same task</span>`
-        : nothing}
-      ${meta ? html`<span slot="summary-extra">${renderNudgeChips(meta)}</span>` : nothing}
-      ${candidate.nudgeEligible && !candidate.ineligibleReason
-        ? html`<span slot="meta">${renderNudgeActions(ctx, candidate, canNudge, intent)}</span>`
-        : nothing}
-    </slot-choice-row>
-  `;
-}
-
-function renderNudgeActions(
-  ctx: DispatchCandidateSelectionRenderContext,
-  candidate: DispatchCandidate,
-  canNudge: boolean,
-  intent: NudgeIntent | undefined,
-) {
-  return html`
-    <span class="cand-actions" @click=${(event: Event) => event.stopPropagation()}>
-      <button
-        class="nudge-action ${intent === 'nudge' ? 'on' : ''}"
-        ?disabled=${!canNudge}
-        title=${canNudge
-          ? 'Reuse the existing tmux session — skip prepare, send-keys the new TASK.md prompt'
-          : `Nudge unavailable for this runner/candidate. Use Fresh dispatch.`}
-        @click=${() => {
-          if (canNudge) ctx.setNudgeIntent(candidate.slotId, 'nudge');
-        }}
-      >
-        Nudge
-      </button>
-      <button
-        class="nudge-action ${intent === 'fresh' ? 'on' : ''}"
-        title="Kill the current worker on this slot and dispatch a fresh run"
-        @click=${() => ctx.setNudgeIntent(candidate.slotId, 'fresh')}
-      >
-        Fresh
-      </button>
-    </span>
   `;
 }
