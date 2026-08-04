@@ -10,7 +10,7 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
-import { loadProjectVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
 import {
   effectiveRequiredReviewCount,
   independentReviewPolicySatisfied,
@@ -23,6 +23,11 @@ import {
 import { computeReadyGateReviewSubjectHash } from '../run-completion/ready-gate-package.js';
 import { getRun, updateRun } from '../runs/store.js';
 
+import {
+  applyBranchFreshnessToReadyGatePayload,
+  probeSlotBranchFreshness,
+  resolveBranchUpdateStrategy,
+} from './branch-freshness.js';
 import {
   buildEvidenceRefreshAction,
   countStalePublicationReviews,
@@ -237,30 +242,69 @@ export async function refreshPublishPackage(params: {
       style: 'secondary',
     },
   ];
-  const nextPayload: ReadyGatePayload = {
-    ...oldPayload,
-    diffStat: prPackage.diffStat,
-    branch: prPackage.branch,
-    headSha: prPackage.headSha,
-    artifactManifest: prPackage.evidenceManifest,
-    prPackage,
-    reviewDepth,
-    independentReviews,
-    gatePolicy: prPackage.gatePolicy,
-    validationSummary: prPackage.validationSummaryPath ?? undefined,
-    publicationTarget: prPackage.publicationTarget,
-    publicationStatus: publicationStatusForRun(refreshedRun),
-    stale: staleReviewCount > 0,
-    draftEdits: {
-      ...(oldPayload.draftEdits ?? {}),
-      selectedEvidenceKeys: prPackage.selectedEvidenceKeys,
+  // Soft gate chip: re-probe behind-main + merge-tree on package refresh so the
+  // operator sees staleness before more review loops. Never auto-rebases.
+  // Always replace (not partial-spread) freshness keys so stale mergeConflictPaths
+  // / hints cannot survive a clean or failed probe via ...oldPayload.
+  let freshness: Awaited<ReturnType<typeof probeSlotBranchFreshness>> = null;
+  let freshnessLine = '';
+  if (refreshedRun.slotId) {
+    try {
+      const vars = await loadSlotVars(refreshedRun.slotId);
+      const projectVars = await loadProjectVars(refreshedRun.project);
+      const defaultBranch =
+        getProjectField(projectVars.projectJson, 'default_branch') || 'main';
+      const strategy = resolveBranchUpdateStrategy(projectVars.projectJson);
+      freshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
+      if (freshness) {
+        const behindLabel =
+          typeof freshness.behindMain === 'number' ? String(freshness.behindMain) : 'unknown';
+        const conflictLabel =
+          typeof freshness.mergeConflicts === 'boolean'
+            ? String(freshness.mergeConflicts)
+            : 'unknown';
+        const detail =
+          freshness.mergeConflicts === true ||
+          (typeof freshness.behindMain === 'number' && freshness.behindMain > 0) ||
+          !freshness.remoteRefOk
+            ? ` — ${freshness.hint}`
+            : '';
+        freshnessLine = `\n**Branch freshness:** behindMain=${behindLabel}, mergeConflicts=${conflictLabel}${detail}`;
+      }
+    } catch (err) {
+      console.warn(
+        `[run-engine] package-refresh branch-freshness probe failed for ${params.runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+      );
+      freshness = null;
+    }
+  }
+  const nextPayload: ReadyGatePayload = applyBranchFreshnessToReadyGatePayload(
+    {
+      ...oldPayload,
+      diffStat: prPackage.diffStat,
+      branch: prPackage.branch,
+      headSha: prPackage.headSha,
+      artifactManifest: prPackage.evidenceManifest,
+      prPackage,
+      reviewDepth,
+      independentReviews,
+      gatePolicy: prPackage.gatePolicy,
+      validationSummary: prPackage.validationSummaryPath ?? undefined,
+      publicationTarget: prPackage.publicationTarget,
+      publicationStatus: publicationStatusForRun(refreshedRun),
+      stale: staleReviewCount > 0,
+      draftEdits: {
+        ...(oldPayload.draftEdits ?? {}),
+        selectedEvidenceKeys: prPackage.selectedEvidenceKeys,
+      },
     },
-  };
+    freshness,
+  );
   const nextDecision: RunDecision = {
     ...decision,
     actions,
     payload: nextPayload,
-    description: `**Package:** ${prPackage.id}\n**Target:** ${prPackage.publicationTarget}\n**Branch:** ${prPackage.branch || refreshedRun.branch || 'unknown'}\n**Files:** ${prPackage.diffStat.files} (+${prPackage.diffStat.additions} -${prPackage.diffStat.deletions})\n\nPackage refreshed. Review the local package before public PR publication.`,
+    description: `**Package:** ${prPackage.id}\n**Target:** ${prPackage.publicationTarget}\n**Branch:** ${prPackage.branch || refreshedRun.branch || 'unknown'}\n**Files:** ${prPackage.diffStat.files} (+${prPackage.diffStat.additions} -${prPackage.diffStat.deletions})${freshnessLine}\n\nPackage refreshed. Review the local package before public PR publication.`,
   };
   updateRun(params.runId, {
     engineState: {

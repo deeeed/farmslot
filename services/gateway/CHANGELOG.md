@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat(run-engine): ready-gate and package-refresh soft-chip probe for behind-main count + non-destructive merge-tree conflicts (`behindMain`, `mergeConflicts`) so operators see staleness before more review loops — never auto-rebases mid-loop.
 - Fix publication gate restart recovery so a later passing review supersedes older continuation markers, recovered reviewer timeouts are terminated instead of duplicated, and gate summaries keep new snapshot-less failures without reviving historical findings.
 
 - fix(run-engine): reclaim the exact surviving reviewer after a gateway restart, resume its fix/re-review continuation without failing the run when delivery is temporarily unavailable, and deduplicate terminal verdict recovery.

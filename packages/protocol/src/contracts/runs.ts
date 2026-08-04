@@ -615,6 +615,21 @@ export interface ReadyGatePayload {
    * without a re-review. Absent on every other approval path.
    */
   evidenceRefreshOverride?: EvidenceRefreshOverrideRecord;
+  /**
+   * Soft gate: commits the slot branch is behind origin/<defaultBranch>
+   * (`git rev-list --count HEAD..origin/<branch>`). Chip only — not a hard fail.
+   * Absent when the probe could not run.
+   */
+  behindMain?: number;
+  /**
+   * Soft gate: non-destructive merge-tree conflict probe against origin/<defaultBranch>.
+   * Chip only — not a hard fail. Absent when the probe could not run.
+   */
+  mergeConflicts?: boolean;
+  /** Sample conflict paths from the merge-tree probe (capped). */
+  mergeConflictPaths?: string[];
+  /** Operator-facing next command (merge preferred during open review loops). */
+  branchFreshnessHint?: string;
 }
 
 export interface EvidenceRefreshOverrideRecord {

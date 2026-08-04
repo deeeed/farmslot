@@ -49,6 +49,12 @@ import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
 
 import {
+  applyBranchFreshnessToReadyGatePayload,
+  type BranchFreshnessSummary,
+  probeSlotBranchFreshness,
+  resolveBranchUpdateStrategy,
+} from './branch-freshness.js';
+import {
   latestResolvedHumanGateDecision,
   markResolvedHumanGateReviewRequestConsumed,
 } from './decision-replay.js';
@@ -626,43 +632,45 @@ export async function executeReadyGate(runId: string): Promise<string> {
       await persistRunPrNumber(current.id, mergedPrNumber);
     }
   }
-  if (publicationApprovalGate && !mergedPrNumber && current.slotId) {
-    // Zero commits ahead of the default branch also means there is nothing to
-    // publish (spec Phase 2 AC) even when no merged PR is discoverable.
+  // defaultBranch is shared by zero-ahead + branch-freshness (single slot probe).
+  const defaultBranch =
+    (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || 'main';
+
+  // Soft branch-freshness probe (fetch + behind/ahead + merge-tree). headSha is
+  // taken from the probe when present; fall back to a cheap local rev-parse so a
+  // failed/incomplete probe (timeout, missing markers) does not lose drift tracking.
+  let headSha: string | undefined;
+  let branchFreshness: BranchFreshnessSummary | null = null;
+  if (current.slotId) {
     try {
       const vars = await loadSlotVars(current.slotId);
-      const defaultBranch =
-        (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || 'main';
-      const r = await execOnSlot(
-        vars,
-        `git -C '${vars.remoteRepo}' rev-list --count origin/${defaultBranch}..HEAD 2>/dev/null`,
-        { timeout: 15_000 },
-      );
-      branchZeroAhead = r.stdout.trim() === '0';
+      const strategy = resolveBranchUpdateStrategy(pv?.projectJson);
+      branchFreshness = await probeSlotBranchFreshness(vars, String(defaultBranch), strategy);
+      if (branchFreshness?.headSha) headSha = branchFreshness.headSha;
+      if (!headSha) {
+        const r = await execOnSlot(vars, `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`, {
+          timeout: 10_000,
+        });
+        const sha = r.stdout.trim();
+        if (sha && /^[0-9a-f]{7,40}$/i.test(sha)) headSha = sha;
+      }
+      // Fail closed: only promote close-as-shipped when ahead count is a known 0.
+      // Unknown/missing ahead (ref not resolved) must not look like zero-ahead.
+      if (
+        publicationApprovalGate &&
+        !mergedPrNumber &&
+        branchFreshness &&
+        typeof branchFreshness.aheadMain === 'number'
+      ) {
+        branchZeroAhead = branchFreshness.aheadMain === 0;
+      }
     } catch (err) {
       console.warn(
-        `[run-engine] ready-gate zero-ahead probe failed for ${runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+        `[run-engine] ready-gate branch-freshness probe failed for ${runId.slice(0, 8)}: ${(err as Error).message}`,
       );
     }
   }
 
-  // Snapshot the slot's HEAD SHA at gate-creation time so post-hoc viewers
-  // can tell when the workspace's live diff has drifted from what was
-  // reviewed. Non-fatal — legacy gates without this field fall back to
-  // the "live diff" warning banner in ready-workspace.
-  let headSha: string | undefined;
-  if (current.slotId) {
-    try {
-      const vars = await loadSlotVars(current.slotId);
-      const r = await execOnSlot(vars, `git -C '${vars.remoteRepo}' rev-parse HEAD 2>/dev/null`);
-      const sha = r.stdout.trim();
-      if (sha && /^[0-9a-f]{7,40}$/i.test(sha)) headSha = sha;
-    } catch (err) {
-      console.warn(
-        `[run-engine] ready-gate headSha capture failed for ${runId.slice(0, 8)}: ${(err as Error).message}`,
-      );
-    }
-  }
   const reviewLaunchRejection = reconcileReviewLaunchRejectionForCurrentHead(runId, headSha);
 
   const baseDescription =
@@ -859,50 +867,57 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const inputSnapshot = await buildReadyGateInputSnapshot(current);
 
   // Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost).
+  // Soft branch-freshness fields live on the typed ReadyGatePayload only
+  // (not mirrored into the untyped gate-summary extras bag).
   const gateSummary = buildGateSummary(current, GATE_SUMMARY_KINDS.publication, {
     gatePolicy: preparedPackage?.gatePolicy,
   });
 
-  const readyPayload: ReadyGatePayload = {
-    kind: 'ready',
-    prNumber,
-    repo: ciRepo,
-    gateSummary,
-    diffStat: preparedPackage?.diffStat ?? diffStat,
-    workerReport: report ?? '',
-    branch: preparedPackage?.branch ?? current.branch ?? '',
-    slotId: current.slotId ?? undefined,
-    headSha: preparedPackage?.headSha ?? headSha,
-    recipeJson,
-    recipeQualityArtifact: (
-      await loadRecipeQualityEvaluation({
-        run: current,
-        workerReport: report ?? '',
-        recipeJson,
-        recipeCoverage,
-      })
-    ).artifact,
-    artifactManifest: preparedPackage?.evidenceManifest ?? artifactManifest,
-    selfReviewVerdict,
-    selfReviewSummary,
-    workerLearnings,
-    reviewLaunchRejection,
-    ciChecks,
-    acceptanceCriteria,
-    inputSnapshot,
-    ...(preparedPackage
-      ? {
-          prPackage: preparedPackage,
-          reviewDepth,
-          independentReviews,
-          gatePolicy: preparedPackage.gatePolicy,
-          validationSummary: preparedPackage.validationSummaryPath ?? undefined,
-          publicationTarget: preparedPackage.publicationTarget,
-          publicationStatus: publicationStatusForRun(current),
-          stale: staleReviewCount > 0,
-        }
-      : {}),
-  };
+  // Soft freshness fields go through the same clear-then-set helper as package-refresh
+  // so empty mergeConflictPaths and unknown counts share one encoding.
+  const readyPayload: ReadyGatePayload = applyBranchFreshnessToReadyGatePayload(
+    {
+      kind: 'ready',
+      prNumber,
+      repo: ciRepo,
+      gateSummary,
+      diffStat: preparedPackage?.diffStat ?? diffStat,
+      workerReport: report ?? '',
+      branch: preparedPackage?.branch ?? current.branch ?? '',
+      slotId: current.slotId ?? undefined,
+      headSha: preparedPackage?.headSha ?? headSha,
+      recipeJson,
+      recipeQualityArtifact: (
+        await loadRecipeQualityEvaluation({
+          run: current,
+          workerReport: report ?? '',
+          recipeJson,
+          recipeCoverage,
+        })
+      ).artifact,
+      artifactManifest: preparedPackage?.evidenceManifest ?? artifactManifest,
+      selfReviewVerdict,
+      selfReviewSummary,
+      workerLearnings,
+      reviewLaunchRejection,
+      ciChecks,
+      acceptanceCriteria,
+      inputSnapshot,
+      ...(preparedPackage
+        ? {
+            prPackage: preparedPackage,
+            reviewDepth,
+            independentReviews,
+            gatePolicy: preparedPackage.gatePolicy,
+            validationSummary: preparedPackage.validationSummaryPath ?? undefined,
+            publicationTarget: preparedPackage.publicationTarget,
+            publicationStatus: publicationStatusForRun(current),
+            stale: staleReviewCount > 0,
+          }
+        : {}),
+    },
+    branchFreshness,
+  );
 
   updateRunStep(runId, S.HUMAN_GATE, { detail: 'Waiting for operator decision' });
   const actionId = await createEngineDecision(runId, 'human_gate', desc, actions, readyPayload);

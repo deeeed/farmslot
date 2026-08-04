@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat(publication): ready-gate payload soft fields `behindMain`, `mergeConflicts`, `mergeConflictPaths`, and `branchFreshnessHint` for early branch-staleness chips (not a hard fail).
 - fix(run): independent review state records when restart recovery explicitly owes a worker fix/re-review continuation, and reviewer contexts retain the loop that owns their launch snapshot.
 - fix(runs): expose structured publication-review launch rejections in ready-gate payloads and persisted publish-gate state alongside the recoverable gate description.
 
