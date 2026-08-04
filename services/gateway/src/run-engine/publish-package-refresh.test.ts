@@ -313,6 +313,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   const refreshedDecision = getRun(run.id)!.decisions[0];
   const refreshedPayload = refreshedDecision.payload as ReadyGatePayload;
   assert.equal(refreshedPayload.publicationTarget, 'draft');
+  assert.equal(refreshedPayload.gateSummary?.review.passingReviews, 0);
   // Wiring: soft fields are re-probed on the live slot repo (clean main) and must
   // not keep stale mergeConflictPaths / hints from the prior payload.
   assert.notEqual(refreshedPayload.mergeConflicts, true);

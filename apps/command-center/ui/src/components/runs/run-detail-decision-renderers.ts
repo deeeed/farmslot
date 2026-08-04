@@ -72,8 +72,15 @@ function withGraftedGateSummary(
   const payload = pending.payload;
   if (payload?.kind !== 'ready') return pending;
   const enriched = pendingDecisions.find((d) => d.id === pending.id)?.payload;
-  const gateSummary = enriched?.kind === 'ready' ? enriched.gateSummary : undefined;
-  if (!gateSummary) return pending;
+  if (enriched?.kind !== 'ready' || !enriched.gateSummary) return pending;
+  const gateSummary = enriched.gateSummary;
+  if (payload.prPackage?.id !== enriched.prPackage?.id) return pending;
+  if (
+    payload.gateSummary?.capturedAt &&
+    payload.gateSummary.capturedAt > (gateSummary.capturedAt ?? '')
+  ) {
+    return pending;
+  }
   return { ...pending, payload: { ...payload, gateSummary } };
 }
 

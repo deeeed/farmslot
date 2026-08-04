@@ -245,8 +245,8 @@ export function buildReviewSummary(
   const passingReviews = independentEntries.filter(
     (r) =>
       r.verdict === 'pass' &&
-      r.unresolvedCount === 0 &&
-      (!preparedPackage || publicationReviewMatchesPreparedPackage(r, preparedPackage)),
+      (!preparedPackage ||
+        (r.unresolvedCount === 0 && publicationReviewMatchesPreparedPackage(r, preparedPackage))),
   ).length;
   const totalUnresolved =
     num(selfReview?.unresolvedCount) +
