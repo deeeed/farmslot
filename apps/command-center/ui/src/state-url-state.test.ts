@@ -37,3 +37,17 @@ test('runs hash state only applies on runs routes and preserves unrelated params
   );
   assert.equal(runsHashWithState({ tab: 'all' }, '#slot/demo'), null);
 });
+
+test('changing the selected run clears detail-only step and artifact state', () => {
+  assert.equal(
+    runsHashWithState(
+      { run: '', tab: 'all' },
+      '#runs?run=run-1&tab=all&step=ci-pass&artifactRun=run-1&artifact=report.md&projects=cc',
+    ),
+    '#runs?tab=all&projects=cc',
+  );
+  assert.equal(
+    runsHashWithState({ run: 'run-2' }, '#runs?run=run-1&step=monitor&projects=cc'),
+    '#runs?run=run-2&projects=cc',
+  );
+});

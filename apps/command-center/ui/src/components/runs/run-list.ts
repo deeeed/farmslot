@@ -30,7 +30,6 @@ import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../stat
 import { colors } from '../../styles/theme-tokens.js';
 import { flowBadgeStyles, renderFlowBadge } from '../shared/flow-badge.js';
 import {
-  inventoryShowsBackAffordance,
   inventoryShowsDetail,
   inventoryShowsList,
   renderWorkInventoryBackButton,
@@ -273,15 +272,13 @@ export class RunList extends RunListState {
   private selectRun(run: Run) {
     this.selectedRunId = run.id;
     this.forceInventoryList = false;
-    this._persistHashState();
+    this._persistHashState('push');
   }
 
   private backToRunList() {
-    this.forceInventoryList = true;
-  }
-
-  private get selectedRun(): Run | null {
-    return this.runs.find((run) => run.id === this.selectedRunId) ?? null;
+    this.selectedRunId = '';
+    this.forceInventoryList = false;
+    this._persistHashState();
   }
 
   private clearSelection() {
@@ -448,7 +445,7 @@ export class RunList extends RunListState {
     ).length;
     const compareAllowed =
       selectedRuns.length === 2 && canCompareRuns(selectedRuns[0], selectedRuns[1]);
-    const selectedRun = this.selectedRun;
+    const selectedRunId = this.selectedRunId;
 
     return html`
       ${renderRunListToolbar({
@@ -592,23 +589,27 @@ export class RunList extends RunListState {
                     leadingTracks: showCheckboxes ? ['30px'] : [],
                   })}`;
               const layout = {
-                hasSelection: Boolean(selectedRun),
+                hasSelection: Boolean(selectedRunId),
                 narrowViewport: this.narrowViewport,
                 forceList: this.forceInventoryList,
               };
-              const detail = html`${inventoryShowsBackAffordance(layout)
-                ? renderWorkInventoryBackButton({
-                    testId: 'runs-back-to-list',
-                    onBack: () => this.backToRunList(),
-                  })
-                : nothing}${selectedRun
-                ? html`<run-detail class="run-list-detail" .runId=${selectedRun.id}></run-detail>`
-                : nothing}`;
+              const showDetail = inventoryShowsDetail(layout);
+              const detail = showDetail
+                ? html`${renderWorkInventoryBackButton({
+                      label: this.narrowViewport ? '← Back to list' : '× Close details',
+                      testId: 'runs-back-to-list',
+                      onBack: () => this.backToRunList(),
+                    })}<run-detail
+                      class="run-list-detail"
+                      .runId=${selectedRunId}
+                      embedded
+                    ></run-detail>`
+                : nothing;
               return renderWorkInventoryLayout({
                 list,
                 detail,
                 showList: inventoryShowsList(layout),
-                showDetail: inventoryShowsDetail(layout),
+                showDetail,
                 testId: 'runs-inventory-layout',
               });
             })()}

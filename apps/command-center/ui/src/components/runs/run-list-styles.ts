@@ -312,9 +312,10 @@ export const runListStyles = css`
     font-size: 11px;
     font-weight: 650;
     line-height: 1.3;
+    display: -webkit-box;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
   .pipeline-label {
     color: ${unsafeCSS(colors.textMuted)};

@@ -50,6 +50,7 @@ import {
 } from './run-utils.js';
 
 export interface RunDetailViewContext {
+  embedded: boolean;
   run: Run | null;
   prStatus: PRStatus | null;
   siblings: Run[];
@@ -229,56 +230,38 @@ export function renderRunGrade(grade: RunGrade): unknown {
 }
 
 export function renderRunDetailView(ctx: RunDetailViewContext) {
+  const backToRuns = ctx.embedded
+    ? nothing
+    : html`<div
+        class="back"
+        @click=${() => {
+          location.hash = 'runs';
+        }}
+      >
+        &lt; Back to runs
+      </div>`;
   if (!ctx.run) {
     if (ctx._hydrating) {
       return html`
-        <div
-          class="back"
-          @click=${() => {
-            location.hash = 'runs';
-          }}
-        >
-          &lt; Back to runs
-        </div>
+        ${backToRuns}
         <farm-hydrating message="Loading runs…"></farm-hydrating>
       `;
     }
     if (ctx._bootstrapFailed) {
       return html`
-        <div
-          class="back"
-          @click=${() => {
-            location.hash = 'runs';
-          }}
-        >
-          &lt; Back to runs
-        </div>
+        ${backToRuns}
         <div class="empty">Run data refresh failed during reconnect</div>
       `;
     }
     if (ctx._directRunUnavailable) {
       return html`
-        <div
-          class="back"
-          @click=${() => {
-            location.hash = 'runs';
-          }}
-        >
-          &lt; Back to runs
-        </div>
+        ${backToRuns}
         <div class="empty">Run is no longer available</div>
       `;
     }
     if (ctx._directRunRefreshFailed) {
       return html`
-        <div
-          class="back"
-          @click=${() => {
-            location.hash = 'runs';
-          }}
-        >
-          &lt; Back to runs
-        </div>
+        ${backToRuns}
         <div class="empty">Run data refresh failed during reconnect</div>
       `;
     }
@@ -310,14 +293,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   );
 
   return html`
-    <div
-      class="back"
-      @click=${() => {
-        location.hash = 'runs';
-      }}
-    >
-      &lt; Back to runs
-    </div>
+    ${backToRuns}
     ${ctx._bootstrapFailed
       ? html`<div class="rehydrating-banner">
           Run refresh failed… showing cached data and pausing actions

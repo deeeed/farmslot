@@ -4,6 +4,12 @@ import { test } from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import {
+  inventoryShowsBackAffordance,
+  inventoryShowsDetail,
+  inventoryShowsList,
+} from '../shared/work-inventory-table.js';
+
+import {
   compactRunPipelineLabel,
   isHumanPublicationGateLabel,
   isIndependentReviewLabel,
@@ -72,4 +78,16 @@ test('independent review fix loop stays distinct from publication gate', () => {
   );
   assert.equal(label, 'Independent review fix');
   assert.equal(isHumanPublicationGateLabel(label), false);
+});
+
+test('run inventory selection uses split detail on wide screens and back on narrow screens', () => {
+  const wide = { hasSelection: true, narrowViewport: false, forceList: false };
+  assert.equal(inventoryShowsList(wide), true);
+  assert.equal(inventoryShowsDetail(wide), true);
+  assert.equal(inventoryShowsBackAffordance(wide), false);
+
+  const narrow = { ...wide, narrowViewport: true };
+  assert.equal(inventoryShowsList(narrow), false);
+  assert.equal(inventoryShowsDetail(narrow), true);
+  assert.equal(inventoryShowsBackAffordance(narrow), true);
 });

@@ -34,13 +34,14 @@ export function runDetailStepHash(
   stepName: string | null,
   hash: string = location.hash,
 ): string {
-  const { params } = parseHashRoute(hash);
+  const { route, params } = parseHashRoute(hash);
   if (stepName) {
     params.set(STEP_PARAM, stepName);
   } else {
     params.delete(STEP_PARAM);
   }
-  return buildHash(runDetailRoute(runId), params);
+  if (!route.startsWith('runs')) params.delete('run');
+  return buildHash(route.startsWith('runs') ? route : runDetailRoute(runId), params);
 }
 
 export function runDetailEvidenceArtifactHash(
@@ -48,7 +49,7 @@ export function runDetailEvidenceArtifactHash(
   item: Pick<LightboxItem, 'path'> | null,
   hash: string = location.hash,
 ): string {
-  const { params } = parseHashRoute(hash);
+  const { route, params } = parseHashRoute(hash);
   if (item) {
     params.set(ARTIFACT_RUN_PARAM, runId);
     params.set(ARTIFACT_PARAM, item.path);
@@ -56,7 +57,8 @@ export function runDetailEvidenceArtifactHash(
     params.delete(ARTIFACT_RUN_PARAM);
     params.delete(ARTIFACT_PARAM);
   }
-  return buildHash(runDetailRoute(runId), params);
+  if (!route.startsWith('runs')) params.delete('run');
+  return buildHash(route.startsWith('runs') ? route : runDetailRoute(runId), params);
 }
 
 function runDetailRoute(runId: string): string {

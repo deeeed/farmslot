@@ -85,6 +85,11 @@ export function runsHashWithState(
 ): string | null {
   const { route, params } = parseHashRoute(hash);
   if (!route.startsWith('runs')) return null;
+  if ((next.run ?? '') !== (params.get('run') ?? '')) {
+    params.delete('step');
+    params.delete('artifactRun');
+    params.delete('artifact');
+  }
   for (const key of RUNS_HASH_KEYS) {
     const value = next[key];
     if (value && value !== '') params.set(key, value);
@@ -93,14 +98,15 @@ export function runsHashWithState(
   return buildHash(route, params);
 }
 
-export function writeRunsHashState(next: RunsHashState): void {
+export function writeRunsHashState(
+  next: RunsHashState,
+  historyMode: 'replace' | 'push' = 'replace',
+): void {
   if (typeof location === 'undefined') return;
   const nextHash = runsHashWithState(next);
   if (!nextHash) return;
   if (location.hash === nextHash) return;
-  // replaceState avoids both flooding browser history with one entry per
-  // keystroke (when the search box persists on every input event) and the
-  // hashchange listener re-applying our own write back into state — replaceState
-  // does not fire `hashchange`.
-  history.replaceState(null, '', nextHash);
+  // Filters replace to avoid one history entry per keystroke. Explicit row
+  // selection may push so browser Back returns to the inventory.
+  history[historyMode === 'push' ? 'pushState' : 'replaceState'](null, '', nextHash);
 }

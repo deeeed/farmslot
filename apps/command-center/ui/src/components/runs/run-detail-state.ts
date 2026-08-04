@@ -14,6 +14,7 @@ import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 export abstract class RunDetailState extends LitElement {
   @property() runId = '';
+  @property({ type: Boolean }) embedded = false;
   @property({ type: Boolean, attribute: 'mock-data' }) mockData = false;
   @property({ attribute: false }) mockRun: Run | null = null;
   @property({ attribute: false }) mockArtifactTextLoader:

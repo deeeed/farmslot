@@ -154,17 +154,20 @@ export abstract class RunListState extends LitElement {
     if (tagChanged) void this.refreshTagFilter();
   };
 
-  _persistHashState() {
-    writeRunsHashState({
-      run: this.selectedRunId || '',
-      tab: this.tab !== 'active' ? this.tab : '',
-      status: this.statusFilter !== 'all' ? this.statusFilter : '',
-      flow: this.flowFilter || '',
-      lane: this.laneFilter || '',
-      sort: this.sortBy !== 'newest' ? this.sortBy : '',
-      q: this.searchQuery || '',
-      tag: this.tagFilter || '',
-      family: this.familyFilter || '',
-    });
+  _persistHashState(historyMode: 'replace' | 'push' = 'replace') {
+    writeRunsHashState(
+      {
+        run: this.selectedRunId || '',
+        tab: this.tab !== 'active' ? this.tab : '',
+        status: this.statusFilter !== 'all' ? this.statusFilter : '',
+        flow: this.flowFilter || '',
+        lane: this.laneFilter || '',
+        sort: this.sortBy !== 'newest' ? this.sortBy : '',
+        q: this.searchQuery || '',
+        tag: this.tagFilter || '',
+        family: this.familyFilter || '',
+      },
+      historyMode,
+    );
   }
 }
