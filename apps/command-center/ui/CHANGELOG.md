@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix(slot-view): resolve committed changes against the open PR's actual base while keeping staged, unstaged, and untracked files in their own source-control groups.
 - fix(dispatch): use one sortable slot-choice table across Dispatch, Backlog, Roadmap, and Work Graph, with shared lifecycle/worker colors and bounded scrolling for long fleets.
 - fix(runs): clear run-scoped worker progress immediately when the selected run changes and ignore late progress or family responses from the previous selection.
 - fix(runs): show the live current-package review summary in run details instead of retaining the gate-time snapshot after package or review changes.
