@@ -838,7 +838,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         .request<GitDiffResult>(Methods.GIT_DIFF, {
           slotId: this.slotId,
           path: c.path,
-          base: 'main',
+          base: this._baseRef,
         })
         .then((r) => {
           this._fileDiff = r.diff;

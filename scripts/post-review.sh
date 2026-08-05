@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-POOL_DIR="${PROJECT_DIR}/pool"
+POOL_DIR="${FARMSLOT_POOL_DIR:-${PROJECT_DIR}/pool}"
 
 # ── Parse args ────────────────────────────────────────────────────
 PR_NUMBER=""
@@ -325,7 +325,7 @@ cat > "$COMMENT_FILE" <<HEADER
 | | |
 |---|---|
 | **Recommendation** | ${RECOMMENDATION} |
-| **Reviewed commit** | \`${COMMIT_ID}\` |
+| **Reviewed commit** | \`${REVIEW_COMMIT_ID}\` |
 | **Runner** | ${RUNNER} / ${MODEL} |
 | **Tier** | ${TIER} |
 | **Cost** | ${COST} (${TOTAL_TOKENS} tokens) |

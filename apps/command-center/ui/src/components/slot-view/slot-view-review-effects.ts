@@ -89,6 +89,7 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
   // ticket stales any completion from an earlier visit.
   const ticket = branchDiffTicket(view);
   const isCurrent = () => isTicketCurrent(view, ticket);
+  const requestedHeadSha = view._liveGitData?.headSha;
   view._branchDiffLoading = true;
   try {
     const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
@@ -121,7 +122,13 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
   } finally {
     // A stale completion (slot switched away) must not clear the loading
     // flag the new slot's own load now owns.
-    if (isCurrent()) view._branchDiffLoading = false;
+    if (isCurrent()) {
+      view._branchDiffLoading = false;
+      if (requestedHeadSha && view._liveGitData?.headSha !== requestedHeadSha) {
+        view._liveDiffContents.clear();
+        void view._loadBranchDiff();
+      }
+    }
   }
 
   // Load branch list for the dropdown (only once per slot)

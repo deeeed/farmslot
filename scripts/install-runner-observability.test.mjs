@@ -649,6 +649,24 @@ test('codex install is idempotent when multiline strings contain section-like te
   assert.match(content, /custom_flag = true/);
 });
 
+test('codex install handles multiline string closers with trailing quote content', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-string-closer-'));
+  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  const configPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  fs.writeFileSync(
+    configPath,
+    "[operator]\nmodels = [\n  \"\"\"foo\"\"\"\",\n  '''bar'''''\n]\n\n[features]\nhooks = false\n",
+  );
+
+  installToTempDir('codex', repo);
+  installToTempDir('codex', repo);
+
+  const content = fs.readFileSync(configPath, 'utf8');
+  assert.equal((content.match(/^\[features\]/gm) || []).length, 1);
+  assert.equal((content.match(/^\[projects\./gm) || []).length, 1);
+  assert.match(content, /hooks = true/);
+});
+
 test('codex install rebinds auth.json symlink from account A to B without touching source files', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-auth-rebind-'));
   const accountA = path.join(repo, 'accounts', 'a', 'auth.json');

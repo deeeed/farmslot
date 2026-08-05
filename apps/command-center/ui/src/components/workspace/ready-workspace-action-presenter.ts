@@ -514,7 +514,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       const result = await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
         slotId: this.slotId,
         path: filePath,
-        base: 'main',
+        base: normalizeReviewBaseRef(this._payload?.prPackage?.reviewSnapshot?.baseRef),
       });
       this._fileDiff = result.diff;
       if (this._diffModalOpen && !this._diffModalUrl) {

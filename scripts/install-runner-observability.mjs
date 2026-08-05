@@ -273,7 +273,10 @@ function scanTomlLine(line, state) {
         continue;
       }
       if (line.startsWith(state.quote, index)) {
-        index += 2;
+        const quoteChar = state.quote[0];
+        let closingRunLength = 3;
+        while (line[index + closingRunLength] === quoteChar) closingRunLength += 1;
+        index += closingRunLength - 1;
         state.quote = null;
       }
       continue;
