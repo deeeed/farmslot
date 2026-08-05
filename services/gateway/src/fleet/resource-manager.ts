@@ -41,6 +41,13 @@ export function hasUnresolvedPlaceholders(expanded: string): boolean {
   return /\{\{[^}]+\}\}/.test(expanded);
 }
 
+export function isSlotResourceConfigured(
+  configuredResources: Record<string, unknown> | undefined,
+  resourceId: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(configuredResources ?? {}, resourceId);
+}
+
 // ─── Status cache ───
 
 // slotId → resourceId → status
@@ -305,7 +312,8 @@ export function clearResourceStreamState(slotId: string, resourceId: string): vo
 
 /**
  * Resolve available resources for a slot.
- * Reads `resources` from project.json. Uses cached status if available.
+ * Reads definitions from project.json, limited to resources configured by the slot.
+ * Uses cached status if available.
  */
 export async function resolveSlotResources(slotId: string): Promise<SlotResource[]> {
   const { pool, slot } = await resolveSlot(slotId);
@@ -318,29 +326,31 @@ export async function resolveSlotResources(slotId: string): Promise<SlotResource
   const slotCache = statusCache.get(slotId);
   const streamCache = streamStatusCache.get(slotId);
 
-  return Object.entries(projectJson.resources).map(([id, def]) => ({
-    id,
-    definition: {
-      type: (def.type ?? 'device') as ResourceDefinition['type'],
-      platform: def.platform,
-      label: def.label ?? id,
-      streamable: def.streamable ?? true,
-      controllable: def.controllable ?? false,
-      watch: def.watch
-        ? {
-            type: def.watch.type as ResourceWatchType,
-            path: def.watch.path,
-            port: def.watch.port,
-            cmd: def.watch.cmd,
-            intervalMs: def.watch.intervalMs,
-          }
-        : undefined,
-      hooks: def.hooks as ResourceDefinition['hooks'],
-      actions: def.actions as ResourceDefinition['actions'],
-    },
-    status: (slotCache?.get(id) ?? 'unknown') as ResourceStatus,
-    stream: def.streamable ? (streamCache?.get(id) ?? { state: 'unknown' }) : undefined,
-  }));
+  return Object.entries(projectJson.resources)
+    .filter(([id]) => isSlotResourceConfigured(slot.resources, id))
+    .map(([id, def]) => ({
+      id,
+      definition: {
+        type: (def.type ?? 'device') as ResourceDefinition['type'],
+        platform: def.platform,
+        label: def.label ?? id,
+        streamable: def.streamable ?? true,
+        controllable: def.controllable ?? false,
+        watch: def.watch
+          ? {
+              type: def.watch.type as ResourceWatchType,
+              path: def.watch.path,
+              port: def.watch.port,
+              cmd: def.watch.cmd,
+              intervalMs: def.watch.intervalMs,
+            }
+          : undefined,
+        hooks: def.hooks as ResourceDefinition['hooks'],
+        actions: def.actions as ResourceDefinition['actions'],
+      },
+      status: (slotCache?.get(id) ?? 'unknown') as ResourceStatus,
+      stream: def.streamable ? (streamCache?.get(id) ?? { state: 'unknown' }) : undefined,
+    }));
 }
 
 /**
@@ -352,6 +362,9 @@ export async function executeResourceHealth(
   resourceId: string,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { pool, slot } = await resolveSlot(slotId);
+  if (!isSlotResourceConfigured(slot.resources, resourceId)) {
+    return { ok: false, detail: `Resource '${resourceId}' is not configured for slot '${slotId}'` };
+  }
   const projectName = slot.project ?? pool.project;
   const projectVars = await loadProjectVars(projectName);
   const projectJson = projectVars.projectJson;
@@ -874,6 +887,7 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
         }> = [];
 
         for (const [id, def] of Object.entries(projectJson.resources)) {
+          if (!isSlotResourceConfigured(slotCfg.resources, id)) continue;
           if (!def.watch) continue;
 
           const expandedWatch: {
@@ -1049,6 +1063,9 @@ export async function executeResourceControl(
   action: ResourceControlAction,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { pool, slot } = await resolveSlot(slotId);
+  if (!isSlotResourceConfigured(slot.resources, resourceId)) {
+    return { ok: false, detail: `Resource '${resourceId}' is not configured for slot '${slotId}'` };
+  }
   const projectName = slot.project ?? pool.project;
   const projectVars = await loadProjectVars(projectName);
   const projectJson = projectVars.projectJson;

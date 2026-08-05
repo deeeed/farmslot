@@ -8,9 +8,17 @@ import {
   buildBrowserPidFileCapturableCommand,
   buildBrowserPidRecoveryCommand,
   isSimulatorDeviceProbe,
+  isSlotResourceConfigured,
   shouldProbeResourceForSlot,
   slotHasActiveRun,
 } from './resource-manager.js';
+
+test('isSlotResourceConfigured only accepts resources declared by the slot', () => {
+  const resources = { 'ios-sim': { simulator: 'mmdev-1' }, 'dev-server': { port: 8061 } };
+  assert.equal(isSlotResourceConfigured(resources, 'ios-sim'), true);
+  assert.equal(isSlotResourceConfigured(resources, 'android-emu'), false);
+  assert.equal(isSlotResourceConfigured(undefined, 'ios-sim'), false);
+});
 
 const iosSimResource = {
   type: 'device',
