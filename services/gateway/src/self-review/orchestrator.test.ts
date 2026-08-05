@@ -266,6 +266,7 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
 test('restart recovery re-delivers the existing fix task without rewriting it', async () => {
   let delivered = false;
   let restored = false;
+  let checklistTargetRestored = false;
   let persistedTarget: string | null = null;
   const run = {
     id: 'run-1',
@@ -304,6 +305,11 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
         assert.equal(signalPath, '/repo/tasks/run-1/SELF-REVIEW-FIX-SIGNAL.json');
         return null;
       },
+      syncChecklistTarget: async (_vars, taskDir, role) => {
+        assert.equal(taskDir, 'tasks/run-1');
+        assert.equal(role, 'self-review-fix');
+        checklistTargetRestored = true;
+      },
       ensureTarget: async (_vars, session, target, window, flowType) => {
         restored = true;
         assert.equal(session, 'ff-1');
@@ -339,6 +345,7 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
 
   assert.equal(result, 'delivered');
   assert.equal(restored, true);
+  assert.equal(checklistTargetRestored, true);
   assert.equal(persistedTarget, 'ff-1:bugfix-restored');
   assert.equal(delivered, true);
 });
@@ -368,6 +375,7 @@ test('restart recovery requests a fresh worker after an unacknowledged retained 
       resolvePrompt: async () => 'read fix task',
       resolveRuntimeDir: async () => '.sandbox/farmslot-farm/agent',
       readLaunchAck: async () => null,
+      syncChecklistTarget: async () => {},
       ensureTarget: async () => 'ff-1:bugfix',
       persistTarget: async () => {},
       deliver: async () => ({

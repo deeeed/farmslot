@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(self-review): restore the scoped fix checklist target before re-delivering a retained worker prompt after restart, so `mark complete` cannot write the main worker signal while recovery waits on the fix signal.
 - fix(self-review): include explicit untracked path/blob manifests in review and fix-delta snapshots so empty files cannot bypass exact reviewed-package identity.
 
 - Fix recovered self-review loops to supersede obsolete delivery failures, relaunch the original worker with its own runner/model, and deliver the persisted fix task from a fresh structured session without relying on composer glyphs.

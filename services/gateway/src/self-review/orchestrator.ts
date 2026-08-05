@@ -952,6 +952,7 @@ interface FixPromptRecoveryDeps {
   resolvePrompt: typeof resolveWorkerDispatchPrompt;
   resolveRuntimeDir: typeof resolveProjectRuntimeDir;
   readLaunchAck: typeof readLaunchAckSignalSnapshot;
+  syncChecklistTarget: typeof syncChecklistTargetForRole;
   ensureTarget: typeof ensureTmuxTargetReadyForRelaunch;
   persistTarget: (
     runId: string,
@@ -966,6 +967,7 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
   resolvePrompt: resolveWorkerDispatchPrompt,
   resolveRuntimeDir: resolveProjectRuntimeDir,
   readLaunchAck: readLaunchAckSignalSnapshot,
+  syncChecklistTarget: syncChecklistTargetForRole,
   ensureTarget: ensureTmuxTargetReadyForRelaunch,
   persistTarget: async (runId, run, target) => {
     await upsertAgentContext(runId, 'self-review-fix', { target });
@@ -1003,6 +1005,13 @@ export async function resumeSelfReviewFixPromptDelivery(
 
   const run = deps.getRun(runId);
   if (!run) return 'unsupported';
+  const taskDir = path.posix.dirname(taskFile);
+  // A gateway restart can leave the shared mark helper pointed back at TASK.md
+  // even though the durable fix context still owns SELF-REVIEW-FIX.md. Restore
+  // the role target before any recovered prompt is delivered, otherwise a
+  // completed worker writes SIGNAL.json while recovery waits forever on the
+  // scoped fix signal.
+  await deps.syncChecklistTarget(vars, taskDir, 'self-review-fix');
   const target = await deps.ensureTarget(
     vars,
     session,
@@ -1019,7 +1028,6 @@ export async function resumeSelfReviewFixPromptDelivery(
     pane: null,
     target,
   });
-  const taskDir = path.posix.dirname(taskFile);
   const attemptStartedAt = context.attemptStartedAt?.trim();
   if (!attemptStartedAt) return 'deferred';
   const basePrompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
