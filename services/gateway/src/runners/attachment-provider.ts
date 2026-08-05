@@ -5,8 +5,7 @@
 // runner id — they look the provider up here. A runner with no entry is explicitly
 // unsupported rather than silently best-effort.
 
-import type { TerminalAttachmentDeliveryStatus } from '@farmslot/protocol';
-import { normalizeRunner } from '@farmslot/protocol';
+import { normalizeRunner, type TerminalAttachmentDeliveryStatus } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
 

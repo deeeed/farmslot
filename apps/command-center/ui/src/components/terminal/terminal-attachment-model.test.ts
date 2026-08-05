@@ -17,8 +17,8 @@ import {
   isTerminalAttachmentRetryable,
   type TerminalAttachment,
   TerminalAttachmentQueue,
-  type TerminalAttachmentTransport,
   terminalAttachmentStatusLabel,
+  type TerminalAttachmentTransport,
   unsupportedDropFilenames,
 } from './terminal-attachment-model.js';
 

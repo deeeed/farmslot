@@ -7,6 +7,7 @@
 
 import {
   isTerminalAttachmentCleanupScope,
+  normalizeRunner,
   TERMINAL_ATTACHMENT_CLEANUP_SCOPES,
   type TerminalAttachmentCleanupParams,
   type TerminalAttachmentCleanupResult,
@@ -16,9 +17,7 @@ import {
   type TerminalAttachmentUploadParams,
   type TerminalAttachmentUploadResult,
 } from '@farmslot/protocol';
-import { normalizeRunner } from '@farmslot/protocol';
 
-import { resolveAgentTarget } from '../agents/contexts.js';
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import {
   GatewayMethodError,
@@ -35,6 +34,7 @@ import {
   runnerAttachmentUnsupportedDetail,
 } from '../runners/attachment-provider.js';
 
+import { resolveAgentOrBareTarget } from './terminal.js';
 import {
   isStaleTerminalAttachment,
   isTerminalAttachmentStoredName,
@@ -55,7 +55,11 @@ async function resolveAttachmentTarget(
   params: TerminalAttachmentUploadParams | TerminalAttachmentDeliverParams,
 ): Promise<{ vars: SlotVars; target: string; dir: string; runner: string | null }> {
   const vars = await loadSlotVars(params.slotId);
-  const resolved = await resolveAgentTarget(params.slotId, params);
+  // Same routing as terminal.input/resize: a postmortem terminal sends `bareSession: true`
+  // and is attached to the slot's bare PTY, so agent-context lookup must be skipped. Without
+  // this, an image pasted into a postmortem view resolves through the still-active run and is
+  // staged for and delivered into the primary context's pane — one the operator is not viewing.
+  const resolved = await resolveAgentOrBareTarget(params.slotId, params);
   const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
   return {
     vars,

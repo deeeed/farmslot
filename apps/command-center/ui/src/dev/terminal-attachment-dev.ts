@@ -4,12 +4,12 @@
 import { css, html, LitElement, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
+import type { TerminalAttachment } from '../components/terminal/terminal-attachment-model.js';
 import {
   renderTerminalAttachmentTray,
   renderTerminalDropOverlay,
   terminalAttachmentStyles,
 } from '../components/terminal/terminal-attachment-renderers.js';
-import type { TerminalAttachment } from '../components/terminal/terminal-attachment-model.js';
 import { colors, fonts, spacing } from '../styles/theme-tokens.js';
 
 const PREVIEW_SRC =

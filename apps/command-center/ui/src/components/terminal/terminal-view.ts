@@ -62,6 +62,11 @@ export class TerminalView extends TerminalViewState {
 
   connectedCallback() {
     super.connectedCallback();
+    // Bound here, not in firstUpdated(): _dispose() unbinds on every disconnect, and
+    // firstUpdated cannot fire a second time, so a DOM move that re-connects this element
+    // would otherwise leave it live with image paste permanently dead. Lit assigns
+    // renderRoot in ReactiveElement.connectedCallback() before this runs.
+    this._bindPasteCapture();
     this._initAttachmentQueue();
     this._connected = gateway.connectionState === 'connected';
     this._recoveryMessage = this._connected ? '' : 'Waiting for gateway';
@@ -72,11 +77,15 @@ export class TerminalView extends TerminalViewState {
   disconnectedCallback() {
     super.disconnectedCallback();
     this._log('disconnectedCallback');
+    // Paired with connectedCallback's bind. Deliberately not in _dispose(): the HMR recovery
+    // path in updated() disposes the terminal while the element stays connected, and unbinding
+    // there would kill image paste for the rest of the element's life.
+    this.renderRoot.removeEventListener('paste', this._onPasteCapture, true);
+    this._pasteCaptureBound = false;
     this._dispose();
   }
 
   firstUpdated() {
-    this._bindPasteCapture();
     this._initTerminal();
     if (this._hasTarget()) {
       if (gateway.connectionState === 'connected') {
@@ -230,15 +239,19 @@ export class TerminalView extends TerminalViewState {
     void this._enqueueAttachments(candidates);
   }
 
-  /** Cmd+V path: the keydown handler consumes the event, so read the clipboard directly. */
-  private async _handleCommandPaste() {
+  /**
+   * Cmd+V path: the keydown handler consumes the event, so read the clipboard directly.
+   * `send` is the key handler's own unguarded sender — the non-image path must keep sending
+   * exactly like every other intercepted Cmd+key combo does.
+   */
+  private async _handleCommandPaste(send: (data: string) => void) {
     const images = this._attachmentsSupported() ? await this._readClipboardImagesOrWarn() : [];
     if (images.length > 0) {
       await this._enqueueAttachments(images);
       return;
     }
     const text = await navigator.clipboard.readText();
-    if (text) this._sendRawKeys(text);
+    if (text) send(text);
   }
 
   /**
@@ -582,7 +595,7 @@ export class TerminalView extends TerminalViewState {
           case 'v': {
             // Cmd+V: images become attachments, everything else keeps the existing
             // read-clipboard-text-and-send-to-PTY behavior.
-            this._handleCommandPaste().catch((err) => this._warn('clipboard paste', err));
+            this._handleCommandPaste(send).catch((err) => this._warn('clipboard paste', err));
             e.preventDefault();
             return false;
           }
@@ -813,8 +826,6 @@ export class TerminalView extends TerminalViewState {
     this._xtermSelectionDisposable?.dispose();
     clearTimeout(this._selectionCopyTimer);
     clearTimeout(this._copyToastTimer);
-    this.renderRoot.removeEventListener('paste', this._onPasteCapture, true);
-    this._pasteCaptureBound = false;
     this._attachmentQueue?.clear();
     this._resizeObserver?.disconnect();
     this._terminal?.dispose();
