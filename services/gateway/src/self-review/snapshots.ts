@@ -55,29 +55,40 @@ function parseReviewNumstat(text: string): DiffStat {
   return stat;
 }
 
-export function parseUntrackedFileManifest(text: string): Array<{ path: string; blobSha: string }> {
+type UntrackedReviewFile = NonNullable<ReviewDiffSnapshot['untrackedFiles']>[number];
+
+export function parseUntrackedFileManifest(text: string): UntrackedReviewFile[] {
   if (!text) return [];
   const fields = text.split('\0');
   if (fields.at(-1) === '') fields.pop();
-  const files: Array<{ path: string; blobSha: string }> = [];
-  for (let index = 0; index + 1 < fields.length; index += 2) {
-    const blobSha = fields[index] ?? '';
-    const filePath = fields[index + 1] ?? '';
-    if (!/^[0-9a-f]{40,64}$/i.test(blobSha) || !filePath) continue;
-    files.push({ path: filePath, blobSha });
+  const files: UntrackedReviewFile[] = [];
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    const mode = fields[index] ?? '';
+    const blobSha = fields[index + 1] ?? '';
+    const filePath = fields[index + 2] ?? '';
+    if (
+      (mode !== '100644' && mode !== '100755' && mode !== '120000') ||
+      !/^[0-9a-f]{40,64}$/i.test(blobSha) ||
+      !filePath
+    ) {
+      continue;
+    }
+    files.push({ path: filePath, blobSha, mode });
   }
   return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 export function appendUntrackedFileManifest(
   diffText: string,
-  files: ReadonlyArray<{ path: string; blobSha: string }>,
+  files: ReadonlyArray<UntrackedReviewFile>,
 ): string {
   if (files.length === 0) return diffText;
   const separator = diffText && !diffText.endsWith('\n') ? '\n' : '';
   const manifest = [
-    '# Farmslot untracked file manifest (blob SHA and JSON-encoded path)',
-    ...files.map(({ path: filePath, blobSha }) => `# ${blobSha}\t${JSON.stringify(filePath)}`),
+    '# Farmslot untracked file manifest (Git mode, blob SHA, and JSON-encoded path)',
+    ...files.map(
+      ({ path: filePath, blobSha, mode }) => `# ${mode}\t${blobSha}\t${JSON.stringify(filePath)}`,
+    ),
     '',
   ].join('\n');
   return `${diffText}${separator}${manifest}`;

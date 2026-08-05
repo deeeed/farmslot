@@ -372,11 +372,12 @@ export function runSourceDiffNumstatCommand(
 }
 
 /**
- * Emit NUL-delimited blob-SHA/path pairs for every untracked file.
+ * Emit NUL-delimited Git-mode/blob-SHA/path triples for every untracked file.
  *
  * A normal `git diff --no-index /dev/null <file>` has no output for an empty
  * file. Review snapshots therefore need this explicit manifest so creating,
- * removing, or renaming an empty untracked file changes the reviewed identity.
+ * removing, renaming, changing the executable bit, or changing a symlink target
+ * changes the reviewed identity.
  */
 export function runSourceDiffUntrackedManifestCommand(pathspecs: readonly string[]): string {
   const pathspecClause = gitPathspecClause(pathspecs);
@@ -387,9 +388,16 @@ export function runSourceDiffUntrackedManifestCommand(pathspecs: readonly string
     'trap \'rm -f "$untracked"\' EXIT',
     `git -c core.quotePath=false ls-files --others --exclude-standard -z ${pathspecClause} > "$untracked"`,
     "while IFS= read -r -d '' file; do",
-    '  [ -f "$file" ] || continue',
-    '  blob=$(git hash-object -- "$file")',
-    '  printf \'%s\\0%s\\0\' "$blob" "$file"',
+    '  if [ -L "$file" ]; then',
+    '    mode=120000',
+    '    blob=$(node -e \'process.stdout.write(require("node:fs").readlinkSync(process.argv[1], { encoding: "buffer" }))\' -- "$file" | git hash-object --stdin)',
+    '  elif [ -f "$file" ]; then',
+    '    if [ -x "$file" ]; then mode=100755; else mode=100644; fi',
+    '    blob=$(git hash-object --no-filters -- "$file")',
+    '  else',
+    '    continue',
+    '  fi',
+    '  printf \'%s\\0%s\\0%s\\0\' "$mode" "$blob" "$file"',
     'done < "$untracked"',
   ].join('\n');
   return `bash -c ${shellQuote(script)}`;

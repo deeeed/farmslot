@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { exec as execCallback } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -21,18 +31,38 @@ import { makeRun } from './test-fixtures.js';
 
 const exec = promisify(execCallback);
 
-test('untracked manifest command captures an empty file by path and Git blob identity', async (t) => {
+test('untracked manifest command captures empty files, executable mode, and dangling symlinks', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'review-untracked-manifest-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   await exec('git init -q', { cwd: dir });
   await writeFile(path.join(dir, 'empty file.ts'), '');
+  await chmod(path.join(dir, 'empty file.ts'), 0o755);
+  await symlink('missing-target', path.join(dir, 'dangling-link'));
 
   const { stdout } = await exec(runSourceDiffUntrackedManifestCommand([]), { cwd: dir });
+  const fields = stdout.split('\0').slice(0, -1);
+  const files = [];
+  for (let index = 0; index < fields.length; index += 3) {
+    files.push({ mode: fields[index], blobSha: fields[index + 1], path: fields[index + 2] });
+  }
 
-  assert.deepEqual(stdout.split('\0').slice(0, 2), [
-    'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391',
-    'empty file.ts',
+  assert.deepEqual(files, [
+    {
+      mode: '120000',
+      blobSha: '2050c51309015cf65b86e480b4d354ff82237eb7',
+      path: 'dangling-link',
+    },
+    {
+      mode: '100755',
+      blobSha: 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391',
+      path: 'empty file.ts',
+    },
   ]);
+
+  await chmod(path.join(dir, 'empty file.ts'), 0o644);
+  const second = await exec(runSourceDiffUntrackedManifestCommand([]), { cwd: dir });
+  assert.match(second.stdout, /100644\0e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\0empty file\.ts\0/);
+  assert.notEqual(second.stdout, stdout);
 });
 
 test('parseGitNumstat counts text and binary files without splitting paths containing spaces', () => {
