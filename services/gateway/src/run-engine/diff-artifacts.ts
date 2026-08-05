@@ -371,6 +371,30 @@ export function runSourceDiffNumstatCommand(
   return `bash -c ${shellQuote(script)}`;
 }
 
+/**
+ * Emit NUL-delimited blob-SHA/path pairs for every untracked file.
+ *
+ * A normal `git diff --no-index /dev/null <file>` has no output for an empty
+ * file. Review snapshots therefore need this explicit manifest so creating,
+ * removing, or renaming an empty untracked file changes the reviewed identity.
+ */
+export function runSourceDiffUntrackedManifestCommand(pathspecs: readonly string[]): string {
+  const pathspecClause = gitPathspecClause(pathspecs);
+  const script = [
+    'set -euo pipefail',
+    'export LC_ALL=C',
+    'untracked=$(mktemp "${TMPDIR:-/tmp}/farmslot-untracked.XXXXXX")',
+    'trap \'rm -f "$untracked"\' EXIT',
+    `git -c core.quotePath=false ls-files --others --exclude-standard -z ${pathspecClause} > "$untracked"`,
+    "while IFS= read -r -d '' file; do",
+    '  [ -f "$file" ] || continue',
+    '  blob=$(git hash-object -- "$file")',
+    '  printf \'%s\\0%s\\0\' "$blob" "$file"',
+    'done < "$untracked"',
+  ].join('\n');
+  return `bash -c ${shellQuote(script)}`;
+}
+
 export function cappedRunSourceDiffCommand(
   trackedDiffBase: string,
   pathspecs: readonly string[],

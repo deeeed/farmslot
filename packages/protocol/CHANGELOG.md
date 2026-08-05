@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix(publication): bind review snapshots to explicit untracked file paths and blob identities, including empty files that produce no Git patch.
 - fix(publication): carry the exact reviewed diff identity and PR base through ready-gate packages so clients and publish policy can reject stale reviews.
 - feat(publication): ready-gate payload soft fields `behindMain`, `mergeConflicts`, `mergeConflictPaths`, and `branchFreshnessHint` for early branch-staleness chips (not a hard fail).
 - fix(run): independent review state records when restart recovery explicitly owes a worker fix/re-review continuation, and reviewer contexts retain the loop that owns their launch snapshot.

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { exec as execCallback } from 'node:child_process';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 
 import { isFamilyDiffProvenance } from '@farmslot/protocol';
 
@@ -13,8 +15,25 @@ import {
   captureRunDiffArtifacts,
   parseGitNumstat,
   resolveReviewInputCaptureTimeoutMs,
+  runSourceDiffUntrackedManifestCommand,
 } from './diff-artifacts.js';
 import { makeRun } from './test-fixtures.js';
+
+const exec = promisify(execCallback);
+
+test('untracked manifest command captures an empty file by path and Git blob identity', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'review-untracked-manifest-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await exec('git init -q', { cwd: dir });
+  await writeFile(path.join(dir, 'empty file.ts'), '');
+
+  const { stdout } = await exec(runSourceDiffUntrackedManifestCommand([]), { cwd: dir });
+
+  assert.deepEqual(stdout.split('\0').slice(0, 2), [
+    'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391',
+    'empty file.ts',
+  ]);
+});
 
 test('parseGitNumstat counts text and binary files without splitting paths containing spaces', () => {
   const numstat = [

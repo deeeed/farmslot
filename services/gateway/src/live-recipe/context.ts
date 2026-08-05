@@ -593,11 +593,24 @@ function resolveInheritedRecipeInputsDir(run: Pick<Run, 'taskFile'>): string | n
 async function loadContextFromInheritedInputs(run: Run): Promise<LiveRecipeContext | null> {
   const inheritedRoot = resolveInheritedRecipeInputsDir(run);
   if (!inheritedRoot) return null;
-  const [recipeJson, workerLearnings, recipeQualityArtifact] = await Promise.all([
-    readPortableTextIfExists(run, path.join(inheritedRoot, 'recipe.json')),
-    readPortableTextIfExists(run, path.join(inheritedRoot, 'learnings.md')),
-    readRecipeQualityArtifactPortable(run, path.join(inheritedRoot, 'recipe-quality.json')),
-  ]);
+  const [recipeJson, recipeCoverage, workerLearnings, storedRecipeQualityArtifact] =
+    await Promise.all([
+      readPortableTextIfExists(run, path.join(inheritedRoot, 'recipe.json')),
+      readPortableTextIfExists(run, path.join(inheritedRoot, 'recipe-coverage.md')),
+      readPortableTextIfExists(run, path.join(inheritedRoot, 'learnings.md')),
+      readRecipeQualityArtifactPortable(run, path.join(inheritedRoot, 'recipe-quality.json')),
+    ]);
+  const recipeQualityArtifact =
+    recipeJson || recipeCoverage
+      ? (
+          await loadRecipeQualityEvaluation({
+            run,
+            recipeJson,
+            recipeCoverage,
+            recipeQualityArtifact: storedRecipeQualityArtifact,
+          })
+        ).artifact
+      : storedRecipeQualityArtifact;
   const context: LiveRecipeContext = {
     source: 'recipe-run-artifacts',
     recipeRunId: null,

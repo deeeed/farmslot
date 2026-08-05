@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(self-review): include explicit untracked path/blob manifests in review and fix-delta snapshots so empty files cannot bypass exact reviewed-package identity.
+
 - Fix recovered self-review loops to supersede obsolete delivery failures, relaunch the original worker with its own runner/model, and deliver the persisted fix task from a fresh structured session without relying on composer glyphs.
 
 - Fix ready-gate and publish-package refreshes to recapture the contribution diff at the current HEAD, and refuse to restamp a passing review when its captured diff differs from the refreshed package.

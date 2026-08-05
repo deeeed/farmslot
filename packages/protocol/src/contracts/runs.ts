@@ -245,6 +245,7 @@ export interface ReviewDiffSnapshot {
   diffPath?: string | null;
   diffHash?: string | null;
   diffStat?: DiffStat;
+  untrackedFiles?: Array<{ path: string; blobSha: string }>;
   capturedAt: string;
   source: 'local-git' | 'github-pr' | 'unavailable';
   missingReason?: string;

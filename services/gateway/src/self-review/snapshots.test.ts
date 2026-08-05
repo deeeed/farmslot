@@ -2,10 +2,31 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  appendUntrackedFileManifest,
   parseReviewSnapshotArtifact,
+  parseUntrackedFileManifest,
   preferredRemoteReviewBaseRef,
   tmuxListSelfReviewWindowIdsSnippet,
 } from './snapshots.js';
+
+test('untracked manifest binds empty-file paths and blob identities into the review diff', () => {
+  const emptyBlob = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391';
+  const files = parseUntrackedFileManifest(
+    `${emptyBlob}\0empty file.ts\0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0src/a.ts\0`,
+  );
+
+  assert.deepEqual(files, [
+    { path: 'empty file.ts', blobSha: emptyBlob },
+    { path: 'src/a.ts', blobSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+  ]);
+  const diff = appendUntrackedFileManifest('', files);
+  assert.match(diff, new RegExp(emptyBlob));
+  assert.match(diff, /"empty file\.ts"/);
+  assert.notEqual(
+    diff,
+    appendUntrackedFileManifest('', [{ path: 'renamed.ts', blobSha: emptyBlob }]),
+  );
+});
 
 test('parseReviewSnapshotArtifact rejects a missing or invalid launch snapshot', () => {
   assert.equal(parseReviewSnapshotArtifact(''), null);

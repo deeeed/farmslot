@@ -105,6 +105,31 @@ test('loadLiveRecipeContextForRun falls back to inputs/inherited recipe.json', a
     '{"title":"Inherited related-markets recipe"}\n',
     'utf-8',
   );
+  await writeFile(
+    path.join(inheritedDir, 'recipe-quality.json'),
+    JSON.stringify({
+      version: 1,
+      verdict: 'pass',
+      compact: { verdict: 'PASS', reasons: ['Worker claimed pass.'], better_version_guidance: [] },
+      dimensions: {},
+      structural_findings: [],
+      contextual_findings: [],
+      suggested_recipe_delta: [],
+      training_fields: {
+        project: 'example-mobile-farm',
+        flow_type: 'dev',
+        proof_mode: 'mixed',
+      },
+      meta: {
+        producer: 'worker',
+        fallback_used: false,
+        legacy_task: false,
+        artifact_required: true,
+        source_signals: ['recipe-quality.json'],
+      },
+    }),
+    'utf-8',
+  );
 
   const run = makeRun(path.join(taskDir, 'TASK.md'), { id: 'run-inherited-recipe-1' });
   const context = await loadLiveRecipeContextForRun(run);
@@ -113,6 +138,11 @@ test('loadLiveRecipeContextForRun falls back to inputs/inherited recipe.json', a
   assert.ok(context);
   assert.match(context.recipeJson ?? '', /Inherited related-markets recipe/);
   assert.equal(context.artifactRoot, inheritedDir);
+  assert.equal(
+    context.recipeQualityArtifact?.compact.verdict,
+    'FAIL',
+    'canonical inherited-recipe validation must override an invalid worker-authored pass',
+  );
   assert.equal(groups.length, 1);
   assert.equal(groups[0]?.groupKind, 'current-artifacts');
   assert.equal(groups[0]?.label, 'Inherited recipe package');

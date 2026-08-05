@@ -19,6 +19,7 @@ import {
 import {
   cappedRunSourceDiffCommand,
   runSourceDiffNumstatCommand,
+  runSourceDiffUntrackedManifestCommand,
 } from '../run-engine/diff-artifacts.js';
 import {
   captureRunnerSessionMetadata,
@@ -52,6 +53,34 @@ function parseReviewNumstat(text: string): DiffStat {
     if (Number.isFinite(deletions)) stat.deletions += deletions;
   }
   return stat;
+}
+
+export function parseUntrackedFileManifest(text: string): Array<{ path: string; blobSha: string }> {
+  if (!text) return [];
+  const fields = text.split('\0');
+  if (fields.at(-1) === '') fields.pop();
+  const files: Array<{ path: string; blobSha: string }> = [];
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    const blobSha = fields[index] ?? '';
+    const filePath = fields[index + 1] ?? '';
+    if (!/^[0-9a-f]{40,64}$/i.test(blobSha) || !filePath) continue;
+    files.push({ path: filePath, blobSha });
+  }
+  return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+export function appendUntrackedFileManifest(
+  diffText: string,
+  files: ReadonlyArray<{ path: string; blobSha: string }>,
+): string {
+  if (files.length === 0) return diffText;
+  const separator = diffText && !diffText.endsWith('\n') ? '\n' : '';
+  const manifest = [
+    '# Farmslot untracked file manifest (blob SHA and JSON-encoded path)',
+    ...files.map(({ path: filePath, blobSha }) => `# ${blobSha}\t${JSON.stringify(filePath)}`),
+    '',
+  ].join('\n');
+  return `${diffText}${separator}${manifest}`;
 }
 
 export function reviewArtifactDir(loopNumber: number, artifactScope?: string | null): string {
@@ -212,6 +241,19 @@ export async function captureCurrentReviewSnapshot(
         ),
       };
     }
+    const untrackedManifest = await execOnSlot(vars, runSourceDiffUntrackedManifestCommand([]), {
+      timeout: 10_000,
+    });
+    if (untrackedManifest.exitCode !== 0) {
+      return {
+        snapshot: unavailableReviewSnapshot(
+          'git-untracked-manifest-failed',
+          untrackedManifest.stderr || untrackedManifest.stdout,
+        ),
+      };
+    }
+    const untrackedFiles = parseUntrackedFileManifest(untrackedManifest.stdout);
+    const reviewDiffText = appendUntrackedFileManifest(diff.stdout, untrackedFiles);
     return {
       snapshot: {
         source: 'local-git',
@@ -219,11 +261,12 @@ export async function captureCurrentReviewSnapshot(
         baseSha,
         headRef: branchResult.stdout.trim() || null,
         headSha: headResult.stdout.trim(),
-        diffHash: sha256(diff.stdout),
+        diffHash: sha256(reviewDiffText),
         diffStat: parseReviewNumstat(numstat.stdout),
+        ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
         capturedAt: new Date().toISOString(),
       },
-      diffText: diff.stdout,
+      diffText: reviewDiffText,
     };
   } catch (err) {
     return {
@@ -305,8 +348,7 @@ export async function captureFixDeltaSnapshot(
     const fixHeadSha = headResult.stdout.trim();
     // Use base-to-worktree, not base..HEAD, so a self-review fix pass that
     // leaves changes uncommitted still has a useful delta artifact.
-    const range = shellQuote(fixBaseSha);
-    const numstat = await execOnSlot(vars, `git -c core.quotePath=false diff --numstat ${range}`, {
+    const numstat = await execOnSlot(vars, runSourceDiffNumstatCommand(fixBaseSha, []), {
       timeout: 10_000,
     });
     if (numstat.exitCode !== 0) {
@@ -318,14 +360,10 @@ export async function captureFixDeltaSnapshot(
       await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
       return { snapshot, artifactPaths: [statRel] };
     }
-    const diff = await execOnSlot(
-      vars,
-      `git -c core.quotePath=false diff --binary --find-renames ${range}`,
-      {
-        timeout: 30_000,
-        maxBuffer: REVIEW_DIFF_MAX_BUFFER,
-      },
-    );
+    const diff = await execOnSlot(vars, cappedRunSourceDiffCommand(fixBaseSha, []), {
+      timeout: 30_000,
+      maxBuffer: REVIEW_DIFF_MAX_BUFFER,
+    });
     if (diff.exitCode !== 0) {
       const snapshot: ReviewFixDeltaSnapshot = {
         ...unavailableReviewSnapshot(
@@ -338,6 +376,23 @@ export async function captureFixDeltaSnapshot(
       await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
       return { snapshot, artifactPaths: [statRel] };
     }
+    const untrackedManifest = await execOnSlot(vars, runSourceDiffUntrackedManifestCommand([]), {
+      timeout: 10_000,
+    });
+    if (untrackedManifest.exitCode !== 0) {
+      const snapshot: ReviewFixDeltaSnapshot = {
+        ...unavailableReviewSnapshot(
+          'git-untracked-manifest-failed',
+          untrackedManifest.stderr || untrackedManifest.stdout,
+        ),
+        fixBaseSha,
+        fixHeadSha,
+      };
+      await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
+      return { snapshot, artifactPaths: [statRel] };
+    }
+    const untrackedFiles = parseUntrackedFileManifest(untrackedManifest.stdout);
+    const fixDiffText = appendUntrackedFileManifest(diff.stdout, untrackedFiles);
     const snapshot: ReviewFixDeltaSnapshot = {
       source: 'local-git',
       baseSha: fixBaseSha,
@@ -345,11 +400,12 @@ export async function captureFixDeltaSnapshot(
       fixBaseSha,
       fixHeadSha,
       diffPath: diffRel,
-      diffHash: sha256(diff.stdout),
+      diffHash: sha256(fixDiffText),
       diffStat: parseReviewNumstat(numstat.stdout),
+      ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
       capturedAt: new Date().toISOString(),
     };
-    await writeLargeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, diff.stdout);
+    await writeLargeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, fixDiffText);
     await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
     return { snapshot, artifactPaths: [diffRel, statRel] };
   } catch (err) {
