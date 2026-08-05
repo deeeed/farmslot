@@ -4,8 +4,11 @@ import test from 'node:test';
 import type { IndependentReviewStatus } from '@farmslot/protocol';
 
 import {
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   assertPublicationReviewPolicySatisfied,
+  assertUnavailableSnapshotOverrideAvailable,
   buildPublishGateReviewStatus,
+  buildUnavailableSnapshotAction,
   countStalePublicationReviews,
   reviewFinalSnapshotMatchesPreparedPackage,
   stampPublishGateReviewStatusForPackage,
@@ -142,6 +145,10 @@ test('publication review policy rejects stale and unavailable review snapshots',
             reviewedReviewSubjectHash: 'subject-default',
             reviewSnapshot: {
               headSha: 'head-good',
+              baseRef: pkg.reviewSnapshot?.baseRef,
+              baseSha: pkg.reviewSnapshot?.baseSha,
+              diffHash: pkg.reviewSnapshot?.diffHash,
+              diffStat: pkg.diffStat,
               capturedAt: '2026-04-15T00:00:00.000Z',
               source: 'local-git',
             },
@@ -224,6 +231,92 @@ test('publication review policy rejects stale and unavailable review snapshots',
     1,
   );
   assert.throws(() => assertPublicationReviewPolicySatisfied(staleRun, pkg), /approved package/);
+});
+
+test('snapshot-unavailable publication requires an explicit exact-package operator override', () => {
+  const pkg = makeReadyGatePackage({
+    headSha: 'head-good',
+    reviewSnapshot: {
+      source: 'unavailable',
+      missingReason: 'slot-load-error',
+      capturedAt: '2026-04-15T00:00:00.000Z',
+    },
+  });
+  const reviewDepth = {
+    minimumIndependentReviews: 1,
+    requireCrossRunner: false,
+    extraLoopsRequested: 0,
+    requestedBy: 'dispatch' as const,
+  };
+  const review: IndependentReviewStatus = {
+    id: 'independent-review-1',
+    source: 'dispatch',
+    crossRunner: false,
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    reviewedHeadSha: 'head-good',
+    reviewedReviewSubjectHash: pkg.reviewSubjectHash,
+    reviewSnapshot: {
+      source: 'unavailable',
+      missingReason: 'slot-load-error',
+      capturedAt: '2026-04-15T00:00:00.000Z',
+    },
+  };
+  const baseRun = makeRun({
+    engineState: { publishGate: { reviewDepth, independentReviews: [review] } },
+  });
+
+  assert.doesNotThrow(() => assertUnavailableSnapshotOverrideAvailable([review], pkg, reviewDepth));
+  assert.equal(
+    buildUnavailableSnapshotAction([review], pkg, reviewDepth)?.id,
+    APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+  );
+  assert.throws(
+    () =>
+      assertUnavailableSnapshotOverrideAvailable(
+        [
+          {
+            ...review,
+            reviewSnapshot: {
+              source: 'local-git',
+              headSha: 'head-reviewed-before-package-refresh',
+              capturedAt: '2026-04-15T00:00:00.000Z',
+            },
+          },
+        ],
+        pkg,
+        reviewDepth,
+      ),
+    /exact package HEAD and subject/i,
+  );
+  assert.throws(() => assertPublicationReviewPolicySatisfied(baseRun, pkg), /approved package/);
+
+  const approvedRun = makeRun({
+    ...baseRun,
+    decisions: [
+      {
+        id: 'decision-1',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: 'Snapshot unavailable',
+        actions: [],
+        createdAt: '2026-04-15T00:00:00.000Z',
+        resolvedAt: '2026-04-15T00:01:00.000Z',
+        resolvedAction: APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          diffStat: pkg.diffStat,
+          workerReport: '',
+          branch: pkg.branch,
+          prPackage: pkg,
+        },
+      },
+    ],
+  });
+  assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(approvedRun, pkg));
 });
 test('publication review policy rejects semantic review subject drift', () => {
   const pkg = makeReadyGatePackage({
@@ -593,6 +686,10 @@ test('publication review policy accepts fresh re-review after package refresh wi
       reviewedReviewSubjectHash: 'subject-new',
       reviewSnapshot: {
         headSha: 'head-new',
+        baseRef: pkg.reviewSnapshot?.baseRef,
+        baseSha: pkg.reviewSnapshot?.baseSha,
+        diffHash: pkg.reviewSnapshot?.diffHash,
+        diffStat: pkg.diffStat,
         capturedAt: '2026-04-15T00:10:00.000Z',
         source: 'local-git',
       },
@@ -763,6 +860,7 @@ test('buildPublishGateReviewStatus preserves the final re-review head after work
             source: 'local-git',
             capturedAt: '2026-05-18T00:00:00.000Z',
             headSha: 'old-head',
+            diffStat: { files: 1, additions: 2, deletions: 3 },
           },
         },
         {
@@ -773,6 +871,10 @@ test('buildPublishGateReviewStatus preserves the final re-review head after work
             source: 'local-git',
             capturedAt: '2026-05-18T00:10:00.000Z',
             headSha: 'new-head',
+            baseRef: 'origin/main',
+            baseSha: 'base-default',
+            diffHash: 'new-diff',
+            diffStat: { files: 1, additions: 2, deletions: 3 },
           },
         },
       ],
@@ -783,8 +885,48 @@ test('buildPublishGateReviewStatus preserves the final re-review head after work
   assert.equal(status.reviewSnapshot?.headSha, 'new-head');
   assert.equal(status.reviewedPackageInputHash, undefined);
   assert.equal(status.reviewedReviewSubjectHash, undefined);
-  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(status, { headSha: 'new-head' }), true);
-  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(status, { headSha: 'old-head' }), false);
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(status, {
+      headSha: 'new-head',
+      reviewSnapshot: {
+        source: 'local-git',
+        capturedAt: '2026-05-18T00:11:00.000Z',
+        headSha: 'new-head',
+        baseRef: 'origin/main',
+        baseSha: 'base-default',
+        diffHash: 'new-diff',
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(status, {
+      headSha: 'old-head',
+      reviewSnapshot: {
+        source: 'local-git',
+        capturedAt: '2026-05-18T00:11:00.000Z',
+        headSha: 'old-head',
+        baseRef: 'origin/main',
+        baseSha: 'base-default',
+        diffHash: 'new-diff',
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(status, {
+      headSha: 'new-head',
+      reviewSnapshot: {
+        source: 'local-git',
+        capturedAt: '2026-05-18T00:11:00.000Z',
+        headSha: 'new-head',
+        baseRef: 'origin/main',
+        baseSha: 'base-default',
+        diffHash: 'different-diff',
+      },
+    }),
+    false,
+  );
 });
 test('stampPublishGateReviewStatusForPackage only certifies the selected review', () => {
   const staleReview: IndependentReviewStatus = {

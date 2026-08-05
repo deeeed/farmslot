@@ -39,8 +39,10 @@ export async function readTaskArtifactText(
   }
 }
 
-export async function getDiffStat(run: Run): Promise<DiffStat> {
-  const snapshot = await captureRunDiffArtifacts(run);
+export async function getDiffStat(run: Run, options: { fresh?: boolean } = {}): Promise<DiffStat> {
+  const snapshot = await captureRunDiffArtifacts(run, {
+    forceRecapture: options.fresh,
+  });
   // COMPLETE step output keeps only the legacy numeric diffStat shape; full
   // provenance remains durable in artifacts/diff-stat.json and is re-read by
   // family observability for kind/filter/refs/SHAs/missing reasons.

@@ -1,8 +1,21 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { exec as execCallback } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 
 import { isFamilyDiffProvenance } from '@farmslot/protocol';
 
@@ -13,8 +26,55 @@ import {
   captureRunDiffArtifacts,
   parseGitNumstat,
   resolveReviewInputCaptureTimeoutMs,
+  runSourceDiffUntrackedManifestCommand,
 } from './diff-artifacts.js';
 import { makeRun } from './test-fixtures.js';
+
+const exec = promisify(execCallback);
+
+test('untracked manifest command captures empty files, executable mode, and dangling symlinks', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'review-untracked-manifest-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await exec('git init -q', { cwd: dir });
+  await writeFile(path.join(dir, 'empty file.ts'), '');
+  await chmod(path.join(dir, 'empty file.ts'), 0o755);
+  await symlink('missing-target', path.join(dir, 'dangling-link'));
+  await symlink('target-with-newline\n', path.join(dir, '-leading-link'));
+
+  const { stdout } = await exec(runSourceDiffUntrackedManifestCommand([]), { cwd: dir });
+  const fields = stdout.split('\0').slice(0, -1);
+  const files = [];
+  for (let index = 0; index < fields.length; index += 3) {
+    files.push({ mode: fields[index], blobSha: fields[index + 1], path: fields[index + 2] });
+  }
+
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  assert.deepEqual(byPath.get('dangling-link'), {
+    mode: '120000',
+    blobSha: '2050c51309015cf65b86e480b4d354ff82237eb7',
+    path: 'dangling-link',
+  });
+  assert.deepEqual(byPath.get('empty file.ts'), {
+    mode: '100755',
+    blobSha: 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391',
+    path: 'empty file.ts',
+  });
+  const newlineTarget = Buffer.from('target-with-newline\n');
+  const newlineBlobSha = createHash('sha1')
+    .update(`blob ${newlineTarget.length}\0`)
+    .update(newlineTarget)
+    .digest('hex');
+  assert.deepEqual(byPath.get('-leading-link'), {
+    mode: '120000',
+    blobSha: newlineBlobSha,
+    path: '-leading-link',
+  });
+
+  await chmod(path.join(dir, 'empty file.ts'), 0o644);
+  const second = await exec(runSourceDiffUntrackedManifestCommand([]), { cwd: dir });
+  assert.match(second.stdout, /100644\0e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\0empty file\.ts\0/);
+  assert.notEqual(second.stdout, stdout);
+});
 
 test('parseGitNumstat counts text and binary files without splitting paths containing spaces', () => {
   const numstat = [
@@ -481,6 +541,49 @@ test('captureRunDiffArtifacts preserves an existing durable diff snapshot', asyn
   assert.equal(result.files, 1);
   assert.equal(result.additions, 2);
   assert.equal(await readFile(path.join(artifactsDir, 'diff.txt'), 'utf-8'), 'original diff');
+});
+
+test('publication refresh preserves a durable diff when its slot was removed', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'run-diff-artifacts-force-refresh-'));
+  const artifactsDir = path.join(dir, 'artifacts');
+  await mkdir(artifactsDir, { recursive: true });
+  await writeFile(path.join(artifactsDir, 'diff.txt'), 'stale diff', 'utf-8');
+  await writeFile(
+    path.join(artifactsDir, 'diff-stat.json'),
+    JSON.stringify({
+      source: 'artifact',
+      available: true,
+      files: 1,
+      additions: 2,
+      deletions: 3,
+      kind: 'contribution',
+      filter: 'source-code',
+      artifactPath: 'artifacts/diff.txt',
+      capturedAt: '2026-05-03T00:00:00.000Z',
+    }),
+    'utf-8',
+  );
+
+  const result = await captureRunDiffArtifacts(
+    makeRun({
+      slotId: 'missing-slot-for-force-refresh-test',
+      taskFile: path.join(dir, 'TASK.md'),
+    }),
+    { forceRecapture: true },
+  );
+
+  assert.equal(result.source, 'artifact');
+  assert.equal(result.files, 1);
+  assert.equal(result.additions, 2);
+  assert.equal(result.deletions, 3);
+  const persisted = JSON.parse(await readFile(path.join(artifactsDir, 'diff-stat.json'), 'utf-8'));
+  assert.equal(persisted.source, 'artifact');
+  assert.equal(persisted.files, 1);
+  assert.equal(
+    (await readdir(artifactsDir)).some((name) => name.startsWith('diff.txt.previous.')),
+    false,
+  );
+  assert.equal(await readFile(path.join(artifactsDir, 'diff.txt'), 'utf-8'), 'stale diff');
 });
 
 test('captureRunDiffArtifacts captures iteration diff when contribution diff is reused', async () => {

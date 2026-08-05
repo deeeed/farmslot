@@ -117,12 +117,17 @@ test('dispatch role shell command starts a real repo shell, not the prepare plac
   assert.doesNotMatch(command, /while :; do sleep 86400; done/);
 });
 
-test('dispatch role launch wrapper holds failed runner output for diagnostics', () => {
-  const command = buildRoleLaunchCommandWithDiagnosticHold('codex --model gpt-5.5');
+test('dispatch role launch wrapper holds failed runner output then restores the repo shell', () => {
+  const command = buildRoleLaunchCommandWithDiagnosticHold(
+    'codex --model gpt-5.5',
+    '/tmp/farm slot/repo',
+  );
 
   assert.match(command, /bash -lc/);
   assert.match(command, /runner launch command exited/);
   assert.match(command, /sleep 45/);
+  assert.match(command, /cd .*farm slot\/repo/);
+  assert.match(command, /exec .*shell:-\/bin\/sh/);
   assert.doesNotMatch(command, /^exec bash -lc/);
 });
 

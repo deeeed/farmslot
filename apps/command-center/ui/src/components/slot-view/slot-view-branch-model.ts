@@ -18,12 +18,37 @@ export function slotViewBranchList({
 
 export type BranchDiffPollAction = 'none' | 'reload' | 'reload-and-clear-cache';
 
+export function normalizeReviewBaseRef(baseRef: string | null | undefined): string {
+  const base = baseRef?.trim() || 'main';
+  return base.startsWith('origin/') ? base.slice('origin/'.length) : base;
+}
+
+export function committedReviewBranchDiffRequest(
+  slotId: string,
+  baseRef: string | null | undefined,
+) {
+  return { slotId, base: normalizeReviewBaseRef(baseRef) };
+}
+
+export function committedReviewFileDiffRequest(
+  slotId: string,
+  path: string,
+  baseRef: string | null | undefined,
+) {
+  return {
+    slotId,
+    path,
+    base: normalizeReviewBaseRef(baseRef),
+    target: 'head' as const,
+  };
+}
+
 /**
  * Decide what the git-status poll should do about the branch diff. The diff
  * is otherwise fetched once at view init, so the poll is the only recovery
  * path: a transiently failed load (node reconnecting, gateway restart) or a
  * commit count change must trigger a reload, or the panel shows "No changes"
- * forever while the branch is ahead. Git movement (branch or ahead change)
+ * forever while the branch is ahead. Git movement (branch, HEAD, or ahead change)
  * also invalidates cached per-file diff contents; a retry after a failed
  * load does not — the underlying commits did not change.
  */
@@ -32,8 +57,8 @@ export function branchDiffPollAction({
   nextBranch,
   prevAhead,
   nextAhead,
-  prevChangesKey,
-  nextChangesKey,
+  prevHeadSha,
+  nextHeadSha,
   lastLoadFailed,
   loading,
 }: {
@@ -41,37 +66,20 @@ export function branchDiffPollAction({
   nextBranch: string;
   prevAhead: number | undefined;
   nextAhead: number;
-  /** gitChangesFingerprint of the previous/next working-tree status. */
-  prevChangesKey: string | undefined;
-  nextChangesKey: string;
+  prevHeadSha: string | undefined;
+  nextHeadSha: string;
   lastLoadFailed: boolean;
   loading: boolean;
 }): BranchDiffPollAction {
   if (loading) return 'none';
   const branchChanged = prevBranch !== undefined && nextBranch !== prevBranch;
   const aheadChanged = prevAhead !== undefined && nextAhead !== prevAhead;
-  // Worktree-scope diffs include uncommitted changes, so working-tree
-  // movement stales the union list and per-file diff cache exactly like a
-  // commit does.
-  const changesChanged = prevChangesKey !== undefined && nextChangesKey !== prevChangesKey;
-  if (branchChanged || aheadChanged || changesChanged) return 'reload-and-clear-cache';
+  const headChanged = prevHeadSha !== undefined && nextHeadSha !== prevHeadSha;
+  // The branch panel is committed-only. Uncommitted changes update through
+  // git.status and must not trigger another base fetch every poll.
+  if (branchChanged || aheadChanged || headChanged) return 'reload-and-clear-cache';
   if (lastLoadFailed) return 'reload';
-  // A dirty worktree can change content without changing status (more edits
-  // to an already-modified file), which the fingerprint cannot see — keep the
-  // union list fresh every poll while dirty. Per-file worktree diffs bypass
-  // the cache on click, so no cache clear is needed here.
-  if (nextChangesKey !== '') return 'reload';
   return 'none';
-}
-
-/** Stable fingerprint of the working-tree status for poll-change detection. */
-export function gitChangesFingerprint(
-  changes: Array<{ path: string; status: string; staged: boolean }>,
-): string {
-  return changes
-    .map((change) => `${change.path}:${change.status}:${change.staged ? 1 : 0}`)
-    .sort()
-    .join('|');
 }
 
 export interface BranchDiffRequestTicket {

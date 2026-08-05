@@ -211,7 +211,7 @@ function buildSelfReview(
 /** Build the review-outcomes section (self-review + independent reviews). */
 export function buildReviewSummary(
   run: Run,
-  preparedPackage?: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSubjectHash'>,
+  preparedPackage?: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot' | 'reviewSubjectHash'>,
 ): ReviewSummary {
   const reviews = run.engineState?.publishGate?.independentReviews ?? [];
   const selfEntries = reviews.filter(isSelfReviewEntry);
@@ -412,7 +412,7 @@ export function buildGateSummary(
   kind: GateSummary['kind'],
   opts?: {
     gatePolicy?: GatePolicy;
-    preparedPackage?: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSubjectHash'>;
+    preparedPackage?: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot' | 'reviewSubjectHash'>;
   },
 ): GateSummary {
   const review = buildReviewSummary(run, opts?.preparedPackage);

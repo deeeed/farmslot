@@ -44,6 +44,7 @@ import {
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
+import { NODE_SUPPORT_HASH_FILENAME } from '../../runners/runner-observability.js';
 import { getRun } from '../../runs/store.js';
 
 import { runHealthCheck } from './check.js';
@@ -264,12 +265,17 @@ async function slotPrepareInner(
   const materializeHookSupport = async () => {
     if (!projectVars || hookSupportChecked) return;
     hookSupportChecked = true;
-    const { paths: supportPaths } = resolveNodeSupportPaths(
+    const { paths: hookSupportPaths } = resolveNodeSupportPaths(
       vars.projectName,
       projectJson,
       farmslotRoot,
     );
-    if (supportPaths.length === 0) return;
+    const installerPath = 'scripts/install-runner-observability.mjs';
+    const supportPaths = hookSupportPaths.some(
+      (supportPath) => supportPath === installerPath || installerPath.startsWith(`${supportPath}/`),
+    )
+      ? hookSupportPaths
+      : [...hookSupportPaths, installerPath].sort();
     if (slotIsLocal) {
       hookSupportDir = farmslotRoot;
       step('support', 'Using local node support source');
@@ -303,6 +309,15 @@ async function slotPrepareInner(
     };
 
     hookSupportDir = path.posix.join('~/farmslot-node/support', manifest.hash);
+    const persistNodeSupportSelection = async () => {
+      await slotWriteFiles(vars, path.posix.join(vars.remoteRepo, runtimeDir, '.observability'), [
+        {
+          path: NODE_SUPPORT_HASH_FILENAME,
+          content: Buffer.from(`${manifest.hash}\n`).toString('base64'),
+          mode: 0o644,
+        },
+      ]);
+    };
     const verifyHookSupport = async () => {
       const verifyResult = await execOnSlot(
         vars,
@@ -322,6 +337,7 @@ async function slotPrepareInner(
         if (!(await verifyHookSupport())) {
           throw new Error(`Node support bundle corrupt for ${manifest.hash}`);
         }
+        await persistNodeSupportSelection();
         step('support', `Node support bundle current (${files.length} files)`);
         return;
       }
@@ -406,6 +422,7 @@ async function slotPrepareInner(
     if (!(await verifyHookSupport())) {
       throw new Error(`Node support publish verification failed for ${manifest.hash}`);
     }
+    await persistNodeSupportSelection();
     step(
       'support',
       `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`,

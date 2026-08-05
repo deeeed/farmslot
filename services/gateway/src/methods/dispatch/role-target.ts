@@ -2,7 +2,7 @@
 
 import type { AgentContextTarget } from '@farmslot/protocol';
 
-import { shellQuote } from '../../core/tmux.js';
+export { buildDispatchRoleShellCommand } from '../../core/tmux.js';
 
 export function parseCapturedAgentPaneTarget(session: string, raw: string): AgentContextTarget {
   const [rawTarget = session, windowName = null] = raw ? raw.split('|', 2) : [session, null];
@@ -30,14 +30,4 @@ export function canonicalAgentContextTarget(target: AgentContextTarget): string 
     return `${session}:${window}`;
   }
   return target.target;
-}
-
-export function buildDispatchRoleShellCommand(remoteRepo: string): string {
-  return [
-    `cd ${shellQuote(remoteRepo)}`,
-    'shell="${SHELL:-}"',
-    'if [ -z "$shell" ]; then shell="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk \'{print $2}\')"; fi',
-    'if [ -z "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
-    'exec "${shell:-/bin/sh}"',
-  ].join(' && ');
 }

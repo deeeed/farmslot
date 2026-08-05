@@ -1,4 +1,4 @@
-import type { Run, SlotStatus } from '@farmslot/protocol';
+import type { GitStatusResult, Run, SlotStatus } from '@farmslot/protocol';
 
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 
@@ -39,12 +39,7 @@ export interface OpenFile {
   diffBase?: string; // branch diff base (for branch-changed-files diffs)
 }
 
-export interface GitData {
-  branch: string;
-  ahead: number;
-  behind: number;
-  changes: Array<{ path: string; status: string; staged: boolean; oldPath?: string }>;
-}
+export type GitData = GitStatusResult;
 
 export interface SlotSwitcherEntry {
   slot: string;

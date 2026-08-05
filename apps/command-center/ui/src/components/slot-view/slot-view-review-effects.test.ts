@@ -38,8 +38,12 @@ interface FakeView {
   _branchDiffLoading: boolean;
   _branchDiffError: string | null;
   _branchDiffBranches: string[];
+  _liveGitData: { branch: string; headSha: string; ahead: number; behind: number; changes: [] };
+  _liveDiffContents: Map<string, string>;
   _git: { branch: string } | null;
   _loadBranchList: () => void;
+  _loadBranchDiff: () => void;
+  branchDiffReloads: number;
 }
 
 function makeView(): FakeView {
@@ -56,8 +60,14 @@ function makeView(): FakeView {
     _branchDiffLoading: false,
     _branchDiffError: null,
     _branchDiffBranches: [],
+    _liveGitData: { branch: 'feat/x', headSha: 'head-a', ahead: 1, behind: 0, changes: [] },
+    _liveDiffContents: new Map(),
     _git: { branch: 'feat/x' },
     _loadBranchList: () => {},
+    _loadBranchDiff() {
+      this.branchDiffReloads += 1;
+    },
+    branchDiffReloads: 0,
   };
 }
 
@@ -116,4 +126,21 @@ test('current branch-diff completion writes files and clears the error', async (
   assert.equal(view._branchDiffError, null);
   assert.equal(view._branchDiffFiles.length, 1);
   assert.equal(view._branchDiffLoading, false);
+});
+
+test('branch-diff completion reloads when HEAD changed while its request was in flight', async () => {
+  const view = makeView();
+  view._liveDiffContents.set('branch:main:a.ts', 'stale');
+  const inFlight = loadSlotViewBranchDiff(asView(view));
+  view._liveGitData.headSha = 'head-b';
+  pending.shift()?.resolve({
+    base: 'main',
+    head: 'feat/x',
+    files: [{ path: 'a.ts', status: 'M', additions: 1, deletions: 0 }],
+    totalAdditions: 1,
+    totalDeletions: 0,
+  });
+  await inFlight;
+  assert.equal(view.branchDiffReloads, 1);
+  assert.equal(view._liveDiffContents.size, 0);
 });

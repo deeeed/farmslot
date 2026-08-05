@@ -236,6 +236,11 @@ test('a one-shot scan only replaces an explicitly recoverable failed placeholder
     artifactScope: 'independent-review-7',
   });
   assert.equal(
+    reviewerContextNeedsRecovery(failed, [], { includeFailed: true }),
+    false,
+    'a failed reviewer without a delivery placeholder is terminal',
+  );
+  assert.equal(
     reviewerContextNeedsRecovery(failed, [
       {
         id: 'independent-review-7',
@@ -261,6 +266,31 @@ test('a one-shot scan only replaces an explicitly recoverable failed placeholder
       { includeFailed: true },
     ),
     true,
+  );
+  assert.equal(
+    reviewerContextNeedsRecovery(
+      failed,
+      [
+        {
+          id: 'independent-review-7',
+          source: 'dispatch',
+          verdict: 'failed',
+          unresolvedCount: 0,
+          feedbackSent: false,
+          recoveryContinuationPending: true,
+        },
+        {
+          id: 'independent-review-8',
+          source: 'dispatch',
+          verdict: 'issues',
+          unresolvedCount: 1,
+          feedbackSent: false,
+        },
+      ],
+      { includeFailed: true },
+    ),
+    false,
+    'a failed placeholder is superseded once a later review settled',
   );
   assert.equal(
     reviewerContextNeedsRecovery(

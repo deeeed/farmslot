@@ -41,6 +41,13 @@ export function hasUnresolvedPlaceholders(expanded: string): boolean {
   return /\{\{[^}]+\}\}/.test(expanded);
 }
 
+export function isSlotResourceConfigured(
+  configuredResources: Record<string, unknown> | undefined,
+  resourceId: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(configuredResources ?? {}, resourceId);
+}
+
 // ─── Status cache ───
 
 // slotId → resourceId → status
@@ -53,9 +60,18 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let broadcastFn: ((event: string, payload: unknown) => void) | null = null;
 const RESOURCE_POLL_CONCURRENCY = 4;
 let pollAllInFlight = false;
+const warnedUnconfiguredResources = new Map<string, string>();
+
+export function purgeRemovedSlotWarnings(
+  warnings: Map<string, string>,
+  activeSlotIds: ReadonlySet<string>,
+): void {
+  for (const slotId of warnings.keys()) {
+    if (!activeSlotIds.has(slotId)) warnings.delete(slotId);
+  }
+}
 
 // Track which machines have active resource watches
-const activeWatchMachines = new Set<string>();
 const resourceWatchStateFile =
   process.env.FARMSLOT_RESOURCE_WATCH_STATE_FILE ??
   path.join(farmslotRoot, '.farm-cache', 'resource-watch-state.json');
@@ -305,7 +321,8 @@ export function clearResourceStreamState(slotId: string, resourceId: string): vo
 
 /**
  * Resolve available resources for a slot.
- * Reads `resources` from project.json. Uses cached status if available.
+ * Reads definitions from project.json, limited to resources configured by the slot.
+ * Uses cached status if available.
  */
 export async function resolveSlotResources(slotId: string): Promise<SlotResource[]> {
   const { pool, slot } = await resolveSlot(slotId);
@@ -318,29 +335,45 @@ export async function resolveSlotResources(slotId: string): Promise<SlotResource
   const slotCache = statusCache.get(slotId);
   const streamCache = streamStatusCache.get(slotId);
 
-  return Object.entries(projectJson.resources).map(([id, def]) => ({
-    id,
-    definition: {
-      type: (def.type ?? 'device') as ResourceDefinition['type'],
-      platform: def.platform,
-      label: def.label ?? id,
-      streamable: def.streamable ?? true,
-      controllable: def.controllable ?? false,
-      watch: def.watch
-        ? {
-            type: def.watch.type as ResourceWatchType,
-            path: def.watch.path,
-            port: def.watch.port,
-            cmd: def.watch.cmd,
-            intervalMs: def.watch.intervalMs,
-          }
-        : undefined,
-      hooks: def.hooks as ResourceDefinition['hooks'],
-      actions: def.actions as ResourceDefinition['actions'],
-    },
-    status: (slotCache?.get(id) ?? 'unknown') as ResourceStatus,
-    stream: def.streamable ? (streamCache?.get(id) ?? { state: 'unknown' }) : undefined,
-  }));
+  const resourceEntries = Object.entries(projectJson.resources);
+  const droppedIds = resourceEntries
+    .map(([id]) => id)
+    .filter((id) => !isSlotResourceConfigured(slot.resources, id));
+  const warningSignature = droppedIds.join(',');
+  if (droppedIds.length === 0) {
+    warnedUnconfiguredResources.delete(slotId);
+  } else if (warnedUnconfiguredResources.get(slotId) !== warningSignature) {
+    warnedUnconfiguredResources.set(slotId, warningSignature);
+    console.warn(
+      `[resource-manager] slot ${slotId} does not configure project resource(s): ${droppedIds.join(', ')}`,
+    );
+  }
+
+  return resourceEntries
+    .filter(([id]) => isSlotResourceConfigured(slot.resources, id))
+    .map(([id, def]) => ({
+      id,
+      definition: {
+        type: (def.type ?? 'device') as ResourceDefinition['type'],
+        platform: def.platform,
+        label: def.label ?? id,
+        streamable: def.streamable ?? true,
+        controllable: def.controllable ?? false,
+        watch: def.watch
+          ? {
+              type: def.watch.type as ResourceWatchType,
+              path: def.watch.path,
+              port: def.watch.port,
+              cmd: def.watch.cmd,
+              intervalMs: def.watch.intervalMs,
+            }
+          : undefined,
+        hooks: def.hooks as ResourceDefinition['hooks'],
+        actions: def.actions as ResourceDefinition['actions'],
+      },
+      status: (slotCache?.get(id) ?? 'unknown') as ResourceStatus,
+      stream: def.streamable ? (streamCache?.get(id) ?? { state: 'unknown' }) : undefined,
+    }));
 }
 
 /**
@@ -352,6 +385,9 @@ export async function executeResourceHealth(
   resourceId: string,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { pool, slot } = await resolveSlot(slotId);
+  if (!isSlotResourceConfigured(slot.resources, resourceId)) {
+    return { ok: false, detail: `Resource '${resourceId}' is not configured for slot '${slotId}'` };
+  }
   const projectName = slot.project ?? pool.project;
   const projectVars = await loadProjectVars(projectName);
   const projectJson = projectVars.projectJson;
@@ -639,6 +675,7 @@ async function pollAllResources(): Promise<void> {
   try {
     const fleet = await loadFleetStatus();
     const slotIds = fleet.slots.map((s) => s.slot);
+    purgeRemovedSlotWarnings(warnedUnconfiguredResources, new Set(slotIds));
     const failures: string[] = [];
     await mapWithConcurrency(slotIds, RESOURCE_POLL_CONCURRENCY, async (id) => {
       try {
@@ -859,8 +896,6 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
         const projectJson = projectVars.projectJson;
         const slotVars = await loadSlotVars(slot.slot);
 
-        if (!projectJson.resources) continue;
-
         const watchInstructions: Array<{
           id: string;
           watch: {
@@ -873,7 +908,8 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
           };
         }> = [];
 
-        for (const [id, def] of Object.entries(projectJson.resources)) {
+        for (const [id, def] of Object.entries(projectJson.resources ?? {})) {
+          if (!isSlotResourceConfigured(slotCfg.resources, id)) continue;
           if (!def.watch) continue;
 
           const expandedWatch: {
@@ -929,13 +965,13 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
           watchInstructions.push({ id, watch: expandedWatch });
         }
 
-        if (watchInstructions.length > 0) {
-          await sendNodeRequest(node, 'resource.watch.start', {
-            slotId: slot.slot,
-            resources: watchInstructions,
-          });
-          totalWatches += watchInstructions.length;
-        }
+        // The node treats this as the complete watch set for the slot, so send
+        // an empty set too. Omitting the request would leave removed watches alive.
+        await sendNodeRequest(node, 'resource.watch.start', {
+          slotId: slot.slot,
+          resources: watchInstructions,
+        });
+        totalWatches += watchInstructions.length;
       } catch (err) {
         console.log(
           `[resource-manager] failed to send watch for ${slot.slot}: ${(err as Error).message}`,
@@ -944,7 +980,6 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
     }
 
     if (totalWatches > 0) {
-      activeWatchMachines.add(machine);
       console.log(`[resource-manager] sent ${totalWatches} watch instructions to node ${machine}`);
     }
   } catch (err) {
@@ -992,7 +1027,6 @@ export async function setResourceWatchesEnabled(
   for (const machine of affectedMachines) {
     await clearMachineResourceStatus(machine);
   }
-  activeWatchMachines.clear();
   return { ok: true, enabled, affectedMachines, affectedSlots };
 }
 
@@ -1000,8 +1034,6 @@ export async function setResourceWatchesEnabled(
  * Mark all resources for a machine as 'unknown' when its agent disconnects.
  */
 export async function clearMachineResourceStatus(machine: string): Promise<void> {
-  activeWatchMachines.delete(machine);
-
   try {
     const fleet = await loadFleetStatus();
     const machineSlots = fleet.slots.filter((s) => s.machine === machine);
@@ -1049,6 +1081,9 @@ export async function executeResourceControl(
   action: ResourceControlAction,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { pool, slot } = await resolveSlot(slotId);
+  if (!isSlotResourceConfigured(slot.resources, resourceId)) {
+    return { ok: false, detail: `Resource '${resourceId}' is not configured for slot '${slotId}'` };
+  }
   const projectName = slot.project ?? pool.project;
   const projectVars = await loadProjectVars(projectName);
   const projectJson = projectVars.projectJson;

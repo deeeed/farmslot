@@ -1,7 +1,7 @@
 // Proves run.create soft-links (or warns about) backlog items with the same sourceRef.
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -234,9 +234,57 @@ test('runCreate soft-links jira backlog item by sourceRef and stamps run.backlog
 
   try {
     assert.equal(run.backlogItemId, created.item.id);
+    assert.match(run.engineState?.interactiveDev?.initialContext ?? '', /Direct CLI run\.create/);
     const linked = backlog.getBacklogItemSnapshot(created.item.id);
     assert.equal(linked?.status, 'running');
     assert.equal(linked?.runId, run.id);
+  } finally {
+    if (runStore.getRun(run.id)) {
+      runStore.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await runStore.deleteRun(run.id);
+    }
+  }
+});
+
+test('runCreate carries matching backlog spec context through a direct soft-link', async () => {
+  const { backlog } = await freshStores();
+  const { runCreate } = await import('../methods/run.js');
+  const runStore = await import('../runs/store.js');
+  const specPath = path.join(testDir, 'specs', 'direct-run-context.md');
+  await mkdir(path.dirname(specPath), { recursive: true });
+  await writeFile(
+    specPath,
+    '# Baseline\n\n## Acceptance Criteria\n\n- Capture production Sentry p75\n',
+    'utf-8',
+  );
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Direct dispatch with attached spec',
+    sourceKind: 'jira',
+    sourceRef: SOURCE_REF_RECONCILE,
+    flowType: 'dev',
+    status: 'ready',
+    specPath,
+    notes: 'Preserve the operator baseline context.',
+  });
+
+  const { run } = await runCreate(
+    {
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: SOURCE_REF_RECONCILE,
+      mode: 'autonomous',
+    },
+    () => {},
+  );
+
+  try {
+    assert.equal(run.backlogItemId, created.item.id);
+    assert.match(run.engineState?.interactiveDev?.initialContext ?? '', /production Sentry p75/);
+    assert.match(
+      run.engineState?.interactiveDev?.initialContext ?? '',
+      /operator baseline context/,
+    );
   } finally {
     if (runStore.getRun(run.id)) {
       runStore.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });

@@ -7,8 +7,30 @@ import test from 'node:test';
 
 import {
   buildClaudeObservabilityFallbackCommand,
+  buildRunnerObservabilityInstallCommand,
   withRunnerObservabilityInstall,
 } from './runner-observability.js';
+
+test('remote observability install prefers the prepared immutable node-support bundle', () => {
+  const command = buildRunnerObservabilityInstallCommand(
+    {
+      host: 'mini.local',
+      machine: 'mini',
+      remoteRepo: '/Volumes/FD/farm/farmslot-1',
+      slotId: 'mini-ff-1',
+    } as never,
+    'claude',
+    '/Volumes/FD/farm/farmslot-1',
+    '.sandbox/farmslot-farm/agent',
+  );
+
+  assert.match(command, /node-support-hash/);
+  assert.match(
+    command,
+    /farmslot-node\/support\/\$\{support_hash\}\/scripts\/install-runner-observability\.mjs/,
+  );
+  assert.match(command, /farmslot-node\/scripts\/install-runner-observability\.mjs/);
+});
 
 test('Claude observability fallback replaces corrupt runtime settings', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'farmslot-claude-settings-'));

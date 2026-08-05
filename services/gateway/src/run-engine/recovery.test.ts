@@ -75,6 +75,28 @@ test('hasRecoverablePublicationReviewer ignores an already-ingested completed co
     }),
     false,
   );
+
+  assert.equal(
+    hasRecoverablePublicationReviewer({
+      ...run,
+      agentContexts: [{ ...context, status: 'failed' }],
+      engineState: {
+        publishGate: {
+          independentReviews: [
+            {
+              ...run.engineState!.publishGate!.independentReviews![0]!,
+              verdict: 'failed',
+              unresolvedCount: 0,
+              feedbackSent: false,
+              recoveryContinuationPending: true,
+            },
+          ],
+        },
+      },
+    }),
+    true,
+    'a delivery-failed reviewer remains watched for a later manual submit',
+  );
 });
 
 test('hasPendingPublicationReviewContinuation requires the explicit recovery marker', () => {

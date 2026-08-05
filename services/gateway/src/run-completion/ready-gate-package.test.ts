@@ -35,6 +35,17 @@ test('ready package hashes separate artifact identity from review subject', () =
     selectedEvidenceKeys: ['artifacts/after.png'],
     validationSummaryPath: 'artifacts/report.md',
     validationSummaryHash: 'validation-a',
+    reviewSnapshot: {
+      source: 'local-git' as const,
+      baseRef: 'origin/main',
+      baseSha: 'base1234',
+      headRef: 'fix/a',
+      headSha: 'abc1234',
+      diffHash: 'diff-a',
+      diffStat: { files: 1, additions: 2, deletions: 0 },
+      capturedAt: '2026-04-15T00:00:00.000Z',
+      diffPath: 'artifacts/review.diff',
+    },
     reviewArtifactIds: ['review-1'],
     dispatchMode: 'interactive' as const,
     gatePolicy: {
@@ -72,6 +83,24 @@ test('ready package hashes separate artifact identity from review subject', () =
   assert.notEqual(
     computeReadyGateReviewSubjectHash(base),
     computeReadyGateReviewSubjectHash({ ...base, headSha: 'def5678' }),
+  );
+  assert.notEqual(
+    computeReadyGateReviewSubjectHash(base),
+    computeReadyGateReviewSubjectHash({
+      ...base,
+      reviewSnapshot: { ...base.reviewSnapshot, diffHash: 'diff-b' },
+    }),
+  );
+  assert.equal(
+    computeReadyGateReviewSubjectHash(base),
+    computeReadyGateReviewSubjectHash({
+      ...base,
+      reviewSnapshot: {
+        ...base.reviewSnapshot,
+        capturedAt: '2026-04-15T00:05:00.000Z',
+        diffPath: 'artifacts/refreshed-review.diff',
+      },
+    }),
   );
   assert.notEqual(
     computeReadyGateReviewSubjectHash(base),

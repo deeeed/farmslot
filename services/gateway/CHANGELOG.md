@@ -4,13 +4,27 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(review): pin the formal verdict and inline comments to one certified commit, fail closed on malformed untracked manifests and unexpected slot errors, and contain asynchronous remote progress failures without losing the watcher.
+- fix(self-review): restore the scoped fix checklist target before re-delivering a retained worker prompt after restart, so `mark complete` cannot write the main worker signal while recovery waits on the fix signal.
+- fix(ready-gate): invalidate pre-upgrade publish packages that lack an exact review snapshot, preserve the last durable diff when a refresh finds that its slot was removed, and keep removed-slot packages inspectable through the explicit exact-HEAD snapshot-unavailable override.
+- fix(self-review): scope review identity to configured source paths and include byte-exact untracked path/mode/blob manifests so empty files, executable-bit changes, and symlink targets cannot bypass the reviewed package.
+- fix(self-review): supersede obsolete delivery failures, relaunch the original worker with its runner and model, and deliver persisted fix tasks from fresh structured sessions.
+- fix(run-engine): recapture the contribution diff at current HEAD during ready-gate and package refresh, and refuse to restamp reviews whose captured diff changed.
+- fix(run-engine): refresh the worker artifact mirror before replaying a human gate so corrected evidence cannot be replaced by an older report copy.
+- fix(backlog): carry matched markdown specs and notes into direct `run.create` task context.
+- fix(resources): limit discovery, health, control, and node watches to resources configured on each slot, replacing complete watch sets so removed resources cannot report stale health.
+- fix(runners): bind retained sessions from the pane-scoped observability snapshot when the bounded hook tail no longer contains `SessionStart`, and recover missing session metadata before a follow-up handoff.
+- fix(run-engine): keep an explicitly delivery-failed publication reviewer under recovery watch, so a later manual prompt submission is ingested and its findings return to the original worker.
+- fix(self-review): prefer the slot's remote-tracking default branch when capturing review snapshots, avoiding inflated reviews when a local default branch is stale.
+- fix(recipe-quality): derive current quality from recipe and coverage sources instead of trusting legacy worker-authored verdicts or copy-order-dependent mtimes, preserve slot-portable verdicts without rereading gateway-local paths, and use the same canonical evaluation in operator gates and live run context.
+- fix(command-center): resolve slot and review diffs against the open PR's actual base branch (or the configured remote default), include untracked files in exact review snapshots, and keep committed and local worktree state distinct.
+- fix(review-gate): pin formal reviews and inline comments to the reviewed commit so a concurrent push cannot publish against a different PR head or trigger a duplicate replay.
 - fix(run-completion): reconcile merged and already-ready PRs without replaying `gh pr ready`, and report closed-unmerged PRs explicitly.
-- fix(runners): keep Codex observability hooks in the isolated slot runtime, enable them at launch despite project overrides, and safely clean legacy backed-up repository `.codex` changes, so new observability installs no longer dirty worker trees or silently lose their event contract.
+- fix(runners): keep Codex observability hooks in the isolated slot runtime, enable them at launch despite project overrides, and safely clean legacy Farmslot-only repository `.codex` changes even when an older installer left no backup, so new observability installs no longer dirty worker trees or silently lose their event contract.
 - fix(run-engine): project publication review counts against the current prepared package, so an older passing review is shown as stale instead of contradicting the publish cockpit.
 - fix(runners): require a task-scoped signal or exact runner hook before cold dispatch or a warm-session handoff starts monitoring, recreate the persisted primary worker target before restart delivery, validate the exact Claude settings artifact even when an older node installer exits successfully, never reuse a pre-replay task signal, and never repair failed dispatch by matching runner prose.
 - feat(run-engine): ready-gate and package-refresh soft-chip probe for behind-main count + non-destructive merge-tree conflicts (`behindMain`, `mergeConflicts`) so operators see staleness before more review loops — never auto-rebases mid-loop.
-- Fix publication gate restart recovery so a later passing review supersedes older continuation markers, recovered reviewer timeouts are terminated instead of duplicated, and gate summaries keep new snapshot-less failures without reviving historical findings.
-
+- fix(run-engine): let later passing reviews supersede older continuation markers, terminate recovered reviewer timeouts instead of duplicating them, and retain current snapshot-less failures without reviving historical findings.
 - fix(run-engine): reclaim the exact surviving reviewer after a gateway restart, resume its fix/re-review continuation without failing the run when delivery is temporarily unavailable, and deduplicate terminal verdict recovery.
 - fix(run-engine): clear completed reviewer progress when the publication gate is waiting for its operator decision.
 - fix(run-engine): settle superseded reviewer contexts, close their retained tmux windows, and only replace failed review records explicitly marked for late recovery.

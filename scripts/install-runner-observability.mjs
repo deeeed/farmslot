@@ -255,6 +255,73 @@ function escapeTomlBasicString(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+function isTomlSectionHeader(line) {
+  return /^\s*\[\[?[^\]]+\]\]?\s*(?:#.*)?$/.test(line);
+}
+
+function scanTomlLine(line, state) {
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (state.quote === '"""' || state.quote === "'''") {
+      if (state.quote === '"""' && escaped) {
+        escaped = false;
+        continue;
+      }
+      if (state.quote === '"""' && char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (line.startsWith(state.quote, index)) {
+        const quoteChar = state.quote[0];
+        let closingRunLength = 3;
+        while (line[index + closingRunLength] === quoteChar) closingRunLength += 1;
+        index += closingRunLength - 1;
+        state.quote = null;
+      }
+      continue;
+    }
+    if (state.quote) {
+      if (state.quote === '"' && escaped) {
+        escaped = false;
+      } else if (state.quote === '"' && char === '\\') {
+        escaped = true;
+      } else if (char === state.quote) {
+        state.quote = null;
+      }
+      continue;
+    }
+    if (char === '#') break;
+    if (line.startsWith('"""', index) || line.startsWith("'''", index)) {
+      state.quote = line.slice(index, index + 3);
+      index += 2;
+    } else if (char === '"' || char === "'") {
+      state.quote = char;
+    } else if (char === '[') {
+      state.arrayDepth += 1;
+    } else if (char === ']') {
+      state.arrayDepth = Math.max(0, state.arrayDepth - 1);
+    }
+  }
+  // Ordinary TOML strings cannot span physical lines. Multiline strings are
+  // retained in state until their matching triple quote is encountered.
+  if (state.quote === '"' || state.quote === "'") state.quote = null;
+}
+
+function tomlSectionHeaderIndexes(lines) {
+  const headers = new Set();
+  const state = { arrayDepth: 0, quote: null };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (state.arrayDepth === 0 && state.quote === null && isTomlSectionHeader(line)) {
+      headers.add(index);
+      continue;
+    }
+    scanTomlLine(line, state);
+  }
+  return headers;
+}
+
 function normalizedCommandHookIdentity(eventName, entry, hook) {
   return {
     event_name: CODEX_HOOK_EVENT_LABELS[eventName],
@@ -296,13 +363,17 @@ function buildCodexHookTrustToml(hooksPath, hooks) {
 
 function stripTomlSections(content, shouldStrip) {
   const lines = content.split('\n');
+  const headers = tomlSectionHeaderIndexes(lines);
   const kept = [];
   let skipping = false;
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     // Codex config sections touched here are ordinary `[table]` headers. This
     // intentionally does not parse TOML array-of-tables (`[[table]]`); do not
     // reuse it for configs where generated sections may be arrays.
-    const section = line.trim().match(/^\[([^\]]+)\]\s*$/)?.[1] ?? null;
+    const section = headers.has(index)
+      ? (line.trim().match(/^\[([^\]]+)\]\s*$/)?.[1] ?? null)
+      : null;
     if (section) skipping = shouldStrip(section);
     if (!skipping) kept.push(line);
   }
@@ -319,9 +390,65 @@ function stripCodexHomeInstallerSections(content, repoPath) {
   });
 }
 
-function upsertCodexHooksFeature(content) {
+function coalesceCodexFeaturesSections(content) {
   const lines = content.split('\n');
-  const existingFeatureIdx = lines.findIndex((line) => line.trim() === '[features]');
+  const headers = tomlSectionHeaderIndexes(lines);
+  const bodies = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!headers.has(i) || lines[i].trim() !== '[features]') continue;
+    const body = [];
+    for (i += 1; i < lines.length && !headers.has(i); i += 1) {
+      body.push(lines[i]);
+    }
+    i -= 1;
+    bodies.push(body);
+  }
+  if (bodies.length <= 1) return content;
+
+  const merged = [];
+  const assignmentIndexes = new Map();
+  for (const line of bodies.flat()) {
+    const assignment = line.match(/^\s*([A-Za-z0-9_-]+)\s*=/);
+    if (assignment) {
+      const key = assignment[1];
+      const existing = assignmentIndexes.get(key);
+      if (existing === undefined) {
+        assignmentIndexes.set(key, merged.length);
+        merged.push(line);
+      } else {
+        merged[existing] = line;
+      }
+      continue;
+    }
+    merged.push(line);
+  }
+
+  const output = [];
+  let inserted = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!headers.has(i) || lines[i].trim() !== '[features]') {
+      output.push(lines[i]);
+      continue;
+    }
+    if (!inserted) {
+      output.push('[features]', ...merged);
+      inserted = true;
+    }
+    for (i += 1; i < lines.length && !headers.has(i); i += 1) {
+      // Skip the body of every original features section; it was merged above.
+    }
+    i -= 1;
+  }
+  return output.join('\n').trimEnd();
+}
+
+function upsertCodexHooksFeature(content) {
+  content = coalesceCodexFeaturesSections(content);
+  const lines = content.split('\n');
+  const headers = tomlSectionHeaderIndexes(lines);
+  const existingFeatureIdx = lines.findIndex(
+    (line, index) => headers.has(index) && line.trim() === '[features]',
+  );
   if (existingFeatureIdx < 0) {
     const block = '[features]\nhooks = true\n';
     return content.trimEnd() ? `${content.trimEnd()}\n\n${block.trimEnd()}` : block.trimEnd();
@@ -329,7 +456,7 @@ function upsertCodexHooksFeature(content) {
 
   let sectionEnd = lines.length;
   for (let i = existingFeatureIdx + 1; i < lines.length; i += 1) {
-    if (/^\s*\[/.test(lines[i])) {
+    if (headers.has(i)) {
       sectionEnd = i;
       break;
     }
@@ -354,12 +481,14 @@ function restoreLegacyCodexHooksFeature(currentContent, backupContent) {
   if (generatedContent === backupContent) return currentContent;
 
   const sectionBounds = (lines) => {
-    const start = lines.findIndex((line) => line.trim() === '[features]');
+    const headers = tomlSectionHeaderIndexes(lines);
+    const start = lines.findIndex(
+      (line, index) => headers.has(index) && line.trim() === '[features]',
+    );
     if (start < 0) return null;
     let end = lines.length;
     for (let i = start + 1; i < lines.length; i += 1) {
-      const trimmed = lines[i].trim();
-      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      if (headers.has(i)) {
         end = i;
         break;
       }

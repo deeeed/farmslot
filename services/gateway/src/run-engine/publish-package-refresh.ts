@@ -11,7 +11,7 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
 import {
   effectiveRequiredReviewCount,
   independentReviewPolicySatisfied,
@@ -123,18 +123,19 @@ function restampReviewsForRefreshedPackage(
   reviewedPackages: Array<ReadyGatePrPackage | undefined>,
   refreshedPackage: ReadyGatePrPackage,
 ): IndependentReviewStatus[] {
-  return independentReviews.map((review) =>
-    ((review.source === 'dispatch' || review.source === 'human-gate') &&
-      reviewFinalSnapshotMatchesPreparedPackage(review, refreshedPackage)) ||
-    reviewedPackages.some(
-      (reviewedPackage) =>
-        reviewedPackage &&
-        readyGateReviewSubjectMatches(reviewedPackage, refreshedPackage) &&
-        reviewWasStampedForPackage(review, reviewedPackage),
-    )
-      ? stampPublishGateReviewStatusForPackage(review, refreshedPackage)
-      : review,
-  );
+  return independentReviews.map((review) => {
+    if (!reviewFinalSnapshotMatchesPreparedPackage(review, refreshedPackage)) return review;
+    const canRestamp =
+      review.source === 'dispatch' ||
+      review.source === 'human-gate' ||
+      reviewedPackages.some(
+        (reviewedPackage) =>
+          reviewedPackage &&
+          readyGateReviewSubjectMatches(reviewedPackage, refreshedPackage) &&
+          reviewWasStampedForPackage(review, reviewedPackage),
+      );
+    return canRestamp ? stampPublishGateReviewStatusForPackage(review, refreshedPackage) : review;
+  });
 }
 
 export async function refreshPublishPackage(params: {
@@ -180,6 +181,15 @@ export async function refreshPublishPackage(params: {
     params.publicationTarget === 'draft' || params.publicationTarget === 'ready'
       ? params.publicationTarget
       : (oldPayload.publicationTarget ?? oldPayload.prPackage?.publicationTarget ?? 'ready');
+  let slotAvailable = false;
+  if (run.slotId) {
+    try {
+      await loadSlotVars(run.slotId);
+      slotAvailable = true;
+    } catch (error) {
+      if (!(error instanceof SlotConfigError) || error.code !== 'SLOT_NOT_FOUND') throw error;
+    }
+  }
   let reviewDepthForRefresh = oldPayload.reviewDepth;
   if (oldPayload.reviewDepth?.requestedBy === 'human-gate') {
     const projectVars = await loadProjectVars(run.project);
@@ -190,7 +200,9 @@ export async function refreshPublishPackage(params: {
     );
   }
 
-  const diffStat = await getDiffStat(run);
+  // A refresh must describe the current HEAD, not the durable snapshot captured
+  // before later review-fix commits changed the contribution.
+  const diffStat = await getDiffStat(run, { fresh: true });
   const prepared = await prepareCompletionPackage(params.runId, {
     diffStat,
     publicationTarget: target,
@@ -198,8 +210,8 @@ export async function refreshPublishPackage(params: {
     selectedEvidenceKeys: selectedBefore,
     priorEvidenceManifest: oldPayload.prPackage?.evidenceManifest,
     stampReviews: false,
-    requireArtifactMirror: Boolean(run.slotId),
-    headSha: run.slotId ? undefined : oldPayload.prPackage?.headSha,
+    requireArtifactMirror: slotAvailable,
+    headSha: oldPayload.prPackage?.headSha,
   });
   const refreshedRun = getRun(params.runId)!;
   const prPackage = prepared.prPackage;

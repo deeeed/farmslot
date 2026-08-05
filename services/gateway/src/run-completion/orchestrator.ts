@@ -19,7 +19,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { execLocal } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
@@ -31,6 +31,10 @@ import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { extractRunnerSessionUsage } from '../runtime/session-usage.js';
+import {
+  captureCurrentReviewSnapshot,
+  unavailableReviewSnapshot,
+} from '../self-review/snapshots.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { refreshArtifactMirror } from './artifact-mirror.js';
@@ -348,14 +352,6 @@ async function snapshotHeadSha(run: Run): Promise<string | undefined> {
   }
 }
 
-async function requireSnapshotHeadSha(run: Run): Promise<string> {
-  const headSha = await snapshotHeadSha(run);
-  if (!headSha) {
-    throw new Error('Cannot prepare publishable PR package without a workspace HEAD SHA');
-  }
-  return headSha;
-}
-
 function preserveSelectedEvidenceKeys(
   selectedEvidenceKeys: string[] | undefined,
   evidenceManifest: ArtifactRef[],
@@ -516,7 +512,24 @@ export async function prepareCompletionPackage(
   );
   independentReviews = await augmentIndependentReviewAttemptsFromArtifacts(run, independentReviews);
   const target = options?.publicationTarget ?? defaultPublicationTarget(run);
-  const headSha = options?.headSha ?? (await requireSnapshotHeadSha(run));
+  // A live slot always wins. A persisted package HEAD is accepted only as the
+  // inspection identity fallback after that slot has been removed.
+  const headSha = (await snapshotHeadSha(run)) ?? options?.headSha;
+  if (!headSha) {
+    throw new Error('Cannot prepare publishable PR package without a workspace HEAD SHA');
+  }
+  let reviewSnapshot = unavailableReviewSnapshot('missing-slot');
+  if (run.slotId) {
+    let vars: Awaited<ReturnType<typeof loadSlotVars>> | null = null;
+    try {
+      vars = await loadSlotVars(run.slotId);
+    } catch (error) {
+      if (!(error instanceof SlotConfigError) || error.code !== 'SLOT_NOT_FOUND') throw error;
+      // A removed slot must not make the package impossible to inspect.
+      reviewSnapshot = unavailableReviewSnapshot('slot-load-error', (error as Error).message);
+    }
+    if (vars) reviewSnapshot = (await captureCurrentReviewSnapshot(vars)).snapshot;
+  }
   const branch = run.branch ?? before.branch ?? '';
   const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
   const artifactPath = 'artifacts/pr-package.json';
@@ -536,6 +549,7 @@ export async function prepareCompletionPackage(
     remoteBranchRef: branch ? `origin/${branch}` : null,
     headSha,
     diffStat: options?.diffStat ?? { files: 0, additions: 0, deletions: 0 },
+    reviewSnapshot,
     draftTitle: buildDraftPrTitle(run),
     draftBody: await buildDraftPrBody(run, report, draftBodyArtifacts),
     evidenceManifest,

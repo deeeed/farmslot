@@ -81,6 +81,8 @@ export interface PRForSlotParams {
 export interface PRForSlotResult {
   pr: number | null;
   repo: string | null;
+  /** Pull request base branch, or the project's configured default when no PR exists. */
+  baseRef: string;
 }
 export interface PRStatusResult {
   pr: PRStatus;

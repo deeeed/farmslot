@@ -99,6 +99,7 @@ export interface GitDiscardParams {
 }
 export interface GitStatusResult {
   branch: string;
+  headSha: string;
   ahead: number;
   behind: number;
   changes: GitChange[];
