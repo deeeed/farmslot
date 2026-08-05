@@ -2,8 +2,8 @@
 # post-review.sh — Format and post a review comment to a GitHub PR.
 #
 # Usage:
-#   bash scripts/post-review.sh --pr 27409 --repo example-org/example-mobile --slot runner-mobile-1
-#   bash scripts/post-review.sh --pr 27409 --repo example-org/example-mobile --slot runner-mobile-1 --task-dir .task/review/27409-0321-1105
+#   bash scripts/post-review.sh --pr 27409 --repo example-org/example-mobile --commit-id <sha> --slot runner-mobile-1
+#   bash scripts/post-review.sh --pr 27409 --repo example-org/example-mobile --commit-id <sha> --slot runner-mobile-1 --task-dir .task/review/27409-0321-1105
 #
 # Reads artifacts from the slot's repo:
 #   .task/<flow>/<id>/artifacts/review.md
@@ -23,6 +23,7 @@ POOL_DIR="${PROJECT_DIR}/pool"
 # ── Parse args ────────────────────────────────────────────────────
 PR_NUMBER=""
 GH_REPO=""
+REVIEW_COMMIT_ID=""
 SLOT_ID=""
 TASK_DIR_ON_WORKER=""
 DRY_RUN=false
@@ -42,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --run-id)            RUN_ID="$2"; shift 2 ;;
     --pr)                PR_NUMBER="$2"; shift 2 ;;
     --repo)              GH_REPO="$2"; shift 2 ;;
+    --commit-id)         REVIEW_COMMIT_ID="$2"; shift 2 ;;
     --slot)              SLOT_ID="$2"; shift 2 ;;
     --task-dir)          TASK_DIR_ON_WORKER="$2"; shift 2 ;;
     --recommendation)    OVERRIDE_RECOMMENDATION="$2"; shift 2 ;;
@@ -60,6 +62,8 @@ done
 
 [ -z "$PR_NUMBER" ] && { echo "ERROR: --pr required"; exit 1; }
 [ -z "$GH_REPO" ] && { echo "ERROR: --repo required"; exit 1; }
+[ -z "$REVIEW_COMMIT_ID" ] && { echo "ERROR: --commit-id required"; exit 1; }
+[[ "$REVIEW_COMMIT_ID" =~ ^[0-9a-fA-F]{7,40}$ ]] || { echo "ERROR: invalid --commit-id"; exit 1; }
 [ -z "$SLOT_ID" ] && { echo "ERROR: --slot required"; exit 1; }
 
 source "${SCRIPT_DIR}/lib/slot-common.sh"
@@ -476,7 +480,10 @@ if [ "$RECOMMENDATION" = "APPROVE" ]; then
   echo "Submitting APPROVE review event..."
   unset GH_TOKEN
   APPROVE_OUTPUT=""
-  if APPROVE_OUTPUT=$(gh pr review "$PR_NUMBER" --repo "$GH_REPO" --approve --body "Automated review — see comment above for full details." 2>&1); then
+  if APPROVE_OUTPUT=$(gh api --method POST "repos/${GH_REPO}/pulls/${PR_NUMBER}/reviews" \
+    -f "body=Automated review — see comment above for full details." \
+    -f "event=APPROVE" \
+    -f "commit_id=${REVIEW_COMMIT_ID}" 2>&1); then
     echo "APPROVE submitted."
   elif echo "$APPROVE_OUTPUT" | grep -Eiq 'can ?not approve your own pull request|cannot approve your own pull request'; then
     echo "$APPROVE_OUTPUT" >&2
@@ -488,7 +495,10 @@ if [ "$RECOMMENDATION" = "APPROVE" ]; then
 elif [ "$RECOMMENDATION" = "REQUEST_CHANGES" ]; then
   echo "Submitting REQUEST_CHANGES review event..."
   unset GH_TOKEN
-  gh pr review "$PR_NUMBER" --repo "$GH_REPO" --request-changes --body "Automated review — see comment above for full details."
+  gh api --method POST "repos/${GH_REPO}/pulls/${PR_NUMBER}/reviews" \
+    -f "body=Automated review — see comment above for full details." \
+    -f "event=REQUEST_CHANGES" \
+    -f "commit_id=${REVIEW_COMMIT_ID}" >/dev/null
   echo "REQUEST_CHANGES submitted."
 fi
 

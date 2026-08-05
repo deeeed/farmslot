@@ -160,8 +160,8 @@ mock.module('../core/exec.js', {
         if (cmd.includes(' -l ')) {
           callOrder.push('tmux:send-literal');
           if (paneTextAfterLiteralSend !== null) paneText = paneTextAfterLiteralSend;
-        } else {
-          if (paneTextAfterBareSend !== null) paneText = paneTextAfterBareSend;
+        } else if (paneTextAfterBareSend !== null) {
+          paneText = paneTextAfterBareSend;
         }
         return { exitCode: 0, stdout: '', stderr: '' };
       }

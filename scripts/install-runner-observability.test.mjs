@@ -612,6 +612,22 @@ test('codex install preserves multiline arrays inside the features section', () 
   assert.match(content, /\[operator\]\nname = "arthur"/);
 });
 
+test('codex install does not treat nested multiline array values as TOML sections', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-nested-array-'));
+  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repo, '.agent', 'codex-home', 'config.toml'),
+    '[features]\nmodels = [\n  ["alpha"],\n  ["beta"]\n]\nhooks = false\n\n[operator]\nname = "arthur"\n',
+  );
+
+  installToTempDir('codex', repo);
+
+  const content = fs.readFileSync(path.join(repo, '.agent', 'codex-home', 'config.toml'), 'utf8');
+  assert.match(content, /models = \[\n {2}\["alpha"\],\n {2}\["beta"\]\n\]/);
+  assert.match(content, /hooks = true/);
+  assert.match(content, /\[operator\]\nname = "arthur"/);
+});
+
 test('codex install rebinds auth.json symlink from account A to B without touching source files', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-auth-rebind-'));
   const accountA = path.join(repo, 'accounts', 'a', 'auth.json');

@@ -16,7 +16,7 @@ import {
 } from '@farmslot/protocol';
 
 import { farmslotRoot, getProjectField, resolveProjectTaskDirName } from '../core/config.js';
-import { fetchGitHubPR, fetchPRDiffFiles, markPRFilesViewed } from '../external/github.js';
+import { fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import { auditEvidenceQuality } from '../intelligence/engine.js';
@@ -354,6 +354,8 @@ export async function executeReviewGate(runId: string): Promise<void> {
       String(prNumber),
       '--repo',
       ciRepo,
+      '--commit-id',
+      reviewSnapshot.headSha,
       '--slot',
       current.slotId!,
       '--skip-session-usage',
@@ -422,9 +424,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
         detail: `Posting comments 0/${commentsToPost.length}...`,
       });
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-      const headSha = (
-        await ghRequest(['api', `repos/${ciRepo}/pulls/${prNumber}`, '--jq', '.head.sha'])
-      ).stdout.trim();
+      const headSha = reviewSnapshot.headSha;
 
       if (headSha) {
         let posted = 0;
@@ -475,26 +475,13 @@ export async function executeReviewGate(runId: string): Promise<void> {
       }
     }
 
-    // A published full review covered the current PR head (checked above), so
-    // mirror that completion in GitHub's Files changed view. GitHub will
-    // automatically unmark a file if a later commit changes it.
+    // The formal review and inline comments were pinned to the reviewed commit.
+    // A concurrent push makes that review outdated, but must not turn the
+    // already-successful publication into a replay that double-posts it.
     const confirmedPr = await fetchGitHubPR(`${ciRepo}#${prNumber}`);
-    assertReviewSnapshotMatchesPullRequest(reviewSnapshot, confirmedPr.headSha);
-    try {
-      const viewedFiles = await fetchPRDiffFiles(ciRepo, prNumber);
-      const viewed = await markPRFilesViewed(
-        ciRepo,
-        prNumber,
-        viewedFiles.map((file) => file.filename),
-      );
-      console.log(
-        `[run-engine] run ${runId.slice(0, 8)} — marked ${viewed} reviewed file(s) viewed`,
-      );
-    } catch (err) {
-      // Review publication already succeeded; keep GitHub's secondary viewed
-      // state visible as a warning without turning the run into a false failure.
+    if (confirmedPr.headSha !== reviewSnapshot.headSha) {
       console.warn(
-        `[run-engine] mark reviewed files viewed failed (non-fatal): ${(err as Error).message.slice(0, 200)}`,
+        `[run-engine] run ${runId.slice(0, 8)} — review posted for ${reviewSnapshot.headSha.slice(0, 7)}, but PR advanced to ${confirmedPr.headSha?.slice(0, 7) ?? 'unknown'}`,
       );
     }
 

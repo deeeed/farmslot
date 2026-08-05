@@ -272,10 +272,7 @@ async function slotPrepareInner(
     );
     const installerPath = 'scripts/install-runner-observability.mjs';
     const supportPaths = hookSupportPaths.some(
-      (supportPath) =>
-        supportPath === installerPath ||
-        supportPath === 'scripts' ||
-        installerPath.startsWith(`${supportPath}/`),
+      (supportPath) => supportPath === installerPath || installerPath.startsWith(`${supportPath}/`),
     )
       ? hookSupportPaths
       : [...hookSupportPaths, installerPath].sort();

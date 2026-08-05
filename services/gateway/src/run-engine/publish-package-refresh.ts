@@ -11,7 +11,7 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
 import {
   effectiveRequiredReviewCount,
   independentReviewPolicySatisfied,
@@ -183,9 +183,12 @@ export async function refreshPublishPackage(params: {
       : (oldPayload.publicationTarget ?? oldPayload.prPackage?.publicationTarget ?? 'ready');
   let slotAvailable = false;
   if (run.slotId) {
-    slotAvailable = await loadSlotVars(run.slotId)
-      .then(() => true)
-      .catch(() => false);
+    try {
+      await loadSlotVars(run.slotId);
+      slotAvailable = true;
+    } catch (error) {
+      if (!(error instanceof SlotConfigError) || error.code !== 'SLOT_NOT_FOUND') throw error;
+    }
   }
   let reviewDepthForRefresh = oldPayload.reviewDepth;
   if (oldPayload.reviewDepth?.requestedBy === 'human-gate') {

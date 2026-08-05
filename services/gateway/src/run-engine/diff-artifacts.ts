@@ -102,7 +102,7 @@ export function resolveReviewInputCaptureTimeoutMs(
   if (raw > REVIEW_INPUT_CAPTURE_TIMEOUT_MAX_MS) return REVIEW_INPUT_CAPTURE_TIMEOUT_MAX_MS;
   return raw;
 }
-const GIT_DIFF_NO_QUOTE_PATH = 'git -c core.quotePath=false diff';
+const GIT_DIFF_NO_QUOTE_PATH = 'git -c core.quotePath=false diff --binary';
 // Sentinel exit code returned by `cappedGitDiffCommand`'s bash script when the
 // captured diff exceeds MAX_DIFF_ARTIFACT_BYTES. 42 is chosen to avoid clashing
 // with git's documented exit codes (0=no-diff, 1=diff, 128=error) and the
@@ -112,6 +112,7 @@ const DIFF_ARTIFACT_EXEC_MAX_BUFFER = MAX_DIFF_ARTIFACT_BYTES + 5 * 1024 * 1024;
 const UNAVAILABLE_DIFF_RECAPTURE_COOLDOWN_MS = 60_000;
 const REVIEW_INPUT_CAPTURE_REUSE_WINDOW_MS = 60_000;
 const REUSABLE_UNAVAILABLE_DIFF_REASONS = new Set(['diff-artifact-too-large']);
+const PRESERVE_DURABLE_DIFF_ON_REFRESH_REASONS = new Set(['slot-vars-unavailable', 'missing-slot']);
 const runArtifactMutationTails = new Map<string, Promise<void>>();
 
 function withRunArtifactMutation<T>(runId: string, fn: () => Promise<T>): Promise<T> {
@@ -143,6 +144,10 @@ function readProjectSourceDiffFilterConfig(
 
 function buildProjectSourceDiffFilter(projectJson: RawProjectJson | null): SourceDiffFilter {
   return buildSourceDiffFilter(projectJson ? readProjectSourceDiffFilterConfig(projectJson) : {});
+}
+
+export function projectSourceDiffPathspecs(projectJson: RawProjectJson | null): string[] {
+  return sourceCodeGitPathspecs(buildProjectSourceDiffFilter(projectJson));
 }
 
 function unavailableDiff(
@@ -395,19 +400,19 @@ export function runSourceDiffUntrackedManifestCommand(pathspecs: readonly string
     'if [ -s "$regular" ]; then xargs -0 git hash-object --no-filters -- < "$regular" > "$hashes"; fi',
     'exec 3< "$hashes"',
     "while IFS= read -r -d '' file; do",
-    '  if [ -L "$file" ]; then',
-    '    mode=120000',
-    '    target=$(readlink "$file")',
-    '    blob=$(printf \'%s\' "$target" | git hash-object --stdin)',
-    '  elif [ -f "$file" ]; then',
+    '  [ -f "$file" ] && [ ! -L "$file" ] || exit 1',
     // The snapshot certifies the executable bit from the checked-out
     // filesystem, matching the exact file identity the worker reviewed.
-    '    if [ -x "$file" ]; then mode=100755; else mode=100644; fi',
-    '    IFS= read -r blob <&3',
-    '  else',
-    '    continue',
-    '  fi',
+    '  if [ -x "$file" ]; then mode=100755; else mode=100644; fi',
+    '  IFS= read -r blob <&3 || exit 1',
     '  printf \'%s\\0%s\\0%s\\0\' "$mode" "$blob" "$file"',
+    'done < "$regular"',
+    "while IFS= read -r -d '' file; do",
+    '  [ -L "$file" ] || continue',
+    // Command substitution cannot preserve trailing newlines in a symlink
+    // target. Stream the raw bytes from Node directly into git instead.
+    '  blob=$(node -e \'const fs = require("node:fs"); process.stdout.write(fs.readlinkSync(process.argv[1], { encoding: "buffer" }))\' -- "$file" | git hash-object --stdin)',
+    '  printf \'120000\\0%s\\0%s\\0\' "$blob" "$file"',
     'done < "$untracked"',
   ].join('\n');
   return `bash -c ${shellQuote(script)}`;
@@ -699,13 +704,19 @@ async function captureRunDiffArtifactsUnlocked(
   run: Run,
   options: { forceRecapture?: boolean },
 ): Promise<FamilyDiffProvenance> {
-  const existingState = options.forceRecapture
-    ? null
-    : await readRunDiffArtifactState(run.taskFile, diffKindForFlow(run.flowType));
+  const durableState = await readRunDiffArtifactState(run.taskFile, diffKindForFlow(run.flowType));
+  const existingState = options.forceRecapture ? null : durableState;
   const existingIterationState = await readIterationDiffArtifactState(run.taskFile);
-  const snapshot = existingState?.reuse
+  const capturedSnapshot = existingState?.reuse
     ? existingState.provenance
     : await captureRunDiffSnapshot(run);
+  const preserveDurableSnapshot =
+    options.forceRecapture === true &&
+    durableState?.provenance.source === 'artifact' &&
+    durableState.provenance.available &&
+    capturedSnapshot.source === 'unavailable' &&
+    PRESERVE_DURABLE_DIFF_ON_REFRESH_REASONS.has(capturedSnapshot.missingReason ?? '');
+  const snapshot = preserveDurableSnapshot ? durableState.provenance : capturedSnapshot;
   const dispatchHead = run.worktreeHeadAtDispatch?.trim();
   let iterationSnapshot: (FamilyDiffProvenance & { diffText?: string }) | null = null;
   if (dispatchHead && !existingIterationState?.reuse) {
@@ -720,7 +731,7 @@ async function captureRunDiffArtifactsUnlocked(
   const taskDir = path.dirname(run.taskFile);
   const artifactsDir = path.join(taskDir, 'artifacts');
   await mkdir(artifactsDir, { recursive: true });
-  if (!existingState?.reuse) {
+  if (!existingState?.reuse && !preserveDurableSnapshot) {
     await writeDiffArtifactPair(artifactsDir, 'diff', snapshot);
   }
   if (iterationSnapshot) {

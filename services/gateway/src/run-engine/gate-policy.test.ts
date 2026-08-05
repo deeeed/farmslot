@@ -246,6 +246,38 @@ test('staleReviewsAreEvidenceOnly is false when reviewed HEAD differs (code chan
   assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), false);
 });
 
+test('staleReviewsAreEvidenceOnly is false for same-HEAD diff drift', () => {
+  const preparedPackage = makeReadyGatePackage({
+    headSha: 'abc1234',
+    reviewSubjectHash: 'subject-new',
+    reviewSnapshot: {
+      source: 'local-git',
+      baseRef: 'origin/main',
+      baseSha: 'base-new',
+      headSha: 'abc1234',
+      diffHash: 'diff-new',
+      diffStat: { files: 1, additions: 2, deletions: 1 },
+      capturedAt: '2026-08-06T00:00:00.000Z',
+    },
+  });
+  const reviews = [
+    makeApprovingReview({
+      reviewedHeadSha: 'abc1234',
+      reviewedReviewSubjectHash: 'subject-old',
+      reviewSnapshot: {
+        source: 'local-git',
+        baseRef: 'origin/main',
+        baseSha: 'base-old',
+        headSha: 'abc1234',
+        diffHash: 'diff-old',
+        diffStat: { files: 1, additions: 2, deletions: 1 },
+        capturedAt: '2026-08-05T00:00:00.000Z',
+      },
+    }),
+  ];
+  assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), false);
+});
+
 test('staleReviewsAreEvidenceOnly is false when no stale approving review exists', () => {
   const preparedPackage = makeReadyGatePackage({
     headSha: 'abc1234',

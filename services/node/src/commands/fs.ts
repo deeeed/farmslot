@@ -219,11 +219,7 @@ export async function fsStat(
   // This is a metadata probe, not an acting read. lstat preserves the old
   // ability to inspect unreadable entries while avoiding symlink traversal.
   const info = await lstat(target);
-  return {
-    size: info.size,
-    isFile: info.isFile(),
-    isDirectory: info.isDirectory(),
-  };
+  return { size: info.size, isFile: info.isFile(), isDirectory: info.isDirectory() };
 }
 
 export async function fsRealpath(params: NodeFsPathParams): Promise<{ path: string }> {

@@ -138,49 +138,6 @@ export interface PRDiffFile {
   patch?: string;
 }
 
-/** Mark every file returned by GitHub for the published PR review as viewed. */
-export async function markPRFilesViewed(
-  repo: string,
-  prNumber: number,
-  paths: string[],
-  opts?: GhRequestOpts,
-): Promise<number> {
-  const uniquePaths = [...new Set(paths.filter(Boolean))];
-  if (uniquePaths.length === 0) return 0;
-
-  const pull = await ghRequest(
-    ['api', `repos/${repo}/pulls/${prNumber}`, '--jq', '.node_id'],
-    opts,
-  );
-  const pullRequestId = pull.stdout.trim();
-  if (!pullRequestId) throw new Error(`GitHub PR ${repo}#${prNumber} has no node id`);
-
-  const batchSize = 25;
-  for (let offset = 0; offset < uniquePaths.length; offset += batchSize) {
-    const batch = uniquePaths.slice(offset, offset + batchSize);
-    const declarations = batch.map((_, index) => `$path${index}: String!`).join(', ');
-    const mutations = batch
-      .map(
-        (_, index) =>
-          `file${index}: markFileAsViewed(input: {pullRequestId: $pullRequestId, path: $path${index}}) { clientMutationId }`,
-      )
-      .join('\n');
-    const args = [
-      'api',
-      'graphql',
-      '-f',
-      `query=mutation($pullRequestId: ID!, ${declarations}) { ${mutations} }`,
-      '-f',
-      `pullRequestId=${pullRequestId}`,
-    ];
-    for (let index = 0; index < batch.length; index += 1) {
-      args.push('-f', `path${index}=${batch[index]}`);
-    }
-    await ghRequest(args, { ...opts, force: true });
-  }
-  return uniquePaths.length;
-}
-
 export async function fetchPRDiffFiles(
   repo: string,
   prNumber: number,

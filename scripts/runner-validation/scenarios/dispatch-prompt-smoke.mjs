@@ -90,6 +90,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       );
       report.hookEvents = hookRows.map((row) => row.hook_event_name || row.event).filter(Boolean);
       report.responseCompleted = report.hookEvents.includes('Stop');
+      pane = capturePane(paneId, 80);
     } else {
       const deadline = Date.now() + 30_000;
       while (Date.now() < deadline) {

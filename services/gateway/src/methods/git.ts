@@ -69,6 +69,39 @@ const VALID_STATUSES: GitChangeStatus[] = ['M', 'A', 'D', '?', 'R'];
 const BASE_REFRESH_TTL_MS = 15_000;
 const baseRefreshCache = new Map<string, { expiresAt: number; refresh: Promise<void> }>();
 
+export async function refreshRemoteBaseRef(
+  slotId: string,
+  remoteRef: string,
+  deps: GitExecDeps = {},
+): Promise<void> {
+  const branch = remoteRef.startsWith('origin/') ? remoteRef.slice('origin/'.length) : remoteRef;
+  const refreshBase = () =>
+    gitExec(
+      slotId,
+      ['fetch', '--no-tags', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`],
+      undefined,
+      deps,
+    ).then(() => undefined);
+  if (Object.keys(deps).length > 0) {
+    await refreshBase();
+    return;
+  }
+
+  const now = Date.now();
+  for (const [key, cached] of baseRefreshCache) {
+    if (cached.expiresAt <= now) baseRefreshCache.delete(key);
+  }
+  const cacheKey = `${slotId}:origin/${branch}`;
+  const cached = baseRefreshCache.get(cacheKey);
+  if (cached) {
+    await cached.refresh;
+    return;
+  }
+  const refresh = refreshBase();
+  baseRefreshCache.set(cacheKey, { expiresAt: now + BASE_REFRESH_TTL_MS, refresh });
+  await refresh;
+}
+
 function toStatus(char: string): GitChangeStatus {
   return VALID_STATUSES.includes(char as GitChangeStatus) ? (char as GitChangeStatus) : 'M';
 }
@@ -158,32 +191,9 @@ async function resolveRemoteBaseRef(
   if (options.refresh) {
     // Branch inventory refreshes the PR base once. Per-file diff reads reuse
     // that ref instead of multiplying network fetches across an opened tree.
-    const fetchBase = () =>
-      gitExec(
-        slotId,
-        ['fetch', '--no-tags', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`],
-        undefined,
-        deps,
-      )
-        .then(() => undefined)
-        .catch(() => undefined);
-    if (Object.keys(deps).length > 0) {
-      await fetchBase();
-    } else {
-      const now = Date.now();
-      for (const [key, cached] of baseRefreshCache) {
-        if (cached.expiresAt <= now) baseRefreshCache.delete(key);
-      }
-      const cacheKey = `${slotId}:${remoteRef}`;
-      const cached = baseRefreshCache.get(cacheKey);
-      if (cached) {
-        await cached.refresh;
-      } else {
-        const refresh = fetchBase();
-        baseRefreshCache.set(cacheKey, { expiresAt: now + BASE_REFRESH_TTL_MS, refresh });
-        await refresh;
-      }
-    }
+    // A missing network refresh is non-fatal when the remote-tracking ref is
+    // already available; the verification/fallback below remains authoritative.
+    await refreshRemoteBaseRef(slotId, remoteRef, deps).catch(() => undefined);
   }
   try {
     await gitExec(slotId, ['rev-parse', '--verify', remoteRef], undefined, deps);

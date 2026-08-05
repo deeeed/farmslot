@@ -62,6 +62,15 @@ const RESOURCE_POLL_CONCURRENCY = 4;
 let pollAllInFlight = false;
 const warnedUnconfiguredResources = new Map<string, string>();
 
+export function purgeRemovedSlotWarnings(
+  warnings: Map<string, string>,
+  activeSlotIds: ReadonlySet<string>,
+): void {
+  for (const slotId of warnings.keys()) {
+    if (!activeSlotIds.has(slotId)) warnings.delete(slotId);
+  }
+}
+
 // Track which machines have active resource watches
 const activeWatchMachines = new Set<string>();
 const resourceWatchStateFile =
@@ -667,6 +676,7 @@ async function pollAllResources(): Promise<void> {
   try {
     const fleet = await loadFleetStatus();
     const slotIds = fleet.slots.map((s) => s.slot);
+    purgeRemovedSlotWarnings(warnedUnconfiguredResources, new Set(slotIds));
     const failures: string[] = [];
     await mapWithConcurrency(slotIds, RESOURCE_POLL_CONCURRENCY, async (id) => {
       try {

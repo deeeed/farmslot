@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { exec as execCallback } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmod,
   mkdir,
@@ -38,6 +39,7 @@ test('untracked manifest command captures empty files, executable mode, and dang
   await writeFile(path.join(dir, 'empty file.ts'), '');
   await chmod(path.join(dir, 'empty file.ts'), 0o755);
   await symlink('missing-target', path.join(dir, 'dangling-link'));
+  await symlink('target-with-newline\n', path.join(dir, '-leading-link'));
 
   const { stdout } = await exec(runSourceDiffUntrackedManifestCommand([]), { cwd: dir });
   const fields = stdout.split('\0').slice(0, -1);
@@ -46,18 +48,27 @@ test('untracked manifest command captures empty files, executable mode, and dang
     files.push({ mode: fields[index], blobSha: fields[index + 1], path: fields[index + 2] });
   }
 
-  assert.deepEqual(files, [
-    {
-      mode: '120000',
-      blobSha: '2050c51309015cf65b86e480b4d354ff82237eb7',
-      path: 'dangling-link',
-    },
-    {
-      mode: '100755',
-      blobSha: 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391',
-      path: 'empty file.ts',
-    },
-  ]);
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  assert.deepEqual(byPath.get('dangling-link'), {
+    mode: '120000',
+    blobSha: '2050c51309015cf65b86e480b4d354ff82237eb7',
+    path: 'dangling-link',
+  });
+  assert.deepEqual(byPath.get('empty file.ts'), {
+    mode: '100755',
+    blobSha: 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391',
+    path: 'empty file.ts',
+  });
+  const newlineTarget = Buffer.from('target-with-newline\n');
+  const newlineBlobSha = createHash('sha1')
+    .update(`blob ${newlineTarget.length}\0`)
+    .update(newlineTarget)
+    .digest('hex');
+  assert.deepEqual(byPath.get('-leading-link'), {
+    mode: '120000',
+    blobSha: newlineBlobSha,
+    path: '-leading-link',
+  });
 
   await chmod(path.join(dir, 'empty file.ts'), 0o644);
   const second = await exec(runSourceDiffUntrackedManifestCommand([]), { cwd: dir });
@@ -532,7 +543,7 @@ test('captureRunDiffArtifacts preserves an existing durable diff snapshot', asyn
   assert.equal(await readFile(path.join(artifactsDir, 'diff.txt'), 'utf-8'), 'original diff');
 });
 
-test('captureRunDiffArtifacts can bypass a durable snapshot for a publication refresh', async () => {
+test('publication refresh preserves a durable diff when its slot was removed', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'run-diff-artifacts-force-refresh-'));
   const artifactsDir = path.join(dir, 'artifacts');
   await mkdir(artifactsDir, { recursive: true });
@@ -561,15 +572,18 @@ test('captureRunDiffArtifacts can bypass a durable snapshot for a publication re
     { forceRecapture: true },
   );
 
-  assert.equal(result.source, 'unavailable');
-  assert.equal(result.missingReason, 'slot-vars-unavailable');
-  assert.equal(result.files, 0);
+  assert.equal(result.source, 'artifact');
+  assert.equal(result.files, 1);
+  assert.equal(result.additions, 2);
+  assert.equal(result.deletions, 3);
   const persisted = JSON.parse(await readFile(path.join(artifactsDir, 'diff-stat.json'), 'utf-8'));
-  assert.equal(persisted.missingReason, 'slot-vars-unavailable');
+  assert.equal(persisted.source, 'artifact');
+  assert.equal(persisted.files, 1);
   assert.equal(
     (await readdir(artifactsDir)).some((name) => name.startsWith('diff.txt.previous.')),
-    true,
+    false,
   );
+  assert.equal(await readFile(path.join(artifactsDir, 'diff.txt'), 'utf-8'), 'stale diff');
 });
 
 test('captureRunDiffArtifacts captures iteration diff when contribution diff is reused', async () => {

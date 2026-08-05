@@ -500,7 +500,9 @@ export async function restoreTmuxWorker(
       },
     )}`;
     await respawnTmuxWindowWithCommand(vars, nextTarget.target, launchCommand, {
-      preserveWindowAfterExit: selected.role !== 'self-review',
+      // Retained review panes preserve the exact runner transcript just like a
+      // freshly launched self-review pane; later cleanup owns their teardown.
+      preserveWindowAfterExit: true,
     });
     await new Promise((resolve) => setTimeout(resolve, TMUX_WINDOW_RESPAWN_SETTLE_MS));
     const livePane = await waitForRunnerAliveInTarget(vars, ref.session, nextTarget.target, runner);

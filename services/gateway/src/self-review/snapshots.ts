@@ -16,8 +16,10 @@ import {
   writeLargeTextFileOnSlot,
   writeTextFileOnSlot,
 } from '../methods/dispatch/slot-file-write.js';
+import { refreshRemoteBaseRef } from '../methods/git.js';
 import {
   cappedRunSourceDiffCommand,
+  projectSourceDiffPathspecs,
   runSourceDiffNumstatCommand,
   runSourceDiffUntrackedManifestCommand,
 } from '../run-engine/diff-artifacts.js';
@@ -71,11 +73,13 @@ export function parseUntrackedFileManifest(text: string): UntrackedReviewFile[] 
       !/^[0-9a-f]{40,64}$/i.test(blobSha) ||
       !filePath
     ) {
-      continue;
+      throw new Error(`Invalid untracked review manifest entry at field ${index}`);
     }
     files.push({ path: filePath, blobSha, mode });
   }
-  return files.sort((left, right) => left.path.localeCompare(right.path));
+  return files.sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+  );
 }
 
 export function reviewSnapshotIdentityText(
@@ -166,13 +170,15 @@ export function preferredRemoteReviewBaseRef(baseRef: string): string | null {
   return `origin/${normalized}`;
 }
 
-async function resolveReviewBaseRef(
+async function resolveReviewContext(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
-): Promise<string> {
+): Promise<{ baseRef: string; pathspecs: string[] }> {
   let configuredBaseRef = 'main';
+  let pathspecs = projectSourceDiffPathspecs(null);
   try {
     const pv = await loadProjectVars(vars.projectName);
     configuredBaseRef = getProjectField(pv.projectJson, 'default_branch') || 'main';
+    pathspecs = projectSourceDiffPathspecs(pv.projectJson);
   } catch (err) {
     debugSelfReviewLog(
       `[self-review] defaulting review base ref to main after project lookup failed: ${(err as Error).message}`,
@@ -180,25 +186,28 @@ async function resolveReviewBaseRef(
   }
 
   const remoteBaseRef = preferredRemoteReviewBaseRef(configuredBaseRef);
-  if (!remoteBaseRef) return configuredBaseRef;
+  if (!remoteBaseRef) return { baseRef: configuredBaseRef, pathspecs };
   const branch = remoteBaseRef.slice('origin/'.length);
-  await execOnSlot(
-    vars,
-    `git fetch --no-tags origin ${shellQuote(`refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
-    { timeout: 15_000 },
-  ).catch(() => undefined);
+  try {
+    await refreshRemoteBaseRef(vars.slotId, remoteBaseRef);
+  } catch (err) {
+    // Offline slots may still have a valid remote-tracking or local base ref.
+    debugSelfReviewLog(
+      `[self-review] base refresh failed for ${vars.slotId}/${remoteBaseRef}: ${(err as Error).message}`,
+    );
+  }
   const remoteAvailable = await execOnSlot(
     vars,
     `git rev-parse --verify ${shellQuote(remoteBaseRef)} 2>/dev/null`,
     { timeout: 10_000 },
   );
-  if (remoteAvailable.exitCode === 0) return remoteBaseRef;
+  if (remoteAvailable.exitCode === 0) return { baseRef: remoteBaseRef, pathspecs };
   const localAvailable = await execOnSlot(
     vars,
     `git rev-parse --verify ${shellQuote(branch)} 2>/dev/null`,
     { timeout: 10_000 },
   );
-  if (localAvailable.exitCode === 0) return branch;
+  if (localAvailable.exitCode === 0) return { baseRef: branch, pathspecs };
   throw new Error(`review base ${remoteBaseRef} is unavailable after refresh`);
 }
 
@@ -206,7 +215,7 @@ export async function captureCurrentReviewSnapshot(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
 ): Promise<{ snapshot: ReviewDiffSnapshot; diffText?: string }> {
   try {
-    const baseRef = await resolveReviewBaseRef(vars);
+    const { baseRef, pathspecs } = await resolveReviewContext(vars);
     const headResult = await execOnSlot(vars, 'git rev-parse HEAD', { timeout: 10_000 });
     if (headResult.exitCode !== 0) {
       return {
@@ -235,7 +244,7 @@ export async function captureCurrentReviewSnapshot(
       { timeout: 10_000 },
     );
     const baseSha = baseResult.stdout.trim().split('\n').at(-1)?.trim() ?? '';
-    const numstat = await execOnSlot(vars, runSourceDiffNumstatCommand(baseSha, []), {
+    const numstat = await execOnSlot(vars, runSourceDiffNumstatCommand(baseSha, pathspecs), {
       timeout: 10_000,
     });
     if (numstat.exitCode !== 0) {
@@ -243,7 +252,7 @@ export async function captureCurrentReviewSnapshot(
         snapshot: unavailableReviewSnapshot('git-numstat-failed', numstat.stderr || numstat.stdout),
       };
     }
-    const diff = await execOnSlot(vars, cappedRunSourceDiffCommand(baseSha, []), {
+    const diff = await execOnSlot(vars, cappedRunSourceDiffCommand(baseSha, pathspecs), {
       timeout: 30_000,
       maxBuffer: REVIEW_DIFF_MAX_BUFFER,
     });
@@ -255,9 +264,11 @@ export async function captureCurrentReviewSnapshot(
         ),
       };
     }
-    const untrackedManifest = await execOnSlot(vars, runSourceDiffUntrackedManifestCommand([]), {
-      timeout: 10_000,
-    });
+    const untrackedManifest = await execOnSlot(
+      vars,
+      runSourceDiffUntrackedManifestCommand(pathspecs),
+      { timeout: 10_000 },
+    );
     if (untrackedManifest.exitCode !== 0) {
       return {
         snapshot: unavailableReviewSnapshot(
@@ -363,9 +374,10 @@ export async function captureFixDeltaSnapshot(
       return { snapshot, artifactPaths: [statRel] };
     }
     const fixHeadSha = headResult.stdout.trim();
+    const { pathspecs } = await resolveReviewContext(vars);
     // Use base-to-worktree, not base..HEAD, so a self-review fix pass that
     // leaves changes uncommitted still has a useful delta artifact.
-    const numstat = await execOnSlot(vars, runSourceDiffNumstatCommand(fixBaseSha, []), {
+    const numstat = await execOnSlot(vars, runSourceDiffNumstatCommand(fixBaseSha, pathspecs), {
       timeout: 10_000,
     });
     if (numstat.exitCode !== 0) {
@@ -377,7 +389,7 @@ export async function captureFixDeltaSnapshot(
       await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
       return { snapshot, artifactPaths: [statRel] };
     }
-    const diff = await execOnSlot(vars, cappedRunSourceDiffCommand(fixBaseSha, []), {
+    const diff = await execOnSlot(vars, cappedRunSourceDiffCommand(fixBaseSha, pathspecs), {
       timeout: 30_000,
       maxBuffer: REVIEW_DIFF_MAX_BUFFER,
     });
@@ -393,9 +405,11 @@ export async function captureFixDeltaSnapshot(
       await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
       return { snapshot, artifactPaths: [statRel] };
     }
-    const untrackedManifest = await execOnSlot(vars, runSourceDiffUntrackedManifestCommand([]), {
-      timeout: 10_000,
-    });
+    const untrackedManifest = await execOnSlot(
+      vars,
+      runSourceDiffUntrackedManifestCommand(pathspecs),
+      { timeout: 10_000 },
+    );
     if (untrackedManifest.exitCode !== 0) {
       const snapshot: ReviewFixDeltaSnapshot = {
         ...unavailableReviewSnapshot(
