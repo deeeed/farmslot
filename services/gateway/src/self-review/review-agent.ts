@@ -749,7 +749,9 @@ export async function runReviewAgent(
     ): Promise<void> => {
       const handoffAckSinceMs = Date.now();
       debugSelfReviewLog(`[self-review] launching (${runner}) via respawn-window: ${launchCmd}`);
-      await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd);
+      await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd, {
+        preserveWindowAfterExit: true,
+      });
       await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
       sessionMeta = await bestEffortCaptureRunnerSessionMetadata(
         vars,

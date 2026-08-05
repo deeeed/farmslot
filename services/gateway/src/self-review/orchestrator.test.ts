@@ -10,6 +10,7 @@ import {
   resumeSelfReviewFixPromptDelivery,
   retryDeferredFixDelivery,
   runSelfReviewRetryLoop,
+  SelfReviewFixDeliveryError,
   type SelfReviewRetryDeps,
   shouldSkipForDisabledSelfReviewConfig,
 } from './orchestrator.js';
@@ -342,6 +343,45 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
   assert.equal(delivered, true);
 });
 
+test('restart recovery requests a fresh worker after an unacknowledged retained handoff', async () => {
+  const run = {
+    id: 'run-1',
+    project: 'farmslot-farm',
+    flowType: 'fix-bug',
+    metrics: { runner: 'claude', model: 'opus' },
+    agentContexts: [],
+  };
+  const result = await resumeSelfReviewFixPromptDelivery(
+    { remoteRepo: '/repo', projectName: 'farmslot-farm' } as never,
+    'run-1',
+    {
+      id: 'self-review-fix',
+      runner: 'claude',
+      model: 'opus',
+      taskFile: 'tasks/run-1/SELF-REVIEW-FIX.md',
+      signalFile: 'tasks/run-1/SELF-REVIEW-FIX-SIGNAL.json',
+      target: { session: 'ff-1', window: 'bugfix', target: 'ff-1:bugfix' },
+      attemptStartedAt: '2026-08-04T08:15:00.000Z',
+    },
+    {
+      getRun: (() => run) as never,
+      resolvePrompt: async () => 'read fix task',
+      resolveRuntimeDir: async () => '.sandbox/farmslot-farm/agent',
+      readLaunchAck: async () => null,
+      ensureTarget: async () => 'ff-1:bugfix',
+      persistTarget: async () => {},
+      deliver: async () => ({
+        delivered: false,
+        disposition: 'hold',
+        reason: 'prompt was not acknowledged',
+        retryable: false,
+      }),
+    },
+  );
+
+  assert.equal(result, 'relaunch-required');
+});
+
 test('resolveSelfReviewRunnerModel keeps self-review on the worker runner by default', () => {
   assert.deepEqual(
     resolveSelfReviewRunnerModel('cursor', 'composer-2.5', { runner: 'same', model: 'opus' }, {}),
@@ -395,6 +435,8 @@ interface ScriptedDepsOptions {
   relaunchOk?: boolean;
   fixSignals?: Array<WorkerSignal | undefined>; // undefined = timeout
   contextPct?: number | null; // omitted = dep not wired (legacy behavior)
+  feedbackError?: string;
+  feedbackErrors?: Array<Error | undefined>;
 }
 
 interface CallLog {
@@ -429,11 +471,16 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
       calls.relaunches += 1;
       return opts.relaunchOk ?? true;
     },
+    resumeFixPromptDelivery: async () => 'delivered',
+    capturePromptAcceptanceBaseline: async () => Date.now(),
     ...(opts.contextPct !== undefined
       ? { getWorkerContextPct: async () => opts.contextPct ?? null }
       : {}),
     sendFeedbackToWorker: async () => {
       calls.sendFeedback += 1;
+      const scriptedError = opts.feedbackErrors?.[calls.sendFeedback - 1];
+      if (scriptedError) throw scriptedError;
+      if (opts.feedbackError) throw new Error(opts.feedbackError);
       // Distinct baseline string per pass — production sendFeedbackToWorker re-reads the
       // (just-cleared) signal file so the next waitForWorkerSignal blocks on a fresh value.
       const baseline = `baseline-${calls.sendFeedback}`;
@@ -515,7 +562,24 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
         ],
       };
     },
-    getRun: () => ({ metrics: { model: 'sonnet' } }) as any,
+    getRun: () =>
+      ({
+        metrics: { model: 'sonnet' },
+        agentContexts: [
+          {
+            id: 'fix-context',
+            role: 'self-review-fix',
+            status: 'working',
+            taskFile: 'tasks/foo/SELF-REVIEW-FIX.md',
+            signalFile: 'tasks/foo/SELF-REVIEW-FIX-SIGNAL.json',
+            runner: 'claude',
+            model: 'sonnet',
+            attemptStartedAt: '2026-08-05T00:00:00.000Z',
+            startedAt: '2026-08-05T00:00:00.000Z',
+            target: { session: 'worker', target: 'worker:dev' },
+          },
+        ],
+      }) as any,
   };
   return { deps, calls };
 }
@@ -603,6 +667,49 @@ test('runSelfReviewRetryLoop: stops as soon as a re-review verdict is pass', asy
   assert.equal(result.attempts?.length, 2);
   assert.equal(result.attempts?.[1]?.fixDelta?.fixBaseSha, 'base-head');
   assert.equal(result.attempts?.[1]?.fixDelta?.diffPath, 'artifacts/review-loop-2/fix-delta.diff');
+});
+
+test('runSelfReviewRetryLoop: preserves findings when worker fix delivery fails', async () => {
+  const { deps } = buildDeps({
+    reviewVerdicts: [],
+    feedbackError: 'retired worker pane',
+  });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 1,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+
+  assert.equal(result.verdict, 'issues');
+  assert.deepEqual(result.issues, ISSUES);
+  assert.equal(result.feedbackSent, false);
+  assert.equal(result.recoveryContinuationPending, true);
+  assert.match(result.reason ?? '', /retired worker pane/);
+  assert.equal(result.attempts?.[0]?.unresolvedCount, ISSUES.length);
+});
+
+test('runSelfReviewRetryLoop: relaunches once when the retained worker rejects fix delivery', async () => {
+  const { deps, calls } = buildDeps({
+    reviewVerdicts: ['pass'],
+    feedbackErrors: [new SelfReviewFixDeliveryError('unacknowledged retained handoff')],
+    fixSignals: [{ status: 'complete', timestamp: new Date().toISOString() }],
+  });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 2,
+    reviewResult: { verdict: 'issues', issues: ISSUES },
+    retryCount: 0,
+    deps,
+  });
+
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.feedbackSent, true);
+  assert.equal(calls.relaunches, 1);
+  assert.equal(calls.sendFeedback, 1);
 });
 
 test('runSelfReviewRetryLoop: relaunches a high-context worker before sending the fix task', async () => {

@@ -47,10 +47,10 @@ import { persistIndependentReviewArtifactsForRun, readPreparedPackage } from './
 
 /**
  * A reviewer context can need recovery while in-flight or after its runner was
- * reconciled to `complete`. A failed context is included only in an explicit
- * one-shot artifact scan; it must never keep the six-hour watcher alive because
- * persisted review data cannot distinguish a delivery placeholder from a real
- * terminal failure.
+ * reconciled to `complete`. A failed context is eligible only when the caller
+ * explicitly includes it; `reviewerContextNeedsRecovery` then requires the
+ * matching persisted delivery-failure placeholder, so a real terminal failure
+ * cannot keep the six-hour watcher alive.
  */
 export function isRecoverableReviewerContext(
   ctx: Pick<AgentContext, 'role' | 'status'>,
@@ -115,7 +115,7 @@ export function reviewerContextNeedsRecovery(
   // the existing fallback id path.
   if (!artifactScope) return ctx.status !== 'complete';
   const recordedIndex = reviews.findIndex((review) => review.id === artifactScope);
-  if (recordedIndex < 0) return true;
+  if (recordedIndex < 0) return ctx.status !== 'failed';
   const recorded = reviews[recordedIndex];
   if (
     ctx.status !== 'failed' &&
@@ -135,6 +135,7 @@ export function reviewerContextNeedsRecovery(
     return true;
   }
   return (
+    !hasLaterSettledReview(reviews, recordedIndex) &&
     recorded.verdict !== undefined &&
     recorded.unresolvedCount !== undefined &&
     isFailedReviewPlaceholder({

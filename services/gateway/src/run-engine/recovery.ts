@@ -171,7 +171,7 @@ export function isPublicationReviewRecoveryHeld(run: Run): boolean {
 export function hasRecoverablePublicationReviewer(run: Run): boolean {
   const reviews = run.engineState?.publishGate?.independentReviews ?? [];
   return (run.agentContexts ?? []).some((context) =>
-    reviewerContextNeedsRecovery(context, reviews),
+    reviewerContextNeedsRecovery(context, reviews, { includeFailed: true }),
   );
 }
 
