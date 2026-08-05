@@ -5,6 +5,7 @@ import { gateway } from '../../gateway-client.js';
 import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
+import { committedReviewFileDiffRequest } from './slot-view-branch-model.js';
 import {
   getSlotViewHashParam,
   isSlotViewHashForSlot,
@@ -180,14 +181,10 @@ export async function openSlotViewFileFromUrl(view: SlotView, file: string): Pro
     const cacheKey = `branch:${base}:${path}`;
     if (view._isLive && !view._liveDiffContents.has(cacheKey)) {
       try {
-        const result = await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
-          slotId: view.slotId,
-          path,
-          base,
-          // branch: cache keys hold worktree-target diffs in the slot view —
-          // restoring with head semantics would poison the cache.
-          target: 'worktree',
-        });
+        const result = await gateway.request<GitDiffResult>(
+          Methods.GIT_DIFF,
+          committedReviewFileDiffRequest(view.slotId, path, base),
+        );
         if (!result.diff.trim()) {
           await view._handleFileSelect(path);
           view._pinFile(path);

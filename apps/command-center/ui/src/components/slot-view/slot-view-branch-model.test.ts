@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import {
   branchDiffPollAction,
+  committedReviewBranchDiffRequest,
+  committedReviewFileDiffRequest,
   isBranchDiffTicketCurrent,
   normalizeReviewBaseRef,
   slotViewBranchList,
@@ -30,6 +32,19 @@ test('normalizeReviewBaseRef uses one gateway request form for local and remote 
   assert.equal(normalizeReviewBaseRef('origin/main'), 'main');
   assert.equal(normalizeReviewBaseRef(' release/1.2 '), 'release/1.2');
   assert.equal(normalizeReviewBaseRef(undefined), 'main');
+});
+
+test('review workspace requests preserve a certified non-main base and committed HEAD target', () => {
+  assert.deepEqual(committedReviewBranchDiffRequest('slot-1', 'origin/release/1.2'), {
+    slotId: 'slot-1',
+    base: 'release/1.2',
+  });
+  assert.deepEqual(committedReviewFileDiffRequest('slot-1', 'src/index.ts', 'origin/release/1.2'), {
+    slotId: 'slot-1',
+    path: 'src/index.ts',
+    base: 'release/1.2',
+    target: 'head',
+  });
 });
 
 const POLL_BASE = {

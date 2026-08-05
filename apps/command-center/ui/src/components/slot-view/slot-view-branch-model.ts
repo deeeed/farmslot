@@ -23,6 +23,26 @@ export function normalizeReviewBaseRef(baseRef: string | null | undefined): stri
   return base.startsWith('origin/') ? base.slice('origin/'.length) : base;
 }
 
+export function committedReviewBranchDiffRequest(
+  slotId: string,
+  baseRef: string | null | undefined,
+) {
+  return { slotId, base: normalizeReviewBaseRef(baseRef) };
+}
+
+export function committedReviewFileDiffRequest(
+  slotId: string,
+  path: string,
+  baseRef: string | null | undefined,
+) {
+  return {
+    slotId,
+    path,
+    base: normalizeReviewBaseRef(baseRef),
+    target: 'head' as const,
+  };
+}
+
 /**
  * Decide what the git-status poll should do about the branch diff. The diff
  * is otherwise fetched once at view init, so the poll is the only recovery

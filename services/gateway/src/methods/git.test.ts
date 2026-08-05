@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import { gitBranchDiff, gitDiff, gitExec } from './git.js';
+import { gitBranchDiff, gitDiff, gitExec, gitStatus } from './git.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -46,6 +46,25 @@ test('gitExec rejects a non-zero exit even when git emits no stderr', async () =
     }),
     /git exited with code 7/,
   );
+});
+
+test('gitStatus keeps an unborn repository readable with an empty HEAD', async () => {
+  const result = await gitStatus(
+    { slotId: 'unborn-slot' },
+    {
+      resolveRepo: async () => '/repo',
+      loadVars: async () => ({ host: 'localhost', machine: 'local', remoteRepo: '/repo' }) as any,
+      runOnSlot: async (_vars, argv) => {
+        if (argv[1] === 'status') return { stdout: '?? README.md\n', stderr: '', exitCode: 0 };
+        if (argv[1] === 'branch') return { stdout: 'main\n', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: 'Needed a single revision', exitCode: 128 };
+      },
+    },
+  );
+
+  assert.equal(result.branch, 'main');
+  assert.equal(result.headSha, '');
+  assert.deepEqual(result.changes, [{ path: 'README.md', status: '?', staged: false }]);
 });
 
 function branchDiffDeps(outputs: {

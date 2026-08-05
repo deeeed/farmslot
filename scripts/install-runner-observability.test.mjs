@@ -460,6 +460,18 @@ test('codex legacy cleanup restores owned project files without losing operator 
     },
     {
       files: {
+        'config.toml.farmslot-backup':
+          '[operator]\nnotes = """\n[features]\n"""\n\n[features]\nhooks = false\n',
+        'config.toml':
+          '[operator]\nnotes = """\n[features]\n"""\nadded = true\n\n[features]\nhooks = true\n',
+      },
+      expected: {
+        'config.toml':
+          '[operator]\nnotes = """\n[features]\n"""\nadded = true\n\n[features]\nhooks = false\n',
+      },
+    },
+    {
+      files: {
         'hooks.json': `${JSON.stringify({ hooks: { Stop: [farmslotHook] } })}\n`,
         'config.toml': '[features]\nhooks = true\n\n[operator]\nadded = true\n',
       },

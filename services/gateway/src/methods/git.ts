@@ -150,12 +150,30 @@ function parseStatusLine(line: string): GitChange[] {
   return changes;
 }
 
-export async function gitStatus(params: GitStatusParams): Promise<GitStatusResult> {
-  const [porcelainResult, branchResult, headResult, aheadBehindResult] = await Promise.all([
-    gitExec(params.slotId, ['status', '--porcelain=v1']),
-    gitExec(params.slotId, ['branch', '--show-current']),
-    gitExec(params.slotId, ['rev-parse', 'HEAD']),
-    gitExec(params.slotId, ['rev-list', '--left-right', '--count', 'HEAD...@{u}']).catch(() => ({
+export async function gitStatus(
+  params: GitStatusParams,
+  deps: GitExecDeps = {},
+): Promise<GitStatusResult> {
+  // A successful status establishes that this is a readable repository. HEAD
+  // may still be absent before its first commit, which is a valid workspace.
+  const porcelainResult = await gitExec(
+    params.slotId,
+    ['status', '--porcelain=v1'],
+    undefined,
+    deps,
+  );
+  const [branchResult, headResult, aheadBehindResult] = await Promise.all([
+    gitExec(params.slotId, ['branch', '--show-current'], undefined, deps),
+    gitExec(params.slotId, ['rev-parse', '--verify', 'HEAD'], undefined, deps).catch(() => ({
+      stdout: '',
+      stderr: '',
+    })),
+    gitExec(
+      params.slotId,
+      ['rev-list', '--left-right', '--count', 'HEAD...@{u}'],
+      undefined,
+      deps,
+    ).catch(() => ({
       stdout: '0\t0',
       stderr: '',
     })),

@@ -31,7 +31,11 @@ import { currentRecoveryEpoch, isRecoveryEpochCurrent } from '../../utils/reconn
 import { renderRecipeQualityCockpit } from '../recipe/recipe-quality-cockpit.js';
 import { createReviewWorkspaceRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
-import { normalizeReviewBaseRef } from '../slot-view/slot-view-branch-model.js';
+import {
+  committedReviewBranchDiffRequest,
+  committedReviewFileDiffRequest,
+  normalizeReviewBaseRef,
+} from '../slot-view/slot-view-branch-model.js';
 
 import {
   renderWorkspaceLearningsTab,
@@ -308,10 +312,10 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         }
       }
 
-      const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
-        slotId: this.slotId,
-        base: this._baseRef,
-      });
+      const result = await gateway.request<GitBranchDiffResult>(
+        Methods.GIT_BRANCH_DIFF,
+        committedReviewBranchDiffRequest(this.slotId, this._baseRef),
+      );
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffFiles = result.files;
       // Auto-select first file with comments, or first file
@@ -368,11 +372,10 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._fileDiffLoading = true;
     this._fileDiff = '';
     try {
-      const result = await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
-        slotId: this.slotId,
-        path,
-        base: this._baseRef,
-      });
+      const result = await gateway.request<GitDiffResult>(
+        Methods.GIT_DIFF,
+        committedReviewFileDiffRequest(this.slotId, path, this._baseRef),
+      );
       this._fileDiff = result.diff;
     } catch (err) {
       console.error('[review-workspace] file diff failed:', err);
@@ -835,11 +838,10 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._fileDiff = '';
       const tDiff = performance.now();
       gateway
-        .request<GitDiffResult>(Methods.GIT_DIFF, {
-          slotId: this.slotId,
-          path: c.path,
-          base: this._baseRef,
-        })
+        .request<GitDiffResult>(
+          Methods.GIT_DIFF,
+          committedReviewFileDiffRequest(this.slotId, c.path, this._baseRef),
+        )
         .then((r) => {
           this._fileDiff = r.diff;
         })

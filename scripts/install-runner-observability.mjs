@@ -482,7 +482,9 @@ function restoreLegacyCodexHooksFeature(currentContent, backupContent) {
 
   const sectionBounds = (lines) => {
     const headers = tomlSectionHeaderIndexes(lines);
-    const start = lines.findIndex((line) => line.trim() === '[features]');
+    const start = lines.findIndex(
+      (line, index) => headers.has(index) && line.trim() === '[features]',
+    );
     if (start < 0) return null;
     let end = lines.length;
     for (let i = start + 1; i < lines.length; i += 1) {
