@@ -499,7 +499,9 @@ export async function restoreTmuxWorker(
         taskDir: run.taskFile ? path.posix.dirname(run.taskFile) : undefined,
       },
     )}`;
-    await respawnTmuxWindowWithCommand(vars, nextTarget.target, launchCommand);
+    await respawnTmuxWindowWithCommand(vars, nextTarget.target, launchCommand, {
+      preserveWindowAfterExit: selected.role !== 'self-review',
+    });
     await new Promise((resolve) => setTimeout(resolve, TMUX_WINDOW_RESPAWN_SETTLE_MS));
     const livePane = await waitForRunnerAliveInTarget(vars, ref.session, nextTarget.target, runner);
     if (!livePane) {

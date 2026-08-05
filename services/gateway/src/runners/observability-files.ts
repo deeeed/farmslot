@@ -99,6 +99,7 @@ export function deriveRunnerActivity(
   let lastPostToolUseAt: number | null = null;
   let lastTurnStop: { observedAt: number } | null = null;
   let lastIdleNotification: { observedAt: number } | null = null;
+  let lastSessionStart: { observedAt: number } | null = null;
   let lastComposing: { observedAt: number } | null = null;
 
   for (const record of hooks) {
@@ -112,6 +113,8 @@ export function deriveRunnerActivity(
       lastPostToolUseAt = observedAt;
     } else if (event === 'Stop') {
       lastTurnStop = { observedAt };
+    } else if (event === 'SessionStart') {
+      lastSessionStart = { observedAt };
     } else if (event === 'UserPromptSubmit' || event === 'UserPromptExpansion') {
       lastComposing = { observedAt };
     } else if (event === 'Notification') {
@@ -123,11 +126,14 @@ export function deriveRunnerActivity(
     }
   }
 
-  const lastIdle =
+  let lastIdle =
     lastIdleNotification &&
     (!lastTurnStop || lastIdleNotification.observedAt > lastTurnStop.observedAt)
       ? lastIdleNotification
       : lastTurnStop;
+  if (lastSessionStart && (!lastIdle || lastSessionStart.observedAt > lastIdle.observedAt)) {
+    lastIdle = lastSessionStart;
+  }
 
   const freshest = [
     lastPreToolUse?.observedAt,

@@ -5,7 +5,10 @@ import path from 'node:path';
 import { DEFAULT_PROMPT, PROMPT_MARKER } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { runGatewayPostLaunchPrompt } from '../lib/gateway-post-launch.mjs';
+import { readHookLines } from '../lib/hooks.mjs';
+import { installHooks, obsDirFor } from '../lib/install.mjs';
 import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
+import { pollHookRows } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'dispatch-prompt-smoke';
 
@@ -17,11 +20,11 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
     return { scenario: SCENARIO_ID, runner, outPath, pass: true, skipped: true, report };
   }
-  if (runner !== 'grok' || typeof runnerAdapter.buildInteractiveLaunchCommand !== 'function') {
+  if (typeof runnerAdapter.buildInteractiveLaunchCommand !== 'function') {
     const report = {
       runner,
       skipped: true,
-      skipReason: 'dispatch-prompt-smoke is grok gateway-parity only today',
+      skipReason: 'runner has no interactive gateway-parity launch adapter',
       pass: true,
     };
     const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
@@ -39,7 +42,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     launchMode: runnerAdapter.interactiveLaunchMode(),
     gatewayPath: 'sendRunnerPostLaunchPrompt',
     promptDelivered: false,
-    markerSeen: false,
+    responseCompleted: false,
+    hookEvents: [],
     blockerSnapshotPath: null,
     pass: false,
     error: null,
@@ -48,11 +52,17 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
 
   try {
     runnerAdapter.prepareRepo(repo);
+    const eventDriven = runnerAdapter.OBSERVABILITY_SCOPE === 'event-driven';
+    const hookLogPath = path.join(obsDirFor(repo, '.agent'), 'hooks.jsonl');
+    if (eventDriven) {
+      installHooks(runner, repo, '.agent', `runner-validate-${runner}-dispatch`);
+    }
+    const beforeHookCount = eventDriven ? readHookLines(hookLogPath).length : 0;
     const shell = ensureShellSession(session, repo);
     paneId = shell.paneId;
 
     // Production parity: interactive launch only; gateway owns blocker resolution + prompt delivery.
-    sendShellScript(paneId, repo, [runnerAdapter.buildInteractiveLaunchCommand()]);
+    sendShellScript(paneId, repo, [runnerAdapter.buildInteractiveLaunchCommand(repo, '.agent')]);
 
     const gatewayResult = runGatewayPostLaunchPrompt({
       repo,
@@ -62,6 +72,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       marker: PROMPT_MARKER,
       timeoutMs: Math.min(timeoutMs, 120_000),
       artifactsDir,
+      requirePromptDigest: eventDriven,
     });
     report.blockerSnapshotPath = gatewayResult.blockerSnapshotPath ?? null;
     report.promptDelivered = Boolean(gatewayResult.ok);
@@ -69,16 +80,27 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       throw new Error(gatewayResult.error || 'sendRunnerPostLaunchPrompt failed');
     }
 
-    const deadline = Date.now() + 30_000;
     let pane = capturePane(paneId, 80);
-    while (Date.now() < deadline) {
-      pane = capturePane(paneId, 80);
-      if (pane.includes(PROMPT_MARKER)) break;
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+    if (eventDriven) {
+      const hookRows = pollHookRows(
+        hookLogPath,
+        beforeHookCount,
+        ['UserPromptSubmit', 'Stop'],
+        30_000,
+      );
+      report.hookEvents = hookRows.map((row) => row.hook_event_name || row.event).filter(Boolean);
+      report.responseCompleted = report.hookEvents.includes('Stop');
+    } else {
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        pane = capturePane(paneId, 80);
+        if (pane.split(PROMPT_MARKER).length - 1 >= 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      report.responseCompleted = pane.split(PROMPT_MARKER).length - 1 >= 2;
     }
     report.paneTail = pane.split('\n').slice(-25).join('\n');
-    report.markerSeen = pane.includes(PROMPT_MARKER);
-    report.pass = report.promptDelivered && report.markerSeen;
+    report.pass = report.promptDelivered && report.responseCompleted;
   } catch (error) {
     report.error = error?.message || String(error);
     report.paneTail = paneId ? capturePane(paneId, 80) : report.paneTail;

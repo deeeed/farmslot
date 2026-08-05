@@ -8,6 +8,7 @@ import { farmslotRoot } from '../projects/repo-root.js';
 
 const REMOTE_AGENT_DIR = '~/farmslot-node';
 const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs';
+export const NODE_SUPPORT_HASH_FILENAME = 'node-support-hash';
 const localHostname = os.hostname().replace(/\.local$/, '');
 
 export function claudeObservabilitySettingsPath(repo: string, runtimeDir: string): string {
@@ -42,9 +43,9 @@ export function buildRunnerObservabilityInstallCommand(
     authSource?: string | null;
   } = {},
 ): string {
-  const installer = path.posix.join(farmslotDirForSlot(vars), INSTALLER_RELATIVE_PATH);
+  const farmslotDir = farmslotDirForSlot(vars);
+  const localInstaller = path.posix.join(farmslotDir, INSTALLER_RELATIVE_PATH);
   const parts = [
-    `node ${shellExpressionForRemotePath(installer)}`,
     `--runner ${shellQuote(runner)}`,
     `--repo ${shellExpressionForRemotePath(repo)}`,
     `--runtime-dir ${shellQuote(runtimeDir)}`,
@@ -57,7 +58,25 @@ export function buildRunnerObservabilityInstallCommand(
   if (options.authSource?.trim()) {
     parts.push(`--auth-source ${shellQuote(options.authSource.trim())}`);
   }
-  return parts.join(' ');
+  if (farmslotDir !== REMOTE_AGENT_DIR) {
+    return `node ${shellExpressionForRemotePath(localInstaller)} ${parts.join(' ')}`;
+  }
+
+  const supportHashPath = path.posix.join(
+    repo,
+    runtimeDir,
+    '.observability',
+    NODE_SUPPORT_HASH_FILENAME,
+  );
+  const fallbackInstaller = '${HOME}/farmslot-node/' + INSTALLER_RELATIVE_PATH;
+  const supportInstaller =
+    '${HOME}/farmslot-node/support/${support_hash}/' + INSTALLER_RELATIVE_PATH;
+  return [
+    `support_hash="$(cat ${shellExpressionForRemotePath(supportHashPath)} 2>/dev/null || true)"`,
+    `installer="${fallbackInstaller}"`,
+    `case "$support_hash" in ''|*[!0-9a-f]*) ;; *) candidate="${supportInstaller}"; [ ! -f "$candidate" ] || installer="$candidate" ;; esac`,
+    `node "$installer" ${parts.join(' ')}`,
+  ].join('; ');
 }
 
 export function withRunnerObservabilityInstall(

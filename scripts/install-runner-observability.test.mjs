@@ -466,6 +466,12 @@ test('codex legacy cleanup restores owned project files without losing operator 
       expected: { 'config.toml': '[features]\nhooks = true\n\n[operator]\nadded = true\n' },
       missing: ['hooks.json'],
     },
+    {
+      files: {
+        'config.toml': '[features]\nhooks = true\n',
+      },
+      expected: { 'config.toml': '[features]\nhooks = true\n' },
+    },
   ];
 
   for (const { files, expected, missing = [] } of cases) {
@@ -558,7 +564,7 @@ test('codex install is idempotent for isolated codex-home config.toml', () => {
   fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
   fs.writeFileSync(
     path.join(repo, '.agent', 'codex-home', 'config.toml'),
-    '[features]\nhooks = false\ncustom_flag = true\n\n[tui.model_availability_nux]\n"gpt-5.5" = 1\n',
+    '[features]\nhooks = false\ncustom_flag = true\n\n[tui.model_availability_nux]\n"gpt-5.5" = 1\n\n[features]\nhooks = true\n\n[features]\nhooks = true\n',
   );
 
   for (let i = 0; i < 2; i += 1) {

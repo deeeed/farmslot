@@ -2,7 +2,12 @@ import type { SafetyTier } from '@farmslot/protocol';
 
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { respawnTmuxWindowWithCommand, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  resolveTmuxPaneId,
+  respawnTmuxWindowWithCommand,
+  shellQuote,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 
 import {
   buildRunnerSessionReloadCommand,
@@ -12,9 +17,9 @@ import { writeRunnerPromptSentinel } from './observability-sentinel.js';
 import type { LaunchAckSignalSnapshot } from './prompt-delivery-evidence.js';
 import {
   captureRunnerPromptAcceptanceBaseline,
-  confirmTrustPromptWithFreshEvidence,
   getRunnerObservability,
   normalizeRunner,
+  resolveLaunchBlockerWithFreshEvidence,
   resolveSafeSendTimeoutMs,
   runnerHasDurablePromptHandoff,
   runnerRetainedSessionHandoff,
@@ -23,7 +28,7 @@ import {
   WORKER_ENV_PREFIX,
 } from './registry.js';
 import { buildRunnerObservabilityInstallCommand } from './runner-observability.js';
-import { resumableSessionProbeCommand } from './session-process.js';
+import { resolveRunnerSessionBinding, resumableSessionProbeCommand } from './session-process.js';
 
 type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
 const RUNNER_SESSION_ACCEPTANCE_POLL_MS = 2_000;
@@ -48,6 +53,8 @@ export interface RunnerSessionReactivationOptions {
   recovery?: RunnerSendRecoveryContext;
   sendLogPrefix?: string;
   forceBusyPoll?: boolean;
+  /** Slot-clock boundary proving this is a gateway-owned fresh runner session. */
+  freshSessionStartedAfterMs?: number | null;
 }
 
 export type RetainedSessionDeliveryResult =
@@ -171,7 +178,9 @@ async function reactivateRunnerSessionWithPrompt(
       },
     )}`;
     paneMutationStarted = true;
-    await respawnTmuxWindowWithCommand(options.vars, options.target, command);
+    await respawnTmuxWindowWithCommand(options.vars, options.target, command, {
+      preserveWindowAfterExit: true,
+    });
     let trustPromptConfirmed = false;
 
     const deadline = Date.now() + (options.timeoutMs ?? RUNNER_LAUNCH_READY_TIMEOUT_MS);
@@ -191,7 +200,7 @@ async function reactivateRunnerSessionWithPrompt(
       // task signals, and pane text cannot acknowledge this resumed prompt.
       if (accepted.accepted) return { delivered: true, acknowledgement: 'structured' };
       if (!trustPromptConfirmed) {
-        const trustResult = await confirmTrustPromptWithFreshEvidence({
+        const trustResult = await resolveLaunchBlockerWithFreshEvidence({
           runnerId: runner,
           target: options.target,
           logPrefix: 'retained-handoff',
@@ -297,6 +306,7 @@ export async function deliverPromptInPlace(
       {
         forceBusyPoll: options.forceBusyPoll ?? true,
         recovery: options.recovery,
+        freshSessionStartedAfterMs: options.freshSessionStartedAfterMs,
       },
     );
     if (accepted && options.launchAckSignalPath) {
@@ -411,11 +421,32 @@ function unacknowledgedPriorSendHold(runner: string): RetainedSessionDeliveryRes
 export async function deliverPromptWithRetainedFallback(
   options: RunnerSessionReactivationOptions,
 ): Promise<RetainedSessionDeliveryResult> {
+  let resolvedOptions = options;
   try {
     const delayedAcknowledgement = await probeDelayedPromptAcknowledgement(options);
     if (delayedAcknowledgement) return delayedAcknowledgement;
     if (options.priorPromptSendAttempted) {
       return unacknowledgedPriorSendHold(normalizeRunner(options.runnerId));
+    }
+    const runner = normalizeRunner(options.runnerId);
+    if (
+      runnerRetainedSessionHandoff(runner) === 'resume-with-prompt' &&
+      (!options.sessionId?.trim() || !options.sessionPath?.trim())
+    ) {
+      const paneId = await resolveTmuxPaneId(options.vars, options.target);
+      const binding = paneId
+        ? await resolveRunnerSessionBinding(options.vars, runner, [], {
+            paneId,
+            slotId: options.vars.slotId,
+          })
+        : null;
+      if (binding) {
+        resolvedOptions = {
+          ...options,
+          sessionId: binding.runnerSessionId,
+          sessionPath: binding.runnerSessionPath,
+        };
+      }
     }
   } catch (error) {
     return {
@@ -424,9 +455,9 @@ export async function deliverPromptWithRetainedFallback(
       reason: `Delayed retained handoff acknowledgement probe failed: ${(error as Error).message}`,
     };
   }
-  const retained = await deliverPromptToRetainedRunnerSession(options);
+  const retained = await deliverPromptToRetainedRunnerSession(resolvedOptions);
   if (!retained.delivered && retained.disposition === 'safe-send') {
-    return deliverPromptInPlace(options);
+    return deliverPromptInPlace(resolvedOptions);
   }
   return retained;
 }

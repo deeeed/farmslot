@@ -124,6 +124,15 @@ function detectLaunchBlocker(
   ) {
     return { kind: 'hooks-review', autoAction: 'codex-refresh-hooks-and-trust' };
   }
+  if (
+    runner === 'claude' &&
+    lower.includes('this session is') &&
+    lower.includes('resume from summary (recommended)') &&
+    lower.includes('resume full session as-is') &&
+    lower.includes('enter to confirm')
+  ) {
+    return { kind: 'session-resume', autoAction: 'claude-resume-from-summary' };
+  }
   if (runner === 'grok') {
     const liveStatus = grokLiveStatusText(pane);
     const mcpInit = detectGrokMcpInit(liveStatus);

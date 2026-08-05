@@ -22,6 +22,7 @@ const CODEX_BIN = path.join(
   os.homedir(),
   '.npm-global/lib/node_modules/@openai/codex/bin/codex.js',
 );
+const DEFAULT_MODEL = 'gpt-5.6-sol';
 
 export function binaryPath() {
   return CODEX_BIN;
@@ -44,7 +45,12 @@ export function assertBinary() {
   }
 }
 
-export function buildLaunchCommand(repo, runtimeDir, prompt = DEFAULT_PROMPT, model = 'gpt-5.4') {
+export function buildLaunchCommand(
+  repo,
+  runtimeDir,
+  prompt = DEFAULT_PROMPT,
+  model = DEFAULT_MODEL,
+) {
   assertBinary();
   const codexHome = path.join(repo, runtimeDir, 'codex-home');
   if (!fs.existsSync(codexHome)) {
@@ -65,8 +71,31 @@ export function buildLaunchCommand(repo, runtimeDir, prompt = DEFAULT_PROMPT, mo
   ].join(' ');
 }
 
+/** Production-parity: open the interactive TUI; the gateway submits the prompt separately. */
+export function buildInteractiveLaunchCommand(repo, runtimeDir = '.agent', model = DEFAULT_MODEL) {
+  assertBinary();
+  const codexHome = path.join(repo, runtimeDir, 'codex-home');
+  if (!fs.existsSync(codexHome)) {
+    throw new Error(`codex-home missing after install: ${codexHome}`);
+  }
+  return [
+    `CODEX_HOME=${shSingleQuote(codexHome)}`,
+    'node',
+    shSingleQuote(CODEX_BIN),
+    '--config',
+    'features.hooks=true',
+    '--dangerously-bypass-approvals-and-sandbox',
+    '--model',
+    shSingleQuote(model),
+  ].join(' ');
+}
+
 export function launchMode() {
   return 'codex-exec';
+}
+
+export function interactiveLaunchMode() {
+  return 'codex-interactive';
 }
 
 export function supportsLiveScenario(scenario) {

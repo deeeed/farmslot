@@ -77,6 +77,23 @@ test('deriveRunnerActivity recognizes the structured idle notification type', ()
   assert.equal(reading?.value, 'idle');
 });
 
+test('deriveRunnerActivity treats a fresh session start as an idle runner boundary', () => {
+  const reading = deriveRunnerActivity(
+    [
+      { hook_event_name: 'UserPromptSubmit', observedAt: NOW - 5_000 },
+      { hook_event_name: 'SessionStart', observedAt: NOW - 1_000 },
+    ],
+    null,
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 1_000,
+  });
+});
+
 test('deriveRunnerActivity does not treat an unrelated notification as idle', () => {
   const reading = deriveRunnerActivity(
     [

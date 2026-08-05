@@ -319,7 +319,62 @@ function stripCodexHomeInstallerSections(content, repoPath) {
   });
 }
 
+function coalesceCodexFeaturesSections(content) {
+  const lines = content.split('\n');
+  const bodies = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].trim() !== '[features]') continue;
+    const body = [];
+    for (i += 1; i < lines.length && !/^\s*\[/.test(lines[i]); i += 1) {
+      body.push(lines[i]);
+    }
+    i -= 1;
+    bodies.push(body);
+  }
+  if (bodies.length <= 1) return content;
+
+  const merged = [];
+  const assignmentIndexes = new Map();
+  const passthrough = new Set();
+  for (const line of bodies.flat()) {
+    const assignment = line.match(/^\s*([A-Za-z0-9_-]+)\s*=/);
+    if (assignment) {
+      const key = assignment[1];
+      const existing = assignmentIndexes.get(key);
+      if (existing === undefined) {
+        assignmentIndexes.set(key, merged.length);
+        merged.push(line);
+      } else {
+        merged[existing] = line;
+      }
+      continue;
+    }
+    if (!line.trim() || passthrough.has(line)) continue;
+    passthrough.add(line);
+    merged.push(line);
+  }
+
+  const output = [];
+  let inserted = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].trim() !== '[features]') {
+      output.push(lines[i]);
+      continue;
+    }
+    if (!inserted) {
+      output.push('[features]', ...merged);
+      inserted = true;
+    }
+    for (i += 1; i < lines.length && !/^\s*\[/.test(lines[i]); i += 1) {
+      // Skip the body of every original features section; it was merged above.
+    }
+    i -= 1;
+  }
+  return output.join('\n').trimEnd();
+}
+
 function upsertCodexHooksFeature(content) {
+  content = coalesceCodexFeaturesSections(content);
   const lines = content.split('\n');
   const existingFeatureIdx = lines.findIndex((line) => line.trim() === '[features]');
   if (existingFeatureIdx < 0) {

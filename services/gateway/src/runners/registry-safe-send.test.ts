@@ -36,6 +36,7 @@ let paneTextAfterLiteralSend: string | null = null;
 let paneTextAfterBareSend: string | null = null;
 let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
 let acceptDigestHandoff = false;
+let acceptDigestHandoffAfterBareSubmit = false;
 let acceptDigestHandoffAfterCall = Number.POSITIVE_INFINITY;
 let handoffProbeCalls = 0;
 let launchAckSnapshotReads = 0;
@@ -160,8 +161,9 @@ mock.module('../core/exec.js', {
         if (cmd.includes(' -l ')) {
           callOrder.push('tmux:send-literal');
           if (paneTextAfterLiteralSend !== null) paneText = paneTextAfterLiteralSend;
-        } else if (paneTextAfterBareSend !== null) {
-          paneText = paneTextAfterBareSend;
+        } else {
+          if (acceptDigestHandoffAfterBareSubmit) acceptDigestHandoff = true;
+          if (paneTextAfterBareSend !== null) paneText = paneTextAfterBareSend;
         }
         return { exitCode: 0, stdout: '', stderr: '' };
       }
@@ -338,6 +340,57 @@ test('digest-required prompt delivery rejects cosmetic Claude pane acceptance', 
     callOrder.filter((entry) => entry === 'tmux:send').length,
     2,
     'the retry should submit the existing composer, but pane cosmetics must not prove acceptance',
+  );
+});
+
+test('Codex retries an unaccepted injected prompt without waiting for an idle composer', async (t) => {
+  const reviewMessage = `${message}\nFollow SELF-REVIEW.md`;
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = false;
+  paneTextByCapture = null;
+  paneText = '›\nContext 88%\n';
+  paneTextAfterLiteralSend = '›\nContext 88%\n';
+  paneTextAfterBareSend = '• Working\n';
+  acceptDigestHandoffAfterBareSubmit = true;
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    exactPromptMatch: false,
+  };
+  t.after(() => {
+    acceptDigestHandoff = false;
+    acceptDigestHandoffAfterBareSubmit = false;
+    paneTextAfterLiteralSend = null;
+    paneTextAfterBareSend = null;
+    paneClearsAfterSubmit = true;
+    paneText = '❯\nctx:12%\n';
+  });
+
+  await sendRunnerPostLaunchPrompt(
+    vars,
+    target,
+    'codex',
+    reviewMessage,
+    'SELF-REVIEW.md',
+    '[test]',
+    {
+      readyTimeoutMs: 100,
+      stabilityPolls: 1,
+      pollIntervalMs: 0,
+      verifyWaitMs: 0,
+      maxAttempts: 2,
+      requirePromptDigest: true,
+    },
+  );
+
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send-literal').length, 1);
+  assert.equal(
+    callOrder.filter((entry) => entry === 'tmux:send').length,
+    2,
+    'Codex should type once, then issue one submit-only recovery',
   );
 });
 
@@ -1223,6 +1276,37 @@ test('claude (hook-only) holds when the composer state is UNKNOWN (no prompt mar
   } finally {
     paneClearsAfterSubmit = true;
   }
+});
+
+test('claude (hook-only) gateway-owned fresh session sends from structured idle despite unknown composer', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  const freshSessionStartedAfterMs = Date.now() - 1_000;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = 'fresh runner scrollback with no prompt marker yet\n';
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 5_000, {
+    forceBusyPoll: true,
+    freshSessionStartedAfterMs,
+  });
+
+  assert.equal(sent, true);
+  assert.ok(
+    callOrder.includes('tmux:send-literal'),
+    `the gateway-owned fresh session should receive the instruction; order=${callOrder.join(',')}`,
+  );
 });
 
 test('claude (hook-only) foreign-draft hold records a composer-draft audit cause, not a hook lapse', async (t) => {
