@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(self-review): fail closed when an independent reviewer signals blocked or writes feedback without an explicit PASS/ISSUES verdict, preventing unavailable reviewers from being recorded as passing.
+
 - fix(review): pin the formal verdict and inline comments to one certified commit, fail closed on malformed untracked manifests and unexpected slot errors, and contain asynchronous remote progress failures without losing the watcher.
 - fix(self-review): restore the scoped fix checklist target before re-delivering a retained worker prompt after restart, so `mark complete` cannot write the main worker signal while recovery waits on the fix signal.
 - fix(ready-gate): invalidate pre-upgrade publish packages that lack an exact review snapshot, preserve the last durable diff when a refresh finds that its slot was removed, and keep removed-slot packages inspectable through the explicit exact-HEAD snapshot-unavailable override.
