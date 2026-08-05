@@ -61,11 +61,16 @@ async function deliverViaRunnerInstruction(
 }
 
 /**
- * Claude Code resolves `@<path>` file references and reads image files at that path.
+ * Claude Code reads an image file named by absolute path.
+ *
+ * Deliberately NOT an `@<path>` reference: typing `@` into the composer opens Claude Code's
+ * file-reference autocomplete, and the submit Enter then selects an autocomplete entry instead
+ * of sending — the message sits in the composer forever while the send adapter reports the
+ * keystroke as delivered. Proven live on slot demo-ff-1 (see the ac10 proof artifact).
  */
 const claudeAttachmentProvider: RunnerAttachmentProvider = {
   id: 'claude',
-  buildMessage: (ctx) => `Look at this image: @${ctx.storedPath}`,
+  buildMessage: (ctx) => `Look at this image: ${ctx.storedPath}`,
   deliver: (ctx) => deliverViaRunnerInstruction(claudeAttachmentProvider, ctx),
 };
 

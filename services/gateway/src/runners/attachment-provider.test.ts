@@ -28,15 +28,23 @@ test('claude and codex expose verified attachment providers', () => {
   }
 });
 
-test('claude uses its @path file reference and codex names the plain path', () => {
+test('every provider names the staged path plainly, never as an @ reference', () => {
   assert.equal(
     getRunnerAttachmentProvider('claude')!.buildMessage(CTX),
-    `Look at this image: @${CTX.storedPath}`,
+    `Look at this image: ${CTX.storedPath}`,
   );
   assert.equal(
     getRunnerAttachmentProvider('codex')!.buildMessage(CTX),
     `View the image at ${CTX.storedPath}`,
   );
+  // `@` opens Claude Code's file-reference autocomplete, which eats the submit Enter and leaves
+  // the instruction buffered in the composer while the send adapter reports it as delivered.
+  for (const runner of ['claude', 'codex']) {
+    assert.ok(
+      !getRunnerAttachmentProvider(runner)!.buildMessage(CTX).includes('@'),
+      `${runner} delivery message must not contain an @ composer reference`,
+    );
+  }
 });
 
 test('runners without verified behavior are explicitly unsupported', () => {
