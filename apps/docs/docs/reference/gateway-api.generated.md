@@ -62,6 +62,8 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `backlog.list`                       | backlog          | read-only     | —      | —      | Backlog List gateway method.                       |
 | `backlog.markReady`                  | backlog          | bounded-write | —      | —      | Backlog MarkReady gateway method.                  |
 | `backlog.reconcileRun`               | backlog          | bounded-write | —      | —      | Backlog ReconcileRun gateway method.               |
+| `backlog.refine`                     | backlog          | bounded-write | —      | —      | Backlog Refine gateway method.                     |
+| `backlog.refinementSession.get`      | backlog          | read-only     | —      | —      | Backlog RefinementSession Get gateway method.      |
 | `backlog.spec.get`                   | backlog          | read-only     | —      | —      | Backlog Spec Get gateway method.                   |
 | `backlog.upcoming`                   | backlog          | bounded-write | —      | —      | Backlog Upcoming gateway method.                   |
 | `backlog.update`                     | backlog          | bounded-write | —      | —      | Backlog Update gateway method.                     |
