@@ -45,7 +45,6 @@ import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import { readLaunchAckSignalSnapshot } from '../runners/prompt-delivery-evidence.js';
 import {
-  captureRunnerPromptAcceptanceBaseline,
   normalizeRunner,
   runnerDefaultModel,
   runnerLineLooksWaiting,
@@ -428,7 +427,6 @@ export interface SelfReviewRetryDeps {
     runId: string,
   ) => Promise<boolean>;
   resumeFixPromptDelivery: typeof resumeSelfReviewFixPromptDelivery;
-  capturePromptAcceptanceBaseline: typeof captureRunnerPromptAcceptanceBaseline;
   sendFeedbackToWorker: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
     issues: SelfReviewIssue[],
@@ -506,7 +504,6 @@ const PRODUCTION_DEPS: SelfReviewRetryDeps = {
   isWorkerAlive,
   relaunchWorkerForFix,
   resumeFixPromptDelivery: resumeSelfReviewFixPromptDelivery,
-  capturePromptAcceptanceBaseline: captureRunnerPromptAcceptanceBaseline,
   sendFeedbackToWorker,
   startProgressWatcher,
   waitForWorkerSignal,
@@ -660,11 +657,6 @@ export async function runSelfReviewRetryLoop({
       const fixContext = run?.agentContexts?.find(
         (context) => context.role === 'self-review-fix' && context.taskFile,
       );
-      const freshSessionStartedAfterMs = await deps.capturePromptAcceptanceBaseline(
-        vars,
-        fixContext?.target?.target ?? '',
-        workerRunner,
-      );
       const relaunched = await deps.relaunchWorkerForFix(
         vars,
         workerRunner,
@@ -684,7 +676,7 @@ export async function runSelfReviewRetryLoop({
             runId,
             relaunchedFixContext,
             undefined,
-            { priorPromptSendAttempted: false, freshSessionStartedAfterMs },
+            { priorPromptSendAttempted: false },
           );
           if (delivery === 'delivered') fixSignalBaseline = '';
           else deliveryError = new Error(`fresh-worker fix delivery ${delivery}`);
@@ -999,7 +991,6 @@ export async function resumeSelfReviewFixPromptDelivery(
   deps: FixPromptRecoveryDeps = FIX_PROMPT_RECOVERY_DEPS,
   options: {
     priorPromptSendAttempted?: boolean;
-    freshSessionStartedAfterMs?: number | null;
   } = {},
 ): Promise<'delivered' | 'deferred' | 'relaunch-required' | 'unsupported'> {
   const storedTarget = context.target?.target;
@@ -1065,7 +1056,6 @@ export async function resumeSelfReviewFixPromptDelivery(
     recovery: { runId },
     sendLogPrefix: 'self-review-fix-recovery',
     forceBusyPoll: true,
-    freshSessionStartedAfterMs: options.freshSessionStartedAfterMs,
   });
   if (result.delivered) return 'delivered';
   return result.disposition === 'hold' && result.retryable === false
@@ -1153,11 +1143,6 @@ async function recoverSelfReviewFixPass({
         `[self-review] run ${runId.slice(0, 8)} — recovered fix prompt ${delivery}`,
       );
       if (delivery === 'relaunch-required') {
-        const freshSessionStartedAfterMs = await captureRunnerPromptAcceptanceBaseline(
-          vars,
-          fixContext.target?.target ?? '',
-          workerRunner,
-        );
         const relaunched = await relaunchWorkerForFix(vars, workerRunner, model, runId);
         if (relaunched) {
           const relaunchedFixContext =
@@ -1169,7 +1154,7 @@ async function recoverSelfReviewFixPass({
             runId,
             relaunchedFixContext,
             FIX_PROMPT_RECOVERY_DEPS,
-            { priorPromptSendAttempted: false, freshSessionStartedAfterMs },
+            { priorPromptSendAttempted: false },
           );
         } else {
           delivery = 'deferred';

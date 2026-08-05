@@ -138,7 +138,7 @@ export interface PRDiffFile {
   patch?: string;
 }
 
-/** Mark the exact files covered by a published review as viewed on GitHub. */
+/** Mark every file returned by GitHub for the published PR review as viewed. */
 export async function markPRFilesViewed(
   repo: string,
   prNumber: number,

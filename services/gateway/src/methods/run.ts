@@ -36,7 +36,7 @@ import {
   linkDirectRunToMatchingBacklog,
 } from '../backlog/store.js';
 import { resolveCIDecision } from '../ci-monitor/service.js';
-import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { shellQuote } from '../core/tmux.js';
@@ -1127,7 +1127,20 @@ async function assertReadyPublishResolveIsFresh(
   await assertReadyGatePackageInputsCurrent(run, currentPackage);
   if (!currentPackage.headSha || !run.slotId) return;
 
-  const vars = await loadSlotVars(run.slotId);
+  let vars: Awaited<ReturnType<typeof loadSlotVars>>;
+  try {
+    vars = await loadSlotVars(run.slotId);
+  } catch (error) {
+    if (
+      params.actionId === APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION &&
+      currentPackage.reviewSnapshot?.source === 'unavailable' &&
+      error instanceof SlotConfigError &&
+      error.code === 'SLOT_NOT_FOUND'
+    ) {
+      return;
+    }
+    throw error;
+  }
   const liveHead = (
     await execOnSlot(vars, `git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD 2>/dev/null`, {
       timeout: 15_000,

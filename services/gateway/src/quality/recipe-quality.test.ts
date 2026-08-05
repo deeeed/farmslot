@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -57,7 +57,7 @@ async function writeTaskFile(taskDir: string, body: string): Promise<string> {
   return taskFile;
 }
 
-test('loadRecipeQualityEvaluation preserves a current worker artifact and merges structural checks', async () => {
+test('loadRecipeQualityEvaluation preserves a current gateway artifact and merges structural checks', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-valid-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Task\nWrite artifacts/recipe-quality.json\n');
@@ -99,7 +99,7 @@ test('loadRecipeQualityEvaluation preserves a current worker artifact and merges
           proof_mode: 'mixed',
         },
         meta: {
-          producer: 'worker',
+          producer: 'gateway',
           fallback_used: false,
           legacy_task: false,
           artifact_required: true,
@@ -117,7 +117,7 @@ test('loadRecipeQualityEvaluation preserves a current worker artifact and merges
   });
 
   assert.equal(evaluation.artifact.verdict, 'fail');
-  assert.equal(evaluation.artifact.meta.producer, 'worker');
+  assert.equal(evaluation.artifact.meta.producer, 'gateway');
   assert.equal(evaluation.signal.source, 'recipe-quality');
   assert.equal(evaluation.signal.semantic, 'bad');
 });
@@ -163,14 +163,13 @@ test('loadRecipeQualityEvaluation uses a supplied slot artifact instead of the g
   assert.equal(evaluation.artifact.compact.reasons[0], portableArtifact.compact.reasons[0]);
 });
 
-test('loadRecipeQualityEvaluation ignores a worker verdict when recipe sources are newer', async () => {
+test('loadRecipeQualityEvaluation ignores a legacy worker verdict when recipe sources exist', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-stale-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Task\n');
   const artifactsDir = path.join(taskDir, 'artifacts');
   await mkdir(artifactsDir, { recursive: true });
   const qualityPath = path.join(artifactsDir, 'recipe-quality.json');
-  const recipePath = path.join(artifactsDir, 'recipe.json');
   await writeFile(
     qualityPath,
     JSON.stringify({
@@ -202,9 +201,7 @@ test('loadRecipeQualityEvaluation ignores a worker verdict when recipe sources a
       },
     },
   });
-  await writeFile(recipePath, recipeJson);
-  await utimes(qualityPath, new Date(1_000), new Date(1_000));
-  await utimes(recipePath, new Date(2_000), new Date(2_000));
+  await writeFile(path.join(artifactsDir, 'recipe.json'), recipeJson);
 
   const evaluation = await loadRecipeQualityEvaluation({
     run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'fix-bug' }),

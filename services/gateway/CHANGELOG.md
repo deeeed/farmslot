@@ -5,6 +5,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - fix(self-review): restore the scoped fix checklist target before re-delivering a retained worker prompt after restart, so `mark complete` cannot write the main worker signal while recovery waits on the fix signal.
+- fix(ready-gate): invalidate pre-upgrade publish packages that lack an exact review snapshot, and keep removed-slot packages inspectable through the explicit exact-HEAD snapshot-unavailable override.
 - fix(self-review): include explicit untracked path/mode/blob manifests in review and fix-delta snapshots so empty files, executable-bit changes, and dangling symlinks cannot bypass exact reviewed-package identity.
 - fix(self-review): supersede obsolete delivery failures, relaunch the original worker with its runner and model, and deliver persisted fix tasks from fresh structured sessions.
 - fix(run-engine): recapture the contribution diff at current HEAD during ready-gate and package refresh, and refuse to restamp reviews whose captured diff changed.
@@ -13,9 +14,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - fix(resources): limit discovery, health, control, and node watches to resources configured on each slot, replacing complete watch sets so removed resources cannot report stale health.
 - fix(runners): bind retained sessions from the pane-scoped observability snapshot when the bounded hook tail no longer contains `SessionStart`, and recover missing session metadata before a follow-up handoff.
 - fix(run-engine): keep an explicitly delivery-failed publication reviewer under recovery watch, so a later manual prompt submission is ingested and its findings return to the original worker.
-- fix(runners): retry an unaccepted Codex prompt with the runner capability's submit action without waiting for the still-buffered composer to become idle.
 - fix(self-review): prefer the slot's remote-tracking default branch when capturing review snapshots, avoiding inflated reviews when a local default branch is stale.
-- fix(recipe-quality): stop stale worker-authored quality artifacts from overriding newer recipe and coverage evidence, preserve slot-portable verdicts without rereading gateway-local paths, and use the same canonical evaluation in operator gates and live run context.
+- fix(recipe-quality): derive current quality from recipe and coverage sources instead of trusting legacy worker-authored verdicts or copy-order-dependent mtimes, preserve slot-portable verdicts without rereading gateway-local paths, and use the same canonical evaluation in operator gates and live run context.
 - fix(command-center): resolve slot and review diffs against the open PR's actual base branch (or the configured remote default), include untracked files in exact review snapshots, keep committed and local worktree state distinct, and mark reviewed files viewed on GitHub after a full review is posted.
 - fix(run-completion): reconcile merged and already-ready PRs without replaying `gh pr ready`, and report closed-unmerged PRs explicitly.
 - fix(runners): keep Codex observability hooks in the isolated slot runtime, enable them at launch despite project overrides, and safely clean legacy Farmslot-only repository `.codex` changes even when an older installer left no backup, so new observability installs no longer dirty worker trees or silently lose their event contract.

@@ -156,6 +156,8 @@ export interface ReviewGatePayload {
   kind: 'review';
   prNumber: number | null;
   repo: string | null;
+  /** PR/project base branch used by the review diff workspace. */
+  baseRef?: string;
   recommendation: string;
   reviewMd: string;
   lineComments: ReviewLineComment[];

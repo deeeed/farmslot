@@ -466,7 +466,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     try {
       const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
         slotId: this.slotId,
-        base: 'main',
+        base: this._payload?.prPackage?.reviewSnapshot?.baseRef ?? 'main',
       });
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffError = '';

@@ -1,6 +1,6 @@
 // @farmslot:serial — writes slot fixtures into the shared repo `pool/` directory.
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, unlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -18,7 +18,7 @@ import {
 } from './context.js';
 import { FakeNodeWebSocket, makeRun, poolDir } from './test-fixtures.js';
 
-test('loadLiveRecipeContextForRun keeps a current quality artifact and rejects it after recipe changes', async (t) => {
+test('loadLiveRecipeContextForRun derives quality from recipe sources instead of a worker verdict', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-live-recipe-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -27,7 +27,6 @@ test('loadLiveRecipeContextForRun keeps a current quality artifact and rejects i
   await mkdir(artifactsDir, { recursive: true });
   await writeFile(path.join(taskDir, 'TASK.md'), '# task\n', 'utf-8');
   const recipePath = path.join(artifactsDir, 'recipe.json');
-  const qualityPath = path.join(artifactsDir, 'recipe-quality.json');
   await writeFile(
     recipePath,
     JSON.stringify({
@@ -54,7 +53,7 @@ test('loadLiveRecipeContextForRun keeps a current quality artifact and rejects i
     'utf-8',
   );
   await writeFile(
-    qualityPath,
+    path.join(artifactsDir, 'recipe-quality.json'),
     JSON.stringify({
       version: 1,
       verdict: 'pass',
@@ -90,19 +89,8 @@ test('loadLiveRecipeContextForRun keeps a current quality artifact and rejects i
   assert.match(context.recipeJson ?? '', /schemas\/recipe-v1\.schema\.json/);
   assert.equal(context.workerLearnings, 'Watch for stale metro sockets.\n');
   assert.equal(context.recipeQualityArtifact?.compact.verdict, 'PASS');
-  assert.equal(context.recipeQualityArtifact?.meta.producer, 'worker');
+  assert.equal(context.recipeQualityArtifact?.meta.producer, 'fallback:recipe-json');
   assert.ok((context.artifactManifest?.length ?? 0) >= 3);
-
-  await utimes(qualityPath, new Date(1_000), new Date(1_000));
-  await utimes(recipePath, new Date(2_000), new Date(2_000));
-  const refreshedContext = await loadLiveRecipeContextForRun(run);
-
-  assert.equal(refreshedContext?.recipeQualityArtifact?.compact.verdict, 'PASS');
-  assert.equal(
-    refreshedContext?.recipeQualityArtifact?.meta.producer,
-    'fallback:recipe-json',
-    'a worker verdict must not survive a newer recipe source',
-  );
 });
 
 test('loadLiveRecipeContextForRun falls back to inputs/inherited recipe.json', async (t) => {

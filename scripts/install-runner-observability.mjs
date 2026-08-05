@@ -255,6 +255,10 @@ function escapeTomlBasicString(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+function isTomlSectionHeader(line) {
+  return /^\s*\[\[?[^\]]+\]\]?\s*(?:#.*)?$/.test(line);
+}
+
 function normalizedCommandHookIdentity(eventName, entry, hook) {
   return {
     event_name: CODEX_HOOK_EVENT_LABELS[eventName],
@@ -325,7 +329,7 @@ function coalesceCodexFeaturesSections(content) {
   for (let i = 0; i < lines.length; i += 1) {
     if (lines[i].trim() !== '[features]') continue;
     const body = [];
-    for (i += 1; i < lines.length && !/^\s*\[/.test(lines[i]); i += 1) {
+    for (i += 1; i < lines.length && !isTomlSectionHeader(lines[i]); i += 1) {
       body.push(lines[i]);
     }
     i -= 1;
@@ -365,7 +369,7 @@ function coalesceCodexFeaturesSections(content) {
       output.push('[features]', ...merged);
       inserted = true;
     }
-    for (i += 1; i < lines.length && !/^\s*\[/.test(lines[i]); i += 1) {
+    for (i += 1; i < lines.length && !isTomlSectionHeader(lines[i]); i += 1) {
       // Skip the body of every original features section; it was merged above.
     }
     i -= 1;
@@ -384,7 +388,7 @@ function upsertCodexHooksFeature(content) {
 
   let sectionEnd = lines.length;
   for (let i = existingFeatureIdx + 1; i < lines.length; i += 1) {
-    if (/^\s*\[/.test(lines[i])) {
+    if (isTomlSectionHeader(lines[i])) {
       sectionEnd = i;
       break;
     }

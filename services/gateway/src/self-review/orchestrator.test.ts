@@ -480,7 +480,6 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
       return opts.relaunchOk ?? true;
     },
     resumeFixPromptDelivery: async () => 'delivered',
-    capturePromptAcceptanceBaseline: async () => Date.now(),
     ...(opts.contextPct !== undefined
       ? { getWorkerContextPct: async () => opts.contextPct ?? null }
       : {}),

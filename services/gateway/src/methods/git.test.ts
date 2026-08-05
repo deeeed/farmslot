@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 
 import { gitBranchDiff, gitDiff, gitExec } from './git.js';
+
+const execFileAsync = promisify(execFile);
 
 test('gitExec remote branch transmits shell metacharacters as one argv element', async () => {
   const payload = 'feature/foo;touch /tmp/pwned`id`$(id)';
@@ -122,10 +129,10 @@ test('gitBranchDiff fetches an exact stacked PR base that is missing locally', a
   );
 });
 
-test('gitDiff reuses the refreshed remote base without fetching per file', async () => {
+test('gitDiff refreshes the remote base when called directly', async () => {
   const { deps, argvLog } = branchDiffDeps({ nameStatus: '', numstat: '' });
   await gitDiff({ slotId: 's', base: 'main', path: 'src/a.ts' }, deps);
-  assert.ok(!argvLog.some((argv) => argv[1] === 'fetch'));
+  assert.ok(argvLog.some((argv) => argv[1] === 'fetch'));
   assert.ok(argvLog.some((argv) => argv[1] === 'rev-parse' && argv.includes('origin/main')));
 });
 
@@ -150,7 +157,80 @@ test('gitDiff falls back to a local base branch when the remote ref is unavailab
   );
   assert.equal(result.diff, 'diff body');
   assert.ok(argvLog.some((argv) => argv[1] === 'merge-base' && argv.includes('main')));
-  assert.ok(!argvLog.some((argv) => argv[1] === 'fetch'));
+  assert.ok(argvLog.some((argv) => argv[1] === 'fetch'));
+});
+
+test('gitDiff uses an existing remote-tracking base when refresh is offline', async () => {
+  const argvLog: string[][] = [];
+  const result = await gitDiff(
+    { slotId: 's', base: 'main', path: 'src/a.ts' },
+    {
+      resolveRepo: async () => '/repo',
+      loadVars: async () => ({ host: 'localhost', machine: 'local', remoteRepo: '/repo' }) as any,
+      runOnSlot: async (_vars: unknown, argv: string[]) => {
+        argvLog.push(argv);
+        if (argv[1] === 'fetch') return { stdout: '', stderr: 'offline', exitCode: 1 };
+        if (argv[1] === 'rev-parse') return { stdout: 'remote-base\n', stderr: '', exitCode: 0 };
+        if (argv[1] === 'merge-base') return { stdout: 'mb-remote\n', stderr: '', exitCode: 0 };
+        if (argv[1] === 'diff') return { stdout: 'diff body', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    },
+  );
+  assert.equal(result.diff, 'diff body');
+  assert.ok(argvLog.some((argv) => argv[1] === 'fetch'));
+  assert.ok(argvLog.some((argv) => argv[1] === 'merge-base' && argv.includes('origin/main')));
+});
+
+test('real git: direct gitDiff keeps the last remote base when origin is offline', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-git-diff-offline-'));
+  const remote = path.join(root, 'origin.git');
+  const repo = path.join(root, 'repo');
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(repo);
+  await execFileAsync('git', ['init', '--bare', remote]);
+  await execFileAsync('git', ['init'], { cwd: repo });
+  await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
+  await execFileAsync('git', ['config', 'user.name', 'Test'], { cwd: repo });
+  await execFileAsync('git', ['branch', '-M', 'main'], { cwd: repo });
+  await writeFile(path.join(repo, 'proof.txt'), 'base\n');
+  await execFileAsync('git', ['add', 'proof.txt'], { cwd: repo });
+  await execFileAsync('git', ['commit', '-m', 'base'], { cwd: repo });
+  await execFileAsync('git', ['remote', 'add', 'origin', remote], { cwd: repo });
+  await execFileAsync('git', ['push', '-u', 'origin', 'main'], { cwd: repo });
+  await execFileAsync('git', ['checkout', '-b', 'feature'], { cwd: repo });
+  await writeFile(path.join(repo, 'proof.txt'), 'base\nfeature\n');
+  await execFileAsync('git', ['commit', '-am', 'feature'], { cwd: repo });
+  await execFileAsync('git', ['remote', 'set-url', 'origin', path.join(root, 'offline.git')], {
+    cwd: repo,
+  });
+
+  const result = await gitDiff(
+    { slotId: 'offline-slot', base: 'main', path: 'proof.txt' },
+    {
+      resolveRepo: async () => repo,
+      loadVars: async () => ({ host: 'localhost', machine: 'local', remoteRepo: repo }) as any,
+      runOnSlot: async (_vars, argv, options) => {
+        try {
+          const executed = await execFileAsync(argv[0], argv.slice(1), { cwd: options?.cwd });
+          return { stdout: executed.stdout, stderr: executed.stderr, exitCode: 0 };
+        } catch (error) {
+          const failed = error as Error & {
+            code?: number;
+            stdout?: string;
+            stderr?: string;
+          };
+          return {
+            stdout: failed.stdout ?? '',
+            stderr: failed.stderr ?? failed.message,
+            exitCode: typeof failed.code === 'number' ? failed.code : 1,
+          };
+        }
+      },
+    },
+  );
+
+  assert.match(result.diff, /^\+feature$/m);
 });
 
 test('gitBranchDiff worktree target diffs against the working tree and appends untracked files', async () => {

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -100,25 +100,6 @@ async function readTextIfExists(filePath: string): Promise<string | null> {
     return await readFile(filePath, 'utf-8');
   } catch {
     return null;
-  }
-}
-
-async function workerQualityArtifactIsStale(artifactsDir: string): Promise<boolean> {
-  const qualityPath = path.join(artifactsDir, RECIPE_QUALITY_FILENAME);
-  try {
-    const qualityMtime = (await stat(qualityPath)).mtimeMs;
-    const sourceMtimes = await Promise.all(
-      ['recipe.json', 'recipe-coverage.md'].map(async (filename) => {
-        try {
-          return (await stat(path.join(artifactsDir, filename))).mtimeMs;
-        } catch {
-          return null;
-        }
-      }),
-    );
-    return sourceMtimes.some((mtime) => mtime != null && mtime > qualityMtime);
-  } catch {
-    return false;
   }
 }
 
@@ -518,11 +499,11 @@ export async function loadRecipeQualityEvaluation(
       const parsed = JSON.parse(artifactText);
       if (isRecipeQualityArtifact(parsed)) {
         const artifact = parsed as RecipeQualityArtifact;
+        // Worker-authored verdicts are legacy input. Once current recipe
+        // sources exist, derive quality from them instead of guessing artifact
+        // freshness from copy-order-dependent mtimes.
         const workerArtifactIsStale =
-          artifact.meta.producer === 'worker' &&
-          hasCurrentRecipeSources &&
-          artifactsDir != null &&
-          (await workerQualityArtifactIsStale(artifactsDir));
+          artifact.meta.producer === 'worker' && hasCurrentRecipeSources;
         if (!workerArtifactIsStale) {
           const merged = mergeStructuralEvaluation(artifact, structural);
           return { artifact: merged, signal: buildSignal(run.id, merged) };

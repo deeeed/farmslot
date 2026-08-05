@@ -65,6 +65,7 @@ const execFileAsync = promisify(execFile);
 interface BranchPRBinding {
   pr: number;
   repo: string;
+  baseRef?: string;
 }
 
 /**
@@ -849,13 +850,20 @@ async function findPRViaSlotRepo(slotId: string, branch: string): Promise<Branch
   try {
     const { stdout } = await execFileAsync(
       'gh',
-      ['pr', 'list', '--head', branch, '--json', 'number', '--jq', '.[0].number'],
+      ['pr', 'list', '--head', branch, '--json', 'number,baseRefName', '--jq', '.[0]'],
       { cwd: repoPath, env, maxBuffer: 1024 * 1024 },
     );
-    const prNum = parseInt(stdout.trim(), 10);
-    if (isNaN(prNum)) return null;
+    const found = JSON.parse(stdout || 'null') as {
+      number?: number;
+      baseRefName?: string;
+    } | null;
+    if (!found?.number) return null;
     const slug = await resolveSlotRepoSlug(slotId);
-    return { pr: prNum, repo: slug ?? '' };
+    return {
+      pr: found.number,
+      repo: slug ?? '',
+      ...(found.baseRefName ? { baseRef: found.baseRefName } : {}),
+    };
   } catch {
     return null;
   }
@@ -920,21 +928,11 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
   if (!repo) {
     const fallback = await findPRViaSlotRepo(slot.slot, slot.branch);
     if (!fallback) return { pr: null, repo: null, baseRef: defaultBranch };
-    let baseRef = defaultBranch;
-    if (fallback.repo) {
-      try {
-        const result = await ghRequest([
-          'api',
-          `repos/${fallback.repo}/pulls/${fallback.pr}`,
-          '--jq',
-          '.base.ref',
-        ]);
-        baseRef = result.stdout.trim() || defaultBranch;
-      } catch {
-        // Keep the configured project default when GitHub base lookup is unavailable.
-      }
-    }
-    return { pr: fallback.pr, repo: fallback.repo || null, baseRef };
+    return {
+      pr: fallback.pr,
+      repo: fallback.repo || null,
+      baseRef: fallback.baseRef || defaultBranch,
+    };
   }
 
   const cached = getBinding(slot.branch, repo);

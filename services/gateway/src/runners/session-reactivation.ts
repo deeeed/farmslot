@@ -53,8 +53,6 @@ export interface RunnerSessionReactivationOptions {
   recovery?: RunnerSendRecoveryContext;
   sendLogPrefix?: string;
   forceBusyPoll?: boolean;
-  /** Slot-clock boundary proving this is a gateway-owned fresh runner session. */
-  freshSessionStartedAfterMs?: number | null;
 }
 
 export type RetainedSessionDeliveryResult =
@@ -306,8 +304,6 @@ export async function deliverPromptInPlace(
       {
         forceBusyPoll: options.forceBusyPoll ?? true,
         recovery: options.recovery,
-        freshSessionStartedAfterMs: options.freshSessionStartedAfterMs,
-        replacedSessionId: options.sessionId,
       },
     );
     if (accepted && options.launchAckSignalPath) {

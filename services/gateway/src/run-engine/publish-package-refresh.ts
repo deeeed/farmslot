@@ -181,6 +181,12 @@ export async function refreshPublishPackage(params: {
     params.publicationTarget === 'draft' || params.publicationTarget === 'ready'
       ? params.publicationTarget
       : (oldPayload.publicationTarget ?? oldPayload.prPackage?.publicationTarget ?? 'ready');
+  let slotAvailable = false;
+  if (run.slotId) {
+    slotAvailable = await loadSlotVars(run.slotId)
+      .then(() => true)
+      .catch(() => false);
+  }
   let reviewDepthForRefresh = oldPayload.reviewDepth;
   if (oldPayload.reviewDepth?.requestedBy === 'human-gate') {
     const projectVars = await loadProjectVars(run.project);
@@ -201,8 +207,8 @@ export async function refreshPublishPackage(params: {
     selectedEvidenceKeys: selectedBefore,
     priorEvidenceManifest: oldPayload.prPackage?.evidenceManifest,
     stampReviews: false,
-    requireArtifactMirror: Boolean(run.slotId),
-    headSha: run.slotId ? undefined : oldPayload.prPackage?.headSha,
+    requireArtifactMirror: slotAvailable,
+    headSha: oldPayload.prPackage?.headSha,
   });
   const refreshedRun = getRun(params.runId)!;
   const prPackage = prepared.prPackage;

@@ -352,14 +352,6 @@ async function snapshotHeadSha(run: Run): Promise<string | undefined> {
   }
 }
 
-async function requireSnapshotHeadSha(run: Run): Promise<string> {
-  const headSha = await snapshotHeadSha(run);
-  if (!headSha) {
-    throw new Error('Cannot prepare publishable PR package without a workspace HEAD SHA');
-  }
-  return headSha;
-}
-
 function preserveSelectedEvidenceKeys(
   selectedEvidenceKeys: string[] | undefined,
   evidenceManifest: ArtifactRef[],
@@ -520,7 +512,12 @@ export async function prepareCompletionPackage(
   );
   independentReviews = await augmentIndependentReviewAttemptsFromArtifacts(run, independentReviews);
   const target = options?.publicationTarget ?? defaultPublicationTarget(run);
-  const headSha = options?.headSha ?? (await requireSnapshotHeadSha(run));
+  // A live slot always wins. A persisted package HEAD is accepted only as the
+  // inspection identity fallback after that slot has been removed.
+  const headSha = (await snapshotHeadSha(run)) ?? options?.headSha;
+  if (!headSha) {
+    throw new Error('Cannot prepare publishable PR package without a workspace HEAD SHA');
+  }
   let reviewSnapshot = unavailableReviewSnapshot('missing-slot');
   if (run.slotId) {
     let vars: Awaited<ReturnType<typeof loadSlotVars>> | null = null;

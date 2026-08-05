@@ -417,6 +417,8 @@ function reviewSnapshotDiffMatchesPackage(
  * Per-review staleness diagnosis against the prepared package's review subject.
  * `headDrift` means the review certified a different (or missing) HEAD SHA than
  * the prepared package — a real code change that mandates re-review.
+ * `diffDrift` means the worktree snapshot differs at the same HEAD (for example
+ * uncommitted files), which also mandates re-review.
  * `subjectDrift` means the reviewed subject hash no longer matches — typically
  * caused by an evidence/package refresh that regenerated artifact digests even
  * though the reviewed code (HEAD) is unchanged. The two reasons are kept
@@ -425,6 +427,7 @@ function reviewSnapshotDiffMatchesPackage(
 interface PublicationReviewStaleness {
   stale: boolean;
   headDrift: boolean;
+  diffDrift: boolean;
   subjectDrift: boolean;
 }
 
@@ -441,9 +444,13 @@ function diagnosePublicationReviewStaleness(
   const headDrift =
     !reviewedHeadSha ||
     reviewedHeadSha !== preparedPackage.headSha ||
-    (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable')) ||
-    diffDrift;
-  return { stale: headDrift || subjectDrift, headDrift, subjectDrift };
+    (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable'));
+  return {
+    stale: headDrift || diffDrift || subjectDrift,
+    headDrift,
+    diffDrift,
+    subjectDrift,
+  };
 }
 
 /** True when a review was captured for the exact prepared package subject and HEAD. */
@@ -525,7 +532,8 @@ function classifyStaleApprovingReviews(
       preparedPackage,
     );
     if (!diagnosis.stale) continue;
-    if (diagnosis.subjectDrift && !diagnosis.headDrift) evidenceOnly.push(review);
+    if (diagnosis.subjectDrift && !diagnosis.headDrift && !diagnosis.diffDrift)
+      evidenceOnly.push(review);
     else hasHeadDriftedApproval = true;
   }
   return { evidenceOnly, hasHeadDriftedApproval };

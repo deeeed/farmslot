@@ -44,7 +44,7 @@ test('snapshot prefers family-level recipe quality from the strongest available 
           proof_mode: 'mixed',
         },
         meta: {
-          producer: 'worker',
+          producer: 'gateway',
           fallback_used: false,
           legacy_task: false,
           artifact_required: true,

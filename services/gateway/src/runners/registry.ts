@@ -106,13 +106,6 @@ export interface RunnerDefinition {
   /** Runner's TUI can show a busy "composer" pane that swallows send-keys — poll before sending. */
   requiresBusyComposerPoll: boolean;
   /**
-   * A submit key the runner accepts when text injection succeeded but its native
-   * prompt-acceptance signal did not fire. This recovery is transport-owned: it
-   * retries submission once without waiting for an idle composer, because the
-   * unsubmitted prompt itself makes that wait impossible.
-   */
-  unacceptedPromptSubmitKey?: 'Enter' | 'C-m' | 'Tab';
-  /**
    * Per-tier CLI flags appended to the runner binary (ADR-023). Every tier maps to
    * an explicit list so callers never branch on runner-id when selecting flags —
    * the registry lookup picks the right set.
@@ -226,7 +219,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     sessionReload: 'with-prompt',
     retainedSessionHandoff: 'resume-with-prompt',
     requiresBusyComposerPoll: true,
-    unacceptedPromptSubmitKey: 'Enter',
     // Codex tier mapping:
     //   sandboxed  — default; Codex CLI prompts for approvals on destructive ops.
     //   full-auto  — workspace-write sandbox with approval prompts disabled.
@@ -687,7 +679,6 @@ export interface RunnerLaunchBlocker {
     | 'workspace-trust'
     | 'project-directory'
     | 'hooks-review'
-    | 'session-resume'
     | 'auth-required'
     | 'mcp-init'
     | 'cold-start'
@@ -697,7 +688,6 @@ export interface RunnerLaunchBlocker {
     | 'cursor-trust-workspace'
     | 'grok-select-current-project'
     | 'codex-refresh-hooks-and-trust'
-    | 'claude-resume-from-summary'
     | null;
   /** Wait for the blocker to clear instead of failing prompt delivery. */
   defer?: boolean;
@@ -709,7 +699,6 @@ export function runnerLaunchBlockerAutoActionKey(
 ): string | null {
   if (autoAction === 'cursor-trust-workspace') return 'a';
   if (autoAction === 'grok-select-current-project') return 'Enter';
-  if (autoAction === 'claude-resume-from-summary') return 'Enter';
   if (autoAction === 'codex-refresh-hooks-and-trust') {
     for (const line of pane.split('\n')) {
       const match = normalizeInstructionText(line).match(/\b(\d+)\.\s*Trust all and continue\b/i);
@@ -835,13 +824,6 @@ export function detectRunnerLaunchBlocker(
         kind: 'hooks-review',
         summary: 'Codex is waiting for repository hook review before the chat input is available.',
         autoAction: 'codex-refresh-hooks-and-trust',
-      };
-    case 'session-resume':
-      return {
-        kind: 'session-resume',
-        summary:
-          'Claude is waiting for confirmation to compact and resume an old persisted session.',
-        autoAction: 'claude-resume-from-summary',
       };
     case 'mcp-init':
       return {
@@ -1910,8 +1892,6 @@ async function sendRunnerInstructionHookOnly(
   loopStartMs: number,
   promptAcceptedSinceMs: number,
   recovery?: RunnerSendRecoveryContext,
-  freshSessionStartedAfterMs?: number | null,
-  replacedSessionId?: string | null,
 ): Promise<boolean> {
   const observability = getRunnerObservability(runner);
   if (!observability) return false;
@@ -1998,19 +1978,6 @@ async function sendRunnerInstructionHookOnly(
       if (submitted === 'stuck') return false;
       // 'not-buffered' → OUR message is not buffered → fall through to the foreign-draft guard.
     }
-    const gatewayOwnedFreshSession =
-      freshSessionStartedAfterMs != null &&
-      replacedSessionId != null &&
-      activity?.value === 'idle' &&
-      activity.source === 'hook' &&
-      activity.observedAt >= freshSessionStartedAfterMs &&
-      activity.sessionId != null &&
-      activity.sessionId !== replacedSessionId;
-    if (gatewayOwnedFreshSession) {
-      return (
-        (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok'
-      );
-    }
     // Reaching here means our instruction is NOT buffered (submit-existing proved 'not-buffered',
     // or the hook read authoritative-accepted so nothing of ours is pending). Before typing fresh,
     // confirm the live composer is EMPTY: foreign draft text — an operator keystroke, another
@@ -2075,8 +2042,6 @@ export async function sendRunnerInstructionSafely(
   opts: {
     forceBusyPoll?: boolean;
     recovery?: RunnerSendRecoveryContext;
-    freshSessionStartedAfterMs?: number | null;
-    replacedSessionId?: string | null;
   } = {},
 ): Promise<boolean> {
   const runner = normalizeRunner(runnerId);
@@ -2107,8 +2072,6 @@ export async function sendRunnerInstructionSafely(
       loopStartMs,
       hookPromptAcceptedSinceMs,
       opts.recovery,
-      opts.freshSessionStartedAfterMs,
-      opts.replacedSessionId,
     );
   }
   // Skip the busy-composer poll iff the runner doesn't require it AND the caller didn't opt
@@ -2761,9 +2724,6 @@ export async function sendRunnerPostLaunchPrompt(
 
   let attempt = 1;
   let sentAttempts = 0;
-  let submitRetryPending = false;
-  let submitRetryAttempted = false;
-  const unacceptedPromptSubmitKey = getRunnerDefinition(runner).unacceptedPromptSubmitKey;
   const deliveryDeadline = Date.now() + readyTimeoutMs;
   while (attempt <= maxAttempts && Date.now() < deliveryDeadline) {
     const immediatePane = (
@@ -2807,12 +2767,10 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    const preSendPane = submitRetryPending
-      ? immediatePane
-      : await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
-          deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
-          pollIntervalMs,
-        });
+    const preSendPane = await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
+      deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
+      pollIntervalMs,
+    });
     const preSendHandoff = await runnerHasDurablePromptHandoff(
       vars,
       target,
@@ -2851,21 +2809,18 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    const shouldSubmitOnly =
-      submitRetryPending ||
-      runnerPaneShouldSubmitExistingInstruction(preSendPane, message, marker, runner, {
-        allowMarkerOnly: attempt > 1,
-      });
+    const shouldSubmitOnly = runnerPaneShouldSubmitExistingInstruction(
+      preSendPane,
+      message,
+      marker,
+      runner,
+      { allowMarkerOnly: attempt > 1 },
+    );
     let sendCommand: string;
     if (shouldSubmitOnly) {
-      if (submitRetryPending) {
-        submitRetryPending = false;
-        submitRetryAttempted = true;
-      }
-      const submitKey = submitRetryAttempted
-        ? unacceptedPromptSubmitKey!
-        : runnerBufferedInstructionSubmitKey(preSendPane, runner)!;
-      sendCommand = tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${submitKey} 2>/dev/null`);
+      sendCommand = tmuxShellSnippet(
+        `send-keys -t ${shellQuote(target)} ${runnerBufferedInstructionSubmitKey(preSendPane, runner)} 2>/dev/null`,
+      );
     } else {
       try {
         await writeRunnerPromptSentinel(vars, message);
@@ -2917,21 +2872,6 @@ export async function sendRunnerPostLaunchPrompt(
     if (!requirePromptDigest && runnerPaneHasQueuedInstruction(postPane, message)) {
       console.log(`[${logPrefix}] prompt queued in ${target} (attempt ${attempt}/${maxAttempts})`);
       return;
-    }
-    if (submitRetryAttempted) {
-      console.log(
-        `[${logPrefix}] prompt remained unaccepted after the runner-defined submit retry in ${target}`,
-      );
-      break;
-    }
-    if (unacceptedPromptSubmitKey && sentAttempts === 1) {
-      console.log(
-        `[${logPrefix}] prompt was injected but not accepted after attempt ${attempt}/${maxAttempts}; retrying the runner submit key without waiting for idle`,
-      );
-      submitRetryPending = true;
-      lastPane = postPane;
-      attempt += 1;
-      continue;
     }
     if (runnerPaneHasBufferedInstruction(postPane, message, runner)) {
       console.log(

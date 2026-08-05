@@ -226,6 +226,9 @@ export async function executeReviewGate(runId: string): Promise<void> {
     kind: 'review',
     prNumber,
     repo: ciRepo,
+    baseRef:
+      reviewSnapshot?.baseRef ??
+      (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') || 'main' : 'main'),
     recommendation: review.recommendation,
     reviewMd: review.reviewMd,
     lineComments: review.lineComments,
@@ -475,10 +478,10 @@ export async function executeReviewGate(runId: string): Promise<void> {
     // A published full review covered the current PR head (checked above), so
     // mirror that completion in GitHub's Files changed view. GitHub will
     // automatically unmark a file if a later commit changes it.
+    const confirmedPr = await fetchGitHubPR(`${ciRepo}#${prNumber}`);
+    assertReviewSnapshotMatchesPullRequest(reviewSnapshot, confirmedPr.headSha);
     try {
       const viewedFiles = await fetchPRDiffFiles(ciRepo, prNumber);
-      const confirmedPr = await fetchGitHubPR(`${ciRepo}#${prNumber}`);
-      assertReviewSnapshotMatchesPullRequest(reviewSnapshot, confirmedPr.headSha);
       const viewed = await markPRFilesViewed(
         ciRepo,
         prNumber,

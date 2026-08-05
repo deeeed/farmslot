@@ -74,7 +74,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private get _baseRef(): string {
-    const base = this._payload?.reviewSnapshot?.baseRef?.trim() || 'main';
+    const base =
+      this._payload?.reviewSnapshot?.baseRef?.trim() || this._payload?.baseRef?.trim() || 'main';
     return base.startsWith('origin/') ? base.slice('origin/'.length) : base;
   }
 

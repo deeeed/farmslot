@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  appendUntrackedFileManifest,
   parseReviewSnapshotArtifact,
   parseUntrackedFileManifest,
   preferredRemoteReviewBaseRef,
+  reviewSnapshotIdentityText,
   tmuxListSelfReviewWindowIdsSnippet,
 } from './snapshots.js';
 
@@ -27,16 +27,16 @@ test('untracked manifest binds paths, modes, and blob identities into the review
     { path: 'empty file.ts', blobSha: emptyBlob, mode: '100644' },
     { path: 'src/a.ts', blobSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', mode: '100755' },
   ]);
-  const diff = appendUntrackedFileManifest('', files);
+  const diff = reviewSnapshotIdentityText('', files);
   assert.match(diff, new RegExp(emptyBlob));
   assert.match(diff, /"empty file\.ts"/);
   assert.notEqual(
     diff,
-    appendUntrackedFileManifest('', [{ path: 'renamed.ts', blobSha: emptyBlob, mode: '100644' }]),
+    reviewSnapshotIdentityText('', [{ path: 'renamed.ts', blobSha: emptyBlob, mode: '100644' }]),
   );
   assert.notEqual(
     diff,
-    appendUntrackedFileManifest('', [
+    reviewSnapshotIdentityText('', [
       { path: 'empty file.ts', blobSha: emptyBlob, mode: '100755' },
       { path: 'src/a.ts', blobSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', mode: '100755' },
     ]),

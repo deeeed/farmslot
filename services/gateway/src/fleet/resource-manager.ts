@@ -60,7 +60,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let broadcastFn: ((event: string, payload: unknown) => void) | null = null;
 const RESOURCE_POLL_CONCURRENCY = 4;
 let pollAllInFlight = false;
-const warnedUnconfiguredResources = new Set<string>();
+const warnedUnconfiguredResources = new Map<string, string>();
 
 // Track which machines have active resource watches
 const activeWatchMachines = new Set<string>();
@@ -331,9 +331,11 @@ export async function resolveSlotResources(slotId: string): Promise<SlotResource
   const droppedIds = resourceEntries
     .map(([id]) => id)
     .filter((id) => !isSlotResourceConfigured(slot.resources, id));
-  const warningKey = `${slotId}:${droppedIds.join(',')}`;
-  if (droppedIds.length > 0 && !warnedUnconfiguredResources.has(warningKey)) {
-    warnedUnconfiguredResources.add(warningKey);
+  const warningSignature = droppedIds.join(',');
+  if (droppedIds.length === 0) {
+    warnedUnconfiguredResources.delete(slotId);
+  } else if (warnedUnconfiguredResources.get(slotId) !== warningSignature) {
+    warnedUnconfiguredResources.set(slotId, warningSignature);
     console.warn(
       `[resource-manager] slot ${slotId} does not configure project resource(s): ${droppedIds.join(', ')}`,
     );

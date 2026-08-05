@@ -451,36 +451,6 @@ describe('cursor runner', () => {
     assert.match(commands[1], /^send-keys -t 'core-2:review\.0' '2' 'Enter'/);
   });
 
-  it('resumes an old Claude session from its recommended compacted summary', async () => {
-    const claudePane = `
-  This session is 5h 34m old and 574.7k tokens.
-
-  ❯ 1. Resume from summary (recommended)
-    2. Resume full session as-is
-    3. Don't ask me again
-
-  Enter to confirm · Esc to cancel
-`;
-    assert.deepEqual(detectRunnerLaunchBlocker(claudePane, 'claude'), {
-      kind: 'session-resume',
-      summary: 'Claude is waiting for confirmation to compact and resume an old persisted session.',
-      autoAction: 'claude-resume-from-summary',
-    });
-
-    const commands: string[] = [];
-    const result = await resolveLaunchBlockerWithFreshEvidence({
-      runnerId: 'claude',
-      target: 'ff-1:dev',
-      logPrefix: 'test',
-      exec: async (tmuxCommand) => {
-        commands.push(tmuxCommand);
-        return { exitCode: 0, stdout: tmuxCommand.startsWith('capture-pane') ? claudePane : '' };
-      },
-    });
-    assert.deepEqual(result, { outcome: 'sent', key: 'Enter' });
-    assert.match(commands[1], /^send-keys -t 'ff-1:dev' 'Enter'/);
-  });
-
   it('resolveLaunchBlockerWithFreshEvidence never sends without fresh deterministic evidence', async () => {
     const commands: string[] = [];
     const result = await resolveLaunchBlockerWithFreshEvidence({

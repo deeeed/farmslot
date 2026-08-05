@@ -46,7 +46,7 @@ test('snapshot aggregates family runs, artifacts, and learnings from persisted f
           proof_mode: 'mixed',
         },
         meta: {
-          producer: 'worker',
+          producer: 'gateway',
           fallback_used: false,
           legacy_task: false,
           artifact_required: true,

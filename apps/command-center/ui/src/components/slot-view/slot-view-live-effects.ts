@@ -13,7 +13,7 @@ import { gateway } from '../../gateway-client.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
-import { branchDiffPollAction, gitChangesFingerprint } from './slot-view-branch-model.js';
+import { branchDiffPollAction } from './slot-view-branch-model.js';
 import {
   isDirectoryReadErrorMessage,
   isImageFile,
@@ -117,9 +117,6 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
     if (!isCurrentLiveResult(view, epoch)) return;
     const prevBranch = view._liveGitData?.branch;
     const prevAhead = view._liveGitData?.ahead;
-    const prevChangesKey = view._liveGitData
-      ? gitChangesFingerprint(view._liveGitData.changes)
-      : undefined;
     view._liveGitData = {
       branch: result.branch,
       ahead: result.ahead,
@@ -131,8 +128,6 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
       nextBranch: result.branch,
       prevAhead,
       nextAhead: result.ahead,
-      prevChangesKey,
-      nextChangesKey: gitChangesFingerprint(result.changes),
       lastLoadFailed: view._branchDiffError !== null,
       loading: view._branchDiffLoading,
     });

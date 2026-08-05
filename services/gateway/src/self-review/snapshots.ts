@@ -78,7 +78,7 @@ export function parseUntrackedFileManifest(text: string): UntrackedReviewFile[] 
   return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export function appendUntrackedFileManifest(
+export function reviewSnapshotIdentityText(
   diffText: string,
   files: ReadonlyArray<UntrackedReviewFile>,
 ): string {
@@ -181,22 +181,25 @@ async function resolveReviewBaseRef(
 
   const remoteBaseRef = preferredRemoteReviewBaseRef(configuredBaseRef);
   if (!remoteBaseRef) return configuredBaseRef;
-  try {
-    const branch = remoteBaseRef.slice('origin/'.length);
-    const fetchResult = await execOnSlot(
-      vars,
-      `git fetch --no-tags origin ${shellQuote(`refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
-      { timeout: 15_000 },
-    );
-    if (fetchResult.exitCode !== 0) {
-      throw new Error(fetchResult.stderr || fetchResult.stdout || `fetch ${remoteBaseRef} failed`);
-    }
-    return remoteBaseRef;
-  } catch (err) {
-    throw new Error(
-      `remote review base ${remoteBaseRef} could not be refreshed: ${(err as Error).message}`,
-    );
-  }
+  const branch = remoteBaseRef.slice('origin/'.length);
+  await execOnSlot(
+    vars,
+    `git fetch --no-tags origin ${shellQuote(`refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
+    { timeout: 15_000 },
+  ).catch(() => undefined);
+  const remoteAvailable = await execOnSlot(
+    vars,
+    `git rev-parse --verify ${shellQuote(remoteBaseRef)} 2>/dev/null`,
+    { timeout: 10_000 },
+  );
+  if (remoteAvailable.exitCode === 0) return remoteBaseRef;
+  const localAvailable = await execOnSlot(
+    vars,
+    `git rev-parse --verify ${shellQuote(branch)} 2>/dev/null`,
+    { timeout: 10_000 },
+  );
+  if (localAvailable.exitCode === 0) return branch;
+  throw new Error(`review base ${remoteBaseRef} is unavailable after refresh`);
 }
 
 export async function captureCurrentReviewSnapshot(
@@ -264,7 +267,7 @@ export async function captureCurrentReviewSnapshot(
       };
     }
     const untrackedFiles = parseUntrackedFileManifest(untrackedManifest.stdout);
-    const reviewDiffText = appendUntrackedFileManifest(diff.stdout, untrackedFiles);
+    const reviewDiffIdentity = reviewSnapshotIdentityText(diff.stdout, untrackedFiles);
     return {
       snapshot: {
         source: 'local-git',
@@ -272,12 +275,15 @@ export async function captureCurrentReviewSnapshot(
         baseSha,
         headRef: branchResult.stdout.trim() || null,
         headSha: headResult.stdout.trim(),
-        diffHash: sha256(reviewDiffText),
+        diffHash: sha256(reviewDiffIdentity),
         diffStat: parseReviewNumstat(numstat.stdout),
         ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
         capturedAt: new Date().toISOString(),
       },
-      diffText: reviewDiffText,
+      // Keep review.diff valid for diff2html/git tooling. The untracked
+      // identity manifest participates in diffHash and lives structurally in
+      // the snapshot, not as non-diff trailer text.
+      diffText: diff.stdout,
     };
   } catch (err) {
     return {
@@ -403,7 +409,7 @@ export async function captureFixDeltaSnapshot(
       return { snapshot, artifactPaths: [statRel] };
     }
     const untrackedFiles = parseUntrackedFileManifest(untrackedManifest.stdout);
-    const fixDiffText = appendUntrackedFileManifest(diff.stdout, untrackedFiles);
+    const fixDiffIdentity = reviewSnapshotIdentityText(diff.stdout, untrackedFiles);
     const snapshot: ReviewFixDeltaSnapshot = {
       source: 'local-git',
       baseSha: fixBaseSha,
@@ -411,12 +417,12 @@ export async function captureFixDeltaSnapshot(
       fixBaseSha,
       fixHeadSha,
       diffPath: diffRel,
-      diffHash: sha256(fixDiffText),
+      diffHash: sha256(fixDiffIdentity),
       diffStat: parseReviewNumstat(numstat.stdout),
       ...(untrackedFiles.length > 0 ? { untrackedFiles } : {}),
       capturedAt: new Date().toISOString(),
     };
-    await writeLargeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, fixDiffText);
+    await writeLargeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, diff.stdout);
     await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
     return { snapshot, artifactPaths: [diffRel, statRel] };
   } catch (err) {

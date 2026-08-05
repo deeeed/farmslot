@@ -66,6 +66,8 @@ export async function gitExec(
 }
 
 const VALID_STATUSES: GitChangeStatus[] = ['M', 'A', 'D', '?', 'R'];
+const BASE_REFRESH_TTL_MS = 15_000;
+const baseRefreshCache = new Map<string, { expiresAt: number; refresh: Promise<void> }>();
 
 function toStatus(char: string): GitChangeStatus {
   return VALID_STATUSES.includes(char as GitChangeStatus) ? (char as GitChangeStatus) : 'M';
@@ -156,22 +158,41 @@ async function resolveRemoteBaseRef(
   if (options.refresh) {
     // Branch inventory refreshes the PR base once. Per-file diff reads reuse
     // that ref instead of multiplying network fetches across an opened tree.
-    await gitExec(
-      slotId,
-      ['fetch', '--no-tags', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`],
-      undefined,
-      deps,
-    );
+    const fetchBase = () =>
+      gitExec(
+        slotId,
+        ['fetch', '--no-tags', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`],
+        undefined,
+        deps,
+      )
+        .then(() => undefined)
+        .catch(() => undefined);
+    if (Object.keys(deps).length > 0) {
+      await fetchBase();
+    } else {
+      const now = Date.now();
+      for (const [key, cached] of baseRefreshCache) {
+        if (cached.expiresAt <= now) baseRefreshCache.delete(key);
+      }
+      const cacheKey = `${slotId}:${remoteRef}`;
+      const cached = baseRefreshCache.get(cacheKey);
+      if (cached) {
+        await cached.refresh;
+      } else {
+        const refresh = fetchBase();
+        baseRefreshCache.set(cacheKey, { expiresAt: now + BASE_REFRESH_TTL_MS, refresh });
+        await refresh;
+      }
+    }
   }
   try {
     await gitExec(slotId, ['rev-parse', '--verify', remoteRef], undefined, deps);
     return remoteRef;
-  } catch (error) {
-    if (options.refresh || base.startsWith('origin/')) throw error;
+  } catch {
     // Offline/local-only worktrees may have no remote-tracking ref yet. The
     // named local branch is a safe read-only fallback for a per-file diff.
-    await gitExec(slotId, ['rev-parse', '--verify', base], undefined, deps);
-    return base;
+    await gitExec(slotId, ['rev-parse', '--verify', branch], undefined, deps);
+    return branch;
   }
 }
 
@@ -182,7 +203,11 @@ export async function gitDiff(
   const args = ['diff'];
 
   if (params.base) {
-    const baseRef = await resolveRemoteBaseRef(params.slotId, params.base, deps);
+    // `git.diff` is also a public RPC/chat tool and cannot assume a preceding
+    // branch-inventory request refreshed the PR base.
+    const baseRef = await resolveRemoteBaseRef(params.slotId, params.base, deps, {
+      refresh: true,
+    });
 
     const { stdout: mergeBase } = await gitExec(
       params.slotId,
