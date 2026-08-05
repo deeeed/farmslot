@@ -46,11 +46,13 @@ function branchDiffDeps(outputs: {
   numstat: string;
   untracked?: string;
   committedNameStatus?: string;
+  remoteMissing?: boolean;
 }): {
   deps: Parameters<typeof gitBranchDiff>[1];
   argvLog: string[][];
 } {
   const argvLog: string[][] = [];
+  let remoteFetched = false;
   return {
     argvLog,
     deps: {
@@ -59,7 +61,16 @@ function branchDiffDeps(outputs: {
       runOnSlot: async (_vars: unknown, argv: string[]) => {
         argvLog.push(argv);
         const sub = argv[1];
-        if (sub === 'rev-parse') return { stdout: '', stderr: '', exitCode: 1 };
+        if (sub === 'rev-parse') {
+          const remoteAvailable = !outputs.remoteMissing || remoteFetched;
+          return remoteAvailable
+            ? { stdout: 'base123\n', stderr: '', exitCode: 0 }
+            : { stdout: '', stderr: '', exitCode: 1 };
+        }
+        if (sub === 'fetch') {
+          remoteFetched = true;
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
         if (sub === 'merge-base') return { stdout: 'mb123\n', stderr: '', exitCode: 0 };
         if (sub === 'branch') return { stdout: 'feat/x\n', stderr: '', exitCode: 0 };
         if (sub === 'ls-files') return { stdout: outputs.untracked ?? '', stderr: '', exitCode: 0 };
@@ -87,7 +98,28 @@ test('gitBranchDiff default target diffs committed history only', async () => {
   assert.deepEqual(result.files, [{ path: 'a.ts', status: 'M', additions: 3, deletions: 1 }]);
   const diffArgs = argvLog.filter((argv) => argv[1] === 'diff');
   assert.ok(diffArgs.every((argv) => argv.includes('mb123..HEAD')));
+  assert.ok(
+    argvLog.some(
+      (argv) => argv[1] === 'fetch' && argv.includes('refs/heads/main:refs/remotes/origin/main'),
+    ),
+  );
   assert.ok(!argvLog.some((argv) => argv[1] === 'ls-files'));
+});
+
+test('gitBranchDiff fetches an exact stacked PR base that is missing locally', async () => {
+  const { deps, argvLog } = branchDiffDeps({
+    nameStatus: 'M\ta.ts\n',
+    numstat: '1\t0\ta.ts\n',
+    remoteMissing: true,
+  });
+  await gitBranchDiff({ slotId: 's', base: 'feature/base' }, deps);
+  assert.ok(
+    argvLog.some(
+      (argv) =>
+        argv[1] === 'fetch' &&
+        argv.includes('refs/heads/feature/base:refs/remotes/origin/feature/base'),
+    ),
+  );
 });
 
 test('gitBranchDiff worktree target diffs against the working tree and appends untracked files', async () => {

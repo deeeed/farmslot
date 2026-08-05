@@ -140,17 +140,35 @@ export async function gitStatus(params: GitStatusParams): Promise<GitStatusResul
   return { branch, ahead, behind, changes };
 }
 
+async function resolveRemoteBaseRef(
+  slotId: string,
+  requestedBase: string,
+  deps: GitExecDeps = {},
+): Promise<string> {
+  const base = requestedBase.trim() || 'main';
+  if (base.startsWith('refs/') || /^[0-9a-f]{7,40}$/i.test(base)) {
+    await gitExec(slotId, ['rev-parse', '--verify', base], undefined, deps);
+    return base;
+  }
+  const remoteRef = base.startsWith('origin/') ? base : `origin/${base}`;
+  const branch = remoteRef.slice('origin/'.length);
+  // A stale local or remote-tracking branch is not a safe substitute for the
+  // PR's live base. Explicit refs and SHAs are handled above.
+  await gitExec(
+    slotId,
+    ['fetch', '--no-tags', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`],
+    undefined,
+    deps,
+  );
+  await gitExec(slotId, ['rev-parse', '--verify', remoteRef], undefined, deps);
+  return remoteRef;
+}
+
 export async function gitDiff(params: GitDiffParams): Promise<GitDiffResult> {
   const args = ['diff'];
 
   if (params.base) {
-    let baseRef = params.base;
-    try {
-      await gitExec(params.slotId, ['rev-parse', '--verify', `origin/${params.base}`]);
-      baseRef = `origin/${params.base}`;
-    } catch {
-      /* use local ref */
-    }
+    const baseRef = await resolveRemoteBaseRef(params.slotId, params.base);
 
     const { stdout: mergeBase } = await gitExec(params.slotId, ['merge-base', baseRef, 'HEAD']);
     // 'worktree' diffs merge-base against the working tree (committed +
@@ -244,14 +262,7 @@ export async function gitBranchDiff(
   deps: GitExecDeps = {},
 ): Promise<GitBranchDiffResult> {
   const base = params.base || 'main';
-
-  let baseRef = base;
-  try {
-    await gitExec(params.slotId, ['rev-parse', '--verify', `origin/${base}`], undefined, deps);
-    baseRef = `origin/${base}`;
-  } catch {
-    /* use local ref */
-  }
+  const baseRef = await resolveRemoteBaseRef(params.slotId, base, deps);
 
   const [mergeBaseResult, branchResult] = await Promise.all([
     gitExec(params.slotId, ['merge-base', baseRef, 'HEAD'], undefined, deps),

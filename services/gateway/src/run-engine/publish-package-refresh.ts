@@ -123,18 +123,19 @@ function restampReviewsForRefreshedPackage(
   reviewedPackages: Array<ReadyGatePrPackage | undefined>,
   refreshedPackage: ReadyGatePrPackage,
 ): IndependentReviewStatus[] {
-  return independentReviews.map((review) =>
-    ((review.source === 'dispatch' || review.source === 'human-gate') &&
-      reviewFinalSnapshotMatchesPreparedPackage(review, refreshedPackage)) ||
-    reviewedPackages.some(
-      (reviewedPackage) =>
-        reviewedPackage &&
-        readyGateReviewSubjectMatches(reviewedPackage, refreshedPackage) &&
-        reviewWasStampedForPackage(review, reviewedPackage),
-    )
-      ? stampPublishGateReviewStatusForPackage(review, refreshedPackage)
-      : review,
-  );
+  return independentReviews.map((review) => {
+    if (!reviewFinalSnapshotMatchesPreparedPackage(review, refreshedPackage)) return review;
+    const canRestamp =
+      review.source === 'dispatch' ||
+      review.source === 'human-gate' ||
+      reviewedPackages.some(
+        (reviewedPackage) =>
+          reviewedPackage &&
+          readyGateReviewSubjectMatches(reviewedPackage, refreshedPackage) &&
+          reviewWasStampedForPackage(review, reviewedPackage),
+      );
+    return canRestamp ? stampPublishGateReviewStatusForPackage(review, refreshedPackage) : review;
+  });
 }
 
 export async function refreshPublishPackage(params: {
@@ -190,7 +191,9 @@ export async function refreshPublishPackage(params: {
     );
   }
 
-  const diffStat = await getDiffStat(run);
+  // A refresh must describe the current HEAD, not the durable snapshot captured
+  // before later review-fix commits changed the contribution.
+  const diffStat = await getDiffStat(run, { fresh: true });
   const prepared = await prepareCompletionPackage(params.runId, {
     diffStat,
     publicationTarget: target,

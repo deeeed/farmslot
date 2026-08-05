@@ -16,7 +16,7 @@ import {
 } from '@farmslot/protocol';
 
 import { farmslotRoot, getProjectField, resolveProjectTaskDirName } from '../core/config.js';
-import { fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
+import { fetchGitHubPR, fetchPRDiffFiles, markPRFilesViewed } from '../external/github.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
 import { auditEvidenceQuality } from '../intelligence/engine.js';
@@ -64,6 +64,24 @@ export function reviewEvidencePostArgs(
   return evidenceTmpFile && shouldIncludeReviewEvidence(selectionData)
     ? ['--evidence-md-file', evidenceTmpFile]
     : [];
+}
+
+export function assertReviewSnapshotMatchesPullRequest(
+  reviewSnapshot: ReviewDiffSnapshot | undefined,
+  liveHeadSha: string | null | undefined,
+): asserts reviewSnapshot is ReviewDiffSnapshot & { headSha: string } {
+  if (!reviewSnapshot?.headSha || reviewSnapshot.source === 'unavailable') {
+    throw new BlockedRunError(
+      'Review snapshot is unavailable; refresh/rerun review before posting.',
+      'stale-review',
+    );
+  }
+  if (!liveHeadSha || liveHeadSha !== reviewSnapshot.headSha) {
+    throw new BlockedRunError(
+      `Review is stale: reviewed ${reviewSnapshot.headSha.slice(0, 7)}, current PR head is ${liveHeadSha?.slice(0, 7) ?? 'unavailable'}. Refresh/rerun review before posting.`,
+      'stale-review',
+    );
+  }
 }
 
 export async function executeReviewGate(runId: string): Promise<void> {
@@ -268,10 +286,11 @@ export async function executeReviewGate(runId: string): Promise<void> {
     updateRunStep(runId, S.HUMAN_GATE, { detail: 'Posting review...' });
     broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     console.log(`[run-engine] run ${runId.slice(0, 8)} — posting review to PR #${prNumber}`);
-    if (reviewSnapshot?.headSha) {
-      const livePr = await fetchGitHubPR(`${ciRepo}#${prNumber}`);
-      if (livePr.headSha && livePr.headSha !== reviewSnapshot.headSha) {
-        const message = `Review is stale: reviewed ${reviewSnapshot.headSha.slice(0, 7)}, current PR head is ${livePr.headSha.slice(0, 7)}. Refresh/rerun review before posting.`;
+    const livePr = await fetchGitHubPR(`${ciRepo}#${prNumber}`);
+    try {
+      assertReviewSnapshotMatchesPullRequest(reviewSnapshot, livePr.headSha);
+    } catch (err) {
+      if (err instanceof BlockedRunError) {
         const latest = getRun(runId)!;
         updateRun(runId, {
           decisions: latest.decisions.map((decision) => {
@@ -292,8 +311,8 @@ export async function executeReviewGate(runId: string): Promise<void> {
             };
           }),
         });
-        throw new BlockedRunError(message, 'stale-review');
       }
+      throw err;
     }
     const taskRelDir = current.taskFile?.includes('/tasks/')
       ? current.taskFile.split('/tasks/')[1].replace('/TASK.md', '')
@@ -451,6 +470,31 @@ export async function executeReviewGate(runId: string): Promise<void> {
         updateRunStep(runId, S.HUMAN_GATE, { detail: `Posted ${posted} comments` });
         broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
       }
+    }
+
+    // A published full review covered the current PR head (checked above), so
+    // mirror that completion in GitHub's Files changed view. GitHub will
+    // automatically unmark a file if a later commit changes it.
+    try {
+      const currentPr = await fetchGitHubPR(`${ciRepo}#${prNumber}`);
+      assertReviewSnapshotMatchesPullRequest(reviewSnapshot, currentPr.headSha);
+      const viewedFiles = await fetchPRDiffFiles(ciRepo, prNumber);
+      const confirmedPr = await fetchGitHubPR(`${ciRepo}#${prNumber}`);
+      assertReviewSnapshotMatchesPullRequest(reviewSnapshot, confirmedPr.headSha);
+      const viewed = await markPRFilesViewed(
+        ciRepo,
+        prNumber,
+        viewedFiles.map((file) => file.filename),
+      );
+      console.log(
+        `[run-engine] run ${runId.slice(0, 8)} — marked ${viewed} reviewed file(s) viewed`,
+      );
+    } catch (err) {
+      // Review publication already succeeded; keep GitHub's secondary viewed
+      // state visible as a warning without turning the run into a false failure.
+      console.warn(
+        `[run-engine] mark reviewed files viewed failed (non-fatal): ${(err as Error).message.slice(0, 200)}`,
+      );
     }
 
     console.log(`[run-engine] run ${runId.slice(0, 8)} — review posted`);

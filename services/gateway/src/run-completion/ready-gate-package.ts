@@ -71,9 +71,27 @@ function packageSemanticHashPayload(
     createdAt: _createdAt,
     approvedAt: _approvedAt,
     supersededByPackageId: _supersededByPackageId,
+    reviewSnapshot,
     ...semantic
   } = prPackage;
-  return semantic;
+  return {
+    ...semantic,
+    ...(reviewSnapshot
+      ? {
+          reviewSnapshot: {
+            source: reviewSnapshot.source,
+            baseRef: reviewSnapshot.baseRef,
+            baseSha: reviewSnapshot.baseSha,
+            headRef: reviewSnapshot.headRef,
+            headSha: reviewSnapshot.headSha,
+            diffHash: reviewSnapshot.diffHash,
+            diffStat: reviewSnapshot.diffStat,
+            missingReason: reviewSnapshot.missingReason,
+            error: reviewSnapshot.error,
+          },
+        }
+      : {}),
+  };
 }
 
 export function computeReadyGatePackageInputHash(prPackage: ReadyGatePrPackageWithoutHash): string {
@@ -128,6 +146,7 @@ export function computeReadyGateReviewSubjectHash(
           ? canonicalSelectedEvidenceKeys
           : payload.selectedEvidenceKeys,
       validationSummaryHash: payload.validationSummaryHash,
+      reviewSnapshot: payload.reviewSnapshot,
     }),
   );
 }

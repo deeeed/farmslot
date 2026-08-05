@@ -539,6 +539,8 @@ export interface ReadyGatePrPackage {
   remoteBranchRef?: string | null;
   headSha?: string;
   diffStat: DiffStat;
+  /** Exact worktree diff identity captured with the same scope as independent reviews. */
+  reviewSnapshot?: ReviewDiffSnapshot;
   draftTitle: string;
   draftBody: string;
   evidenceManifest?: EvidenceManifestEntry[];

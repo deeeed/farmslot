@@ -132,6 +132,7 @@ function selfReviewResultFromInterruptedReview(review: IndependentReviewStatus):
     crossRunner: review.crossRunner,
     retryCount: Math.max(0, (review.attempts?.length ?? 1) - 1),
     feedbackSent: review.feedbackSent,
+    recoveryContinuationPending: review.recoveryContinuationPending,
   };
 }
 
@@ -614,7 +615,9 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const workerLearnings = await readTaskArtifactText(current.taskFile, 'learnings.md');
 
   // Build diff stat
-  const diffStat = await getDiffStat(current);
+  // The publication package must describe the final reviewed HEAD. Earlier
+  // completion snapshots remain durable history, but cannot supply this gate.
+  const diffStat = await getDiffStat(current, { fresh: true });
 
   const videoProofWarning = localVideoProofWarning(preparedPackage?.evidenceManifest);
   // Out-of-band merge detection: if this branch already has a MERGED PR the

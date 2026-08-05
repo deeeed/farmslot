@@ -626,8 +626,11 @@ export async function captureRunDiffSnapshot(
   }
 }
 
-export async function captureRunDiffArtifacts(run: Run): Promise<FamilyDiffProvenance> {
-  return withRunArtifactMutation(run.id, () => captureRunDiffArtifactsUnlocked(run));
+export async function captureRunDiffArtifacts(
+  run: Run,
+  options: { forceRecapture?: boolean } = {},
+): Promise<FamilyDiffProvenance> {
+  return withRunArtifactMutation(run.id, () => captureRunDiffArtifactsUnlocked(run, options));
 }
 
 async function writeDiffArtifactPair(
@@ -650,8 +653,13 @@ async function writeDiffArtifactPair(
   }
 }
 
-async function captureRunDiffArtifactsUnlocked(run: Run): Promise<FamilyDiffProvenance> {
-  const existingState = await readRunDiffArtifactState(run.taskFile, diffKindForFlow(run.flowType));
+async function captureRunDiffArtifactsUnlocked(
+  run: Run,
+  options: { forceRecapture?: boolean },
+): Promise<FamilyDiffProvenance> {
+  const existingState = options.forceRecapture
+    ? null
+    : await readRunDiffArtifactState(run.taskFile, diffKindForFlow(run.flowType));
   const existingIterationState = await readIterationDiffArtifactState(run.taskFile);
   const snapshot = existingState?.reuse
     ? existingState.provenance

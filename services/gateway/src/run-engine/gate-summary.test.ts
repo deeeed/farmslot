@@ -185,6 +185,16 @@ test('buildGateSummary does not count a pass from an older prepared package', ()
     preparedPackage: {
       headSha: 'current-head',
       reviewSubjectHash: 'current-subject',
+      reviewSnapshot: {
+        source: 'local-git',
+        baseRef: 'origin/main',
+        baseSha: 'current-base',
+        headRef: 'feature',
+        headSha: 'current-head',
+        diffHash: 'current-diff',
+        diffStat: { files: 5, additions: 347, deletions: 0 },
+        capturedAt: '2026-08-04T00:01:00.000Z',
+      },
     },
   });
 

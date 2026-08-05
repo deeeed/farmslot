@@ -73,6 +73,11 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     return this.decision.payload as ReviewGatePayload;
   }
 
+  private get _baseRef(): string {
+    const base = this._payload?.reviewSnapshot?.baseRef?.trim() || 'main';
+    return base.startsWith('origin/') ? base.slice('origin/'.length) : base;
+  }
+
   private get _comments(): ReviewLineComment[] {
     return this._payload?.lineComments ?? [];
   }
@@ -305,7 +310,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
       const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
         slotId: this.slotId,
-        base: 'main',
+        base: this._baseRef,
       });
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffFiles = result.files;
@@ -366,7 +371,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       const result = await gateway.request<GitDiffResult>(Methods.GIT_DIFF, {
         slotId: this.slotId,
         path,
-        base: 'main',
+        base: this._baseRef,
       });
       this._fileDiff = result.diff;
     } catch (err) {

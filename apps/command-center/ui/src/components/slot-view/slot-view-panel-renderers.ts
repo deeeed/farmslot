@@ -136,7 +136,7 @@ export function renderSlotViewSidebarSource(view: SlotView) {
     .changes=${git.changes}
     .committedFiles=${view._branchDiffFiles}
     .committedError=${view._branchDiffError}
-    .committedScope=${'worktree'}
+    .committedScope=${'head'}
     .branch=${git.branch}
     .ahead=${git.ahead}
     .behind=${git.behind}
@@ -238,7 +238,7 @@ export function renderSlotViewChangesPanel(view: SlotView) {
   return html`<branch-changed-files
     .files=${view._branchDiffFiles}
     .changes=${view._git?.changes ?? []}
-    .scope=${'worktree'}
+    .scope=${'head'}
     .base=${view._branchDiffBase}
     .head=${view._branchDiffHead}
     .totalAdditions=${view._branchDiffTotalAdd}

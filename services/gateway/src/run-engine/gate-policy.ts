@@ -6,6 +6,7 @@ import type {
   NoChangeGatePayload,
   ReadyGatePrPackage,
   ReviewDepthPolicy,
+  ReviewDiffSnapshot,
   Run,
   RunDecision,
   WorkerTerminalDisposition,
@@ -194,6 +195,7 @@ export function buildPublishGateReviewStatus({
     validationDepth: finalAttempt.validationDepth ?? reviewResult.validationDepth,
     usage: finalAttempt.usage ?? reviewResult.usage,
     feedbackSent: reviewResult.feedbackSent === true,
+    recoveryContinuationPending: reviewResult.recoveryContinuationPending === true,
     attempts,
     artifactPaths: [...new Set(attempts.flatMap((attempt) => attempt.artifactPaths ?? []))],
     taskProgressArtifactPath: finalAttempt.taskProgressArtifactPath,
@@ -384,12 +386,27 @@ function selectedEvidenceKeysMatchPackageSelection(
 
 export function reviewFinalSnapshotMatchesPreparedPackage(
   review: IndependentReviewStatus,
-  preparedPackage: Pick<ReadyGatePrPackage, 'headSha'>,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot'>,
 ): boolean {
   if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
   const snapshot = review.reviewSnapshot;
   if (!snapshot || snapshot.source === 'unavailable') return false;
-  return Boolean(preparedPackage.headSha && snapshot.headSha === preparedPackage.headSha);
+  if (!preparedPackage.headSha || snapshot.headSha !== preparedPackage.headSha) return false;
+  return reviewSnapshotDiffMatchesPackage(snapshot, preparedPackage);
+}
+
+function reviewSnapshotDiffMatchesPackage(
+  snapshot: ReviewDiffSnapshot,
+  preparedPackage: Pick<ReadyGatePrPackage, 'reviewSnapshot'>,
+): boolean {
+  const preparedSnapshot = preparedPackage.reviewSnapshot;
+  if (!preparedSnapshot || preparedSnapshot.source === 'unavailable') return false;
+  return (
+    snapshot.baseRef === preparedSnapshot.baseRef &&
+    snapshot.baseSha === preparedSnapshot.baseSha &&
+    snapshot.headSha === preparedSnapshot.headSha &&
+    snapshot.diffHash === preparedSnapshot.diffHash
+  );
 }
 
 /**
@@ -410,23 +427,25 @@ interface PublicationReviewStaleness {
 function diagnosePublicationReviewStaleness(
   review: IndependentReviewStatus,
   packageReviewSubjectHash: string,
-  preparedPackage: Pick<ReadyGatePrPackage, 'headSha'>,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot'>,
 ): PublicationReviewStaleness {
   const snapshot = review.reviewSnapshot;
   const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
   const reviewedSubjectHash = review.reviewedReviewSubjectHash ?? null;
   const subjectDrift = reviewedSubjectHash !== packageReviewSubjectHash;
+  const diffDrift = !snapshot || !reviewSnapshotDiffMatchesPackage(snapshot, preparedPackage);
   const headDrift =
     !reviewedHeadSha ||
     reviewedHeadSha !== preparedPackage.headSha ||
-    (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable'));
+    (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable')) ||
+    diffDrift;
   return { stale: headDrift || subjectDrift, headDrift, subjectDrift };
 }
 
 /** True when a review was captured for the exact prepared package subject and HEAD. */
 export function publicationReviewMatchesPreparedPackage(
   review: IndependentReviewStatus,
-  preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSubjectHash'>,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'reviewSnapshot' | 'reviewSubjectHash'>,
 ): boolean {
   const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
   if (!packageReviewSubjectHash) return false;

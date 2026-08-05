@@ -115,17 +115,118 @@ export async function readPersistedReviewSnapshot(
   };
 }
 
+export function preferredRemoteReviewBaseRef(baseRef: string): string | null {
+  const normalized = baseRef.trim() || 'main';
+  if (normalized.startsWith('refs/')) return null;
+  if (normalized.startsWith('origin/')) return normalized;
+  return `origin/${normalized}`;
+}
+
 async function resolveReviewBaseRef(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
 ): Promise<string> {
+  let configuredBaseRef = 'main';
   try {
     const pv = await loadProjectVars(vars.projectName);
-    return getProjectField(pv.projectJson, 'default_branch') || 'main';
+    configuredBaseRef = getProjectField(pv.projectJson, 'default_branch') || 'main';
   } catch (err) {
     debugSelfReviewLog(
       `[self-review] defaulting review base ref to main after project lookup failed: ${(err as Error).message}`,
     );
-    return 'main';
+  }
+
+  const remoteBaseRef = preferredRemoteReviewBaseRef(configuredBaseRef);
+  if (!remoteBaseRef) return configuredBaseRef;
+  try {
+    const branch = remoteBaseRef.slice('origin/'.length);
+    const fetchResult = await execOnSlot(
+      vars,
+      `git fetch --no-tags origin ${shellQuote(`refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
+      { timeout: 15_000 },
+    );
+    if (fetchResult.exitCode !== 0) {
+      throw new Error(fetchResult.stderr || fetchResult.stdout || `fetch ${remoteBaseRef} failed`);
+    }
+    return remoteBaseRef;
+  } catch (err) {
+    throw new Error(
+      `remote review base ${remoteBaseRef} could not be refreshed: ${(err as Error).message}`,
+    );
+  }
+}
+
+export async function captureCurrentReviewSnapshot(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+): Promise<{ snapshot: ReviewDiffSnapshot; diffText?: string }> {
+  try {
+    const baseRef = await resolveReviewBaseRef(vars);
+    const headResult = await execOnSlot(vars, 'git rev-parse HEAD', { timeout: 10_000 });
+    if (headResult.exitCode !== 0) {
+      return {
+        snapshot: unavailableReviewSnapshot(
+          'head-ref-unavailable',
+          headResult.stderr || headResult.stdout,
+        ),
+      };
+    }
+    const baseResult = await execOnSlot(
+      vars,
+      `git merge-base ${shellQuote(baseRef)} HEAD 2>/dev/null || git rev-parse --verify ${shellQuote(baseRef)} 2>/dev/null`,
+      { timeout: 10_000 },
+    );
+    if (baseResult.exitCode !== 0) {
+      return {
+        snapshot: unavailableReviewSnapshot(
+          'base-ref-unavailable',
+          baseResult.stderr || baseResult.stdout,
+        ),
+      };
+    }
+    const branchResult = await execOnSlot(
+      vars,
+      'git rev-parse --abbrev-ref HEAD 2>/dev/null || true',
+      { timeout: 10_000 },
+    );
+    const baseSha = baseResult.stdout.trim().split('\n').at(-1)?.trim() ?? '';
+    const range = shellQuote(baseSha);
+    const numstat = await execOnSlot(vars, `git -c core.quotePath=false diff --numstat ${range}`, {
+      timeout: 10_000,
+    });
+    if (numstat.exitCode !== 0) {
+      return {
+        snapshot: unavailableReviewSnapshot('git-numstat-failed', numstat.stderr || numstat.stdout),
+      };
+    }
+    const diff = await execOnSlot(
+      vars,
+      `git -c core.quotePath=false diff --binary --find-renames ${range}`,
+      { timeout: 30_000, maxBuffer: REVIEW_DIFF_MAX_BUFFER },
+    );
+    if (diff.exitCode !== 0) {
+      return {
+        snapshot: unavailableReviewSnapshot(
+          /maxBuffer exceeded/i.test(diff.stderr) ? 'diff-artifact-too-large' : 'git-diff-failed',
+          diff.stderr || diff.stdout,
+        ),
+      };
+    }
+    return {
+      snapshot: {
+        source: 'local-git',
+        baseRef,
+        baseSha,
+        headRef: branchResult.stdout.trim() || null,
+        headSha: headResult.stdout.trim(),
+        diffHash: sha256(diff.stdout),
+        diffStat: parseReviewNumstat(numstat.stdout),
+        capturedAt: new Date().toISOString(),
+      },
+      diffText: diff.stdout,
+    };
+  } catch (err) {
+    return {
+      snapshot: unavailableReviewSnapshot('slot-exec-error', (err as Error).message),
+    };
   }
 }
 
@@ -135,85 +236,23 @@ export async function captureReviewSnapshot(
   loopNumber: number,
   artifactScope?: string | null,
 ): Promise<{ snapshot: ReviewDiffSnapshot; artifactPaths: string[] }> {
-  const baseRef = await resolveReviewBaseRef(vars);
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
   const diffRel = `${artifactDir}/review.diff`;
   const statRel = `${artifactDir}/review-diff-stat.json`;
   try {
-    const headResult = await execOnSlot(vars, 'git rev-parse HEAD', { timeout: 10_000 });
-    if (headResult.exitCode !== 0) {
-      const snapshot = unavailableReviewSnapshot(
-        'head-ref-unavailable',
-        headResult.stderr || headResult.stdout,
-      );
-      await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
-      return { snapshot, artifactPaths: [statRel] };
-    }
-    const baseResult = await execOnSlot(
-      vars,
-      `git merge-base ${shellQuote(baseRef)} HEAD 2>/dev/null || git rev-parse --verify ${shellQuote(baseRef)} 2>/dev/null`,
-      { timeout: 10_000 },
-    );
-    if (baseResult.exitCode !== 0) {
-      const snapshot = unavailableReviewSnapshot(
-        'base-ref-unavailable',
-        baseResult.stderr || baseResult.stdout,
-      );
-      await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
-      return { snapshot, artifactPaths: [statRel] };
-    }
-    const branchResult = await execOnSlot(
-      vars,
-      'git rev-parse --abbrev-ref HEAD 2>/dev/null || true',
-      { timeout: 10_000 },
-    );
-    const headSha = headResult.stdout.trim();
-    const baseSha = baseResult.stdout.trim().split('\n').at(-1)?.trim() ?? '';
-    const headRef = branchResult.stdout.trim() || null;
-    // Compare the base commit to the current worktree instead of HEAD-only so
-    // local-first/uncommitted runner fixes are still captured for audit.
-    const range = shellQuote(baseSha);
-    const numstat = await execOnSlot(vars, `git -c core.quotePath=false diff --numstat ${range}`, {
-      timeout: 10_000,
-    });
-    if (numstat.exitCode !== 0) {
-      const snapshot = unavailableReviewSnapshot(
-        'git-numstat-failed',
-        numstat.stderr || numstat.stdout,
-      );
-      await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
-      return { snapshot, artifactPaths: [statRel] };
-    }
-    const diff = await execOnSlot(
-      vars,
-      `git -c core.quotePath=false diff --binary --find-renames ${range}`,
-      {
-        timeout: 30_000,
-        maxBuffer: REVIEW_DIFF_MAX_BUFFER,
-      },
-    );
-    if (diff.exitCode !== 0) {
-      const snapshot = unavailableReviewSnapshot(
-        /maxBuffer exceeded/i.test(diff.stderr) ? 'diff-artifact-too-large' : 'git-diff-failed',
-        diff.stderr || diff.stdout,
-      );
-      await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
-      return { snapshot, artifactPaths: [statRel] };
-    }
+    const captured = await captureCurrentReviewSnapshot(vars);
     const snapshot: ReviewDiffSnapshot = {
-      source: 'local-git',
-      baseRef,
-      baseSha,
-      headRef,
-      headSha,
-      diffPath: diffRel,
-      diffHash: sha256(diff.stdout),
-      diffStat: parseReviewNumstat(numstat.stdout),
-      capturedAt: new Date().toISOString(),
+      ...captured.snapshot,
+      ...(captured.diffText !== undefined ? { diffPath: diffRel } : {}),
     };
-    await writeLargeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, diff.stdout);
+    if (captured.diffText !== undefined) {
+      await writeLargeTextFileOnSlot(vars, `${taskDir}/${diffRel}`, captured.diffText);
+    }
     await writeTextFileOnSlot(vars, `${taskDir}/${statRel}`, JSON.stringify(snapshot, null, 2));
-    return { snapshot, artifactPaths: [diffRel, statRel] };
+    return {
+      snapshot,
+      artifactPaths: [...(captured.diffText !== undefined ? [diffRel] : []), statRel],
+    };
   } catch (err) {
     const snapshot = unavailableReviewSnapshot('slot-exec-error', (err as Error).message);
     try {

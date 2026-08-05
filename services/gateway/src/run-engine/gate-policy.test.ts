@@ -75,6 +75,18 @@ function makeApprovingReview(
       'reviewedReviewSubjectHash' in overrides
         ? overrides.reviewedReviewSubjectHash
         : 'subject-old',
+    reviewSnapshot:
+      'reviewSnapshot' in overrides
+        ? overrides.reviewSnapshot
+        : {
+            source: 'local-git',
+            baseRef: 'origin/main',
+            baseSha: 'base-default',
+            headSha: overrides.reviewedHeadSha ?? 'abc1234',
+            diffHash: 'diff-default',
+            diffStat: { files: 1, additions: 2, deletions: 1 },
+            capturedAt: '2026-04-15T00:00:00.000Z',
+          },
     ...overrides,
   };
 }

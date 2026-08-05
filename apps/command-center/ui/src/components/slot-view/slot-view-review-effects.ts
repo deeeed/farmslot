@@ -43,6 +43,7 @@ export async function detectSlotViewPR(view: SlotView) {
     if (!isCurrentReviewResult(view, epoch)) return;
     view._prNumber = result.pr;
     view._prRepo = result.repo;
+    view._branchDiffBase = result.baseRef;
     if (result.pr && result.repo) {
       view._loadPRComments();
     }
@@ -93,12 +94,13 @@ export async function loadSlotViewBranchDiff(view: SlotView) {
     const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
       slotId: view.slotId,
       base: view._branchDiffBase,
-      // Every change on the branch vs base — committed or not — deduped per
-      // file. Publish flows (ready/review workspaces) keep the committed-only
-      // default.
-      target: 'worktree',
+      // Keep the branch/PR diff identical to committed source control. Staged,
+      // unstaged, and untracked work remains in the separate IDE-style groups
+      // sourced from git.status.
+      target: 'head',
     });
     if (!isCurrent()) return;
+    view._branchDiffBase = result.base;
     view._branchDiffFiles = result.files;
     view._branchDiffHead = result.head;
     view._branchDiffTotalAdd = result.totalAdditions;
@@ -180,9 +182,7 @@ export async function handleSlotViewBranchDiffSelect(
     return;
   }
 
-  // M/D/R: fetch branch diff and open as diff tab. Worktree-target content
-  // can change without any status transition, so drop the cached entry and
-  // fetch fresh on every click.
+  // M/D/R: fetch the committed branch/PR diff and open it as a diff tab.
   const cacheKey = `branch:${view._branchDiffBase}:${path}`;
   if (view._liveDiffContents.has(cacheKey)) {
     const next = new Map(view._liveDiffContents);
@@ -191,7 +191,7 @@ export async function handleSlotViewBranchDiffSelect(
   }
   const loaded = await loadSlotViewDiffContent(view, cacheKey, {
     diffBase: view._branchDiffBase,
-    diffTarget: 'worktree',
+    diffTarget: 'head',
     errorFallback: 'Failed to load diff',
     requestPath: path,
     requestOldPath: oldPath,

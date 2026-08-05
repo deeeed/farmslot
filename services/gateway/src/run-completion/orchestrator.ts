@@ -31,6 +31,10 @@ import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { extractRunnerSessionUsage } from '../runtime/session-usage.js';
+import {
+  captureCurrentReviewSnapshot,
+  unavailableReviewSnapshot,
+} from '../self-review/snapshots.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { refreshArtifactMirror } from './artifact-mirror.js';
@@ -517,6 +521,9 @@ export async function prepareCompletionPackage(
   independentReviews = await augmentIndependentReviewAttemptsFromArtifacts(run, independentReviews);
   const target = options?.publicationTarget ?? defaultPublicationTarget(run);
   const headSha = options?.headSha ?? (await requireSnapshotHeadSha(run));
+  const reviewSnapshot = run.slotId
+    ? (await captureCurrentReviewSnapshot(await loadSlotVars(run.slotId))).snapshot
+    : unavailableReviewSnapshot('missing-slot');
   const branch = run.branch ?? before.branch ?? '';
   const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
   const artifactPath = 'artifacts/pr-package.json';
@@ -536,6 +543,7 @@ export async function prepareCompletionPackage(
     remoteBranchRef: branch ? `origin/${branch}` : null,
     headSha,
     diffStat: options?.diffStat ?? { files: 0, additions: 0, deletions: 0 },
+    reviewSnapshot,
     draftTitle: buildDraftPrTitle(run),
     draftBody: await buildDraftPrBody(run, report, draftBodyArtifacts),
     evidenceManifest,

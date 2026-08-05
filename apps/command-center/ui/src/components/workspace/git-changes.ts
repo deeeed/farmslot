@@ -825,7 +825,7 @@ export class GitChanges extends LitElement {
                   'staged',
                 )}
                 ${this._renderGroup(
-                  'Changes',
+                  'Unstaged Changes',
                   unstaged,
                   this._changesOpen,
                   '_changesOpen',

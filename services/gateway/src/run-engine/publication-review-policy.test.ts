@@ -142,6 +142,10 @@ test('publication review policy rejects stale and unavailable review snapshots',
             reviewedReviewSubjectHash: 'subject-default',
             reviewSnapshot: {
               headSha: 'head-good',
+              baseRef: pkg.reviewSnapshot?.baseRef,
+              baseSha: pkg.reviewSnapshot?.baseSha,
+              diffHash: pkg.reviewSnapshot?.diffHash,
+              diffStat: pkg.diffStat,
               capturedAt: '2026-04-15T00:00:00.000Z',
               source: 'local-git',
             },
@@ -593,6 +597,10 @@ test('publication review policy accepts fresh re-review after package refresh wi
       reviewedReviewSubjectHash: 'subject-new',
       reviewSnapshot: {
         headSha: 'head-new',
+        baseRef: pkg.reviewSnapshot?.baseRef,
+        baseSha: pkg.reviewSnapshot?.baseSha,
+        diffHash: pkg.reviewSnapshot?.diffHash,
+        diffStat: pkg.diffStat,
         capturedAt: '2026-04-15T00:10:00.000Z',
         source: 'local-git',
       },
@@ -763,6 +771,7 @@ test('buildPublishGateReviewStatus preserves the final re-review head after work
             source: 'local-git',
             capturedAt: '2026-05-18T00:00:00.000Z',
             headSha: 'old-head',
+            diffStat: { files: 1, additions: 2, deletions: 3 },
           },
         },
         {
@@ -773,6 +782,10 @@ test('buildPublishGateReviewStatus preserves the final re-review head after work
             source: 'local-git',
             capturedAt: '2026-05-18T00:10:00.000Z',
             headSha: 'new-head',
+            baseRef: 'origin/main',
+            baseSha: 'base-default',
+            diffHash: 'new-diff',
+            diffStat: { files: 1, additions: 2, deletions: 3 },
           },
         },
       ],
@@ -783,8 +796,48 @@ test('buildPublishGateReviewStatus preserves the final re-review head after work
   assert.equal(status.reviewSnapshot?.headSha, 'new-head');
   assert.equal(status.reviewedPackageInputHash, undefined);
   assert.equal(status.reviewedReviewSubjectHash, undefined);
-  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(status, { headSha: 'new-head' }), true);
-  assert.equal(reviewFinalSnapshotMatchesPreparedPackage(status, { headSha: 'old-head' }), false);
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(status, {
+      headSha: 'new-head',
+      reviewSnapshot: {
+        source: 'local-git',
+        capturedAt: '2026-05-18T00:11:00.000Z',
+        headSha: 'new-head',
+        baseRef: 'origin/main',
+        baseSha: 'base-default',
+        diffHash: 'new-diff',
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(status, {
+      headSha: 'old-head',
+      reviewSnapshot: {
+        source: 'local-git',
+        capturedAt: '2026-05-18T00:11:00.000Z',
+        headSha: 'old-head',
+        baseRef: 'origin/main',
+        baseSha: 'base-default',
+        diffHash: 'new-diff',
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    reviewFinalSnapshotMatchesPreparedPackage(status, {
+      headSha: 'new-head',
+      reviewSnapshot: {
+        source: 'local-git',
+        capturedAt: '2026-05-18T00:11:00.000Z',
+        headSha: 'new-head',
+        baseRef: 'origin/main',
+        baseSha: 'base-default',
+        diffHash: 'different-diff',
+      },
+    }),
+    false,
+  );
 });
 test('stampPublishGateReviewStatusForPackage only certifies the selected review', () => {
   const staleReview: IndependentReviewStatus = {

@@ -899,18 +899,19 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
   const fleet = await loadFleetStatus();
   const slot = fleet.slots.find((s) => s.slot === params.slotId);
   if (!slot || !slot.branch) {
-    return { pr: null, repo: null };
+    return { pr: null, repo: null, baseRef: DEFAULT_BRANCH };
   }
   const projectConfig = await loadProjectConfig(slot.project);
+  const defaultBranch = projectConfig?.defaultBranch || DEFAULT_BRANCH;
   const projectConfigs = {
     [slot.project]: {
-      defaultBranch: projectConfig?.defaultBranch || DEFAULT_BRANCH,
+      defaultBranch,
       isTerminalRunStatus,
       slotTrackingBranch: projectConfig?.slotTrackingBranch,
     },
   };
   if (!slotBranchHasPrLookupContext(slot, projectConfigs)) {
-    return { pr: null, repo: null };
+    return { pr: null, repo: null, baseRef: defaultBranch };
   }
   const repo = projectConfig?.ci?.repo ?? null;
   // Project has no ci.repo configured — fall back to `gh pr list` inside the
@@ -918,8 +919,22 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
   // like farmslot that only carry the remote in the slot checkout).
   if (!repo) {
     const fallback = await findPRViaSlotRepo(slot.slot, slot.branch);
-    if (!fallback) return { pr: null, repo: null };
-    return { pr: fallback.pr, repo: fallback.repo || null };
+    if (!fallback) return { pr: null, repo: null, baseRef: defaultBranch };
+    let baseRef = defaultBranch;
+    if (fallback.repo) {
+      try {
+        const result = await ghRequest([
+          'api',
+          `repos/${fallback.repo}/pulls/${fallback.pr}`,
+          '--jq',
+          '.base.ref',
+        ]);
+        baseRef = result.stdout.trim() || defaultBranch;
+      } catch {
+        // Keep the configured project default when GitHub base lookup is unavailable.
+      }
+    }
+    return { pr: fallback.pr, repo: fallback.repo || null, baseRef };
   }
 
   const cached = getBinding(slot.branch, repo);
@@ -931,10 +946,16 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
         'api',
         `repos/${repo}/pulls/${cached}`,
         '--jq',
-        '{state:.state,head:.head.ref}',
+        '{state:.state,head:.head.ref,base:.base.ref}',
       ]);
-      const parsed = JSON.parse(verify.stdout || '{}') as { state?: string; head?: string };
-      if (parsed.state === 'open' && parsed.head === slot.branch) return { pr: cached, repo };
+      const parsed = JSON.parse(verify.stdout || '{}') as {
+        state?: string;
+        head?: string;
+        base?: string;
+      };
+      if (parsed.state === 'open' && parsed.head === slot.branch) {
+        return { pr: cached, repo, baseRef: parsed.base || defaultBranch };
+      }
       invalidateBinding(slot.branch, repo);
     } catch {
       invalidateBinding(slot.branch, repo);
@@ -950,15 +971,15 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
       '--head',
       slot.branch,
       '--json',
-      'number',
+      'number,baseRefName',
       '--jq',
-      '.[0].number',
+      '.[0] | {pr:.number,baseRef:.baseRefName}',
     ]);
-    const prNum = parseInt(stdout.trim(), 10);
-    if (isNaN(prNum)) return { pr: null, repo };
-    setBinding(slot.branch, repo, prNum);
-    return { pr: prNum, repo };
+    const result = JSON.parse(stdout || '{}') as { pr?: number; baseRef?: string };
+    if (!result.pr) return { pr: null, repo, baseRef: defaultBranch };
+    setBinding(slot.branch, repo, result.pr);
+    return { pr: result.pr, repo, baseRef: result.baseRef || defaultBranch };
   } catch {
-    return { pr: null, repo };
+    return { pr: null, repo, baseRef: defaultBranch };
   }
 }

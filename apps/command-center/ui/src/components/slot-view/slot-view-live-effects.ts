@@ -91,11 +91,10 @@ export async function initSlotViewLive(view: SlotView, epoch: number) {
   // Auto-pin task folder if slot is working and has a taskFile
   view._autoPinTaskFolder();
 
-  // Load branch diff (changes vs base branch)
+  // Resolve the PR base before loading changed files. Falling back to a stale
+  // local `main` can inflate the source tree far beyond GitHub's PR diff.
+  await view._detectPR();
   view._loadBranchDiff();
-
-  // Detect PR for this slot (enables Comments tab)
-  view._detectPR();
 
   // Load pinned folder entries if set
   if (view._pinnedFolder) view._loadPinnedEntries();
