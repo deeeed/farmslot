@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -93,6 +93,25 @@ async function readTextIfExists(filePath: string): Promise<string | null> {
     return await readFile(filePath, 'utf-8');
   } catch {
     return null;
+  }
+}
+
+async function workerQualityArtifactIsStale(artifactsDir: string): Promise<boolean> {
+  const qualityPath = path.join(artifactsDir, RECIPE_QUALITY_FILENAME);
+  try {
+    const qualityMtime = (await stat(qualityPath)).mtimeMs;
+    const sourceMtimes = await Promise.all(
+      ['recipe.json', 'recipe-coverage.md'].map(async (filename) => {
+        try {
+          return (await stat(path.join(artifactsDir, filename))).mtimeMs;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return sourceMtimes.some((mtime) => mtime != null && mtime > qualityMtime);
+  } catch {
+    return false;
   }
 }
 
@@ -348,10 +367,10 @@ function buildFallbackEvaluation(
     const artifact = buildArtifact({
       verdict: 'warn',
       reasons: [
-        'Only legacy recipe-coverage.md was available; shared recipe-quality.json was missing.',
+        'Recipe quality was derived from current recipe-coverage.md; no gateway-owned recipe-quality artifact was available.',
       ],
       betterVersionGuidance: [
-        'Keep recipe-coverage.md complete; the gateway derives recipe-quality from it.',
+        'Keep recipe.json and recipe-coverage.md complete; the gateway derives recipe quality from those current sources.',
       ],
       producer: 'fallback:recipe-coverage',
       fallbackSource: 'fallback:recipe-coverage',
@@ -482,12 +501,25 @@ export async function loadRecipeQualityEvaluation(
     try {
       const parsed = JSON.parse(artifactText);
       if (isRecipeQualityArtifact(parsed)) {
-        const artifact = mergeStructuralEvaluation(parsed as RecipeQualityArtifact, structural);
-        return { artifact, signal: buildSignal(run.id, artifact) };
+        const artifact = parsed as RecipeQualityArtifact;
+        const hasCurrentRecipeSources = Boolean(input.recipeJson || input.recipeCoverage);
+        const workerArtifactIsStale =
+          artifact.meta.producer === 'worker' &&
+          hasCurrentRecipeSources &&
+          artifactsDir != null &&
+          (await workerQualityArtifactIsStale(artifactsDir));
+        if (!workerArtifactIsStale) {
+          const merged = mergeStructuralEvaluation(artifact, structural);
+          return { artifact: merged, signal: buildSignal(run.id, merged) };
+        }
+        console.warn(
+          `[recipe-quality] ignoring stale worker-authored ${RECIPE_QUALITY_FILENAME}; deriving quality from newer recipe sources.`,
+        );
+      } else {
+        console.warn(
+          `[recipe-quality] ${RECIPE_QUALITY_FILENAME} did not match the shared schema; regenerating from recipe structure.`,
+        );
       }
-      console.warn(
-        `[recipe-quality] ${RECIPE_QUALITY_FILENAME} did not match the shared schema; regenerating from recipe structure.`,
-      );
     } catch (error) {
       console.warn(
         `[recipe-quality] failed to parse ${RECIPE_QUALITY_FILENAME}; regenerating from recipe structure: ${(error as Error).message}`,

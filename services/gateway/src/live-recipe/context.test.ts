@@ -26,7 +26,26 @@ test('loadLiveRecipeContextForRun projects live recipe artifacts without decisio
   const artifactsDir = path.join(taskDir, 'artifacts');
   await mkdir(artifactsDir, { recursive: true });
   await writeFile(path.join(taskDir, 'TASK.md'), '# task\n', 'utf-8');
-  await writeFile(path.join(artifactsDir, 'recipe.json'), '{"entry":"start"}\n', 'utf-8');
+  await writeFile(
+    path.join(artifactsDir, 'recipe.json'),
+    JSON.stringify({
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
+      description: 'Proves the current recipe artifact is executable.',
+      workflow: {
+        entry: 'start',
+        nodes: {
+          start: {
+            action: 'assert_file',
+            path: 'artifacts/recipe.json',
+            intent: 'Confirm the current recipe artifact exists',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    }),
+    'utf-8',
+  );
   await writeFile(
     path.join(artifactsDir, 'learnings.md'),
     'Watch for stale metro sockets.\n',
@@ -66,9 +85,10 @@ test('loadLiveRecipeContextForRun projects live recipe artifacts without decisio
   assert.equal(context.recipeRunId, null);
   assert.equal(context.selectionReason, 'latest-run');
   assert.equal(context.artifactRoot, artifactsDir);
-  assert.equal(context.recipeJson, '{"entry":"start"}\n');
+  assert.match(context.recipeJson ?? '', /schemas\/recipe-v1\.schema\.json/);
   assert.equal(context.workerLearnings, 'Watch for stale metro sockets.\n');
   assert.equal(context.recipeQualityArtifact?.compact.verdict, 'PASS');
+  assert.equal(context.recipeQualityArtifact?.meta.producer, 'worker');
   assert.ok((context.artifactManifest?.length ?? 0) >= 3);
 });
 

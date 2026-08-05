@@ -639,16 +639,29 @@ async function loadContextFromArtifactRoot({
   const [
     recipeJson,
     workerLearnings,
-    recipeQualityArtifact,
+    storedRecipeQualityArtifact,
+    recipeCoverage,
     typedArtifactManifestJson,
     artifactScan,
   ] = await Promise.all([
     readPortableTextIfExists(run, path.join(artifactRoot, 'recipe.json')),
     readPortableTextIfExists(run, path.join(artifactRoot, 'learnings.md')),
     readRecipeQualityArtifactPortable(run, path.join(artifactRoot, 'recipe-quality.json')),
+    readPortableTextIfExists(run, path.join(artifactRoot, 'recipe-coverage.md')),
     readPortableTextIfExists(run, path.join(artifactRoot, 'artifact-manifest.json')),
     scanArtifactRootPortable(artifactRoot, run, effectiveScanOptions),
   ]);
+  const recipeQualityArtifact =
+    recipeJson || recipeCoverage
+      ? (
+          await loadRecipeQualityEvaluation({
+            run,
+            artifactDir: artifactRoot,
+            recipeJson,
+            recipeCoverage,
+          })
+        ).artifact
+      : storedRecipeQualityArtifact;
   const typedArtifactRefs = parseTypedArtifactManifestRefs(
     typedArtifactManifestJson,
     path.join(artifactRoot, 'artifact-manifest.json'),

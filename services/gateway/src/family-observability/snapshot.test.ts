@@ -23,6 +23,7 @@ test('snapshot aggregates family runs, artifacts, and learnings from persisted f
       done: { action: 'end', status: 'pass' },
     }),
   );
+  await writeArtifact(rootDir, 'artifacts/recipe-coverage.md', '24/25 passed');
   await writeArtifact(
     rootDir,
     'artifacts/recipe-quality.json',
@@ -56,7 +57,6 @@ test('snapshot aggregates family runs, artifacts, and learnings from persisted f
       2,
     ),
   );
-  await writeArtifact(rootDir, 'artifacts/recipe-coverage.md', '24/25 passed');
   await writeArtifact(rootDir, 'artifacts/after.png', 'png');
   await writeArtifact(rootDir, 'artifacts/evidence/review.mp4', 'video');
   await writeArtifact(followUpDir, 'TASK.md', '# Follow-up task');
