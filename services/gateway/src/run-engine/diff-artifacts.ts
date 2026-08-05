@@ -392,6 +392,8 @@ export function runSourceDiffUntrackedManifestCommand(pathspecs: readonly string
     '    mode=120000',
     '    blob=$(node -e \'process.stdout.write(require("node:fs").readlinkSync(process.argv[1], { encoding: "buffer" }))\' -- "$file" | git hash-object --stdin)',
     '  elif [ -f "$file" ]; then',
+    // The snapshot certifies the executable bit from the checked-out
+    // filesystem, matching the exact file identity the worker reviewed.
     '    if [ -x "$file" ]; then mode=100755; else mode=100644; fi',
     '    blob=$(git hash-object --no-filters -- "$file")',
     '  else',

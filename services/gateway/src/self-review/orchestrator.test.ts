@@ -677,26 +677,22 @@ test('runSelfReviewRetryLoop: stops as soon as a re-review verdict is pass', asy
   assert.equal(result.attempts?.[1]?.fixDelta?.diffPath, 'artifacts/review-loop-2/fix-delta.diff');
 });
 
-test('runSelfReviewRetryLoop: preserves findings when worker fix delivery fails', async () => {
+test('runSelfReviewRetryLoop: rethrows non-delivery failures from worker feedback', async () => {
   const { deps } = buildDeps({
     reviewVerdicts: [],
     feedbackError: 'retired worker pane',
   });
 
-  const result = await runSelfReviewRetryLoop({
-    ...baseArgs,
-    maxRetries: 1,
-    reviewResult: { verdict: 'issues', issues: ISSUES },
-    retryCount: 0,
-    deps,
-  });
-
-  assert.equal(result.verdict, 'issues');
-  assert.deepEqual(result.issues, ISSUES);
-  assert.equal(result.feedbackSent, false);
-  assert.equal(result.recoveryContinuationPending, true);
-  assert.match(result.reason ?? '', /retired worker pane/);
-  assert.equal(result.attempts?.[0]?.unresolvedCount, ISSUES.length);
+  await assert.rejects(
+    runSelfReviewRetryLoop({
+      ...baseArgs,
+      maxRetries: 1,
+      reviewResult: { verdict: 'issues', issues: ISSUES },
+      retryCount: 0,
+      deps,
+    }),
+    /retired worker pane/,
+  );
 });
 
 test('runSelfReviewRetryLoop: relaunches once when the retained worker rejects fix delivery', async () => {

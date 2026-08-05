@@ -521,9 +521,17 @@ export async function prepareCompletionPackage(
   independentReviews = await augmentIndependentReviewAttemptsFromArtifacts(run, independentReviews);
   const target = options?.publicationTarget ?? defaultPublicationTarget(run);
   const headSha = options?.headSha ?? (await requireSnapshotHeadSha(run));
-  const reviewSnapshot = run.slotId
-    ? (await captureCurrentReviewSnapshot(await loadSlotVars(run.slotId))).snapshot
-    : unavailableReviewSnapshot('missing-slot');
+  let reviewSnapshot = unavailableReviewSnapshot('missing-slot');
+  if (run.slotId) {
+    let vars: Awaited<ReturnType<typeof loadSlotVars>> | null = null;
+    try {
+      vars = await loadSlotVars(run.slotId);
+    } catch (error) {
+      // A removed slot must not make the package impossible to inspect.
+      reviewSnapshot = unavailableReviewSnapshot('slot-load-error', (error as Error).message);
+    }
+    if (vars) reviewSnapshot = (await captureCurrentReviewSnapshot(vars)).snapshot;
+  }
   const branch = run.branch ?? before.branch ?? '';
   const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
   const artifactPath = 'artifacts/pr-package.json';

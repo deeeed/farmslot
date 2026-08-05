@@ -4,8 +4,11 @@ import test from 'node:test';
 import type { IndependentReviewStatus } from '@farmslot/protocol';
 
 import {
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   assertPublicationReviewPolicySatisfied,
+  assertUnavailableSnapshotOverrideAvailable,
   buildPublishGateReviewStatus,
+  buildUnavailableSnapshotAction,
   countStalePublicationReviews,
   reviewFinalSnapshotMatchesPreparedPackage,
   stampPublishGateReviewStatusForPackage,
@@ -228,6 +231,74 @@ test('publication review policy rejects stale and unavailable review snapshots',
     1,
   );
   assert.throws(() => assertPublicationReviewPolicySatisfied(staleRun, pkg), /approved package/);
+});
+
+test('snapshot-unavailable publication requires an explicit exact-package operator override', () => {
+  const pkg = makeReadyGatePackage({
+    headSha: 'head-good',
+    reviewSnapshot: {
+      source: 'unavailable',
+      missingReason: 'slot-load-error',
+      capturedAt: '2026-04-15T00:00:00.000Z',
+    },
+  });
+  const reviewDepth = {
+    minimumIndependentReviews: 1,
+    requireCrossRunner: false,
+    extraLoopsRequested: 0,
+    requestedBy: 'dispatch' as const,
+  };
+  const review: IndependentReviewStatus = {
+    id: 'independent-review-1',
+    source: 'dispatch',
+    crossRunner: false,
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    reviewedHeadSha: 'head-good',
+    reviewedReviewSubjectHash: pkg.reviewSubjectHash,
+    reviewSnapshot: {
+      source: 'unavailable',
+      missingReason: 'slot-load-error',
+      capturedAt: '2026-04-15T00:00:00.000Z',
+    },
+  };
+  const baseRun = makeRun({
+    engineState: { publishGate: { reviewDepth, independentReviews: [review] } },
+  });
+
+  assert.doesNotThrow(() => assertUnavailableSnapshotOverrideAvailable([review], pkg, reviewDepth));
+  assert.equal(
+    buildUnavailableSnapshotAction([review], pkg, reviewDepth)?.id,
+    APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+  );
+  assert.throws(() => assertPublicationReviewPolicySatisfied(baseRun, pkg), /approved package/);
+
+  const approvedRun = makeRun({
+    ...baseRun,
+    decisions: [
+      {
+        id: 'decision-1',
+        type: 'engine_human_gate',
+        title: 'Publish',
+        description: 'Snapshot unavailable',
+        actions: [],
+        createdAt: '2026-04-15T00:00:00.000Z',
+        resolvedAt: '2026-04-15T00:01:00.000Z',
+        resolvedAction: APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+        payload: {
+          kind: 'ready',
+          prNumber: null,
+          repo: null,
+          diffStat: pkg.diffStat,
+          workerReport: '',
+          branch: pkg.branch,
+          prPackage: pkg,
+        },
+      },
+    ],
+  });
+  assert.doesNotThrow(() => assertPublicationReviewPolicySatisfied(approvedRun, pkg));
 });
 test('publication review policy rejects semantic review subject drift', () => {
   const pkg = makeReadyGatePackage({

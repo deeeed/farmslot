@@ -1288,6 +1288,7 @@ test('claude (hook-only) gateway-owned fresh session sends from structured idle 
     source: 'hook',
     confidence: 'high',
     observedAt: Date.now(),
+    sessionId: 'fresh-session',
   };
   promptAcceptedReading = {
     value: false,
@@ -1300,6 +1301,7 @@ test('claude (hook-only) gateway-owned fresh session sends from structured idle 
   const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 5_000, {
     forceBusyPoll: true,
     freshSessionStartedAfterMs,
+    replacedSessionId: 'old-session',
   });
 
   assert.equal(sent, true);
@@ -1307,6 +1309,36 @@ test('claude (hook-only) gateway-owned fresh session sends from structured idle 
     callOrder.includes('tmux:send-literal'),
     `the gateway-owned fresh session should receive the instruction; order=${callOrder.join(',')}`,
   );
+});
+
+test('claude (hook-only) does not trust a fresh timestamp from the replaced session', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  const freshSessionStartedAfterMs = Date.now() - 1_000;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+    sessionId: 'old-session',
+  };
+  promptAcceptedReading = {
+    value: false,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  paneText = 'fresh runner scrollback with no prompt marker yet\n';
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]', 20, {
+    forceBusyPoll: true,
+    freshSessionStartedAfterMs,
+    replacedSessionId: 'old-session',
+  });
+
+  assert.equal(sent, false);
+  assert.ok(!callOrder.includes('tmux:send-literal'));
 });
 
 test('claude (hook-only) foreign-draft hold records a composer-draft audit cause, not a hook lapse', async (t) => {

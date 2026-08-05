@@ -144,6 +144,7 @@ async function resolveRemoteBaseRef(
   slotId: string,
   requestedBase: string,
   deps: GitExecDeps = {},
+  options: { refresh: boolean } = { refresh: false },
 ): Promise<string> {
   const base = requestedBase.trim() || 'main';
   if (base.startsWith('refs/') || /^[0-9a-f]{7,40}$/i.test(base)) {
@@ -152,25 +153,43 @@ async function resolveRemoteBaseRef(
   }
   const remoteRef = base.startsWith('origin/') ? base : `origin/${base}`;
   const branch = remoteRef.slice('origin/'.length);
-  // A stale local or remote-tracking branch is not a safe substitute for the
-  // PR's live base. Explicit refs and SHAs are handled above.
-  await gitExec(
-    slotId,
-    ['fetch', '--no-tags', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`],
-    undefined,
-    deps,
-  );
-  await gitExec(slotId, ['rev-parse', '--verify', remoteRef], undefined, deps);
-  return remoteRef;
+  if (options.refresh) {
+    // Branch inventory refreshes the PR base once. Per-file diff reads reuse
+    // that ref instead of multiplying network fetches across an opened tree.
+    await gitExec(
+      slotId,
+      ['fetch', '--no-tags', 'origin', `refs/heads/${branch}:refs/remotes/origin/${branch}`],
+      undefined,
+      deps,
+    );
+  }
+  try {
+    await gitExec(slotId, ['rev-parse', '--verify', remoteRef], undefined, deps);
+    return remoteRef;
+  } catch (error) {
+    if (options.refresh || base.startsWith('origin/')) throw error;
+    // Offline/local-only worktrees may have no remote-tracking ref yet. The
+    // named local branch is a safe read-only fallback for a per-file diff.
+    await gitExec(slotId, ['rev-parse', '--verify', base], undefined, deps);
+    return base;
+  }
 }
 
-export async function gitDiff(params: GitDiffParams): Promise<GitDiffResult> {
+export async function gitDiff(
+  params: GitDiffParams,
+  deps: GitExecDeps = {},
+): Promise<GitDiffResult> {
   const args = ['diff'];
 
   if (params.base) {
-    const baseRef = await resolveRemoteBaseRef(params.slotId, params.base);
+    const baseRef = await resolveRemoteBaseRef(params.slotId, params.base, deps);
 
-    const { stdout: mergeBase } = await gitExec(params.slotId, ['merge-base', baseRef, 'HEAD']);
+    const { stdout: mergeBase } = await gitExec(
+      params.slotId,
+      ['merge-base', baseRef, 'HEAD'],
+      undefined,
+      deps,
+    );
     // 'worktree' diffs merge-base against the working tree (committed +
     // uncommitted); default diffs committed history only.
     args.push(params.target === 'worktree' ? mergeBase.trim() : `${mergeBase.trim()}..HEAD`);
@@ -183,7 +202,7 @@ export async function gitDiff(params: GitDiffParams): Promise<GitDiffResult> {
     if (params.oldPath && params.oldPath !== params.path) args.push(params.oldPath);
   }
 
-  const { stdout } = await gitExec(params.slotId, args, { maxBuffer: 10 * 1024 * 1024 });
+  const { stdout } = await gitExec(params.slotId, args, { maxBuffer: 10 * 1024 * 1024 }, deps);
   return { diff: stdout };
 }
 
@@ -262,7 +281,7 @@ export async function gitBranchDiff(
   deps: GitExecDeps = {},
 ): Promise<GitBranchDiffResult> {
   const base = params.base || 'main';
-  const baseRef = await resolveRemoteBaseRef(params.slotId, base, deps);
+  const baseRef = await resolveRemoteBaseRef(params.slotId, base, deps, { refresh: true });
 
   const [mergeBaseResult, branchResult] = await Promise.all([
     gitExec(params.slotId, ['merge-base', baseRef, 'HEAD'], undefined, deps),

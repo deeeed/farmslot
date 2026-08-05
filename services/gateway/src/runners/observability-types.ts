@@ -11,6 +11,8 @@ export interface ObservabilityReading<T> {
   observedAt: number;
   /** True only when prompt-acceptance evidence matched the requested prompt itself. */
   exactPromptMatch?: boolean;
+  /** Persisted runner session that emitted the reading, when the provider exposes it. */
+  sessionId?: string;
 }
 
 export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';

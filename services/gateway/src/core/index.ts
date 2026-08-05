@@ -58,6 +58,7 @@ export {
   slotCopyDir,
   slotCopyFile,
   slotFileExists,
+  slotFileMtimeMs,
   slotListDir,
   slotReadFile,
   slotWatchFile,

@@ -1,10 +1,15 @@
 import type { DecisionAction, FlowType, RunDecision } from '@farmslot/protocol';
 
-import { APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION, CLOSE_AS_SHIPPED_ACTION } from './gate-policy.js';
+import {
+  APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+  CLOSE_AS_SHIPPED_ACTION,
+} from './gate-policy.js';
 
 const HUMAN_GATE_APPROVAL_ACTIONS = new Set([
   'approve-publish',
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   'ready',
   'post',
   // Close-as-shipped resolves the gate terminally (work already merged); finalize

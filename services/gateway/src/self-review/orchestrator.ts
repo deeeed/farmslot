@@ -121,6 +121,14 @@ export class SelfReviewFixDeliveryError extends Error {
   override name = 'SelfReviewFixDeliveryError';
 }
 
+function resolveWorkerModel(
+  run: Pick<NonNullable<ReturnType<typeof getRun>>, 'metrics'> | null | undefined,
+  runner: string,
+  fallback: string,
+): string {
+  return run?.metrics.model?.trim() || runnerDefaultModel(runner) || fallback;
+}
+
 export interface SelfReviewOptions {
   reviewRunner?: string | null;
   model?: string | null;
@@ -643,44 +651,43 @@ export async function runSelfReviewRetryLoop({
     try {
       fixSignalBaseline = await deps.sendFeedbackToWorker(vars, result.issues, taskDir, runId);
     } catch (error) {
+      if (!(error instanceof SelfReviewFixDeliveryError)) throw error;
       let deliveryError: unknown = error;
-      if (error instanceof SelfReviewFixDeliveryError) {
-        console.warn(
-          `[self-review] run ${runId.slice(0, 8)} — retained worker rejected the fix task; relaunching once before preserving the findings`,
-        );
-        const run = deps.getRun(runId);
-        const fixContext = run?.agentContexts?.find(
-          (context) => context.role === 'self-review-fix' && context.taskFile,
-        );
-        const freshSessionStartedAfterMs = await deps.capturePromptAcceptanceBaseline(
-          vars,
-          fixContext?.target?.target ?? '',
-          workerRunner,
-        );
-        const relaunched = await deps.relaunchWorkerForFix(
-          vars,
-          workerRunner,
-          run?.metrics.model ?? model,
-          runId,
-        );
-        if (relaunched) {
-          const relaunchedFixContext =
-            deps
-              .getRun(runId)
-              ?.agentContexts?.find(
-                (context) => context.role === 'self-review-fix' && context.taskFile,
-              ) ?? fixContext;
-          if (relaunchedFixContext) {
-            const delivery = await deps.resumeFixPromptDelivery(
-              vars,
-              runId,
-              relaunchedFixContext,
-              undefined,
-              { priorPromptSendAttempted: false, freshSessionStartedAfterMs },
-            );
-            if (delivery === 'delivered') fixSignalBaseline = '';
-            else deliveryError = new Error(`fresh-worker fix delivery ${delivery}`);
-          }
+      console.warn(
+        `[self-review] run ${runId.slice(0, 8)} — retained worker rejected the fix task; relaunching once before preserving the findings`,
+      );
+      const run = deps.getRun(runId);
+      const fixContext = run?.agentContexts?.find(
+        (context) => context.role === 'self-review-fix' && context.taskFile,
+      );
+      const freshSessionStartedAfterMs = await deps.capturePromptAcceptanceBaseline(
+        vars,
+        fixContext?.target?.target ?? '',
+        workerRunner,
+      );
+      const relaunched = await deps.relaunchWorkerForFix(
+        vars,
+        workerRunner,
+        resolveWorkerModel(run, workerRunner, model),
+        runId,
+      );
+      if (relaunched) {
+        const relaunchedFixContext =
+          deps
+            .getRun(runId)
+            ?.agentContexts?.find(
+              (context) => context.role === 'self-review-fix' && context.taskFile,
+            ) ?? fixContext;
+        if (relaunchedFixContext) {
+          const delivery = await deps.resumeFixPromptDelivery(
+            vars,
+            runId,
+            relaunchedFixContext,
+            undefined,
+            { priorPromptSendAttempted: false, freshSessionStartedAfterMs },
+          );
+          if (delivery === 'delivered') fixSignalBaseline = '';
+          else deliveryError = new Error(`fresh-worker fix delivery ${delivery}`);
         }
       }
       if (fixSignalBaseline === undefined) {
@@ -1130,8 +1137,7 @@ async function recoverSelfReviewFixPass({
     );
 
     if (!fixSignal) {
-      const expectedWorkerModel =
-        run?.metrics.model?.trim() || runnerDefaultModel(workerRunner) || model;
+      const expectedWorkerModel = resolveWorkerModel(run, workerRunner, model);
       const fixContextMatchesWorker =
         normalizeRunner(fixContext.runner) === normalizeRunner(workerRunner) &&
         (!fixContext.model?.trim() || fixContext.model.trim() === expectedWorkerModel);
@@ -1727,7 +1733,7 @@ async function relaunchWorkerForFix(
 ): Promise<boolean> {
   const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
   const parentRun = getRun(runId);
-  const effectiveModel = parentRun?.metrics.model?.trim() || runnerDefaultModel(runner) || model;
+  const effectiveModel = resolveWorkerModel(parentRun, runner, model);
   const roleWindowName =
     parentRun?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(parentRun?.flowType))
       ?.target?.window ?? null;

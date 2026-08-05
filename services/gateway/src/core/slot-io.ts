@@ -106,6 +106,17 @@ export async function slotReadFile(ctx: SlotLocality, filePath: string): Promise
   return result.content;
 }
 
+export async function slotFileMtimeMs(ctx: SlotLocality, filePath: string): Promise<number> {
+  if (local(ctx)) return (await lstat(filePath)).mtimeMs;
+  const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.stat', {
+    ...nodePathParams(filePath),
+  })) as { mtimeMs?: number };
+  if (typeof result.mtimeMs !== 'number' || !Number.isFinite(result.mtimeMs)) {
+    throw new Error(`Node did not return mtimeMs for ${filePath}`);
+  }
+  return result.mtimeMs;
+}
+
 export async function slotRealpath(ctx: SlotLocality, filePath: string): Promise<string> {
   if (local(ctx)) return realpath(filePath);
   const result = (await sendNodeRequest(requireNode(ctx.machine), 'fs.realpath', {

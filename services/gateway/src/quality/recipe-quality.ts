@@ -36,8 +36,7 @@ interface RecipeQualityEvaluationInput {
   artifactDir?: string | null;
   /**
    * Portable callers pass the artifact they already read from the slot. When
-   * present, this is authoritative for that artifact root and the evaluator
-   * must not reread the gateway host filesystem.
+   * present, the evaluator must not reread the gateway host filesystem.
    */
   recipeQualityArtifact?: RecipeQualityArtifact | null;
   /** True only when the caller can prove the supplied artifact predates its sources. */
@@ -502,6 +501,7 @@ export async function loadRecipeQualityEvaluation(
       ? await readTextIfExists(path.join(artifactsDir, RECIPE_QUALITY_FILENAME))
       : null;
   const structural = evaluateRecipeStructure(input.recipeJson);
+  const hasCurrentRecipeSources = Boolean(input.recipeJson || input.recipeCoverage);
 
   // The gateway is the sole producer of recipe-quality.json (ADR/roadmap:
   // run-metrics consolidation). A previously-generated, schema-valid artifact is
@@ -518,7 +518,6 @@ export async function loadRecipeQualityEvaluation(
       const parsed = JSON.parse(artifactText);
       if (isRecipeQualityArtifact(parsed)) {
         const artifact = parsed as RecipeQualityArtifact;
-        const hasCurrentRecipeSources = Boolean(input.recipeJson || input.recipeCoverage);
         const workerArtifactIsStale =
           artifact.meta.producer === 'worker' &&
           hasCurrentRecipeSources &&

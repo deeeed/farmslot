@@ -30,7 +30,7 @@ import {
   type LatestValidRecipeRunPointer,
   sanitizeLatestValidRecipeRunPointer,
 } from '../core/recipe-artifacts.js';
-import { MAX_ARTIFACT_TREE_DEPTH, slotReadFile } from '../core/slot-io.js';
+import { MAX_ARTIFACT_TREE_DEPTH, slotFileMtimeMs, slotReadFile } from '../core/slot-io.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
@@ -271,6 +271,55 @@ async function readPortableTextIfExistsUncached(
     return readSlotTextIfExists(run, remoteFilePath ?? filePath);
   }
   return readSlotTextIfExists(run, filePath);
+}
+
+async function readPortableMtimeMsIfExists(
+  run: LiveRecipeReadCtx,
+  filePath: string,
+): Promise<number | null> {
+  const remotePath = await resolveRemotePortableArtifactPath(run, filePath);
+  if (run.slotId) {
+    const locality = await getSlotLocality(run.slotId).catch(() => null);
+    if (locality && !locality.isLocal) {
+      try {
+        return await slotFileMtimeMs(await loadSlotVars(run.slotId), remotePath ?? filePath);
+      } catch {
+        // The remote artifact may have been promoted locally already.
+      }
+    }
+  }
+  try {
+    return (await lstat(filePath)).mtimeMs;
+  } catch {
+    if (!run.slotId) return null;
+    try {
+      return await slotFileMtimeMs(await loadSlotVars(run.slotId), remotePath ?? filePath);
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function portableWorkerQualityArtifactIsStale(
+  run: LiveRecipeReadCtx,
+  artifactRoot: string,
+  artifact: RecipeQualityArtifact | null,
+  sourceFiles: string[],
+): Promise<boolean> {
+  if (!artifact || artifact.meta.producer !== 'worker' || sourceFiles.length === 0) return false;
+  const qualityMtime = await readPortableMtimeMsIfExists(
+    run,
+    path.join(artifactRoot, 'recipe-quality.json'),
+  );
+  const sourceMtimes = await Promise.all(
+    sourceFiles.map((filename) =>
+      readPortableMtimeMsIfExists(run, path.join(artifactRoot, filename)),
+    ),
+  );
+  // Fail closed when an older node cannot expose mtimes: a worker verdict
+  // cannot override current recipe sources unless its freshness is provable.
+  if (qualityMtime == null || sourceMtimes.some((mtime) => mtime == null)) return true;
+  return sourceMtimes.some((mtime) => mtime! > qualityMtime);
 }
 
 async function scanSlotArtifactRoot(
@@ -608,6 +657,15 @@ async function loadContextFromInheritedInputs(run: Run): Promise<LiveRecipeConte
             recipeJson,
             recipeCoverage,
             recipeQualityArtifact: storedRecipeQualityArtifact,
+            recipeQualityArtifactIsStale: await portableWorkerQualityArtifactIsStale(
+              run,
+              inheritedRoot,
+              storedRecipeQualityArtifact,
+              [
+                ...(recipeJson ? ['recipe.json'] : []),
+                ...(recipeCoverage ? ['recipe-coverage.md'] : []),
+              ],
+            ),
           })
         ).artifact
       : storedRecipeQualityArtifact;
@@ -672,6 +730,15 @@ async function loadContextFromArtifactRoot({
             recipeJson,
             recipeCoverage,
             recipeQualityArtifact: storedRecipeQualityArtifact,
+            recipeQualityArtifactIsStale: await portableWorkerQualityArtifactIsStale(
+              run,
+              artifactRoot,
+              storedRecipeQualityArtifact,
+              [
+                ...(recipeJson ? ['recipe.json'] : []),
+                ...(recipeCoverage ? ['recipe-coverage.md'] : []),
+              ],
+            ),
           })
         ).artifact
       : storedRecipeQualityArtifact;

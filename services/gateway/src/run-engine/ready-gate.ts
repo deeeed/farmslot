@@ -62,10 +62,13 @@ import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { createEngineDecision } from './engine-decisions.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
+  assertUnavailableSnapshotOverrideAvailable,
   buildEvidenceRefreshAction,
   buildPublishGateReviewStatus,
+  buildUnavailableSnapshotAction,
   CLOSE_AS_SHIPPED_ACTION,
   countStalePublicationReviews,
   hasValidPrNumber,
@@ -734,6 +737,10 @@ export async function executeReadyGate(runId: string): Promise<string> {
     publicationApprovalGate && preparedPackage
       ? buildEvidenceRefreshAction(independentReviews, preparedPackage, reviewDepth)
       : null;
+  const unavailableSnapshotAction =
+    publicationApprovalGate && preparedPackage
+      ? buildUnavailableSnapshotAction(independentReviews, preparedPackage, reviewDepth)
+      : null;
   const actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }> =
     publicationApprovalGate
       ? [
@@ -752,6 +759,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
             ? [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }]
             : []),
           ...(evidenceRefreshAction ? [evidenceRefreshAction] : []),
+          ...(unavailableSnapshotAction ? [unavailableSnapshotAction] : []),
           { id: 'hold', label: 'Hold', style: 'secondary' as const },
           {
             id: 'request-extra-review',
@@ -959,6 +967,14 @@ export async function executeReadyGate(runId: string): Promise<string> {
         decision,
         reviewDepth,
         selectionData,
+      );
+    }
+    if (actionId === APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION) {
+      if (!approvedPackage) throw new Error('Publication approval requires a prepared package');
+      assertUnavailableSnapshotOverrideAvailable(
+        getRun(runId)!.engineState?.publishGate?.independentReviews ?? [],
+        approvedPackage,
+        reviewDepth,
       );
     }
     if (isPublishApprovalAction(actionId)) {

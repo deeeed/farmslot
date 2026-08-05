@@ -34,6 +34,9 @@ import { publicationReviewPolicyForRun } from './publication-policy.js';
  */
 export const APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION = 'approve-publish-evidence-refresh';
 
+/** Explicit human escape when the slot disappeared before its diff snapshot could be recaptured. */
+export const APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION = 'approve-publish-snapshot-unavailable';
+
 /**
  * Gate action offered when the run's branch already shipped out-of-band (merged
  * PR, or zero commits ahead of the default branch). Resolving it links the
@@ -50,6 +53,7 @@ export const CLOSE_AS_SHIPPED_ACTION = 'close-as-shipped';
 export const PUBLISH_APPROVAL_ACTIONS: ReadonlySet<string> = new Set([
   'approve-publish',
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   'ready',
 ]);
 
@@ -601,6 +605,70 @@ export function buildEvidenceRefreshAction(
   };
 }
 
+function reviewMatchesUnavailableSnapshotPackage(
+  review: IndependentReviewStatus,
+  preparedPackage: ReadyGatePrPackage,
+): boolean {
+  return (
+    isQualifyingIndependentReview(review) &&
+    review.verdict === 'pass' &&
+    review.unresolvedCount === 0 &&
+    review.reviewedHeadSha === preparedPackage.headSha &&
+    review.reviewedReviewSubjectHash === preparedPackage.reviewSubjectHash
+  );
+}
+
+export function unavailableSnapshotOverrideAvailable(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  reviewDepth: ReviewDepthPolicy,
+): boolean {
+  if (preparedPackage.reviewSnapshot?.source !== 'unavailable') return false;
+  const matching = independentReviews.filter((review) =>
+    reviewMatchesUnavailableSnapshotPackage(review, preparedPackage),
+  );
+  return freshPublicationReviewCountSatisfied(reviewDepth, matching);
+}
+
+export function assertUnavailableSnapshotOverrideAvailable(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  reviewDepth: ReviewDepthPolicy,
+): void {
+  if (!unavailableSnapshotOverrideAvailable(independentReviews, preparedPackage, reviewDepth)) {
+    throw new Error(
+      'Snapshot-unavailable override requires passing reviews for the exact package HEAD and subject',
+    );
+  }
+}
+
+export function buildUnavailableSnapshotAction(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  reviewDepth: ReviewDepthPolicy,
+): DecisionAction | null {
+  if (!unavailableSnapshotOverrideAvailable(independentReviews, preparedPackage, reviewDepth)) {
+    return null;
+  }
+  return {
+    id: APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
+    label: 'Publish Anyway (snapshot unavailable)',
+    style: 'primary',
+  };
+}
+
+function snapshotUnavailableOverrideWasApproved(
+  current: Run,
+  preparedPackage: ReadyGatePrPackage,
+): boolean {
+  return current.decisions.some((decision) => {
+    if (decision.resolvedAction !== APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION) return false;
+    const decisionPackage = (decision.payload as { prPackage?: ReadyGatePrPackage } | undefined)
+      ?.prPackage;
+    return decisionPackage?.packageHash === preparedPackage.packageHash;
+  });
+}
+
 /**
  * Carry the prior pass verdict forward when the operator uses the human
  * evidence-refresh override: restamp every evidence-only stale approving review
@@ -678,7 +746,13 @@ export function assertPublicationReviewPolicySatisfied(
           requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
         })
       : 0;
-  if (!independentReviewPolicySatisfied(reviewDepth, independentReviews) || staleReviewCount > 0) {
+  const unavailableOverrideApproved =
+    snapshotUnavailableOverrideWasApproved(current, preparedPackage) &&
+    unavailableSnapshotOverrideAvailable(independentReviews, preparedPackage, reviewDepth);
+  if (
+    !independentReviewPolicySatisfied(reviewDepth, independentReviews) ||
+    (staleReviewCount > 0 && !unavailableOverrideApproved)
+  ) {
     throw new Error(
       'Publication approval requires passing independent reviews for the approved package; package changed, refresh package and re-review before publishing',
     );

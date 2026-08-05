@@ -163,7 +163,7 @@ test('loadRecipeQualityEvaluation uses a supplied slot artifact instead of the g
   assert.equal(evaluation.artifact.compact.reasons[0], portableArtifact.compact.reasons[0]);
 });
 
-test('loadRecipeQualityEvaluation ignores a worker artifact only when recipe sources are newer', async () => {
+test('loadRecipeQualityEvaluation ignores a worker verdict when recipe sources are newer', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-stale-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Task\n');

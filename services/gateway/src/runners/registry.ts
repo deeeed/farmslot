@@ -1911,6 +1911,7 @@ async function sendRunnerInstructionHookOnly(
   promptAcceptedSinceMs: number,
   recovery?: RunnerSendRecoveryContext,
   freshSessionStartedAfterMs?: number | null,
+  replacedSessionId?: string | null,
 ): Promise<boolean> {
   const observability = getRunnerObservability(runner);
   if (!observability) return false;
@@ -1999,9 +2000,12 @@ async function sendRunnerInstructionHookOnly(
     }
     const gatewayOwnedFreshSession =
       freshSessionStartedAfterMs != null &&
+      replacedSessionId != null &&
       activity?.value === 'idle' &&
       activity.source === 'hook' &&
-      activity.observedAt >= freshSessionStartedAfterMs;
+      activity.observedAt >= freshSessionStartedAfterMs &&
+      activity.sessionId != null &&
+      activity.sessionId !== replacedSessionId;
     if (gatewayOwnedFreshSession) {
       return (
         (await submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send')) === 'ok'
@@ -2072,6 +2076,7 @@ export async function sendRunnerInstructionSafely(
     forceBusyPoll?: boolean;
     recovery?: RunnerSendRecoveryContext;
     freshSessionStartedAfterMs?: number | null;
+    replacedSessionId?: string | null;
   } = {},
 ): Promise<boolean> {
   const runner = normalizeRunner(runnerId);
@@ -2103,6 +2108,7 @@ export async function sendRunnerInstructionSafely(
       hookPromptAcceptedSinceMs,
       opts.recovery,
       opts.freshSessionStartedAfterMs,
+      opts.replacedSessionId,
     );
   }
   // Skip the busy-composer poll iff the runner doesn't require it AND the caller didn't opt
@@ -2857,11 +2863,8 @@ export async function sendRunnerPostLaunchPrompt(
         submitRetryAttempted = true;
       }
       const submitKey = submitRetryAttempted
-        ? unacceptedPromptSubmitKey
-        : runnerBufferedInstructionSubmitKey(preSendPane, runner);
-      if (!submitKey) {
-        throw new Error(`Runner ${runner} has no submit key for buffered prompt recovery`);
-      }
+        ? unacceptedPromptSubmitKey!
+        : runnerBufferedInstructionSubmitKey(preSendPane, runner)!;
       sendCommand = tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${submitKey} 2>/dev/null`);
     } else {
       try {

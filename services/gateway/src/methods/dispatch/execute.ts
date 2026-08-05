@@ -689,8 +689,9 @@ export function buildRoleLaunchCommandWithDiagnosticHold(
   const lines = [
     `bash -lc ${shellQuote(command)}`,
     '__farmslot_status=$?',
+    'echo "[farmslot] runner launch command exited $__farmslot_status" >&2',
     'if [ "$__farmslot_status" -ne 0 ]; then',
-    '  echo "[farmslot] runner launch command exited $__farmslot_status; preserving pane for diagnostics" >&2',
+    '  echo "[farmslot] preserving pane for launch diagnostics" >&2',
     `  sleep ${ROLE_LAUNCH_FAILURE_DIAGNOSTIC_HOLD_SECONDS}`,
     'fi',
     buildDispatchRoleShellCommand(remoteRepo),

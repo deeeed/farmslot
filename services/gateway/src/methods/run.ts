@@ -61,8 +61,10 @@ import { isHumanGateReviewRequestAction } from '../run-engine/decision-replay.js
 import { resolveEngineDecision } from '../run-engine/engine-decisions.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
+  assertUnavailableSnapshotOverrideAvailable,
   isPublishApprovalAction,
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
@@ -1103,6 +1105,13 @@ async function assertReadyPublishResolveIsFresh(
     // precondition instead: staleness must be evidence-only (HEAD unchanged).
     const reviewDepth = currentPackage.reviewDepth ?? publicationReviewPolicyForRun(run);
     assertEvidenceRefreshOverrideAvailable(
+      run.engineState?.publishGate?.independentReviews ?? [],
+      currentPackage,
+      reviewDepth,
+    );
+  } else if (params.actionId === APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION) {
+    const reviewDepth = currentPackage.reviewDepth ?? publicationReviewPolicyForRun(run);
+    assertUnavailableSnapshotOverrideAvailable(
       run.engineState?.publishGate?.independentReviews ?? [],
       currentPackage,
       reviewDepth,

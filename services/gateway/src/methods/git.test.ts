@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { gitBranchDiff, gitExec } from './git.js';
+import { gitBranchDiff, gitDiff, gitExec } from './git.js';
 
 test('gitExec remote branch transmits shell metacharacters as one argv element', async () => {
   const payload = 'feature/foo;touch /tmp/pwned`id`$(id)';
@@ -120,6 +120,37 @@ test('gitBranchDiff fetches an exact stacked PR base that is missing locally', a
         argv.includes('refs/heads/feature/base:refs/remotes/origin/feature/base'),
     ),
   );
+});
+
+test('gitDiff reuses the refreshed remote base without fetching per file', async () => {
+  const { deps, argvLog } = branchDiffDeps({ nameStatus: '', numstat: '' });
+  await gitDiff({ slotId: 's', base: 'main', path: 'src/a.ts' }, deps);
+  assert.ok(!argvLog.some((argv) => argv[1] === 'fetch'));
+  assert.ok(argvLog.some((argv) => argv[1] === 'rev-parse' && argv.includes('origin/main')));
+});
+
+test('gitDiff falls back to a local base branch when the remote ref is unavailable', async () => {
+  const argvLog: string[][] = [];
+  const result = await gitDiff(
+    { slotId: 's', base: 'main', path: 'src/a.ts' },
+    {
+      resolveRepo: async () => '/repo',
+      loadVars: async () => ({ host: 'localhost', machine: 'local', remoteRepo: '/repo' }) as any,
+      runOnSlot: async (_vars: unknown, argv: string[]) => {
+        argvLog.push(argv);
+        if (argv[1] === 'rev-parse' && argv.includes('origin/main')) {
+          return { stdout: '', stderr: 'missing', exitCode: 1 };
+        }
+        if (argv[1] === 'rev-parse') return { stdout: 'local-base\n', stderr: '', exitCode: 0 };
+        if (argv[1] === 'merge-base') return { stdout: 'mb-local\n', stderr: '', exitCode: 0 };
+        if (argv[1] === 'diff') return { stdout: 'diff body', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    },
+  );
+  assert.equal(result.diff, 'diff body');
+  assert.ok(argvLog.some((argv) => argv[1] === 'merge-base' && argv.includes('main')));
+  assert.ok(!argvLog.some((argv) => argv[1] === 'fetch'));
 });
 
 test('gitBranchDiff worktree target diffs against the working tree and appends untracked files', async () => {

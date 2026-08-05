@@ -476,8 +476,6 @@ export async function executeReviewGate(runId: string): Promise<void> {
     // mirror that completion in GitHub's Files changed view. GitHub will
     // automatically unmark a file if a later commit changes it.
     try {
-      const currentPr = await fetchGitHubPR(`${ciRepo}#${prNumber}`);
-      assertReviewSnapshotMatchesPullRequest(reviewSnapshot, currentPr.headSha);
       const viewedFiles = await fetchPRDiffFiles(ciRepo, prNumber);
       const confirmedPr = await fetchGitHubPR(`${ciRepo}#${prNumber}`);
       assertReviewSnapshotMatchesPullRequest(reviewSnapshot, confirmedPr.headSha);

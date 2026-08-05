@@ -63,7 +63,7 @@ test('startProgressWatcher broadcasts reviewer progress for the allocated contex
     contextId: 'rev-codex',
     role: 'self-review',
   });
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await watcher.ready;
   watcher.stop();
   rmSync(dir, { recursive: true, force: true });
 

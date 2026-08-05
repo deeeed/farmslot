@@ -55,13 +55,13 @@ export function startProgressWatcher(
   runId: string,
   label = 'Review',
   options: { contextId?: string; role?: AgentRole } = {},
-): { stop: () => void } {
+): { stop: () => void; ready: Promise<void> } {
   let lastProgress = '';
   const fallbackContextId = label === 'Fix' ? 'self-review-fix' : 'self-review';
   const contextId = options.contextId ?? fallbackContextId;
   const role = options.role ?? (fallbackContextId as AgentRole);
 
-  const compute = (content: string) => {
+  const compute = async (content: string): Promise<void> => {
     const total = (content.match(/- \[[ x]\]/g) || []).length;
     const done = (content.match(/- \[x\]/gi) || []).length;
     const progress = `${done}/${total}`;
@@ -69,28 +69,32 @@ export function startProgressWatcher(
     lastProgress = progress;
     updateRunStep(runId, 'self-review', { detail: `${label}: ${progress} steps` });
     broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-    void taskProgress({ slotId: vars.slotId, runId, contextId, role })
-      .then((structuredProgress) => {
-        broadcastFn(Events.TASK_PROGRESS_UPDATED, {
-          slotId: vars.slotId,
-          runId,
-          role,
-          contextId,
-          progress: structuredProgress,
-        });
-      })
-      .catch((err) => {
-        console.warn(
-          `[self-review] failed to broadcast ${contextId} task progress for ${runId.slice(0, 8)}: ${(err as Error).message}`,
-        );
+    try {
+      const structuredProgress = await taskProgress({
+        slotId: vars.slotId,
+        runId,
+        contextId,
+        role,
       });
+      broadcastFn(Events.TASK_PROGRESS_UPDATED, {
+        slotId: vars.slotId,
+        runId,
+        role,
+        contextId,
+        progress: structuredProgress,
+      });
+    } catch (err) {
+      console.warn(
+        `[self-review] failed to broadcast ${contextId} task progress for ${runId.slice(0, 8)}: ${(err as Error).message}`,
+      );
+    }
   };
 
   if (isLocal(vars.host, vars.machine)) {
     const watcher = watch(filePath, { persistent: false, ignoreInitial: true });
     const onUpdate = async () => {
       try {
-        compute(await readFile(filePath, 'utf-8'));
+        await compute(await readFile(filePath, 'utf-8'));
       } catch (err) {
         console.warn(
           `[self-review] progress file read skipped for ${filePath}: ${(err as Error).message}`,
@@ -98,8 +102,9 @@ export function startProgressWatcher(
       }
     };
     watcher.on('change', onUpdate);
-    onUpdate();
+    const ready = onUpdate();
     return {
+      ready,
       stop: () => {
         watcher.close();
       },
@@ -108,7 +113,11 @@ export function startProgressWatcher(
 
   // Remote slot — register callback for node.fs.changed dispatch + start node-side watch
   const key = `${vars.machine}|${filePath}|${runId}|${label}|${contextId}`;
-  remoteProgressEntries.set(key, { machine: vars.machine, path: filePath, onContent: compute });
+  remoteProgressEntries.set(key, {
+    machine: vars.machine,
+    path: filePath,
+    onContent: (content) => void compute(content),
+  });
   const node = getNode(vars.machine);
   let watchRequestId: string | undefined;
   if (node) {
@@ -132,6 +141,7 @@ export function startProgressWatcher(
     );
   }
   return {
+    ready: Promise.resolve(),
     stop: () => {
       remoteProgressEntries.delete(key);
       if (!watchRequestId) return;

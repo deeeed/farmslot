@@ -97,10 +97,10 @@ export function deriveRunnerActivity(
 
   let lastPreToolUse: { record: HookRecord; observedAt: number } | null = null;
   let lastPostToolUseAt: number | null = null;
-  let lastTurnStop: { observedAt: number } | null = null;
-  let lastIdleNotification: { observedAt: number } | null = null;
-  let lastSessionStart: { observedAt: number } | null = null;
-  let lastComposing: { observedAt: number } | null = null;
+  let lastTurnStop: { observedAt: number; sessionId?: string } | null = null;
+  let lastIdleNotification: { observedAt: number; sessionId?: string } | null = null;
+  let lastSessionStart: { observedAt: number; sessionId?: string } | null = null;
+  let lastComposing: { observedAt: number; sessionId?: string } | null = null;
 
   for (const record of hooks) {
     const event = hookEventName(record);
@@ -112,16 +112,16 @@ export function deriveRunnerActivity(
     } else if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
       lastPostToolUseAt = observedAt;
     } else if (event === 'Stop') {
-      lastTurnStop = { observedAt };
+      lastTurnStop = { observedAt, sessionId: record.session_id };
     } else if (event === 'SessionStart') {
-      lastSessionStart = { observedAt };
+      lastSessionStart = { observedAt, sessionId: record.session_id };
     } else if (event === 'UserPromptSubmit' || event === 'UserPromptExpansion') {
-      lastComposing = { observedAt };
+      lastComposing = { observedAt, sessionId: record.session_id };
     } else if (event === 'Notification') {
       if (record.notification_type === 'idle_prompt') {
-        lastIdleNotification = { observedAt };
+        lastIdleNotification = { observedAt, sessionId: record.session_id };
       } else {
-        lastComposing = { observedAt };
+        lastComposing = { observedAt, sessionId: record.session_id };
       }
     }
   }
@@ -156,6 +156,7 @@ export function deriveRunnerActivity(
       source: 'hook',
       confidence: 'high',
       observedAt: lastPreToolUse.observedAt,
+      ...(lastPreToolUse.record.session_id ? { sessionId: lastPreToolUse.record.session_id } : {}),
     };
   }
   if (lastComposing && (lastIdle == null || lastComposing.observedAt > lastIdle.observedAt)) {
@@ -164,6 +165,7 @@ export function deriveRunnerActivity(
       source: 'hook',
       confidence: 'high',
       observedAt: lastComposing.observedAt,
+      ...(lastComposing.sessionId ? { sessionId: lastComposing.sessionId } : {}),
     };
   }
   if (lastIdle) {
@@ -172,6 +174,7 @@ export function deriveRunnerActivity(
       source: 'hook',
       confidence: 'high',
       observedAt: lastIdle.observedAt,
+      ...(lastIdle.sessionId ? { sessionId: lastIdle.sessionId } : {}),
     };
   }
   return null;

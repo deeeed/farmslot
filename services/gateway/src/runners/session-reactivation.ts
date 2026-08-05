@@ -307,6 +307,7 @@ export async function deliverPromptInPlace(
         forceBusyPoll: options.forceBusyPoll ?? true,
         recovery: options.recovery,
         freshSessionStartedAfterMs: options.freshSessionStartedAfterMs,
+        replacedSessionId: options.sessionId,
       },
     );
     if (accepted && options.launchAckSignalPath) {
@@ -428,11 +429,20 @@ export async function deliverPromptWithRetainedFallback(
     if (options.priorPromptSendAttempted) {
       return unacknowledgedPriorSendHold(normalizeRunner(options.runnerId));
     }
-    const runner = normalizeRunner(options.runnerId);
-    if (
-      runnerRetainedSessionHandoff(runner) === 'resume-with-prompt' &&
-      (!options.sessionId?.trim() || !options.sessionPath?.trim())
-    ) {
+  } catch (error) {
+    return {
+      delivered: false,
+      disposition: 'hold',
+      reason: `Delayed retained handoff acknowledgement probe failed: ${(error as Error).message}`,
+    };
+  }
+
+  const runner = normalizeRunner(options.runnerId);
+  if (
+    runnerRetainedSessionHandoff(runner) === 'resume-with-prompt' &&
+    (!options.sessionId?.trim() || !options.sessionPath?.trim())
+  ) {
+    try {
       const paneId = await resolveTmuxPaneId(options.vars, options.target);
       const binding = paneId
         ? await resolveRunnerSessionBinding(options.vars, runner, [], {
@@ -447,13 +457,13 @@ export async function deliverPromptWithRetainedFallback(
           sessionPath: binding.runnerSessionPath,
         };
       }
+    } catch (error) {
+      // Binding enrichment is optional; retain the caller's persisted identity
+      // and let the standard native/in-place delivery contract decide safely.
+      console.warn(
+        `[retained-handoff] failed to enrich runner session binding for ${options.target}: ${(error as Error).message}`,
+      );
     }
-  } catch (error) {
-    return {
-      delivered: false,
-      disposition: 'hold',
-      reason: `Delayed retained handoff acknowledgement probe failed: ${(error as Error).message}`,
-    };
   }
   const retained = await deliverPromptToRetainedRunnerSession(resolvedOptions);
   if (!retained.delivered && retained.disposition === 'safe-send') {
