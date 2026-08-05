@@ -212,7 +212,7 @@ function startPidFileWatch(
       status: current.status,
       pid: current.pid,
       ...(current.meta ? { meta: current.meta } : {}),
-      });
+    });
   };
 
   const runPoll = (force = false, source = 'pid-file') => {
@@ -357,12 +357,14 @@ export function startResourceWatch(
   slotId: string,
   instructions: WatchInstruction[],
   onChange: (change: ResourceStatusChange) => void,
-): void {
+): number {
+  // Each start request is the authoritative watch set for the slot. Without
+  // clearing omitted IDs, configuration changes leave old pollers running and
+  // keep publishing resources that no longer belong to the slot.
+  stopResourceWatch(slotId);
+
   for (const inst of instructions) {
     const key = watchKey(slotId, inst.id);
-
-    // Stop existing watch for this resource
-    stopSingleWatch(key);
 
     const aw: ActiveWatch = {
       slotId,
@@ -386,6 +388,8 @@ export function startResourceWatch(
 
     console.log(`[resource-watch] started ${inst.watch.type} watch: ${key}`);
   }
+
+  return instructions.length;
 }
 
 function stopSingleWatch(key: string): void {

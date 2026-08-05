@@ -122,6 +122,47 @@ test('loadRecipeQualityEvaluation preserves a current worker artifact and merges
   assert.equal(evaluation.signal.semantic, 'bad');
 });
 
+test('loadRecipeQualityEvaluation uses a supplied slot artifact instead of the gateway filesystem', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-portable-'));
+  const taskDir = path.join(base, 'task');
+  const taskFile = await writeTaskFile(taskDir, '# Task\n');
+  await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+  await writeFile(
+    path.join(taskDir, 'artifacts', 'recipe-quality.json'),
+    JSON.stringify({ invalid: 'gateway-host-collision' }),
+  );
+  const portableArtifact = {
+    version: 1,
+    verdict: 'fail',
+    compact: {
+      verdict: 'FAIL',
+      reasons: ['The remote worker found a live proof failure.'],
+      better_version_guidance: [],
+    },
+    dimensions: {},
+    structural_findings: [],
+    contextual_findings: [],
+    suggested_recipe_delta: [],
+    training_fields: { proof_mode: 'mixed' },
+    meta: {
+      producer: 'worker',
+      fallback_used: false,
+      legacy_task: false,
+      artifact_required: true,
+      source_signals: ['recipe-quality.json'],
+    },
+  };
+  assert.ok(isRecipeQualityArtifact(portableArtifact));
+
+  const evaluation = await loadRecipeQualityEvaluation({
+    run: makeRun({ taskFile }),
+    recipeQualityArtifact: portableArtifact,
+  });
+
+  assert.equal(evaluation.artifact.verdict, 'fail');
+  assert.equal(evaluation.artifact.compact.reasons[0], portableArtifact.compact.reasons[0]);
+});
+
 test('loadRecipeQualityEvaluation ignores a worker artifact only when recipe sources are newer', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-stale-'));
   const taskDir = path.join(base, 'task');

@@ -872,8 +872,6 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
         const projectJson = projectVars.projectJson;
         const slotVars = await loadSlotVars(slot.slot);
 
-        if (!projectJson.resources) continue;
-
         const watchInstructions: Array<{
           id: string;
           watch: {
@@ -886,7 +884,7 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
           };
         }> = [];
 
-        for (const [id, def] of Object.entries(projectJson.resources)) {
+        for (const [id, def] of Object.entries(projectJson.resources ?? {})) {
           if (!isSlotResourceConfigured(slotCfg.resources, id)) continue;
           if (!def.watch) continue;
 
@@ -943,13 +941,13 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
           watchInstructions.push({ id, watch: expandedWatch });
         }
 
-        if (watchInstructions.length > 0) {
-          await sendNodeRequest(node, 'resource.watch.start', {
-            slotId: slot.slot,
-            resources: watchInstructions,
-          });
-          totalWatches += watchInstructions.length;
-        }
+        // The node treats this as the complete watch set for the slot, so send
+        // an empty set too. Omitting the request would leave removed watches alive.
+        await sendNodeRequest(node, 'resource.watch.start', {
+          slotId: slot.slot,
+          resources: watchInstructions,
+        });
+        totalWatches += watchInstructions.length;
       } catch (err) {
         console.log(
           `[resource-manager] failed to send watch for ${slot.slot}: ${(err as Error).message}`,
@@ -960,6 +958,8 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
     if (totalWatches > 0) {
       activeWatchMachines.add(machine);
       console.log(`[resource-manager] sent ${totalWatches} watch instructions to node ${machine}`);
+    } else {
+      activeWatchMachines.delete(machine);
     }
   } catch (err) {
     console.error(

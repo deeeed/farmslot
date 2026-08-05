@@ -34,6 +34,14 @@ interface RecipeQualityEvaluationInput {
    * for that root — the per-run badge and family leaderboard never diverge.
    */
   artifactDir?: string | null;
+  /**
+   * Portable callers pass the artifact they already read from the slot. When
+   * present, this is authoritative for that artifact root and the evaluator
+   * must not reread the gateway host filesystem.
+   */
+  recipeQualityArtifact?: RecipeQualityArtifact | null;
+  /** True only when the caller can prove the supplied artifact predates its sources. */
+  recipeQualityArtifactIsStale?: boolean;
 }
 
 interface StructuralRecipeEvaluation {
@@ -487,9 +495,12 @@ export async function loadRecipeQualityEvaluation(
   const taskText = run.taskFile ? await readTextIfExists(run.taskFile) : null;
   const legacyTask = !taskText?.includes(RECIPE_QUALITY_MARKER);
   const artifactsDir = input.artifactDir ?? (taskDir ? path.join(taskDir, 'artifacts') : null);
-  const artifactText = artifactsDir
-    ? await readTextIfExists(path.join(artifactsDir, RECIPE_QUALITY_FILENAME))
-    : null;
+  const hasPortableArtifact = Object.hasOwn(input, 'recipeQualityArtifact');
+  const suppliedArtifact = hasPortableArtifact ? input.recipeQualityArtifact : undefined;
+  const artifactText =
+    !hasPortableArtifact && artifactsDir
+      ? await readTextIfExists(path.join(artifactsDir, RECIPE_QUALITY_FILENAME))
+      : null;
   const structural = evaluateRecipeStructure(input.recipeJson);
 
   // The gateway is the sole producer of recipe-quality.json (ADR/roadmap:
@@ -497,6 +508,11 @@ export async function loadRecipeQualityEvaluation(
   // reused for idempotency; anything else (absent, unparseable, or non-conformant)
   // is regenerated from the recipe structure — never salvaged or fabricated into a
   // misleading fail. Workers no longer hand-author this file.
+  if (suppliedArtifact && !input.recipeQualityArtifactIsStale) {
+    const merged = mergeStructuralEvaluation(suppliedArtifact, structural);
+    return { artifact: merged, signal: buildSignal(run.id, merged) };
+  }
+
   if (artifactText) {
     try {
       const parsed = JSON.parse(artifactText);

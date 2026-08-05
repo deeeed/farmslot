@@ -17,6 +17,10 @@ import {
   writeTextFileOnSlot,
 } from '../methods/dispatch/slot-file-write.js';
 import {
+  cappedRunSourceDiffCommand,
+  runSourceDiffNumstatCommand,
+} from '../run-engine/diff-artifacts.js';
+import {
   captureRunnerSessionMetadata,
   listRunnerSessionFiles,
 } from '../runners/session-process.js';
@@ -188,8 +192,7 @@ export async function captureCurrentReviewSnapshot(
       { timeout: 10_000 },
     );
     const baseSha = baseResult.stdout.trim().split('\n').at(-1)?.trim() ?? '';
-    const range = shellQuote(baseSha);
-    const numstat = await execOnSlot(vars, `git -c core.quotePath=false diff --numstat ${range}`, {
+    const numstat = await execOnSlot(vars, runSourceDiffNumstatCommand(baseSha, []), {
       timeout: 10_000,
     });
     if (numstat.exitCode !== 0) {
@@ -197,11 +200,10 @@ export async function captureCurrentReviewSnapshot(
         snapshot: unavailableReviewSnapshot('git-numstat-failed', numstat.stderr || numstat.stdout),
       };
     }
-    const diff = await execOnSlot(
-      vars,
-      `git -c core.quotePath=false diff --binary --find-renames ${range}`,
-      { timeout: 30_000, maxBuffer: REVIEW_DIFF_MAX_BUFFER },
-    );
+    const diff = await execOnSlot(vars, cappedRunSourceDiffCommand(baseSha, []), {
+      timeout: 30_000,
+      maxBuffer: REVIEW_DIFF_MAX_BUFFER,
+    });
     if (diff.exitCode !== 0) {
       return {
         snapshot: unavailableReviewSnapshot(
