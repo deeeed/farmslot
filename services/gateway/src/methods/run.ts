@@ -534,12 +534,29 @@ export async function runCreate(
   if (!params.backlogItemId) {
     const link = await linkDirectRunToMatchingBacklog(run);
     if (link.action === 'linked') {
+      const existingContext = run.engineState?.interactiveDev?.initialContext?.trim();
+      const backlogContext = link.initialContext.trim();
+      const initialContext = existingContext?.includes(backlogContext)
+        ? existingContext
+        : existingContext && backlogContext.includes(existingContext)
+          ? backlogContext
+          : [backlogContext, existingContext].filter(Boolean).join('\n\n');
+      const linkedState: Pick<Run, 'backlogItemId' | 'engineState'> = {
+        backlogItemId: link.itemId,
+        engineState: {
+          ...run.engineState,
+          interactiveDev: {
+            ...run.engineState?.interactiveDev,
+            ...(initialContext ? { initialContext } : {}),
+          },
+        },
+      };
       if (options.awaitPersist) {
-        run.backlogItemId = link.itemId;
+        Object.assign(run, linkedState);
         run.updatedAt = new Date().toISOString();
         await persistRunNow(run, 'create-soft-link');
       } else {
-        run = updateRun(run.id, { backlogItemId: link.itemId });
+        run = updateRun(run.id, linkedState);
       }
     }
   }
