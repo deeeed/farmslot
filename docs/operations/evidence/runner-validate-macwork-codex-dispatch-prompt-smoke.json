@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-04T15:34:37.564Z",
+  "host": "macwork",
+  "scenario": "dispatch-prompt-smoke",
+  "runner": "codex",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-dispatch-A0GzxP",
+  "session": "runner-validate-codex-dispatch-prompt-smoke-27839",
+  "launchMode": "codex-interactive",
+  "gatewayPath": "sendRunnerPostLaunchPrompt",
+  "promptDelivered": true,
+  "responseCompleted": true,
+  "hookEvents": ["SessionStart", "UserPromptSubmit", "Stop"],
+  "blockerSnapshotPath": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-dispatch-A0GzxP/.artifacts/runner-blockers/dispatch-launch.txt",
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash /private/tmp/tmux-model-driver.pYZTJs/launch-75a0b8a47fa71f6d.sh\n╭──────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.0)                               │\n│                                                          │\n│ model:       gpt-5.6-sol   /model to change              │\n│ directory:   …gn/T/runner-validate-codex-dispatch-A0GzxP │\n│ permissions: YOLO mode                                   │\n╰──────────────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n\n› Reply with exactly TMUX_HOOK_OK and nothing else.\n\n\n• Working (2s • esc to interrupt)\n\n\n› Implement {feature}\n\n  gpt-5.6-sol default · /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/…"
+}
