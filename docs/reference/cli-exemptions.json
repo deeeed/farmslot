@@ -130,6 +130,15 @@
     "stream.unsubscribe": {
       "reason": "Binary stream relay for the web UI."
     },
+    "terminal.attachment.cleanup": {
+      "reason": "Web terminal image paste/drag-drop (Command Center); also called by slot release."
+    },
+    "terminal.attachment.deliver": {
+      "reason": "Web terminal image paste/drag-drop (Command Center); hands the staged path to the runner."
+    },
+    "terminal.attachment.upload": {
+      "reason": "Web terminal image paste/drag-drop (Command Center); carries browser-held image bytes."
+    },
     "terminal.input": {
       "reason": "Web terminal PTY surface (Command Center)."
     },
