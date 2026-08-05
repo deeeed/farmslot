@@ -19,7 +19,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars, SlotConfigError } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { execLocal } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
@@ -524,6 +524,7 @@ export async function prepareCompletionPackage(
     try {
       vars = await loadSlotVars(run.slotId);
     } catch (error) {
+      if (!(error instanceof SlotConfigError) || error.code !== 'SLOT_NOT_FOUND') throw error;
       // A removed slot must not make the package impossible to inspect.
       reviewSnapshot = unavailableReviewSnapshot('slot-load-error', (error as Error).message);
     }

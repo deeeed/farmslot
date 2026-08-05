@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   branchDiffPollAction,
   isBranchDiffTicketCurrent,
+  normalizeReviewBaseRef,
   slotViewBranchList,
 } from './slot-view-branch-model.js';
 
@@ -25,11 +26,19 @@ test('slotViewBranchList deduplicates main and empty candidates', () => {
   );
 });
 
+test('normalizeReviewBaseRef uses one gateway request form for local and remote refs', () => {
+  assert.equal(normalizeReviewBaseRef('origin/main'), 'main');
+  assert.equal(normalizeReviewBaseRef(' release/1.2 '), 'release/1.2');
+  assert.equal(normalizeReviewBaseRef(undefined), 'main');
+});
+
 const POLL_BASE = {
   prevBranch: 'feat/x' as string | undefined,
   nextBranch: 'feat/x',
   prevAhead: 2 as number | undefined,
   nextAhead: 2,
+  prevHeadSha: 'head-a' as string | undefined,
+  nextHeadSha: 'head-a',
   lastLoadFailed: false,
   loading: false,
 };
@@ -43,6 +52,13 @@ test('branchDiffPollAction reloads and clears the diff cache on branch change', 
 
 test('branchDiffPollAction reloads and clears the diff cache when ahead changes', () => {
   assert.equal(branchDiffPollAction({ ...POLL_BASE, nextAhead: 6 }), 'reload-and-clear-cache');
+});
+
+test('branchDiffPollAction reloads and clears the diff cache when HEAD changes', () => {
+  assert.equal(
+    branchDiffPollAction({ ...POLL_BASE, nextHeadSha: 'head-amended' }),
+    'reload-and-clear-cache',
+  );
 });
 
 test('branchDiffPollAction retries without clearing the cache after a failed load', () => {
@@ -66,6 +82,7 @@ test('branchDiffPollAction does not treat the first poll as git movement', () =>
       ...POLL_BASE,
       prevBranch: undefined,
       prevAhead: undefined,
+      prevHeadSha: undefined,
     }),
     'none',
   );

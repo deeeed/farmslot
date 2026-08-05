@@ -151,9 +151,10 @@ function parseStatusLine(line: string): GitChange[] {
 }
 
 export async function gitStatus(params: GitStatusParams): Promise<GitStatusResult> {
-  const [porcelainResult, branchResult, aheadBehindResult] = await Promise.all([
+  const [porcelainResult, branchResult, headResult, aheadBehindResult] = await Promise.all([
     gitExec(params.slotId, ['status', '--porcelain=v1']),
     gitExec(params.slotId, ['branch', '--show-current']),
+    gitExec(params.slotId, ['rev-parse', 'HEAD']),
     gitExec(params.slotId, ['rev-list', '--left-right', '--count', 'HEAD...@{u}']).catch(() => ({
       stdout: '0\t0',
       stderr: '',
@@ -161,6 +162,7 @@ export async function gitStatus(params: GitStatusParams): Promise<GitStatusResul
   ]);
 
   const branch = branchResult.stdout.trim();
+  const headSha = headResult.stdout.trim();
 
   const parts = aheadBehindResult.stdout.trim().split('\t');
   const ahead = parseInt(parts[0], 10) || 0;
@@ -172,7 +174,7 @@ export async function gitStatus(params: GitStatusParams): Promise<GitStatusResul
     changes.push(...parseStatusLine(line));
   }
 
-  return { branch, ahead, behind, changes };
+  return { branch, headSha, ahead, behind, changes };
 }
 
 async function resolveRemoteBaseRef(

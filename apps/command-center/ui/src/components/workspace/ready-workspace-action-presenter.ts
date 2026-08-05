@@ -22,6 +22,7 @@ import {
 } from '../../utils/reconnect.js';
 import { type LightboxItem, type LightboxPair } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
+import { normalizeReviewBaseRef } from '../slot-view/slot-view-branch-model.js';
 
 import {
   isReadyPublicationApproval,
@@ -466,7 +467,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     try {
       const result = await gateway.request<GitBranchDiffResult>(Methods.GIT_BRANCH_DIFF, {
         slotId: this.slotId,
-        base: this._payload?.prPackage?.reviewSnapshot?.baseRef ?? 'main',
+        base: normalizeReviewBaseRef(this._payload?.prPackage?.reviewSnapshot?.baseRef),
       });
       if (epoch !== this._recoveryEpoch || !isRecoveryEpochCurrent(epoch)) return;
       this._diffError = '';

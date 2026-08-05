@@ -61,6 +61,7 @@ export async function initSlotViewLive(view: SlotView, epoch: number) {
     view._liveEntries = fsResult.entries;
     view._liveGitData = {
       branch: gitResult.branch,
+      headSha: gitResult.headSha,
       ahead: gitResult.ahead,
       behind: gitResult.behind,
       changes: gitResult.changes,
@@ -117,8 +118,10 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
     if (!isCurrentLiveResult(view, epoch)) return;
     const prevBranch = view._liveGitData?.branch;
     const prevAhead = view._liveGitData?.ahead;
+    const prevHeadSha = view._liveGitData?.headSha;
     view._liveGitData = {
       branch: result.branch,
+      headSha: result.headSha,
       ahead: result.ahead,
       behind: result.behind,
       changes: result.changes,
@@ -128,6 +131,8 @@ export async function refreshSlotViewGitStatus(view: SlotView) {
       nextBranch: result.branch,
       prevAhead,
       nextAhead: result.ahead,
+      prevHeadSha,
+      nextHeadSha: result.headSha,
       lastLoadFailed: view._branchDiffError !== null,
       loading: view._branchDiffLoading,
     });

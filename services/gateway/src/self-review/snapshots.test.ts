@@ -43,6 +43,14 @@ test('untracked manifest binds paths, modes, and blob identities into the review
   );
 });
 
+test('untracked manifest rejects truncated entries', () => {
+  assert.throws(
+    () => parseUntrackedFileManifest('100644\0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0'),
+    /field count/i,
+  );
+  assert.throws(() => parseUntrackedFileManifest('100644\0'), /field count/i);
+});
+
 test('parseReviewSnapshotArtifact rejects a missing or invalid launch snapshot', () => {
   assert.equal(parseReviewSnapshotArtifact(''), null);
   assert.equal(

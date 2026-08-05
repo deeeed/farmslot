@@ -272,6 +272,24 @@ test('snapshot-unavailable publication requires an explicit exact-package operat
     buildUnavailableSnapshotAction([review], pkg, reviewDepth)?.id,
     APPROVE_PUBLISH_SNAPSHOT_UNAVAILABLE_ACTION,
   );
+  assert.throws(
+    () =>
+      assertUnavailableSnapshotOverrideAvailable(
+        [
+          {
+            ...review,
+            reviewSnapshot: {
+              source: 'local-git',
+              headSha: 'head-reviewed-before-package-refresh',
+              capturedAt: '2026-04-15T00:00:00.000Z',
+            },
+          },
+        ],
+        pkg,
+        reviewDepth,
+      ),
+    /exact package HEAD and subject/i,
+  );
   assert.throws(() => assertPublicationReviewPolicySatisfied(baseRun, pkg), /approved package/);
 
   const approvedRun = makeRun({

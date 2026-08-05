@@ -628,6 +628,27 @@ test('codex install does not treat nested multiline array values as TOML section
   assert.match(content, /\[operator\]\nname = "arthur"/);
 });
 
+test('codex install is idempotent when multiline strings contain section-like text', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-string-'));
+  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  const configPath = path.join(repo, '.agent', 'codex-home', 'config.toml');
+  fs.writeFileSync(
+    configPath,
+    '[operator]\nnotes = """\n[features]\n[not-a-section]\n"""\n\n[features]\n# first copy\nhooks = false\n\n[features]\n# second copy\ncustom_flag = true\n',
+  );
+
+  installToTempDir('codex', repo);
+  installToTempDir('codex', repo);
+
+  const content = fs.readFileSync(configPath, 'utf8');
+  assert.equal((content.match(/^\[features\]/gm) || []).length, 2);
+  assert.match(content, /notes = """\n\[features\]\n\[not-a-section\]\n"""/);
+  assert.match(content, /# first copy/);
+  assert.match(content, /# second copy/);
+  assert.match(content, /hooks = true/);
+  assert.match(content, /custom_flag = true/);
+});
+
 test('codex install rebinds auth.json symlink from account A to B without touching source files', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-auth-rebind-'));
   const accountA = path.join(repo, 'accounts', 'a', 'auth.json');

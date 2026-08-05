@@ -9,6 +9,7 @@ import type { TaskProgressParams } from '@farmslot/protocol';
 import { makeVars } from '../runners/test-fixtures.js';
 
 let lastTaskProgressParams: TaskProgressParams | null = null;
+let updateRunStepError: Error | null = null;
 
 mock.module('chokidar', {
   namedExports: {
@@ -39,7 +40,9 @@ mock.module('../runs/store.js', {
   namedExports: {
     getRun: (id: string) => ({ id }),
     shouldUseIsolatedRunsDir: () => false,
-    updateRunStep: () => {},
+    updateRunStep: () => {
+      if (updateRunStepError) throw updateRunStepError;
+    },
   },
 });
 
@@ -49,7 +52,8 @@ mock.module('./snapshots.js', {
   },
 });
 
-const { initSelfReviewProgress, startProgressWatcher } = await import('./progress.js');
+const { handleSelfReviewFsChanged, initSelfReviewProgress, startProgressWatcher } =
+  await import('./progress.js');
 
 test('startProgressWatcher broadcasts reviewer progress for the allocated context id', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'self-review-progress-'));
@@ -78,4 +82,35 @@ test('startProgressWatcher broadcasts reviewer progress for the allocated contex
     }),
     true,
   );
+});
+
+test('remote progress callback contains asynchronous update failures', async () => {
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (message?: unknown) => warnings.push(String(message));
+  updateRunStepError = new Error('run store unavailable');
+  const watcher = startProgressWatcher(
+    makeVars({ host: 'runner.example', machine: 'runner-remote' }),
+    '/remote/SELF-REVIEW.md',
+    'run-remote',
+  );
+  try {
+    assert.equal(
+      handleSelfReviewFsChanged({
+        machine: 'runner-remote',
+        path: '/remote/SELF-REVIEW.md',
+        content: '- [x] read\n',
+      }),
+      true,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(
+      warnings.some((warning) => warning.includes('run store unavailable')),
+      true,
+    );
+  } finally {
+    watcher.stop();
+    updateRunStepError = null;
+    console.warn = originalWarn;
+  }
 });

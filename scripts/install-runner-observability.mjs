@@ -259,43 +259,62 @@ function isTomlSectionHeader(line) {
   return /^\s*\[\[?[^\]]+\]\]?\s*(?:#.*)?$/.test(line);
 }
 
-function tomlArrayDepthDelta(line) {
-  let delta = 0;
-  let quote = null;
+function scanTomlLine(line, state) {
   let escaped = false;
-  for (const char of line) {
-    if (quote) {
-      if (quote === '"' && escaped) {
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (state.quote === '"""' || state.quote === "'''") {
+      if (state.quote === '"""' && escaped) {
         escaped = false;
-      } else if (quote === '"' && char === '\\') {
+        continue;
+      }
+      if (state.quote === '"""' && char === '\\') {
         escaped = true;
-      } else if (char === quote) {
-        quote = null;
+        continue;
+      }
+      if (line.startsWith(state.quote, index)) {
+        index += 2;
+        state.quote = null;
+      }
+      continue;
+    }
+    if (state.quote) {
+      if (state.quote === '"' && escaped) {
+        escaped = false;
+      } else if (state.quote === '"' && char === '\\') {
+        escaped = true;
+      } else if (char === state.quote) {
+        state.quote = null;
       }
       continue;
     }
     if (char === '#') break;
-    if (char === '"' || char === "'") {
-      quote = char;
+    if (line.startsWith('"""', index) || line.startsWith("'''", index)) {
+      state.quote = line.slice(index, index + 3);
+      index += 2;
+    } else if (char === '"' || char === "'") {
+      state.quote = char;
     } else if (char === '[') {
-      delta += 1;
+      state.arrayDepth += 1;
     } else if (char === ']') {
-      delta -= 1;
+      state.arrayDepth = Math.max(0, state.arrayDepth - 1);
     }
   }
-  return delta;
+  // Ordinary TOML strings cannot span physical lines. Multiline strings are
+  // retained in state until their matching triple quote is encountered.
+  if (state.quote === '"' || state.quote === "'") state.quote = null;
 }
 
 function tomlSectionHeaderIndexes(lines) {
   const headers = new Set();
-  let arrayDepth = 0;
+  const state = { arrayDepth: 0, quote: null };
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (arrayDepth === 0 && isTomlSectionHeader(line)) {
+    if (state.arrayDepth === 0 && state.quote === null && isTomlSectionHeader(line)) {
       headers.add(index);
       continue;
     }
-    arrayDepth = Math.max(0, arrayDepth + tomlArrayDepthDelta(line));
+    scanTomlLine(line, state);
   }
   return headers;
 }
@@ -373,7 +392,7 @@ function coalesceCodexFeaturesSections(content) {
   const headers = tomlSectionHeaderIndexes(lines);
   const bodies = [];
   for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i].trim() !== '[features]') continue;
+    if (!headers.has(i) || lines[i].trim() !== '[features]') continue;
     const body = [];
     for (i += 1; i < lines.length && !headers.has(i); i += 1) {
       body.push(lines[i]);
@@ -385,7 +404,6 @@ function coalesceCodexFeaturesSections(content) {
 
   const merged = [];
   const assignmentIndexes = new Map();
-  const passthrough = new Set();
   for (const line of bodies.flat()) {
     const assignment = line.match(/^\s*([A-Za-z0-9_-]+)\s*=/);
     if (assignment) {
@@ -399,15 +417,13 @@ function coalesceCodexFeaturesSections(content) {
       }
       continue;
     }
-    if (!line.trim() || passthrough.has(line)) continue;
-    passthrough.add(line);
     merged.push(line);
   }
 
   const output = [];
   let inserted = false;
   for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i].trim() !== '[features]') {
+    if (!headers.has(i) || lines[i].trim() !== '[features]') {
       output.push(lines[i]);
       continue;
     }
@@ -427,7 +443,9 @@ function upsertCodexHooksFeature(content) {
   content = coalesceCodexFeaturesSections(content);
   const lines = content.split('\n');
   const headers = tomlSectionHeaderIndexes(lines);
-  const existingFeatureIdx = lines.findIndex((line) => line.trim() === '[features]');
+  const existingFeatureIdx = lines.findIndex(
+    (line, index) => headers.has(index) && line.trim() === '[features]',
+  );
   if (existingFeatureIdx < 0) {
     const block = '[features]\nhooks = true\n';
     return content.trimEnd() ? `${content.trimEnd()}\n\n${block.trimEnd()}` : block.trimEnd();

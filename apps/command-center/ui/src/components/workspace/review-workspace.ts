@@ -31,6 +31,7 @@ import { currentRecoveryEpoch, isRecoveryEpochCurrent } from '../../utils/reconn
 import { renderRecipeQualityCockpit } from '../recipe/recipe-quality-cockpit.js';
 import { createReviewWorkspaceRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
+import { normalizeReviewBaseRef } from '../slot-view/slot-view-branch-model.js';
 
 import {
   renderWorkspaceLearningsTab,
@@ -74,9 +75,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private get _baseRef(): string {
-    const base =
-      this._payload?.reviewSnapshot?.baseRef?.trim() || this._payload?.baseRef?.trim() || 'main';
-    return base.startsWith('origin/') ? base.slice('origin/'.length) : base;
+    return normalizeReviewBaseRef(this._payload?.reviewSnapshot?.baseRef ?? this._payload?.baseRef);
   }
 
   private get _comments(): ReviewLineComment[] {

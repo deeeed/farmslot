@@ -72,7 +72,6 @@ export function purgeRemovedSlotWarnings(
 }
 
 // Track which machines have active resource watches
-const activeWatchMachines = new Set<string>();
 const resourceWatchStateFile =
   process.env.FARMSLOT_RESOURCE_WATCH_STATE_FILE ??
   path.join(farmslotRoot, '.farm-cache', 'resource-watch-state.json');
@@ -981,10 +980,7 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
     }
 
     if (totalWatches > 0) {
-      activeWatchMachines.add(machine);
       console.log(`[resource-manager] sent ${totalWatches} watch instructions to node ${machine}`);
-    } else {
-      activeWatchMachines.delete(machine);
     }
   } catch (err) {
     console.error(
@@ -1031,7 +1027,6 @@ export async function setResourceWatchesEnabled(
   for (const machine of affectedMachines) {
     await clearMachineResourceStatus(machine);
   }
-  activeWatchMachines.clear();
   return { ok: true, enabled, affectedMachines, affectedSlots };
 }
 
@@ -1039,8 +1034,6 @@ export async function setResourceWatchesEnabled(
  * Mark all resources for a machine as 'unknown' when its agent disconnects.
  */
 export async function clearMachineResourceStatus(machine: string): Promise<void> {
-  activeWatchMachines.delete(machine);
-
   try {
     const fleet = await loadFleetStatus();
     const machineSlots = fleet.slots.filter((s) => s.machine === machine);

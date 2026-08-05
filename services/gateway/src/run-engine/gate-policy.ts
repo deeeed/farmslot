@@ -617,12 +617,15 @@ function reviewMatchesUnavailableSnapshotPackage(
   review: IndependentReviewStatus,
   preparedPackage: ReadyGatePrPackage,
 ): boolean {
+  const certifiedSnapshotHead =
+    review.reviewSnapshot?.source === 'unavailable' ? undefined : review.reviewSnapshot?.headSha;
   return (
     isQualifyingIndependentReview(review) &&
     review.verdict === 'pass' &&
     review.unresolvedCount === 0 &&
     review.reviewedHeadSha === preparedPackage.headSha &&
-    review.reviewedReviewSubjectHash === preparedPackage.reviewSubjectHash
+    review.reviewedReviewSubjectHash === preparedPackage.reviewSubjectHash &&
+    (!certifiedSnapshotHead || certifiedSnapshotHead === preparedPackage.headSha)
   );
 }
 

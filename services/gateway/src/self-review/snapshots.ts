@@ -63,6 +63,9 @@ export function parseUntrackedFileManifest(text: string): UntrackedReviewFile[] 
   if (!text) return [];
   const fields = text.split('\0');
   if (fields.at(-1) === '') fields.pop();
+  if (fields.length % 3 !== 0) {
+    throw new Error(`Invalid untracked review manifest field count: ${fields.length}`);
+  }
   const files: UntrackedReviewFile[] = [];
   for (let index = 0; index + 2 < fields.length; index += 3) {
     const mode = fields[index] ?? '';
@@ -170,9 +173,9 @@ export function preferredRemoteReviewBaseRef(baseRef: string): string | null {
   return `origin/${normalized}`;
 }
 
-async function resolveReviewContext(
+async function resolveReviewPathspecs(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
-): Promise<{ baseRef: string; pathspecs: string[] }> {
+): Promise<{ configuredBaseRef: string; pathspecs: string[] }> {
   let configuredBaseRef = 'main';
   let pathspecs = projectSourceDiffPathspecs(null);
   try {
@@ -184,7 +187,13 @@ async function resolveReviewContext(
       `[self-review] defaulting review base ref to main after project lookup failed: ${(err as Error).message}`,
     );
   }
+  return { configuredBaseRef, pathspecs };
+}
 
+async function resolveReviewContext(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+): Promise<{ baseRef: string; pathspecs: string[] }> {
+  const { configuredBaseRef, pathspecs } = await resolveReviewPathspecs(vars);
   const remoteBaseRef = preferredRemoteReviewBaseRef(configuredBaseRef);
   if (!remoteBaseRef) return { baseRef: configuredBaseRef, pathspecs };
   const branch = remoteBaseRef.slice('origin/'.length);
@@ -374,7 +383,7 @@ export async function captureFixDeltaSnapshot(
       return { snapshot, artifactPaths: [statRel] };
     }
     const fixHeadSha = headResult.stdout.trim();
-    const { pathspecs } = await resolveReviewContext(vars);
+    const { pathspecs } = await resolveReviewPathspecs(vars);
     // Use base-to-worktree, not base..HEAD, so a self-review fix pass that
     // leaves changes uncommitted still has a useful delta artifact.
     const numstat = await execOnSlot(vars, runSourceDiffNumstatCommand(fixBaseSha, pathspecs), {

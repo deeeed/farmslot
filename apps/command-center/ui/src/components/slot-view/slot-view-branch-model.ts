@@ -18,12 +18,17 @@ export function slotViewBranchList({
 
 export type BranchDiffPollAction = 'none' | 'reload' | 'reload-and-clear-cache';
 
+export function normalizeReviewBaseRef(baseRef: string | null | undefined): string {
+  const base = baseRef?.trim() || 'main';
+  return base.startsWith('origin/') ? base.slice('origin/'.length) : base;
+}
+
 /**
  * Decide what the git-status poll should do about the branch diff. The diff
  * is otherwise fetched once at view init, so the poll is the only recovery
  * path: a transiently failed load (node reconnecting, gateway restart) or a
  * commit count change must trigger a reload, or the panel shows "No changes"
- * forever while the branch is ahead. Git movement (branch or ahead change)
+ * forever while the branch is ahead. Git movement (branch, HEAD, or ahead change)
  * also invalidates cached per-file diff contents; a retry after a failed
  * load does not — the underlying commits did not change.
  */
@@ -32,6 +37,8 @@ export function branchDiffPollAction({
   nextBranch,
   prevAhead,
   nextAhead,
+  prevHeadSha,
+  nextHeadSha,
   lastLoadFailed,
   loading,
 }: {
@@ -39,15 +46,18 @@ export function branchDiffPollAction({
   nextBranch: string;
   prevAhead: number | undefined;
   nextAhead: number;
+  prevHeadSha: string | undefined;
+  nextHeadSha: string;
   lastLoadFailed: boolean;
   loading: boolean;
 }): BranchDiffPollAction {
   if (loading) return 'none';
   const branchChanged = prevBranch !== undefined && nextBranch !== prevBranch;
   const aheadChanged = prevAhead !== undefined && nextAhead !== prevAhead;
+  const headChanged = prevHeadSha !== undefined && nextHeadSha !== prevHeadSha;
   // The branch panel is committed-only. Uncommitted changes update through
   // git.status and must not trigger another base fetch every poll.
-  if (branchChanged || aheadChanged) return 'reload-and-clear-cache';
+  if (branchChanged || aheadChanged || headChanged) return 'reload-and-clear-cache';
   if (lastLoadFailed) return 'reload';
   return 'none';
 }

@@ -325,6 +325,7 @@ cat > "$COMMENT_FILE" <<HEADER
 | | |
 |---|---|
 | **Recommendation** | ${RECOMMENDATION} |
+| **Reviewed commit** | \`${COMMIT_ID}\` |
 | **Runner** | ${RUNNER} / ${MODEL} |
 | **Tier** | ${TIER} |
 | **Cost** | ${COST} (${TOTAL_TOKENS} tokens) |

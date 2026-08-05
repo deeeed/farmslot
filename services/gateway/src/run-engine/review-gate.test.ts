@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   assertReviewSnapshotMatchesPullRequest,
+  publishPinnedReview,
   reviewEvidencePostArgs,
   shouldIncludeReviewEvidence,
 } from './review-gate.js';
@@ -53,4 +54,27 @@ test('review posting requires an available snapshot for the current PR head', ()
       ),
     /snapshot is unavailable/i,
   );
+});
+
+test('review publication stays pinned when the PR head advances during posting', async () => {
+  const reviewedHeadSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  let liveHeadSha = reviewedHeadSha;
+  const writes: string[] = [];
+  const warnings: Array<string | null | undefined> = [];
+
+  await publishPinnedReview({
+    reviewedHeadSha,
+    postFormalReview: async (commitId) => {
+      writes.push(`formal:${commitId}`);
+      liveHeadSha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    },
+    postInlineComments: async (commitId) => {
+      writes.push(`inline:${commitId}`);
+    },
+    fetchCurrentHeadSha: async () => liveHeadSha,
+    onHeadAdvanced: (currentHeadSha) => warnings.push(currentHeadSha),
+  });
+
+  assert.deepEqual(writes, [`formal:${reviewedHeadSha}`, `inline:${reviewedHeadSha}`]);
+  assert.deepEqual(warnings, [liveHeadSha]);
 });

@@ -116,7 +116,13 @@ export function startProgressWatcher(
   remoteProgressEntries.set(key, {
     machine: vars.machine,
     path: filePath,
-    onContent: (content) => void compute(content),
+    onContent: (content) => {
+      void compute(content).catch((err) => {
+        console.warn(
+          `[self-review] remote progress update skipped for ${filePath}: ${(err as Error).message}`,
+        );
+      });
+    },
   });
   const node = getNode(vars.machine);
   let watchRequestId: string | undefined;
