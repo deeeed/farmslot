@@ -350,6 +350,9 @@ export async function executeSelfReview(
       return {
         skipped: true,
         reason: 'no-feedback-file',
+        runner: reviewRunner,
+        model,
+        crossRunner: isCrossRunnerReview,
         retryCount: 0,
         validationDepth,
         usage: result.usage,

@@ -26,7 +26,13 @@ export async function readReviewFeedback(
 
     // Parse verdict
     const verdictMatch = content.match(/##\s*Verdict:\s*(PASS|ISSUES)/i);
-    const verdict = verdictMatch?.[1]?.toUpperCase() === 'ISSUES' ? 'issues' : 'pass';
+    if (!verdictMatch) {
+      console.warn(
+        `[self-review] ${feedbackRelPath} has no PASS or ISSUES verdict — treating as incomplete`,
+      );
+      return { verdict: 'pass', issues: [], incomplete: true };
+    }
+    const verdict = verdictMatch[1]?.toUpperCase() === 'ISSUES' ? 'issues' : 'pass';
 
     // Parse issues
     let issues: SelfReviewIssue[] = [];

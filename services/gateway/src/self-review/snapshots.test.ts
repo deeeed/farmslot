@@ -5,6 +5,7 @@ import {
   parseReviewSnapshotArtifact,
   parseUntrackedFileManifest,
   preferredRemoteReviewBaseRef,
+  reviewAttemptFromResult,
   reviewSnapshotIdentityText,
   tmuxListSelfReviewWindowIdsSnippet,
 } from './snapshots.js';
@@ -87,4 +88,12 @@ test('preferredRemoteReviewBaseRef refreshes remote branches without rewriting e
   assert.equal(preferredRemoteReviewBaseRef('release/1.2'), 'origin/release/1.2');
   assert.equal(preferredRemoteReviewBaseRef('origin/main'), 'origin/main');
   assert.equal(preferredRemoteReviewBaseRef('refs/heads/main'), null);
+});
+
+test('incomplete reviewer output records a skipped attempt, never a pass', () => {
+  const attempt = reviewAttemptFromResult({ verdict: 'pass', issues: [], incomplete: true }, 3);
+  assert.equal(attempt.verdict, 'skipped');
+  assert.equal(attempt.unresolvedCount, 0);
+  assert.deepEqual(attempt.artifactPaths, []);
+  assert.ok(attempt.completedAt);
 });

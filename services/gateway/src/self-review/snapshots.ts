@@ -482,10 +482,11 @@ export function reviewAttemptFromResult(
   extraArtifactPaths: string[] = [],
 ): IndependentReviewAttempt {
   const effectiveFixDelta = fixDelta ?? result.fixDelta;
+  const verdict = result.incomplete ? 'skipped' : result.verdict === 'pass' ? 'pass' : 'issues';
   return {
     loopNumber,
-    verdict: result.verdict === 'pass' ? 'pass' : 'issues',
-    unresolvedCount: result.verdict === 'pass' ? 0 : result.issues.length,
+    verdict,
+    unresolvedCount: verdict === 'issues' ? result.issues.length : 0,
     ...(result.issues.length ? { issues: result.issues } : {}),
     ...(result.validationDepth ? { validationDepth: result.validationDepth } : {}),
     ...(result.usage ? { usage: result.usage } : {}),
