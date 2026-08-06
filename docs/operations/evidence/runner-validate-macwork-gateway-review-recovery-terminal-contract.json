@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-06T18:58:22.394Z",
+  "recordedAt": "2026-08-06T19:23:43.089Z",
   "host": "macwork",
   "scenario": "review-recovery-terminal-contract",
   "runner": "gateway",
@@ -12,7 +12,7 @@
     "recovery": {
       "recoveryStatus": "watching",
       "recoveryAttempts": 0,
-      "recoveryStartedAt": "2026-08-06T18:57:38.113Z",
+      "recoveryStartedAt": "2026-08-06T19:22:54.686Z",
       "nextRetryAtPresent": true,
       "reviewVerdicts": {},
       "reviewRecoveryPending": {},
@@ -39,12 +39,12 @@
     "closedEpisodeReset": {
       "status": "watching",
       "attempts": 0,
-      "startedAt": "2026-08-06T18:57:37.685Z"
+      "startedAt": "2026-08-06T19:22:54.025Z"
     },
     "activeEpisodePreserved": {
       "status": "watching",
       "attempts": 0,
-      "startedAt": "2026-08-06T18:57:37.637Z"
+      "startedAt": "2026-08-06T19:22:53.956Z"
     },
     "replayClearedRecovery": false,
     "pipeline": {
@@ -77,12 +77,14 @@
       "launcherPidAbsentBeforeCleanup": true,
       "trackedPrePidLauncherKilled": false,
       "similarlyNamedNeighborPreserved": true,
-      "processGroupIdentityRemoved": false
+      "processGroupIdentityRemoved": false,
+      "recycledWrongScopeGroupPreserved": false,
+      "staleIdentityRemoved": false
     },
     "contractSatisfied": false
   },
   "current": {
-    "sourceSha": "a4e9b3bb6d2e6f0fb1dc3bc94acd676d435a8450",
+    "sourceSha": "f426568f9d941d0b266e6a4eefa6b5d9fde5c64f",
     "recovery": {
       "recoveryStatus": "operator-required",
       "recoveryAttempts": 38,
@@ -110,7 +112,7 @@
       "contextLastSignalAt": {
         "rev-missing": null,
         "rev-invalid": null,
-        "rev-valid": "2026-08-06T18:58:17.235Z",
+        "rev-valid": "2026-08-06T19:23:34.207Z",
         "rev-failed": "2026-08-06T10:40:00.000Z",
         "rev-blocked": "2026-08-06T10:40:00.000Z",
         "rev-stale": null,
@@ -121,7 +123,7 @@
     "closedEpisodeReset": {
       "status": "watching",
       "attempts": 0,
-      "startedAt": "2026-08-06T18:58:17.050Z"
+      "startedAt": "2026-08-06T19:23:34.032Z"
     },
     "activeEpisodePreserved": {
       "status": "watching",
@@ -159,7 +161,9 @@
       "launcherPidAbsentBeforeCleanup": true,
       "trackedPrePidLauncherKilled": true,
       "similarlyNamedNeighborPreserved": true,
-      "processGroupIdentityRemoved": true
+      "processGroupIdentityRemoved": true,
+      "recycledWrongScopeGroupPreserved": true,
+      "staleIdentityRemoved": true
     },
     "contractSatisfied": true
   },
@@ -193,6 +197,7 @@
     "[run] replay from human-gate — refreshed 0 worker artifact(s) before rebuilding the gate",
     "[run] replaying recovery from step human-gate",
     "[run-engine] run wait-con — paused, skipping recovery",
+    "[run-engine] cleaned up slot processes for review-recovery-validation",
     "[run-engine] cleaned up slot processes for review-recovery-validation",
     "[run] replay from human-gate — re-claimed slot review-recovery-validation",
     "[run] replay from human-gate — refreshed 0 worker artifact(s) before rebuilding the gate",
