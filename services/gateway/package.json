@@ -16,6 +16,7 @@
     "@earendil-works/pi-ai": "0.82.1",
     "@farmslot/agent-runtime": "workspace:*",
     "@farmslot/capabilities": "workspace:*",
+    "@farmslot/credential-store": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "@farmslot/run-bundle": "workspace:*",
     "@farmslot/slot-config": "workspace:*",

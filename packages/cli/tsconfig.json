@@ -4,6 +4,7 @@
     "paths": {
       "@farmslot/agent-runtime": ["../agent-runtime/src/index.ts"],
       "@farmslot/agent-runtime/*": ["../agent-runtime/src/*"],
+      "@farmslot/credential-store": ["../credential-store/src/index.ts"],
       "@farmslot/recipe-harness": ["../recipe-harness/src/index.ts"],
       "@farmslot/recipe-harness/*": ["../recipe-harness/src/*"],
       "@farmslot/protocol": ["../protocol/src/index.ts"],

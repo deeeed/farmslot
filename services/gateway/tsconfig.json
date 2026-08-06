@@ -9,6 +9,7 @@
       "@farmslot/run-bundle": ["../../packages/run-bundle/src/index.ts"],
       "@farmslot/capabilities": ["../../packages/capabilities/src/index.ts"],
       "@farmslot/capabilities/*": ["../../packages/capabilities/src/*"],
+      "@farmslot/credential-store": ["../../packages/credential-store/src/index.ts"],
       "@farmslot/slot-config": ["../../packages/slot-config/src/index.ts"],
       "@farmslot/slot-config/*": ["../../packages/slot-config/src/*"]
     }
