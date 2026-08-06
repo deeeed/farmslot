@@ -257,8 +257,8 @@ export class CredentialStoreWriter {
         '  farmslot credential issue --principal <principal> --name <new-name>\n\n' +
         'A compromised admin credential uses the offline recovery path.\n' +
         'Next: stop every gateway in this identity domain, then run\n' +
-        '  farmslot credential revoke <compromised-id>\n' +
-        '  farmslot credential issue --principal owner --role admin --scope global\n' +
+        '  farmslot credential revoke <compromised-id> --offline\n' +
+        '  farmslot credential issue --principal owner --role admin --scope global --offline\n' +
         'and start them again.',
     );
   }

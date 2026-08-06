@@ -15,6 +15,10 @@ const generatedRuntimePath = resolve(
   'services/gateway/src/security/authorization-classification.generated.ts',
 );
 const webhookPath = resolve(repoRoot, 'services/gateway/src/webhook.ts');
+const callbackFixturePath = resolve(
+  repoRoot,
+  'scripts/quality/fixtures/authorization-conformance-callback.ts',
+);
 const routePaths = [
   'services/gateway/src/server/route-method.ts',
   'services/gateway/src/server/run-route.ts',
@@ -95,6 +99,7 @@ const allMethods = [...new Set([...registry.values(), ...routed])].sort((a, b) =
 const rawAllowlist = JSON.parse(readFileSync(allowlistPath, 'utf8'));
 const problems = [];
 problems.push(...webhookOriginatorProblems());
+problems.push(...callbackIndirectionFixtureProblems(program, checker));
 
 if (!Array.isArray(rawAllowlist) || rawAllowlist.length !== 8) {
   problems.push('authorization allowlist must be a top-level array with exactly eight entries');
@@ -309,7 +314,10 @@ function analysisProgram() {
   if (config.error)
     throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dirname(configPath));
-  const program = ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options });
+  const program = ts.createProgram({
+    rootNames: [...parsed.fileNames, callbackFixturePath],
+    options: parsed.options,
+  });
   return { program, checker: program.getTypeChecker() };
 }
 
@@ -353,23 +361,61 @@ function analyzeCaseReachability(path, method, registryMap, program, checker) {
     }
     const declaration = resolvedImplementation(call, checker);
     if (declaration) {
-      const identity = nodeIdentity(declaration);
-      reachable.add(identity);
-      if (!visitedDeclarations.has(identity)) {
-        visitedDeclarations.add(identity);
-        visit(declarationBody(declaration) ?? declaration);
-      }
+      visitImplementation(declaration);
       return;
     }
-    if (!isKnownIntrinsic(call, checker)) {
+    if (isKnownIntrinsic(call, checker)) {
+      for (const argument of call.arguments) inspectIntrinsicCallback(argument, call);
+    } else {
       findings.add(
         `has an unresolvable call-graph edge '${call.expression.getText()}' at ${nodeLocation(call)}`,
       );
     }
   };
 
+  const visitImplementation = (declaration) => {
+    const identity = nodeIdentity(declaration);
+    reachable.add(identity);
+    if (visitedDeclarations.has(identity)) return;
+    visitedDeclarations.add(identity);
+    visit(declarationBody(declaration) ?? declaration);
+  };
+
+  const inspectIntrinsicCallback = (argument, call) => {
+    if (!isCallableArgument(argument, checker) || isKnownCallableIntrinsic(argument)) return;
+    if (ts.isArrowFunction(argument) || ts.isFunctionExpression(argument)) return;
+    const declaration = resolvedExpressionImplementation(argument, checker);
+    if (declaration) {
+      visitImplementation(declaration);
+      return;
+    }
+    findings.add(
+      `has an unresolvable intrinsic callback edge '${argument.getText()}' from '${call.expression.getText()}' at ${nodeLocation(argument)}`,
+    );
+  };
+
   visit(root);
   return { reachable, findings };
+}
+
+function callbackIndirectionFixtureProblems(program, checker) {
+  const analysis = analyzeCaseReachability(
+    callbackFixturePath,
+    'fixture.callback',
+    new Map(),
+    program,
+    checker,
+  );
+  if (
+    analysis &&
+    [...analysis.findings].some((finding) =>
+      finding.includes("reaches forbidden primitive 'execLocal'"),
+    ) &&
+    [...analysis.reachable].some((identity) => identity.endsWith('#forbiddenCallback'))
+  ) {
+    return [];
+  }
+  return ['authorization callback-indirection negative fixture was not rejected'];
 }
 
 function resolvedImplementation(call, checker) {
@@ -382,6 +428,18 @@ function resolvedImplementation(call, checker) {
   for (const declaration of candidates) {
     const body = declarationBody(declaration);
     if (!body) continue;
+    const source = declaration.getSourceFile();
+    if (source.isDeclarationFile || !resolve(source.fileName).startsWith(`${repoRoot}/`)) continue;
+    return declaration;
+  }
+  return undefined;
+}
+
+function resolvedExpressionImplementation(expression, checker) {
+  let symbol = checker.getSymbolAtLocation(expression);
+  if (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+  for (const declaration of symbol?.declarations ?? []) {
+    if (!declarationBody(declaration)) continue;
     const source = declaration.getSourceFile();
     if (source.isDeclarationFile || !resolve(source.fileName).startsWith(`${repoRoot}/`)) continue;
     return declaration;
@@ -412,6 +470,32 @@ function calledName(expression) {
     return expression.argumentExpression.text;
   }
   return '';
+}
+
+function isCallableArgument(argument, checker) {
+  return (
+    ts.isArrowFunction(argument) ||
+    ts.isFunctionExpression(argument) ||
+    checker.getTypeAtLocation(argument).getCallSignatures().length > 0
+  );
+}
+
+function isKnownCallableIntrinsic(argument) {
+  return (
+    ts.isIdentifier(argument) &&
+    new Set([
+      'structuredClone',
+      'String',
+      'Number',
+      'Boolean',
+      'parseInt',
+      'parseFloat',
+      'setTimeout',
+      'clearTimeout',
+      'setInterval',
+      'clearInterval',
+    ]).has(argument.text)
+  );
 }
 
 function isForbiddenCall(call, name, checker) {

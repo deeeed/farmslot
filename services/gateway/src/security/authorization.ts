@@ -106,7 +106,7 @@ function noActiveAdminDenial(
     {
       userAction:
         'stop every gateway in this identity domain, then run\n' +
-        '  farmslot credential issue --principal owner --role admin --scope global\n' +
+        '  farmslot credential issue --principal owner --role admin --scope global --offline\n' +
         'and start them again.',
     },
   );

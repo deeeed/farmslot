@@ -188,7 +188,7 @@ test('last-admin refusal lives in both writer revoke primitives; offline recover
   const issue = writer.issueCredential(admin.id, 'owner-laptop');
   assert.throws(
     () => writer.revokeCredential(issue.record.id),
-    /last active admin credential[\s\S]*Next: issue a replacement[\s\S]*compromised-id/u,
+    /last active admin credential[\s\S]*credential revoke <compromised-id> --offline[\s\S]*credential issue --principal owner --role admin --scope global --offline/u,
   );
   assert.throws(
     () => writer.revokeRole(admin.id, 'admin', { kind: 'global' }),
@@ -220,7 +220,7 @@ test('activated gateways without an admin teach the offline escape without revea
       assert.match(denial.message ?? '', /no active admin credential[\s\S]*principal 'sam'/u);
       assert.match(
         denial.userAction ?? '',
-        /stop every gateway[\s\S]*credential issue --principal owner --role admin --scope global/u,
+        /stop every gateway[\s\S]*credential issue --principal owner --role admin --scope global --offline/u,
       );
       assert.doesNotMatch(denial.message ?? '', /owner/u);
       return true;
