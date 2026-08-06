@@ -9,7 +9,6 @@ import {
   buildCodexPromptProbeCommand,
   buildCodexSessionIdProbeCommand,
   parseCodexPromptProbe,
-  promptAcceptedFromCodexSession,
 } from './codex-observability.js';
 
 const prompt = 'Read SELF-REVIEW-FIX.md';
@@ -25,36 +24,6 @@ function record(timestamp: string, text: string): string {
     },
   });
 }
-
-test('Codex native session history accepts the exact post-baseline prompt', () => {
-  const before = '2026-08-06T09:00:00.000Z';
-  const after = '2026-08-06T09:01:00.000Z';
-  const reading = promptAcceptedFromCodexSession(
-    [`partial-json`, record(before, prompt), record(after, prompt)].join('\n'),
-    prompt,
-    Date.parse('2026-08-06T09:00:30.000Z'),
-  );
-
-  assert.deepEqual(reading, {
-    value: true,
-    source: 'signal',
-    confidence: 'high',
-    observedAt: Date.parse(after),
-    exactPromptMatch: true,
-  });
-});
-
-test('Codex native session history rejects old and non-exact prompts', () => {
-  const raw = [
-    record('2026-08-06T09:00:00.000Z', prompt),
-    record('2026-08-06T09:02:00.000Z', `${prompt} please`),
-  ].join('\n');
-
-  assert.equal(
-    promptAcceptedFromCodexSession(raw, prompt, Date.parse('2026-08-06T09:01:00.000Z')),
-    null,
-  );
-});
 
 test('Codex native probe validates internal session identity and returns a bounded result', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-codex-session-probe-'));

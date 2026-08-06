@@ -1,58 +1,9 @@
 import { execOnSlot } from '../core/exec.js';
 
 import { claudeHookObservability } from './claude-observability.js';
-import type { ObservabilityReading, RunnerObservability } from './observability-types.js';
+import type { RunnerObservability, SlotVars } from './observability-types.js';
 
 const SESSION_SCAN_BYTES = 2 * 1024 * 1024;
-
-interface JsonRecord {
-  [key: string]: unknown;
-}
-
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function userPrompt(record: JsonRecord): string | null {
-  if (record.type !== 'response_item' || !isRecord(record.payload)) return null;
-  if (record.payload.type !== 'message' || record.payload.role !== 'user') return null;
-  if (!Array.isArray(record.payload.content)) return null;
-  const parts = record.payload.content
-    .filter(isRecord)
-    .filter((part) => part.type === 'input_text' && typeof part.text === 'string')
-    .map((part) => String(part.text));
-  return parts.length > 0 ? parts.join('\n') : null;
-}
-
-export function promptAcceptedFromCodexSession(
-  raw: string,
-  expectedPrompt: string,
-  sinceMs: number,
-): ObservabilityReading<boolean> | null {
-  let latestMatch = 0;
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    let record: unknown;
-    try {
-      record = JSON.parse(line);
-    } catch {
-      // A bounded tail can begin inside one JSONL record; later complete records remain valid.
-      continue;
-    }
-    if (!isRecord(record) || userPrompt(record) !== expectedPrompt) continue;
-    const observedAt = typeof record.timestamp === 'string' ? Date.parse(record.timestamp) : NaN;
-    if (Number.isFinite(observedAt) && observedAt >= sinceMs) latestMatch = observedAt;
-  }
-  return latestMatch > 0
-    ? {
-        value: true,
-        source: 'signal',
-        confidence: 'high',
-        observedAt: latestMatch,
-        exactPromptMatch: true,
-      }
-    : null;
-}
 
 type CodexPromptProbe =
   | { status: 'matched'; observedAt: number }
@@ -182,6 +133,86 @@ print(json.dumps({'sessionId': session_id if isinstance(session_id, str) else No
 PY`;
 }
 
+type CodexSessionBindingProbe =
+  | { status: 'matched'; sessionId: string; sessionPath: string }
+  | { status: 'unavailable' | 'identity-mismatch' };
+
+export function parseCodexSessionBindingProbe(raw: string): CodexSessionBindingProbe {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  if (
+    parsed.status === 'matched' &&
+    typeof parsed.sessionId === 'string' &&
+    typeof parsed.sessionPath === 'string'
+  ) {
+    return {
+      status: 'matched',
+      sessionId: parsed.sessionId,
+      sessionPath: parsed.sessionPath,
+    };
+  }
+  if (parsed.status === 'unavailable' || parsed.status === 'identity-mismatch') {
+    return { status: parsed.status };
+  }
+  throw new Error(`Invalid Codex session binding probe: ${raw}`);
+}
+
+export function buildCodexSessionBindingProbeCommand(
+  sessionPath: string,
+  persistedSessionId?: string,
+): string {
+  return `
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+requested_path = Path(${JSON.stringify(sessionPath)})
+persisted_session_id = ${persistedSessionId === undefined ? 'None' : JSON.stringify(persistedSessionId)}
+try:
+    session_path = Path(os.path.realpath(requested_path))
+    with session_path.open() as handle:
+        first = json.loads(handle.readline())
+    session_id = first.get('payload', {}).get('id') if first.get('type') == 'session_meta' else None
+except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    print(json.dumps({'status': 'unavailable'}))
+    raise SystemExit(0)
+
+if not isinstance(session_id, str) or not session_id:
+    print(json.dumps({'status': 'unavailable'}))
+    raise SystemExit(0)
+
+# Before native Codex ids were read from session_meta, Farmslot persisted the
+# rollout filename (minus .jsonl). Accept exactly that historical format, then
+# upgrade both id and path to the current native/canonical binding.
+legacy_session_id = requested_path.name
+if legacy_session_id.endswith('.jsonl'):
+    legacy_session_id = legacy_session_id[:-len('.jsonl')]
+if persisted_session_id is not None and persisted_session_id not in (session_id, legacy_session_id):
+    print(json.dumps({'status': 'identity-mismatch'}))
+    raise SystemExit(0)
+
+print(json.dumps({
+    'status': 'matched',
+    'sessionId': session_id,
+    'sessionPath': str(session_path),
+}))
+PY`;
+}
+
+async function probeCodexSessionBinding(
+  vars: SlotVars,
+  sessionPath: string,
+  persistedSessionId?: string,
+): Promise<CodexSessionBindingProbe> {
+  const result = await execOnSlot(
+    vars,
+    buildCodexSessionBindingProbeCommand(sessionPath, persistedSessionId),
+    { timeout: 10_000 },
+  );
+  if (result.exitCode !== 0) return { status: 'unavailable' };
+  return parseCodexSessionBindingProbe(result.stdout.trim());
+}
+
 export const codexSessionObservability: RunnerObservability = {
   ...claudeHookObservability,
   async resolveSessionId(vars, sessionPath) {
@@ -192,6 +223,12 @@ export const codexSessionObservability: RunnerObservability = {
     const parsed = JSON.parse(result.stdout.trim()) as { sessionId?: unknown };
     return typeof parsed.sessionId === 'string' && parsed.sessionId.trim()
       ? parsed.sessionId.trim()
+      : null;
+  },
+  async normalizeRetainedSessionBinding(vars, binding) {
+    const probe = await probeCodexSessionBinding(vars, binding.sessionPath, binding.sessionId);
+    return probe.status === 'matched'
+      ? { sessionId: probe.sessionId, sessionPath: probe.sessionPath }
       : null;
   },
   async promptAcceptedInSession(vars, _target, sessionId, sessionPath, promptText, sinceMs) {

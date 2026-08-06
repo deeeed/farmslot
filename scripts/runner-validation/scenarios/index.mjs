@@ -1,4 +1,5 @@
 import * as busyComposer from './busy-composer.mjs';
+import * as dispatchPromptDroppedEnter from './dispatch-prompt-dropped-enter.mjs';
 import * as dispatchPromptMcpRace from './dispatch-prompt-mcp-race.mjs';
 import * as dispatchPromptSmoke from './dispatch-prompt-smoke.mjs';
 import * as dispatchPromptTrust from './dispatch-prompt-trust.mjs';
@@ -18,6 +19,7 @@ export const SCENARIOS = {
   'pane-smoke': paneSmoke,
   'interaction-smoke': interactionSmoke,
   'dispatch-prompt-smoke': dispatchPromptSmoke,
+  'dispatch-prompt-dropped-enter': dispatchPromptDroppedEnter,
   'dispatch-prompt-mcp-race': dispatchPromptMcpRace,
   'dispatch-prompt-trust': dispatchPromptTrust,
   'prompt-accepted': promptAccepted,

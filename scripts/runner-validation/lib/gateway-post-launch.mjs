@@ -103,6 +103,11 @@ try {
   const parsed = JSON.parse(jsonLine);
   return {
     ...parsed,
+    gatewayLog:
+      stdout
+        .split('\n')
+        .filter((line) => line && line !== jsonLine)
+        .join('\n') || null,
     exitCode: result.status,
     stderr: result.stderr?.trim() || null,
   };

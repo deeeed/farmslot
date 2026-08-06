@@ -42,7 +42,6 @@ import {
   retainedSessionSendOption,
 } from '../../runners/session-process.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
-import { getRun, updateRun } from '../../runs/store.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
@@ -340,6 +339,7 @@ export async function nudgeDispatch(
     taskDir: workerTaskAbs,
   });
   const nudgeTimeoutMs = resolveSafeSendTimeoutMs(runner);
+  const { getRun, updateRun } = await import('../../runs/store.js');
   const deliveryOwnerRunId = (await readSlotField(params.slotId, 'current_run_id')) as
     | string
     | null;
@@ -400,11 +400,9 @@ export async function nudgeDispatch(
   // context starts at `priorOwnerNudgeCount + 1`, not `0 + 1`. Without this read here the
   // wizard's `×N` chip resets to 1 after every nudge regardless of how many we've sent into
   // the same worker, which also defeats the `high-nudge-count` risk-flag threshold.
-  const priorRunId = (await readSlotField(params.slotId, 'current_run_id')) as string | null;
-  const priorOwnerRun = priorRunId && priorRunId !== params.runId ? getRun(priorRunId) : null;
   const priorOwnerContext =
-    priorOwnerRun?.agentContexts?.find((c) => c.role === workerRole) ??
-    priorOwnerRun?.agentContexts?.[0];
+    deliveryOwnerRun?.agentContexts?.find((c) => c.role === workerRole) ??
+    deliveryOwnerRun?.agentContexts?.[0];
   const priorNudgeCount = priorOwnerContext?.nudgeCount ?? 0;
 
   await terminalizePriorRunOnSlot(params.slotId, params.runId, 'nudge');

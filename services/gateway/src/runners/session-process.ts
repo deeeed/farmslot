@@ -86,6 +86,9 @@ export function resolveRunRetainedSessionBinding(
   },
   context?: Pick<AgentContext, 'runnerSessionId' | 'runnerSessionPath'> | null,
 ): PersistedRunnerSessionBindingResult {
+  if (context === null) {
+    return { binding: null, reason: 'requested agent context is unavailable' };
+  }
   return resolvePersistedRunnerSessionBinding(
     context
       ? [
@@ -166,7 +169,7 @@ def repo_path_matches(session_path, repo_path: str) -> bool:
 if runner == 'claude':
     session_dir = home / '.claude' / 'projects' / repo.replace('/', '-')
     if session_dir.is_dir():
-        paths = [str(p) for p in sorted(session_dir.glob('*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)]
+        paths = [os.path.realpath(p) for p in sorted(session_dir.glob('*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)]
 elif runner == 'grok':
     keys = {quote(repo, safe=''), quote(grok_repo_key(repo), safe='')}
     cutoff = time() - (7 * 24 * 60 * 60)
@@ -181,7 +184,7 @@ elif runner == 'grok':
                     continue
                 summary = json.loads(summary_path.read_text())
                 if grok_cwd_matches(summary.get('info', {}).get('cwd'), repo):
-                    parent = str(summary_path.parent)
+                    parent = os.path.realpath(summary_path.parent)
                     if parent in seen:
                         continue
                     seen.add(parent)
@@ -208,7 +211,9 @@ else:
                 with path.open() as f:
                     first = json.loads(next(f))
                 if first.get('type') == 'session_meta' and repo_path_matches(first.get('payload', {}).get('cwd'), repo):
-                    paths.append(str(path))
+                    canonical = os.path.realpath(path)
+                    if canonical not in paths:
+                        paths.append(canonical)
                 seen += 1
             except Exception:
                 # Codex session discovery scans CLI-owned files; skip malformed/non-session files.
@@ -279,19 +284,6 @@ async function resolveSessionIdFromPath(
   return definition.supportsExactSessionDelivery ? null : runnerSessionIdForPath(sessionPath);
 }
 
-async function canonicalizeSessionPath(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  sessionPath: string,
-): Promise<string | null> {
-  const result = await execOnSlot(
-    vars,
-    `python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' ${shellQuote(sessionPath)}`,
-  );
-  if (result.exitCode !== 0) return null;
-  const canonical = result.stdout.trim();
-  return canonical || null;
-}
-
 async function tryFilesystemSessionBinding(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
@@ -311,12 +303,10 @@ async function tryFilesystemSessionBinding(
     existingPath: options.existingPath,
   });
   if (!chosen) return null;
-  const runnerSessionPath = await canonicalizeSessionPath(vars, chosen);
-  if (!runnerSessionPath) return null;
-  const runnerSessionId = await resolveSessionIdFromPath(vars, runner, runnerSessionPath);
+  const runnerSessionId = await resolveSessionIdFromPath(vars, runner, chosen);
   if (!runnerSessionId) return null;
   return {
-    runnerSessionPath,
+    runnerSessionPath: chosen,
     runnerSessionId,
     source: 'filesystem',
   };

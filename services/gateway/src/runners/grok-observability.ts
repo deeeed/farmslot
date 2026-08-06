@@ -157,10 +157,18 @@ if len(candidates) != 1:
     raise SystemExit(0)
 
 candidate = candidates[0]
-session_dirs = list(dict.fromkeys([
-    root / candidate['session_id'] for root in session_roots
-]))
-session_dirs = [path for path in session_dirs if path.is_dir()]
+session_dirs = []
+seen_session_dirs = set()
+for root in session_roots:
+    raw_path = root / candidate['session_id']
+    if not raw_path.is_dir():
+        continue
+    canonical_path = Path(os.path.realpath(raw_path))
+    canonical_key = str(canonical_path)
+    if canonical_key in seen_session_dirs:
+        continue
+    seen_session_dirs.add(canonical_key)
+    session_dirs.append(canonical_path)
 if len(session_dirs) != 1:
     print(json.dumps({'status': 'ambiguous' if session_dirs else 'unavailable'}))
     raise SystemExit(0)
@@ -221,8 +229,13 @@ for message in read_jsonl_tail(chat_path):
     texts = [item.get('text') for item in content if isinstance(item, dict) and item.get('type') == 'text']
     if not texts or not all(isinstance(text, str) for text in texts):
         continue
+    text = ''.join(texts)
+    user_query_prefix = '<user_query>\\n'
+    user_query_suffix = '\\n</user_query>'
+    if text.startswith(user_query_prefix) and text.endswith(user_query_suffix):
+        text = text[len(user_query_prefix):-len(user_query_suffix)]
     if latest_user is None or prompt_index > latest_user['prompt_index']:
-        latest_user = {'prompt_index': prompt_index, 'text': ''.join(texts)}
+        latest_user = {'prompt_index': prompt_index, 'text': text}
 
 if latest_start is None:
     activity = 'unknown'
@@ -315,13 +328,9 @@ export function createGrokLogObservability(
             exactPromptMatch: true,
           };
     },
-    async getSessionDeliveryState(vars, target, sessionId, sessionPath) {
+    async getSessionDeliveryState(vars, target, sessionId, _sessionPath) {
       const signal = await probe(vars, target, null, null);
-      if (
-        signal.status !== 'matched' ||
-        signal.sessionId !== sessionId ||
-        signal.sessionPath !== sessionPath
-      ) {
+      if (signal.status !== 'matched' || signal.sessionId !== sessionId) {
         return null;
       }
       return {

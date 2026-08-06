@@ -2117,7 +2117,28 @@ export async function sendRunnerInstructionSafely(
     runner,
     hookPromptAcceptedSinceMs,
   );
-  if (opts.retainedSession && def.supportsExactSessionDelivery && !isRunnerPaneRetired(runner)) {
+  let retainedSession = opts.retainedSession;
+  if (retainedSession && def.supportsExactSessionDelivery) {
+    const observability = getRunnerObservability(runner);
+    if (observability?.normalizeRetainedSessionBinding) {
+      try {
+        retainedSession =
+          (await observability.normalizeRetainedSessionBinding(vars, retainedSession)) ?? undefined;
+      } catch (error) {
+        console.warn(
+          `[${logPrefix}] retained ${runner} session normalization failed for ${target}: ${(error as Error).message}`,
+        );
+        retainedSession = undefined;
+      }
+      if (!retainedSession) {
+        console.warn(
+          `[${logPrefix}] retained ${runner} session binding is incompatible with native session identity; holding send`,
+        );
+        return false;
+      }
+    }
+  }
+  if (retainedSession && def.supportsExactSessionDelivery && !isRunnerPaneRetired(runner)) {
     const observability = getRunnerObservability(runner);
     let retainedState: ObservabilityReading<RunnerSessionDeliveryState> | null = null;
     try {
@@ -2125,8 +2146,8 @@ export async function sendRunnerInstructionSafely(
         (await observability?.getSessionDeliveryState(
           vars,
           target,
-          opts.retainedSession.sessionId,
-          opts.retainedSession.sessionPath,
+          retainedSession.sessionId,
+          retainedSession.sessionPath,
         )) ?? null;
     } catch (error) {
       console.warn(
@@ -2154,7 +2175,7 @@ export async function sendRunnerInstructionSafely(
       loopStartMs,
       hookPromptAcceptedSinceMs,
       opts.recovery,
-      opts.retainedSession,
+      retainedSession,
     );
   }
   // Skip the busy-composer poll iff the runner doesn't require it AND the caller didn't opt
@@ -2919,6 +2940,9 @@ export async function sendRunnerPostLaunchPrompt(
     }
     let sendCommand: string;
     if (shouldSubmitOnly) {
+      console.log(
+        `[${logPrefix}] recovering buffered instruction in ${target} with submit-only delivery`,
+      );
       sendCommand = tmuxShellSnippet(
         `send-keys -t ${shellQuote(target)} ${runnerBufferedInstructionSubmitKey(preSendPane, runner)} 2>/dev/null`,
       );

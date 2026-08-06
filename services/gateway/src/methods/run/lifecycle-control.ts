@@ -10,9 +10,9 @@ import {
   type RunResumeResult,
 } from '@farmslot/protocol';
 
-import { resolveAgentTarget, selectAgentContext } from '../../agents/contexts.js';
+import { selectAgentContext } from '../../agents/contexts.js';
 import { execOnSlot } from '../../core/exec.js';
-import { shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { bumpRunGeneration, cancelRunEngine, startRun } from '../../run-engine/orchestrator.js';
 import {
   cancelTransitionDeps,
@@ -136,9 +136,9 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
     try {
       const { loadSlotVars } = await import('../../core/config.js');
       const vars = await loadSlotVars(existing.slotId);
-      const target = (
-        await resolveAgentTarget(existing.slotId, { runId: existing.id, role: 'primary' })
-      ).target;
+      // Preserve the pre-retained-binding resume behavior: a missing or ambiguous
+      // context must not prevent the base worker session from being nudged.
+      const target = await resolveTmuxSession(existing.slotId, vars);
       // Capture last few lines of tmux pane to check for idle prompt
       const { stdout } = await execOnSlot(
         vars,

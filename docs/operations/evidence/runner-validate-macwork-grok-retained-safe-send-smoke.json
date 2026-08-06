@@ -1,23 +1,35 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-06T09:58:44.766Z",
+  "recordedAt": "2026-08-06T11:09:20.931Z",
   "host": "macwork",
   "scenario": "retained-safe-send-smoke",
   "runner": "grok",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-retained-send-ti0isv",
-  "session": "runner-validate-grok-retained-safe-send-smoke-47046",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-retained-send-J9XlOU",
+  "session": "runner-validate-grok-retained-safe-send-smoke-25612",
   "initialCompleted": true,
   "mismatchedSessionRejected": true,
   "followupDelivered": true,
   "followupAccepted": true,
+  "nativeInitialTurn": {
+    "promptIndex": 0,
+    "turnStartedAt": "2026-08-06T11:08:44.110Z",
+    "turnEndedAt": "2026-08-06T11:08:59.609Z"
+  },
+  "nativeFollowupTurn": {
+    "promptIndex": 1,
+    "turnStartedAt": "2026-08-06T11:09:18.098Z",
+    "turnEndedAt": "2026-08-06T11:09:20.553Z"
+  },
+  "sessionRootSymlinked": true,
+  "bindingIsRealpath": true,
   "mismatchedSend": {
     "result": {
       "delivered": false
     },
     "exitCode": 1,
-    "error": "[ci-monitor] retained grok session identity is unavailable for %101; holding send"
+    "error": "[ci-monitor] retained grok session identity is unavailable for %109; holding send"
   },
   "pass": true,
   "error": null,
-  "paneTail": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_0… ⠦ MCP (15/16) │ 25K / 500K\n\n\n     ❯ Reply with exactly RETAINED_SAFE_SEND_OK and nothing else.    5:58 PM\n\n\n     ◆ Thought for 0.0s                                                        █\n                                                                               █\n     RETAINED_SAFE_SEND_OK                                           5:58 PM   █\n                                                                               █\n     Worked for 1.8s                                                           █\n                                                                               █\n                                                                               █\n                                                                               █\n                                                                               █\n                                                                               █\n\n  ╭──────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                        │\n  ╰─────────────────────────────────────── Grok 4.5 (high) · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts"
+  "paneTail": null
 }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -256,7 +256,7 @@ describe('Grok structured prompt observability', () => {
         activity: 'tool-running',
         activityAt: Date.parse('2026-08-01T12:00:01.500+00:00'),
         sessionId,
-        sessionPath: sessionDir,
+        sessionPath: await realpath(sessionDir),
       });
 
       await writeFile(
@@ -286,7 +286,7 @@ describe('Grok structured prompt observability', () => {
         activity: 'idle',
         activityAt: Date.parse('2026-08-01T12:00:02+00:00'),
         sessionId,
-        sessionPath: sessionDir,
+        sessionPath: await realpath(sessionDir),
       });
 
       await writeFile(

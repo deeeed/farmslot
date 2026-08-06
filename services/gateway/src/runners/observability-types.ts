@@ -69,6 +69,15 @@ export interface RunnerObservability {
   capturePromptAcceptanceBaseline?(vars: SlotVars, target: string): Promise<number>;
   /** Resolve the runner-native session id stored inside one persisted session. */
   resolveSessionId?(vars: SlotVars, sessionPath: string): Promise<string | null>;
+  /**
+   * Upgrade one persisted binding to the runner's current native identity.
+   * Providers must reject ids that are neither current nor a format they
+   * previously persisted; callers fail closed when normalization rejects it.
+   */
+  normalizeRetainedSessionBinding?(
+    vars: SlotVars,
+    binding: { sessionId: string; sessionPath: string },
+  ): Promise<{ sessionId: string; sessionPath: string } | null>;
   promptAccepted(
     vars: SlotVars,
     target: string,

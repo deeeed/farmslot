@@ -2,13 +2,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { DEFAULT_PROMPT, PROMPT_MARKER, shSingleQuote, sleepMs } from '../lib/common.mjs';
+import { DEFAULT_PROMPT, shSingleQuote, sleepMs } from '../lib/common.mjs';
 import * as digest from '../lib/digest.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { runGatewaySafeInstruction } from '../lib/gateway-post-launch.mjs';
-import { eventName, readHookLines } from '../lib/hooks.mjs';
+import { eventName, hookDigestTurnEvidence, readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
-import { listSessionCandidates, resolveSessionBinding } from '../lib/session-attribution.mjs';
+import {
+  grokSessionDirKeys,
+  listSessionCandidates,
+  resolveSessionBinding,
+} from '../lib/session-attribution.mjs';
 import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
 import { resolveLaunchBlockers, sendTmuxLine } from '../lib/tmux-input.mjs';
 import { pollHookRows } from '../lib/wait.mjs';
@@ -53,15 +57,96 @@ function ageObservability(obsDir, paneId) {
   }
 }
 
-function waitForPaneText(paneId, text, timeoutMs) {
+function readJsonl(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  return fs
+    .readFileSync(filePath, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    });
+}
+
+function grokNativePromptText(row) {
+  if (!Array.isArray(row?.content)) return null;
+  const text = row.content
+    .filter((item) => item?.type === 'text')
+    .map((item) => item.text)
+    .join('');
+  const prefix = '<user_query>\n';
+  const suffix = '\n</user_query>';
+  return text.startsWith(prefix) && text.endsWith(suffix)
+    ? text.slice(prefix.length, -suffix.length)
+    : text;
+}
+
+function waitForGrokNativeTurn(sessionPath, prompt, afterPromptIndex, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
-  let pane = '';
   while (Date.now() < deadline) {
-    pane = capturePane(paneId, 100);
-    if (pane.includes(text)) return pane;
+    const chatRows = readJsonl(path.join(sessionPath, 'chat_history.jsonl'));
+    const promptRow = chatRows
+      .filter(
+        (row) =>
+          row?.type === 'user' &&
+          Number.isInteger(row.prompt_index) &&
+          row.prompt_index > afterPromptIndex &&
+          grokNativePromptText(row) === prompt,
+      )
+      .sort((a, b) => b.prompt_index - a.prompt_index)[0];
+    if (promptRow) {
+      const eventRows = readJsonl(path.join(sessionPath, 'events.jsonl'));
+      const started = eventRows.find(
+        (row) => row?.type === 'turn_started' && row.turn_number === promptRow.prompt_index,
+      );
+      const startedAt = Date.parse(started?.ts ?? '');
+      const ended = eventRows.find(
+        (row) => row?.type === 'turn_ended' && Date.parse(row.ts ?? '') >= startedAt,
+      );
+      if (started && ended) {
+        return {
+          promptIndex: promptRow.prompt_index,
+          turnStartedAt: started.ts,
+          turnEndedAt: ended.ts,
+        };
+      }
+    }
     sleepMs(1000);
   }
-  throw new Error(`timed out waiting for ${JSON.stringify(text)} in runner pane`);
+  return null;
+}
+
+function createGrokSymlinkedSessionRoots(repo) {
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-validate-grok-sessions-'));
+  const links = [];
+  try {
+    for (const key of grokSessionDirKeys(repo)) {
+      const link = path.join(os.homedir(), '.grok', 'sessions', key);
+      fs.mkdirSync(path.dirname(link), { recursive: true });
+      if (fs.existsSync(link))
+        throw new Error(`unexpected pre-existing Grok session root: ${link}`);
+      fs.symlinkSync(targetRoot, link, 'dir');
+      links.push(link);
+    }
+  } catch (error) {
+    // Setup is atomic from the scenario's perspective: remove only the unique
+    // roots this invocation created, then preserve the original failure.
+    for (const link of links) fs.rmSync(link, { force: true });
+    fs.rmSync(targetRoot, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    links,
+    targetRoot,
+    cleanup() {
+      for (const link of links) fs.rmSync(link, { force: true });
+      fs.rmSync(targetRoot, { recursive: true, force: true });
+    },
+  };
 }
 
 function waitForGrokSessionBinding({ repo, paneId, beforePaths, sinceMs, timeoutMs }) {
@@ -87,6 +172,7 @@ function runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-validate-grok-retained-send-'));
   const session = `runner-validate-grok-${SCENARIO_ID}-${process.pid}`;
+  let symlinkedRoots = null;
   let paneId = null;
   const report = {
     runner,
@@ -96,6 +182,10 @@ function runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
     mismatchedSessionRejected: false,
     followupDelivered: false,
     followupAccepted: false,
+    nativeInitialTurn: null,
+    nativeFollowupTurn: null,
+    sessionRootSymlinked: false,
+    bindingIsRealpath: false,
     mismatchedSend: null,
     pass: false,
     error: null,
@@ -104,6 +194,8 @@ function runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
 
   try {
     runnerAdapter.prepareRepo(repo);
+    symlinkedRoots = createGrokSymlinkedSessionRoots(repo);
+    report.sessionRootSymlinked = symlinkedRoots.links.length > 0;
     const beforePaths = listSessionCandidates(runner, repo, '.agent');
     const shell = ensureShellSession(session, repo);
     paneId = shell.paneId;
@@ -113,8 +205,6 @@ function runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
     if (!blockers.resolved) throw new Error('Grok did not reach an interactive composer');
     sleepMs(2000);
     sendTmuxLine(paneId, DEFAULT_PROMPT);
-    waitForPaneText(paneId, PROMPT_MARKER, timeoutMs);
-    report.initialCompleted = true;
 
     const binding = waitForGrokSessionBinding({
       repo,
@@ -125,6 +215,18 @@ function runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
     });
     if (!binding?.runnerSessionId || !binding.runnerSessionPath) {
       throw new Error('Grok did not expose an exact retained session binding');
+    }
+    report.bindingIsRealpath =
+      fs.realpathSync.native(binding.runnerSessionPath) === binding.runnerSessionPath;
+    report.nativeInitialTurn = waitForGrokNativeTurn(
+      binding.runnerSessionPath,
+      DEFAULT_PROMPT,
+      -1,
+      timeoutMs,
+    );
+    report.initialCompleted = Boolean(report.nativeInitialTurn);
+    if (!report.initialCompleted) {
+      throw new Error('initial Grok turn lacked native start/end evidence');
     }
     sleepMs(1500);
 
@@ -158,8 +260,13 @@ function runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
     if (!report.followupDelivered) {
       throw new Error(safeSend.error || 'production safe-send rejected the exact Grok session');
     }
-    report.paneTail = waitForPaneText(paneId, 'RETAINED_SAFE_SEND_OK', timeoutMs);
-    report.followupAccepted = true;
+    report.nativeFollowupTurn = waitForGrokNativeTurn(
+      binding.runnerSessionPath,
+      FOLLOWUP_PROMPT,
+      report.nativeInitialTurn.promptIndex,
+      timeoutMs,
+    );
+    report.followupAccepted = Boolean(report.nativeFollowupTurn);
     report.pass =
       report.initialCompleted &&
       report.mismatchedSessionRejected &&
@@ -169,7 +276,10 @@ function runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
     report.error = error?.message || String(error);
     report.paneTail = paneId ? capturePaneBestEffort(paneId, 100) : null;
   } finally {
-    if (!keepSession) killSession(session);
+    if (!keepSession) {
+      killSession(session);
+      symlinkedRoots?.cleanup();
+    }
   }
 
   const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
@@ -190,9 +300,13 @@ function runCodexScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
     session,
     initialCompleted: false,
     filesystemSessionId: null,
+    nativeSessionId: null,
+    legacyBinding: null,
+    legacyBindingUpgraded: false,
     mismatchedSessionRejected: false,
     followupDelivered: false,
     followupAccepted: false,
+    nativeFollowupTurn: null,
     mismatchedSend: null,
     pass: false,
     error: null,
@@ -228,6 +342,16 @@ function runCodexScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
       throw new Error('Codex filesystem fallback did not expose an exact retained session binding');
     }
     report.filesystemSessionId = binding.runnerSessionId;
+    report.nativeSessionId = binding.runnerSessionId;
+    const legacySessionId = path.basename(binding.runnerSessionPath, '.jsonl');
+    const legacySessionPath = binding.runnerSessionPath.startsWith('/private/var/')
+      ? binding.runnerSessionPath.replace(/^\/private\/var\//, '/var/')
+      : binding.runnerSessionPath;
+    report.legacyBinding = {
+      sessionId: legacySessionId,
+      sessionPath: legacySessionPath,
+      format: 'pre-native-id-filesystem-binding',
+    };
     sleepMs(1500);
 
     const mismatchedSend = runGatewaySafeInstruction({
@@ -235,8 +359,8 @@ function runCodexScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
       target: paneId,
       runner,
       message: FOLLOWUP_PROMPT,
-      sessionId: `${binding.runnerSessionId}-mismatch`,
-      sessionPath: binding.runnerSessionPath,
+      sessionId: `${legacySessionId}-mismatch`,
+      sessionPath: legacySessionPath,
       timeoutMs: 10_000,
     });
     report.mismatchedSend = mismatchedSend;
@@ -248,25 +372,37 @@ function runCodexScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
       );
     }
 
+    const followupCount = readHookLines(logPath).length;
     const safeSend = runGatewaySafeInstruction({
       repo,
       target: paneId,
       runner,
       message: FOLLOWUP_PROMPT,
-      sessionId: binding.runnerSessionId,
-      sessionPath: binding.runnerSessionPath,
+      sessionId: legacySessionId,
+      sessionPath: legacySessionPath,
       timeoutMs: Math.min(timeoutMs, 30_000),
     });
     report.followupDelivered = safeSend.result?.delivered === true;
+    report.legacyBindingUpgraded = report.followupDelivered;
     if (!report.followupDelivered) {
       throw new Error(safeSend.error || 'production CI-fix delivery rejected exact Codex session');
     }
-    report.paneTail = waitForPaneText(paneId, 'RETAINED_SAFE_SEND_OK', timeoutMs);
-    report.followupAccepted = true;
+    const followupRows = pollHookRows(
+      logPath,
+      followupCount,
+      ['UserPromptSubmit', 'Stop'],
+      timeoutMs,
+    );
+    report.nativeFollowupTurn = hookDigestTurnEvidence(
+      followupRows,
+      digest.runnerPromptDigest(FOLLOWUP_PROMPT),
+    );
+    report.followupAccepted = Boolean(report.nativeFollowupTurn);
     report.pass =
       report.initialCompleted &&
       report.mismatchedSessionRejected &&
       report.followupDelivered &&
+      report.legacyBindingUpgraded &&
       report.followupAccepted;
   } catch (error) {
     report.error = error?.message || String(error);

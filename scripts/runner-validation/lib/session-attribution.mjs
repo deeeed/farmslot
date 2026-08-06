@@ -160,11 +160,12 @@ export function listSessionCandidates(runner, repo, runtimeDir = '.agent') {
     return fs
       .readdirSync(sessionDir)
       .filter((name) => name.endsWith('.jsonl'))
-      .map((name) => path.join(sessionDir, name))
+      .map((name) => fs.realpathSync.native(path.join(sessionDir, name)))
       .sort((a, b) => statMtimeMs(b) - statMtimeMs(a));
   }
   if (runner === 'grok') {
     const paths = [];
+    const seen = new Set();
     for (const key of grokSessionDirKeys(repo)) {
       const sessionsDir = path.join(os.homedir(), '.grok', 'sessions', key);
       if (!fs.existsSync(sessionsDir)) continue;
@@ -175,7 +176,13 @@ export function listSessionCandidates(runner, repo, runtimeDir = '.agent') {
         if (statMtimeMs(summaryPath) < cutoff) continue;
         try {
           const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-          if (grokCwdMatches(summary?.info?.cwd, repo)) paths.push(path.dirname(summaryPath));
+          if (grokCwdMatches(summary?.info?.cwd, repo)) {
+            const sessionPath = fs.realpathSync.native(path.dirname(summaryPath));
+            if (!seen.has(sessionPath)) {
+              seen.add(sessionPath);
+              paths.push(sessionPath);
+            }
+          }
         } catch {
           // Grok may write summary.json incrementally during launch.
         }
