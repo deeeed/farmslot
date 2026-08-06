@@ -41,7 +41,20 @@ export interface PushVerificationResult {
 }
 
 export interface WorktreePublishState {
+  /**
+   * Total dirty paths (tracked content changes + untracked). Kept for
+   * diagnostics and push-mode gates that require a fully clean tree.
+   */
   dirtyFiles: number;
+  /** Modified/deleted/staged tracked paths (content vs HEAD). */
+  trackedDirtyFiles: number;
+  /**
+   * Untracked (non-ignored) paths. Often farm leftovers (e.g. AgenticService
+   * scaffold) rather than task work the worker just committed. Commit-mode
+   * completion does not treat these as blocking — the nudge also tells the
+   * worker to leave unrelated files alone, so counting them would soft-lock.
+   */
+  untrackedFiles: number;
   unpushedCommits: number;
 }
 
@@ -101,18 +114,22 @@ export async function inspectWorktreePublishState(
   assertGitProbe(staged, 'staged-content diff');
   const untracked = await execute('git ls-files --others --exclude-standard -z');
   assertGitProbe(untracked, 'untracked-files probe');
+  const trackedDirtyFiles = new Set([...nulPaths(worktree.stdout), ...nulPaths(staged.stdout)])
+    .size;
+  const untrackedFiles = nulPaths(untracked.stdout).length;
   const dirtyFiles = new Set([
     ...nulPaths(worktree.stdout),
     ...nulPaths(staged.stdout),
     ...nulPaths(untracked.stdout),
   ]).size;
+  const baseState = { dirtyFiles, trackedDirtyFiles, untrackedFiles };
 
   const branchRef = `refs/heads/${branch}`;
   const remoteRef = `origin/${branch}`;
   const remoteProbe = await execute(`git rev-parse --verify --quiet ${shellQuote(remoteRef)}`);
   if (refExists(remoteProbe, `rev-parse ${remoteRef}`)) {
     return {
-      dirtyFiles,
+      ...baseState,
       unpushedCommits: await countCommitsAhead(execute, remoteRef, branchRef),
     };
   }
@@ -132,7 +149,7 @@ export async function inspectWorktreePublishState(
     );
     if (refExists(upstreamProbe, `rev-parse ${upstreamRef}`)) {
       return {
-        dirtyFiles,
+        ...baseState,
         unpushedCommits: Math.max(1, await countCommitsAhead(execute, upstreamRef, branchRef)),
       };
     }
@@ -142,7 +159,7 @@ export async function inspectWorktreePublishState(
   const originHeadRef = originHead.stdout.trim();
   if (refExists(originHead, 'origin/HEAD probe') && originHeadRef) {
     return {
-      dirtyFiles,
+      ...baseState,
       unpushedCommits: Math.max(1, await countCommitsAhead(execute, originHeadRef, branchRef)),
     };
   }
@@ -150,7 +167,7 @@ export async function inspectWorktreePublishState(
   // With neither a feature remote nor a trustworthy base ref, publication
   // cannot be proven. Report the safe minimum instead of the whole repository
   // history and keep the gate closed.
-  return { dirtyFiles, unpushedCommits: 1 };
+  return { ...baseState, unpushedCommits: 1 };
 }
 
 async function inspectWorktree(
@@ -179,11 +196,37 @@ export function completionVerificationMode(run: Run): 'push' | 'commit' | 'none'
   return isInteractiveDevRun(run) ? 'none' : 'commit';
 }
 
-function describe(state: WorktreePublishState): string {
+function describe(state: WorktreePublishState, mode: 'push' | 'commit' | 'none' = 'push'): string {
   const parts: string[] = [];
-  if (state.dirtyFiles > 0) parts.push(`${state.dirtyFiles} uncommitted file(s)`);
-  if (state.unpushedCommits > 0) parts.push(`${state.unpushedCommits} unpushed commit(s)`);
+  if (mode === 'commit') {
+    // Commit-mode only blocks on tracked dirtiness; still surface untracked for operators.
+    if (state.trackedDirtyFiles > 0) {
+      parts.push(`${state.trackedDirtyFiles} uncommitted tracked file(s)`);
+    }
+    if (state.untrackedFiles > 0) {
+      parts.push(
+        `${state.untrackedFiles} untracked leftover file(s) (non-blocking for commit-mode)`,
+      );
+    }
+  } else if (state.dirtyFiles > 0) {
+    parts.push(`${state.dirtyFiles} uncommitted file(s)`);
+  }
+  if (mode === 'push' && state.unpushedCommits > 0) {
+    parts.push(`${state.unpushedCommits} unpushed commit(s)`);
+  } else if (mode === 'commit' && state.unpushedCommits > 0) {
+    // Push is owned by the publication step for dev flows — do not present as a failure.
+  }
   return parts.join(' and ') || 'clean';
+}
+
+function stateSatisfiesMode(state: WorktreePublishState, mode: 'push' | 'commit'): boolean {
+  if (mode === 'commit') {
+    // Autonomous dev: worker must commit task work. Publication pushes later.
+    // Untracked farm leftovers must not soft-lock after a clean task commit
+    // (run add136c6: AgenticService leftovers + nudge "leave unrelated alone").
+    return state.trackedDirtyFiles === 0;
+  }
+  return state.dirtyFiles === 0 && state.unpushedCommits === 0;
 }
 
 /**
@@ -204,32 +247,33 @@ export async function verifyWorkerPushedBranch(
   if (!run || !branch || mode === 'none') {
     return { verified: true };
   }
-  const requiresPush = mode === 'push';
-  const satisfied = (s: WorktreePublishState): boolean =>
-    s.dirtyFiles === 0 && (!requiresPush || s.unpushedCommits === 0);
+  if (mode !== 'push' && mode !== 'commit') {
+    return { verified: true };
+  }
   const vars = await loadSlotVars(slotId);
   let state = await inspectWorktree(vars, branch);
-  if (satisfied(state)) {
+  if (stateSatisfiesMode(state, mode)) {
     return { verified: true, dirtyFiles: state.dirtyFiles, unpushedCommits: state.unpushedCommits };
   }
 
   console.warn(
-    `[push-verification] run ${runId.slice(0, 8)} — worker signaled complete but ${branch} has ${describe(state)}; sending publish nudge`,
+    `[push-verification] run ${runId.slice(0, 8)} — worker signaled complete but ${branch} has ${describe(state, mode)}; sending publish nudge`,
   );
 
   let nudged = false;
   try {
     const target = await resolveAgentTarget(slotId, { runId, role: 'primary' });
-    const instruction = requiresPush
-      ? `Your completion signal was received but the branch is not published. In ${vars.remoteRepo}: ` +
-        `stage and commit the changes that belong to your task (leave any unrelated files alone) ` +
-        `with a Conventional Commit message describing the fix, then publish the branch with: git push. ` +
-        `Verify with git status before finishing.`
-      : `Your completion signal was received but ${vars.remoteRepo} still has uncommitted changes. ` +
-        `Work left uncommitted lives only in this slot and is destroyed when the slot is reclaimed. ` +
-        `Stage and commit the changes that belong to your task (leave any unrelated files alone) ` +
-        `with a Conventional Commit message. Pushing is not required here. ` +
-        `Verify with git status before finishing.`;
+    const instruction =
+      mode === 'push'
+        ? `Your completion signal was received but the branch is not published. In ${vars.remoteRepo}: ` +
+          `stage and commit the changes that belong to your task (leave any unrelated files alone) ` +
+          `with a Conventional Commit message describing the fix, then publish the branch with: git push. ` +
+          `Verify with git status before finishing.`
+        : `Your completion signal was received but ${vars.remoteRepo} still has uncommitted tracked changes. ` +
+          `Work left uncommitted lives only in this slot and is destroyed when the slot is reclaimed. ` +
+          `Stage and commit the tracked changes that belong to your task (leave unrelated untracked leftovers alone) ` +
+          `with a Conventional Commit message. Pushing is not required here. ` +
+          `Verify with git status before finishing.`;
     nudged = await sendRunnerInstructionSafely(
       vars,
       target.target,
@@ -271,10 +315,10 @@ export async function verifyWorkerPushedBranch(
       }
       throw err;
     }
-    if (satisfied(state)) {
+    if (stateSatisfiesMode(state, mode)) {
       console.log(
         `[push-verification] run ${runId.slice(0, 8)} — branch ${branch} ` +
-          `${requiresPush ? 'published' : 'committed'} after nudge`,
+          `${mode === 'push' ? 'published' : 'committed'} after nudge`,
       );
       // Report what was actually observed. In commit mode unpushed commits are
       // expected and left for the publication step, so claiming zero would be false.
@@ -289,7 +333,7 @@ export async function verifyWorkerPushedBranch(
 
   return {
     verified: false,
-    reason: `worker signaled complete but ${branch} still has ${describe(state)} after publish nudge`,
+    reason: `worker signaled complete but ${branch} still has ${describe(state, mode)} after publish nudge`,
     dirtyFiles: state.dirtyFiles,
     unpushedCommits: state.unpushedCommits,
     nudged,
