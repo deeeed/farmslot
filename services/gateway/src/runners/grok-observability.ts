@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { execOnSlot } from '../core/exec.js';
 
 import { readSlotClockMs } from './observability-clock.js';
@@ -17,8 +19,8 @@ type GrokPromptSignalProbe =
 type ProbeGrokPromptSignal = (
   vars: SlotVars,
   target: string,
-  sinceMs: number,
-  promptText: string,
+  sinceMs: number | null,
+  promptText: string | null,
 ) => Promise<GrokPromptSignalProbe>;
 
 export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
@@ -50,8 +52,8 @@ export function parseGrokPromptSignalProbe(raw: string): GrokPromptSignalProbe {
 async function probeGrokPromptSignal(
   vars: SlotVars,
   target: string,
-  sinceMs: number,
-  promptText: string,
+  sinceMs: number | null,
+  promptText: string | null,
 ): Promise<GrokPromptSignalProbe> {
   const result = await execOnSlot(
     vars,
@@ -69,8 +71,8 @@ async function probeGrokPromptSignal(
 export function buildGrokPromptSignalProbeCommand(
   vars: SlotVars,
   target: string,
-  sinceMs: number,
-  promptText: string,
+  sinceMs: number | null,
+  promptText: string | null,
 ): string {
   return `
 python3 - <<'PY'
@@ -83,8 +85,8 @@ from urllib.parse import quote
 
 target = ${JSON.stringify(target)}
 repo = ${JSON.stringify(vars.remoteRepo)}
-since_ms = ${Math.floor(sinceMs)}
-expected_prompt = ${JSON.stringify(promptText)}
+since_ms = ${sinceMs === null ? 'None' : Math.floor(sinceMs)}
+expected_prompt = ${promptText === null ? 'None' : JSON.stringify(promptText)}
 home = Path.home()
 active_path = home / '.grok' / 'active_sessions.json'
 session_roots = list(dict.fromkeys([
@@ -243,6 +245,8 @@ if (
     latest_start is not None
     and latest_user is not None
     and latest_start['turn_number'] == latest_user['prompt_index']
+    and expected_prompt is not None
+    and since_ms is not None
     and latest_start['at'] >= max(candidate['opened_at_ms'], since_ms)
     and latest_user['text'] == expected_prompt
 ):
@@ -265,8 +269,11 @@ export function createGrokLogObservability(
 ): RunnerObservability {
   return {
     promptAcceptanceMode: 'native-text',
+    async resolveSessionId(_vars, sessionPath) {
+      return path.basename(sessionPath) || null;
+    },
     async getActivity(vars, target) {
-      const signal = await probe(vars, target, 0, '');
+      const signal = await probe(vars, target, null, null);
       if (signal.status !== 'matched') return null;
       return {
         value: signal.activity,
@@ -309,7 +316,7 @@ export function createGrokLogObservability(
           };
     },
     async getSessionDeliveryState(vars, target, sessionId, sessionPath) {
-      const signal = await probe(vars, target, 0, '');
+      const signal = await probe(vars, target, null, null);
       if (
         signal.status !== 'matched' ||
         signal.sessionId !== sessionId ||

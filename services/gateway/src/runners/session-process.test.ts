@@ -8,6 +8,7 @@ import {
   buildFindRunnerDescendantPidCommand,
   resolvePersistedRunnerSessionBinding,
   resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
 } from './session-process.js';
 
 const execFile = promisify(execFileCb);
@@ -101,6 +102,40 @@ test('run retained session binding prefers the selected agent context', () => {
         runnerSessionPath: '/sessions/context.jsonl',
       },
       reason: null,
+    },
+  );
+});
+
+test('run retained session binding does not borrow metrics for an unbound selected context', () => {
+  const result = resolveRunRetainedSessionBinding(
+    {
+      metrics: {
+        runnerSessionId: 'metrics-session',
+        runnerSessionPath: '/sessions/metrics.jsonl',
+      },
+      agentContexts: [],
+    },
+    { runnerSessionId: null, runnerSessionPath: null },
+  );
+
+  assert.deepEqual(result, { binding: null, reason: null });
+  assert.deepEqual(retainedSessionSendOption(result), {});
+});
+
+test('retained session send option maps one atomic binding', () => {
+  assert.deepEqual(
+    retainedSessionSendOption({
+      binding: {
+        runnerSessionId: 'session-1',
+        runnerSessionPath: '/sessions/session-1.jsonl',
+      },
+      reason: null,
+    }),
+    {
+      retainedSession: {
+        sessionId: 'session-1',
+        sessionPath: '/sessions/session-1.jsonl',
+      },
     },
   );
 });

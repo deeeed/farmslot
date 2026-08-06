@@ -12,6 +12,7 @@ import {
 } from './observability-files.js';
 import {
   getRunnerDefinition,
+  getRunnerObservability,
   runnerPersistsSessionFiles,
   runnerProcessPatternSource,
 } from './registry.js';
@@ -85,18 +86,36 @@ export function resolveRunRetainedSessionBinding(
   },
   context?: Pick<AgentContext, 'runnerSessionId' | 'runnerSessionPath'> | null,
 ): PersistedRunnerSessionBindingResult {
-  return resolvePersistedRunnerSessionBinding([
-    {
-      label: 'agent context',
-      runnerSessionId: context?.runnerSessionId,
-      runnerSessionPath: context?.runnerSessionPath,
-    },
-    {
-      label: 'run metrics',
-      runnerSessionId: run.metrics.runnerSessionId,
-      runnerSessionPath: run.metrics.runnerSessionPath,
-    },
-  ]);
+  return resolvePersistedRunnerSessionBinding(
+    context
+      ? [
+          {
+            label: 'agent context',
+            runnerSessionId: context.runnerSessionId,
+            runnerSessionPath: context.runnerSessionPath,
+          },
+        ]
+      : [
+          {
+            label: 'run metrics',
+            runnerSessionId: run.metrics.runnerSessionId,
+            runnerSessionPath: run.metrics.runnerSessionPath,
+          },
+        ],
+  );
+}
+
+export function retainedSessionSendOption(result: PersistedRunnerSessionBindingResult): {
+  retainedSession?: { sessionId: string; sessionPath: string };
+} {
+  return result.binding
+    ? {
+        retainedSession: {
+          sessionId: result.binding.runnerSessionId,
+          sessionPath: result.binding.runnerSessionPath,
+        },
+      }
+    : {};
 }
 
 /** Files for Claude/Codex and directories for Grok are both resumable state. */
@@ -236,11 +255,41 @@ async function tryHookSessionBinding(
   if (!hookBinding) return null;
   const mtimeMs = await statSessionPathMtimeMs(vars, hookBinding.transcriptPath);
   if (mtimeMs === null) return null;
+  const runnerSessionId =
+    hookBinding.sessionId ??
+    (await resolveSessionIdFromPath(vars, runner, hookBinding.transcriptPath));
+  if (!runnerSessionId) return null;
   return {
     runnerSessionPath: hookBinding.transcriptPath,
-    runnerSessionId: hookBinding.sessionId ?? runnerSessionIdForPath(hookBinding.transcriptPath),
+    runnerSessionId,
     source: 'hook',
   };
+}
+
+async function resolveSessionIdFromPath(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  sessionPath: string,
+): Promise<string | null> {
+  const definition = getRunnerDefinition(runner);
+  const observability = getRunnerObservability(runner);
+  if (observability?.resolveSessionId) {
+    return observability.resolveSessionId(vars, sessionPath);
+  }
+  return definition.supportsExactSessionDelivery ? null : runnerSessionIdForPath(sessionPath);
+}
+
+async function canonicalizeSessionPath(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  sessionPath: string,
+): Promise<string | null> {
+  const result = await execOnSlot(
+    vars,
+    `python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' ${shellQuote(sessionPath)}`,
+  );
+  if (result.exitCode !== 0) return null;
+  const canonical = result.stdout.trim();
+  return canonical || null;
 }
 
 async function tryFilesystemSessionBinding(
@@ -262,9 +311,13 @@ async function tryFilesystemSessionBinding(
     existingPath: options.existingPath,
   });
   if (!chosen) return null;
+  const runnerSessionPath = await canonicalizeSessionPath(vars, chosen);
+  if (!runnerSessionPath) return null;
+  const runnerSessionId = await resolveSessionIdFromPath(vars, runner, runnerSessionPath);
+  if (!runnerSessionId) return null;
   return {
-    runnerSessionPath: chosen,
-    runnerSessionId: runnerSessionIdForPath(chosen),
+    runnerSessionPath,
+    runnerSessionId,
     source: 'filesystem',
   };
 }

@@ -120,8 +120,7 @@ export function runGatewaySafeInstruction({
 }) {
   const snippet = `
 import os from 'node:os';
-import { resolveCiFixRetainedSession } from './services/gateway/src/ci-monitor/inline-fix.ts';
-import { sendRunnerInstructionSafely } from './services/gateway/src/runners/registry.ts';
+import { sendCiFixNudge } from './services/gateway/src/ci-monitor/inline-fix.ts';
 
 const vars = {
   slotId: 'runner-validate-local',
@@ -147,9 +146,13 @@ const vars = {
   resourceVars: {},
 };
 
-const retained = resolveCiFixRetainedSession({
+const run = {
+  id: 'runner-validate-ci-fix',
   flowType: 'dev',
   metrics: {
+    runner: ${JSON.stringify(runner)},
+    model: null,
+    nudgeCount: 0,
     runnerSessionId: ${JSON.stringify(sessionId)},
     runnerSessionPath: ${JSON.stringify(sessionPath)},
   },
@@ -158,24 +161,18 @@ const retained = resolveCiFixRetainedSession({
     runnerSessionId: ${JSON.stringify(sessionId)},
     runnerSessionPath: ${JSON.stringify(sessionPath)},
   }],
-});
-if (!retained.binding) throw new Error(retained.reason || 'CI fix retained session was not resolved');
+};
 
-const delivered = await sendRunnerInstructionSafely(
+const delivery = await sendCiFixNudge({
   vars,
-  ${JSON.stringify(target)},
-  ${JSON.stringify(runner)},
-  ${JSON.stringify(message)},
-  'retained-safe-send-smoke',
-  ${timeoutMs},
-  {
-    forceBusyPoll: true,
-    retainedSession: {
-      sessionId: retained.binding.runnerSessionId,
-      sessionPath: retained.binding.runnerSessionPath,
-    },
-  },
-);
+  target: ${JSON.stringify(target)},
+  runner: ${JSON.stringify(runner)},
+  prompt: ${JSON.stringify(message)},
+  run,
+  timeoutMs: ${timeoutMs},
+  forceBusyPoll: true,
+});
+const delivered = delivery.sent;
 process.stdout.write(JSON.stringify({ delivered }) + '\\n', () => {
   process.exit(delivered ? 0 : 1);
 });

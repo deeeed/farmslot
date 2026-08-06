@@ -111,7 +111,16 @@ export function loadMtimes(paths) {
   return map;
 }
 
-export function runnerSessionIdForPath(sessionPath) {
+export function runnerSessionIdForPath(runner, sessionPath) {
+  if (runner === 'codex') {
+    try {
+      const first = JSON.parse(fs.readFileSync(sessionPath, 'utf8').split('\n')[0]);
+      const sessionId = first?.type === 'session_meta' ? first?.payload?.id : null;
+      return typeof sessionId === 'string' && sessionId ? sessionId : null;
+    } catch {
+      return null;
+    }
+  }
   const base = path.basename(sessionPath);
   return base.endsWith('.jsonl') ? base.slice(0, -'.jsonl'.length) : base;
 }
@@ -191,7 +200,7 @@ export function listSessionCandidates(runner, repo, runtimeDir = '.agent') {
         try {
           const first = JSON.parse(fs.readFileSync(full, 'utf8').split('\n')[0]);
           if (first?.type === 'session_meta' && repoPathMatches(first?.payload?.cwd, repo))
-            paths.push(full);
+            paths.push(fs.realpathSync.native(full));
         } catch {
           // Codex-owned session files may be partial during discovery.
         }
@@ -319,7 +328,7 @@ export function resolveSessionBinding({
       return {
         runnerSessionPath: hookBinding.transcriptPath,
         runnerSessionId:
-          hookBinding.sessionId ?? runnerSessionIdForPath(hookBinding.transcriptPath),
+          hookBinding.sessionId ?? runnerSessionIdForPath(runner, hookBinding.transcriptPath),
         source: 'hook',
         hookBinding,
       };
@@ -335,7 +344,7 @@ export function resolveSessionBinding({
   if (!chosen) return null;
   return {
     runnerSessionPath: chosen,
-    runnerSessionId: runnerSessionIdForPath(chosen),
+    runnerSessionId: runnerSessionIdForPath(runner, chosen),
     source: 'filesystem',
     hookBinding: null,
   };

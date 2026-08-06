@@ -176,10 +176,116 @@ function runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
   return { scenario: SCENARIO_ID, runner, outPath, pass: report.pass, report };
 }
 
+function runCodexScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
+  const runner = runnerAdapter.RUNNER_ID;
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-validate-codex-retained-send-'));
+  const runtimeDir = '.agent';
+  const slotId = `runner-validate-${os.hostname().replace(/\.local$/, '')}-codex`;
+  const session = `runner-validate-codex-${SCENARIO_ID}-${process.pid}`;
+  const logPath = path.join(obsDirFor(repo, runtimeDir), 'hooks.jsonl');
+  let paneId = null;
+  const report = {
+    runner,
+    repo,
+    session,
+    initialCompleted: false,
+    filesystemSessionId: null,
+    mismatchedSessionRejected: false,
+    followupDelivered: false,
+    followupAccepted: false,
+    mismatchedSend: null,
+    pass: false,
+    error: null,
+    paneTail: null,
+  };
+
+  try {
+    runnerAdapter.prepareRepo(repo);
+    installHooks(runner, repo, runtimeDir, slotId);
+    const beforePaths = listSessionCandidates(runner, repo, runtimeDir);
+    const shell = ensureShellSession(session, repo);
+    paneId = shell.paneId;
+    const dispatchMs = Date.now();
+    const initialCount = readHookLines(logPath).length;
+    sendShellScript(paneId, repo, [runnerAdapter.buildInteractiveLaunchCommand(repo, runtimeDir)]);
+    sleepMs(2500);
+    sendTmuxLine(paneId, DEFAULT_PROMPT);
+    const initialRows = pollHookRows(logPath, initialCount, ['Stop'], timeoutMs);
+    report.initialCompleted = initialRows.some((row) => eventName(row) === 'Stop');
+    if (!report.initialCompleted) throw new Error('initial Codex turn did not emit Stop');
+
+    const binding = resolveSessionBinding({
+      runner,
+      repo,
+      runtimeDir,
+      beforePaths,
+      sinceMs: dispatchMs,
+      hookRows: [],
+      paneId,
+      slotId,
+    });
+    if (!binding?.runnerSessionId || !binding.runnerSessionPath) {
+      throw new Error('Codex filesystem fallback did not expose an exact retained session binding');
+    }
+    report.filesystemSessionId = binding.runnerSessionId;
+    sleepMs(1500);
+
+    const mismatchedSend = runGatewaySafeInstruction({
+      repo,
+      target: paneId,
+      runner,
+      message: FOLLOWUP_PROMPT,
+      sessionId: `${binding.runnerSessionId}-mismatch`,
+      sessionPath: binding.runnerSessionPath,
+      timeoutMs: 10_000,
+    });
+    report.mismatchedSend = mismatchedSend;
+    report.mismatchedSessionRejected = mismatchedSend.result?.delivered === false;
+    if (!report.mismatchedSessionRejected) {
+      throw new Error(
+        mismatchedSend.error ||
+          'production CI-fix delivery accepted a mismatched Codex session binding',
+      );
+    }
+
+    const safeSend = runGatewaySafeInstruction({
+      repo,
+      target: paneId,
+      runner,
+      message: FOLLOWUP_PROMPT,
+      sessionId: binding.runnerSessionId,
+      sessionPath: binding.runnerSessionPath,
+      timeoutMs: Math.min(timeoutMs, 30_000),
+    });
+    report.followupDelivered = safeSend.result?.delivered === true;
+    if (!report.followupDelivered) {
+      throw new Error(safeSend.error || 'production CI-fix delivery rejected exact Codex session');
+    }
+    report.paneTail = waitForPaneText(paneId, 'RETAINED_SAFE_SEND_OK', timeoutMs);
+    report.followupAccepted = true;
+    report.pass =
+      report.initialCompleted &&
+      report.mismatchedSessionRejected &&
+      report.followupDelivered &&
+      report.followupAccepted;
+  } catch (error) {
+    report.error = error?.message || String(error);
+    report.paneTail = paneId ? capturePaneBestEffort(paneId, 100) : null;
+  } finally {
+    if (!keepSession) killSession(session);
+  }
+
+  const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
+  return { scenario: SCENARIO_ID, runner, outPath, pass: report.pass, report };
+}
+
 export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
   if (runner === 'grok') {
     return runGrokScenario({ runnerAdapter, timeoutMs, keepSession, outDir });
+  }
+  if (runner === 'codex') {
+    return runCodexScenario({ runnerAdapter, timeoutMs, keepSession, outDir });
   }
   if (runner !== 'claude') {
     const report = {
@@ -196,6 +302,7 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
   const runtimeDir = '.agent';
   const slotId = `runner-validate-${os.hostname().replace(/\.local$/, '')}-claude`;
   const session = `runner-validate-claude-${SCENARIO_ID}-${process.pid}`;
+  const foreignSession = `${session}-foreign`;
   const obsDir = obsDirFor(repo, runtimeDir);
   const logPath = path.join(obsDir, 'hooks.jsonl');
   let paneId = null;
@@ -233,6 +340,22 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       throw new Error('terminal hook did not expose an exact retained session binding');
     }
 
+    const foreignShell = ensureShellSession(foreignSession, repo);
+    const foreignCount = readHookLines(logPath).length;
+    sendShellScript(foreignShell.paneId, repo, [command]);
+    const foreignRows = pollHookRows(logPath, foreignCount, ['Stop'], timeoutMs);
+    const foreignStop = [...foreignRows]
+      .reverse()
+      .find(
+        (row) =>
+          eventName(row) === 'Stop' &&
+          row.tmuxPane === foreignShell.paneId &&
+          row.session_id !== sessionId,
+      );
+    if (!foreignStop?.session_id || !foreignStop.transcript_path) {
+      throw new Error('second Claude session did not expose an independent retained binding');
+    }
+
     ageObservability(obsDir, paneId);
     const followupCount = readHookLines(logPath).length;
     const mismatchedSend = runGatewaySafeInstruction({
@@ -240,8 +363,8 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
       target: paneId,
       runner,
       message: FOLLOWUP_PROMPT,
-      sessionId: `${sessionId}-mismatch`,
-      sessionPath,
+      sessionId: foreignStop.session_id,
+      sessionPath: foreignStop.transcript_path,
       timeoutMs: 10_000,
     });
     report.mismatchedSend = mismatchedSend;
@@ -286,7 +409,10 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     report.error = error?.message || String(error);
     report.paneTail = paneId ? capturePaneBestEffort(paneId, 80) : null;
   } finally {
-    if (!keepSession) killSession(session);
+    if (!keepSession) {
+      killSession(session);
+      killSession(foreignSession);
+    }
   }
 
   const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);

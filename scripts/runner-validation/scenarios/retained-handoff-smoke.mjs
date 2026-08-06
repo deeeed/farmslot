@@ -79,7 +79,9 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     });
     if (!binding) throw new Error(`initial ${runner} session binding was not captured`);
     report.sessionPath = binding.runnerSessionPath;
-    report.sessionId = binding.runnerSessionId ?? runnerSessionIdForPath(binding.runnerSessionPath);
+    report.sessionId =
+      binding.runnerSessionId ?? runnerSessionIdForPath(runner, binding.runnerSessionPath);
+    if (!report.sessionId) throw new Error(`initial ${runner} session id was not captured`);
 
     const handoff = runGatewayRetainedHandoff({
       repo,

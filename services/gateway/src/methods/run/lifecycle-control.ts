@@ -10,7 +10,7 @@ import {
   type RunResumeResult,
 } from '@farmslot/protocol';
 
-import { resolveAgentTarget } from '../../agents/contexts.js';
+import { resolveAgentTarget, selectAgentContext } from '../../agents/contexts.js';
 import { execOnSlot } from '../../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { bumpRunGeneration, cancelRunEngine, startRun } from '../../run-engine/orchestrator.js';
@@ -26,7 +26,10 @@ import {
   runnerPaneLooksIdle,
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
-import { resolveRunRetainedSessionBinding } from '../../runners/session-process.js';
+import {
+  resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
+} from '../../runners/session-process.js';
 import { getRun, updateRun } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
@@ -148,7 +151,10 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
         .map((l) => l.trim())
         .filter(Boolean);
       const runner = normalizeRunner(existing.metrics.runner);
-      const retainedSession = resolveRunRetainedSessionBinding(existing);
+      const retainedSession = resolveRunRetainedSessionBinding(
+        existing,
+        selectAgentContext(existing, { role: 'primary' }),
+      );
       const nudge = runnerContinueCommand(runner);
       // ADR-032 Phase 3: when the pane is retired for this runner (Claude), skip the pane-idle
       // pre-gate and let the hook-only safe-send own the idle/busy decision. Pane-fallback runners
@@ -165,14 +171,7 @@ export async function runResume(params: RunResumeParams, emit: Emit): Promise<Ru
           undefined,
           {
             recovery: { runId: existing.id, emit },
-            ...(retainedSession.binding
-              ? {
-                  retainedSession: {
-                    sessionId: retainedSession.binding.runnerSessionId,
-                    sessionPath: retainedSession.binding.runnerSessionPath,
-                  },
-                }
-              : {}),
+            ...retainedSessionSendOption(retainedSession),
           },
         );
         console.log(

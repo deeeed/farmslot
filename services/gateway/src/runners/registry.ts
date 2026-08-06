@@ -105,6 +105,8 @@ export interface RunnerDefinition {
   sessionReload: SessionReloadCapability;
   /** How a completed worker session receives a chained task without TUI parsing. */
   retainedSessionHandoff: RetainedSessionHandoff;
+  /** Exact persisted-session identity can gate retained prompt delivery. */
+  supportsExactSessionDelivery: boolean;
   /** Runner's TUI can show a busy "composer" pane that swallows send-keys — poll before sending. */
   requiresBusyComposerPoll: boolean;
   /**
@@ -188,6 +190,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
     retainedSessionHandoff: 'resume-with-prompt',
+    supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: false,
     // Claude has no "more dangerous" mode beyond --dangerously-skip-permissions,
     // so full-auto and dangerous collapse onto the same flag. Sandboxed drops it.
@@ -220,6 +223,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
     retainedSessionHandoff: 'resume-with-prompt',
+    supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: true,
     // Codex tier mapping:
     //   sandboxed  — default; Codex CLI prompts for approvals on destructive ops.
@@ -256,6 +260,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'in-place',
+    supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
     flagsByTier: {
       sandboxed: ['--sandbox', 'enabled'],
@@ -283,6 +288,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: true,
     sessionReload: 'with-prompt',
     retainedSessionHandoff: 'in-place',
+    supportsExactSessionDelivery: true,
     requiresBusyComposerPoll: true,
     flagsByTier: {
       sandboxed: [],
@@ -306,6 +312,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'unsupported',
+    supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -325,6 +332,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'unsupported',
+    supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -344,6 +352,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     persistsSessionFiles: false,
     sessionReload: 'none',
     retainedSessionHandoff: 'unsupported',
+    supportsExactSessionDelivery: false,
     requiresBusyComposerPoll: false,
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
@@ -2108,7 +2117,7 @@ export async function sendRunnerInstructionSafely(
     runner,
     hookPromptAcceptedSinceMs,
   );
-  if (opts.retainedSession && !isRunnerPaneRetired(runner)) {
+  if (opts.retainedSession && def.supportsExactSessionDelivery && !isRunnerPaneRetired(runner)) {
     const observability = getRunnerObservability(runner);
     let retainedState: ObservabilityReading<RunnerSessionDeliveryState> | null = null;
     try {
@@ -2841,55 +2850,73 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    const preSendPane = await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
-      deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
-      pollIntervalMs,
-    });
-    const preSendHandoff = await runnerHasDurablePromptHandoff(
-      vars,
-      target,
-      runner,
-      message,
-      handoffAckSinceMs,
-      {
-        launchAckSignalPath: opts.launchAckSignalPath,
-        launchAckBaseline,
-        requirePromptDigest,
-        acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
-        promptAcceptanceBaselineMs,
-      },
-    );
-    if (preSendHandoff.accepted) {
-      console.log(
-        `[${logPrefix}] prompt handoff accepted via ${preSendHandoff.source}: ${preSendHandoff.reason} before attempt ${attempt}/${maxAttempts}`,
-      );
-      return;
-    }
-    const preSendPaneClaimsTaskActive =
-      runnerPaneShowsPreSendDuplicateInstruction(preSendPane, message, runner) ||
-      runnerPaneShowsTaskAlreadyRunning(preSendPane, message, marker, runner);
-    // The previous attempt's prompt may have been accepted just after its verify
-    // window closed. Pane progress prevents a duplicate transport send, but an
-    // exact-ack caller must keep waiting for structured evidence.
-    if (preSendPaneClaimsTaskActive) {
-      if (requirePromptDigest) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.max(0, Math.min(pollIntervalMs, deliveryDeadline - Date.now()))),
-        );
-        continue;
-      }
-      console.log(
-        `[${logPrefix}] task already visible with runner progress in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
-      );
-      return;
-    }
-    const shouldSubmitOnly = runnerPaneShouldSubmitExistingInstruction(
+    // A prior send can leave the exact instruction in the live composer when
+    // the runner drops Enter. Submit that buffer before waiting for an empty
+    // prompt: a buffered composer cannot satisfy the ready-state wait, so doing
+    // this check afterwards turns the recovery attempt into a guaranteed
+    // timeout.
+    let preSendPane = immediatePane;
+    let shouldSubmitOnly = runnerPaneShouldSubmitExistingInstruction(
       preSendPane,
       message,
       marker,
       runner,
       { allowMarkerOnly: attempt > 1 },
     );
+    if (!shouldSubmitOnly) {
+      preSendPane = await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
+        deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
+        pollIntervalMs,
+      });
+      const preSendHandoff = await runnerHasDurablePromptHandoff(
+        vars,
+        target,
+        runner,
+        message,
+        handoffAckSinceMs,
+        {
+          launchAckSignalPath: opts.launchAckSignalPath,
+          launchAckBaseline,
+          requirePromptDigest,
+          acceptExistingLaunchAck: opts.acceptExistingLaunchAck,
+          promptAcceptanceBaselineMs,
+        },
+      );
+      if (preSendHandoff.accepted) {
+        console.log(
+          `[${logPrefix}] prompt handoff accepted via ${preSendHandoff.source}: ${preSendHandoff.reason} before attempt ${attempt}/${maxAttempts}`,
+        );
+        return;
+      }
+      const preSendPaneClaimsTaskActive =
+        runnerPaneShowsPreSendDuplicateInstruction(preSendPane, message, runner) ||
+        runnerPaneShowsTaskAlreadyRunning(preSendPane, message, marker, runner);
+      // The previous attempt's prompt may have been accepted just after its verify
+      // window closed. Pane progress prevents a duplicate transport send, but an
+      // exact-ack caller must keep waiting for structured evidence.
+      if (preSendPaneClaimsTaskActive) {
+        if (requirePromptDigest) {
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              Math.max(0, Math.min(pollIntervalMs, deliveryDeadline - Date.now())),
+            ),
+          );
+          continue;
+        }
+        console.log(
+          `[${logPrefix}] task already visible with runner progress in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
+        );
+        return;
+      }
+      shouldSubmitOnly = runnerPaneShouldSubmitExistingInstruction(
+        preSendPane,
+        message,
+        marker,
+        runner,
+        { allowMarkerOnly: attempt > 1 },
+      );
+    }
     let sendCommand: string;
     if (shouldSubmitOnly) {
       sendCommand = tmuxShellSnippet(

@@ -48,6 +48,17 @@ mock.module('../core/exec.js', {
           stderr: '',
         };
       }
+      if (command.includes('max_scan_bytes =') && command.includes('session_path = Path(')) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(
+            promptAccepted
+              ? { status: 'matched', observedAt: promptAcceptedAt ?? Date.now() }
+              : { status: 'not-found' },
+          ),
+          stderr: '',
+        };
+      }
       if (command.startsWith('test -e ')) {
         return {
           exitCode: sessionPathExists ? 0 : 1,

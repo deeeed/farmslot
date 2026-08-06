@@ -67,6 +67,8 @@ export interface RunnerObservability {
    * gateway clock because fleet nodes can be skewed.
    */
   capturePromptAcceptanceBaseline?(vars: SlotVars, target: string): Promise<number>;
+  /** Resolve the runner-native session id stored inside one persisted session. */
+  resolveSessionId?(vars: SlotVars, sessionPath: string): Promise<string | null>;
   promptAccepted(
     vars: SlotVars,
     target: string,

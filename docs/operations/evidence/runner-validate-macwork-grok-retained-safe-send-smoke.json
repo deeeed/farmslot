@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-08-06T09:11:31.724Z",
+  "recordedAt": "2026-08-06T09:58:44.766Z",
   "host": "macwork",
   "scenario": "retained-safe-send-smoke",
   "runner": "grok",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-retained-send-2na8Em",
-  "session": "runner-validate-grok-retained-safe-send-smoke-95943",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-retained-send-ti0isv",
+  "session": "runner-validate-grok-retained-safe-send-smoke-47046",
   "initialCompleted": true,
   "mismatchedSessionRejected": true,
   "followupDelivered": true,
@@ -15,9 +15,9 @@
       "delivered": false
     },
     "exitCode": 1,
-    "error": "[retained-safe-send-smoke] retained grok session identity is unavailable for %85; holding send"
+    "error": "[ci-monitor] retained grok session identity is unavailable for %101; holding send"
   },
   "pass": true,
   "error": null,
-  "paneTail": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_0… ⠼ MCP (15/16) │ 25K / 500K\n\n\n     ❯ Reply with exactly RETAINED_SAFE_SEND_OK and nothing else.    5:11 PM\n\n\n     ◆ Thought for 0.0s                                                        █\n                                                                               █\n     RETAINED_SAFE_SEND_OK                                           5:11 PM   █\n                                                                               █\n     Worked for 2.7s                                                           █\n                                                                               █\n                                                                               █\n                                                                               █\n                                                                               █\n                                                                               █\n\n  ╭──────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                        │\n  ╰─────────────────────────────────────── Grok 4.5 (high) · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts"
+  "paneTail": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_0… ⠦ MCP (15/16) │ 25K / 500K\n\n\n     ❯ Reply with exactly RETAINED_SAFE_SEND_OK and nothing else.    5:58 PM\n\n\n     ◆ Thought for 0.0s                                                        █\n                                                                               █\n     RETAINED_SAFE_SEND_OK                                           5:58 PM   █\n                                                                               █\n     Worked for 1.8s                                                           █\n                                                                               █\n                                                                               █\n                                                                               █\n                                                                               █\n                                                                               █\n\n  ╭──────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                        │\n  ╰─────────────────────────────────────── Grok 4.5 (high) · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts"
 }

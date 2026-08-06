@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Route CI-watch follow-ups through the runner capability with the original worker's exact retained-session binding, so an old terminal Stop can safely deliver without weakening freshness-based activity checks.
+- Route CI-watch follow-ups through the runner capability with the original worker's exact retained-session binding, and submit an already-buffered runner prompt before waiting for an empty composer, so retained work and independent reviews cannot stall after a dropped Enter.
 
 - fix(server): handle WebSocket `error` events (including `WS_ERR_UNSUPPORTED_MESSAGE_LENGTH` / close 1009) so an oversized inbound frame closes that client instead of crashing the whole gateway process; make the 100 MiB `maxPayload` explicit.
 - fix(terminal): name the staged image path plainly in the Claude attachment prompt. The previous `@<path>` reference opened Claude Code's file-reference autocomplete, which consumed the submit Enter, so the instruction sat unsent in the composer while delivery reported success. Proven end to end against live Claude and Codex runner panes.

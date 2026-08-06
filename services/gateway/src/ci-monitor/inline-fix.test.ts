@@ -7,8 +7,32 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { farmslotRoot } from '../core/config.js';
+import { makeRun } from '../run-engine/test-fixtures.js';
 
-import { resolveCiFixTemplatePath } from './inline-fix.js';
+import { resolveCiFixRetainedSession, resolveCiFixTemplatePath } from './inline-fix.js';
+
+test('CI fix delivery resolves the primary worker retained session', () => {
+  const retained = resolveCiFixRetainedSession(
+    makeRun({
+      flowType: 'dev',
+      metrics: {
+        nudgeCount: 0,
+        runner: 'codex',
+        model: 'gpt-5.6-sol',
+        runnerSessionId: 'session-1',
+        runnerSessionPath: '/sessions/session-1.jsonl',
+      },
+    }),
+  );
+
+  assert.deepEqual(retained, {
+    binding: {
+      runnerSessionId: 'session-1',
+      runnerSessionPath: '/sessions/session-1.jsonl',
+    },
+    reason: null,
+  });
+});
 
 test('resolveCiFixTemplatePath prefers project-owned ci-fix.md', async () => {
   const project = `ci-fix-test-${Date.now()}`;

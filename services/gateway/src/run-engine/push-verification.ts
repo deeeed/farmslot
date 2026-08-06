@@ -18,7 +18,10 @@ import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { normalizeRunner, sendRunnerInstructionSafely } from '../runners/registry.js';
-import { resolveRunRetainedSessionBinding } from '../runners/session-process.js';
+import {
+  resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
+} from '../runners/session-process.js';
 import { getRun } from '../runs/store.js';
 
 const WORKER_OWNED_PUSH_FLOWS = new Set(['pr-complete', 'update-branch']);
@@ -288,14 +291,7 @@ export async function verifyWorkerPushedBranch(
       {
         forceBusyPoll: true,
         recovery: { runId },
-        ...(retainedSession.binding
-          ? {
-              retainedSession: {
-                sessionId: retainedSession.binding.runnerSessionId,
-                sessionPath: retainedSession.binding.runnerSessionPath,
-              },
-            }
-          : {}),
+        ...retainedSessionSendOption(retainedSession),
       },
     );
     console.log(

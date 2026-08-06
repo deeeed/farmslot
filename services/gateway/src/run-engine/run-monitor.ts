@@ -52,6 +52,7 @@ import {
 import {
   isRunnerAliveUnderPane,
   resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
 } from '../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { onWorkerSignal, resolveContextFilePath } from '../tasks/watcher.js';
@@ -819,14 +820,7 @@ export async function monitorRun(
               ),
               'artifact-contract',
               undefined,
-              retainedSession.binding
-                ? {
-                    retainedSession: {
-                      sessionId: retainedSession.binding.runnerSessionId,
-                      sessionPath: retainedSession.binding.runnerSessionPath,
-                    },
-                  }
-                : {},
+              retainedSessionSendOption(retainedSession),
             );
           } catch (err) {
             // The durable blocked decision below is the recovery path when the
@@ -1381,14 +1375,7 @@ async function sendNudge(
       // console warning); broadcastFn flips the degraded-audit flag in the UI on write failure.
       {
         recovery: { runId, emit: broadcastFn },
-        ...(retainedSession.binding
-          ? {
-              retainedSession: {
-                sessionId: retainedSession.binding.runnerSessionId,
-                sessionPath: retainedSession.binding.runnerSessionPath,
-              },
-            }
-          : {}),
+        ...retainedSessionSendOption(retainedSession),
       },
     );
     if (!sent) return;

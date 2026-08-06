@@ -9,7 +9,7 @@ import {
   primaryRoleForFlow,
 } from '@farmslot/protocol';
 
-import { upsertAgentContext } from '../../agents/contexts.js';
+import { selectAgentContext, upsertAgentContext } from '../../agents/contexts.js';
 import {
   claimSlotStatusIf,
   execLocal,
@@ -37,8 +37,12 @@ import {
   runnerSupportsTmuxNudges,
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
-import { resolveRunRetainedSessionBinding } from '../../runners/session-process.js';
+import {
+  resolveRunRetainedSessionBinding,
+  retainedSessionSendOption,
+} from '../../runners/session-process.js';
 import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
+import { getRun, updateRun } from '../../runs/store.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, unwatchSlot, watchContext, watchSlot } from '../../tasks/watcher.js';
 
@@ -339,13 +343,11 @@ export async function nudgeDispatch(
   const deliveryOwnerRunId = (await readSlotField(params.slotId, 'current_run_id')) as
     | string
     | null;
-  const { getRun: getRunForDelivery } = await import('../../runs/store.js');
   const deliveryOwnerRun =
-    deliveryOwnerRunId && deliveryOwnerRunId !== params.runId
-      ? getRunForDelivery(deliveryOwnerRunId)
-      : null;
-  const deliveryOwnerContext =
-    deliveryOwnerRun?.agentContexts?.find((context) => context.role === workerRole) ?? null;
+    deliveryOwnerRunId && deliveryOwnerRunId !== params.runId ? getRun(deliveryOwnerRunId) : null;
+  const deliveryOwnerContext = deliveryOwnerRun
+    ? selectAgentContext(deliveryOwnerRun, { role: 'primary' })
+    : null;
   const retainedSession = deliveryOwnerRun
     ? resolveRunRetainedSessionBinding(deliveryOwnerRun, deliveryOwnerContext)
     : { binding: null, reason: null };
@@ -360,14 +362,7 @@ export async function nudgeDispatch(
     {
       forceBusyPoll: true,
       recovery: { runId: params.runId, emit },
-      ...(retainedSession.binding
-        ? {
-            retainedSession: {
-              sessionId: retainedSession.binding.runnerSessionId,
-              sessionPath: retainedSession.binding.runnerSessionPath,
-            },
-          }
-        : {}),
+      ...retainedSessionSendOption(retainedSession),
     },
   );
   if (!sent) {
@@ -378,7 +373,6 @@ export async function nudgeDispatch(
     );
     // No rollback needed — we deferred all state mutation past this point. Prior run is still
     // the slot's owner and its monitor/watchers are intact. The new run fails cleanly.
-    const { getRun, updateRun } = await import('../../runs/store.js');
     const timeoutRun = getRun(params.runId);
     if (timeoutRun) {
       updateRun(params.runId, {
@@ -406,7 +400,6 @@ export async function nudgeDispatch(
   // context starts at `priorOwnerNudgeCount + 1`, not `0 + 1`. Without this read here the
   // wizard's `×N` chip resets to 1 after every nudge regardless of how many we've sent into
   // the same worker, which also defeats the `high-nudge-count` risk-flag threshold.
-  const { getRun } = await import('../../runs/store.js');
   const priorRunId = (await readSlotField(params.slotId, 'current_run_id')) as string | null;
   const priorOwnerRun = priorRunId && priorRunId !== params.runId ? getRun(priorRunId) : null;
   const priorOwnerContext =

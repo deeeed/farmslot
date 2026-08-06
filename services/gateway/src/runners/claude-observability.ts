@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { resolveTmuxPaneId } from '../core/tmux.js';
 
 import { readSlotClockMs } from './observability-clock.js';
@@ -29,7 +31,7 @@ async function loadObservabilitySnapshot(vars: SlotVars, target: string) {
   return { hooks, statusline };
 }
 
-export async function claudeSessionPaneMoveIsSafe(
+export async function sessionPaneMoveIsSafe(
   vars: SlotVars,
   recordedPane: string | null | undefined,
   destinationPane: string,
@@ -41,6 +43,10 @@ export async function claudeSessionPaneMoveIsSafe(
 
 export const claudeHookObservability: RunnerObservability = {
   promptAcceptanceMode: 'hook-digest',
+  async resolveSessionId(_vars, sessionPath) {
+    const base = path.basename(sessionPath);
+    return base.endsWith('.jsonl') ? base.slice(0, -'.jsonl'.length) : base || null;
+  },
   async getActivity(vars, target) {
     const { hooks, statusline } = await loadObservabilitySnapshot(vars, target);
     return deriveRunnerActivity(hooks, statusline);
@@ -95,7 +101,7 @@ export const claudeHookObservability: RunnerObservability = {
     if (!hookRecordMatchesRunnerSessionIdentity(sessionState, expected)) {
       return null;
     }
-    if (!(await claudeSessionPaneMoveIsSafe(vars, sessionState.tmuxPane, paneId))) {
+    if (!(await sessionPaneMoveIsSafe(vars, sessionState.tmuxPane, paneId))) {
       // A pane move is safe only after the pane that last owned the session is
       // gone. Otherwise resuming the transcript here would create two live
       // runners writing the same persisted session.
