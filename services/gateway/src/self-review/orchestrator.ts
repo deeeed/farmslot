@@ -56,6 +56,7 @@ import { getRunnerStatusProvider } from '../runners/status-provider.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import {
+  checklistMarkerCommand,
   restoreWorkerChecklistTargetFromSlot,
   SELF_REVIEW_FIX_CHECKLIST_TARGET,
   slotTaskRelPath,
@@ -142,7 +143,7 @@ export interface SelfReviewOptions {
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
-const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min without worker progress
+const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min without a fix-progress signal
 const FEEDBACK_MAX_ACTIVE_MS = 2 * 60 * 60_000; // bound continuously progressing fix passes
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -981,6 +982,26 @@ const FIX_PROMPT_RECOVERY_DEPS: FixPromptRecoveryDeps = {
   deliver: deliverPromptWithRetainedFallback,
 };
 
+function selfReviewFixProgressContract(taskDir: string, taskFile: string): string {
+  const mark = checklistMarkerCommand(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET);
+  return (
+    `Follow ${taskFile} top-to-bottom. After EVERY checklist step run ${mark} N ` +
+    `(bootstrap with ${mark} start). ` +
+    `Skipping ${mark} leaves the fix timeout blind to real progress. ` +
+    `On success finish with ${mark} complete --mark-last; when applicable use ` +
+    `${mark} no-change --reason \"…\" or ${mark} blocked --reason \"…\" instead.`
+  );
+}
+
+function selfReviewFixPrompt(
+  basePrompt: string,
+  taskDir: string,
+  taskFile: string,
+  attempt: string,
+) {
+  return `${basePrompt}\n\n${selfReviewFixProgressContract(taskDir, taskFile)}\n\nFarmslot fix delivery attempt: ${attempt}`;
+}
+
 /**
  * Re-submit an already-materialized fix task after restart without rewriting the
  * task or clearing its signal. The retained-session delivery layer owns runner
@@ -1032,7 +1053,7 @@ export async function resumeSelfReviewFixPromptDelivery(
   const attemptStartedAt = context.attemptStartedAt?.trim();
   if (!attemptStartedAt) return 'deferred';
   const basePrompt = await deps.resolvePrompt(run.project, { taskFile, taskDir });
-  const prompt = `${basePrompt}\n\nFarmslot fix delivery attempt: ${attemptStartedAt}`;
+  const prompt = selfReviewFixPrompt(basePrompt, taskDir, taskFile, attemptStartedAt);
   const primaryContext = selectAgentContext(run, { role: 'primary' });
   const signalRelPath =
     context.signalFile ?? taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
@@ -1494,7 +1515,7 @@ async function sendFeedbackToWorker(
       taskFile: fixTaskFile,
       taskDir,
     });
-    const cmd = `${baseCmd}\n\nFarmslot fix delivery attempt: ${fixAttemptStartedAt}`;
+    const cmd = selfReviewFixPrompt(baseCmd, taskDir, fixTaskFile, fixAttemptStartedAt);
     const runner = normalizeRunner(run?.metrics.runner);
     let lastRetainedHoldReason: string | null = null;
     let terminalRetainedHoldReason: string | null = null;
@@ -1737,10 +1758,15 @@ async function relaunchWorkerForFix(
   );
   const prompt =
     parentRun?.project && fixContext?.taskFile && fixContext.attemptStartedAt
-      ? `${await resolveWorkerDispatchPrompt(parentRun.project, {
-          taskFile: fixContext.taskFile,
-          taskDir: path.posix.dirname(fixContext.taskFile),
-        })}\n\nFarmslot fix delivery attempt: ${fixContext.attemptStartedAt}`
+      ? selfReviewFixPrompt(
+          await resolveWorkerDispatchPrompt(parentRun.project, {
+            taskFile: fixContext.taskFile,
+            taskDir: path.posix.dirname(fixContext.taskFile),
+          }),
+          path.posix.dirname(fixContext.taskFile),
+          fixContext.taskFile,
+          fixContext.attemptStartedAt,
+        )
       : 'Continue working on the current TASK.md and self-review fix feedback.';
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
   const parentSafetyTier = parentRun?.safetyTier;

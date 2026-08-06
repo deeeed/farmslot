@@ -2,10 +2,10 @@
 
 > Self-review found issues. Fix them, verify, update artifacts, commit and push.
 
-> **Signal file:** `{{TASK_DIR}}/mark N` for progress; `SELF-REVIEW-FIX-SIGNAL.json` when done. TASK `STATUS` ≠ SIGNAL `status`.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins. After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete | {{TASK_DIR}}/mark no-change --reason "…" | {{TASK_DIR}}/mark blocked --reason "…"` (never hand-write `SIGNAL.json`).
+> **Checklist/signal target:** Always run `{{TASK_DIR}}/mark --checklist SELF-REVIEW-FIX.md --signal SELF-REVIEW-FIX-SIGNAL.json …`. This explicit target survives nested review recovery and keeps progress visible even if the ambient worker checklist changes.
+> **Checklist marker:** Start with `{{TASK_DIR}}/mark --checklist SELF-REVIEW-FIX.md --signal SELF-REVIEW-FIX-SIGNAL.json start`. After each item, replace `…` with its visible 1-based step number. Terminal actions use the same prefix followed by `complete`, `no-change --reason "…"`, or `blocked --reason "…"` (never hand-write a signal file).
 
-**CRITICAL: Never pause or wait for user input. Complete ALL steps. After each step, run `{{TASK_DIR}}/mark N` (or mark `[x]` manually).**
+**CRITICAL: Never pause or wait for user input. Complete ALL steps. After each step, run the explicit checklist/signal marker above. Manually editing a checkbox does not emit the progress signal.**
 
 ---
 
@@ -33,17 +33,17 @@ STATUS: pending
 - Touch ONLY flagged files/lines. No drive-by cleanups, renames, reformatting, or new abstractions.
 - Don't apply a change just to silence the reviewer. If the prescription is wrong, write the correct fix and note why in `report.md`.
 - Each iteration shrinks the issue list, not the diff. Scope creep gets rejected.
-- If the real fix needs broader changes, run `{{TASK_DIR}}/mark blocked --reason "..."` with a one-line reason — don't ship a regression to close the loop, and never hand-write the signal file.
+- If the real fix needs broader changes, run `{{TASK_DIR}}/mark --checklist SELF-REVIEW-FIX.md --signal SELF-REVIEW-FIX-SIGNAL.json blocked --reason "..."` with a one-line reason — don't ship a regression to close the loop, and never hand-write the signal file.
 
 ---
 
 ## Checklist
 
-> If the review issues turn out to require no code changes, write `{{TASK_DIR}}/artifacts/no-change-report.md` explaining why before running `{{TASK_DIR}}/mark no-change --reason "..."`.
+> If the review issues turn out to require no code changes, write `{{TASK_DIR}}/artifacts/no-change-report.md` explaining why before running `{{TASK_DIR}}/mark --checklist SELF-REVIEW-FIX.md --signal SELF-REVIEW-FIX-SIGNAL.json no-change --reason "..."`.
 
 ### Fix (steps 1-3)
 
-- [ ] **1. Update Status** — `STATUS: working` in Task block, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 1`.
+- [ ] **1. Update Status** — `STATUS: working` in Task block, then run the explicit checklist/signal marker with `start`, followed by `1`.
 - [ ] **2. Read the review feedback** — `{{TASK_DIR}}/artifacts/review-feedback.md` has the full analysis. Understand each issue.
 - [ ] **3. Fix each issue:**
   For each issue above:
@@ -145,5 +145,5 @@ Long fix/review loops leave the feature branch behind `origin/main`. Surface tha
 
 - [ ] **10. Signal completion:**
   ```bash
-  {{TASK_DIR}}/mark complete --mark-last
+  {{TASK_DIR}}/mark --checklist SELF-REVIEW-FIX.md --signal SELF-REVIEW-FIX-SIGNAL.json complete --mark-last
   ```

@@ -52,6 +52,7 @@ import {
   unavailableRunnerSessionUsage,
 } from '../runtime/session-usage.js';
 import {
+  checklistMarkerCommand,
   restoreWorkerChecklistTargetFromSlot,
   slotTaskRelPath,
   syncChecklistTargetForRole,
@@ -132,8 +133,7 @@ export function selfReviewChecklistMarkPrompt(
   feedbackRelPath: string,
   resultRelPath?: string | null,
 ): string {
-  const mark = `${taskDir}/mark`;
-  const markWithTarget = `${mark} --checklist ${reviewTarget.checklist} --signal ${reviewTarget.signal}`;
+  const markWithTarget = checklistMarkerCommand(taskDir, reviewTarget);
   return (
     `Follow ${taskMdPath} top-to-bottom. After EVERY checklist step run ${markWithTarget} N ` +
     `(bootstrap with ${markWithTarget} start — same path as the checklist header). ` +

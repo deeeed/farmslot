@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(self-review): keep long worker-fix passes alive while their explicit fix checklist advances, even if the ambient worker checklist target changes.
+
 - fix(run-engine): preserve an existing fix-bug/dev feature branch without reset or clean when replaying from prepare instead of recreating it from main or discarding unpublished work.
 
 - Require a machine-readable verdict and issue artifact from newly launched self-review and publication reviewers, bound live waits to the configured timeout without masking them on cleanup failure, preserve failed and valid sibling outcomes during restart recovery, and terminalize operator-required review failures with coherent replay and opaque-scope-verified process-group cleanup, including the pre-launcher-pid window without trusting recycled identities.
