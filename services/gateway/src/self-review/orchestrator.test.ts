@@ -330,10 +330,15 @@ test('restart recovery re-delivers the existing fix task without rewriting it', 
       deliver: async (options) => {
         delivered = true;
         assert.equal(options.target, 'ff-1:bugfix-restored');
-        assert.equal(
+        assert.match(options.prompt, /^read tasks\/run-1\/SELF-REVIEW-FIX\.md\n\n/);
+        assert.match(
           options.prompt,
-          'read tasks/run-1/SELF-REVIEW-FIX.md\n\nFarmslot fix delivery attempt: 2026-08-04T08:15:00.000Z',
+          /tasks\/run-1\/mark --checklist SELF-REVIEW-FIX\.md --signal SELF-REVIEW-FIX-SIGNAL\.json start/,
         );
+        assert.match(options.prompt, /complete --mark-last/);
+        assert.match(options.prompt, /no-change --reason/);
+        assert.match(options.prompt, /blocked --reason/);
+        assert.match(options.prompt, /Farmslot fix delivery attempt: 2026-08-04T08:15:00\.000Z$/);
         assert.equal(options.sessionId, 'session-1');
         assert.equal(options.sessionPath, '/sessions/session-1.jsonl');
         assert.equal(options.priorPromptSendAttempted, true);
