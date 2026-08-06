@@ -25,6 +25,21 @@ export const runPipelineStyles = css`
     color: ${unsafeCSS(colors.statusFail)};
     background: ${unsafeCSS(colors.statusFail)}12;
   }
+  .pipeline-status-row {
+    display: flex;
+    align-items: flex-start;
+    gap: ${unsafeCSS(spacing.sm)};
+    margin-bottom: ${unsafeCSS(spacing.sm)};
+  }
+  .pipeline-status-row .review-recovery {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+  }
+  .pipeline-status-row .controls {
+    position: static;
+    flex: 0 0 auto;
+  }
 
   .pipeline-svg {
     display: block;

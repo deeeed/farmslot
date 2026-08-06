@@ -103,8 +103,14 @@ recoverable. Once completion is established by a successful `complete`/`done` si
 process/window completion, a missing or invalid structured result is stable: recovery marks the
 reviewer blocked, records `reviewRecovery.status = "operator-required"`, preserves valid sibling
 results, replays the human gate, and stops polling. Fresh failed and blocked terminal signals persist
-a visible failed-review outcome without retry; stale prior-attempt signals are ignored. Reproduce the
-production gateway regression against the broken baseline and current gateway paths with:
+a visible failed-review outcome without retry; stale prior-attempt signals are ignored. An idle or
+shell-looking pane is not completion evidence, so partial artifacts remain recoverable while its
+runner is alive. The live wait still ends at `review_timeout_min`; a newly launched reviewer window
+is killed by its resolved tmux window ID before the caller raises the timeout, while an operator can
+end the wait earlier with a shared failed or blocked terminal signal. The registered scenario uses
+only its generated session, window, and child-process IDs for cleanup; it never scans or kills by a
+shared name pattern. Reproduce the production gateway regression against the broken baseline and
+current gateway paths with:
 
 ```bash
 node scripts/runner-validation/run.mjs --scenario review-recovery-terminal-contract --out-dir docs/operations/evidence

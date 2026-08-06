@@ -20,9 +20,8 @@ export function isSuccessfulTerminalReviewSignal(
 export function terminalReviewArtifactErrorForCompletion(
   reviewerContextId: string,
   terminalInvalidReason: string | undefined,
-  completionEstablished: boolean,
 ): TerminalReviewArtifactError | undefined {
-  if (!completionEstablished || !terminalInvalidReason) return undefined;
+  if (!terminalInvalidReason) return undefined;
   return new TerminalReviewArtifactError(
     `Reviewer ${reviewerContextId} completed with an invalid result artifact: ${terminalInvalidReason}`,
   );

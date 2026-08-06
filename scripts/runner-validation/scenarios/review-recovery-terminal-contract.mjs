@@ -19,7 +19,10 @@ function exposeBaselineWaitContract(baselineRoot) {
       'async function waitForReviewCompletion(',
       'export async function waitForReviewCompletion(',
     )
-    .replace('const pollInterval = 10_000; // 10s', 'const pollInterval = 25;');
+    .replace(
+      'const pollInterval = 10_000; // 10s',
+      "const pollInterval = reviewWindow === 'wait-overdue' ? 4_000 : 25;",
+    );
   if (exposed === original) {
     throw new Error('main-reachable baseline wait contract could not be exposed');
   }
@@ -60,7 +63,8 @@ export async function runScenario({ outDir }) {
     runner,
     baselineSha: BASELINE_SHA,
     baselineReachability: 'origin/main',
-    baselineAdaptation: 'export waitForReviewCompletion and shorten only its poll interval',
+    baselineAdaptation:
+      'export waitForReviewCompletion; use 25ms polls except a 4s overdue poll that preserves the production deadline miss',
     baseline: null,
     current: null,
     baselineLog: [],

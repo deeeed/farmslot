@@ -1225,8 +1225,6 @@ async function cleanupSlotProcesses(slotId: string): Promise<void> {
     `    if [ -n "$p" ] && kill "$p" 2>/dev/null; then echo "killed $pf ($p)"; fi;`,
     `  fi;`,
     `done`,
-    // Kill by slot pattern (catches nohup'd launch-browser.sh)
-    `if pkill -f "tsx.*launch-browser.*${slotId}" 2>/dev/null; then echo "killed launch-browser for ${slotId}"; fi`,
     // Kill webpack by dev-server port
     port
       ? `if pids=$(lsof -ti ":${port}" 2>/dev/null); then if [ -n "$pids" ]; then kill $pids; fi; else rc=$?; if [ "$rc" -ne 1 ]; then exit "$rc"; fi; fi`

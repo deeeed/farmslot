@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Require a machine-readable verdict and issue artifact from newly launched self-review and publication reviewers, bound live waits to the configured timeout, preserve failed and valid sibling outcomes during restart recovery, and terminalize operator-required review failures with coherent replay and slot cleanup.
+- Require a machine-readable verdict and issue artifact from newly launched self-review and publication reviewers, bound live waits to the configured timeout, preserve failed and valid sibling outcomes during restart recovery, and terminalize operator-required review failures with coherent replay and exact-ID slot cleanup.
 
 - Route CI-watch follow-ups through the runner capability with the original worker's exact retained-session binding, and submit an already-buffered runner prompt before waiting for an empty composer, so retained work and independent reviews cannot stall after a dropped Enter.
 

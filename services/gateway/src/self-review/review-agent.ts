@@ -560,7 +560,6 @@ async function recoverRunningReviewAgent(params: {
     const terminalArtifactError = terminalReviewArtifactErrorForCompletion(
       context.id,
       feedback.terminalInvalidReason,
-      completed,
     );
     if (terminalArtifactError) {
       await abandonRecoveredReviewer('invalid recovered reviewer artifact cleanup', 'blocked');
@@ -993,7 +992,7 @@ export async function runReviewAgent(
       contextId: allocated.id,
       role: 'self-review',
     });
-    const completed = await waitForReviewCompletion(
+    await waitForReviewCompletionOrThrow(
       vars,
       session,
       taskDir,
@@ -1006,11 +1005,6 @@ export async function runReviewAgent(
       feedbackRelPath,
       resultRelPath,
     );
-    if (!completed) {
-      throw new Error(
-        `Self-review agent did not complete within ${reviewTimeoutMs}ms (${reviewTimeoutMs / 60_000}min). Bump self_review.review_timeout_min in projects/${vars.projectName}/project.json if reviews need longer.`,
-      );
-    }
     await waitForSessionTranscriptToSettle(vars, sessionMeta.runnerSessionPath);
     const usage = sessionMeta.error
       ? unavailableRunnerSessionUsage({
@@ -1040,7 +1034,6 @@ export async function runReviewAgent(
     const terminalArtifactError = terminalReviewArtifactErrorForCompletion(
       allocated.id,
       feedback.terminalInvalidReason,
-      completed,
     );
     if (terminalArtifactError) throw terminalArtifactError;
     if (feedback.incomplete) {
@@ -1186,25 +1179,29 @@ export async function waitForReviewCompletion(
       `Reviewer ${reviewContextId} completed with an invalid result artifact: ${reason}`,
     );
   };
-  const completedOutputIsValid = async (strict: boolean): Promise<boolean> => {
+  const completedOutputIsValid = async (completionEstablished: boolean): Promise<boolean> => {
     if (!(await outputExists(requiredOutputPaths[0]!))) {
-      if (!strict) return false;
+      if (!completionEstablished) return false;
       return terminalInvalid(`${feedbackRelPath} is missing`);
     }
     if (resultRelPath && !(await outputExists(requiredOutputPaths[1]!))) {
+      if (!completionEstablished) return false;
       return terminalInvalid(`${resultRelPath} is missing`);
     }
     if (resultRelPath) {
       const feedback = await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath);
       if (feedback.terminalInvalidReason) {
+        if (!completionEstablished) return false;
         return terminalInvalid(feedback.terminalInvalidReason);
       }
     }
     return true;
   };
+  let reviewerWasObservedActive = false;
 
   while (true) {
-    await new Promise((r) => setTimeout(r, pollInterval));
+    const remainingMs = Math.max(0, timeoutMs - (Date.now() - start));
+    await new Promise((r) => setTimeout(r, Math.min(pollInterval, remainingMs)));
     let reviewerActive = false;
 
     // Check if the review window still exists
@@ -1219,8 +1216,9 @@ export async function waitForReviewCompletion(
       ).exitCode === 0;
 
     if (!hasWindow) {
-      // Window disappearance is only success after the review artifact exists.
-      if (await completedOutputIsValid(false)) {
+      // Window disappearance establishes completion. Required artifacts must
+      // now be valid; unlike pane heuristics, this branch may fail closed.
+      if (await completedOutputIsValid(true)) {
         debugSelfReviewLog(`[self-review] review window gone + feedback written — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
           id: reviewContextId,
@@ -1253,11 +1251,12 @@ export async function waitForReviewCompletion(
     if (panePid) {
       const agentAlive = await isRunnerAliveUnderPane(vars, panePid, runner);
       reviewerActive = agentAlive;
+      reviewerWasObservedActive ||= agentAlive;
 
       if (!agentAlive) {
-        // Runner exited but window still exists — only declare done if feedback was written.
-        // Without this gate, a false positive fires during runner startup before it has forked.
-        if (await completedOutputIsValid(false)) {
+        // Only absence after observing the process is completion. A runner can
+        // be temporarily absent while its launcher is still starting.
+        if (await completedOutputIsValid(reviewerWasObservedActive)) {
           debugSelfReviewLog(
             `[self-review] ${runner} process exited + feedback written — agent completed`,
           );
@@ -1367,4 +1366,40 @@ export async function waitForReviewCompletion(
       return false;
     }
   }
+}
+
+export async function waitForReviewCompletionOrThrow(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  session: string,
+  taskDir: string,
+  timeoutMs: number,
+  runId: string,
+  runner: string,
+  reviewWindow: string,
+  reviewContextId: string,
+  signalBasename: string,
+  feedbackRelPath: string,
+  resultRelPath?: string | null,
+  pollInterval?: number,
+): Promise<void> {
+  const completed = await waitForReviewCompletion(
+    vars,
+    session,
+    taskDir,
+    timeoutMs,
+    runId,
+    runner,
+    reviewWindow,
+    reviewContextId,
+    signalBasename,
+    feedbackRelPath,
+    resultRelPath,
+    pollInterval,
+  );
+  if (completed) return;
+
+  await killSelfReviewWindow(vars, session, 'review timeout cleanup', reviewWindow);
+  throw new Error(
+    `Self-review agent did not complete within ${timeoutMs}ms (${timeoutMs / 60_000}min). Bump self_review.review_timeout_min in projects/${vars.projectName}/project.json if reviews need longer.`,
+  );
 }

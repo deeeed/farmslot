@@ -1,7 +1,15 @@
 #!/usr/bin/env tsx
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -45,6 +53,20 @@ interface ReviewAgentModule {
     resultRelPath?: string | null,
     pollInterval?: number,
   ): Promise<boolean>;
+  waitForReviewCompletionOrThrow?(
+    vars: unknown,
+    session: string,
+    taskDir: string,
+    timeoutMs: number,
+    runId: string,
+    runner: string,
+    reviewWindow: string,
+    reviewContextId: string,
+    signalBasename: string,
+    feedbackRelPath: string,
+    resultRelPath?: string | null,
+    pollInterval?: number,
+  ): Promise<void>;
 }
 
 interface SessionProcessModule {
@@ -79,8 +101,12 @@ interface WaitBehaviorSnapshot {
   missingJsonTerminalInvalid: boolean;
   invalidJsonTerminalInvalid: boolean;
   noSignalInvalidJsonTerminalInvalid: boolean;
-  overdueReviewerAlive: boolean;
+  activeInvalidRemainedRecoverable: boolean;
+  activeInvalidReviewerAlive: boolean;
+  overdueSettledBeforeDeadline: boolean;
   overdueReviewerTimedOut: boolean;
+  overdueReviewWindowKilledBeforeThrow: boolean;
+  overdueNeighborWindowPreserved: boolean;
 }
 
 interface PipelineSnapshot {
@@ -129,6 +155,9 @@ const activeEpisodeRunId = 'active-episode-contract-run';
 const slotId = 'review-recovery-validation';
 const project = 'review-recovery-validation';
 const waitSession = `review-recovery-wait-${process.pid}`;
+const runnerPath = path.join(tempRoot, 'bin', 'scripted-runner');
+const generatedRunnerPids = new Set<number>();
+let waitSessionId: string | null = null;
 const startedAt = '2026-08-06T10:00:00.000Z';
 const completedAt = '2026-08-06T10:40:00.000Z';
 const staleSignalAt = '2026-08-06T09:00:00.000Z';
@@ -402,6 +431,7 @@ function seedFixture(): void {
     'wait-missing',
     'wait-invalid',
     'wait-no-signal-invalid',
+    'wait-active-invalid',
     'wait-overdue',
   ].map((id) => contextForRun(id, waitRunId, 'wait'));
   writeJson(
@@ -486,12 +516,82 @@ function recoveryEpisodeSnapshot(run: Run): RecoveryEpisodeSnapshot {
   };
 }
 
-function createWaitWindow(name: string, lifetimeSeconds?: number): void {
-  const args = ['new-window', '-d', '-t', waitSession, '-n', name];
+interface WaitWindow {
+  windowId: string;
+  panePid: string;
+  runnerPid?: number;
+}
+
+function createWaitWindow(name: string, lifetimeSeconds?: number): WaitWindow {
+  const args = [
+    'new-window',
+    '-d',
+    '-P',
+    '-F',
+    '#{window_id}\t#{pane_pid}',
+    '-t',
+    waitSession,
+    '-n',
+    name,
+  ];
   if (lifetimeSeconds !== undefined) {
-    args.push(`bash -c 'exec -a scripted-runner sleep ${lifetimeSeconds}'`);
+    args.push(`${runnerPath} ${lifetimeSeconds}`);
   }
-  execFileSync('tmux', args, { stdio: 'ignore' });
+  const [windowId, panePid] = execFileSync('tmux', args, { encoding: 'utf-8' }).trim().split('\t');
+  assert.ok(windowId);
+  assert.ok(panePid);
+  return { windowId, panePid };
+}
+
+function createActiveShellWindow(name: string, lifetimeSeconds: number): WaitWindow {
+  const pidPath = path.join(tempRoot, `${name}.pid`);
+  const command = `${runnerPath} ${lifetimeSeconds} & child=$!; printf '%s' "$child" > ${pidPath}; printf '$ \\n'; wait "$child"`;
+  const [windowId, panePid] = execFileSync(
+    'tmux',
+    [
+      'new-window',
+      '-d',
+      '-P',
+      '-F',
+      '#{window_id}\t#{pane_pid}',
+      '-t',
+      waitSession,
+      '-n',
+      name,
+      command,
+    ],
+    { encoding: 'utf-8' },
+  )
+    .trim()
+    .split('\t');
+  assert.ok(windowId);
+  assert.ok(panePid);
+  const pidDeadline = Date.now() + 1_000;
+  while (!existsSync(pidPath) && Date.now() < pidDeadline) {
+    execFileSync('sleep', ['0.01']);
+  }
+  const runnerPid = Number(readFileSync(pidPath, 'utf-8'));
+  assert.ok(Number.isInteger(runnerPid) && runnerPid > 1, `${name} runner pid was not recorded`);
+  generatedRunnerPids.add(runnerPid);
+  return { windowId, panePid, runnerPid };
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function tmuxWindowExists(windowId: string): boolean {
+  const ids = execFileSync('tmux', ['list-windows', '-a', '-F', '#{window_id}'], {
+    encoding: 'utf-8',
+  })
+    .trim()
+    .split('\n');
+  return ids.includes(windowId);
 }
 
 function writeWaitSignal(id: string, status: 'complete' | 'failed' | 'blocked'): void {
@@ -503,14 +603,13 @@ async function runWaitBehaviorContract(
   reviewAgent: ReviewAgentModule,
   sessionProcess: SessionProcessModule,
 ): Promise<WaitBehaviorSnapshot> {
-  const runCase = async (id: string, lifetimeSeconds?: number): Promise<boolean | Error> => {
-    createWaitWindow(id, lifetimeSeconds);
+  const waitForCase = async (id: string, timeoutMs = 1): Promise<boolean | Error> => {
     try {
       return await reviewAgent.waitForReviewCompletion(
         vars,
         waitSession,
         'tasks/wait',
-        1,
+        timeoutMs,
         waitRunId,
         'scripted',
         id,
@@ -523,6 +622,14 @@ async function runWaitBehaviorContract(
     } catch (error) {
       return error instanceof Error ? error : new Error(String(error));
     }
+  };
+  const runCase = async (
+    id: string,
+    lifetimeSeconds?: number,
+    timeoutMs?: number,
+  ): Promise<boolean | Error> => {
+    createWaitWindow(id, lifetimeSeconds);
+    return waitForCase(id, timeoutMs);
   };
   const isTerminalInvalid = (result: boolean | Error): boolean =>
     result instanceof Error && result.name === 'TerminalReviewArtifactError';
@@ -559,33 +666,61 @@ async function runWaitBehaviorContract(
     path.join(waitTaskDir, 'artifacts', 'review-result.wait-no-signal-invalid.json'),
     '{"schemaVersion":1,"verdict":"pass"}\n',
   );
-  const noSignalInvalid = await runCase('wait-no-signal-invalid');
+  createActiveShellWindow('wait-no-signal-invalid', 0.2);
+  const noSignalInvalid = await waitForCase('wait-no-signal-invalid', 1_000);
 
-  createWaitWindow('wait-overdue', 0.5);
-  const overduePanePid = execFileSync(
-    'tmux',
-    ['list-panes', '-t', `${waitSession}:wait-overdue`, '-F', '#{pane_pid}'],
-    { encoding: 'utf-8' },
-  ).trim();
-  const overdueReviewerAlive = await sessionProcess.isRunnerAliveUnderPane(
+  writeText(
+    path.join(waitTaskDir, 'artifacts', 'review-feedback.wait-active-invalid.md'),
+    '# Review\n\n## Verdict: PASS\n',
+  );
+  writeText(
+    path.join(waitTaskDir, 'artifacts', 'review-result.wait-active-invalid.json'),
+    '{"schemaVersion":1,"verdict":"pass"}\n',
+  );
+  const activeWindow = createActiveShellWindow('wait-active-invalid', 30);
+  const activeInvalid = await waitForCase('wait-active-invalid');
+  const activeInvalidReviewerAlive = await sessionProcess.isRunnerAliveUnderPane(
     vars,
-    overduePanePid,
+    activeWindow.panePid,
     'scripted',
   );
-  const overdue = await reviewAgent.waitForReviewCompletion(
-    vars,
-    waitSession,
-    'tasks/wait',
-    1,
-    waitRunId,
-    'scripted',
-    'wait-overdue',
-    'wait-overdue',
-    'SELF-REVIEW.wait-overdue-SIGNAL.json',
-    'artifacts/review-feedback.wait-overdue.md',
-    'artifacts/review-result.wait-overdue.json',
-    25,
-  );
+
+  const overdueWindow = createActiveShellWindow('wait-overdue', 30);
+  const overdueNeighbor = createActiveShellWindow('wait-overdue-neighbor', 30);
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const overdueWait = reviewAgent.waitForReviewCompletionOrThrow
+    ? reviewAgent
+        .waitForReviewCompletionOrThrow(
+          vars,
+          waitSession,
+          'tasks/wait',
+          1_000,
+          waitRunId,
+          'scripted',
+          'wait-overdue',
+          'wait-overdue',
+          'SELF-REVIEW.wait-overdue-SIGNAL.json',
+          'artifacts/review-feedback.wait-overdue.md',
+          'artifacts/review-result.wait-overdue.json',
+        )
+        .then(() => ({ timedOut: false }))
+        .catch((error: unknown) => ({
+          timedOut:
+            error instanceof Error && error.message.includes('did not complete within 1000ms'),
+        }))
+    : waitForCase('wait-overdue', 1_000).then((result) => ({ timedOut: result === false }));
+  const overdue = await Promise.race([
+    overdueWait.then((result) => ({ settled: true as const, ...result })),
+    new Promise<{ settled: false }>((resolve) => {
+      deadline = setTimeout(() => resolve({ settled: false }), 3_000);
+    }),
+  ]);
+  if (deadline) clearTimeout(deadline);
+  const overdueReviewWindowKilledBeforeThrow = !tmuxWindowExists(overdueWindow.windowId);
+  const overdueNeighborWindowPreserved =
+    tmuxWindowExists(overdueNeighbor.windowId) &&
+    overdueNeighbor.runnerPid !== undefined &&
+    processIsAlive(overdueNeighbor.runnerPid);
 
   return {
     failedSignalExited: failed === true,
@@ -593,8 +728,12 @@ async function runWaitBehaviorContract(
     missingJsonTerminalInvalid: isTerminalInvalid(missing),
     invalidJsonTerminalInvalid: isTerminalInvalid(invalid),
     noSignalInvalidJsonTerminalInvalid: isTerminalInvalid(noSignalInvalid),
-    overdueReviewerAlive,
-    overdueReviewerTimedOut: overdue === false,
+    activeInvalidRemainedRecoverable: activeInvalid === false,
+    activeInvalidReviewerAlive,
+    overdueSettledBeforeDeadline: overdue.settled,
+    overdueReviewerTimedOut: overdue.settled && overdue.timedOut,
+    overdueReviewWindowKilledBeforeThrow,
+    overdueNeighborWindowPreserved,
   };
 }
 
@@ -611,9 +750,24 @@ function readSlotSnapshot(): { lifecycle: string | null; currentRunId: string | 
 
 async function main(): Promise<void> {
   seedFixture();
-  execFileSync('tmux', ['new-session', '-d', '-s', waitSession, '-n', 'anchor', 'sleep 120'], {
-    stdio: 'ignore',
-  });
+  mkdirSync(path.dirname(runnerPath), { recursive: true });
+  symlinkSync('/bin/sleep', runnerPath);
+  waitSessionId = execFileSync(
+    'tmux',
+    [
+      'new-session',
+      '-d',
+      '-P',
+      '-F',
+      '#{session_id}',
+      '-s',
+      waitSession,
+      '-n',
+      'anchor',
+      'sleep 120',
+    ],
+    { encoding: 'utf-8' },
+  ).trim();
   const store = (await import(
     moduleUrl('services/gateway/src/runs/store.ts')
   )) as unknown as StoreModule;
@@ -743,10 +897,19 @@ main()
     process.exitCode = 1;
   })
   .finally(() => {
-    try {
-      execFileSync('tmux', ['kill-session', '-t', waitSession], { stdio: 'ignore' });
-    } catch {
-      // The session may already have exited after a fatal setup error.
+    for (const pid of generatedRunnerPids) {
+      if (!processIsAlive(pid)) continue;
+      const command = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], {
+        encoding: 'utf-8',
+      }).trim();
+      if (command.startsWith(runnerPath)) process.kill(pid, 'SIGTERM');
+    }
+    if (waitSessionId) {
+      try {
+        execFileSync('tmux', ['kill-session', '-t', waitSessionId], { stdio: 'ignore' });
+      } catch {
+        // The exact generated session may already have exited after a fatal setup error.
+      }
     }
     rmSync(tempRoot, { recursive: true, force: true });
   });

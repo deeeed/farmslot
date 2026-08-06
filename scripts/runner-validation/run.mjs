@@ -61,10 +61,10 @@ async function main() {
   for (const runnerId of runners) {
     const runnerAdapter = getRunnerAdapter(runnerId);
     for (const scenarioId of scenarios) {
-      sleepMs(3000);
       const scenario = SCENARIOS[scenarioId];
       if (scenario.RUNNER_AGNOSTIC && completedRunnerAgnosticScenarios.has(scenarioId)) continue;
       if (scenario.RUNNER_AGNOSTIC) completedRunnerAgnosticScenarios.add(scenarioId);
+      sleepMs(3000);
       const result = await scenario.runScenario({
         runnerAdapter,
         timeoutMs: args.timeoutMs,

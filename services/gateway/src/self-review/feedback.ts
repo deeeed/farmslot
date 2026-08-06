@@ -9,10 +9,16 @@ import type { ReviewAgentResult } from './review-agent.js';
 
 // ─── Read review output ───
 
-interface StructuredReviewFeedback {
-  schemaVersion: 1;
-  verdict: 'pass' | 'issues';
-  issues: SelfReviewIssue[];
+interface StructuredReviewFeedbackCandidate {
+  schemaVersion?: unknown;
+  verdict?: unknown;
+  issues?: unknown;
+}
+
+interface StructuredReviewIssueCandidate {
+  file?: unknown;
+  line?: unknown;
+  description?: unknown;
 }
 
 export function parseStructuredReviewFeedback(
@@ -38,26 +44,31 @@ export function parseStructuredReviewFeedback(
       terminalInvalidReason: `${resultRelPath} must contain a JSON object`,
     };
   }
-  const candidate = parsed as Partial<StructuredReviewFeedback>;
+  const candidate = parsed as StructuredReviewFeedbackCandidate;
+  const verdict =
+    typeof candidate.verdict === 'string' ? candidate.verdict.trim().toLowerCase() : undefined;
   const issues = Array.isArray(candidate.issues) ? candidate.issues : null;
   const validIssues =
-    issues?.every(
-      (issue) =>
+    issues?.every((value) => {
+      const issue = value as StructuredReviewIssueCandidate;
+      return (
         !!issue &&
         typeof issue === 'object' &&
         typeof issue.file === 'string' &&
         issue.file.trim().length > 0 &&
         (issue.line === undefined ||
+          issue.line === null ||
           (typeof issue.line === 'number' && Number.isInteger(issue.line) && issue.line > 0)) &&
         typeof issue.description === 'string' &&
-        issue.description.trim().length > 0,
-    ) ?? false;
+        issue.description.trim().length > 0
+      );
+    }) ?? false;
   if (
     candidate.schemaVersion !== 1 ||
-    (candidate.verdict !== 'pass' && candidate.verdict !== 'issues') ||
+    (verdict !== 'pass' && verdict !== 'issues') ||
     !validIssues ||
-    (candidate.verdict === 'pass' && issues!.length !== 0) ||
-    (candidate.verdict === 'issues' && issues!.length === 0)
+    (verdict === 'pass' && issues!.length !== 0) ||
+    (verdict === 'issues' && issues!.length === 0)
   ) {
     return {
       verdict: 'issues',
@@ -68,7 +79,12 @@ export function parseStructuredReviewFeedback(
         'or verdict issues + at least one { file, line?, description } issue',
     };
   }
-  return { verdict: candidate.verdict, issues: issues! };
+  const normalizedIssues = (issues as StructuredReviewIssueCandidate[]).map((issue) => ({
+    file: issue.file as string,
+    ...(typeof issue.line === 'number' ? { line: issue.line } : {}),
+    description: issue.description as string,
+  }));
+  return { verdict, issues: normalizedIssues };
 }
 
 export async function readReviewFeedback(

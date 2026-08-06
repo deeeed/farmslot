@@ -69,7 +69,6 @@ test('established completion makes an invalid structured result terminal', () =>
   const error = terminalReviewArtifactErrorForCompletion(
     'reviewer-1',
     'review-result.json is invalid',
-    true,
   );
 
   assert.match(error?.message ?? '', /review-result\.json is invalid/);
@@ -80,16 +79,25 @@ test('structured result parser preserves schema v1 issues and fails closed on co
     parseStructuredReviewFeedback(
       JSON.stringify({
         schemaVersion: 1,
-        verdict: 'issues',
-        issues: [{ file: 'src/review.ts', line: 7, description: 'Keep this finding.' }],
+        verdict: 'ISSUES',
+        issues: [{ file: 'src/review.ts', line: null, description: 'Keep this finding.' }],
       }),
       'artifacts/review-result.json',
     ),
     {
       verdict: 'issues',
-      issues: [{ file: 'src/review.ts', line: 7, description: 'Keep this finding.' }],
+      issues: [{ file: 'src/review.ts', description: 'Keep this finding.' }],
     },
   );
+  const invalidCardinality = parseStructuredReviewFeedback(
+    JSON.stringify({
+      schemaVersion: 1,
+      verdict: 'PASS',
+      issues: [{ file: 'src/review.ts', description: 'Pass cannot contain findings.' }],
+    }),
+    'artifacts/review-result.json',
+  );
+  assert.equal(invalidCardinality.incomplete, true);
   const corrupt = parseStructuredReviewFeedback('{', 'artifacts/review-result.json');
   assert.equal(corrupt.verdict, 'issues');
   assert.equal(corrupt.incomplete, true);
