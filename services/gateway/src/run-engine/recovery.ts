@@ -31,6 +31,10 @@ const S = PipelineSteps;
 const RECONCILE_INTERVAL_MS = 60_000; // 60s
 let orphanReconcileInFlight = false;
 
+type PublicationReviewRecoveryState = NonNullable<
+  NonNullable<Run['engineState']>['publishGate']
+>['reviewRecovery'];
+
 interface FleetSlotSnapshot {
   slot: string;
   lifecycle: string;
@@ -153,9 +157,10 @@ export function markTerminalReviewArtifactOperatorRequired(
   deps: Pick<RunRecoveryCollaborators, 'updateRun'>,
   run: Run,
   message: string,
+  recoveryForensics?: PublicationReviewRecoveryState,
 ): void {
   const now = new Date().toISOString();
-  const previous = run.engineState?.publishGate?.reviewRecovery;
+  const previous = recoveryForensics ?? run.engineState?.publishGate?.reviewRecovery;
   deps.updateRun(run.id, {
     engineState: {
       ...run.engineState,
@@ -345,6 +350,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       isPublicationReviewRecoveryHeld(run) &&
       hasRecoverablePublicationReviewer(run)
     ) {
+      const recoveryForensics = run.engineState?.publishGate?.reviewRecovery
+        ? { ...run.engineState.publishGate.reviewRecovery }
+        : undefined;
       let recoveryResult: PublicationReviewRecoveryResult;
       try {
         recoveryResult = await deps.recoverInflightPublicationReviews(run.id, run.slotId);
@@ -365,6 +373,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
               deps,
               deps.getRun(run.id) ?? run,
               `${terminalReviewRecoveryMessage(recoveryResult)}; gate replay failed: ${(err as Error).message}`,
+              recoveryForensics,
             );
             continue;
           }
@@ -378,6 +387,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
             deps,
             deps.getRun(run.id) ?? run,
             terminalReviewRecoveryMessage(recoveryResult),
+            recoveryForensics,
           );
         }
         continue;
@@ -388,6 +398,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
           deps,
           deps.getRun(run.id) ?? run,
           terminalReviewRecoveryMessage(recoveryResult),
+          recoveryForensics,
         );
         continue;
       }

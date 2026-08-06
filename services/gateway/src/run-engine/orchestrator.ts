@@ -564,9 +564,13 @@ export async function startRun(runId: string): Promise<void> {
           `[run-engine] run ${runId.slice(0, 8)} step ${stepName} requires operator review: ${msg}`,
         );
         markTerminalReviewArtifactOperatorRequired({ updateRun }, interruptedRun, msg);
-        updateRunStep(runId, stepName, { detail: msg });
+        updateRunStep(runId, stepName, {
+          status: 'done',
+          detail: msg,
+          completedAt: new Date().toISOString(),
+        });
         updateRun(runId, { status: 'blocked', error: msg });
-        broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+        await finalizeNonThrownTerminalRun(runId, i + 1, steps);
         return;
       }
 

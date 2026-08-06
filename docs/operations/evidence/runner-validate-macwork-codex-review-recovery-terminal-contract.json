@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-06T16:18:01.157Z",
+  "host": "macwork",
+  "scenario": "review-recovery-terminal-contract",
+  "runner": "codex",
+  "baselineSha": "2f5299c7d4c1ed675875d7107d15d1f71970547d",
+  "baseline": {
+    "sourceSha": "2f5299c7d4c1ed675875d7107d15d1f71970547d",
+    "recovery": {
+      "recoveryStatus": "operator-required",
+      "recoveryAttempts": 38,
+      "recoveryStartedAt": "2026-08-06T10:00:00.000Z",
+      "nextRetryAtPresent": false,
+      "reviewVerdicts": {
+        "independent-review-3": "pass"
+      },
+      "reviewRecoveryPending": {
+        "independent-review-3": false
+      },
+      "contextStatus": {
+        "rev-missing": "blocked",
+        "rev-invalid": "blocked",
+        "rev-valid": "complete",
+        "rev-failed": "failed",
+        "rev-blocked": "blocked",
+        "rev-stale": "failed",
+        "rev-no-signal-invalid": "blocked"
+      },
+      "contextLastSignalAt": {
+        "rev-missing": null,
+        "rev-invalid": null,
+        "rev-valid": "2026-08-06T16:17:58.202Z",
+        "rev-failed": "2026-08-06T10:40:00.000Z",
+        "rev-blocked": "2026-08-06T10:40:00.000Z",
+        "rev-stale": "2026-08-06T09:00:00.000Z",
+        "rev-no-signal-invalid": null
+      },
+      "gateReplayed": true
+    },
+    "replayClearedRecovery": false,
+    "pipeline": {
+      "status": "blocked",
+      "currentStepStatus": "running",
+      "remainingStepStatuses": {
+        "finalize": "pending",
+        "ci-watch": "pending"
+      },
+      "completedAtPresent": false,
+      "metricsOutcome": null,
+      "durationRecorded": false,
+      "slotLifecycle": "busy",
+      "slotCurrentRunId": "pipeline-terminal-contract-run"
+    },
+    "noSignalCorruptJsonOperatorRequired": false,
+    "contractSatisfied": false
+  },
+  "current": {
+    "sourceSha": "working-tree@2f5299c7d4c1ed675875d7107d15d1f71970547d",
+    "recovery": {
+      "recoveryStatus": "operator-required",
+      "recoveryAttempts": 38,
+      "recoveryStartedAt": "2026-08-06T10:00:00.000Z",
+      "nextRetryAtPresent": false,
+      "reviewVerdicts": {
+        "independent-review-3": "pass",
+        "independent-review-4": "failed",
+        "independent-review-5": "failed"
+      },
+      "reviewRecoveryPending": {
+        "independent-review-3": false,
+        "independent-review-4": false,
+        "independent-review-5": false
+      },
+      "contextStatus": {
+        "rev-missing": "blocked",
+        "rev-invalid": "blocked",
+        "rev-valid": "complete",
+        "rev-failed": "failed",
+        "rev-blocked": "blocked",
+        "rev-stale": "failed",
+        "rev-no-signal-invalid": "blocked"
+      },
+      "contextLastSignalAt": {
+        "rev-missing": null,
+        "rev-invalid": null,
+        "rev-valid": "2026-08-06T16:18:00.291Z",
+        "rev-failed": "2026-08-06T10:40:00.000Z",
+        "rev-blocked": "2026-08-06T10:40:00.000Z",
+        "rev-stale": null,
+        "rev-no-signal-invalid": null
+      },
+      "gateReplayed": true
+    },
+    "replayClearedRecovery": true,
+    "pipeline": {
+      "status": "blocked",
+      "currentStepStatus": "done",
+      "remainingStepStatuses": {
+        "finalize": "skipped",
+        "ci-watch": "skipped"
+      },
+      "completedAtPresent": true,
+      "metricsOutcome": "partial",
+      "durationRecorded": true,
+      "slotLifecycle": "ready",
+      "slotCurrentRunId": null
+    },
+    "noSignalCorruptJsonOperatorRequired": true,
+    "contractSatisfied": true
+  },
+  "baselineLog": [
+    "[pty] set tmux escape-time=10 status-left-length=30",
+    "[run-store] loaded 2 runs from disk",
+    "[run-engine] recovering 2 active run(s)",
+    "[run-engine] run pipeline — paused, skipping recovery",
+    "[run-engine] run recovery — recovered in-flight publication review independent-review-3 (verdict pass) from reviewer context rev-valid",
+    "[run] replay from human-gate — re-claimed slot review-recovery-validation",
+    "[run] replay from human-gate — refreshed 0 worker artifact(s) before rebuilding the gate",
+    "[run] replaying recovery from step human-gate",
+    "[run] replay from human-gate — re-claimed slot review-recovery-validation",
+    "[run] replay from human-gate — refreshed 0 worker artifact(s) before rebuilding the gate",
+    "[run] replaying recovery from step human-gate",
+    "[run-engine] starting run pipeline from step 8/11 (human-gate) gen=0",
+    "[run-engine] run pipeline — superseded 1 stale human-gate decision(s) on gate entry"
+  ],
+  "currentLog": [
+    "[pty] set tmux escape-time=10 status-left-length=30",
+    "[run-store] loaded 2 runs from disk",
+    "[run-engine] recovering 2 active run(s)",
+    "[run-engine] run pipeline — paused, skipping recovery",
+    "[run-engine] run recovery — recovered in-flight publication review independent-review-3 (verdict pass) from reviewer context rev-valid",
+    "[run-engine] run recovery — recovered terminal failed publication review independent-review-4 from reviewer context rev-failed",
+    "[run-engine] run recovery — recovered terminal blocked publication review independent-review-5 from reviewer context rev-blocked",
+    "[run] replay from human-gate — re-claimed slot review-recovery-validation",
+    "[run] replay from human-gate — refreshed 0 worker artifact(s) before rebuilding the gate",
+    "[run] replaying recovery from step human-gate",
+    "[run] replay from human-gate — re-claimed slot review-recovery-validation",
+    "[run] replay from human-gate — refreshed 0 worker artifact(s) before rebuilding the gate",
+    "[run] replaying recovery from step human-gate",
+    "[run-engine] starting run pipeline from step 8/11 (human-gate) gen=0",
+    "[run-engine] run pipeline — superseded 1 stale human-gate decision(s) on gate entry",
+    "[run-engine] cleaned up slot processes for review-recovery-validation",
+    "[run-engine] slot review-recovery-validation reset to ready/idle after non-thrown blocked"
+  ],
+  "failBefore": true,
+  "passAfter": true,
+  "pass": true,
+  "error": null
+}

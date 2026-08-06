@@ -499,16 +499,12 @@ async function ingestRecoveredReviewer(
   recoveryContinuationPending: boolean,
 ): Promise<string | null> {
   const signal = await readReviewerTerminalSignal(vars, ctx);
-  if (signal && !isSuccessfulTerminalReviewSignal(signal)) {
-    await markAgentContextStatus(
-      runId,
-      'self-review',
-      signal.status === 'blocked' ? 'blocked' : 'failed',
-      { id: ctx.id, lastSignalAt: signal.timestamp },
-    );
-    return null;
+  const freshnessAnchor = ctx.attemptStartedAt ?? ctx.startedAt;
+  const freshSignal = signal && signalFreshSince(signal, freshnessAnchor) ? signal : undefined;
+  if (freshSignal && !isSuccessfulTerminalReviewSignal(freshSignal)) {
+    return persistRecoveredFailedReviewer(runId, ctx, freshSignal, stampablePackage);
   }
-  if (!signal && (ctx.status === 'working' || ctx.status === 'launching')) {
+  if (!freshSignal && (ctx.status === 'working' || ctx.status === 'launching')) {
     const promptRecovery = await resumeReviewAgentPromptDelivery(vars, runId, ctx);
     if (promptRecovery === 'inactive') {
       await markAgentContextStatus(runId, 'self-review', 'failed', { id: ctx.id });
@@ -530,7 +526,14 @@ async function ingestRecoveredReviewer(
     reviewerFeedbackRelPath(ctx.id),
     ctx.reviewResultFile,
   );
-  if ((signal || ctx.status === 'complete') && feedback.terminalInvalidReason) {
+  const completedContextIsFresh =
+    ctx.status === 'complete' &&
+    !!ctx.completedAt &&
+    (!freshnessAnchor || Date.parse(ctx.completedAt) >= Date.parse(freshnessAnchor));
+  if (
+    (isSuccessfulTerminalReviewSignal(freshSignal) || completedContextIsFresh) &&
+    feedback.terminalInvalidReason
+  ) {
     await markAgentContextStatus(runId, 'self-review', 'blocked', { id: ctx.id });
     throw new TerminalReviewArtifactError(
       `Reviewer ${ctx.id} completed with an invalid result artifact: ${feedback.terminalInvalidReason}`,
@@ -550,7 +553,7 @@ async function ingestRecoveredReviewer(
   const review = buildRecoveredReview({
     run: latest,
     ctx,
-    signal,
+    signal: freshSignal,
     feedback,
     reviewSnapshot,
     reviewedPackage: stampablePackage,
@@ -605,6 +608,80 @@ async function ingestRecoveredReviewer(
   });
   console.log(
     `[run-engine] run ${runId.slice(0, 8)} — recovered in-flight publication review ${persisted.id} (verdict ${persisted.verdict}) from reviewer context ${ctx.id}`,
+  );
+  return persisted.id;
+}
+
+async function persistRecoveredFailedReviewer(
+  runId: string,
+  ctx: AgentContext,
+  signal: WorkerSignal,
+  reviewedPackage: ReadyGatePrPackage | undefined,
+): Promise<string> {
+  const latest = getRun(runId)!;
+  const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
+  const reviewId = recoveredReviewArtifactScope(
+    ctx,
+    EXTRA_REVIEW_SOURCE.artifactRefs(priorReviews.length + 1).id,
+  );
+  const existingIndex = priorReviews.findIndex((review) => review.id === reviewId);
+  const existing = existingIndex >= 0 ? priorReviews[existingIndex] : undefined;
+  const validationDepth = existing?.validationDepth ?? 'full-live';
+  const failed = buildPublishGateReviewStatus({
+    source:
+      latest.engineState?.publishGate?.reviewDepth?.requestedBy === 'dispatch'
+        ? 'dispatch'
+        : 'human-gate',
+    priorReviewCount: priorReviews.length,
+    reviewResult: {
+      verdict: 'blocked',
+      reason: `reviewer-${signal.status}`,
+      runner: ctx.runner ?? undefined,
+      model: ctx.model ?? undefined,
+      retryCount: 0,
+      validationDepth,
+      attempts: [
+        {
+          loopNumber: 1,
+          verdict: 'failed',
+          unresolvedCount: 0,
+          validationDepth,
+          startedAt: ctx.attemptStartedAt ?? ctx.startedAt,
+          completedAt: signal.timestamp,
+        },
+      ],
+    },
+    requestedRunner: ctx.runner ?? null,
+    workerRunner: latest.metrics.runner,
+    model: ctx.model ?? latest.metrics.actualModel ?? latest.metrics.model ?? null,
+    reviewId,
+    reviewedPackage: reviewedPackage ?? null,
+  });
+  const reviewToPersist = {
+    ...(existing ? appendRecoveredContinuationAttempt(existing, failed) : failed),
+    recoveryContinuationPending: false,
+  };
+  const [persisted] = await persistIndependentReviewArtifactsForRun(latest, [reviewToPersist]);
+  const nextReviews = [...priorReviews];
+  if (existingIndex >= 0) nextReviews[existingIndex] = persisted;
+  else nextReviews.push(persisted);
+  updateRun(runId, {
+    engineState: {
+      ...latest.engineState,
+      publishGate: {
+        ...latest.engineState?.publishGate,
+        independentReviews: nextReviews,
+      },
+    },
+  });
+  await markAgentContextStatus(
+    runId,
+    'self-review',
+    signal.status === 'blocked' ? 'blocked' : 'failed',
+    { id: ctx.id, lastSignalAt: signal.timestamp },
+  );
+  console.log(
+    `[run-engine] run ${runId.slice(0, 8)} — recovered terminal ${signal.status} publication review ${persisted.id} from reviewer context ${ctx.id}`,
   );
   return persisted.id;
 }

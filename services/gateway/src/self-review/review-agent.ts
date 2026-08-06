@@ -90,6 +90,7 @@ import {
   isSuccessfulTerminalReviewSignal,
   isTerminalReviewArtifactError,
   TerminalReviewArtifactError,
+  terminalReviewArtifactErrorForCompletion,
 } from './terminal-result.js';
 
 /** Progress mark writes status "running"; only terminal worker signals count as done. */
@@ -458,8 +459,11 @@ async function recoverRunningReviewAgent(params: {
   )
     return null;
 
-  const abandonRecoveredReviewer = async (reason: string): Promise<null> => {
-    await markAgentContextStatus(params.runId, 'self-review', 'failed', { id: context.id });
+  const abandonRecoveredReviewer = async (
+    reason: string,
+    status: 'failed' | 'blocked' = 'failed',
+  ): Promise<null> => {
+    await markAgentContextStatus(params.runId, 'self-review', status, { id: context.id });
     try {
       await killSelfReviewWindow(params.vars, params.session, reason, context.target?.window);
     } catch (error) {
@@ -547,10 +551,14 @@ async function recoverRunningReviewAgent(params: {
       await readReviewFeedback(params.vars, params.taskDir, feedbackRelPath, resultRelPath),
       terminalSignal,
     );
-    if (feedback.terminalInvalidReason && isSuccessfulTerminalReviewSignal(terminalSignal)) {
-      throw new TerminalReviewArtifactError(
-        `Reviewer ${context.id} completed with an invalid result artifact: ${feedback.terminalInvalidReason}`,
-      );
+    const terminalArtifactError = terminalReviewArtifactErrorForCompletion(
+      context.id,
+      feedback.terminalInvalidReason,
+      completed,
+    );
+    if (terminalArtifactError) {
+      await abandonRecoveredReviewer('invalid recovered reviewer artifact cleanup', 'blocked');
+      throw terminalArtifactError;
     }
     await waitForSessionTranscriptToSettle(params.vars, context.runnerSessionPath ?? null);
     const usage = context.runnerSessionPath
@@ -1023,11 +1031,12 @@ export async function runReviewAgent(
       await readReviewFeedback(vars, taskDir, feedbackRelPath, resultRelPath),
       terminalSignal,
     );
-    if (feedback.terminalInvalidReason && isSuccessfulTerminalReviewSignal(terminalSignal)) {
-      throw new TerminalReviewArtifactError(
-        `Reviewer ${allocated.id} completed with an invalid result artifact: ${feedback.terminalInvalidReason}`,
-      );
-    }
+    const terminalArtifactError = terminalReviewArtifactErrorForCompletion(
+      allocated.id,
+      feedback.terminalInvalidReason,
+      completed,
+    );
+    if (terminalArtifactError) throw terminalArtifactError;
     if (feedback.incomplete) {
       return {
         ...feedback,

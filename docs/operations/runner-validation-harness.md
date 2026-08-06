@@ -50,22 +50,23 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 
 ## Scenarios
 
-| Scenario                        | Proves                                                                | Claude/Codex | Cursor            | Grok                   |
-| ------------------------------- | --------------------------------------------------------------------- | ------------ | ----------------- | ---------------------- |
-| `hook-smoke`                    | SessionStart + UserPromptSubmit + Stop + `tmuxPane`                   | live tmux    | skip              | skip                   |
-| `pane-smoke`                    | Launch + response marker in pane                                      | skip         | `--print --trust` | `-p` single-turn       |
-| `interaction-smoke`             | Post-launch TUI flow (blockers + compose)                             | skip         | skip              | **interactive** launch |
-| `dispatch-prompt-smoke`         | Gateway `sendRunnerPostLaunchPrompt` (dispatch parity)                | skip         | skip              | **interactive** launch |
-| `dispatch-prompt-dropped-enter` | Buffered prompt recovery after a deterministically omitted submit key | Codex live   | skip              | skip                   |
-| `dispatch-prompt-mcp-race`      | MCP init race: fixture repro + live force-fail + fix pass             | skip         | skip              | **interactive** launch |
-| `dispatch-prompt-trust`         | Directory-trust / project-directory + classifier send_yes             | skip         | skip              | **fixture**            |
-| `prompt-accepted`               | Sentinel digest ↔ UserPromptSubmit                                    | live         | skip              | skip                   |
-| `retained-safe-send-smoke`      | Exact retained-session follow-up after activity expiry                | live         | skip              | live                   |
-| `turn-boundary`                 | Stop after UserPromptSubmit                                           | live         | skip              | skip                   |
-| `busy-composer`                 | Busy pane regex fixtures                                              | fixtures     | skip              | skip                   |
-| `mode-switch`                   | Bypass / permission mode                                              | live         | skip              | skip                   |
-| `session-attribution-smoke`     | Stale session rejected; hook path + model match                       | live tmux    | skip              | live tmux              |
-| `token-usage-smoke`             | Live `session-usage.sh` on resolved path + model match                | live tmux    | skip              | live tmux              |
+| Scenario                            | Proves                                                                | Claude/Codex | Cursor            | Grok                   |
+| ----------------------------------- | --------------------------------------------------------------------- | ------------ | ----------------- | ---------------------- |
+| `hook-smoke`                        | SessionStart + UserPromptSubmit + Stop + `tmuxPane`                   | live tmux    | skip              | skip                   |
+| `pane-smoke`                        | Launch + response marker in pane                                      | skip         | `--print --trust` | `-p` single-turn       |
+| `interaction-smoke`                 | Post-launch TUI flow (blockers + compose)                             | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-smoke`             | Gateway `sendRunnerPostLaunchPrompt` (dispatch parity)                | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-dropped-enter`     | Buffered prompt recovery after a deterministically omitted submit key | Codex live   | skip              | skip                   |
+| `dispatch-prompt-mcp-race`          | MCP init race: fixture repro + live force-fail + fix pass             | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-trust`             | Directory-trust / project-directory + classifier send_yes             | skip         | skip              | **fixture**            |
+| `prompt-accepted`                   | Sentinel digest ↔ UserPromptSubmit                                    | live         | skip              | skip                   |
+| `review-recovery-terminal-contract` | Restart recovery, replay, terminalization, and slot cleanup           | gateway E2E  | gateway E2E       | gateway E2E            |
+| `retained-safe-send-smoke`          | Exact retained-session follow-up after activity expiry                | live         | skip              | live                   |
+| `turn-boundary`                     | Stop after UserPromptSubmit                                           | live         | skip              | skip                   |
+| `busy-composer`                     | Busy pane regex fixtures                                              | fixtures     | skip              | skip                   |
+| `mode-switch`                       | Bypass / permission mode                                              | live         | skip              | skip                   |
+| `session-attribution-smoke`         | Stale session rejected; hook path + model match                       | live tmux    | skip              | live tmux              |
+| `token-usage-smoke`                 | Live `session-usage.sh` on resolved path + model match                | live tmux    | skip              | live tmux              |
 
 Skipped scenarios record `skipReason` and count as pass so matrices stay honest.
 
@@ -96,18 +97,19 @@ one. For those contexts, the terminal contract requires both files and the JSON 
 Markdown formatting is not positive evidence for the verdict. Legacy in-flight contexts without
 `reviewResultFile` may still use the legacy Markdown parser during migration.
 
-Restart recovery distinguishes waiting from terminal-invalid state. A live reviewer with no terminal
-signal remains recoverable. Once a successful `complete`/`done` terminal signal exists, a missing or
-invalid structured result is stable: recovery marks the reviewer blocked, records
-`reviewRecovery.status = "operator-required"`, preserves valid sibling results, replays the human
-gate, and stops polling. Failed and blocked terminal signals keep their existing failed-review path.
-Reproduce the production gateway regression and regenerate its evidence with:
+Restart recovery distinguishes waiting from terminal-invalid state. Active partial writes remain
+recoverable. Once completion is established by a successful `complete`/`done` signal or reviewer
+process/window completion, a missing or invalid structured result is stable: recovery marks the
+reviewer blocked, records `reviewRecovery.status = "operator-required"`, preserves valid sibling
+results, replays the human gate, and stops polling. Fresh failed and blocked terminal signals persist
+a visible failed-review outcome without retry; stale prior-attempt signals are ignored. Reproduce the
+production gateway regression against the broken baseline and current gateway paths with:
 
 ```bash
-yarn exec tsx scripts/runner-validation/gateway/review-recovery-terminal-contract.mts
+node scripts/runner-validation/run.mjs --runner codex --scenario review-recovery-terminal-contract --out-dir docs/operations/evidence
 ```
 
-Evidence: `evidence/runner-validate-review-recovery-terminal-contract.json`.
+Evidence: `evidence/runner-validate-<host>-codex-review-recovery-terminal-contract.json`.
 
 ## Session binding + attribution
 

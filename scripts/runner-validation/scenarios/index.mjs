@@ -10,6 +10,7 @@ import * as paneSmoke from './pane-smoke.mjs';
 import * as promptAccepted from './prompt-accepted.mjs';
 import * as retainedHandoffSmoke from './retained-handoff-smoke.mjs';
 import * as retainedSafeSendSmoke from './retained-safe-send-smoke.mjs';
+import * as reviewRecoveryTerminalContract from './review-recovery-terminal-contract.mjs';
 import * as sessionAttributionSmoke from './session-attribution-smoke.mjs';
 import * as tokenUsageSmoke from './token-usage-smoke.mjs';
 import * as turnBoundary from './turn-boundary.mjs';
@@ -23,6 +24,7 @@ export const SCENARIOS = {
   'dispatch-prompt-mcp-race': dispatchPromptMcpRace,
   'dispatch-prompt-trust': dispatchPromptTrust,
   'prompt-accepted': promptAccepted,
+  'review-recovery-terminal-contract': reviewRecoveryTerminalContract,
   'retained-handoff-smoke': retainedHandoffSmoke,
   'retained-safe-send-smoke': retainedSafeSendSmoke,
   'turn-boundary': turnBoundary,

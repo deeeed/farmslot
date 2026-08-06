@@ -4,7 +4,10 @@ import test from 'node:test';
 import { resumableSessionProbeCommand } from '../runners/session-process.js';
 
 import { applyTerminalReviewSignal, parseTerminalSelfReviewSignal } from './review-agent.js';
-import { isSuccessfulTerminalReviewSignal } from './terminal-result.js';
+import {
+  isSuccessfulTerminalReviewSignal,
+  terminalReviewArtifactErrorForCompletion,
+} from './terminal-result.js';
 
 test('parseTerminalSelfReviewSignal ignores progress mark signals (status running)', () => {
   const raw = JSON.stringify({
@@ -59,6 +62,16 @@ test('only complete and done are successful reviewer terminal signals', () => {
   assert.equal(isSuccessfulTerminalReviewSignal({ status: 'done' }), true);
   assert.equal(isSuccessfulTerminalReviewSignal({ status: 'failed' }), false);
   assert.equal(isSuccessfulTerminalReviewSignal({ status: 'blocked' }), false);
+});
+
+test('established completion makes an invalid structured result terminal', () => {
+  const error = terminalReviewArtifactErrorForCompletion(
+    'reviewer-1',
+    'review-result.json is invalid',
+    true,
+  );
+
+  assert.match(error?.message ?? '', /review-result\.json is invalid/);
 });
 
 test('parseTerminalSelfReviewSignal rejects legacy substring-only detection', () => {
